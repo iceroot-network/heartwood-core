@@ -131,10 +131,6 @@ fn is_js_space(c: char) -> bool {
 
 /// The text of `bytes` as Node's `Buffer.toString()` decodes it: each maximal invalid UTF-8
 /// subpart becomes U+FFFD.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the frame and protobuf readers call it")
-)]
 pub(crate) fn utf8_lossy(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }

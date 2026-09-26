@@ -183,15 +183,28 @@ message! {
 /// JavaScript's rules: array-index names come first in numeric order, and other names in the order
 /// they were first set; a repeated name keeps its first position and takes the last value; an entry
 /// without a value is `None` (the reference's `null`). An entry named `__proto__` replaces the
-/// object's prototype instead of adding an entry: it is dropped here, and
-/// [`Plugins::replaced_prototype`] records it (a documented difference: the reference's reply
-/// check then sees the prototype's properties).
+/// object's prototype instead of adding an entry, and [`Plugins::replaced_prototype`] records it
+/// (a documented difference: the reference's reply check then sees the prototype's properties).
+/// Once an entry without a value has made the prototype `null`, `__proto__` is an ordinary name.
 ///
 /// Equality compares the entries only.
 #[derive(Debug, Clone, Default)]
 pub struct Plugins {
     entries: Vec<(String, Option<Plugin>)>,
-    replaced_prototype: bool,
+    prototype: Prototype,
+}
+
+/// The prototype of the reference's `plugins` object.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Prototype {
+    /// `Object.prototype`, as created.
+    #[default]
+    Object,
+    /// A plugin: an entry named `__proto__` with a value.
+    Plugin,
+    /// `null`: an entry named `__proto__` without a value. The `__proto__` setter is then out of
+    /// reach, and the name is an ordinary own key.
+    Null,
 }
 
 impl Plugins {
@@ -202,8 +215,21 @@ impl Plugins {
 
     /// `object[name] = plugin`.
     pub fn insert(&mut self, name: String, plugin: Option<Plugin>) {
-        if js::assign(&mut self.entries, name, plugin) == Assigned::Prototype {
-            self.replaced_prototype = true;
+        let prototype = match plugin {
+            Some(_) => Prototype::Plugin,
+            None => Prototype::Null,
+        };
+        if self.prototype == Prototype::Null && name == js::PROTO_KEY {
+            match self
+                .entries
+                .iter_mut()
+                .find(|(existing, _)| *existing == name)
+            {
+                Some(entry) => entry.1 = plugin,
+                None => self.entries.push((name, plugin)),
+            }
+        } else if js::assign(&mut self.entries, name, plugin) == Assigned::Prototype {
+            self.prototype = prototype;
         }
     }
 
@@ -247,10 +273,15 @@ impl Plugins {
         self.entries.is_empty()
     }
 
-    /// Whether an entry named `__proto__` was set, which replaces the prototype of the
-    /// reference's object.
+    /// Whether an entry named `__proto__` replaced the prototype of the reference's object.
     pub fn replaced_prototype(&self) -> bool {
-        self.replaced_prototype
+        self.prototype != Prototype::Object
+    }
+
+    /// Whether the reference's object has a `null` prototype and an own key `__proto__`, which
+    /// its bytes must set up again: an entry named `__proto__` without a value first.
+    pub(crate) fn has_own_proto_key(&self) -> bool {
+        self.prototype == Prototype::Null && self.get(js::PROTO_KEY).is_some()
     }
 }
 
