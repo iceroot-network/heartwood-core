@@ -320,6 +320,56 @@ fn own_keys_put_repeated_fields_first_then_the_wire_order() {
 }
 
 #[test]
+fn plugins_follow_the_own_key_order_of_a_plain_object() {
+    let port = |port| {
+        Some(Plugin {
+            port: Some(port),
+            ..Plugin::default()
+        })
+    };
+    let mut plugins = Plugins::new();
+    for (name, value) in [
+        ("b-plugin", 1),
+        ("1234", 2),
+        ("a-plugin", 3),
+        ("7", 4),
+        ("b-plugin", 5),
+        ("__proto__", 6),
+        // 4294967295 is not an array index, so it keeps its insertion order.
+        ("4294967295", 7),
+        ("01", 8),
+    ] {
+        plugins.insert(name.into(), port(value));
+    }
+    let keys: Vec<(&str, Option<u32>)> = plugins
+        .iter()
+        .map(|(name, plugin)| (name, plugin.and_then(|p| p.port)))
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            ("7", Some(4)),
+            ("1234", Some(2)),
+            ("b-plugin", Some(5)),
+            ("a-plugin", Some(3)),
+            ("4294967295", Some(7)),
+            ("01", Some(8)),
+        ]
+    );
+    assert!(plugins.replaced_prototype());
+    assert_eq!(plugins.get("1234"), Some(port(2).as_ref()));
+    assert_eq!(plugins.remove("b-plugin"), Some(port(5)));
+    assert_eq!(plugins.remove("7"), Some(port(4)));
+    assert_eq!(plugins.get("a-plugin"), Some(port(3).as_ref()));
+    plugins.retain(|name, _| name != "1234");
+    plugins.insert("c".into(), None);
+    let names: Vec<&str> = plugins.iter().map(|(name, _)| name).collect();
+    assert_eq!(names, ["a-plugin", "4294967295", "01", "c"]);
+    assert_eq!(plugins.get("c"), Some(None));
+    assert_eq!(plugins.len(), 4);
+}
+
+#[test]
 fn map_entries_are_assigned_as_to_a_plain_object() {
     let decoded = Config::decode(&bytes(
         "1a0e0a08622d706c7567696e12020801 1a0a0a0431323334120208021a0a0a08622d706c7567696e \

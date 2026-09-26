@@ -1,7 +1,11 @@
 //! The messages of `peer.proto`: getPeers, getCommonBlocks and getStatus.
 
+use std::collections::{BTreeMap, HashMap};
+
+use heartwood_crypto::utils::js::is_array_index;
+
 use super::shared::Headers;
-use crate::js::{self, Assigned};
+use crate::js;
 use crate::proto::message;
 
 message! {
@@ -187,10 +191,18 @@ message! {
 /// (a documented difference: the reference's reply check then sees the prototype's properties).
 /// Once an entry without a value has made the prototype `null`, `__proto__` is an ordinary name.
 ///
-/// Equality compares the entries only.
+/// Setting and finding a name take logarithmic or constant time, so a payload of many entries
+/// decodes in time proportional to its size, as the reference's object does.
+///
+/// Equality compares the entries, in order.
 #[derive(Debug, Clone, Default)]
 pub struct Plugins {
-    entries: Vec<(String, Option<Plugin>)>,
+    /// The entries with an array-index name, by that index.
+    indexed: BTreeMap<u32, (String, Option<Plugin>)>,
+    /// The other entries, in the order their names were first set.
+    named: Vec<(String, Option<Plugin>)>,
+    /// The position of each name of `named`.
+    positions: HashMap<String, usize>,
     prototype: Prototype,
 }
 
@@ -207,6 +219,11 @@ enum Prototype {
     Null,
 }
 
+/// The index of an array-index name: the canonical decimal text of 0 to 2^32 - 2.
+fn array_index(name: &str) -> Option<u32> {
+    is_array_index(name).then(|| name.parse().ok()).flatten()
+}
+
 impl Plugins {
     /// An empty map.
     pub fn new() -> Plugins {
@@ -215,62 +232,81 @@ impl Plugins {
 
     /// `object[name] = plugin`.
     pub fn insert(&mut self, name: String, plugin: Option<Plugin>) {
-        let prototype = match plugin {
-            Some(_) => Prototype::Plugin,
-            None => Prototype::Null,
-        };
-        if self.prototype == Prototype::Null && name == js::PROTO_KEY {
-            match self
-                .entries
-                .iter_mut()
-                .find(|(existing, _)| *existing == name)
-            {
-                Some(entry) => entry.1 = plugin,
-                None => self.entries.push((name, plugin)),
-            }
-        } else if js::assign(&mut self.entries, name, plugin) == Assigned::Prototype {
-            self.prototype = prototype;
+        if name == js::PROTO_KEY && self.prototype != Prototype::Null {
+            self.prototype = match plugin {
+                Some(_) => Prototype::Plugin,
+                None => Prototype::Null,
+            };
+        } else if let Some(index) = array_index(&name) {
+            self.indexed.entry(index).or_insert_with(|| (name, None)).1 = plugin;
+        } else if let Some(entry) = self.position(&name).and_then(|at| self.named.get_mut(at)) {
+            entry.1 = plugin;
+        } else {
+            self.positions.insert(name.clone(), self.named.len());
+            self.named.push((name, plugin));
         }
+    }
+
+    /// The position in `named` of `name`.
+    fn position(&self, name: &str) -> Option<usize> {
+        self.positions.get(name).copied()
     }
 
     /// The entry named `name`: `None` when there is none, `Some(None)` when it has no value.
     pub fn get(&self, name: &str) -> Option<Option<&Plugin>> {
-        self.entries
-            .iter()
-            .find(|(existing, _)| existing == name)
-            .map(|(_, plugin)| plugin.as_ref())
+        let entry = match array_index(name) {
+            Some(index) => self.indexed.get(&index),
+            None => self.position(name).and_then(|at| self.named.get(at)),
+        };
+        entry.map(|(_, plugin)| plugin.as_ref())
     }
 
     /// `delete object[name]`: remove the entry named `name`, and return its value if it had one.
     pub fn remove(&mut self, name: &str) -> Option<Option<Plugin>> {
-        let at = self
-            .entries
-            .iter()
-            .position(|(existing, _)| existing == name)?;
-        Some(self.entries.remove(at).1)
+        if let Some(index) = array_index(name) {
+            return self.indexed.remove(&index).map(|(_, plugin)| plugin);
+        }
+        let at = self.positions.remove(name)?;
+        let (_, plugin) = self.named.remove(at);
+        self.reindex();
+        Some(plugin)
     }
 
     /// Keep the entries for which `keep` is true, in their order.
     pub fn retain(&mut self, mut keep: impl FnMut(&str, Option<&Plugin>) -> bool) {
-        self.entries
+        self.indexed
+            .retain(|_, (name, plugin)| keep(name, plugin.as_ref()));
+        self.named
             .retain(|(name, plugin)| keep(name, plugin.as_ref()));
+        self.reindex();
+    }
+
+    /// Record the position of each name of `named` again.
+    fn reindex(&mut self) {
+        self.positions = self
+            .named
+            .iter()
+            .enumerate()
+            .map(|(at, (name, _))| (name.clone(), at))
+            .collect();
     }
 
     /// The entries, in the object's own-key order.
     pub fn iter(&self) -> impl Iterator<Item = (&str, Option<&Plugin>)> {
-        self.entries
-            .iter()
+        self.indexed
+            .values()
+            .chain(&self.named)
             .map(|(name, plugin)| (name.as_str(), plugin.as_ref()))
     }
 
     /// The number of entries.
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.indexed.len().saturating_add(self.named.len())
     }
 
     /// Whether there is no entry.
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.indexed.is_empty() && self.named.is_empty()
     }
 
     /// Whether an entry named `__proto__` replaced the prototype of the reference's object.
@@ -281,13 +317,13 @@ impl Plugins {
     /// Whether the reference's object has a `null` prototype and an own key `__proto__`, which
     /// its bytes must set up again: an entry named `__proto__` without a value first.
     pub(crate) fn has_own_proto_key(&self) -> bool {
-        self.prototype == Prototype::Null && self.get(js::PROTO_KEY).is_some()
+        self.prototype == Prototype::Null && self.positions.contains_key(js::PROTO_KEY)
     }
 }
 
 impl PartialEq for Plugins {
     fn eq(&self, other: &Plugins) -> bool {
-        self.entries == other.entries
+        self.iter().eq(other.iter())
     }
 }
 
