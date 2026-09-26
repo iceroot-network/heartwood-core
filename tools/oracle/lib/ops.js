@@ -7,12 +7,17 @@
 // Inputs and outputs are plain JSON: bytes are lowercase hex, amounts are decimal strings.
 // Operations that take `milestones` (JSON text) run under those milestones on the devnet network
 // and restore the devnet configuration afterwards.
+//
+// The operations of the node's other packages (kernel, logger, state, handlers, chains) are in
+// lib/ops/*.js, one file per area; makeOps loads every file there (see loadOpsFiles).
 
 const crypto = require("crypto");
+const fs = require("fs");
 const path = require("path");
 
 const FIXED_AUX = Buffer.alloc(32, 0x42);
 const ORACLE_DIR = path.resolve(__dirname, "..");
+const OPS_DIR = path.join(__dirname, "ops");
 
 /**
  * Make BIP340 signing deterministic inside this process only: the reference's transaction signer
@@ -325,14 +330,18 @@ function makeOps(solar, devnet) {
         },
 
         // The dynamic fee floor of the transaction's handler under the milestone at the height:
-        // (addonBytes[key] + round(size / 2)) x minFee, where size is the byte length.
-        "fee.minimum": ({ hex }, height) => {
-            const tx = Transactions.TransactionFactory.fromBytes(hexBuffer(hex, "hex"), true);
-            const { InternalTransactionType } = Transactions;
-            const handler = handlerRegistry().getRegisteredHandlerByType(InternalTransactionType.from(tx.data.type, tx.data.typeGroup));
-            const minimumFee = handler.getMinimumFee(tx, cm.getMilestone(height).dynamicFees);
-            return { key: tx.key, size: tx.serialised.length, minimumFee: minimumFee.toString() };
-        },
+        // (addonBytes[key] + round(size / 2)) x minFee, where size is the byte length. With
+        // `milestones`, under those milestones instead of the devnet's.
+        "fee.minimum": ({ hex, milestones }, height) =>
+            withConfig(milestones, () =>
+                atHeight(height, () => {
+                    const tx = Transactions.TransactionFactory.fromBytes(hexBuffer(hex, "hex"), true);
+                    const { InternalTransactionType } = Transactions;
+                    const handler = handlerRegistry().getRegisteredHandlerByType(InternalTransactionType.from(tx.data.type, tx.data.typeGroup));
+                    const minimumFee = handler.getMinimumFee(tx, cm.getMilestone(height).dynamicFees);
+                    return { key: tx.key, size: tx.serialised.length, minimumFee: minimumFee.toString() };
+                }),
+            ),
 
         // Transaction.setBurnedFee at the height, for a transaction with this fee.
         "fee.burned": ({ fee }, height) => {
@@ -544,6 +553,26 @@ function makeOps(solar, devnet) {
         },
     };
 
+    // The operations of lib/ops/*.js, with what they share with the operations above.
+    const context = {
+        solar,
+        devnet,
+        cm,
+        describe,
+        atHeight,
+        withConfig,
+        plain,
+        hexBuffer,
+        safeInteger,
+        amount,
+        sha256Hex,
+        canonicalJson,
+        handlerRegistry,
+        txOutput,
+        blockOutput,
+    };
+    loadOpsFiles(ops, context);
+
     /**
      * Run one operation at a height. Resolves to {output} or {error}; never rejects for errors the
      * reference raises.
@@ -561,6 +590,28 @@ function makeOps(solar, devnet) {
     }
 
     return { ops, run, atHeight, describe };
+}
+
+/**
+ * Add the operations of every lib/ops/*.js file to `ops`, in file-name order. Each file exports a
+ * function that takes `context` (the reference, the devnet and the helpers of makeOps) and returns
+ * an object of operations of the same shape as those of makeOps: (input, height) => output, or a
+ * promise of it. An operation name may be defined only once.
+ */
+function loadOpsFiles(ops, context) {
+    if (!fs.existsSync(OPS_DIR)) return;
+    const files = fs
+        .readdirSync(OPS_DIR)
+        .filter((f) => f.endsWith(".js"))
+        .sort();
+    for (const file of files) {
+        const extra = require(path.join(OPS_DIR, file))(context);
+        for (const [name, fn] of Object.entries(extra)) {
+            if (Object.prototype.hasOwnProperty.call(ops, name)) throw new Error(`operation ${name} of lib/ops/${file} is already defined`);
+            if (typeof fn !== "function") throw new TypeError(`operation ${name} of lib/ops/${file} is not a function`);
+            ops[name] = fn;
+        }
+    }
 }
 
 module.exports = { FIXED_AUX, errorInfo, makeOps, plain, sha256Hex };

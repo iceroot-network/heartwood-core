@@ -255,6 +255,12 @@ impl Transaction {
         self.data.kind
     }
 
+    /// The reference's key for the type (`transfer`, `secondSignature`, `delegateRegistration`,
+    /// `delegateResignation`, `burn` or `vote`), which the milestones' fee tables use.
+    pub fn key(&self) -> &'static str {
+        self.data.kind.key()
+    }
+
     /// The fee in base units.
     pub fn fee(&self) -> u64 {
         self.data.fee

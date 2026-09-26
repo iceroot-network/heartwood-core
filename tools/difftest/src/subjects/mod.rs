@@ -1,8 +1,10 @@
-//! Heartwood's subjects: the oracle's operations answered with `heartwood-crypto`.
+//! Heartwood's subjects: the oracle's operations answered with Heartwood's crates.
 //!
-//! Each subject turns a case's input into the crate's types, runs the crate, and writes the result
-//! in the JSON shape the oracle writes (`tools/oracle/lib/ops.js`), so that L0 can compare them
-//! value for value.
+//! Each subject turns a case's input into the crates' types, runs them, and writes the result in
+//! the JSON shape the oracle writes (`tools/oracle/lib/ops.js` and `tools/oracle/lib/ops/`), so
+//! that L0 and L1 can compare them value for value.
+//!
+//! With `heartwood-crypto`:
 //!
 //! - `keys`: passphrase keys, public keys and addresses.
 //! - `signatures`: BIP340 and legacy Schnorr, transaction preimages, the published vector files
@@ -13,13 +15,26 @@
 //!   loader.
 //! - `genesis`: the devnet chain-definition builder.
 //!
+//! With the kernel, the logger, the state and the transaction handlers:
+//!
+//! - `kernel`: rounds, forging slots, block chaining, the status canonical JSON, `.env` text,
+//!   timestamps, IP lists, node paths and log lines.
+//! - `state`: the forging shuffle, the delegate ranking and a voter's shares.
+//! - `digest`: the canonical state digest of a wallet fixture.
+//! - `handlers`: the dynamic fee floor, and a transaction applied to a wallet fixture and
+//!   reverted.
+//!
 //! Most operations run under the devnet configuration the oracle was set up with, which the
 //! [`Devnet`] context carries; a case that brings its own milestone file runs under that file.
 
 mod blocks;
+mod digest;
 mod genesis;
+mod handlers;
+mod kernel;
 mod keys;
 mod signatures;
+mod state;
 mod transactions;
 
 use std::borrow::Cow;
@@ -230,11 +245,26 @@ const OPS: &[(&str, Run)] = &[
     ("block.fromBytes", blocks::from_bytes),
     ("block.receive", blocks::receive),
     ("fee.burned", blocks::fee_burned),
-    ("fee.minimum", blocks::fee_minimum),
     ("reward.calculate", blocks::reward_calculate),
     ("reward.donations", blocks::reward_donations),
     ("config.load", blocks::config_load),
     ("genesis.generate", genesis::generate),
+    ("round.calculate", kernel::round_calculate),
+    ("round.isNew", kernel::round_is_new),
+    ("forging.info", kernel::forging_info),
+    ("block.isChained", kernel::block_is_chained),
+    ("kernel.stringify", kernel::stringify),
+    ("kernel.dotenv", kernel::dotenv),
+    ("kernel.formatTimestamp", kernel::format_timestamp),
+    ("kernel.ip", kernel::ip),
+    ("kernel.paths", kernel::paths),
+    ("logger.format", kernel::logger_format),
+    ("state.shuffle", state::shuffle),
+    ("state.rank", state::rank),
+    ("wallet.voteAmounts", state::vote_amounts),
+    ("state.digest", digest::state_digest),
+    ("fee.minimum", handlers::fee_minimum),
+    ("state.applyTransaction", handlers::apply_transaction),
 ];
 
 /// Register every operation of [`OPS`] in `registry`.

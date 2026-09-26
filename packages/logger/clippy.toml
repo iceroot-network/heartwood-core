@@ -1,0 +1,8 @@
+# Lints of heartwood-logger. Line times and rotation dates come from heartwood_kernel::clock::Clock,
+# so tests can drive them with a manual clock.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order differs between runs; use IndexMap or BTreeMap" },
+    { path = "std::collections::HashSet", reason = "iteration order differs between runs; use IndexSet or BTreeSet" },
+    { path = "std::time::SystemTime", reason = "read the time through heartwood_kernel::clock::Clock" },
+    { path = "std::time::Instant", reason = "read the time through heartwood_kernel::clock::Clock" },
+]

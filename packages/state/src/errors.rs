@@ -1,0 +1,241 @@
+//! Error types of the crate.
+//!
+//! Where the reference throws an untyped error (a failed `assert`, a lookup of a missing index
+//! entry, too few delegates for a round), the state returns one of these typed errors instead,
+//! with the same verdict: the block is refused, or the node refuses to start. None of them can
+//! happen on a chain of blocks the reference accepts.
+
+use heartwood_crypto::blocks::VerifyFailure;
+use heartwood_crypto::identities::{Address, PublicKeyBytes};
+use heartwood_crypto::transactions::TransactionId;
+use thiserror::Error;
+
+use crate::handlers::TransactionRejected;
+
+/// A wallet or delegate value would leave its range, or a wallet or delegate is missing.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum WalletError {
+    /// A credit would take the balance past `2^64 − 1`.
+    #[error("the balance of {address} would overflow")]
+    BalanceOverflow {
+        /// The wallet.
+        address: Address,
+    },
+    /// A debit is larger than the balance; the reference asserts that no balance goes negative.
+    #[error("the balance of {address} would be negative")]
+    NegativeBalance {
+        /// The wallet.
+        address: Address,
+    },
+    /// A nonce would go below 0 or past `2^64 − 1`.
+    #[error("the nonce of {address} would leave its range")]
+    NonceRange {
+        /// The wallet.
+        address: Address,
+    },
+    /// No wallet has this address where one must exist.
+    #[error("no wallet has the address {address}")]
+    UnknownWallet {
+        /// The address.
+        address: Address,
+    },
+    /// No delegate is registered with this name; the reference's lookup of a missing index entry
+    /// throws.
+    #[error("no delegate is registered as {username}")]
+    UnknownDelegate {
+        /// The name.
+        username: String,
+    },
+    /// The wallet is not a delegate where it must be one.
+    #[error("{address} is not a delegate")]
+    NotADelegate {
+        /// The wallet.
+        address: Address,
+    },
+    /// Another wallet already holds this delegate name.
+    #[error("the delegate name {username} is already registered")]
+    UsernameTaken {
+        /// The name.
+        username: String,
+    },
+    /// A delegate's vote balance or one of its counters would go below 0 or past `2^64 − 1`.
+    #[error("a value of delegate {username} would leave its range")]
+    DelegateRange {
+        /// The delegate's name.
+        username: String,
+    },
+}
+
+/// The delegate ranking or a round's schedule failed.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum RoundError {
+    /// Fewer delegates are ranked than a round needs; the reference refuses to go on.
+    #[error("expected to find {required} delegates but only found {ranked}")]
+    NotEnoughDelegates {
+        /// `activeDelegates`.
+        required: u64,
+        /// The delegates that are registered and not resigned.
+        ranked: usize,
+    },
+    /// Two delegates have the same vote balance and the same public key.
+    #[error("the delegates {first} and {second} have the same vote balance and public key")]
+    IdenticalPublicKeys {
+        /// One delegate's name.
+        first: String,
+        /// The other's.
+        second: String,
+    },
+    /// A delegate of the ranking has no public key.
+    #[error("the delegate {username} has no public key")]
+    NoPublicKey {
+        /// The delegate's name.
+        username: String,
+    },
+    /// The block to revert is not the last block of the round state.
+    #[error("the block at height {height} is not the last block of the round")]
+    NotLastBlock {
+        /// The height of the block.
+        height: u32,
+    },
+    /// A wallet value left its range.
+    #[error(transparent)]
+    Wallet(#[from] WalletError),
+}
+
+/// The reward of a block in its round could not be computed.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum RewardError {
+    /// The delegate has no rank, so the rank table cannot be read.
+    #[error("the delegate {username} has no rank")]
+    NoRank {
+        /// The delegate's name.
+        username: String,
+    },
+    /// The rank table has no reward for the delegate's rank.
+    #[error(transparent)]
+    Reward(#[from] heartwood_crypto::errors::RewardError),
+}
+
+/// A block could not be applied. The state is unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ApplyError {
+    /// The block's height is not the last block's height plus one.
+    #[error("expected a block at height {expected}, got height {height}")]
+    Height {
+        /// The last block's height plus one.
+        expected: u32,
+        /// The block's height.
+        height: u32,
+    },
+    /// The block's generator is not a registered delegate.
+    #[error("the generator {} is not a registered delegate", generator.to_hex())]
+    GeneratorNotDelegate {
+        /// The generator's public key.
+        generator: PublicKeyBytes,
+    },
+    /// A transaction was refused.
+    #[error("transaction {index} ({id}) was refused: {rejected}")]
+    Transaction {
+        /// Its position in the block.
+        index: usize,
+        /// Its id.
+        id: TransactionId,
+        /// Why.
+        rejected: TransactionRejected,
+    },
+    /// A total (rewards, burned fees, burned amounts) would pass `2^64 − 1`.
+    #[error("the supply totals would overflow")]
+    TotalsOverflow,
+    /// A wallet value left its range.
+    #[error(transparent)]
+    Wallet(#[from] WalletError),
+    /// The round that the block ends could not be started.
+    #[error(transparent)]
+    Round(#[from] RoundError),
+}
+
+/// The last block could not be reverted.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum RevertError {
+    /// The last block is the genesis block.
+    #[error("the genesis block cannot be reverted")]
+    Genesis,
+    /// A transaction's revert was refused.
+    #[error("transaction {index} ({id}) could not be reverted: {rejected}")]
+    Transaction {
+        /// Its position in the block.
+        index: usize,
+        /// Its id.
+        id: TransactionId,
+        /// Why.
+        rejected: TransactionRejected,
+    },
+    /// A total would go below 0.
+    #[error("the supply totals would go below 0")]
+    TotalsUnderflow,
+    /// A wallet value left its range.
+    #[error(transparent)]
+    Wallet(#[from] WalletError),
+    /// The round state could not be restored.
+    #[error(transparent)]
+    Round(#[from] RoundError),
+}
+
+/// The genesis block was refused; the node does not start.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum GenesisError {
+    /// The block is not at height 1.
+    #[error("the genesis block is at height {height}, not 1")]
+    Height {
+        /// The block's height.
+        height: u32,
+    },
+    /// The block does not verify (the timestamp rule excepted).
+    #[error("the genesis block does not verify: {failures:?}")]
+    Invalid {
+        /// Every rule that failed, in the reference's order.
+        failures: Vec<VerifyFailure>,
+    },
+    /// The issuance records add up to more than `2^63 − 1`.
+    #[error("the genesis block issues more than 2^63 - 1")]
+    Issuance,
+    /// A wallet's built balance is negative.
+    #[error("wallet {address} has a negative balance")]
+    NegativeBalance {
+        /// The wallet.
+        address: Address,
+    },
+    /// A delegate's built vote balance is negative.
+    #[error("delegate {username} has a negative vote balance")]
+    NegativeVoteBalance {
+        /// The delegate's name.
+        username: String,
+    },
+    /// A genesis transaction could not be bootstrapped.
+    #[error("genesis transaction {index} ({id}) was refused: {rejected}")]
+    Transaction {
+        /// Its position in the block.
+        index: usize,
+        /// Its id.
+        id: TransactionId,
+        /// Why.
+        rejected: TransactionRejected,
+    },
+    /// A wallet value left its range.
+    #[error(transparent)]
+    Wallet(#[from] WalletError),
+    /// Round 1 could not be scheduled.
+    #[error(transparent)]
+    Round(#[from] RoundError),
+}
+
+/// The supply check failed: the balances do not add up to what was issued and rewarded, less
+/// what was burned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("the balances add up to {balances}, expected {expected}")]
+pub struct SupplyError {
+    /// The sum of every balance.
+    pub balances: u128,
+    /// Issued plus rewards, less burned fees and burned amounts.
+    pub expected: i128,
+}

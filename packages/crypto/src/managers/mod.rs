@@ -7,5 +7,5 @@
 pub mod config;
 pub mod network;
 
-pub use self::config::{Donation, DynamicReward, Milestones, Params};
+pub use self::config::{Donation, DynamicFees, DynamicReward, Milestones, Params};
 pub use self::network::Network;

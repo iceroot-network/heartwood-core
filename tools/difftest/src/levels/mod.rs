@@ -11,6 +11,8 @@
 //! Only L0 runs today, with the subjects of `heartwood-crypto` ([`crate::subjects`]).
 
 pub mod l0;
+pub mod l1;
+pub mod l2;
 
 use std::fmt;
 use std::str::FromStr;
