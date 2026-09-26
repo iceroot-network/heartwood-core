@@ -20,12 +20,12 @@
 //! timestamp 0, with 32 bytes of payload per transaction; its payload hash, the SHA-256 of the
 //! concatenated transaction ids, is also the network hash.
 //!
-//! The transactions are made as the generator makes them: signed and serialised directly, without
-//! the transaction rules of [`crate::validation`], which refuse a zero fee except for the
-//! transactions of a network's own genesis block. The rules that do apply to the genesis block
-//! are checked here instead: delegate names are valid, allocations are at least 1, and transfers
-//! stay within the milestone's `transfer.minimum` and `transfer.maximum`. Every transaction
-//! signature is verified.
+//! The transactions are made as the generator makes them, signed and serialised directly, and each
+//! is then decoded under the transaction rules for a genesis block ([`validation::Mode::GENESIS`],
+//! which allows the zero fee, as the reference does for its genesis block's transactions), with
+//! its signature verified. The builder also refuses early, with a clearer error, what those rules
+//! and the later steps would refuse: invalid delegate names, allocations of 0, and transfers
+//! outside the milestone's `transfer.minimum` and `transfer.maximum`.
 //!
 //! `milestones.json` holds the first milestone, built from the input rules, and, when there are
 //! donations, a second milestone that sets them. Before the block is built the milestones pass the
@@ -52,7 +52,7 @@ use crate::identities::{Address, KeyPair};
 use crate::managers::{Milestones, Network, Params};
 use crate::transactions::serialiser::{self, SerialiseOptions};
 use crate::transactions::types::{TransferItem, Votes};
-use crate::transactions::{Asset, Transaction, TransactionData, TransactionType, signer, verifier};
+use crate::transactions::{Asset, Transaction, TransactionData, TransactionType, signer};
 use crate::utils::{hex, js};
 use crate::validation;
 
@@ -340,9 +340,8 @@ fn transfer_chunks<'a>(
 }
 
 /// A genesis transaction, made as the reference's devnet generator makes it: version 3, fee 0,
-/// signed over its unsigned bytes, with no transaction rules applied. (Outside a loaded genesis
-/// block the rules refuse a zero fee; the asset rules that apply are checked by the caller.) The
-/// signature is checked before the transaction is used.
+/// signed over its unsigned bytes. It is then decoded under the rules for genesis transactions,
+/// which allow the zero fee, and its signature is checked before it is used.
 fn genesis_transaction(
     keys: &KeyPair,
     nonce: u64,
@@ -373,8 +372,9 @@ fn genesis_transaction(
     signer::sign(&mut data, keys, aux, params)?;
     let bytes =
         serialiser::serialise(&data, SerialiseOptions::FULL, params).map_err(BuildError::from)?;
-    let tx = Transaction::decode_trusted(&bytes, params).map_err(BuildError::from)?;
-    if !verifier::verify(tx.data(), params) {
+    let tx = Transaction::decode_with(&bytes, params, validation::Mode::GENESIS)
+        .map_err(BuildError::from)?;
+    if !tx.is_verified() {
         return Err(GenesisError::Verification(vec![
             VerifyFailure::UnverifiedTransactions(vec![*tx.id()]),
         ]));
