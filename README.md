@@ -17,7 +17,7 @@ equal byte for byte, including which inputs each side rejects.
 
 | Level | What is compared | Status |
 |---|---|---|
-| L0 | golden vectors written by the reference, against Heartwood | runs; nothing to compare until the first crates |
+| L0 | golden vectors written by the reference, against Heartwood | runs against `heartwood-crypto`: 1,399 of 1,445 records compared, all equal (see below) |
 | L1 | random and mutated cases, one oracle call each | planned |
 | L2 | block sequences replayed on both sides, a state digest per block | planned |
 | L3 | the same scenario on a reference devnet and on a Heartwood devnet | planned |
@@ -44,6 +44,7 @@ tools/oracle/         the oracle: Node scripts and the image recipe
   check-native.js       checks that the reference's native modules build and load
 packages/crypto/tests/vectors/  the golden vectors of heartwood-crypto, with MANIFEST.sha256
   external/             published vector files, with their source URLs and SHA-256
+fuzz/                 cargo-fuzz targets for the transaction and block decoders (own workspace)
 ```
 
 ## Requirements
@@ -67,9 +68,9 @@ make e2e            # vectors in the image and locally, diff the two runs, run L
 make vectors-install  # copy the image's vectors into packages/crypto/tests/vectors
 ```
 
-`make check` needs only Rust. `make e2e` passes when the image run and the local run agree on
-every record; its L0 step then reports "0 compared" and lists, per operation, the records that have
-no Rust implementation yet. `make help` lists the other targets: `make ping` and
+`make check` needs only Rust; it includes the L0 comparison of the committed vectors. `make e2e`
+passes when the image run and the local run agree on every record and L0 finds no difference in
+the image run. `make help` lists the other targets: `make ping` and
 `make test-oracle` (the oracle answers, in the image and locally) and `make oracle-save`
 (`docker save` of the image into `IMAGE_DIR`).
 
@@ -98,6 +99,59 @@ TOOLCHAIN_ENV = $(HOME)/toolchains/node18-rust.sh
 ```
 
 The same variables work on the command line: `make e2e SOLAR_REPO=../solar-core-ref`.
+
+## heartwood-crypto
+
+`packages/crypto` is the byte-exact layer of the node: hashes, secret and public keys, addresses,
+BIP340 signatures and the legacy Schnorr scheme, the version 3 transaction codec for the six kept
+transaction types (1/1, 1/2, 1/6, 1/7, 2/0, 2/2) with the transaction rules and builders, the
+block codec with its verification rules and factory, the network description and the milestones
+(merged and checked at load, looked up by height), rewards, donations and the fee burn. Two
+features are off by default: `legacy-schnorr`, the pre-BIP340 scheme that only peer status
+messages use, and `genesis`, the devnet chain-definition builder. The crate forbids unsafe code,
+and its decoders return typed errors instead of panicking on untrusted input.
+
+```sh
+cargo test -p heartwood-crypto --locked   # unit tests, property tests and every vector class
+```
+
+The crate is its own dev-dependency with both features, so this one command also runs the legacy
+Schnorr and genesis tests. The integration tests check every record of the vector classes (bytes,
+ids, JSON text with key order, verdicts and error classes), the published BIP340, bip-schnorr and
+BIP39 vector files, and a cross-check of both signature schemes with `k256` on every signature
+record and on random keys and messages.
+
+`difftest run l0` compares the same records through the harness, with one subject per oracle
+operation. On the committed vectors (reference tag `s1-ref-v2`) it reports:
+
+| Outcome | Records |
+|---|---|
+| compared, equal to the reference | 1,399 |
+| documented differences: refused at decode, where the reference decodes and refuses later | 19 |
+| skipped: the dynamic fee floor (transaction handlers) and the peer status message (P2P codec) | 27 |
+
+The documented differences are four forms that the reference decodes and only refuses when a
+transaction is applied: the removed transaction types, the extended header, multi-signature
+entries after the signatures, and memos that are not valid UTF-8 (which the reference re-encodes,
+changing the bytes it hashes). Heartwood refuses them when it decodes, so a block holding one is
+refused either way.
+
+The fuzz targets run with cargo-fuzz on a nightly toolchain, and a corpus can then be replayed
+against the oracle:
+
+```sh
+(cd fuzz && cargo +nightly fuzz run transaction_decode -- -max_total_time=600)
+difftest oracle replay tx.fromBytes fuzz/corpus/transaction_decode \
+    --vectors packages/crypto/tests/vectors --milestones fuzz/milestones/transaction_decode.json \
+    --image heartwood-oracle:<commit>
+```
+
+With the `genesis` feature, `difftest genesis` writes a devnet chain definition (the four
+`crypto/*.json` files, the delegate and wallet keys and a summary) from a genesis profile file, a
+seed and an epoch, and `--compare DIR` checks it against the reference's devnet generator's output
+for the same inputs. The profile file is written by `node tools/oracle/lib/vectors/genesis.js
+--devnet-generator FILE --solar-dir DIR --out FILE`; every genesis vector record carries the same
+profile.
 
 ## The oracle image
 
@@ -175,13 +229,18 @@ difftest vectors diff DIR DIR
 difftest run l0 DIR
 difftest run l1|l2|l3|l4        says that the level is not built yet
 difftest levels
+difftest oracle replay OP CORPUS --vectors DIR [--height N] [--milestones FILE] [--image TAG | --solar-dir DIR]
+difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--compare DIR]
 ```
 
 Library modules: `oracle` (run the scripts in the image or locally; `OracleServer` for L1),
 `vectors` (files, meta records, manifest), `subject` (a Rust implementation of one oracle
-operation, shared by L0 and L1, and the registry), `compare` (a JSON diff that names the path and,
-for hex values, the first differing byte with the bytes around it), `report`, and `levels` (L0
-runs; L1 to L4 are described with what each one arrives with).
+operation, shared by L0 and L1, and the registry), `subjects` (the operations answered with
+`heartwood-crypto`), `compare` (a JSON diff that names the path and, for hex values, the first
+differing byte with the bytes around it; numbers compare by their double value and object keys by
+their JavaScript order), `report`, `replay` (a corpus through the oracle and Heartwood), `genesis`
+(the chain-definition driver) and `levels` (L0 runs; L1 to L4 are described with what each one
+arrives with).
 
 A difference names the JSON path and, for bytes, the first differing offset. This is
 `difftest vectors diff` against a copy of the vectors with one byte and one fee changed; an L0
@@ -196,9 +255,10 @@ failure (`FAIL <file>:<line> <op> "<name>" (height H)`) prints the same lines:
   1 of 1445 records differ, 0 files missing
 ```
 
-The node's crates plug in by adding subjects (for example `keys.fromPassphrase` backed by
-`heartwood-crypto`) to `subject::heartwood()`; `difftest run l0` then compares them, with no other
-change.
+The subjects take the devnet configuration from the vector set itself: the network and milestone
+files of the genesis class's chain definition that the other classes' meta records name, and the
+aux of the meta records. Later crates plug in by adding subjects to `subjects`; `difftest run l0`
+then compares them, with no other change.
 
 `make test-oracle` runs the cargo test that pings `oracle-server.js` in the image and locally
 (`DIFFTEST_TEST_IMAGE`, `DIFFTEST_TEST_SOLAR_DIR`); plain `cargo test` skips it.
