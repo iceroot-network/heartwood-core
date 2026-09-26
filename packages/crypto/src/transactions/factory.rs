@@ -12,9 +12,10 @@ use crate::transactions::deserialiser::{Deserialised, deserialise_raw};
 use crate::transactions::registry::TYPE_GROUP_CORE;
 use crate::transactions::serialiser::{SerialiseOptions, serialise, transaction_id};
 use crate::transactions::types::{
-    Asset, Memo, ResignationType, Transaction, TransactionData, TransferItem,
+    Asset, Memo, ResignationType, Transaction, TransactionData, TransferItem, Votes,
 };
 use crate::transactions::verifier;
+use crate::utils::js::is_truthy;
 use crate::validation::{
     MAX_AMOUNT, Mode, bigint, bignumber, validate_transaction, votes_from_json,
 };
@@ -101,7 +102,10 @@ impl Transaction {
     ///
     /// Numbers of the 64-bit fields (nonce, fee, amounts) may be decimal strings or JSON integers,
     /// read as JavaScript's `BigInt` reads them. Vote shares are JSON numbers. A vote asset that is
-    /// not a JSON object is refused.
+    /// not a JSON object is no votes when it is truthy and has no own keys (a nonzero number,
+    /// `true`, an empty array), as in the reference; any other value is refused, where the
+    /// reference writes a non-empty array's or string's indices as vote names, or no vote asset
+    /// at all for a falsy value.
     pub fn from_json(json: &Value, params: &Params) -> Result<Transaction, BuildError> {
         Transaction::from_json_with(json, params, Mode::Strict)
     }
@@ -130,7 +134,7 @@ fn data_from_json(
     // The reference converts `amount` (when it is truthy) and `fee` to big integers before any
     // rule, and refuses values that do not convert.
     let amount = match object.get("amount") {
-        Some(value) if truthy(value) => Some(
+        Some(value) if is_truthy(value) => Some(
             bigint(value).ok_or_else(|| SchemaError::invalid("amount", "must be an integer"))?,
         ),
         _ => None,
@@ -191,6 +195,10 @@ fn data_from_json(
         .ok_or_else(|| SchemaError::missing("nonce"))
         .and_then(|value| u64_field(bignumber(value), "nonce", 0))?;
     let fee = u64_field(Some(fee), "fee", 0)?;
+    // The burned fee is not part of the transaction, but the schema checks it when it is present.
+    if let Some(value) = object.get("burnedFee") {
+        u64_field(bignumber(value), "burnedFee", 0)?;
+    }
     if let Some(sender) = object.get("senderId") {
         address_text(sender, "senderId")?;
     }
@@ -200,7 +208,7 @@ fn data_from_json(
     )?;
     // A truthy `vendorField` is the memo's old name, and takes its place.
     let memo_value = match object.get("vendorField") {
-        Some(value) if truthy(value) => Some(value),
+        Some(value) if is_truthy(value) => Some(value),
         _ => object.get("memo"),
     };
     let memo = match memo_value {
@@ -269,8 +277,15 @@ fn asset_from_json(
     match kind {
         TransactionType::Transfer => {
             let asset = asset_object()?;
+            // `payments` takes the place of `transfers` when it is truthy and `transfers` is not.
             let renamed = match (asset.get("transfers"), asset.get("payments")) {
-                (None, Some(payments)) if explicit_core && truthy(payments) => Some(payments),
+                (transfers, Some(payments))
+                    if explicit_core
+                        && is_truthy(payments)
+                        && !transfers.is_some_and(is_truthy) =>
+                {
+                    Some(payments)
+                }
                 (transfers, _) => transfers,
             };
             let items = match renamed {
@@ -367,10 +382,20 @@ fn asset_from_json(
             }
             let votes = match asset.get("votes") {
                 Some(Value::Object(votes)) => votes_from_json(votes)?,
+                // The vote schema does not require an object, and the vote serialiser writes the
+                // entries of `Object.keys(votes)` when `votes` is truthy. A truthy value without
+                // own keys (a nonzero number, `true`, an empty array) is therefore no votes.
+                Some(value @ (Value::Number(_) | Value::Bool(true))) if is_truthy(value) => {
+                    Votes::new()
+                }
+                Some(Value::Array(items)) if items.is_empty() => Votes::new(),
+                // A non-empty array or string: the reference writes its indices as vote names and
+                // removes them only after it has computed the id. A falsy value: the reference
+                // writes no vote asset at all. Both are refused here.
                 Some(_) => {
                     return Err(JsonError::Invalid {
                         field: "asset.votes",
-                        expected: "an object",
+                        expected: "an object, or a truthy value without own keys",
                     }
                     .into());
                 }
@@ -378,16 +403,6 @@ fn asset_from_json(
             };
             Ok(Asset::Vote { votes })
         }
-    }
-}
-
-/// Whether `value` is truthy in JavaScript.
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null | Value::Bool(false) => false,
-        Value::String(text) => !text.is_empty(),
-        Value::Number(number) => number.as_f64().is_some_and(|double| double != 0.0),
-        Value::Bool(true) | Value::Array(_) | Value::Object(_) => true,
     }
 }
 

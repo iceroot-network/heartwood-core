@@ -10,11 +10,14 @@ use super::{AddressError, HexError, KeyError, SigError, UnexpectedEnd};
 /// [`DecodeError::Schema`] marks a refusal by the transaction rules rather than by the codec, and
 /// [`DecodeError::UnsupportedVersion`] a refused version.
 ///
-/// Four refusals are deliberate differences from the reference, which decodes these forms and
-/// refuses them later, when the transaction is applied: an extended header
-/// ([`DecodeError::UnsupportedHeaderType`]), a removed type ([`DecodeError::RemovedType`]), a memo
-/// that is not valid UTF-8 ([`DecodeError::InvalidMemo`]) and multi-signature entries
-/// ([`DecodeError::MultiSignature`]). A block that holds such a transaction is refused either way.
+/// Four refusals are deliberate differences from the reference, which decodes these forms. Three
+/// of them it refuses later, when the transaction is applied, so a block that holds one is refused
+/// either way: an extended header ([`DecodeError::UnsupportedHeaderType`]), a removed type
+/// ([`DecodeError::RemovedType`]) and multi-signature entries ([`DecodeError::MultiSignature`]).
+/// The fourth, a memo that is not valid UTF-8 ([`DecodeError::InvalidMemo`]), the reference reads
+/// as replacement characters and accepts, in a block too: a known consensus difference. The copy
+/// of such a transaction with the replacement characters has the same id and signature, and both
+/// implementations accept it.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DecodeError {
     /// The bytes end inside a field.
@@ -45,7 +48,8 @@ pub enum DecodeError {
     /// The sender key is not a public key the reference accepts.
     #[error("invalid sender public key: {0}")]
     SenderKey(KeyError),
-    /// The memo is not valid UTF-8.
+    /// The memo is not valid UTF-8. The reference reads it as replacement characters instead (see
+    /// the type's documentation).
     #[error("the memo is not valid UTF-8")]
     InvalidMemo,
     /// The vote asset is over 1,024 bytes.

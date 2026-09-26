@@ -48,10 +48,14 @@ pub(crate) struct Header {
     pub(crate) fee: u64,
 }
 
-/// Write the common header of `data`. The version byte 0 is written as 3, as the reference does.
-/// The nonce and the fee are signed 64-bit fields in the reference's writer, so values over
-/// `2^63 − 1` do not fit.
-pub(crate) fn write_header(data: &TransactionData, out: &mut Writer) -> Result<(), EncodeError> {
+/// Write the common header of `data`. The version byte 0 is written as 3 and the network byte 0 as
+/// `network`, the configured network byte, as the reference does. The nonce and the fee are signed
+/// 64-bit fields in the reference's writer, so values over `2^63 − 1` do not fit.
+pub(crate) fn write_header(
+    data: &TransactionData,
+    network: u8,
+    out: &mut Writer,
+) -> Result<(), EncodeError> {
     let key = data.sender_public_key.as_bytes();
     if key.len() != PUBLIC_KEY_SIZE {
         return Err(EncodeError::OutOfRange {
@@ -60,7 +64,10 @@ pub(crate) fn write_header(data: &TransactionData, out: &mut Writer) -> Result<(
     }
     out.u8(STANDARD_HEADER);
     out.u8(data.effective_version());
-    out.u8(data.network);
+    out.u8(match data.network {
+        0 => network,
+        byte => byte,
+    });
     out.u32_le(data.kind.type_group());
     out.u16_le(data.kind.type_id());
     out.u64_le(signed_field(data.nonce, "nonce")?);

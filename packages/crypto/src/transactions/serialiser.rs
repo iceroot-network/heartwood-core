@@ -101,7 +101,7 @@ fn serialise_parts(
         }
     };
     let mut out = Writer::with_capacity(256);
-    codec::write_header(data, &mut out)?;
+    codec::write_header(data, params.network(), &mut out)?;
     codec::write_memo(data.memo.as_ref(), &mut out);
     check(out.len())?;
     let mut network_error = None;
