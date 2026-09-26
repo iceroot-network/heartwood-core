@@ -209,11 +209,21 @@ fn generator_keys(definition: &Definition) -> KeyPair {
 
 /// A genesis block with `transactions`, signed by `keys`, under `milestones`.
 fn genesis_block(transactions: Vec<Transaction>, keys: &KeyPair, milestones: &Milestones) -> Block {
+    block_at(1, transactions, keys, milestones)
+}
+
+/// A block at `height` with no previous block, as a genesis block is made.
+fn block_at(
+    height: u32,
+    transactions: Vec<Transaction>,
+    keys: &KeyPair,
+    milestones: &Milestones,
+) -> Block {
     let count = u32::try_from(transactions.len()).unwrap();
     let draft = BlockDraft {
         version: 0,
         timestamp: 0,
-        height: 1,
+        height,
         previous_block: [0; 32],
         number_of_transactions: count,
         total_amount: transactions.iter().map(Transaction::amount).sum(),
@@ -271,6 +281,14 @@ fn genesis_refusals() {
         State::from_genesis(&forged, milestones, &Handlers),
         Err(GenesisError::Invalid { failures }) if failures == [VerifyFailure::Signature]
     ));
+
+    // Only a block at height 1 starts a chain. The reference does not check the height; this
+    // difference shows only with a genesis file that no generated devnet has.
+    let block = block_at(2, Vec::new(), &generator, milestones);
+    assert_eq!(
+        State::from_genesis(&block, milestones, &Handlers).unwrap_err(),
+        GenesisError::Height { height: 2 }
+    );
 
     // Without delegates there is no round 1, and the reference does not start either.
     let issuance = transfer(&generator, &[1_000], 1, 0, milestones);
