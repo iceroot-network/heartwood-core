@@ -26,7 +26,9 @@
 //       -> {session, lines: [...]}, the digest lines of the start and of each block applied
 //   chain.apply {session, hex, step?}   step "apply" (default) or "reapply"
 //       -> {accepted, height, id, reward, missed: [{timestamp, height, username}], line} or,
-//          refused, {accepted: false, ..., error: {class, message}}
+//          refused, {accepted: false, ..., stage, error: {class, message}}; stage is decode (the
+//          bytes do not decode), verify (the block's own checks, the wall-clock rule on its
+//          timestamp aside) or apply
 //   chain.revert {session, count}      -> {lines}, one revert line per block
 //   chain.dump {session}               -> {sections: {B, S, R, M, W}, line}: the records of the
 //                                          last step
@@ -141,8 +143,12 @@ module.exports = function chainOps(context) {
                 const r = await s.apply(bytes, step);
                 const out = { accepted: r.accepted, height: r.height, id: r.id, missed: r.missed };
                 if (r.reward !== undefined) out.reward = r.reward;
-                if (r.accepted) out.line = r.line;
-                else out.error = r.error;
+                if (r.accepted) {
+                    out.line = r.line;
+                } else {
+                    out.stage = r.stage;
+                    out.error = { class: r.error.class, message: r.error.message.split(solar.solarDir).join("<reference>") };
+                }
                 return out;
             });
         },

@@ -556,12 +556,24 @@ class HeadlessChain {
     }
 
     /**
-     * Apply a block's bytes. Returns {accepted, block, reward, missed, error}: `reward` is the
-     * reward the state computes for the block before it is applied (absent when the generator is
-     * no delegate), `missed` the missed-slot rows recorded while applying it.
+     * Apply a block's bytes. Returns {accepted, stage, block, reward, missed, error}: a refused
+     * block's `stage` is decode, verify or apply; `reward` is the reward the state computes for the
+     * block before it is applied (absent when the generator is no delegate), `missed` the
+     * missed-slot rows recorded while applying it.
      */
     async apply(bytes, step = "apply") {
-        const block = this.receive(bytes);
+        let block;
+        try {
+            block = this.receive(bytes);
+        } catch (error) {
+            return { accepted: false, stage: "decode", error, missed: [] };
+        }
+        // The block processor's verification, without the wall-clock rule on the timestamp (a
+        // replay runs long after the chain was made).
+        const failures = block.verification.errors.map(String).filter((e) => e !== "Invalid block timestamp");
+        if (failures.length) {
+            return { accepted: false, stage: "verify", block, error: new Error(failures.join("; ")), missed: [] };
+        }
         this.pkgs.setBlockUsername.call({ walletRepository: this.walletRepository }, block.data);
         let reward;
         if (block.data.username && this.walletRepository.hasByUsername(block.data.username)) {
@@ -587,7 +599,7 @@ class HeadlessChain {
         this.store.recording = null;
         await settle();
         const missed = this.store.missed.slice(before).map(({ timestamp, height, username }) => ({ timestamp, height, username }));
-        return { accepted: !error, block, reward, missed, error };
+        return { accepted: !error, stage: error ? "apply" : undefined, block, reward, missed, error };
     }
 
     /**

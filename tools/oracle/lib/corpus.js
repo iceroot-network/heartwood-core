@@ -118,9 +118,17 @@ class ReplaySession {
      */
     async apply(bytes, step = "apply") {
         const result = await this.chain.apply(bytes, step);
-        const out = { accepted: result.accepted, height: result.block.data.height, id: result.block.data.id, reward: result.reward, missed: result.missed, block: result.block };
-        if (result.accepted) out.line = this.emit(step, result.reward, result.missed);
-        else out.error = { class: result.error.constructor ? result.error.constructor.name : "Error", message: String(result.error.message) };
+        const out = { accepted: result.accepted, missed: result.missed, reward: result.reward, block: result.block };
+        if (result.block) {
+            out.height = result.block.data.height;
+            out.id = result.block.data.id;
+        }
+        if (result.accepted) {
+            out.line = this.emit(step, result.reward, result.missed);
+        } else {
+            out.stage = result.stage;
+            out.error = { class: result.error.constructor ? result.error.constructor.name : "Error", message: String(result.error.message) };
+        }
         return out;
     }
 
