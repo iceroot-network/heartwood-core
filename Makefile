@@ -116,8 +116,9 @@ vectors-diff: build ## the container and local runs must agree on every record
 	$(DIFFTEST) vectors diff $(VECTORS)/container $(VECTORS)/local
 
 # A run that lacks a class the committed manifest lists is refused, and the committed files are kept:
-# the genesis class (V10) is written only with DEVNET_GENERATOR.
-vectors-install: vectors-diff ## copy the container run (vector files and manifest) into CRYPTO_VECTORS
+# the genesis class (V10) is written only with DEVNET_GENERATOR. The wire class (WIRE_CLASS) is left
+# out, with its manifest line: vectors-install-wire puts it beside its crate.
+vectors-install: vectors-diff ## copy the container run (vector files and manifest) into CRYPTO_VECTORS, but WIRE_CLASS
 	@missing=; \
 	if [ -f $(CRYPTO_VECTORS)/MANIFEST.sha256 ]; then \
 	    for file in $$(awk '{ print $$2 }' $(CRYPTO_VECTORS)/MANIFEST.sha256); do \
@@ -131,7 +132,10 @@ vectors-install: vectors-diff ## copy the container run (vector files and manife
 	fi
 	mkdir -p $(CRYPTO_VECTORS)
 	rm -f $(CRYPTO_VECTORS)/*.jsonl $(CRYPTO_VECTORS)/MANIFEST.sha256
-	cp $(VECTORS)/container/*.jsonl $(VECTORS)/container/MANIFEST.sha256 $(CRYPTO_VECTORS)/
+	for file in $(VECTORS)/container/*.jsonl; do \
+	    [ "$${file##*/}" = $(WIRE_CLASS).jsonl ] || cp "$$file" $(CRYPTO_VECTORS)/ || exit 1; \
+	done
+	grep -v '  $(WIRE_CLASS)\.jsonl$$' $(VECTORS)/container/MANIFEST.sha256 > $(CRYPTO_VECTORS)/MANIFEST.sha256
 	$(DIFFTEST) vectors verify $(CRYPTO_VECTORS)
 
 l0: build ## compare VECTORS/container with Heartwood's subjects
@@ -149,8 +153,9 @@ test-oracle: ## the oracle ping test of cargo test, against IMAGE and LOCAL_SOLA
 e2e: vectors vectors-local vectors-diff l0 ## end to end: generate, diff, compare (needs oracle-image first)
 
 # ---- heartwood-p2p-wire: the peer-to-peer wire codec ----
-# Its golden vectors (class V13) live beside the crate, with their own manifest.
+# Its golden vectors (class WIRE_CLASS) live beside the crate, with their own manifest.
 WIRE_VECTORS  ?= packages/p2p-wire/tests/vectors
+WIRE_CLASS    := V13-p2p-wire
 WIRE_FUZZ     := nes_frame wire_message status_verify
 FUZZ_SECONDS  ?= 600
 FUZZ_FORK     ?= 8
@@ -175,8 +180,15 @@ wire-features: ## only WIRE_SCHNORR enable the legacy-schnorr feature of heartwo
 	fi; \
 	echo "wire-features: legacy-schnorr is enabled by $(WIRE_SCHNORR) only"
 
-vectors-install-wire: ## V13 of the container run, with its manifest, into WIRE_VECTORS (not written yet)
-	@echo "vectors-install-wire: not written yet" >&2; exit 1
+vectors-install-wire: vectors-diff ## copy WIRE_CLASS of the container run, with its manifest line, into WIRE_VECTORS
+	@[ -f $(VECTORS)/container/$(WIRE_CLASS).jsonl ] || { \
+	    echo "vectors-install-wire: the run in $(VECTORS)/container has no $(WIRE_CLASS).jsonl;" \
+	         "nothing was installed" >&2; exit 1; }
+	mkdir -p $(WIRE_VECTORS)
+	rm -f $(WIRE_VECTORS)/*.jsonl $(WIRE_VECTORS)/MANIFEST.sha256
+	cp $(VECTORS)/container/$(WIRE_CLASS).jsonl $(WIRE_VECTORS)/
+	grep '  $(WIRE_CLASS)\.jsonl$$' $(VECTORS)/container/MANIFEST.sha256 > $(WIRE_VECTORS)/MANIFEST.sha256
+	$(DIFFTEST) vectors verify $(WIRE_VECTORS)
 
 fuzz-wire: ## the three wire fuzz targets at once, FUZZ_SECONDS each (not written yet)
 	@echo "fuzz-wire: not written yet" >&2; exit 1
