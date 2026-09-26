@@ -1,13 +1,26 @@
 "use strict";
 // V10 genesis: the devnet chain definition that the reference implementation's devnet generator
 // (gen-network.js, its default profile) writes for three seeds with a fixed epoch. Each record
-// holds the generator's inputs (seed, epoch and the profile it read) and what it wrote: the exact
-// text of the four crypto files, the delegate keys and the genesis, donation and generator wallets,
-// the nethash, the genesis id and the issued amount. A fresh process then rebuilds the genesis block
-// with BlockFactory.fromJson under those files and records its id and verification.
+// holds the inputs (seed, epoch, and the genesis profile described below) and what the generator
+// wrote: the exact text of the four crypto files, the key material of the generator, the delegates,
+// the genesis, donation and test wallets, the nethash, the genesis id and the issued amount. A fresh
+// process then rebuilds the genesis block with BlockFactory.fromJson under those files and records
+// its id and verification.
+//
+// The genesis profile is the file that Heartwood's chain-definition driver reads
+// (`difftest genesis --profile FILE`): every value the chain definition is built from except the
+// seed and the epoch. It is made from the generator's own modules (lib/profiles.js for the
+// economics, lib/common.js for the derivation tag and the milestone merge, lib/reference.js for the
+// reference's merge rules) and the reference's presets, and it restates the generator's fixed
+// conventions (role names, delegate names, the network constants). After every generator run the
+// profile is checked against what the generator wrote, so a change on either side fails here.
 //
 // The generator is not part of the oracle image; gen-vectors.js is given its path
 // (--devnet-generator), and in the container the generator's directory is mounted read-only.
+//
+// Run on its own, this file writes the genesis profile:
+//
+//   node lib/vectors/genesis.js --devnet-generator FILE [--solar-dir DIR] --out FILE
 
 const crypto = require("crypto");
 const fs = require("fs");
@@ -22,13 +35,16 @@ const { DEFAULT_EPOCH, DEFAULT_SEED } = require("../network");
 const SEEDS = [DEFAULT_SEED, "difftest-S-00", "f43d5aeaedcedf2d73b9033bb2eb110263d208ebcb119764a24a79bf9ddde80d"];
 const CRYPTO_FILES = ["network.json", "milestones.json", "genesisBlock.json", "exceptions.json"];
 
+// The generator's fixed conventions (gen-network.js defaults), restated for the profile and checked
+// against every run: the mainnet height whose merged milestone is the rule set, the role names, the
+// delegate names and the number of test wallets.
+const RULES_HEIGHT = 5000000;
+const GENERATOR_ROLE = "generator";
+const DELEGATES = { count: 53, rolePrefix: "delegate/", usernamePrefix: "genesis_" };
+const WALLETS = { count: 20, rolePrefix: "wallet/" };
+
 function sha256Hex(data) {
     return crypto.createHash("sha256").update(data).digest("hex");
-}
-
-/** JSON-safe copy: BigInt amounts become decimal strings. */
-function jsonSafe(value) {
-    return JSON.parse(JSON.stringify(value, (_, v) => (typeof v === "bigint" ? v.toString() : v)));
 }
 
 /** The generator's files, and a digest of each, so a record says which generator wrote it. */
@@ -38,18 +54,99 @@ function generatorFiles(generator) {
     return Object.fromEntries(files.sort().map((f) => [f, sha256Hex(fs.readFileSync(path.join(dir, f)))]));
 }
 
-/** The profile values that decide the chain definition (the generator's descriptive fields left out). */
-function profileInput(profile) {
-    return jsonSafe({
+/**
+ * The genesis profile of the generator's default profile, for the reference built at solarDir.
+ *
+ *   derivationTag        the key-derivation tag
+ *   network              network.json without nethash and addressCharacter (the builder sets both)
+ *   rules                the reference's mainnet milestones merged at RULES_HEIGHT, without height
+ *   overrides            the profile's leaf values on the first milestone (dotted path: value)
+ *   generatorRole        the role of the key that signs the genesis block and the issuance record
+ *   allocations, supply  the issuance record's items (amounts as decimal strings) and their sum
+ *   delegates            count, role prefix and name prefix (roles and names count from 1)
+ *   donations            role, basisPoints, purpose; active from donationsFromHeight
+ *   wallets              test wallets: key material only, not funded at genesis
+ */
+function genesisProfile(solarDir, generator) {
+    const dir = path.dirname(path.resolve(generator));
+    const { DEFAULT_PROFILE, PROFILES } = require(path.join(dir, "lib", "profiles.js"));
+    const { DERIVATION_TAG, mergedMilestoneAt } = require(path.join(dir, "lib", "common.js"));
+    const { detectReference, readPreset } = require(path.join(dir, "lib", "reference.js"));
+    const profile = PROFILES[DEFAULT_PROFILE];
+    if (!profile.genesis || !profile.donations || BigInt(profile.delegateBalance) !== 0n) {
+        throw new Error(`profile ${profile.name}: the genesis profile needs explicit allocations, donations and no delegate balance`);
+    }
+
+    const reference = detectReference(solarDir);
+    const merged = mergedMilestoneAt(readPreset(solarDir, "mainnet").milestones, RULES_HEIGHT, reference.replaceKeys);
+    const rules = {};
+    for (const [key, value] of Object.entries(merged)) if (key !== "height") rules[key] = value;
+
+    const testnet = JSON.parse(fs.readFileSync(path.join(solarDir, "packages", "crypto", "dist", "networks", "testnet", "network.json"), "utf8"));
+    const name = profile.network.name;
+    return {
         name: profile.name,
-        network: profile.network,
-        rules: profile.rules,
-        genesis: profile.genesis,
-        supply: profile.supply,
-        donations: profile.donations,
+        derivationTag: DERIVATION_TAG,
+        network: {
+            name,
+            messagePrefix: `Solar ${name} message:\n`,
+            bip32: testnet.bip32,
+            pubKeyHash: profile.network.pubKeyHash,
+            wif: testnet.wif,
+            slip44: testnet.slip44,
+            client: { token: profile.network.token, symbol: profile.network.symbol, explorer: "" },
+        },
+        rules,
+        overrides: profile.rules,
+        generatorRole: GENERATOR_ROLE,
+        allocations: profile.genesis.map((g) => ({ role: g.role, amount: g.amount.toString() })),
+        supply: profile.supply.toString(),
+        delegates: DELEGATES,
+        donations: profile.donations.map((d) => ({ role: d.role, basisPoints: d.basisPoints, purpose: d.purpose })),
         donationsFromHeight: profile.donationsFromHeight,
-        delegateBalance: profile.delegateBalance,
-    });
+        wallets: WALLETS,
+    };
+}
+
+/** Set a dotted leaf ("a.b.c"), replacing anything on the way that is not an object. */
+function setLeaf(obj, dotted, value) {
+    const keys = dotted.split(".");
+    let o = obj;
+    for (const k of keys.slice(0, -1)) {
+        if (o[k] === null || typeof o[k] !== "object" || Array.isArray(o[k])) o[k] = {};
+        o = o[k];
+    }
+    o[keys[keys.length - 1]] = JSON.parse(JSON.stringify(value));
+}
+
+/** Fail unless the profile describes what the generator wrote for it. */
+function checkProfile(profile, epoch, written) {
+    const { network, milestones, wallets, delegateKeys } = written;
+    const fail = (what) => {
+        throw new Error(`the genesis profile disagrees with the generator's output: ${what}`);
+    };
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+    const { nethash, addressCharacter, ...rest } = network;
+    if (!same(rest, profile.network)) fail("network.json");
+    const first = { height: 1, ...profile.rules, epoch, donations: {} };
+    for (const [leaf, value] of Object.entries(profile.overrides)) setLeaf(first, leaf, value);
+    if (!same(first, milestones[0])) fail("the first milestone");
+    const donationHeights = milestones.slice(1).map((m) => m.height);
+    if (!same(donationHeights, profile.donations.length ? [profile.donationsFromHeight] : [])) fail("the donation milestone");
+
+    if (wallets.generator.role !== profile.generatorRole) fail("the generator role");
+    const pattern = (p, i) => `${p}${i + 1}`;
+    const delegates = delegateKeys.delegates.map((d) => [d.role, d.username]);
+    const expected = Array.from({ length: profile.delegates.count }, (_, i) => [pattern(profile.delegates.rolePrefix, i), pattern(profile.delegates.usernamePrefix, i)]);
+    if (!same(delegates, expected)) fail("the delegate roles and names");
+    const testWallets = wallets.wallets.map((w) => w.role);
+    if (!same(testWallets, Array.from({ length: profile.wallets.count }, (_, i) => pattern(profile.wallets.rolePrefix, i)))) fail("the test wallet roles");
+    if (!same(wallets.genesis.map((w) => ({ role: w.role, amount: w.genesisBalance })), profile.allocations)) fail("the allocations");
+    const donations = wallets.donations.map((w) => ({ role: w.role, basisPoints: w.basisPoints, fromHeight: w.fromHeight }));
+    if (!same(donations, profile.donations.map((d) => ({ role: d.role, basisPoints: d.basisPoints, fromHeight: profile.donationsFromHeight })))) {
+        fail("the donations");
+    }
 }
 
 function run(args, what) {
@@ -62,9 +159,8 @@ module.exports = async function genesis({ solar, shared, options }) {
     const generator = options.devnetGenerator;
     if (!generator) return null;
     const dir = path.dirname(path.resolve(generator));
-    const { DEFAULT_PROFILE, PROFILES } = require(path.join(dir, "lib", "profiles.js"));
-    const { DERIVATION_TAG } = require(path.join(dir, "lib", "common.js"));
-    const profile = PROFILES[DEFAULT_PROFILE];
+    const { DEFAULT_PROFILE } = require(path.join(dir, "lib", "profiles.js"));
+    const profile = genesisProfile(solar.solarDir, generator);
     shared.devnetGenerator = { files: generatorFiles(path.resolve(generator)), profile: DEFAULT_PROFILE };
 
     const out = [];
@@ -81,6 +177,12 @@ module.exports = async function genesis({ solar, shared, options }) {
             const summary = JSON.parse(read("network-summary.json"));
             const wallets = JSON.parse(read("wallets.json"));
             const delegateKeys = JSON.parse(read("delegate-keys.json"));
+            checkProfile(profile, DEFAULT_EPOCH, {
+                network: JSON.parse(files["crypto/network.json"]),
+                milestones: JSON.parse(files["crypto/milestones.json"]),
+                wallets,
+                delegateKeys,
+            });
             const wallet = (w) => ({ role: w.role, address: w.address, publicKey: w.publicKey, passphrase: w.passphrase, genesisBalance: w.genesisBalance });
             const check = JSON.parse(run([options.self, "--check-genesis", path.join(target, "crypto"), "--solar-dir", solar.solarDir], "the genesis check"));
 
@@ -89,15 +191,7 @@ module.exports = async function genesis({ solar, shared, options }) {
                 network: "devnet",
                 height: 1,
                 name: `seed ${i + 1}`,
-                input: {
-                    seed,
-                    epoch: DEFAULT_EPOCH,
-                    delegates: 53,
-                    usernamePrefix: "genesis_",
-                    rulesHeight: 5000000,
-                    derivationTag: DERIVATION_TAG,
-                    profile: profileInput(profile),
-                },
+                input: { seed, epoch: DEFAULT_EPOCH, profile },
                 output: {
                     files,
                     fileSha256: Object.fromEntries(Object.entries(files).map(([f, text]) => [f, sha256Hex(text)])),
@@ -116,7 +210,14 @@ module.exports = async function genesis({ solar, shared, options }) {
                     })),
                     genesisWallets: wallets.genesis.map(wallet),
                     donationWallets: wallets.donations.map((w) => ({ ...wallet(w), basisPoints: w.basisPoints, fromHeight: w.fromHeight })),
-                    generator: { address: wallets.generator.address, publicKey: wallets.generator.publicKey, passphrase: wallets.generator.passphrase, issued: wallets.generator.issued },
+                    testWallets: wallets.wallets.map((w) => ({ role: w.role, address: w.address, publicKey: w.publicKey, passphrase: w.passphrase })),
+                    generator: {
+                        role: wallets.generator.role,
+                        address: wallets.generator.address,
+                        publicKey: wallets.generator.publicKey,
+                        passphrase: wallets.generator.passphrase,
+                        issued: wallets.generator.issued,
+                    },
                     check,
                 },
             });
@@ -154,3 +255,24 @@ module.exports.checkGenesis = function checkGenesis(solar, cryptoDir) {
         payloadLength: block.data.payloadLength,
     };
 };
+
+module.exports.genesisProfile = genesisProfile;
+
+if (require.main === module) {
+    const args = process.argv.slice(2);
+    const flag = (name) => {
+        const i = args.indexOf(name);
+        return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
+    };
+    const generator = flag("--devnet-generator") || process.env.DEVNET_GENERATOR;
+    const solarDir = flag("--solar-dir") || process.env.SOLAR_DIR;
+    const outFile = flag("--out");
+    if (!generator || !solarDir || !outFile) {
+        console.error("usage: node lib/vectors/genesis.js --devnet-generator FILE [--solar-dir DIR] --out FILE");
+        process.exit(2);
+    }
+    const profile = genesisProfile(path.resolve(solarDir), generator);
+    fs.mkdirSync(path.dirname(path.resolve(outFile)), { recursive: true });
+    fs.writeFileSync(outFile, JSON.stringify(profile, null, 4) + "\n");
+    console.log(`genesis profile ${profile.name} written to ${outFile}`);
+}
