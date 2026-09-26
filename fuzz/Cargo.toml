@@ -1,5 +1,6 @@
-# cargo-fuzz targets of the decoders. This package is excluded from the workspace and builds with
-# its own lockfile: cargo fuzz run <target> (nightly), or cargo check here on stable.
+# cargo-fuzz targets of the decoders and of the state. This package is excluded from the workspace
+# and builds with its own lockfile: cargo fuzz run <target> (nightly), or cargo check here on
+# stable.
 [package]
 name = "heartwood-fuzz"
 version = "0.0.0"
@@ -10,7 +11,10 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
+arbitrary = { version = "1.4.2", features = ["derive"] }
 heartwood-crypto = { path = "../packages/crypto" }
+heartwood-state = { path = "../packages/state" }
+heartwood-transactions = { path = "../packages/transactions" }
 libfuzzer-sys = "0.4"
 
 [workspace]
@@ -26,6 +30,13 @@ bench = false
 [[bin]]
 name = "block_decode"
 path = "fuzz_targets/block_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "state_apply"
+path = "fuzz_targets/state_apply.rs"
 test = false
 doc = false
 bench = false

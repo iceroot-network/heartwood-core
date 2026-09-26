@@ -132,6 +132,36 @@ impl DynamicReward {
     }
 }
 
+/// The dynamic fee table, `dynamicFees`: the fee floor of a transaction is
+/// `(addonBytes[key] + round(size / 2)) × max(minFee, 1)` while it is enabled.
+///
+/// The loader refuses values the reference would coerce or trip over later: `enabled` must be a
+/// boolean, and `minFee` and every `addonBytes` value a JSON number whose double value is a safe
+/// integer. Any key is accepted inside `addonBytes`, so files that still list removed types load.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DynamicFees {
+    pub(crate) enabled: bool,
+    pub(crate) min_fee: i64,
+    pub(crate) addon_bytes: IndexMap<String, i64>,
+}
+
+impl DynamicFees {
+    /// Whether the fee floor is in force.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// `minFee`, the price of a byte (the floor uses 1 when it is below 1).
+    pub fn min_fee(&self) -> i64 {
+        self.min_fee
+    }
+
+    /// `addonBytes[key]` for a transaction type key; 0 when the table has none.
+    pub fn addon(&self, key: &str) -> i64 {
+        self.addon_bytes.get(key).copied().unwrap_or(0)
+    }
+}
+
 /// The merged milestone in force from one height: every parameter a rule reads.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Params {
@@ -228,6 +258,19 @@ impl Params {
     /// The donation recipients, in file order.
     pub fn donations(&self) -> &[Donation] {
         &self.donations
+    }
+
+    /// The dynamic fee table; `None` when the merged milestone has no `dynamicFees`, which means
+    /// no fee floor.
+    pub fn dynamic_fees(&self) -> Option<&DynamicFees> {
+        todo!()
+    }
+
+    /// `blocksToRevokeDelegateResignation`: the blocks a temporarily resigned delegate waits
+    /// before it may revoke its resignation; `None` when the merged milestone has none, which
+    /// means no wait (the reference compares with `undefined`).
+    pub fn blocks_to_revoke_delegate_resignation(&self) -> Option<u64> {
+        todo!()
     }
 
     /// The merged milestone as JSON, keys in the order the reference enumerates them.

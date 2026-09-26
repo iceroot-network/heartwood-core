@@ -8,11 +8,18 @@
 //! - [`vectors`]: the JSONL vector files, their meta records and the SHA-256 manifest.
 //! - [`subject`]: a Rust implementation of one oracle operation, shared by L0 and L1, and the
 //!   registry.
-//! - [`subjects`]: Heartwood's subjects, which answer the oracle's operations with
-//!   `heartwood-crypto`.
+//! - [`subjects`]: Heartwood's subjects, which answer the oracle's operations with Heartwood's
+//!   crates.
+//! - [`fixture`]: the wallet fixtures of the state operations, as the oracle reads them and as a
+//!   Heartwood wallet repository.
+//! - [`strategies`]: the `proptest` strategies of L1.
 //! - [`compare`]: the structural diff, with byte offsets for hex values.
 //! - [`report`]: outcomes and the text report.
 //! - [`replay`]: a corpus of inputs (a fuzz corpus) through the oracle and Heartwood.
+//! - [`corpus`]: the chains that L2 replays: import from devnet archives, the corpus directory,
+//!   and revert plans.
+//! - [`digests`]: the state digest files of L2 replays, and their comparison.
+//! - [`synthetic`]: blocks built on top of a corpus chain for the synthetic L2 cases.
 //! - [`levels`]: L0 to L4; L0 runs today, the others plug in as the node's crates arrive.
 //! - [`genesis`]: the devnet chain-definition driver (`difftest genesis`).
 
@@ -20,14 +27,19 @@
 
 pub mod cli;
 pub mod compare;
+pub mod corpus;
+pub mod digests;
 pub mod errors;
+pub mod fixture;
 pub mod genesis;
 pub mod levels;
 pub mod oracle;
 pub mod replay;
 pub mod report;
+pub mod strategies;
 pub mod subject;
 pub mod subjects;
+pub mod synthetic;
 pub mod vectors;
 
 pub use errors::{Error, Result};

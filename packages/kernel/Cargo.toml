@@ -1,0 +1,24 @@
+[package]
+name = "heartwood-kernel"
+description = "The slim kernel of Heartwood Core: rounds and slots, the time seam, events, lifecycle, logging facade, paths and configuration helpers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Test seam: `ManualClock`, a clock that the caller sets. Only test code enables it (the difftest
+# harness and tests); a release build never does.
+difftest = []
+
+[dependencies]
+heartwood-crypto.workspace = true
+indexmap.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

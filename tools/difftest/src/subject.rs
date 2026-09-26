@@ -4,7 +4,7 @@
 //! Heartwood's code. The same subject serves L0 (a golden-vector record) and L1 (a random case
 //! sent to `oracle-server.js`), because both describe a case as operation, network, height and
 //! input. [`heartwood`] registers the subjects of [`crate::subjects`], which answer with
-//! `heartwood-crypto`.
+//! Heartwood's crates.
 
 use std::collections::BTreeMap;
 
@@ -157,7 +157,7 @@ impl Registry {
     }
 }
 
-/// Heartwood's subjects, one per oracle operation that `heartwood-crypto` implements.
+/// Heartwood's subjects, one per oracle operation that Heartwood implements.
 ///
 /// `devnet` is the configuration the cases were generated under (see [`Devnet::from_vectors`]).
 /// Without it, the subjects that need the devnet's rules skip their cases.

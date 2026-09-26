@@ -75,13 +75,18 @@ fmt: ## cargo fmt, the workspace and the fuzz targets
 fmt-check: ## cargo fmt --check, the workspace and the fuzz targets
 	$(TOOLCHAIN) && cargo fmt --all -- --check && cargo fmt --manifest-path $(FUZZ_MANIFEST) -- --check
 
-# heartwood-crypto is tested on its own, so that Cargo does not unify its features with those that
-# difftest turns on: with no features (unit tests, and the doctest that the test seams are absent)
-# and with every feature (every vector class). The oracle ping test of difftest is skipped unless
-# test-oracle sets it up.
-test: ## cargo test: heartwood-crypto with no features and with all, then difftest
+# Each library crate is tested on its own, so that Cargo does not unify its features with those
+# that difftest turns on: heartwood-crypto with no features (unit tests, and the doctest that the
+# test seams are absent) and with every feature (every vector class); the kernel with and without
+# its test seam. The oracle ping test of difftest is skipped unless test-oracle sets it up.
+test: ## cargo test: each library crate alone, with no features and with all, then difftest
 	$(TOOLCHAIN) && cargo test --locked -p heartwood-crypto
 	$(TOOLCHAIN) && cargo test --locked -p heartwood-crypto --all-features
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-kernel
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-kernel --all-features
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-logger
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-state
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-transactions
 	$(TOOLCHAIN) && cargo test --locked -p heartwood-difftest
 
 release-check: ## each release package builds heartwood-crypto without its test seams

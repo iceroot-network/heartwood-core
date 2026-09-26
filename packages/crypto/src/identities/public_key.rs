@@ -85,8 +85,9 @@ impl PublicKey {
 }
 
 /// The 33 bytes of a public-key field that the reference does not check to be a curve point: a
-/// block's generator key and the key of a second-signature registration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// block's generator key and the key of a second-signature registration. They order by their
+/// bytes, which is the order of their lowercase hex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PublicKeyBytes([u8; 33]);
 
 impl PublicKeyBytes {
