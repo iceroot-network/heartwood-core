@@ -1,0 +1,5295 @@
+{
+    "format": "solar-devnet-archive/1",
+    "kind": "checkpoint",
+    "network": "l2c1",
+    "nethash": "c9b03ab996ef3ac216a2ac53eaee71118cbf7995fa44449a7fb7f94bbe18bcca",
+    "height": 265,
+    "blockId": "f41d004098f2f8d90363101e68d06bf088ea3d6c454c90840c2370c41cfe5284",
+    "round": 5,
+    "roundBoundary": true,
+    "consistent": true,
+    "takenAt": "2026-09-26T18:04:16.711Z",
+    "tookMs": 68,
+    "blockchain": {
+        "supply": "9999881261667798",
+        "burned": {
+            "fees": "21056332202",
+            "transactions": "150402000000",
+            "total": "171458332202"
+        }
+    },
+    "delegates": [
+        {
+            "username": "genesis_1",
+            "address": "dHrw5YKu2GcERR3hiwc4euftTpnBTNLyJx",
+            "publicKey": "03cd5721eff66053eb2d7d38c63044be5ea3e7049eb5b22c91ed88e141e1abcee2",
+            "rank": 5,
+            "votes": "10273871000",
+            "votesPercent": 0,
+            "voters": 3,
+            "isResigned": false,
+            "produced": 4,
+            "lastBlock": "b766cfdc207af8e3cef5063a2c675d5cb3297da2433698d8ea977ff021d2a501",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "760000000",
+                "donations": "76000000",
+                "total": "684000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_10",
+            "address": "dXFNLLauy2F4YNBUSBSRvbnhgGuGGi8HUS",
+            "publicKey": "025516733d69b36ccff57f509faa906993cef2f138a9296eb554dbb0682f1e5416",
+            "rank": 43,
+            "votes": "936000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "275177c932586b3183457bf2837a7bb4e17e5a067151a7f7f1d1adcb29bbe312",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "936000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_11",
+            "address": "dZYp2Sje6ETcQRHPMavnk1prjdfoYmC8XN",
+            "publicKey": "0243f627bf1609f152148ae55aec87f7d90d1c771036b1046df541830d501165e0",
+            "rank": 17,
+            "votes": "1241550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "836681256fcd87cc7d1c8fa54b4135765d551329bb50b6c9e82268202294203b",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "980000000",
+                "donations": "98000000",
+                "total": "882000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_12",
+            "address": "dXt1Po6Z3esCYtc5WTNJYWm2B4nFnCYMHA",
+            "publicKey": "03e85001c04edaa91a707747e6fb67b2188d3791a5c4dfad9d716ff9eb87ca3998",
+            "rank": 6,
+            "votes": "9523800000",
+            "votesPercent": 0,
+            "voters": 3,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "fe1f99ad97a4d4dfe83eda6c7b0e5ac3041e2713bd8cd012faba9d25720f0450",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "940000000",
+                "donations": "94000000",
+                "total": "846000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_13",
+            "address": "dEqHyTftjArRqPxfd5Cco4pkkpcuE6cu3z",
+            "publicKey": "0361a237513e536cf72a6213efb7584dbfb53e509af140d8f7cd599ade579a412d",
+            "rank": 23,
+            "votes": "1241550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "cb2188780c45a90a05495d5e0b4a005365874988e857c268dbcd6e30492b73ae",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "980000000",
+                "donations": "98000000",
+                "total": "882000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_14",
+            "address": "dRYxcQrFagdjrZH61QFpJBNu1CTwJ3F3kd",
+            "publicKey": "0259ff6a05771cbb65cc16f460f88277c4ad25a976e3ac1aec819897bfd45317ac",
+            "rank": 4,
+            "votes": "11840550000",
+            "votesPercent": 0,
+            "voters": 3,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "9f3deda0a5e6fc9ad7405872892d1a329ec278120c00c0a0c28646619a198c83",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "940000000",
+                "donations": "94000000",
+                "total": "846000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_15",
+            "address": "dLeaYygMEaGwHhLMWdLUSBcLyQLKCfopz2",
+            "publicKey": "0295f24f2403255f3cdc23e731b825e8f3d89538599a83868217befebc6640da17",
+            "rank": 8,
+            "votes": "5596550001",
+            "votesPercent": 0,
+            "voters": 3,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "6e28d01055a7b341f46c5163aaf7994106ec9311b69eb1f4db90c95a6ef5b1cc",
+            "forged": {
+                "fees": "1",
+                "burnedFees": "0",
+                "rewards": "940000000",
+                "donations": "94000000",
+                "total": "846000001"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_16",
+            "address": "dXT9qY6Wa1XD5tFoEqFZR53S3cGZJnZFyJ",
+            "publicKey": "0211873707cebf5b43a5f12c3ab5b6638e3be0ec057e3dafe1494976c885be5074",
+            "rank": 16,
+            "votes": "1241550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "6015428ee8490bba867b0d822af4c19edb92e4111aedfe8f5881b595283d161c",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "980000000",
+                "donations": "98000000",
+                "total": "882000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_17",
+            "address": "dLgfMir2NysuDZkmVgmp2gz4smGh9Etyez",
+            "publicKey": "0374e2a47ec341d911e8006a908339eb1faf4d7ca84c1cabeb5502abc9d4b908d0",
+            "rank": 24,
+            "votes": "1241550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "0a0c219c81ffac0e309584260d030e407a6b299eb11c032ef5f7cd0c8a2dd822",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "980000000",
+                "donations": "98000000",
+                "total": "882000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_18",
+            "address": "dV7MAAW91syWWdqDebeo4i3HxJP2jinURx",
+            "publicKey": "02df978caa67c04a778fd4d3b42145c45e1de8dd4f9c243ed40b2172ca160fabf9",
+            "rank": 19,
+            "votes": "1241550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "b4293f8421a504e20abbe65d558a50d13945029dd72c2ecd07b21b5e29719b43",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "980000000",
+                "donations": "98000000",
+                "total": "882000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_19",
+            "address": "dcTcwtQHUSWWMD2P8CsP4ESmeuUbhc58cA",
+            "publicKey": "02589588895646bd4cbb7e6c1a70754e18ae1a4ce9c7e2948b59807bde4cf6b0cd",
+            "rank": 29,
+            "votes": "1097550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 4,
+            "lastBlock": "c8f6617e7a019a14256c749c54aaec4eade541e88ba95ae1d66d178fd6f278ae",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "820000000",
+                "donations": "82000000",
+                "total": "738000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_2",
+            "address": "dKVpLt8jZk4PTGPE1Sr7dCfbRmDd37GZ1r",
+            "publicKey": "02f060d6f4d82a10865296502171b136118e33b3830cfeaed06ec7a975028c4968",
+            "rank": 3,
+            "votes": "13829129000",
+            "votesPercent": 0,
+            "voters": 3,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "f38e33ab5ddd7b6def97189dc13e9099dde219c18cd74c3a9580e25d81ee0bfd",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "940000000",
+                "donations": "94000000",
+                "total": "846000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_20",
+            "address": "dVB6ZS4XxGFNnJdgU5M5gjFDViaLZqxo3F",
+            "publicKey": "033aff9abafbea93fba627c28c86c199760eb7378411a2493bcaa9523a341420b0",
+            "rank": 22,
+            "votes": "1241550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "140e3f66df1681bf2104567c308aa181b88a81d87e78b862a10bda05f77a6385",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "980000000",
+                "donations": "98000000",
+                "total": "882000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_21",
+            "address": "dQodKAUfJUQT37fB1XTsxDn12cJDhBdtZD",
+            "publicKey": "03a9b498c931ea943cc8fe4fc5eeb2004928fbb69eefc39cf593ab34311871b423",
+            "rank": 32,
+            "votes": "1079550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 4,
+            "lastBlock": "4f71676d63d89f54ab53c06a5ddc7de2a88a6dac2b041ab7e7d656b5017215d0",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "800000000",
+                "donations": "80000000",
+                "total": "720000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_22",
+            "address": "dJjwfJwLm2HFSqgvEQcFeRojvokecdVeyk",
+            "publicKey": "03312ddf4aa009c51e107f4631b12e14144709fb785414a2fc39d0f59e61c0f5e9",
+            "rank": 21,
+            "votes": "1241550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "ebedc2892307588efe1c2ecd6b81b199650d64aee84209c78cb8bcdcf950fd52",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "980000000",
+                "donations": "98000000",
+                "total": "882000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_23",
+            "address": "dK8BEZG1EpwsmAngB5ZnnPZXeHn8Xg7KTB",
+            "publicKey": "02789c8e814e2e07a90ae170755deb296bb8310e41c0476fbf144374f4c3360191",
+            "rank": 18,
+            "votes": "1241550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "e5dbe32daea59c810238a021d6ae8387d1b9fbd9b0856789f86dc50bab0cf1ec",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "980000000",
+                "donations": "98000000",
+                "total": "882000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_24",
+            "address": "dZLNbL5T6AU2RgkSAEinXiUBkTv2HeHe2o",
+            "publicKey": "0385939beaac419cf4aaa7c8b03ff711d619e984ed1d86f15f8559cd97f5a8a0a6",
+            "rank": 26,
+            "votes": "1241550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "31108e1bb77138e355e525917efd52646f4547a2ecb1c164c1c0e3846f43153f",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "980000000",
+                "donations": "98000000",
+                "total": "882000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_25",
+            "address": "dM6iLC5MKB3jBfo1tkCRxoShuQv9XHvCDD",
+            "publicKey": "03bf7caf10ad1eea990bd67998298eaf9ffa8930724c7803b7fa1b4d40a5abc751",
+            "rank": 14,
+            "votes": "1403550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 6,
+            "lastBlock": "9dac6d13687526d303545e669a876044b9797c6375bcb8e7bea8f8c1c5de12d7",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1160000000",
+                "donations": "116000000",
+                "total": "1044000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_26",
+            "address": "dVE9pmKU7QtcDavcDpszLppN3JEKQmejjg",
+            "publicKey": "02ea8877755584741ed0f97e4826487c761e280a927aa0b7ab82e710f5574951cc",
+            "rank": 12,
+            "votes": "1403550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 6,
+            "lastBlock": "88c13561c77943a452fde27534ebcc999d2301051b2e3b1b3918f867e92201db",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1160000000",
+                "donations": "116000000",
+                "total": "1044000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_27",
+            "address": "dJgv1uuEjz66nf64FMFwfsGfqFvhF8ExX5",
+            "publicKey": "03a7731a6958e5edd5c26e146ac182a1b83862b5f5b84a92ecc543952ad6c2e994",
+            "rank": 15,
+            "votes": "1250550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "df3d818a788714243f5139d04de0e74298f63800c9210634d2a34d84128e8c7b",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "990000000",
+                "donations": "99000000",
+                "total": "891000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_28",
+            "address": "dUodJCnFSkrfF6XhYJxwYsaAMbcrREuWWw",
+            "publicKey": "0321b5fa997f5c8e175af3850961222fd3f6aac02ee7a1c5016ffced2bbbd1126e",
+            "rank": 20,
+            "votes": "1241550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "1db4784a61e23521538478268cb8f1a48523619570009c6e66f6082b6392dba2",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "980000000",
+                "donations": "98000000",
+                "total": "882000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_29",
+            "address": "da9ioAet9zHKSXcQmMZzGt2AV98EdC7ekS",
+            "publicKey": "03779265967d6f5d430313b85ca68e45d5bae88d32b69bc348e5363b187ab8581d",
+            "rank": 25,
+            "votes": "1241550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "3b5108bfe3edbf0767bd32ff0f7792b85d45e794326883f639e87cc0c2fce649",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "980000000",
+                "donations": "98000000",
+                "total": "882000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_3",
+            "address": "dWbrjekrjEZwt19CzRsHF1V15vs7VAtTrE",
+            "publicKey": "027a81c5b51eb3fa371097d5e1f0300a4629e0c4aad170df6c6709ae907974c417",
+            "rank": 7,
+            "votes": "7088391000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 6,
+            "lastBlock": "1e12fd19a38a5619aba3531f1a4258f7cca1e5897c915a74c523a9da29bd7b43",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1120000000",
+                "donations": "112000000",
+                "total": "1008000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_30",
+            "address": "dRVbWHmvLnq1CsynxRZAgm7uSWK1scGpKy",
+            "publicKey": "0357d8f0be891d53cb2e4f682f8547d2773ba9987bb5c57e1ef4a7ccf193184702",
+            "rank": 13,
+            "votes": "1403550000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 6,
+            "lastBlock": "aa66966916a570d6f3c77c68ec2652f36b3a21f6252800a0bef44f78f319899a",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1160000000",
+                "donations": "116000000",
+                "total": "1044000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_31",
+            "address": "dPQDpMBmvFCq1Ypoq2rFzVdWxByfBHMMBx",
+            "publicKey": "03783b9db76f1f1716b28fdad8df332f95e1eb8a45a59ece09de747e0691e5ccdb",
+            "rank": 28,
+            "votes": "1113100003",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 6,
+            "lastBlock": "d326522d372b1501dc6734487431e51fc6fcd5113b6ef68902ab2f7b4478e143",
+            "forged": {
+                "fees": "511000026",
+                "burnedFees": "459900023",
+                "rewards": "1180000000",
+                "donations": "118000000",
+                "total": "1113100003"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_32",
+            "address": "dVL4LXocFGujRNJUBVBM2Ua1YpURrv5rJq",
+            "publicKey": "02094a8daa884cd8df769aecdb80f5eb681b596abb9c990dcc70730d9f3e75c080",
+            "rank": 40,
+            "votes": "936000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "1401d7ae394cbb429f9fb0346edf9153ba9608ac886d6bfc87fe07747200f26b",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "936000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_33",
+            "address": "dZhBBZygAnz3s1j3NmNoMsDUnjF9d8kEfA",
+            "publicKey": "0232b61eb0f081aa1f2ac2fdc3d4cd20ba09a85b3b855939fb36dd9eb212827c12",
+            "rank": 41,
+            "votes": "936000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "c16e77799e254180805b542bca665965f144c0a4de3e5cf6100128794e81f777",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "936000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_34",
+            "address": "dDnegkP1tnzssM15CAs3rq3KuwFqkikNjY",
+            "publicKey": "02b85b15ff121c2408ea682a6f6bf1a1079bf42537cdeef9e039befa26671949df",
+            "rank": 46,
+            "votes": "936000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "810dd4d01ea4d010612d5dc1cd81af1f31503dbcb13853e87a75e3a33a2242d2",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "936000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_35",
+            "address": "dUddEgBx6PHAbCNk9L3KGTLCAzQBiLzbfc",
+            "publicKey": "0391dc71e0c5a86b4ee0e71accf69ae360ac332654763c021435e8e0450ea9e961",
+            "rank": 39,
+            "votes": "938900000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "cd9b99f69dfdb25fbed7d3297d2a99cfda6f0edf86e5a4022079522c96bb5ab5",
+            "forged": {
+                "fees": "119000000",
+                "burnedFees": "107100000",
+                "rewards": "1030000000",
+                "donations": "103000000",
+                "total": "938900000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_36",
+            "address": "dSidsk7iHYW14owC8WeFFiYGQczt4uh35o",
+            "publicKey": "03884e28030b67cf2e36a8e8fe2c828baf4dded98c7b665183603e8fe5f87f2154",
+            "rank": 34,
+            "votes": "945000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "5d9528c5676eb53a31b8f6e9a40bb93b641695b6784af584026ac667d152d795",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1050000000",
+                "donations": "105000000",
+                "total": "945000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_37",
+            "address": "dRkk4yn1kzxodo7nETnjKx6gtx631rGRqK",
+            "publicKey": "02d275ce60e589a0372751d44162c7b7e19c6b4abcfb2fe346347a0b8aab69abd4",
+            "rank": 47,
+            "votes": "936000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "07f2fda5d4aba00347eb55aee73879823f23c24ce217c3a23092c3b2e0c8877d",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "936000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_38",
+            "address": "daPVtyYavS9mo1v9Cdy3AABJSipKCVgzRe",
+            "publicKey": "025343d887efbae2b36a3785fb544586be6d21ac1a00ab82b00b19542bc4cd2d30",
+            "rank": 38,
+            "votes": "943871000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "b0360349da5356629997c0848d22864300d429e4c0f359b5a51aeadc1aaeee7e",
+            "forged": {
+                "fees": "78710000",
+                "burnedFees": "70839000",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "943871000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_39",
+            "address": "dNiwuHMuboAGD9ZsZWvWwwyirKqqUDbNNj",
+            "publicKey": "027b4babb4655b7a66a1c7c9189a476935b13530314db8de6fd350d30948bade68",
+            "rank": 44,
+            "votes": "936000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "bdb15cc3914ab6410ec747e44636991bdfdda5089d4a1fb19b939cad13d4ad2a",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "936000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_4",
+            "address": "dQp2Cn2Zn9wyw4gv2RubhXWWog5bpX6YRX",
+            "publicKey": "0247acf1d977e5f2098a93b342992147c8c1ee488839b4c10a61f559fb32713b2e",
+            "rank": 11,
+            "votes": "2212609000",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 4,
+            "lastBlock": "137914f958ed6fceb7bf58d29ec50d3a22de56a757e1f6d88f28181447f89cb5",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "780000000",
+                "donations": "78000000",
+                "total": "702000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_40",
+            "address": "dRxQcqW5xtFnMTmRF8hxevs7cWqT2SAab6",
+            "publicKey": "032583b96e6a5ef2c88518a0e0f9b711cf2388a0c6a6f8be238fd94a19ac20843e",
+            "rank": 50,
+            "votes": "936000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "d4d56b808f7c0ad7d477a64353b94890c8de0f0280eabda578883d94ecbfcf79",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "936000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_41",
+            "address": "dP5EvJVJoELeibvBoBe6FZsbeWKyWGSmWE",
+            "publicKey": "029b1e0d08ccff8c97ab25f6bd2e1c720d828d4ea4d69183d61842fb1c0382d2c5",
+            "rank": 45,
+            "votes": "936000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "2e5d64dd4781fce7378f3a5ecff94c133f8170c47f2a27c39dfdc2347dd805a0",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "936000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_42",
+            "address": "dPPAXEwTnxSsNBJ8rqodrtzik9eK8UqHXr",
+            "publicKey": "03900b65c8e5a7c1ffe173d144253c5ea11843a59c44baf89040081f51dee1a14a",
+            "rank": 36,
+            "votes": "945000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "a19d48ae179900e8b14190a7e6f15ac7accb3692e7dc38888be0d1d052726c9b",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1050000000",
+                "donations": "105000000",
+                "total": "945000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_43",
+            "address": "dXwYj2k4X17A3Fdwr3S78WAXkqm7fyt6Jv",
+            "publicKey": "02f693e9fdf8218f84e017537bae0abcf176868a3913f4b0ac7a9ba0ecbc69cfe5",
+            "rank": 48,
+            "votes": "936000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "7bd1696748871e29d4dc271c3d48f5f5b7f77722a0ddecd8b9908dfa072310ad",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "936000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_44",
+            "address": "dcPbuzvsoAd6zMqocoEVJfK3TypjnB4SG1",
+            "publicKey": "038d9a9cae9796b20b923894a7995f8540490d133622f73e79ede887ae28ade240",
+            "rank": 35,
+            "votes": "945000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "572f20a7cdb6b1ad442c6f3295de757a37feeeb2d04fec6209902e99cd00546f",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1050000000",
+                "donations": "105000000",
+                "total": "945000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_45",
+            "address": "dJiq1W9ik5CFov1pP396MU49dhYmUDCuwc",
+            "publicKey": "033ada38bba3f0db1f37c32c95e69c1835a13d7278a0dbcc00be7914985cc89455",
+            "rank": 52,
+            "votes": "936000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "bc0df13b83820483734bc64e980fb10885a5f8be033fa0564428439897ed0496",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "936000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_46",
+            "address": "dbfNgJLJyjEJj1htyS12YpcKoXKKuLNYRW",
+            "publicKey": "032d4c0fad61bc79b8bc57584c2b2d68d9ebd735b5412601da5909005b03f59225",
+            "rank": 51,
+            "votes": "936000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "219d572da9b9166743d9e195d05b834e481b56606b271c8f37d58a2ca5773484",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "936000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_47",
+            "address": "dHgQUky9nWcLVtQ5XqKjBMfq2P4BXaSeac",
+            "publicKey": "031e359acc275085238342b49232f9c96e10303ceb3cdd398167e8e3ca84815745",
+            "rank": 49,
+            "votes": "936000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "b0d4b6a812f649f73bb1b6e8f2ebd9c7e18ebf8b7099005b5654e0586e79948d",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "936000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_48",
+            "address": "dZ8mNQDSY5SDgFpF3AV5ZjFK8HLXWsZhvX",
+            "publicKey": "03da52e76eae8ff44493e800bed7a80a9cc2deb3ba82be63161f6fc9ae8b4997d0",
+            "rank": 10,
+            "votes": "3103821467",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "933edde05930cfd23ef89becff96390bd3098e741e0f47c7b791cc0a68d16ff7",
+            "forged": {
+                "fees": "22578214646",
+                "burnedFees": "20320393179",
+                "rewards": "940000000",
+                "donations": "94000000",
+                "total": "3103821467"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_49",
+            "address": "dZwr4Rfc8yvPqHcpxDx3LKEWTMAFZrMSVC",
+            "publicKey": "03d688cb8fa03aa8436e820461852972b66de6bf930e20d2aaf2283e01fc953979",
+            "rank": 37,
+            "votes": "945000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "2ba91c1e9ee797d19e7fa09b5e6df3af6542b84df36a107c98371a394a06c01b",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1050000000",
+                "donations": "105000000",
+                "total": "945000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_5",
+            "address": "dQcSrSKWSj6gYD1dF92EmsVz56UNTae1kz",
+            "publicKey": "03b85138c2cac76da4c468059c7188a07235983f4251d8d2fd6f44e6d4eb286c72",
+            "rank": 1,
+            "votes": "5826564306300",
+            "votesPercent": 0.06,
+            "voters": 3,
+            "isResigned": false,
+            "produced": 4,
+            "lastBlock": "f41d004098f2f8d90363101e68d06bf088ea3d6c454c90840c2370c41cfe5284",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "760000000",
+                "donations": "76000000",
+                "total": "684000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_50",
+            "address": "dYaiQ5ndRgkKWs77GxtqPbaA2DSmDzFAox",
+            "publicKey": "034da77e4b4275eb0247370133646eeef428ce014e5e6c699aae00fe4de8e7954b",
+            "rank": 33,
+            "votes": "945000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "603f4f0fa3c2eeb27659ec1f3d64f3033faef9b090f204fcbe6280c0b28ea0a0",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1050000000",
+                "donations": "105000000",
+                "total": "945000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_51",
+            "address": "dSKAKsvAAVn8xjfuoHiRZvEtCMsQZQtkNY",
+            "publicKey": "02e69cb2cbed90a4362838765c775a26aacc2c6ebc96fb5979be2fe3fc189ce73d",
+            "rank": 30,
+            "votes": "1081000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 6,
+            "lastBlock": "e7103880c856662ec55569ced03f4ac280cf7e5db7d60098a7f36ce81278e777",
+            "forged": {
+                "fees": "100000000",
+                "burnedFees": "90000000",
+                "rewards": "1190000000",
+                "donations": "119000000",
+                "total": "1081000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_52",
+            "address": "dRmoNc9DL2nbhezvdy32mrKqA7AY6NUXND",
+            "publicKey": "02806916740721a29f27f1dd018a8af8cc511ca4ceee015c8a4b44200113ceb9c3",
+            "rank": 31,
+            "votes": "1080900000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 6,
+            "lastBlock": "f830ef6c2bfeeef7c04cf107f269449bffcf1dffd4aca1834365bfd95e4a64e5",
+            "forged": {
+                "fees": "9000000",
+                "burnedFees": "8100000",
+                "rewards": "1200000000",
+                "donations": "120000000",
+                "total": "1080900000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_53",
+            "address": "dLjwqdmP8PB49gQxRTKxeAgZ2jgUHhjLdS",
+            "publicKey": "039a23589c4da05386ba1aa4e0cec53230c006707e680785f4cb9bedb213a28fa4",
+            "rank": 53,
+            "votes": "557999999",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 3,
+            "lastBlock": "be26e594293d3f4e55d1d39a61158ba1c109b09c82a98b2729850df7552e4d64",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "620000000",
+                "donations": "62000000",
+                "total": "558000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_6",
+            "address": "dFPFmCnrgM89purEkgacQwGNZRxL1RzLqg",
+            "publicKey": "02a1426801a790c32bf759030510ffa3b3d2be6a834a1a68ef1c3da28ae683dcf2",
+            "rank": 27,
+            "votes": "1223326500",
+            "votesPercent": 0,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "07702d0610da0c4b7a02117d1da2e6d4d337f4d9d31315c40839adee52852a0b",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1000000000",
+                "donations": "100000000",
+                "total": "900000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_7",
+            "address": "dEf3tToX8VjknVM6HZYjYxDsP4ieFuTe6k",
+            "publicKey": "02d9961bcd79d1aa6d83995014b005e0067a627788c31c25dc314ed67b9f848e81",
+            "rank": 9,
+            "votes": "5008717200",
+            "votesPercent": 0,
+            "voters": 3,
+            "isResigned": false,
+            "produced": 4,
+            "lastBlock": "cbc9c08b948cbbd2aab3506941dfd48a46aa3f36b14baf276daeb8ca6a649e6f",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "760000000",
+                "donations": "76000000",
+                "total": "684000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_8",
+            "address": "dMN76PVgNWF44cgxRycr4LWAUUoYa1n5ri",
+            "publicKey": "0245dcbb68f0ad265203d1adb3d9108bda8045a5148e0634a2d68b74cdea2b72fd",
+            "rank": 42,
+            "votes": "936000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "c6e5127d04369742c772016aff0c200fd6248bee6e4958a6475dc589e7c4a8ae",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "1040000000",
+                "donations": "104000000",
+                "total": "936000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "genesis_9",
+            "address": "dF3UoC5QsF8GaMxcwk7EiXHDiKigcZY3Ls",
+            "publicKey": "033b338238b00abfc29272b1024ffd2226a21ba16739563c0ffb0d6a5fcdbd1771",
+            "rank": 2,
+            "votes": "3880822400000",
+            "votesPercent": 0.04,
+            "voters": 2,
+            "isResigned": false,
+            "produced": 5,
+            "lastBlock": "2a16b5e1039a60d1bdd6a71e974a07a667cb53d2a223c83a9e4a3e804efeca72",
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "940000000",
+                "donations": "94000000",
+                "total": "846000000"
+            },
+            "version": "4.3.1"
+        },
+        {
+            "username": "tx1n1160",
+            "address": "dEmE3wAHWfpWxvnTMEMmXcB1rCUds6GCA8",
+            "publicKey": "025662ee80f6e0a0e71c57c359e5692d4460cbbdb69b3408445c7776ba815f04c7",
+            "votes": "9791000000",
+            "votesPercent": 0,
+            "voters": 1,
+            "isResigned": true,
+            "resignationType": "permanent",
+            "produced": 0,
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "0",
+                "donations": "0",
+                "total": "0"
+            }
+        },
+        {
+            "username": "tx1n2290",
+            "address": "dUk5C92AhGkDnup9kAvTK1M5WuHeUqdLKi",
+            "publicKey": "02d00d35150ff32d8f550493e0d7a08623d430722c17c864c6c6728f6f7f40ee4e",
+            "rank": 54,
+            "votes": "0",
+            "votesPercent": 0,
+            "voters": 0,
+            "isResigned": false,
+            "produced": 0,
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "0",
+                "donations": "0",
+                "total": "0"
+            }
+        },
+        {
+            "username": "tx1n3233",
+            "address": "dUhgZCGMUdxEgiGuLQLDJTaUDF9rmLbgBE",
+            "publicKey": "02dc13187511dd22a0cb1577c6520d0309e431f0116289dda0264ce0b80e3f0561",
+            "votes": "0",
+            "votesPercent": 0,
+            "voters": 0,
+            "isResigned": true,
+            "resignationType": "temporary",
+            "produced": 0,
+            "forged": {
+                "fees": "0",
+                "burnedFees": "0",
+                "rewards": "0",
+                "donations": "0",
+                "total": "0"
+            }
+        }
+    ],
+    "wallets": [
+        {
+            "address": "dDRSP8ihp5cWsdLLrh3gXN3cLz4YeLgXmy",
+            "balance": "10000300000002",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dDnegkP1tnzssM15CAs3rq3KuwFqkikNjY",
+            "publicKey": "02b85b15ff121c2408ea682a6f6bf1a1079bf42537cdeef9e039befa26671949df",
+            "balance": "936000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_34",
+                    "voteBalance": "936000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 46,
+                    "voters": 1,
+                    "lastBlock": "810dd4d01ea4d010612d5dc1cd81af1f31503dbcb13853e87a75e3a33a2242d2",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_34": {
+                    "percent": 100,
+                    "votes": "936000000"
+                }
+            }
+        },
+        {
+            "address": "dDpmZ5JEpQFmAQmGGUbnNTiE5p6BsX9X9r",
+            "balance": "10000600000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dDr9KPuux8fmYfmg6s6yCySjG7znCyhLy2",
+            "balance": "425757",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dDsmrDBibyfMtDreqHVTNix1sixL74Km2P",
+            "publicKey": "025e1a3fea8d4763b6898ced2e356047d334f11cf3c799ea22b02848f608c729b1",
+            "balance": "10635000000",
+            "nonce": "4",
+            "attributes": {
+                "secondPublicKey": "0318b677beadb87f35e29150a9bfdb20e1bb934bd70f1208383f4bff7ad6be5d67"
+            },
+            "votingFor": {
+                "genesis_14": {
+                    "percent": 100,
+                    "votes": "10635000000"
+                }
+            }
+        },
+        {
+            "address": "dDuxXwGVd7pYYWGmSqTiMV3RAJ82ipSKo6",
+            "balance": "780114",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dDzvnHUNCkx6sts6ewBW54CLvddVsHjKSZ",
+            "publicKey": "03533fc43209f8d50b761f01b53114c5dbbce05a4fe07ad8b7af1c088e4ac536d6",
+            "balance": "11982000000",
+            "nonce": "2",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dE2xZT34thBMCeUWbRMRn2Ho7E1Y5qvip4",
+            "balance": "648322",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dE4tr26XEq89YW9GvB3Ztezmp8Use7MnjL",
+            "balance": "501562",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dE8r4ovRUPyMp1D4w4k7eC6dNtozi6ybqJ",
+            "publicKey": "031004f71f02f6dfe05b26529c3202da4eaa17ad0a78676396fd036171ae7b9797",
+            "balance": "7791000000",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {
+                "genesis_5": {
+                    "percent": 75.93,
+                    "votes": "5915706300"
+                },
+                "genesis_7": {
+                    "percent": 19.92,
+                    "votes": "1551967200"
+                },
+                "genesis_6": {
+                    "percent": 4.15,
+                    "votes": "323326500"
+                }
+            }
+        },
+        {
+            "address": "dEBxJbSpWeMMxtpARtZjhXLMpPFgve1BdC",
+            "balance": "281230",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dEEhLF1mR3ezk4x97ArExmGBdRKr2128L4",
+            "balance": "377149",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dEFMYqqE8LMQ5VFD4QNq7iB48eV3ktAsQJ",
+            "balance": "421761",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dEGsrsEoNNh5eXoz9yEozoMDq4m5LV1WbG",
+            "balance": "711381",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dEHgVeeTfqTUctTCvSNyF1dJBjiu6mHz69",
+            "balance": "751098",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dEW8kPi2fcW3VUzNXYL9Atz6iLXLR38ugk",
+            "balance": "10000100000006",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dEbZN9Kqy3K173iKPH4e3ZpqYr8Bdt6U3J",
+            "balance": "696019",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dEf3tToX8VjknVM6HZYjYxDsP4ieFuTe6k",
+            "publicKey": "02d9961bcd79d1aa6d83995014b005e0067a627788c31c25dc314ed67b9f848e81",
+            "balance": "684000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_7",
+                    "voteBalance": "5008717200",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "760000000",
+                    "donations": "76000000",
+                    "producedBlocks": 4,
+                    "rank": 9,
+                    "voters": 3,
+                    "lastBlock": "cbc9c08b948cbbd2aab3506941dfd48a46aa3f36b14baf276daeb8ca6a649e6f",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_7": {
+                    "percent": 100,
+                    "votes": "684000000"
+                }
+            }
+        },
+        {
+            "address": "dEfZqsyd2cETumQqAw7csQtRwauE4VodBD",
+            "balance": "561236",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dEmE3wAHWfpWxvnTMEMmXcB1rCUds6GCA8",
+            "publicKey": "025662ee80f6e0a0e71c57c359e5692d4460cbbdb69b3408445c7776ba815f04c7",
+            "balance": "22498885118",
+            "nonce": "3",
+            "attributes": {
+                "delegate": {
+                    "username": "tx1n1160",
+                    "voteBalance": "9791000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "0",
+                    "donations": "0",
+                    "producedBlocks": 0,
+                    "voters": 1,
+                    "resigned": "permanent"
+                }
+            },
+            "votingFor": {}
+        },
+        {
+            "address": "dEnE53HmZBP8L3t9kPDN4LZMx7hr4nNvKz",
+            "balance": "754773",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dEq4Z5B2Zbn4P4DqCYiwnMdoKNkrj7qzC1",
+            "balance": "785810",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dEqHyTftjArRqPxfd5Cco4pkkpcuE6cu3z",
+            "publicKey": "0361a237513e536cf72a6213efb7584dbfb53e509af140d8f7cd599ade579a412d",
+            "balance": "882000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_13",
+                    "voteBalance": "1241550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "980000000",
+                    "donations": "98000000",
+                    "producedBlocks": 5,
+                    "rank": 23,
+                    "voters": 2,
+                    "lastBlock": "cb2188780c45a90a05495d5e0b4a005365874988e857c268dbcd6e30492b73ae",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_13": {
+                    "percent": 100,
+                    "votes": "882000000"
+                }
+            }
+        },
+        {
+            "address": "dEvup4GuWSvhxqmjSZdbkf3ESo9CTHj84f",
+            "balance": "782235",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dEwqCRAyNSFADsWmvN7PUuqov7kAkRMbCf",
+            "balance": "990437",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dEz523AFbaiGXFQypFSuEAxpBKE8Lb3djH",
+            "balance": "295195",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dF13WE75ddsoLAggVZqpKMMvCf6uYztT9c",
+            "balance": "207588",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dF3UoC5QsF8GaMxcwk7EiXHDiKigcZY3Ls",
+            "publicKey": "033b338238b00abfc29272b1024ffd2226a21ba16739563c0ffb0d6a5fcdbd1771",
+            "balance": "846000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_9",
+                    "voteBalance": "3880822400000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "940000000",
+                    "donations": "94000000",
+                    "producedBlocks": 5,
+                    "rank": 2,
+                    "voters": 2,
+                    "lastBlock": "2a16b5e1039a60d1bdd6a71e974a07a667cb53d2a223c83a9e4a3e804efeca72",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_9": {
+                    "percent": 100,
+                    "votes": "846000000"
+                }
+            }
+        },
+        {
+            "address": "dF5oRt2ssfGLSRWhJrCZZXjdkKmy1ZZTvQ",
+            "balance": "210667",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dFD6fPbGUQwLNnscXxTvf2qoGNeCb1M41P",
+            "balance": "850921",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dFJywUYojXDEpYGFDEprmQHPwcpFLBAhqS",
+            "balance": "71412",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dFLzezDaj3beMirNTuzabSDDu6PmnFMugF",
+            "balance": "937558",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dFPFmCnrgM89purEkgacQwGNZRxL1RzLqg",
+            "publicKey": "02a1426801a790c32bf759030510ffa3b3d2be6a834a1a68ef1c3da28ae683dcf2",
+            "balance": "900000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_6",
+                    "voteBalance": "1223326500",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1000000000",
+                    "donations": "100000000",
+                    "producedBlocks": 5,
+                    "rank": 27,
+                    "voters": 2,
+                    "lastBlock": "07702d0610da0c4b7a02117d1da2e6d4d337f4d9d31315c40839adee52852a0b",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_6": {
+                    "percent": 100,
+                    "votes": "900000000"
+                }
+            }
+        },
+        {
+            "address": "dFS3bXM5xyKcy234SEzHmeLxPm2Yn5hHXm",
+            "balance": "342944",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dFU1XJ3Stjf4BzZ2VhRxN78Tcq47U5fwzu",
+            "balance": "119498",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dFXWuhVQB4Gakpnc7NU5iggJeJwmEkTXgn",
+            "balance": "740671",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dFcegYpgEhLFBxz8QctBkH8D1WgHLqrSE4",
+            "balance": "954083",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dFqQV32gn3ueD52HgzmEdPMmgFCuzbGRaF",
+            "balance": "410609",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dFwz7G59HSf7gopjXDpUmFcq8dhgv5oe8W",
+            "balance": "810613",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dG1FszL4Y15iNQghd36tj5VFwkyvsWADQr",
+            "balance": "892158",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dG2TVeq5wBGtQ6fhJmVuiJri7rgnwjUSgT",
+            "balance": "292714",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dGBuXBy8TTEyXZyxAvRMq25sKwmun2JfD8",
+            "balance": "839957",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dGGuHtFnKNp1DoQy6tNKZ6KBcV8oAb3qFm",
+            "balance": "609638",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dGHrLPZthZmyAEDjDJc8nEWrQu3nn8fRwT",
+            "balance": "2475",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dGJyvHy6eumLc8iKMuv1Q8damuqgZxrFEV",
+            "balance": "961628",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dGRnyRNaVGGQMue8yekCyZVTPLs467eN7Z",
+            "balance": "85313",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dGcL35oM5yBfWCDoHJSXzv2fmvRtcD4pDy",
+            "balance": "616389",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dGfM4wm2cawYnEiEN3Pmgeo8SnyBwdfpfc",
+            "balance": "219045",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dGfQ1EV4nm9DcG66Vua85WR8264APRcUVF",
+            "balance": "361609",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dGkmLpcx3UCnvGgi8AEZYhFy29FTVPnAhE",
+            "balance": "213902",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dGuBs59pXq1rHbWm3nLQ2fMv8iQurXq8pu",
+            "balance": "879981",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dGwEsFB6Fhb5JrcJEvVrAZ88aysQDc6h3S",
+            "balance": "2203",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dGyBS6KVdC1BrTqMkKj8KGAXjhRRm3b4KK",
+            "balance": "734763",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dGyvsZV6oWr92wTfLq44PFUsHbmmDrakxz",
+            "balance": "291609",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dH4JdCFsK4wiPiqMPH12PQqJK8Mw5GQoQV",
+            "balance": "949044",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dH62buWsP2qnsbuF9ri5qCYcthZK6Yzj6Q",
+            "balance": "495115",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dH8S7bQpzCFw64S6x1KCqC7Xer1jeKMwMo",
+            "balance": "415565",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHS5PAfi4KgrKbzRxzfwKiHmeUjWVXZ2kj",
+            "balance": "463219",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHSf6xitTunBw5j8K69ZxHdxw9xj6xuQ3Z",
+            "balance": "839925",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHTukB6FWfQjCQy6KeEPu1rEvyioVhCYq3",
+            "balance": "341041",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHU69ukkwHADT8DMbrVXidFcpky2kApNkh",
+            "balance": "87005",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHUA7ig3qTTMrEtwGBZeP9p1FerEz775JS",
+            "balance": "991100",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHWEUyn2twH7dxTuRmPgkhzEZu4siyDrPE",
+            "balance": "99379",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHaG2fYPRwAPRCRZy9SukwLjzBiMpQDRka",
+            "balance": "695028",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHgQUky9nWcLVtQ5XqKjBMfq2P4BXaSeac",
+            "publicKey": "031e359acc275085238342b49232f9c96e10303ceb3cdd398167e8e3ca84815745",
+            "balance": "936000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_47",
+                    "voteBalance": "936000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 49,
+                    "voters": 1,
+                    "lastBlock": "b0d4b6a812f649f73bb1b6e8f2ebd9c7e18ebf8b7099005b5654e0586e79948d",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_47": {
+                    "percent": 100,
+                    "votes": "936000000"
+                }
+            }
+        },
+        {
+            "address": "dHoyiRRcvAjga61ZEV6s85cJCRjkyXbVZV",
+            "balance": "365058",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHrVJ7fXX2zcBrBy3tYszYTt8bbzgM8T7m",
+            "balance": "464955",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHrw5YKu2GcERR3hiwc4euftTpnBTNLyJx",
+            "publicKey": "03cd5721eff66053eb2d7d38c63044be5ea3e7049eb5b22c91ed88e141e1abcee2",
+            "balance": "684000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_1",
+                    "voteBalance": "10273871000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "760000000",
+                    "donations": "76000000",
+                    "producedBlocks": 4,
+                    "rank": 5,
+                    "voters": 3,
+                    "lastBlock": "b766cfdc207af8e3cef5063a2c675d5cb3297da2433698d8ea977ff021d2a501",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_1": {
+                    "percent": 100,
+                    "votes": "684000000"
+                }
+            }
+        },
+        {
+            "address": "dHsaEvMPvNo6qxEvZGyQLac5xGxZvPaep9",
+            "balance": "749832",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHtqh4ESsLAHPSinVeKKgZGnoS8BjEnx6p",
+            "balance": "20583",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHvRy4oeFkndwch7rM4C8xCZz2ypfVHYFu",
+            "balance": "299450",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHxg3u3z33JVuzpdZGnj7wT1tcdjSDCwcf",
+            "balance": "409846",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dHyWmsrTU9MFiXbVHhuzY799PjdUmrRWqw",
+            "balance": "909273",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dJ1Xu2iEc55qSjKptNnEULUX95yqb5WVhy",
+            "balance": "10000000000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dJ3163VBtoDqoBshijF1W9BnfJRGci7uDU",
+            "balance": "842889",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dJ7VLpYmg7jnbM63qpiAfjFZsQN8ufiLD4",
+            "balance": "925864",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dJFQzyiwgjwvabkdKBZHZzv5CxHEeuz382",
+            "balance": "151199",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dJJcfEpo55KJi8xBFb3WFvhiFSTU4jAQR4",
+            "balance": "583189",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dJPyU1pVNuYA6pwPjGpigVMCKCFK4w8xnx",
+            "balance": "676578",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dJe96ynsZN8JUDhp6CLFHYoiuZZEZ4xDTM",
+            "balance": "60416",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dJgv1uuEjz66nf64FMFwfsGfqFvhF8ExX5",
+            "publicKey": "03a7731a6958e5edd5c26e146ac182a1b83862b5f5b84a92ecc543952ad6c2e994",
+            "balance": "891000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_27",
+                    "voteBalance": "1250550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "990000000",
+                    "donations": "99000000",
+                    "producedBlocks": 5,
+                    "rank": 15,
+                    "voters": 2,
+                    "lastBlock": "df3d818a788714243f5139d04de0e74298f63800c9210634d2a34d84128e8c7b",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_27": {
+                    "percent": 100,
+                    "votes": "891000000"
+                }
+            }
+        },
+        {
+            "address": "dJhbucBnC2fQ4gnRJ12e6akRazGhtBCzMC",
+            "balance": "64036",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dJiq1W9ik5CFov1pP396MU49dhYmUDCuwc",
+            "publicKey": "033ada38bba3f0db1f37c32c95e69c1835a13d7278a0dbcc00be7914985cc89455",
+            "balance": "936000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_45",
+                    "voteBalance": "936000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 52,
+                    "voters": 1,
+                    "lastBlock": "bc0df13b83820483734bc64e980fb10885a5f8be033fa0564428439897ed0496",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_45": {
+                    "percent": 100,
+                    "votes": "936000000"
+                }
+            }
+        },
+        {
+            "address": "dJjwfJwLm2HFSqgvEQcFeRojvokecdVeyk",
+            "publicKey": "03312ddf4aa009c51e107f4631b12e14144709fb785414a2fc39d0f59e61c0f5e9",
+            "balance": "882000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_22",
+                    "voteBalance": "1241550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "980000000",
+                    "donations": "98000000",
+                    "producedBlocks": 5,
+                    "rank": 21,
+                    "voters": 2,
+                    "lastBlock": "ebedc2892307588efe1c2ecd6b81b199650d64aee84209c78cb8bcdcf950fd52",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_22": {
+                    "percent": 100,
+                    "votes": "882000000"
+                }
+            }
+        },
+        {
+            "address": "dJkQEErtMQGZHvgLosDaCc6qczBan1cZbu",
+            "balance": "10000000000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dJnk7bi6Qvp1X1hYqRPahGGVsXwYJH4Mpi",
+            "balance": "953966",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dJrNWMeuN8opkFQr6fJHhS7Z6noJexZFZo",
+            "balance": "962804",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dK8BEZG1EpwsmAngB5ZnnPZXeHn8Xg7KTB",
+            "publicKey": "02789c8e814e2e07a90ae170755deb296bb8310e41c0476fbf144374f4c3360191",
+            "balance": "882000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_23",
+                    "voteBalance": "1241550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "980000000",
+                    "donations": "98000000",
+                    "producedBlocks": 5,
+                    "rank": 18,
+                    "voters": 2,
+                    "lastBlock": "e5dbe32daea59c810238a021d6ae8387d1b9fbd9b0856789f86dc50bab0cf1ec",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_23": {
+                    "percent": 100,
+                    "votes": "882000000"
+                }
+            }
+        },
+        {
+            "address": "dK8rNG926JCTo4WasB8VPCWNrqAEYuiNQ4",
+            "balance": "187165",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dK9p2LxtQSBQEnsJVpd72fVfE3yVLJYF5g",
+            "balance": "130299",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dKGHRh9uE3mBqPJRCpWnEKD951of3DP27T",
+            "balance": "705081",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dKLKhJbouao9hDeqZZxJFzPG2vAD1HTrzm",
+            "balance": "976346",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dKLVFfe81ngGtwC7s2T2mHebmij21q3anC",
+            "balance": "103250",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dKLtKgqZ3eKnjVnHc57eCKFWqD5D72LHHT",
+            "balance": "916550",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dKVpLt8jZk4PTGPE1Sr7dCfbRmDd37GZ1r",
+            "publicKey": "02f060d6f4d82a10865296502171b136118e33b3830cfeaed06ec7a975028c4968",
+            "balance": "846000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_2",
+                    "voteBalance": "13829129000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "940000000",
+                    "donations": "94000000",
+                    "producedBlocks": 5,
+                    "rank": 3,
+                    "voters": 3,
+                    "lastBlock": "f38e33ab5ddd7b6def97189dc13e9099dde219c18cd74c3a9580e25d81ee0bfd",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_2": {
+                    "percent": 100,
+                    "votes": "846000000"
+                }
+            }
+        },
+        {
+            "address": "dKbpAC9p5LGKE588fKSgorDPsmp9m6ZLg3",
+            "balance": "643645",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dKdAGFFuARhHaj4t4KLKSdGEn3s9AZB9Sc",
+            "balance": "918695",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dKeRo9Gg8ueqbj9NRmhzD3zdKCZ9wh1HT4",
+            "balance": "3554",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dKfXZivDeJ6nMxkb4MNJxLBVEHNNzsi7qf",
+            "balance": "52075",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dKfaMe6MR2kDYW3DbBBSYytp3ssQCveHWG",
+            "balance": "530801",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dKfmV7mM3Gu63yEdaa7qfNqjBtxmA1FMay",
+            "balance": "14053",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dKoippCJPkeagAtuFh7iCpqWfDuRb45vGP",
+            "balance": "4478",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dL4jdjPm93YjwR7NZbBiUKFiUXvrsMy36w",
+            "balance": "491043",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dL91nX2K1Y1X4dv8pqDgFotbQU2EPT4FV6",
+            "balance": "535640",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dLDsDi54kXfK243rCci69dM5MwPi65D2xB",
+            "balance": "91126",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dLE3AM6NQxkp7BRGh6ioDFMvN3v3k7uENr",
+            "balance": "891387",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dLYDxnR986anYmfk6dUjGNLuR7WBVTCsv4",
+            "balance": "928677",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dLeaYygMEaGwHhLMWdLUSBcLyQLKCfopz2",
+            "publicKey": "0295f24f2403255f3cdc23e731b825e8f3d89538599a83868217befebc6640da17",
+            "balance": "846000001",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_15",
+                    "voteBalance": "5596550001",
+                    "forgedFees": "1",
+                    "burnedFees": "0",
+                    "forgedRewards": "940000000",
+                    "donations": "94000000",
+                    "producedBlocks": 5,
+                    "rank": 8,
+                    "voters": 3,
+                    "lastBlock": "6e28d01055a7b341f46c5163aaf7994106ec9311b69eb1f4db90c95a6ef5b1cc",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_15": {
+                    "percent": 100,
+                    "votes": "846000001"
+                }
+            }
+        },
+        {
+            "address": "dLecerCUUoC6PngLBZWMripbKT4ypZ63RV",
+            "balance": "581050",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dLgfMir2NysuDZkmVgmp2gz4smGh9Etyez",
+            "publicKey": "0374e2a47ec341d911e8006a908339eb1faf4d7ca84c1cabeb5502abc9d4b908d0",
+            "balance": "882000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_17",
+                    "voteBalance": "1241550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "980000000",
+                    "donations": "98000000",
+                    "producedBlocks": 5,
+                    "rank": 24,
+                    "voters": 2,
+                    "lastBlock": "0a0c219c81ffac0e309584260d030e407a6b299eb11c032ef5f7cd0c8a2dd822",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_17": {
+                    "percent": 100,
+                    "votes": "882000000"
+                }
+            }
+        },
+        {
+            "address": "dLj6BdoPfwctGtNjXhAas1ezj4VZ84jsib",
+            "balance": "280837",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dLjK3P2LH8hV45AVEEeEm5siua9e5eK4bM",
+            "publicKey": "03e0e172c16a90bd5147f5f98a234818b7dda98c51281efd701cea2873dc64d7a2",
+            "balance": "10000350000004",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dLjwqdmP8PB49gQxRTKxeAgZ2jgUHhjLdS",
+            "publicKey": "039a23589c4da05386ba1aa4e0cec53230c006707e680785f4cb9bedb213a28fa4",
+            "balance": "557999999",
+            "nonce": "4",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_53",
+                    "voteBalance": "557999999",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "620000000",
+                    "donations": "62000000",
+                    "producedBlocks": 3,
+                    "voters": 1,
+                    "lastBlock": "be26e594293d3f4e55d1d39a61158ba1c109b09c82a98b2729850df7552e4d64",
+                    "version": "4.3.1",
+                    "rank": 53
+                }
+            },
+            "votingFor": {
+                "genesis_53": {
+                    "percent": 100,
+                    "votes": "557999999"
+                }
+            }
+        },
+        {
+            "address": "dLp6BmEKe2kmtm3Pqv8v7HZ5rpERn5ZNky",
+            "balance": "49723",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dLsNriwsyZ4xAbYMi5nBhVMQvcvPakP6Ej",
+            "balance": "216758",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dM1UwvdL4GXh1SR8YwbqSJinwno2HowKJN",
+            "publicKey": "026ee4308eb1efe49938477f828e7e05d6a4302d3b80b762144fee9e1c8c2131f8",
+            "balance": "10199450000000",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dM6iLC5MKB3jBfo1tkCRxoShuQv9XHvCDD",
+            "publicKey": "03bf7caf10ad1eea990bd67998298eaf9ffa8930724c7803b7fa1b4d40a5abc751",
+            "balance": "1044000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_25",
+                    "voteBalance": "1403550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1160000000",
+                    "donations": "116000000",
+                    "producedBlocks": 6,
+                    "rank": 14,
+                    "voters": 2,
+                    "lastBlock": "9dac6d13687526d303545e669a876044b9797c6375bcb8e7bea8f8c1c5de12d7",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_25": {
+                    "percent": 100,
+                    "votes": "1044000000"
+                }
+            }
+        },
+        {
+            "address": "dMK2tAV3g4mF6CaVXqqMtZYPmDHbnUZE2E",
+            "balance": "67326",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dMN76PVgNWF44cgxRycr4LWAUUoYa1n5ri",
+            "publicKey": "0245dcbb68f0ad265203d1adb3d9108bda8045a5148e0634a2d68b74cdea2b72fd",
+            "balance": "936000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_8",
+                    "voteBalance": "936000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 42,
+                    "voters": 1,
+                    "lastBlock": "c6e5127d04369742c772016aff0c200fd6248bee6e4958a6475dc589e7c4a8ae",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_8": {
+                    "percent": 100,
+                    "votes": "936000000"
+                }
+            }
+        },
+        {
+            "address": "dMVgdVMdEWR2rVH6RRgXqheywVTzbgLNyG",
+            "publicKey": "03fbc493d3753e0e6b1d12cd70c541a291e5247290c67353abff07ac6ad6da086c",
+            "balance": "3199999950000000",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dMbY1nq4CJsHxd7WQKDH4BGQtZQn5q4sxx",
+            "publicKey": "033d4b96d440627cd6fc8ae5c31142884af87e2af894b6603ff40937547b4ccc90",
+            "balance": "9949888000001",
+            "nonce": "2",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dMbampVXcSjjGcEsZY3LwKTKtQjohsX7NE",
+            "balance": "639437",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dMkauzRCSiASn6Hj7hXJ4NAC16MdiC58Fy",
+            "balance": "628933",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dMsSYX6rEwvs28CeFcgSAYeKTYnksJ7WYZ",
+            "balance": "677248",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dMxJYzmxDKnukNxrcH8vd7fvpYH4KafWWq",
+            "balance": "50476",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dMxMrcqeLPteFMnbuz7zG6VR5JH1T7iHRD",
+            "balance": "125378",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dN6hU18xGUY9KeTrhbJ2yxLsH9JsdcV56z",
+            "balance": "214761",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dN9dKiuXb2Scft3FANZL6EZSJ2NoVYQSZL",
+            "balance": "616077",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dNBQ7RmFw9E6HVsocGRGRmaQj7n5RBdLtu",
+            "publicKey": "03cb10018b350b589aab19683f9071645ac27d6e36596fc1103c33bf2062a8fe16",
+            "balance": "7591000000",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {
+                "genesis_3": {
+                    "percent": 80.1,
+                    "votes": "6080391000"
+                },
+                "genesis_4": {
+                    "percent": 19.9,
+                    "votes": "1510609000"
+                }
+            }
+        },
+        {
+            "address": "dNGBedUbW5CwxLgsXGyhJ4mgpXdUZJaaCt",
+            "balance": "564694",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dNKju4b8YpBGXYp9XKhmUkpgBV3h8KwgaX",
+            "balance": "452629",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dNMPhXbjHoPPuTRjp6N8Q75q6JVAEsVMTp",
+            "balance": "107242",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dNQehmrUN5SFL2KrxvW7Uo5z4JpuahQ8BX",
+            "balance": "665816",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dNQqsTdUBfat2DU5jjSvs8BeK3B4Vtfj4M",
+            "balance": "907858",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dNSqcJ3eHy5GY5egdPRqfFiVf29JKoaBig",
+            "balance": "912440",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dNTtCbzpzoKDYD7QxoRbDVG5gNswfCjEoR",
+            "balance": "432545",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dNiwuHMuboAGD9ZsZWvWwwyirKqqUDbNNj",
+            "publicKey": "027b4babb4655b7a66a1c7c9189a476935b13530314db8de6fd350d30948bade68",
+            "balance": "936000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_39",
+                    "voteBalance": "936000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 44,
+                    "voters": 1,
+                    "lastBlock": "bdb15cc3914ab6410ec747e44636991bdfdda5089d4a1fb19b939cad13d4ad2a",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_39": {
+                    "percent": 100,
+                    "votes": "936000000"
+                }
+            }
+        },
+        {
+            "address": "dNmrjdjYuT1ZZiZSVHkE1vtCcCeVjmADYx",
+            "balance": "394796",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dNn7abix3Rw6LWabwn2BuQjaFwTRwHdhbN",
+            "balance": "437909",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dNwseRcZWUhh12jKgpeZdm5y3kMhbjxzuT",
+            "balance": "881214",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dNyKs8iui7zC93MW921PXDB9Vi9PegsQj3",
+            "balance": "884381",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dP4ofX4a71d6aXq82etv9T5VLBAgTTHSwq",
+            "balance": "291750",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dP5EvJVJoELeibvBoBe6FZsbeWKyWGSmWE",
+            "publicKey": "029b1e0d08ccff8c97ab25f6bd2e1c720d828d4ea4d69183d61842fb1c0382d2c5",
+            "balance": "936000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_41",
+                    "voteBalance": "936000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 45,
+                    "voters": 1,
+                    "lastBlock": "2e5d64dd4781fce7378f3a5ecff94c133f8170c47f2a27c39dfdc2347dd805a0",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_41": {
+                    "percent": 100,
+                    "votes": "936000000"
+                }
+            }
+        },
+        {
+            "address": "dP663GorLNagZQ3Wpr7hDfNpcRMbWt5RNn",
+            "balance": "16139",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dP6Tnx289MUxaqmd9EvGu3wJ3kVawS3sBh",
+            "balance": "19732",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPCSMrjJyVUHGjovACpbsWsjZdgMZsvGPm",
+            "balance": "852189",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPECrw3g953SmsxLda88K7pYjSikCMCfy4",
+            "balance": "386011",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPH5K84R66VCKDohQ5bH1cqwufntNQ7oU4",
+            "balance": "905499",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPHWhifMpXpgErLNePupiy4iuerJuvEFF7",
+            "balance": "38053",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPPAXEwTnxSsNBJ8rqodrtzik9eK8UqHXr",
+            "publicKey": "03900b65c8e5a7c1ffe173d144253c5ea11843a59c44baf89040081f51dee1a14a",
+            "balance": "945000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_42",
+                    "voteBalance": "945000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1050000000",
+                    "donations": "105000000",
+                    "producedBlocks": 5,
+                    "rank": 36,
+                    "voters": 1,
+                    "lastBlock": "a19d48ae179900e8b14190a7e6f15ac7accb3692e7dc38888be0d1d052726c9b",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_42": {
+                    "percent": 100,
+                    "votes": "945000000"
+                }
+            }
+        },
+        {
+            "address": "dPPBDPkvZsz1xs52r1cToidEbdmzbYpCSB",
+            "publicKey": "02a109e32065ed1f48b49723f7e3d844dc84c2dc2f7fdba7cd2aecfc578fca10af",
+            "balance": "9699941000000",
+            "nonce": "2",
+            "attributes": {},
+            "votingFor": {
+                "genesis_5": {
+                    "percent": 60,
+                    "votes": "5819964600000"
+                },
+                "genesis_9": {
+                    "percent": 40,
+                    "votes": "3879976400000"
+                }
+            }
+        },
+        {
+            "address": "dPQDpMBmvFCq1Ypoq2rFzVdWxByfBHMMBx",
+            "publicKey": "03783b9db76f1f1716b28fdad8df332f95e1eb8a45a59ece09de747e0691e5ccdb",
+            "balance": "1113100003",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_31",
+                    "voteBalance": "1113100003",
+                    "forgedFees": "511000026",
+                    "burnedFees": "459900023",
+                    "forgedRewards": "1180000000",
+                    "donations": "118000000",
+                    "producedBlocks": 6,
+                    "rank": 28,
+                    "voters": 1,
+                    "lastBlock": "d326522d372b1501dc6734487431e51fc6fcd5113b6ef68902ab2f7b4478e143",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_31": {
+                    "percent": 100,
+                    "votes": "1113100003"
+                }
+            }
+        },
+        {
+            "address": "dPT4JKQntdX9UMy9MxxpcbbL4YFA1iNxxy",
+            "balance": "10000000000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPUXRKtwd7YU4UKmHNiVJua2YFFyKfoxxK",
+            "balance": "18711",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPaV529rdSAHeE6kfakDgUMBqchN2h6c7P",
+            "balance": "540264",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPbmzsndi7f3myjstp2gCNPiAXa2QwMpiX",
+            "balance": "58299",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPbtgaJUGTnVoj5PfZZ2bYgJoDqtnbzoyW",
+            "balance": "101193",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPiLD2Fi1dnQhnskBkSnDEPraaWtbTcYPj",
+            "balance": "2636000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPjwTyHZeSN33YXrQywi5nueHwtuDDKKDD",
+            "balance": "2968",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPnvqMgVvfcL1Md5UTWJvn6nL7MmcPehrY",
+            "balance": "474843",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPoDgd1ukMBtJauHwc6EqTk5fo15xCWJRa",
+            "balance": "805833",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPvNT3WUV5RExphvcUAxbSLm3RFZo4ymZK",
+            "balance": "273982",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dPy7utwJCdMBiSjj7iiUvGGuVieK5D1Rfu",
+            "balance": "17741",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQ2C71jJSgu8j13YmG4GGssNGdYapqWobb",
+            "balance": "7800000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQ6dnzXvAtug3x3Lv6Zx5jKHgwveMsWoCU",
+            "balance": "569455",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQ77afhv8zRnosewVY93zXB5iKXTUvnorJ",
+            "balance": "650295",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQ7BfoVGndGzTK8Bjb4Kqc6G5GaVXU7jTK",
+            "publicKey": "029f8dc2a4002dea6a8cf685854a3fa109d38503cddf71a591b55a7190b44f2871",
+            "balance": "9999990000000",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQEUnrxgpMNgkNuJozt1U93fc6PBoFDWqX",
+            "balance": "328567",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQF5yZScTqW6UjTfs24H8gqdJGBHKRjiba",
+            "balance": "10000000000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQFx1BAoqPZYiRRYpPRREeJcvoQh4zp1U5",
+            "balance": "626420",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQJCpGT99ZKyDCXpgicQstuBFkg6FkpMbt",
+            "balance": "34748",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQNjakUkgR3jVCB7Jh1sAzfsef71PyJK5h",
+            "balance": "765497",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQVrFGd4RaLDmvEt1X3kP3Qf6a6pybaSs6",
+            "balance": "789944",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQYFJbu66Jenyj8Cwic2AASq69i78Ehs3m",
+            "balance": "97144",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQZ5B6dQcPB2sm46XmZPxGJsvpduxPS9cf",
+            "balance": "60560",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQcSrSKWSj6gYD1dF92EmsVz56UNTae1kz",
+            "publicKey": "03b85138c2cac76da4c468059c7188a07235983f4251d8d2fd6f44e6d4eb286c72",
+            "balance": "684000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_5",
+                    "voteBalance": "5826564306300",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "760000000",
+                    "donations": "76000000",
+                    "producedBlocks": 4,
+                    "rank": 1,
+                    "voters": 3,
+                    "lastBlock": "f41d004098f2f8d90363101e68d06bf088ea3d6c454c90840c2370c41cfe5284",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_5": {
+                    "percent": 100,
+                    "votes": "684000000"
+                }
+            }
+        },
+        {
+            "address": "dQdupQecn2X5WQhD6ZjbJ8X2UhssZ69Uh8",
+            "balance": "287785",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQiKfFbTRJUUcQZaWCXqA7CmP9whU8ro7C",
+            "balance": "399865",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQodKAUfJUQT37fB1XTsxDn12cJDhBdtZD",
+            "publicKey": "03a9b498c931ea943cc8fe4fc5eeb2004928fbb69eefc39cf593ab34311871b423",
+            "balance": "720000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_21",
+                    "voteBalance": "1079550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "800000000",
+                    "donations": "80000000",
+                    "producedBlocks": 4,
+                    "rank": 32,
+                    "voters": 2,
+                    "lastBlock": "4f71676d63d89f54ab53c06a5ddc7de2a88a6dac2b041ab7e7d656b5017215d0",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_21": {
+                    "percent": 100,
+                    "votes": "720000000"
+                }
+            }
+        },
+        {
+            "address": "dQp2Cn2Zn9wyw4gv2RubhXWWog5bpX6YRX",
+            "publicKey": "0247acf1d977e5f2098a93b342992147c8c1ee488839b4c10a61f559fb32713b2e",
+            "balance": "702000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_4",
+                    "voteBalance": "2212609000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "780000000",
+                    "donations": "78000000",
+                    "producedBlocks": 4,
+                    "rank": 11,
+                    "voters": 2,
+                    "lastBlock": "137914f958ed6fceb7bf58d29ec50d3a22de56a757e1f6d88f28181447f89cb5",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_4": {
+                    "percent": 100,
+                    "votes": "702000000"
+                }
+            }
+        },
+        {
+            "address": "dQrdNrwr7crZnE46PBgm5gcuQTPk7jDVCT",
+            "balance": "387668",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQwWAKdbJBs6DcgYSMUE5gUzMR3BYwxT4m",
+            "balance": "238949",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQwYHe8cXpSqbdDu6qZaVxjaoP5tMRKoiV",
+            "balance": "470828",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dQwz6kwBCYQ7NX6gMbuXTndJCjTWPkDM6M",
+            "balance": "75376",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dR1mrSFtBBimoanjbHm9D1k7UZLUDSMdH5",
+            "balance": "904176",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dR7u6zhjsKdoLhNmqUMvUbrEm767EP8bNS",
+            "balance": "328540",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dRAK372bkGsCsgWVSPDZVcKbdKewNQvEjE",
+            "balance": "165885",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dRBm9d82oUFVEcx7Vt3Q1GKEY27VsoSg9M",
+            "balance": "293401",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dRKCKFsuMnGKXjBENDLpPJwLEB5qihPboy",
+            "balance": "453710",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dRLShfNyynBQvNmB872F28bR6LjPPg73KC",
+            "balance": "465385",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dRUetf6EiysrgP7ksLUJmTsCAjXXcfxUi6",
+            "balance": "609666",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dRVbWHmvLnq1CsynxRZAgm7uSWK1scGpKy",
+            "publicKey": "0357d8f0be891d53cb2e4f682f8547d2773ba9987bb5c57e1ef4a7ccf193184702",
+            "balance": "1044000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_30",
+                    "voteBalance": "1403550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1160000000",
+                    "donations": "116000000",
+                    "producedBlocks": 6,
+                    "rank": 13,
+                    "voters": 2,
+                    "lastBlock": "aa66966916a570d6f3c77c68ec2652f36b3a21f6252800a0bef44f78f319899a",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_30": {
+                    "percent": 100,
+                    "votes": "1044000000"
+                }
+            }
+        },
+        {
+            "address": "dRYxcQrFagdjrZH61QFpJBNu1CTwJ3F3kd",
+            "publicKey": "0259ff6a05771cbb65cc16f460f88277c4ad25a976e3ac1aec819897bfd45317ac",
+            "balance": "846000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_14",
+                    "voteBalance": "11840550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "940000000",
+                    "donations": "94000000",
+                    "producedBlocks": 5,
+                    "rank": 4,
+                    "voters": 3,
+                    "lastBlock": "9f3deda0a5e6fc9ad7405872892d1a329ec278120c00c0a0c28646619a198c83",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_14": {
+                    "percent": 100,
+                    "votes": "846000000"
+                }
+            }
+        },
+        {
+            "address": "dRgoPnDrp8jtEBfypcnNjZhyLiGLs1mnG5",
+            "balance": "986822",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dRkk4yn1kzxodo7nETnjKx6gtx631rGRqK",
+            "publicKey": "02d275ce60e589a0372751d44162c7b7e19c6b4abcfb2fe346347a0b8aab69abd4",
+            "balance": "936000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_37",
+                    "voteBalance": "936000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 47,
+                    "voters": 1,
+                    "lastBlock": "07f2fda5d4aba00347eb55aee73879823f23c24ce217c3a23092c3b2e0c8877d",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_37": {
+                    "percent": 100,
+                    "votes": "936000000"
+                }
+            }
+        },
+        {
+            "address": "dRm8N9eFLFvaV9gdzGdqeL49BzWzzqGPb2",
+            "balance": "82040",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dRmoNc9DL2nbhezvdy32mrKqA7AY6NUXND",
+            "publicKey": "02806916740721a29f27f1dd018a8af8cc511ca4ceee015c8a4b44200113ceb9c3",
+            "balance": "1080900000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_52",
+                    "voteBalance": "1080900000",
+                    "forgedFees": "9000000",
+                    "burnedFees": "8100000",
+                    "forgedRewards": "1200000000",
+                    "donations": "120000000",
+                    "producedBlocks": 6,
+                    "rank": 31,
+                    "voters": 1,
+                    "lastBlock": "f830ef6c2bfeeef7c04cf107f269449bffcf1dffd4aca1834365bfd95e4a64e5",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_52": {
+                    "percent": 100,
+                    "votes": "1080900000"
+                }
+            }
+        },
+        {
+            "address": "dRnRNJ4rCNobSeiEVocQ8NrG993pvuTFDm",
+            "balance": "344506",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dRurkTLDVPNC57N6YWJT4LjWq9rtiXJpr5",
+            "balance": "719596",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dRxQcqW5xtFnMTmRF8hxevs7cWqT2SAab6",
+            "publicKey": "032583b96e6a5ef2c88518a0e0f9b711cf2388a0c6a6f8be238fd94a19ac20843e",
+            "balance": "936000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_40",
+                    "voteBalance": "936000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 50,
+                    "voters": 1,
+                    "lastBlock": "d4d56b808f7c0ad7d477a64353b94890c8de0f0280eabda578883d94ecbfcf79",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_40": {
+                    "percent": 100,
+                    "votes": "936000000"
+                }
+            }
+        },
+        {
+            "address": "dS3BMuy4GLP6ocAjtDNu7Kng7zWT4K9p9b",
+            "balance": "533516",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dS58AUGfVBfkos6XF5aE6SiCLGxCgg98DY",
+            "balance": "906781",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dSFpM8weUP4Y6RwdCYwEZbD78BCSHUy8di",
+            "balance": "31180",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dSKAKsvAAVn8xjfuoHiRZvEtCMsQZQtkNY",
+            "publicKey": "02e69cb2cbed90a4362838765c775a26aacc2c6ebc96fb5979be2fe3fc189ce73d",
+            "balance": "1081000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_51",
+                    "voteBalance": "1081000000",
+                    "forgedFees": "100000000",
+                    "burnedFees": "90000000",
+                    "forgedRewards": "1190000000",
+                    "donations": "119000000",
+                    "producedBlocks": 6,
+                    "rank": 30,
+                    "voters": 1,
+                    "lastBlock": "e7103880c856662ec55569ced03f4ac280cf7e5db7d60098a7f36ce81278e777",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_51": {
+                    "percent": 100,
+                    "votes": "1081000000"
+                }
+            }
+        },
+        {
+            "address": "dSNU5XV5LPmqTCBVsSXC73tgU6tyYFpBKM",
+            "balance": "349566",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dSVKKZyezTwYiRGtPLjU7cCamoESLy82KJ",
+            "balance": "279849",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dSXtjjLUWVwujn4H5kJVkxQcKRsbUS8LdH",
+            "balance": "236112",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dSbxXyLx1BnT5nyeSahguik8Zk8dKmbxr6",
+            "balance": "520903",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dSidsk7iHYW14owC8WeFFiYGQczt4uh35o",
+            "publicKey": "03884e28030b67cf2e36a8e8fe2c828baf4dded98c7b665183603e8fe5f87f2154",
+            "balance": "945000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_36",
+                    "voteBalance": "945000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1050000000",
+                    "donations": "105000000",
+                    "producedBlocks": 5,
+                    "rank": 34,
+                    "voters": 1,
+                    "lastBlock": "5d9528c5676eb53a31b8f6e9a40bb93b641695b6784af584026ac667d152d795",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_36": {
+                    "percent": 100,
+                    "votes": "945000000"
+                }
+            }
+        },
+        {
+            "address": "dSkc4Q1cWwbxUn9mYRSoi9RQg6SbVtynLc",
+            "balance": "74923",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dSsfFEsy45HJHbCMFqLbarhTReCxyoBgsR",
+            "balance": "699653",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dSsx5CBGgiP1AcvZ6wBTJFKbrHZ3QeJDmw",
+            "balance": "408915",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dSyZm7TNLLPxGYzs53jZN9ABioeev9PkZP",
+            "publicKey": "037b1506b11365e2027691a0be54fc3cf70d4741050327cc7dc5118c37efc919e6",
+            "balance": "7191000000",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {
+                "genesis_11": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_12": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_13": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_14": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_15": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_16": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_17": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_18": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_19": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_20": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_21": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_22": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_23": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_24": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_25": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_26": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_27": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_28": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_29": {
+                    "percent": 5,
+                    "votes": "359550000"
+                },
+                "genesis_30": {
+                    "percent": 5,
+                    "votes": "359550000"
+                }
+            }
+        },
+        {
+            "address": "dT5iSNuZME3RsE8jSnaRfDNEJQTRUdfz4H",
+            "balance": "988022",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dT5tf8EJRt86EBsGr5AJA9dRCmJVysz6bU",
+            "balance": "402782",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dTMkcSw44M9dkmJXfyEWEVVDb2UpN35j7n",
+            "balance": "326789",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dTPTZZ7NpnwUZJgEYC89vfGuPxnfrkeTmX",
+            "balance": "758347",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dTaXyu9sf4iGKGpkwrvrrW4bMRaoiWLLFw",
+            "balance": "372617",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dTe1ruBESG2r63u3VCLrMpTcx18PSurKJJ",
+            "publicKey": "03e8c1d3c0bbc3aa1763277c3cfa34197d2b70e7cf41ae9758da9b1f4174d20c6e",
+            "balance": "8782000000",
+            "nonce": "2",
+            "attributes": {},
+            "votingFor": {
+                "genesis_15": {
+                    "percent": 50,
+                    "votes": "4391000000"
+                },
+                "genesis_2": {
+                    "percent": 50,
+                    "votes": "4391000000"
+                }
+            }
+        },
+        {
+            "address": "dTfQGBbCQaFqM9FTET2Z3TvDU9dUp3oE6w",
+            "balance": "370511",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dU2LnZBSCk1cpksdtF1QV9H4PW3mh5QrQy",
+            "publicKey": "035867ab15875aa8d6d6bd112c8dae623757ebc94b8f06ca1311250403ae69176d",
+            "balance": "7691000000",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {
+                "genesis_1": {
+                    "percent": 100,
+                    "votes": "7691000000"
+                }
+            }
+        },
+        {
+            "address": "dU68jsxhmuyeLquurf2oVoD75RifAnkboK",
+            "balance": "209631",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dU7GhsrZMKFufKUWcSjFrsiwjRw7eSHK9p",
+            "balance": "536702",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dU7mrpwWNBbAC9DLFyEaetk62LbLw7254Z",
+            "publicKey": "03376e13577664fee44e86ef3aaa2e726e0ae6a73ee6261bccd02df483e9fd61f9",
+            "balance": "9797550000000",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dUK2Lhozst4yPs8EaSEhzywjvCSxQJcagy",
+            "balance": "10000400000003",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dUddEgBx6PHAbCNk9L3KGTLCAzQBiLzbfc",
+            "publicKey": "0391dc71e0c5a86b4ee0e71accf69ae360ac332654763c021435e8e0450ea9e961",
+            "balance": "938900000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_35",
+                    "voteBalance": "938900000",
+                    "forgedFees": "119000000",
+                    "burnedFees": "107100000",
+                    "forgedRewards": "1030000000",
+                    "donations": "103000000",
+                    "producedBlocks": 5,
+                    "rank": 39,
+                    "voters": 1,
+                    "lastBlock": "cd9b99f69dfdb25fbed7d3297d2a99cfda6f0edf86e5a4022079522c96bb5ab5",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_35": {
+                    "percent": 100,
+                    "votes": "938900000"
+                }
+            }
+        },
+        {
+            "address": "dUgA1CCWKTTzc94o2by3Vfmwfc4CgeeodA",
+            "balance": "636456",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dUhgZCGMUdxEgiGuLQLDJTaUDF9rmLbgBE",
+            "publicKey": "02dc13187511dd22a0cb1577c6520d0309e431f0116289dda0264ce0b80e3f0561",
+            "balance": "22499595118",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "tx1n3233",
+                    "voteBalance": "0",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "0",
+                    "donations": "0",
+                    "producedBlocks": 0,
+                    "voters": 0,
+                    "resigned": "temporary"
+                }
+            },
+            "votingFor": {}
+        },
+        {
+            "address": "dUk5C92AhGkDnup9kAvTK1M5WuHeUqdLKi",
+            "publicKey": "02d00d35150ff32d8f550493e0d7a08623d430722c17c864c6c6728f6f7f40ee4e",
+            "balance": "22499595118",
+            "nonce": "1",
+            "attributes": {
+                "delegate": {
+                    "username": "tx1n2290",
+                    "voteBalance": "0",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "0",
+                    "donations": "0",
+                    "producedBlocks": 0,
+                    "rank": 54,
+                    "voters": 0
+                }
+            },
+            "votingFor": {}
+        },
+        {
+            "address": "dUkNGhWMWe75yBMxpzRsHT7jb79NYWALq1",
+            "balance": "764137",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dUnJ1mZWroRhUYPx6mYcnvVjRDhaJPXpdQ",
+            "balance": "805329",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dUodJCnFSkrfF6XhYJxwYsaAMbcrREuWWw",
+            "publicKey": "0321b5fa997f5c8e175af3850961222fd3f6aac02ee7a1c5016ffced2bbbd1126e",
+            "balance": "882000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_28",
+                    "voteBalance": "1241550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "980000000",
+                    "donations": "98000000",
+                    "producedBlocks": 5,
+                    "rank": 20,
+                    "voters": 2,
+                    "lastBlock": "1db4784a61e23521538478268cb8f1a48523619570009c6e66f6082b6392dba2",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_28": {
+                    "percent": 100,
+                    "votes": "882000000"
+                }
+            }
+        },
+        {
+            "address": "dUowCAD5DSwVaGCNfiVB8Y7Qw99PTGMXF9",
+            "balance": "303971",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dUyX2KsNPSAGPmA6aAhrevzhj87rWbTjU5",
+            "balance": "480076",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dV39chMtiKQCd3oz2bR96UNZxz6xKKzwp2",
+            "balance": "891596",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dV6F9nfM9WHrwLTPFk7RStnx82LYTg6gFr",
+            "balance": "516334",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dV7MAAW91syWWdqDebeo4i3HxJP2jinURx",
+            "publicKey": "02df978caa67c04a778fd4d3b42145c45e1de8dd4f9c243ed40b2172ca160fabf9",
+            "balance": "882000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_18",
+                    "voteBalance": "1241550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "980000000",
+                    "donations": "98000000",
+                    "producedBlocks": 5,
+                    "rank": 19,
+                    "voters": 2,
+                    "lastBlock": "b4293f8421a504e20abbe65d558a50d13945029dd72c2ecd07b21b5e29719b43",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_18": {
+                    "percent": 100,
+                    "votes": "882000000"
+                }
+            }
+        },
+        {
+            "address": "dV9CY3es2KdfBwi82R8m9kGGUStaw3vrsE",
+            "balance": "806639",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dVApsP1myMNAcUSS9FHQrrd1u3HCANWs9C",
+            "balance": "452914",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dVB6ZS4XxGFNnJdgU5M5gjFDViaLZqxo3F",
+            "publicKey": "033aff9abafbea93fba627c28c86c199760eb7378411a2493bcaa9523a341420b0",
+            "balance": "882000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_20",
+                    "voteBalance": "1241550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "980000000",
+                    "donations": "98000000",
+                    "producedBlocks": 5,
+                    "rank": 22,
+                    "voters": 2,
+                    "lastBlock": "140e3f66df1681bf2104567c308aa181b88a81d87e78b862a10bda05f77a6385",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_20": {
+                    "percent": 100,
+                    "votes": "882000000"
+                }
+            }
+        },
+        {
+            "address": "dVE9pmKU7QtcDavcDpszLppN3JEKQmejjg",
+            "publicKey": "02ea8877755584741ed0f97e4826487c761e280a927aa0b7ab82e710f5574951cc",
+            "balance": "1044000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_26",
+                    "voteBalance": "1403550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1160000000",
+                    "donations": "116000000",
+                    "producedBlocks": 6,
+                    "rank": 12,
+                    "voters": 2,
+                    "lastBlock": "88c13561c77943a452fde27534ebcc999d2301051b2e3b1b3918f867e92201db",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_26": {
+                    "percent": 100,
+                    "votes": "1044000000"
+                }
+            }
+        },
+        {
+            "address": "dVFHhzGukyCf2HCD4zf13SZsaeeiKpUj4z",
+            "balance": "339308",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dVGY2GzFMSvyDC4DzSaenU5ZFwcuGefEQA",
+            "balance": "353037",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dVL4LXocFGujRNJUBVBM2Ua1YpURrv5rJq",
+            "publicKey": "02094a8daa884cd8df769aecdb80f5eb681b596abb9c990dcc70730d9f3e75c080",
+            "balance": "936000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_32",
+                    "voteBalance": "936000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 40,
+                    "voters": 1,
+                    "lastBlock": "1401d7ae394cbb429f9fb0346edf9153ba9608ac886d6bfc87fe07747200f26b",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_32": {
+                    "percent": 100,
+                    "votes": "936000000"
+                }
+            }
+        },
+        {
+            "address": "dVSXespyTLtC8hYqc9BKWuunRTspxDGRpF",
+            "balance": "615570",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dVYx4Tdb2hFQxv2qKC8EocipkgjC9N1oGA",
+            "balance": "620876",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dVbXpqCtCJ99jDNJJd5Upy9nZ1TKarAkLD",
+            "balance": "658242",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dVfeWUtu4k6oFhUoAj5W7v2iywn7k1eqJm",
+            "balance": "780809",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dVi5htmar6Fx9AVRqaFNQLoyShX1Tz9BYw",
+            "balance": "900700",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dViY1gjeNgwWpd8rFsoHiiLJ87SEn5x9y7",
+            "balance": "47832",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dVr41BZSjoLgesPPMYEojSjAGzHNaegKux",
+            "balance": "364125",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dVrZ4iDqHVN8kinRBsFpgphFVaPJoNidsk",
+            "balance": "923877",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dVxfFfe6omSvMw8m1wj52ZqYj4rnKMtDh2",
+            "balance": "164111",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dW8yJECFjK22yVmqavKg1EYh8ztdrEf21o",
+            "balance": "537650",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dWEXJS5L6EJzZbfdBHNy7NbS5BaGw7brEW",
+            "balance": "732782",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dWMSUQZhYnPEE2qywAe6K8aTNmHHG2hBB3",
+            "balance": "643479",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dWbrjekrjEZwt19CzRsHF1V15vs7VAtTrE",
+            "publicKey": "027a81c5b51eb3fa371097d5e1f0300a4629e0c4aad170df6c6709ae907974c417",
+            "balance": "1008000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_3",
+                    "voteBalance": "7088391000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1120000000",
+                    "donations": "112000000",
+                    "producedBlocks": 6,
+                    "rank": 7,
+                    "voters": 2,
+                    "lastBlock": "1e12fd19a38a5619aba3531f1a4258f7cca1e5897c915a74c523a9da29bd7b43",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_3": {
+                    "percent": 100,
+                    "votes": "1008000000"
+                }
+            }
+        },
+        {
+            "address": "dWc9UE4T3rcLyRF462AJtUs2gDXZqsBn2G",
+            "balance": "681351",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dWfm5mxJuB7s1rKg6nWmP6cnJ6wzXJNXJr",
+            "balance": "643875",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dWioV9Hgg4AkkrAmr3UaNZy2XsdZgUeGWq",
+            "balance": "517008",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dX6x8fbQN7s5sW2X6vfhJVHZQ196Ukf5Wu",
+            "balance": "149916",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dX7TPG5cH1cJcrQXGq9cQjno5SuzPg6MPW",
+            "balance": "10000000000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dXCR5EbZXmd815CyyntZoXvgTgpU8ZaUjR",
+            "balance": "612700",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dXFNLLauy2F4YNBUSBSRvbnhgGuGGi8HUS",
+            "publicKey": "025516733d69b36ccff57f509faa906993cef2f138a9296eb554dbb0682f1e5416",
+            "balance": "936000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_10",
+                    "voteBalance": "936000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 43,
+                    "voters": 1,
+                    "lastBlock": "275177c932586b3183457bf2837a7bb4e17e5a067151a7f7f1d1adcb29bbe312",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_10": {
+                    "percent": 100,
+                    "votes": "936000000"
+                }
+            }
+        },
+        {
+            "address": "dXFiFvuK6aun3AsdZeJ5zddSr2jwwvBDxw",
+            "publicKey": "03b3a860166654ec40ff1e4c15ece75488e04c9f30968bbc70c1b375b0d041d235",
+            "balance": "9993449999979",
+            "nonce": "7",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dXRPHtcR3bwbHmK2xkwYdkB1f86E79QbbH",
+            "balance": "206197",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dXT9qY6Wa1XD5tFoEqFZR53S3cGZJnZFyJ",
+            "publicKey": "0211873707cebf5b43a5f12c3ab5b6638e3be0ec057e3dafe1494976c885be5074",
+            "balance": "882000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_16",
+                    "voteBalance": "1241550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "980000000",
+                    "donations": "98000000",
+                    "producedBlocks": 5,
+                    "rank": 16,
+                    "voters": 2,
+                    "lastBlock": "6015428ee8490bba867b0d822af4c19edb92e4111aedfe8f5881b595283d161c",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_16": {
+                    "percent": 100,
+                    "votes": "882000000"
+                }
+            }
+        },
+        {
+            "address": "dXeRji61KBJ8XTZHueNsMq2j9vXU2QgDXQ",
+            "balance": "980188",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dXh6eSMxvobicNuSRmpCPNc5TL5YngouMu",
+            "balance": "354475",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dXjyQeknpPgr3QaioX3WeKJktw1iyDZfcb",
+            "balance": "375511",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dXkD4M4P3CEeSFEGi3gKW4V2jxLNUvjNYk",
+            "balance": "50539",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dXkqAjBy1XAeb2Ej8TMFVH2493vmdfuyjQ",
+            "balance": "604939",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dXr76HjzMbaA1wgDma87viD9tvQvXyrzaC",
+            "balance": "10000100000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dXt1Po6Z3esCYtc5WTNJYWm2B4nFnCYMHA",
+            "publicKey": "03e85001c04edaa91a707747e6fb67b2188d3791a5c4dfad9d716ff9eb87ca3998",
+            "balance": "846000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_12",
+                    "voteBalance": "9523800000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "940000000",
+                    "donations": "94000000",
+                    "producedBlocks": 5,
+                    "rank": 6,
+                    "voters": 3,
+                    "lastBlock": "fe1f99ad97a4d4dfe83eda6c7b0e5ac3041e2713bd8cd012faba9d25720f0450",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_12": {
+                    "percent": 100,
+                    "votes": "846000000"
+                }
+            }
+        },
+        {
+            "address": "dXuV2wic6BabqFYWo69wWedAZmqB2ZuEsr",
+            "balance": "977193",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dXwYj2k4X17A3Fdwr3S78WAXkqm7fyt6Jv",
+            "publicKey": "02f693e9fdf8218f84e017537bae0abcf176868a3913f4b0ac7a9ba0ecbc69cfe5",
+            "balance": "936000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_43",
+                    "voteBalance": "936000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 48,
+                    "voters": 1,
+                    "lastBlock": "7bd1696748871e29d4dc271c3d48f5f5b7f77722a0ddecd8b9908dfa072310ad",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_43": {
+                    "percent": 100,
+                    "votes": "936000000"
+                }
+            }
+        },
+        {
+            "address": "dY66cCjXY4BJb7xrRMEm3ZbtzAPpEUVYK3",
+            "balance": "58306",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dY7q4n9ZciAj77xpS5zVCviSTrFF6Mo3oa",
+            "balance": "230204",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dY9kCCsv6iMJcpa5bTRBrZngispS2WKNMh",
+            "balance": "711362",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYAAZnxkNJGqpp47o8VJkdFrgyL1M83pjG",
+            "balance": "680382",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYAB78mHtpwDzZxC3j4yiKCboWEzpcg4he",
+            "balance": "123066",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYFNyuk6G1fK96tWU2NtxycAxC8wFuSDPY",
+            "balance": "625970",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYJkDanMtRjM2923oHk2StwzckQtGp9wQm",
+            "balance": "791755",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYL7oP8zogphCneDwjAjRZcjeeiJakorPC",
+            "balance": "84502",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYPSVEb2BfxEJgR9VejC7k211BcdYKKiHp",
+            "balance": "278860",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYRRQxLs3wNKohZRFwDy5f2Yc5UAPy19pr",
+            "publicKey": "02c1c36bc5e164051a4a07ca34881324a94fb8aa0e47e9da59860a56938a93e042",
+            "balance": "10004024512324",
+            "nonce": "2",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYSrfD9Y6fDdV6S9QrL3BzoGWCwYj89FWG",
+            "balance": "781736",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYWGt3z9nXERVfcpTLEobmjLXBpfTu75EP",
+            "balance": "78635",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYZrU5bQgGB25TmsWBUV4PZ4ZmzfVWfZvV",
+            "balance": "22899",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYaiQ5ndRgkKWs77GxtqPbaA2DSmDzFAox",
+            "publicKey": "034da77e4b4275eb0247370133646eeef428ce014e5e6c699aae00fe4de8e7954b",
+            "balance": "945000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_50",
+                    "voteBalance": "945000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1050000000",
+                    "donations": "105000000",
+                    "producedBlocks": 5,
+                    "rank": 33,
+                    "voters": 1,
+                    "lastBlock": "603f4f0fa3c2eeb27659ec1f3d64f3033faef9b090f204fcbe6280c0b28ea0a0",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_50": {
+                    "percent": 100,
+                    "votes": "945000000"
+                }
+            }
+        },
+        {
+            "address": "dYjdKKpAiY4q4sxjS53mVeY6uP6L2VoGcd",
+            "balance": "889623",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYk1BkA5QMajPAPJ1nxuTae4kAQwH3uQXQ",
+            "balance": "395896",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYkjqozifA5y5M5XnBd6odqaEKerD3L53L",
+            "balance": "614217",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYq61Fa9UpXycFK9fL65ZfqCJHPHvfPUsP",
+            "balance": "824516",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dYqrjYMGkxpgHt4PEAY4g5EQwVjcGpBA6y",
+            "balance": "454520",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dZ1W1GsDCSyhR148oMhuHy3PkhnnSGCqVn",
+            "publicKey": "021c65ff25a5bb3b4a5b104ed7d09f7006be53b77687a0ee36d0e8206fae1e8677",
+            "balance": "3199999950000000",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dZ8mNQDSY5SDgFpF3AV5ZjFK8HLXWsZhvX",
+            "publicKey": "03da52e76eae8ff44493e800bed7a80a9cc2deb3ba82be63161f6fc9ae8b4997d0",
+            "balance": "3103821467",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_48",
+                    "voteBalance": "3103821467",
+                    "forgedFees": "22578214646",
+                    "burnedFees": "20320393179",
+                    "forgedRewards": "940000000",
+                    "donations": "94000000",
+                    "producedBlocks": 5,
+                    "rank": 10,
+                    "voters": 1,
+                    "lastBlock": "933edde05930cfd23ef89becff96390bd3098e741e0f47c7b791cc0a68d16ff7",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_48": {
+                    "percent": 100,
+                    "votes": "3103821467"
+                }
+            }
+        },
+        {
+            "address": "dZDbtMv86KMqo8iPMtAJLhoT5BVKfyVokA",
+            "balance": "2636000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dZLNbL5T6AU2RgkSAEinXiUBkTv2HeHe2o",
+            "publicKey": "0385939beaac419cf4aaa7c8b03ff711d619e984ed1d86f15f8559cd97f5a8a0a6",
+            "balance": "882000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_24",
+                    "voteBalance": "1241550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "980000000",
+                    "donations": "98000000",
+                    "producedBlocks": 5,
+                    "rank": 26,
+                    "voters": 2,
+                    "lastBlock": "31108e1bb77138e355e525917efd52646f4547a2ecb1c164c1c0e3846f43153f",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_24": {
+                    "percent": 100,
+                    "votes": "882000000"
+                }
+            }
+        },
+        {
+            "address": "dZNrRxYbRa8zHHNJk9DZgb1Wn78xjFgYhx",
+            "balance": "986656",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dZYp2Sje6ETcQRHPMavnk1prjdfoYmC8XN",
+            "publicKey": "0243f627bf1609f152148ae55aec87f7d90d1c771036b1046df541830d501165e0",
+            "balance": "882000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_11",
+                    "voteBalance": "1241550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "980000000",
+                    "donations": "98000000",
+                    "producedBlocks": 5,
+                    "rank": 17,
+                    "voters": 2,
+                    "lastBlock": "836681256fcd87cc7d1c8fa54b4135765d551329bb50b6c9e82268202294203b",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_11": {
+                    "percent": 100,
+                    "votes": "882000000"
+                }
+            }
+        },
+        {
+            "address": "dZbxRNi2t2x4bg8gS3h7dwLC8nTV6DhWFo",
+            "balance": "640844",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dZcTdyAdTE5UmVpseqQ28wuQZQWHfWrYTa",
+            "balance": "528461",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dZhBBZygAnz3s1j3NmNoMsDUnjF9d8kEfA",
+            "publicKey": "0232b61eb0f081aa1f2ac2fdc3d4cd20ba09a85b3b855939fb36dd9eb212827c12",
+            "balance": "936000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_33",
+                    "voteBalance": "936000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 41,
+                    "voters": 1,
+                    "lastBlock": "c16e77799e254180805b542bca665965f144c0a4de3e5cf6100128794e81f777",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_33": {
+                    "percent": 100,
+                    "votes": "936000000"
+                }
+            }
+        },
+        {
+            "address": "dZiQhUwi4k4N4YEStMgjXWcgjqW1TCnbTT",
+            "balance": "218540",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dZoNt2hW7KnAW3j8DswaQwX5kGBW71DLrz",
+            "balance": "730260",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dZvciYQ3NnVxdGuTnShMnDJy6zkp5FpaS7",
+            "balance": "11200000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dZvo7MUS3FHEwsYmJnPhy8K4THdenN2KZ7",
+            "balance": "911060",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dZwKBum9EUyDzt2buqdSnKT6qrNgUKoYay",
+            "balance": "109802",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dZwTMWLNRZ34Xk5YhsM5CVav3bL6v1w4u7",
+            "publicKey": "0334f21b095dbab8c1c602ff0df73371605dd9b79193eb55c89b50d86be0defdea",
+            "balance": "0",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dZwr4Rfc8yvPqHcpxDx3LKEWTMAFZrMSVC",
+            "publicKey": "03d688cb8fa03aa8436e820461852972b66de6bf930e20d2aaf2283e01fc953979",
+            "balance": "945000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_49",
+                    "voteBalance": "945000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1050000000",
+                    "donations": "105000000",
+                    "producedBlocks": 5,
+                    "rank": 37,
+                    "voters": 1,
+                    "lastBlock": "2ba91c1e9ee797d19e7fa09b5e6df3af6542b84df36a107c98371a394a06c01b",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_49": {
+                    "percent": 100,
+                    "votes": "945000000"
+                }
+            }
+        },
+        {
+            "address": "dZzj4XZdJimNCmDQXn9QQRgYhY3JXzuoHu",
+            "balance": "78760",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "da1fUxrhtV2fwubAvV6xg6RNWp88xTT1n9",
+            "balance": "776923",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "da28omQQpgrTCmb4oUQ5GNaup8LAsWQ1ZM",
+            "balance": "126983",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "da9ioAet9zHKSXcQmMZzGt2AV98EdC7ekS",
+            "publicKey": "03779265967d6f5d430313b85ca68e45d5bae88d32b69bc348e5363b187ab8581d",
+            "balance": "882000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_29",
+                    "voteBalance": "1241550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "980000000",
+                    "donations": "98000000",
+                    "producedBlocks": 5,
+                    "rank": 25,
+                    "voters": 2,
+                    "lastBlock": "3b5108bfe3edbf0767bd32ff0f7792b85d45e794326883f639e87cc0c2fce649",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_29": {
+                    "percent": 100,
+                    "votes": "882000000"
+                }
+            }
+        },
+        {
+            "address": "daFUogjWMGR4G9RwLq7d8QuhKgQwENFUx9",
+            "balance": "739307",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "daG4Q9hh1u4SGJxNJgxUUmQrWzaNPBqGdk",
+            "balance": "893335",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "daH7qJkCkxpytg2DdErYq8CBCVf1SiF2G1",
+            "balance": "82956",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "daPVtyYavS9mo1v9Cdy3AABJSipKCVgzRe",
+            "publicKey": "025343d887efbae2b36a3785fb544586be6d21ac1a00ab82b00b19542bc4cd2d30",
+            "balance": "943871000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_38",
+                    "voteBalance": "943871000",
+                    "forgedFees": "78710000",
+                    "burnedFees": "70839000",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 38,
+                    "voters": 1,
+                    "lastBlock": "b0360349da5356629997c0848d22864300d429e4c0f359b5a51aeadc1aaeee7e",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_38": {
+                    "percent": 100,
+                    "votes": "943871000"
+                }
+            }
+        },
+        {
+            "address": "daS3j6dKkPJRkqnbU3nDa5U7BWFSsqLtmA",
+            "balance": "875706",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "daTBxkSJk2tZhujYcYSQtxj5RRFZ8HcxW8",
+            "balance": "3400000000000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "daWHrkzw1tDpcsCsXk75byb65GXxfL4knh",
+            "balance": "88018",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "daYUNeaScvygMsyX35475dHRoU41yQGobA",
+            "balance": "870925",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dadwHAPvUMTPSQ4nL5fdF9ZFYuSNzyKU55",
+            "balance": "222513",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "datYpZcZZNV5nvbsGugrwBHpj7B1qZx2TD",
+            "balance": "796751",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dathB9rx98ZFDTtVx8j9ZviimF7ZUs6egD",
+            "balance": "317445",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dawx6nJCrDn3BWa2b64B8cA3oqghcHW9RW",
+            "balance": "672201",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "db1iqqVQgYsKwmQVW5EXb6cgMQN5S2BzHQ",
+            "balance": "584992",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "db4nyZgrciy3Jqjt1Gk7pu8eWoCmHnz9TY",
+            "balance": "503058",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "db86naZv3hCCP4jDmNDijwYV7qqQCinAMc",
+            "balance": "251752",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "db8LAnj9J5r8WHQWRjzDvBHuRaK58Tk67J",
+            "balance": "10000500000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dbFx7ubpcYkCuT7gUZruDPc7RJ1p6nQfJz",
+            "balance": "828715",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dbJLGNqSkatDXTaWfWAzMuZUB3DkKsEMsC",
+            "balance": "285849",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dbKnhytyPdLqgFgLEgekcF3R6NM5Pdwwg9",
+            "balance": "180748",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dbLmNzxRVfFTCrsRGwiqcKKdsrDsSerVNY",
+            "balance": "468695",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dbNVyK6thUAtibPs6TC5HM1TpA4TTwFoo9",
+            "publicKey": "039dbaf6ac0acb7504ba8eb4def6d657ec4dbd7b45e89f41d8dba2fb442a62dea6",
+            "balance": "11091000000",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {
+                "genesis_12": {
+                    "percent": 75,
+                    "votes": "8318250000"
+                },
+                "genesis_7": {
+                    "percent": 25,
+                    "votes": "2772750000"
+                }
+            }
+        },
+        {
+            "address": "dbXaxde6sHEi1tehS5tuDts5VcWpS6HS79",
+            "balance": "10000000000000",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dbaSShhwyjAkbosDeCLKBinqd2f96m5f4q",
+            "balance": "409234",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dbbdJ2VBZ12Yaqqh8MCgYKcWGdvKHGKHKh",
+            "balance": "929984",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dbfNgJLJyjEJj1htyS12YpcKoXKKuLNYRW",
+            "publicKey": "032d4c0fad61bc79b8bc57584c2b2d68d9ebd735b5412601da5909005b03f59225",
+            "balance": "936000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_46",
+                    "voteBalance": "936000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1040000000",
+                    "donations": "104000000",
+                    "producedBlocks": 5,
+                    "rank": 51,
+                    "voters": 1,
+                    "lastBlock": "219d572da9b9166743d9e195d05b834e481b56606b271c8f37d58a2ca5773484",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_46": {
+                    "percent": 100,
+                    "votes": "936000000"
+                }
+            }
+        },
+        {
+            "address": "dbneHqeUx1kSxhYknjXtzTTBhnH1U2hnEE",
+            "publicKey": "0254bd6915bf35788ab9f91be20e99d1e1663eb14aca0d628ac6fa224978e0ba80",
+            "balance": "9791000000",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {
+                "tx1n1160": {
+                    "percent": 100,
+                    "votes": "9791000000"
+                }
+            }
+        },
+        {
+            "address": "dc4ukRfzm8RwMNRa9Rk3oBLAg1STUbK42R",
+            "publicKey": "023a35ed8bc058d2af6e57aec10bca42e5ce990e9dbac9d037e619199af335163c",
+            "balance": "10491000000",
+            "nonce": "1",
+            "attributes": {},
+            "votingFor": {
+                "genesis_2": {
+                    "percent": 81.9,
+                    "votes": "8592129000"
+                },
+                "genesis_1": {
+                    "percent": 18.1,
+                    "votes": "1898871000"
+                }
+            }
+        },
+        {
+            "address": "dcCzYLoWnVj2gTacewXN3yeQ6VRD6utZpH",
+            "balance": "844626",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dcDUrGCFVY6psqmAL2UEEuwJzzjk6PkemV",
+            "balance": "425880",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dcN3wjEq6c84XSvUd9b1W6FgnYTPGqp8cS",
+            "balance": "513802",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dcPbuzvsoAd6zMqocoEVJfK3TypjnB4SG1",
+            "publicKey": "038d9a9cae9796b20b923894a7995f8540490d133622f73e79ede887ae28ade240",
+            "balance": "945000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_44",
+                    "voteBalance": "945000000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "1050000000",
+                    "donations": "105000000",
+                    "producedBlocks": 5,
+                    "rank": 35,
+                    "voters": 1,
+                    "lastBlock": "572f20a7cdb6b1ad442c6f3295de757a37feeeb2d04fec6209902e99cd00546f",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_44": {
+                    "percent": 100,
+                    "votes": "945000000"
+                }
+            }
+        },
+        {
+            "address": "dcQLE9psQfrFHKP4LUdcUqdiu6Mjcgddc7",
+            "balance": "548418",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dcTcwtQHUSWWMD2P8CsP4ESmeuUbhc58cA",
+            "publicKey": "02589588895646bd4cbb7e6c1a70754e18ae1a4ce9c7e2948b59807bde4cf6b0cd",
+            "balance": "738000000",
+            "nonce": "2",
+            "attributes": {
+                "delegate": {
+                    "username": "genesis_19",
+                    "voteBalance": "1097550000",
+                    "forgedFees": "0",
+                    "burnedFees": "0",
+                    "forgedRewards": "820000000",
+                    "donations": "82000000",
+                    "producedBlocks": 4,
+                    "rank": 29,
+                    "voters": 2,
+                    "lastBlock": "c8f6617e7a019a14256c749c54aaec4eade541e88ba95ae1d66d178fd6f278ae",
+                    "version": "4.3.1"
+                }
+            },
+            "votingFor": {
+                "genesis_19": {
+                    "percent": 100,
+                    "votes": "738000000"
+                }
+            }
+        },
+        {
+            "address": "dcWLiiLi4GUiJ9QrL5rA2uveifytrUtDGe",
+            "balance": "56822",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        },
+        {
+            "address": "dcb3bZaDjnMzDMwqCujW3bCDMyZBpBtAKC",
+            "balance": "746830",
+            "nonce": "0",
+            "attributes": {},
+            "votingFor": {}
+        }
+    ],
+    "rounds": {
+        "5": [
+            {
+                "publicKey": "03b85138c2cac76da4c468059c7188a07235983f4251d8d2fd6f44e6d4eb286c72",
+                "votes": "5826402306300"
+            },
+            {
+                "publicKey": "033b338238b00abfc29272b1024ffd2226a21ba16739563c0ffb0d6a5fcdbd1771",
+                "votes": "3880660400000"
+            },
+            {
+                "publicKey": "02f060d6f4d82a10865296502171b136118e33b3830cfeaed06ec7a975028c4968",
+                "votes": "13667129000"
+            },
+            {
+                "publicKey": "0259ff6a05771cbb65cc16f460f88277c4ad25a976e3ac1aec819897bfd45317ac",
+                "votes": "11678550000"
+            },
+            {
+                "publicKey": "03cd5721eff66053eb2d7d38c63044be5ea3e7049eb5b22c91ed88e141e1abcee2",
+                "votes": "10111871000"
+            },
+            {
+                "publicKey": "03e85001c04edaa91a707747e6fb67b2188d3791a5c4dfad9d716ff9eb87ca3998",
+                "votes": "9361800000"
+            },
+            {
+                "publicKey": "027a81c5b51eb3fa371097d5e1f0300a4629e0c4aad170df6c6709ae907974c417",
+                "votes": "6926391000"
+            },
+            {
+                "publicKey": "0295f24f2403255f3cdc23e731b825e8f3d89538599a83868217befebc6640da17",
+                "votes": "5434550001"
+            },
+            {
+                "publicKey": "02d9961bcd79d1aa6d83995014b005e0067a627788c31c25dc314ed67b9f848e81",
+                "votes": "4846717200"
+            },
+            {
+                "publicKey": "03da52e76eae8ff44493e800bed7a80a9cc2deb3ba82be63161f6fc9ae8b4997d0",
+                "votes": "2941821467"
+            },
+            {
+                "publicKey": "0247acf1d977e5f2098a93b342992147c8c1ee488839b4c10a61f559fb32713b2e",
+                "votes": "2041609000"
+            },
+            {
+                "publicKey": "02ea8877755584741ed0f97e4826487c761e280a927aa0b7ab82e710f5574951cc",
+                "votes": "1232550000"
+            },
+            {
+                "publicKey": "0357d8f0be891d53cb2e4f682f8547d2773ba9987bb5c57e1ef4a7ccf193184702",
+                "votes": "1232550000"
+            },
+            {
+                "publicKey": "03bf7caf10ad1eea990bd67998298eaf9ffa8930724c7803b7fa1b4d40a5abc751",
+                "votes": "1232550000"
+            },
+            {
+                "publicKey": "0321b5fa997f5c8e175af3850961222fd3f6aac02ee7a1c5016ffced2bbbd1126e",
+                "votes": "1070550000"
+            },
+            {
+                "publicKey": "03312ddf4aa009c51e107f4631b12e14144709fb785414a2fc39d0f59e61c0f5e9",
+                "votes": "1070550000"
+            },
+            {
+                "publicKey": "033aff9abafbea93fba627c28c86c199760eb7378411a2493bcaa9523a341420b0",
+                "votes": "1070550000"
+            },
+            {
+                "publicKey": "0361a237513e536cf72a6213efb7584dbfb53e509af140d8f7cd599ade579a412d",
+                "votes": "1070550000"
+            },
+            {
+                "publicKey": "0374e2a47ec341d911e8006a908339eb1faf4d7ca84c1cabeb5502abc9d4b908d0",
+                "votes": "1070550000"
+            },
+            {
+                "publicKey": "03779265967d6f5d430313b85ca68e45d5bae88d32b69bc348e5363b187ab8581d",
+                "votes": "1070550000"
+            },
+            {
+                "publicKey": "0385939beaac419cf4aaa7c8b03ff711d619e984ed1d86f15f8559cd97f5a8a0a6",
+                "votes": "1070550000"
+            },
+            {
+                "publicKey": "03a7731a6958e5edd5c26e146ac182a1b83862b5f5b84a92ecc543952ad6c2e994",
+                "votes": "1070550000"
+            },
+            {
+                "publicKey": "0211873707cebf5b43a5f12c3ab5b6638e3be0ec057e3dafe1494976c885be5074",
+                "votes": "1061550000"
+            },
+            {
+                "publicKey": "0243f627bf1609f152148ae55aec87f7d90d1c771036b1046df541830d501165e0",
+                "votes": "1061550000"
+            },
+            {
+                "publicKey": "02789c8e814e2e07a90ae170755deb296bb8310e41c0476fbf144374f4c3360191",
+                "votes": "1061550000"
+            },
+            {
+                "publicKey": "02df978caa67c04a778fd4d3b42145c45e1de8dd4f9c243ed40b2172ca160fabf9",
+                "votes": "1061550000"
+            },
+            {
+                "publicKey": "02a1426801a790c32bf759030510ffa3b3d2be6a834a1a68ef1c3da28ae683dcf2",
+                "votes": "1043326500"
+            },
+            {
+                "publicKey": "03783b9db76f1f1716b28fdad8df332f95e1eb8a45a59ece09de747e0691e5ccdb",
+                "votes": "933100003"
+            },
+            {
+                "publicKey": "02589588895646bd4cbb7e6c1a70754e18ae1a4ce9c7e2948b59807bde4cf6b0cd",
+                "votes": "917550000"
+            },
+            {
+                "publicKey": "02e69cb2cbed90a4362838765c775a26aacc2c6ebc96fb5979be2fe3fc189ce73d",
+                "votes": "901000000"
+            },
+            {
+                "publicKey": "02806916740721a29f27f1dd018a8af8cc511ca4ceee015c8a4b44200113ceb9c3",
+                "votes": "900900000"
+            },
+            {
+                "publicKey": "03a9b498c931ea943cc8fe4fc5eeb2004928fbb69eefc39cf593ab34311871b423",
+                "votes": "899550000"
+            },
+            {
+                "publicKey": "02094a8daa884cd8df769aecdb80f5eb681b596abb9c990dcc70730d9f3e75c080",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "0232b61eb0f081aa1f2ac2fdc3d4cd20ba09a85b3b855939fb36dd9eb212827c12",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "0245dcbb68f0ad265203d1adb3d9108bda8045a5148e0634a2d68b74cdea2b72fd",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "025516733d69b36ccff57f509faa906993cef2f138a9296eb554dbb0682f1e5416",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "027b4babb4655b7a66a1c7c9189a476935b13530314db8de6fd350d30948bade68",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "029b1e0d08ccff8c97ab25f6bd2e1c720d828d4ea4d69183d61842fb1c0382d2c5",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "02b85b15ff121c2408ea682a6f6bf1a1079bf42537cdeef9e039befa26671949df",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "02d275ce60e589a0372751d44162c7b7e19c6b4abcfb2fe346347a0b8aab69abd4",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "032583b96e6a5ef2c88518a0e0f9b711cf2388a0c6a6f8be238fd94a19ac20843e",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "032d4c0fad61bc79b8bc57584c2b2d68d9ebd735b5412601da5909005b03f59225",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "033ada38bba3f0db1f37c32c95e69c1835a13d7278a0dbcc00be7914985cc89455",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "034da77e4b4275eb0247370133646eeef428ce014e5e6c699aae00fe4de8e7954b",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "03884e28030b67cf2e36a8e8fe2c828baf4dded98c7b665183603e8fe5f87f2154",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "038d9a9cae9796b20b923894a7995f8540490d133622f73e79ede887ae28ade240",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "03900b65c8e5a7c1ffe173d144253c5ea11843a59c44baf89040081f51dee1a14a",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "03d688cb8fa03aa8436e820461852972b66de6bf930e20d2aaf2283e01fc953979",
+                "votes": "747000000"
+            },
+            {
+                "publicKey": "025343d887efbae2b36a3785fb544586be6d21ac1a00ab82b00b19542bc4cd2d30",
+                "votes": "745871000"
+            },
+            {
+                "publicKey": "0391dc71e0c5a86b4ee0e71accf69ae360ac332654763c021435e8e0450ea9e961",
+                "votes": "740900000"
+            },
+            {
+                "publicKey": "02f693e9fdf8218f84e017537bae0abcf176868a3913f4b0ac7a9ba0ecbc69cfe5",
+                "votes": "738000000"
+            },
+            {
+                "publicKey": "031e359acc275085238342b49232f9c96e10303ceb3cdd398167e8e3ca84815745",
+                "votes": "738000000"
+            },
+            {
+                "publicKey": "039a23589c4da05386ba1aa4e0cec53230c006707e680785f4cb9bedb213a28fa4",
+                "votes": "359999999"
+            }
+        ],
+        "6": [
+            {
+                "publicKey": "03b85138c2cac76da4c468059c7188a07235983f4251d8d2fd6f44e6d4eb286c72",
+                "votes": "5826564306300"
+            },
+            {
+                "publicKey": "033b338238b00abfc29272b1024ffd2226a21ba16739563c0ffb0d6a5fcdbd1771",
+                "votes": "3880822400000"
+            },
+            {
+                "publicKey": "02f060d6f4d82a10865296502171b136118e33b3830cfeaed06ec7a975028c4968",
+                "votes": "13829129000"
+            },
+            {
+                "publicKey": "0259ff6a05771cbb65cc16f460f88277c4ad25a976e3ac1aec819897bfd45317ac",
+                "votes": "11840550000"
+            },
+            {
+                "publicKey": "03cd5721eff66053eb2d7d38c63044be5ea3e7049eb5b22c91ed88e141e1abcee2",
+                "votes": "10273871000"
+            },
+            {
+                "publicKey": "03e85001c04edaa91a707747e6fb67b2188d3791a5c4dfad9d716ff9eb87ca3998",
+                "votes": "9523800000"
+            },
+            {
+                "publicKey": "027a81c5b51eb3fa371097d5e1f0300a4629e0c4aad170df6c6709ae907974c417",
+                "votes": "7088391000"
+            },
+            {
+                "publicKey": "0295f24f2403255f3cdc23e731b825e8f3d89538599a83868217befebc6640da17",
+                "votes": "5596550001"
+            },
+            {
+                "publicKey": "02d9961bcd79d1aa6d83995014b005e0067a627788c31c25dc314ed67b9f848e81",
+                "votes": "5008717200"
+            },
+            {
+                "publicKey": "03da52e76eae8ff44493e800bed7a80a9cc2deb3ba82be63161f6fc9ae8b4997d0",
+                "votes": "3103821467"
+            },
+            {
+                "publicKey": "0247acf1d977e5f2098a93b342992147c8c1ee488839b4c10a61f559fb32713b2e",
+                "votes": "2212609000"
+            },
+            {
+                "publicKey": "02ea8877755584741ed0f97e4826487c761e280a927aa0b7ab82e710f5574951cc",
+                "votes": "1403550000"
+            },
+            {
+                "publicKey": "0357d8f0be891d53cb2e4f682f8547d2773ba9987bb5c57e1ef4a7ccf193184702",
+                "votes": "1403550000"
+            },
+            {
+                "publicKey": "03bf7caf10ad1eea990bd67998298eaf9ffa8930724c7803b7fa1b4d40a5abc751",
+                "votes": "1403550000"
+            },
+            {
+                "publicKey": "03a7731a6958e5edd5c26e146ac182a1b83862b5f5b84a92ecc543952ad6c2e994",
+                "votes": "1250550000"
+            },
+            {
+                "publicKey": "0211873707cebf5b43a5f12c3ab5b6638e3be0ec057e3dafe1494976c885be5074",
+                "votes": "1241550000"
+            },
+            {
+                "publicKey": "0243f627bf1609f152148ae55aec87f7d90d1c771036b1046df541830d501165e0",
+                "votes": "1241550000"
+            },
+            {
+                "publicKey": "02789c8e814e2e07a90ae170755deb296bb8310e41c0476fbf144374f4c3360191",
+                "votes": "1241550000"
+            },
+            {
+                "publicKey": "02df978caa67c04a778fd4d3b42145c45e1de8dd4f9c243ed40b2172ca160fabf9",
+                "votes": "1241550000"
+            },
+            {
+                "publicKey": "0321b5fa997f5c8e175af3850961222fd3f6aac02ee7a1c5016ffced2bbbd1126e",
+                "votes": "1241550000"
+            },
+            {
+                "publicKey": "03312ddf4aa009c51e107f4631b12e14144709fb785414a2fc39d0f59e61c0f5e9",
+                "votes": "1241550000"
+            },
+            {
+                "publicKey": "033aff9abafbea93fba627c28c86c199760eb7378411a2493bcaa9523a341420b0",
+                "votes": "1241550000"
+            },
+            {
+                "publicKey": "0361a237513e536cf72a6213efb7584dbfb53e509af140d8f7cd599ade579a412d",
+                "votes": "1241550000"
+            },
+            {
+                "publicKey": "0374e2a47ec341d911e8006a908339eb1faf4d7ca84c1cabeb5502abc9d4b908d0",
+                "votes": "1241550000"
+            },
+            {
+                "publicKey": "03779265967d6f5d430313b85ca68e45d5bae88d32b69bc348e5363b187ab8581d",
+                "votes": "1241550000"
+            },
+            {
+                "publicKey": "0385939beaac419cf4aaa7c8b03ff711d619e984ed1d86f15f8559cd97f5a8a0a6",
+                "votes": "1241550000"
+            },
+            {
+                "publicKey": "02a1426801a790c32bf759030510ffa3b3d2be6a834a1a68ef1c3da28ae683dcf2",
+                "votes": "1223326500"
+            },
+            {
+                "publicKey": "03783b9db76f1f1716b28fdad8df332f95e1eb8a45a59ece09de747e0691e5ccdb",
+                "votes": "1113100003"
+            },
+            {
+                "publicKey": "02589588895646bd4cbb7e6c1a70754e18ae1a4ce9c7e2948b59807bde4cf6b0cd",
+                "votes": "1097550000"
+            },
+            {
+                "publicKey": "02e69cb2cbed90a4362838765c775a26aacc2c6ebc96fb5979be2fe3fc189ce73d",
+                "votes": "1081000000"
+            },
+            {
+                "publicKey": "02806916740721a29f27f1dd018a8af8cc511ca4ceee015c8a4b44200113ceb9c3",
+                "votes": "1080900000"
+            },
+            {
+                "publicKey": "03a9b498c931ea943cc8fe4fc5eeb2004928fbb69eefc39cf593ab34311871b423",
+                "votes": "1079550000"
+            },
+            {
+                "publicKey": "034da77e4b4275eb0247370133646eeef428ce014e5e6c699aae00fe4de8e7954b",
+                "votes": "945000000"
+            },
+            {
+                "publicKey": "03884e28030b67cf2e36a8e8fe2c828baf4dded98c7b665183603e8fe5f87f2154",
+                "votes": "945000000"
+            },
+            {
+                "publicKey": "038d9a9cae9796b20b923894a7995f8540490d133622f73e79ede887ae28ade240",
+                "votes": "945000000"
+            },
+            {
+                "publicKey": "03900b65c8e5a7c1ffe173d144253c5ea11843a59c44baf89040081f51dee1a14a",
+                "votes": "945000000"
+            },
+            {
+                "publicKey": "03d688cb8fa03aa8436e820461852972b66de6bf930e20d2aaf2283e01fc953979",
+                "votes": "945000000"
+            },
+            {
+                "publicKey": "025343d887efbae2b36a3785fb544586be6d21ac1a00ab82b00b19542bc4cd2d30",
+                "votes": "943871000"
+            },
+            {
+                "publicKey": "0391dc71e0c5a86b4ee0e71accf69ae360ac332654763c021435e8e0450ea9e961",
+                "votes": "938900000"
+            },
+            {
+                "publicKey": "02094a8daa884cd8df769aecdb80f5eb681b596abb9c990dcc70730d9f3e75c080",
+                "votes": "936000000"
+            },
+            {
+                "publicKey": "0232b61eb0f081aa1f2ac2fdc3d4cd20ba09a85b3b855939fb36dd9eb212827c12",
+                "votes": "936000000"
+            },
+            {
+                "publicKey": "0245dcbb68f0ad265203d1adb3d9108bda8045a5148e0634a2d68b74cdea2b72fd",
+                "votes": "936000000"
+            },
+            {
+                "publicKey": "025516733d69b36ccff57f509faa906993cef2f138a9296eb554dbb0682f1e5416",
+                "votes": "936000000"
+            },
+            {
+                "publicKey": "027b4babb4655b7a66a1c7c9189a476935b13530314db8de6fd350d30948bade68",
+                "votes": "936000000"
+            },
+            {
+                "publicKey": "029b1e0d08ccff8c97ab25f6bd2e1c720d828d4ea4d69183d61842fb1c0382d2c5",
+                "votes": "936000000"
+            },
+            {
+                "publicKey": "02b85b15ff121c2408ea682a6f6bf1a1079bf42537cdeef9e039befa26671949df",
+                "votes": "936000000"
+            },
+            {
+                "publicKey": "02d275ce60e589a0372751d44162c7b7e19c6b4abcfb2fe346347a0b8aab69abd4",
+                "votes": "936000000"
+            },
+            {
+                "publicKey": "02f693e9fdf8218f84e017537bae0abcf176868a3913f4b0ac7a9ba0ecbc69cfe5",
+                "votes": "936000000"
+            },
+            {
+                "publicKey": "031e359acc275085238342b49232f9c96e10303ceb3cdd398167e8e3ca84815745",
+                "votes": "936000000"
+            },
+            {
+                "publicKey": "032583b96e6a5ef2c88518a0e0f9b711cf2388a0c6a6f8be238fd94a19ac20843e",
+                "votes": "936000000"
+            },
+            {
+                "publicKey": "032d4c0fad61bc79b8bc57584c2b2d68d9ebd735b5412601da5909005b03f59225",
+                "votes": "936000000"
+            },
+            {
+                "publicKey": "033ada38bba3f0db1f37c32c95e69c1835a13d7278a0dbcc00be7914985cc89455",
+                "votes": "936000000"
+            },
+            {
+                "publicKey": "039a23589c4da05386ba1aa4e0cec53230c006707e680785f4cb9bedb213a28fa4",
+                "votes": "557999999"
+            }
+        ]
+    }
+}
