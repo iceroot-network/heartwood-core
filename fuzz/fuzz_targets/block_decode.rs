@@ -1,5 +1,6 @@
-//! The block decoder on arbitrary bytes: no input may panic it, and a block it accepts encodes to
-//! bytes that decode to the same block.
+//! The block decoder on arbitrary bytes: no input may panic it, a block it accepts encodes to
+//! bytes that decode to the same block, and a block received from another node is in canonical
+//! form, so that it encodes to bytes that are received as the same block.
 
 #![no_main]
 
@@ -37,4 +38,10 @@ fuzz_target!(|bytes: &[u8]| {
         assert_eq!(again, block);
     }
     let _ = Block::decode_trusted(bytes, &RULES);
+    if let Ok(block) = Block::receive(bytes, &RULES) {
+        let _ = block.verify(&RULES, 0);
+        let again =
+            Block::receive(&block.encode(), &RULES).expect("a received block is received again");
+        assert_eq!(again, block);
+    }
 });

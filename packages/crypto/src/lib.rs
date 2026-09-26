@@ -24,6 +24,8 @@
 //! - No type of the elliptic-curve libraries appears in the public API: keys, signatures and
 //!   addresses are the opaque types of [`identities`] and [`crypto::sig`].
 //! - Every signing call takes an [`Aux`] value; there is no signing entry point without one.
+//! - A block from another node is accepted with [`Block::receive`], which builds it again from its
+//!   decoded fields as the reference does.
 //!
 //! Features: `legacy-schnorr` enables the pre-BIP340 Schnorr scheme, which is used only for peer
 //! status attestations; `genesis` enables the chain-definition builder. `fixed-aux` is a test seam

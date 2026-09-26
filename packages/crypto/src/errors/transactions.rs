@@ -206,5 +206,27 @@ pub enum BuildError {
     },
     /// The JSON does not have the shape of a transaction.
     #[error("invalid transaction JSON: {0}")]
-    Json(String),
+    Json(#[from] JsonError),
+}
+
+/// The JSON form of a transaction or a block does not have the reference's shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum JsonError {
+    /// The value is not a JSON object.
+    #[error("the value is not a JSON object")]
+    NotAnObject,
+    /// A required key is missing.
+    #[error("{field} is missing")]
+    Missing {
+        /// The key.
+        field: &'static str,
+    },
+    /// A key has a value of the wrong type or range.
+    #[error("{field} must be {expected}")]
+    Invalid {
+        /// The key.
+        field: &'static str,
+        /// What the value must be.
+        expected: &'static str,
+    },
 }

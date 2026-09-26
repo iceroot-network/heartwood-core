@@ -3,20 +3,21 @@
 //!
 //! Every path ends as the reference's `BlockFactory.fromData` does: the transactions are
 //! serialised under the merged milestone at the block's height, the block is written out, and the
-//! bytes are decoded again with [`Block::decode`], so a made block has passed the same checks as a
-//! received one.
+//! bytes are decoded again with [`Block::decode`]. [`Block::receive`] ends the same way, so a made
+//! block has passed the same checks as a received one.
 
 use serde_json::{Map, Value};
 
+use crate::blocks::deserialiser::{self, Rules};
 use crate::blocks::{Block, BlockHeader, serialiser};
 use crate::crypto::sig::{self, Aux, SchemeId, Signature, SigningDomain};
-use crate::errors::BlockError;
+use crate::errors::{BlockDecodeError, BlockError, JsonError};
 use crate::identities::{KeyPair, PublicKeyBytes};
 use crate::managers::Milestones;
-use crate::transactions::Transaction;
 use crate::transactions::serialiser::{SerialiseOptions, serialise as serialise_transaction};
+use crate::transactions::{Transaction, TransactionData};
 use crate::utils::{hex, js};
-use crate::validation::Mode;
+use crate::validation::{Mode, validate_transaction};
 
 /// The header fields of a block to sign; the generator key comes from the signing keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,29 +81,64 @@ pub fn make(
 }
 
 /// The block with the signed `header` and `transactions`, as the reference's
-/// `BlockFactory.fromData` makes it.
-///
-/// A header that counts no transactions is written with the number of `transactions`, as the
-/// reference writes `numberOfTransactions || transactions.length`; the signature then no longer
-/// matches unless the header was signed that way.
+/// `BlockFactory.fromData` makes it: the reference's block schema requires the header to count
+/// exactly the transactions given and applies the transaction rules to each transaction's fields
+/// (removing vote names that are not delegate names), every transaction is serialised again from
+/// its fields, and the result is decoded with [`Block::decode`].
 pub fn from_data(
     header: BlockHeader,
     transactions: &[Transaction],
     milestones: &Milestones,
 ) -> Result<Block, BlockError> {
+    assemble(header, Some(transactions), milestones, Rules::Decode)
+}
+
+/// `BlockFactory.fromData` on a header and, when the data has them, its transactions, with the
+/// transactions of the result decoded under `rules`.
+///
+/// Without transactions the header's count is not checked and the block is written without
+/// transactions, so it decodes to a block with none, whatever the header counts.
+pub(crate) fn assemble(
+    header: BlockHeader,
+    transactions: Option<&[Transaction]>,
+    milestones: &Milestones,
+    rules: Rules,
+) -> Result<Block, BlockError> {
     let params = milestones.at(header.height);
-    let mut header = header;
-    if header.number_of_transactions == 0 {
-        header.number_of_transactions = u32::try_from(transactions.len()).unwrap_or(u32::MAX);
+    if let Some(transactions) = transactions
+        && header.number_of_transactions as usize != transactions.len()
+    {
+        return Err(count_refused(&header).into());
     }
-    let serialised = transactions
+    // The block schema applies the transaction rules to every transaction's fields, which also
+    // removes the vote names that are not delegate names, before the block is written.
+    let mode = match rules {
+        Rules::Decode if header.height == 1 => Mode::Genesis,
+        Rules::Decode | Rules::Received | Rules::Trusted => Mode::Strict,
+    };
+    let mut fields: Vec<TransactionData> = transactions
+        .unwrap_or_default()
         .iter()
-        .map(|transaction| {
-            serialise_transaction(transaction.data(), SerialiseOptions::FULL, params)
-        })
+        .map(|transaction| transaction.data().clone())
+        .collect();
+    for (index, data) in fields.iter_mut().enumerate() {
+        validate_transaction(data, params, mode)
+            .map_err(|source| BlockError::TransactionSchema { index, source })?;
+    }
+    let serialised = fields
+        .iter()
+        .map(|data| serialise_transaction(data, SerialiseOptions::FULL, params))
         .collect::<Result<Vec<Vec<u8>>, _>>()?;
     let bytes = serialiser::serialise_parts(&header, serialised.iter().map(Vec::as_slice));
-    Ok(Block::decode(&bytes, milestones)?)
+    Ok(deserialiser::decode_with(&bytes, milestones, rules)?)
+}
+
+/// The block schema's refusal of a header that does not count the transactions of the block.
+fn count_refused(header: &BlockHeader) -> BlockDecodeError {
+    BlockDecodeError::Schema {
+        height: header.height,
+        reason: "numberOfTransactions must equal the number of transactions",
+    }
 }
 
 /// The block in the reference's JSON form, as `BlockFactory.fromJson` reads it.
@@ -110,12 +146,13 @@ pub fn from_data(
 /// `id` must be present and well formed, but the id is computed again from the header.
 /// Amounts are decimal strings of digits, or JSON numbers with an integer value; hex fields have
 /// their exact lengths; every header field is required except `numberOfTransactions`, which
-/// defaults to the number of transactions. Each transaction is read with
-/// [`Transaction::from_json`] under the merged milestone at the block's height, and at height 1,
-/// the genesis block, under the rules for genesis transactions (see [`Block::decode`]).
+/// defaults to the number of transactions, and `transactions`. Each transaction is read with
+/// [`Transaction::from_json`] under the merged milestone at the block's height, and at height 1
+/// under the rules for the configured genesis block's transactions (see [`Block::decode`]): this
+/// reader is for the node's own chain definition.
 pub fn from_json(json: &Value, milestones: &Milestones) -> Result<Block, BlockError> {
     let Value::Object(fields) = json else {
-        return Err(BlockError::Json("a block is a JSON object".into()));
+        return Err(JsonError::NotAnObject.into());
     };
     hex::decode_array::<32>(text(fields, "id")?)?;
     let height = integer(fields, "height")?;
@@ -126,27 +163,29 @@ pub fn from_json(json: &Value, milestones: &Milestones) -> Result<Block, BlockEr
         Mode::Strict
     };
     let transactions = match fields.get("transactions") {
-        None => Vec::new(),
-        Some(Value::Array(items)) => items
-            .iter()
-            .enumerate()
-            .map(|(index, item)| {
-                Transaction::from_json_with(item, params, mode)
-                    .map_err(|source| BlockError::Transaction { index, source })
-            })
-            .collect::<Result<Vec<Transaction>, BlockError>>()?,
-        Some(_) => return Err(BlockError::Json("transactions must be an array".into())),
+        None => None,
+        Some(Value::Array(items)) => Some(
+            items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    Transaction::from_json_with(item, params, mode)
+                        .map_err(|source| BlockError::Transaction { index, source })
+                })
+                .collect::<Result<Vec<Transaction>, BlockError>>()?,
+        ),
+        Some(_) => {
+            return Err(JsonError::Invalid {
+                field: "transactions",
+                expected: "an array",
+            }
+            .into());
+        }
     };
     let number_of_transactions = match fields.get("numberOfTransactions") {
-        None => u32::try_from(transactions.len()).unwrap_or(u32::MAX),
+        None => u32::try_from(transactions.as_ref().map_or(0, Vec::len)).unwrap_or(u32::MAX),
         Some(_) => integer(fields, "numberOfTransactions")?,
     };
-    if fields.contains_key("transactions") && number_of_transactions as usize != transactions.len()
-    {
-        return Err(BlockError::Json(
-            "numberOfTransactions must equal the number of transactions".into(),
-        ));
-    }
     let header = BlockHeader {
         version: integer(fields, "version")?,
         timestamp: integer(fields, "timestamp")?,
@@ -161,32 +200,43 @@ pub fn from_json(json: &Value, milestones: &Milestones) -> Result<Block, BlockEr
         generator_public_key: PublicKeyBytes::from_hex(text(fields, "generatorPublicKey")?)?,
         block_signature: Signature::from_hex(text(fields, "blockSignature")?)?,
     };
-    from_data(header, &transactions, milestones)
+    assemble(header, transactions.as_deref(), milestones, Rules::Decode)
 }
 
-fn field<'a>(fields: &'a Map<String, Value>, key: &str) -> Result<&'a Value, BlockError> {
+fn field<'a>(fields: &'a Map<String, Value>, key: &'static str) -> Result<&'a Value, BlockError> {
     fields
         .get(key)
-        .ok_or_else(|| BlockError::Json(format!("{key} is missing")))
+        .ok_or(BlockError::Json(JsonError::Missing { field: key }))
 }
 
-fn text<'a>(fields: &'a Map<String, Value>, key: &str) -> Result<&'a str, BlockError> {
+fn text<'a>(fields: &'a Map<String, Value>, key: &'static str) -> Result<&'a str, BlockError> {
     field(fields, key)?
         .as_str()
-        .ok_or_else(|| BlockError::Json(format!("{key} must be a string")))
+        .ok_or(BlockError::Json(JsonError::Invalid {
+            field: key,
+            expected: "a string",
+        }))
 }
 
 /// A header field of 32 bits: a JSON number with an integer value that fits.
-fn integer(fields: &Map<String, Value>, key: &str) -> Result<u32, BlockError> {
+fn integer(fields: &Map<String, Value>, key: &'static str) -> Result<u32, BlockError> {
     js::safe_integer(field(fields, key)?)
         .and_then(|value| u32::try_from(value).ok())
-        .ok_or_else(|| BlockError::Json(format!("{key} must be an integer from 0 to 4294967295")))
+        .ok_or(BlockError::Json(JsonError::Invalid {
+            field: key,
+            expected: "an integer from 0 to 4294967295",
+        }))
 }
 
 /// An amount: a string of decimal digits, or a JSON number with an integer value, that fits 64
 /// bits.
-fn amount(fields: &Map<String, Value>, key: &str) -> Result<u64, BlockError> {
-    let refused = || BlockError::Json(format!("{key} must be an amount that fits 64 bits"));
+fn amount(fields: &Map<String, Value>, key: &'static str) -> Result<u64, BlockError> {
+    let refused = || {
+        BlockError::Json(JsonError::Invalid {
+            field: key,
+            expected: "an amount that fits 64 bits",
+        })
+    };
     match field(fields, key)? {
         Value::String(digits)
             if !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()) =>

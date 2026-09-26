@@ -2,7 +2,10 @@
 
 use thiserror::Error;
 
-use super::{BuildError, DecodeError, EncodeError, HexError, KeyError, SigError, UnexpectedEnd};
+use super::{
+    BuildError, DecodeError, EncodeError, HexError, JsonError, KeyError, SchemaError, SigError,
+    UnexpectedEnd,
+};
 
 /// Block bytes were refused at decode.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -40,6 +43,15 @@ pub enum BlockError {
     /// The serialised block does not decode.
     #[error(transparent)]
     Decode(#[from] BlockDecodeError),
+    /// A transaction's fields break the transaction rules that the reference's block schema
+    /// applies before the block is written.
+    #[error("transaction {index} of the block: {source}")]
+    TransactionSchema {
+        /// Position of the transaction in the block.
+        index: usize,
+        /// Why it was refused.
+        source: SchemaError,
+    },
     /// A transaction in the JSON is refused.
     #[error("transaction {index} of the block JSON: {source}")]
     Transaction {
@@ -56,7 +68,7 @@ pub enum BlockError {
     Hex(#[from] HexError),
     /// The JSON does not have the shape of a block.
     #[error("invalid block JSON: {0}")]
-    Json(String),
+    Json(#[from] JsonError),
 }
 
 /// A block reward could not be computed.

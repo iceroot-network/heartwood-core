@@ -3,7 +3,7 @@
 use serde_json::{Map, Value};
 
 use crate::crypto::sig::Signature;
-use crate::errors::{BuildError, DecodeError, SchemaError};
+use crate::errors::{BuildError, DecodeError, JsonError, SchemaError};
 use crate::identities::{Address, PublicKey, PublicKeyBytes};
 use crate::managers::Params;
 use crate::transactions::TransactionType;
@@ -37,6 +37,9 @@ impl Transaction {
     /// one this serialiser writes (a version byte 0, a resignation byte `0xff`, repeated vote
     /// names). The rules then remove vote names that are not delegate names, and the signature is
     /// checked over the fields that are left; [`Transaction::bytes`] keeps the bytes as received.
+    /// Once the rules have removed a name, the fields serialise to another id: a block from
+    /// another node is built again from the fields ([`crate::Block::receive`]), and its payload
+    /// hash must cover those ids.
     pub fn decode_with(
         bytes: &[u8],
         params: &Params,
@@ -122,7 +125,7 @@ fn data_from_json(
 ) -> Result<TransactionData, BuildError> {
     let object = json
         .as_object()
-        .ok_or_else(|| BuildError::Json("a transaction is a JSON object".into()))?;
+        .ok_or(BuildError::Json(JsonError::NotAnObject))?;
 
     // The reference converts `amount` (when it is truthy) and `fee` to big integers before any
     // rule, and refuses values that do not convert.
@@ -364,7 +367,13 @@ fn asset_from_json(
             }
             let votes = match asset.get("votes") {
                 Some(Value::Object(votes)) => votes_from_json(votes)?,
-                Some(_) => return Err(BuildError::Json("asset.votes must be an object".into())),
+                Some(_) => {
+                    return Err(JsonError::Invalid {
+                        field: "asset.votes",
+                        expected: "an object",
+                    }
+                    .into());
+                }
                 None => return Err(SchemaError::missing("asset.votes").into()),
             };
             Ok(Asset::Vote { votes })
