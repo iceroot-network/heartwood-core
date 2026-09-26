@@ -67,7 +67,7 @@ test "$(git get-tar-commit-id < "$OUT/solar-src.tar")" = "$COMMIT"
 printf 'SOLAR_COMMIT=%s\nSOLAR_TREE=%s\n' "$COMMIT" "$TREE" > "$OUT/solar-src.env"
 
 cp "$HERE/Dockerfile" "$HERE/check-native.js" "$OUT/"
-cp "$HERE/gen-vectors.js" "$HERE/oracle-server.js" "$HERE/check-native.js" "$OUT/oracle/"
+cp "$HERE/gen-vectors.js" "$HERE/oracle-server.js" "$HERE/replay-chain.js" "$HERE/check-native.js" "$OUT/oracle/"
 cp -R "$HERE/lib/." "$OUT/oracle/lib/"
 cp -R "$ROOT/packages/crypto/tests/vectors/external" "$OUT/oracle/external"
 

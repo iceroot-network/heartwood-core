@@ -19,6 +19,8 @@ use crate::vectors::ErrorRecord;
 const IMAGE_SCRIPTS: &str = "/opt/oracle";
 /// Where a container run sees the directory of the devnet generator (mounted read-only).
 const IMAGE_DEVNET_GENERATOR: &str = "/opt/devnet-generator";
+/// Where a container run of the chain judge sees the corpus (mounted read-only).
+const IMAGE_CORPUS: &str = "/corpus";
 
 /// Options of a golden-vector run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -217,6 +219,54 @@ impl Oracle {
             return Err(Error::Oracle(format!("gen-vectors.js failed ({status})")));
         }
         Ok(())
+    }
+
+    /// Run the chain judge, `replay-chain.js`, on the corpus in `corpus`: it writes
+    /// `ts-digests.jsonl` and `anchors.json` into `out` (created if needed). `extra` are further
+    /// arguments (`--dump H,...`). In a container run the corpus is mounted read-only. Returns
+    /// whether the judge's anchors hold; an error when the judge could not run.
+    pub fn judge(&self, corpus: &Path, out: &Path, extra: &[String]) -> Result<bool> {
+        std::fs::create_dir_all(out).map_err(|e| Error::io(out, e))?;
+        let container = matches!(self.mode, Mode::Container { .. });
+        let (corpus_arg, out_dir) = if container {
+            (IMAGE_CORPUS.to_string(), "/out".to_string())
+        } else {
+            (
+                corpus.to_string_lossy().into_owned(),
+                out.to_string_lossy().into_owned(),
+            )
+        };
+        let mut args = vec![
+            "--corpus".to_string(),
+            corpus_arg,
+            "--out".to_string(),
+            format!("{out_dir}/ts-digests.jsonl"),
+            "--anchors".to_string(),
+            format!("{out_dir}/anchors.json"),
+        ];
+        args.extend(extra.iter().cloned());
+        let image_id = self.image_id()?;
+        let read_only: Vec<(&Path, &str)> = if container {
+            vec![(corpus, IMAGE_CORPUS)]
+        } else {
+            Vec::new()
+        };
+        let mut cmd = self.script_command(
+            "replay-chain.js",
+            &args,
+            Some(out),
+            image_id.as_deref(),
+            false,
+            &read_only,
+        )?;
+        let status = cmd
+            .status()
+            .map_err(|e| Error::Oracle(format!("cannot start replay-chain.js: {e}")))?;
+        match status.code() {
+            Some(0) => Ok(true),
+            Some(1) if out.join("anchors.json").exists() => Ok(false),
+            _ => Err(Error::Oracle(format!("replay-chain.js failed ({status})"))),
+        }
     }
 
     /// Start oracle-server.js (L1).
