@@ -265,6 +265,53 @@ module.exports = async function wireStatusVectors({ solar, rec, must, shared }) 
     await crafted(`${MAX_DELEGATES + 1} signatures`, withLists([key], Array(MAX_DELEGATES + 1).fill(signature)));
     await crafted("two pairs over a bound of one", withLists([key, key], [signature, signature]), 1);
 
+    // ---- the getStatus response codec, both ways ------------------------------------------------
+    // Through the codec operations of lib/ops/wire-codecs.js; left out when those are absent.
+    const codec = async (op, name, input) => out.push({ ...(await rec(op, H, { route: "getStatus", direction: "response", ...input })), name: `getStatus response: ${name}` });
+    const hasCodec = await rec("wire.decode", H, { route: "getStatus", direction: "response", hex: signedHex }).then(
+        () => true,
+        (error) => {
+            if (/unknown operation/.test(error.message)) return false;
+            throw error;
+        },
+    );
+    if (hasCodec) {
+        const decodeRecord = (name, bytes) => codec("wire.decode", name, { hex: Buffer.isBuffer(bytes) ? bytes.toString("hex") : bytes });
+        const encodeRecord = (name, value) => codec("wire.encode", name, { value });
+        await decodeRecord("a signed response", signedHex);
+        for (const [name, change] of [
+            ["no state", (r) => delete r.state],
+            ["no header", (r) => delete r.state.header],
+            ["no amounts", (r) => ["totalAmount", "totalFee", "reward"].forEach((k) => delete header(r)[k])],
+            ["amounts as text of other forms", (r) => Object.assign(header(r), { totalAmount: " 0x10 ", totalFee: "+5", reward: "-0" })],
+            ["a fractional amount", (r) => (header(r).reward = "1.5")],
+            ["an amount beyond 128 bits", (r) => (header(r).totalAmount = "0x" + "f".repeat(40))],
+            ["an amount beyond 128 bits, then a syntax error", (r) => Object.assign(header(r), { totalAmount: "0x" + "f".repeat(40), totalFee: "1e3" })],
+            ["no config, keys or signatures", (r) => ["config", "publicKeys", "signatures"].forEach((k) => delete r[k])],
+            ["empty fields present", (r) => Object.assign(r.config, { version: "", plugins: { abcd: {} } })],
+        ]) {
+            const reply = clone();
+            change(reply);
+            await decodeRecord(name, encode(reply));
+        }
+        await decodeRecord("plugins: an entry without a value", raw(entry(text(1, "abcd"))));
+        await decodeRecord("plugins: an entry without a key", raw(entry(delimited(2, pluginBytes(plugin())))));
+        await decodeRecord("plugins: array-index names", raw(Buffer.concat([entry(text(1, "b-plugin")), entry(text(1, "1234")), entry(text(1, "7"))])));
+        await decodeRecord("plugins: __proto__ with a value", raw(entry(text(1, "__proto__"), delimited(2, pluginBytes(plugin())))));
+        await decodeRecord("config before state on the wire", Buffer.concat([delimited(2, configBytes), delimited(1, stateBytes), lists]));
+        await decodeRecord("an unknown field", raw(Buffer.alloc(0), { before: Buffer.concat([varint((9 << 3) | 0), varint(300)]) }));
+
+        await encodeRecord("a signed response", clone());
+        await encodeRecord("the slot's 32-bit value, empty plugins", { ...clone(), state: { ...clone().state, currentSlot: 4294967293 }, config: { ...clone().config, plugins: {} } });
+        await encodeRecord("array-index plugin names", { ...clone(), config: { ...clone().config, plugins: { "b-plugin": plugin(1), 1234: plugin(2), "@solar-network/api": plugin(3) } } });
+        await encodeRecord("zero, false and empty text present", {
+            ...clone(),
+            state: { ...clone().state, forgingAllowed: false, currentSlot: 0 },
+            config: { version: "", network: { name: "", nethash: "", explorer: "", token: {}, version: 0 }, plugins: { abcd: { port: 0, enabled: false, estimateTotalCount: false } } },
+        });
+        await encodeRecord("no config, keys or signatures", { state: clone().state });
+    }
+
     // Mutations that change the signed bytes: a plugin name the check removes, and the lowercased
     // key, still verify; a changed plugin does not.
     await crafted("a removed plugin name still verifies", (r) => (r.config.plugins.xyz = plugin()));

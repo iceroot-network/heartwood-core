@@ -24,15 +24,22 @@ use super::{accepted, object, refused};
 use crate::subject::{Case, Documented, SubjectError, Verdict};
 use crate::subjects::{Env, Outcome, failed, hex_bytes, rejected, unclassified};
 
-/// The getStatus response payload of `value`: the message of its present keys, the header's
-/// amounts written as the decimal text of their values.
+/// The getStatus response payload of `value`: the message of its present keys, with the header's
+/// amounts written as their decimal text. The reference's encoder writes an amount given as text
+/// as it is (`toString()`), so an amount whose text is not the decimal text of its value is not
+/// modelled.
 pub(super) fn encode_response(value: &Value) -> Outcome<Vec<u8>> {
     let header = &value["state"]["header"];
     let amount = |key: &str| {
         let text = header[key]
             .as_str()
             .ok_or_else(|| failed(format!("value.state.header.{key} is not text")))?;
-        Amount::parse(text).map_err(|e| failed(format!("value.state.header.{key}: {e}")))
+        match Amount::parse(text) {
+            Ok(amount) if amount.to_string() == text => Ok(amount),
+            _ => Err(SubjectError::Unsupported(format!(
+                "value.state.header.{key} is not the decimal text of an amount"
+            ))),
+        }
     };
     let received = ReceivedStatus {
         message: response_message(value)?,
