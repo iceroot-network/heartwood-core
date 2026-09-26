@@ -82,7 +82,7 @@ function makeCrafter(solar) {
         return Buffer.concat([unsigned, signPreimage(preimage, passphrase)]).toString("hex");
     }
 
-    /** A Solar vote asset as the codec lays it out, from [name, basis points] entries (a name is text or raw bytes). */
+    /** A type group 2 vote asset as the codec lays it out, from [name, basis points] entries (a name is text or raw bytes). */
     function voteAsset(entries) {
         const parts = [Buffer.from([entries.length])];
         for (const [name, basisPoints] of entries) {

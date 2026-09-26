@@ -1,9 +1,10 @@
 //! The chain-definition builder for devnets (feature `genesis`).
 //!
 //! [`build`] makes, from its inputs alone, the files of a devnet chain definition: `network.json`,
-//! `milestones.json`, `genesisBlock.json` and `exceptions.json`, byte for byte as the reference's
-//! devnet generator writes them, plus the derived key material and a summary. It does no I/O and
-//! reads no clock: the seed, the epoch, the rules, the roles and the allocations are all inputs.
+//! `milestones.json`, `genesisBlock.json` and `exceptions.json`, byte for byte as the devnet
+//! generator writes them (the genesis vectors pin its output), plus the derived key material and a
+//! summary. It does no I/O and reads no clock: the seed, the epoch, the rules, the roles and the
+//! allocations are all inputs.
 //!
 //! Every key is derived from the seed and a role name ([`mod@derive`]). The genesis block holds, in
 //! order:
@@ -337,7 +338,7 @@ fn transfer_chunks<'a>(
     Ok(chunks)
 }
 
-/// A genesis transaction, made as the reference's devnet generator makes it: version 3, fee 0,
+/// A genesis transaction, made as the devnet generator makes it: version 3, fee 0,
 /// signed over its unsigned bytes. It is then decoded under the rules for genesis transactions,
 /// which allow the zero fee, and its signature is checked before it is used.
 fn genesis_transaction(
@@ -382,7 +383,7 @@ fn genesis_transaction(
 
 /// The genesis block of `transactions`: version `block.version`, height 1, timestamp 0, no
 /// previous block, no reward, 32 bytes of payload per transaction, the header signed with BIP340
-/// by `keys`, as the reference's devnet generator makes it.
+/// by `keys`, as the devnet generator makes it.
 fn genesis_block(
     transactions: Vec<Transaction>,
     keys: &KeyPair,

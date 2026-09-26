@@ -1,6 +1,6 @@
 [package]
 name = "heartwood-difftest"
-description = "Differential-test harness: runs the Solar TypeScript oracle and compares its results with Heartwood's"
+description = "Differential-test harness: runs the reference implementation as an oracle and compares its results with Heartwood's"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

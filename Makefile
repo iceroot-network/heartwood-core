@@ -28,8 +28,9 @@ SHORT         := $(shell git -C '$(SOLAR_REPO)' rev-parse --verify -q '$(COMMIT)
 IMAGE         ?= heartwood-oracle:$(SHORT)
 VECTORS       ?= target/vectors
 IMAGE_DIR     ?= target/oracle-images
-# The reference's devnet generator, gen-network.js, which the genesis class (V10) runs. When it is
-# empty, V10 is not written; its directory is mounted read-only in container runs.
+# The devnet generator, gen-network.js, which the genesis class (V10) runs: a separate tool of the
+# maintainers, not published. When it is empty, V10 is not written (vectors-install then keeps the
+# committed V10); its directory is mounted read-only in container runs.
 DEVNET_GENERATOR ?=
 GENERATOR_ARG := $(if $(DEVNET_GENERATOR),--devnet-generator '$(DEVNET_GENERATOR)',)
 # Where the committed golden vectors of heartwood-crypto live.

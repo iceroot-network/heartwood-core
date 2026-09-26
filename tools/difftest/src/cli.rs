@@ -13,9 +13,9 @@ difftest: Heartwood's differential-test harness
 
 Usage:
   difftest oracle gen --out DIR [--no-backend-check] [--devnet-generator FILE] [ORACLE]
-                                  write the L0 golden vectors with the Solar reference; the
-                                  genesis class needs the reference's devnet generator,
-                                  gen-network.js       [$DIFFTEST_DEVNET_GENERATOR]
+                                  write the L0 golden vectors with the reference; the
+                                  genesis class needs the devnet generator, gen-network.js,
+                                  a separate tool      [$DIFFTEST_DEVNET_GENERATOR]
   difftest oracle ping [ORACLE]   start oracle-server.js and check that it answers
   difftest oracle replay OP CORPUS --vectors DIR [--height N] [--milestones FILE] [ORACLE]
                                   send each file of CORPUS (raw bytes, for example a fuzz
@@ -32,10 +32,10 @@ Usage:
   difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--compare DIR]
                                   write the devnet chain definition of a genesis profile for a
                                   seed and an epoch (a whole second, 2026-01-01T00:00:00.000Z);
-                                  --compare checks it against the output of the reference's
-                                  devnet generator for the same inputs
+                                  --compare checks it against the output of the devnet
+                                  generator for the same inputs
 
-ORACLE, where the Solar TypeScript reference runs (the flags win over the environment):
+ORACLE, where the reference runs (the flags win over the environment):
   --image TAG        in the oracle container                     [$DIFFTEST_IMAGE]
   --solar-dir DIR    locally, against a built reference checkout  [$SOLAR_DIR]
   --docker CMD       docker command            [$DIFFTEST_DOCKER, else tools/oracle/docker.sh]
@@ -180,7 +180,7 @@ pub struct GenesisArgs {
     pub out: PathBuf,
     /// Overwrite the files of a directory that is not empty.
     pub force: bool,
-    /// A directory written by the reference's devnet generator, to compare with.
+    /// A directory written by the devnet generator, to compare with.
     pub compare: Option<PathBuf>,
 }
 

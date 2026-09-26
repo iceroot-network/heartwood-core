@@ -1,4 +1,4 @@
-//! Running the Solar Core TypeScript oracle: in the oracle container or locally.
+//! Running the reference implementation as the oracle: in the oracle container or locally.
 //!
 //! The oracle scripts live in `tools/oracle/` (gen-vectors.js for L0, oracle-server.js for L1).
 //! In the container they are at `/opt/oracle` and the reference at `/opt/solar`; the container
@@ -25,9 +25,9 @@ const IMAGE_DEVNET_GENERATOR: &str = "/opt/devnet-generator";
 pub struct GenOptions {
     /// Run gen-vectors.js again under the JavaScript bcrypto backend and require equal records.
     pub backend_check: bool,
-    /// The reference implementation's devnet generator (`gen-network.js`), which the genesis class
-    /// runs. Its directory, with the generator's `lib/`, is mounted read-only in a container run.
-    /// Without it the genesis class is not written.
+    /// The devnet generator (`gen-network.js`), which the genesis class runs: a separate tool of the
+    /// maintainers, not published. Its directory, with the generator's `lib/`, is mounted
+    /// read-only in a container run. Without it the genesis class is not written.
     pub devnet_generator: Option<PathBuf>,
 }
 

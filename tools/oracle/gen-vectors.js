@@ -13,8 +13,9 @@
 // backends and across image builds; everything that legitimately differs between runs (backend,
 // image id, Node version) is in the meta record.
 //
-// --devnet-generator  the reference implementation's devnet generator, gen-network.js, which
-//                     class V10 runs; without it V10 is not written [$DEVNET_GENERATOR]
+// --devnet-generator  the devnet generator, gen-network.js, which class V10 runs: a separate tool
+//                     of the maintainers, not published; without it V10 is not written, and
+//                     the committed V10 stays as it is [$DEVNET_GENERATOR]
 // --external DIR      the published vector files of class V11 and their SOURCES.json
 //                     [external/ next to this script, else packages/crypto/tests/vectors/external]
 //

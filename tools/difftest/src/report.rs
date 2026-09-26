@@ -188,7 +188,7 @@ pub fn describe_meta(meta: &Meta) -> String {
         None => meta.oracle.mode.clone(),
     };
     format!(
-        "Solar {} {}{dirty} (tree {}), {oracle}, Node {}, bcrypto {}",
+        "reference {} {}{dirty} (tree {}), {oracle}, Node {}, bcrypto {}",
         meta.solar.version,
         short(&meta.solar.commit),
         short(&meta.solar.tree),

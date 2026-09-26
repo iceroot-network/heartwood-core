@@ -1,11 +1,16 @@
 "use strict";
-// V10 genesis: the devnet chain definition that the reference implementation's devnet generator
-// (gen-network.js, its default profile) writes for three seeds with a fixed epoch. Each record
-// holds the inputs (seed, epoch, and the genesis profile described below) and what the generator
-// wrote: the exact text of the four crypto files, the key material of the generator, the delegates,
-// the genesis, donation and test wallets, the nethash, the genesis id and the issued amount. A fresh
-// process then rebuilds the genesis block with BlockFactory.fromJson under those files and records
-// its id and verification.
+// V10 genesis: the devnet chain definition that the devnet generator (gen-network.js, with its
+// default profile) writes for three seeds with a fixed epoch. Each record holds the inputs (seed,
+// epoch, and the genesis profile described below) and what the generator wrote: the exact text of
+// the four crypto files, the key material of the generator, the delegates, the genesis, donation
+// and test wallets, the nethash, the genesis id and the issued amount. A fresh process then
+// rebuilds the genesis block with the reference's BlockFactory.fromJson under those files and
+// records its id and verification.
+//
+// The devnet generator is a separate tool of the maintainers. It is not part of the reference
+// implementation, of the oracle image or of this repository, and it is not published: V10 is a
+// frozen, committed class that only the maintainers regenerate. The meta record names the SHA-256
+// of the generator's files, so a regeneration shows which generator wrote it.
 //
 // The genesis profile is the file that Heartwood's chain-definition driver reads
 // (`difftest genesis --profile FILE`): every value the chain definition is built from except the
@@ -15,8 +20,8 @@
 // conventions (role names, delegate names, the network constants). After every generator run the
 // profile is checked against what the generator wrote, so a change on either side fails here.
 //
-// The generator is not part of the oracle image; gen-vectors.js is given its path
-// (--devnet-generator), and in the container the generator's directory is mounted read-only.
+// gen-vectors.js is given the generator's path (--devnet-generator), and in the container the
+// generator's directory is mounted read-only.
 //
 // Run on its own, this file writes the genesis profile:
 //

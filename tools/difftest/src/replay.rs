@@ -42,7 +42,7 @@ fn describe_ping(pong: &Value) -> String {
             .collect::<String>()
     };
     format!(
-        "Solar {} {} (tree {}), Node {}, bcrypto {}",
+        "reference {} {} (tree {}), Node {}, bcrypto {}",
         pong["solar"]["version"].as_str().unwrap_or("unknown"),
         short(&pong["solar"]["commit"]),
         short(&pong["solar"]["tree"]),

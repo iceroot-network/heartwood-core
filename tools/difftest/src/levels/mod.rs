@@ -5,8 +5,8 @@
 //! | L0 | golden vectors against Heartwood, byte-exact and accept/reject | [`l0`]: records to [`crate::subject`] | `heartwood-crypto` (runs) |
 //! | L1 | random and mutated cases, one oracle call each | [`crate::oracle::OracleServer`] and the same subjects, driven by `proptest` | the first oracle operations, then property tests |
 //! | L2 | block sequences replayed on both sides, a state digest per block | a replay driver over `heartwood-blockchain` and a TypeScript harness plugin | block processing |
-//! | L3 | the same scenario on a TS devnet and a Heartwood devnet | a scenario runner over both devnets | the first Heartwood devnet |
-//! | L4 | a mixed TS and Heartwood network | the scenario runner with mixed nodes | mixed networks |
+//! | L3 | the same scenario on a reference devnet and a Heartwood devnet | a scenario runner over both devnets | the first Heartwood devnet |
+//! | L4 | a mixed network of reference and Heartwood nodes | the scenario runner with mixed nodes | mixed networks |
 //!
 //! Only L0 runs today, with the subjects of `heartwood-crypto` ([`crate::subjects`]).
 
@@ -43,7 +43,7 @@ impl Level {
             Level::L1 => "L1 property tests against the Node oracle",
             Level::L2 => "L2 block-sequence replay and state digests",
             Level::L3 => "L3 live devnet scenarios",
-            Level::L4 => "L4 mixed TS and Heartwood network",
+            Level::L4 => "L4 mixed network of reference and Heartwood nodes",
         }
     }
 

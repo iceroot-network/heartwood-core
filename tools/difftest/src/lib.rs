@@ -1,6 +1,6 @@
 //! `heartwood-difftest`: the differential-test harness of Heartwood Core.
 //!
-//! It runs the Solar Core TypeScript reference (the oracle, `tools/oracle/`) in its container or
+//! It runs the reference implementation (the oracle, `tools/oracle/`) in its container or
 //! locally, loads the golden vectors the oracle writes, and compares them with Heartwood's
 //! implementations. This crate is a test tool: it is never a dependency of a production crate.
 //!

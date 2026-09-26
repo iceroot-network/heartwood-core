@@ -1,4 +1,4 @@
-//! The chain-definition builder against the reference's devnet generator (vector class
+//! The chain-definition builder against the devnet generator's output (vector class
 //! `V10-genesis`), and BIP39 mnemonics against the published English vectors (the BIP39 part of
 //! `V11-external`).
 //!

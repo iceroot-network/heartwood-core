@@ -11,9 +11,11 @@
 //! summary.json         nethash, genesis id, transaction count, issued amount, file digests
 //! ```
 //!
-//! [`compare`] then checks the result against a directory that the reference's devnet generator
-//! wrote for the same seed, epoch and profile: the four crypto files byte for byte, and the key
-//! material and the summary figures field by field.
+//! [`compare`] then checks the result against a directory that the devnet generator wrote for the
+//! same seed, epoch and profile: the four crypto files byte for byte, and the key material and the
+//! summary figures field by field. The generator is a separate tool of the maintainers and is not
+//! published; the genesis vectors (`V10-genesis`) hold its output for three seeds, and the tests
+//! compare the driver with those records.
 //!
 //! The profile is a JSON object with every input except the seed and the epoch:
 //!
@@ -32,9 +34,9 @@
 //! wallets              {"count", "rolePrefix"}: test wallets, derived but not funded
 //! ```
 //!
-//! The profile of the reference's devnet generator is written by the oracle's genesis vector
-//! class: `node tools/oracle/lib/vectors/genesis.js --devnet-generator FILE --solar-dir DIR --out
-//! FILE`. Every genesis vector record carries the same profile as its input.
+//! Every genesis vector record carries the profile it was made with as its input. With the
+//! generator at hand, the oracle's genesis vector class writes it: `node
+//! tools/oracle/lib/vectors/genesis.js --devnet-generator FILE --solar-dir DIR --out FILE`.
 
 use std::fs::{self, OpenOptions, Permissions};
 use std::io::Write;
@@ -507,7 +509,7 @@ fn with(mut value: Value, extra: Value) -> Value {
     value
 }
 
-/// Compare `built` with the directory `dir` that the reference's devnet generator wrote: the four
+/// Compare `built` with the directory `dir` that the devnet generator wrote: the four
 /// crypto files byte for byte, then every field of `delegate-keys.json` and `wallets.json` that
 /// the driver writes too, and the nethash, genesis id, transaction count and issued amount of
 /// `network-summary.json`. Returns the differences, one line each.

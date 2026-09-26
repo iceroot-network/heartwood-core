@@ -109,7 +109,7 @@ const TX_METHODS = new Set([
 ]);
 
 // The P2P status of the reference signs this plugin list for a node that serves its API on the
-// default port (packages/p2p get-peer-config.ts builds it from the node's app.json).
+// default port, as the reference's P2P layer builds it from the node's app.json.
 const DEFAULT_STATUS_PLUGINS = { "@solar-network/api": { enabled: true, port: 6003, estimateTotalCount: true } };
 
 function makeOps(solar, devnet) {
@@ -200,8 +200,9 @@ function makeOps(solar, devnet) {
         return registry;
     }
 
-    // A signed Solar vote struct; vote.validate and vote.splits swap in the votes under test and run
-    // the strict transaction schema, as TransactionFactory does when it decodes a vote.
+    // A signed type group 2 vote struct; vote.validate, vote.splits and vote.shares swap in the
+    // votes under test and run the strict transaction schema, as TransactionFactory does when it
+    // decodes a vote.
     let voteStruct;
     function validateVotes(votes) {
         if (!voteStruct) {
@@ -256,7 +257,7 @@ function makeOps(solar, devnet) {
             return { valid: Identities.PublicKey.verify(publicKey) };
         },
 
-        // A 32-byte message is signed as given, any other length is SHA-256 hashed first (hash.ts).
+        // A 32-byte message is signed as given, any other length is SHA-256 hashed first.
         "sig.bip340.sign": ({ message, privateKey, aux }) => {
             const keys = Identities.Keys.fromPrivateKey(privateKey);
             return { signature: Crypto.Hash.signSchnorrBip340(hexBuffer(message, "message"), keys, hexBuffer(aux, "aux")) };
@@ -349,8 +350,8 @@ function makeOps(solar, devnet) {
             return { donations: Object.entries(donations).map(([address, value]) => [address, value.toString()]) };
         },
 
-        // The strict schema of a Solar vote with these votes. Accepted votes are returned as the
-        // schema leaves them (it drops names that do not match the username pattern).
+        // The strict schema of a type group 2 vote with these votes. Accepted votes are returned as
+        // the schema leaves them (it drops names that do not match the username pattern).
         "vote.validate": ({ votes }) => {
             const { error, votes: after } = validateVotes(voteObject(votes));
             if (error) throw new Errors.TransactionSchemaError(error);
@@ -451,12 +452,12 @@ function makeOps(solar, devnet) {
                 }),
             })),
 
-        // A block shaped as the forger makes it (packages/forger/src/delegate.ts createBlock), with
-        // optional header overrides for refusal cases (payloadLength, totalAmount, version). The
-        // header is signed with BIP340 by BlockFactory.make, or with the legacy Schnorr scheme
-        // (scheme "legacy") over the same hash, then built with BlockFactory.fromData. The
-        // transactions are read without checks (fromBytesUnsafe) only to fill the header; the
-        // block factory then validates and decodes them itself at the block's height.
+        // A block shaped as the reference's forger makes it, with optional header overrides for
+        // refusal cases (payloadLength, totalAmount, version). The header is signed with BIP340 by
+        // BlockFactory.make, or with the legacy Schnorr scheme (scheme "legacy") over the same
+        // hash, then built with BlockFactory.fromData. The transactions are read without checks
+        // (fromBytesUnsafe) only to fill the header; the block factory then validates and decodes
+        // them itself at the block's height.
         "block.make": ({ height, timestamp, previousBlock, reward, passphrase, aux, transactions = [], scheme = "bip340", overrides = {}, milestones, summary = false }) =>
             withConfig(milestones, () =>
                 atHeight(height, () => {
@@ -514,9 +515,9 @@ function makeOps(solar, devnet) {
                 return blockOutput(block, summary);
             }),
 
-        // The bytes a relay signs for its P2P status (packages/p2p peer.ts getStatus): the kernel's
-        // key-sorted stringify of {state, config}, with the block's header as getHeader(false) gives
-        // it and the peer config of the devnet network.
+        // The bytes a relay signs for its P2P status: the kernel's key-sorted stringify of
+        // {state, config}, with the block's header as getHeader(false) gives it and the peer config
+        // of the devnet network.
         "status.preimage": ({ block, forgingAllowed, currentSlot, version, plugins = DEFAULT_STATUS_PLUGINS }) => {
             const decoded = Blocks.BlockFactory.fromBytes(hexBuffer(block, "block"));
             const status = {
