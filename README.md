@@ -17,7 +17,7 @@ equal byte for byte, including which inputs each side rejects.
 
 | Level | What is compared | Status |
 |---|---|---|
-| L0 | golden vectors written by the reference, against Heartwood | runs against `heartwood-crypto`: 1,399 of 1,445 records compared, all equal (see below) |
+| L0 | golden vectors written by the reference, against Heartwood | runs against `heartwood-crypto`: 1,468 of 1,518 records compared, all equal (see below) |
 | L1 | random and mutated cases, one oracle call each | planned |
 | L2 | block sequences replayed on both sides, a state digest per block | planned |
 | L3 | the same scenario on a reference devnet and on a Heartwood devnet | planned |
@@ -62,13 +62,14 @@ fuzz/                 cargo-fuzz targets for the transaction and block decoders 
 ## Build and test
 
 ```sh
-make check          # cargo build, clippy (warnings are errors), fmt --check, test
+make check          # cargo build, clippy (warnings are errors), fmt --check, test, release check
 make oracle-image   # build heartwood-oracle:<commit> from scratch (a few minutes)
 make e2e            # vectors in the image and locally, diff the two runs, run L0
 make vectors-install  # copy the image's vectors into packages/crypto/tests/vectors
 ```
 
-`make check` needs only Rust; it includes the L0 comparison of the committed vectors. `make e2e`
+`make check` needs only Rust; it includes the L0 comparison of the committed vectors, and it
+checks and formats the fuzz targets too (their own package, `fuzz/`). `make e2e`
 passes when the image run and the local run agree on every record and L0 finds no difference in
 the image run. `make help` lists the other targets: `make ping` and
 `make test-oracle` (the oracle answers, in the image and locally) and `make oracle-save`
@@ -86,7 +87,7 @@ the image run. `make help` lists the other targets: `make ping` and
 | `VECTORS` | `target/vectors` | where the vector runs are written |
 | `IMAGE_DIR` | `target/oracle-images` | where `make oracle-save` writes |
 | `DIFFTEST_DOCKER` | `tools/oracle/docker.sh` | the docker command |
-| `DEVNET_GENERATOR` | empty | the reference's devnet generator, `gen-network.js`, for the genesis class |
+| `DEVNET_GENERATOR` | empty | the devnet generator, `gen-network.js`, for the genesis class; a separate tool that is not published |
 | `CRYPTO_VECTORS` | `packages/crypto/tests/vectors` | where `make vectors-install` puts the container run |
 
 Settings for one machine go in `local.mk` beside the Makefile. It is git-ignored and read before
@@ -106,35 +107,75 @@ The same variables work on the command line: `make e2e SOLAR_REPO=../solar-core-
 BIP340 signatures and the legacy Schnorr scheme, the version 3 transaction codec for the six kept
 transaction types (1/1, 1/2, 1/6, 1/7, 2/0, 2/2) with the transaction rules and builders, the
 block codec with its verification rules and factory, the network description and the milestones
-(merged and checked at load, looked up by height), rewards, donations and the fee burn. Two
-features are off by default: `legacy-schnorr`, the pre-BIP340 scheme that only peer status
-messages use, and `genesis`, the devnet chain-definition builder. The crate forbids unsafe code,
-and its decoders return typed errors instead of panicking on untrusted input.
+(merged and checked at load, looked up by height), rewards, donations and the fee burn. The crate
+forbids unsafe code, and its decoders return typed errors instead of panicking on untrusted input.
+
+Features, all off by default:
+
+| Feature | What it enables |
+|---|---|
+| `legacy-schnorr` | the pre-BIP340 Schnorr scheme, which only peer status messages use |
+| `genesis` | the devnet chain-definition builder |
+| `fixed-aux` | a test seam: `Aux::fixed`, reproducible BIP340 signatures for test vectors; only test code enables it |
 
 ```sh
-cargo test -p heartwood-crypto --locked   # unit tests, property tests and every vector class
+cargo test -p heartwood-crypto --locked                  # unit tests and doctests of the default build
+cargo test -p heartwood-crypto --locked --all-features   # and every vector class
 ```
 
-The crate is its own dev-dependency with both features, so this one command also runs the legacy
-Schnorr and genesis tests. The integration tests check every record of the vector classes (bytes,
-ids, JSON text with key order, verdicts and error classes), the published BIP340, bip-schnorr and
-BIP39 vector files, and a cross-check of both signature schemes with `k256` on every signature
-record and on random keys and messages.
+The first command also checks, with a doctest that must fail to compile, that the default build has
+no way to choose the signature aux. The integration tests need `fixed-aux` and run with
+`--all-features`: they check every record of the vector classes (bytes, ids, JSON text with key
+order, verdicts and error classes), the published BIP340, bip-schnorr and BIP39 vector files, and a
+cross-check of both signature schemes with `k256` on every signature record and on random keys and
+messages. `make test` runs both commands and the difftest tests.
+
+A node accepts a block from another node with `Block::receive`, not with `Block::decode`. As the
+reference does, it decodes the block and then builds it again from the decoded fields: every
+transaction is serialised again after the transaction rules have changed it (a vote name that is
+not a delegate name is removed, which changes the transaction's id), and the payload hash, the
+transaction ids and the size that the block rules check are those of this canonical form.
+`Block::decode` checks the bytes as they are; it is for the node's own genesis block and for
+tests, and it applies the fee rules of genesis transactions to every transaction at height 1.
+
+### Release builds
+
+Release artefacts are built one package at a time (`cargo build --release -p PACKAGE`), never with
+`--workspace`: Cargo turns on, for every package of one build, the features that any of them asks
+for, and difftest asks for `fixed-aux`, `genesis` and `legacy-schnorr`. `make release-check`, part
+of `make check`, fails when a package of `RELEASE_PACKAGES` builds `heartwood-crypto` with a test
+seam.
+
+### L0 results
 
 `difftest run l0` compares the same records through the harness, with one subject per oracle
-operation. On the committed vectors (reference tag `s1-ref-v2`) it reports:
+operation. Where both sides refuse, it also compares the error class wherever Heartwood models the
+reference's class. On the committed vectors (reference tag `s1-ref-v2`) it reports:
 
 | Outcome | Records |
 |---|---|
-| compared, equal to the reference | 1,399 |
-| documented differences: refused at decode, where the reference decodes and refuses later | 19 |
+| compared, equal to the reference | 1,468 |
+| documented differences, each with its form checked on the input | 23 |
 | skipped: the dynamic fee floor (transaction handlers) and the peer status message (P2P codec) | 27 |
 
-The documented differences are four forms that the reference decodes and only refuses when a
-transaction is applied: the removed transaction types, the extended header, multi-signature
-entries after the signatures, and memos that are not valid UTF-8 (which the reference re-encodes,
-changing the bytes it hashes). Heartwood refuses them when it decodes, so a block holding one is
-refused either way.
+The documented differences are inputs that Heartwood refuses and the reference accepts:
+
+- three wire forms that the reference decodes and only refuses when the transaction is applied, so
+  a block that holds one is refused either way: the removed transaction types, the extended header,
+  and multi-signature entries after the signatures;
+- a memo that is not valid UTF-8. The reference reads it as replacement characters (U+FFFD) and
+  accepts it, with the id and the signature of the replaced text, in a block too. This is a known
+  consensus difference: anyone can put a replacement character in a memo, and a relay can then
+  swap its three bytes for an invalid byte without changing the transaction id or the block id.
+  The reference accepts that copy, and Heartwood refuses it. The copy with the replacement
+  characters is accepted by both, so a node must not mark a block id as invalid because one copy
+  of the block has such a memo;
+- in the JSON form only, `asset.votes` given as a non-empty array or string, whose indices the
+  reference writes as vote names and removes after it has computed the id. A vote asset that is a
+  truthy value without keys of its own (a number, `true`, an empty array) is no votes, as in the
+  reference.
+
+### Fuzz targets and the chain-definition driver
 
 The fuzz targets run with cargo-fuzz on a nightly toolchain, and a corpus can then be replayed
 against the oracle:
@@ -148,10 +189,11 @@ difftest oracle replay tx.fromBytes fuzz/corpus/transaction_decode \
 
 With the `genesis` feature, `difftest genesis` writes a devnet chain definition (the four
 `crypto/*.json` files, the delegate and wallet keys and a summary) from a genesis profile file, a
-seed and an epoch, and `--compare DIR` checks it against the reference's devnet generator's output
-for the same inputs. The profile file is written by `node tools/oracle/lib/vectors/genesis.js
---devnet-generator FILE --solar-dir DIR --out FILE`; every genesis vector record carries the same
-profile.
+seed and an epoch. Every genesis vector record carries its profile as input, and the tests check
+that the driver writes, byte for byte, the files those records hold. `--compare DIR` checks a
+chain definition against a directory that the devnet generator wrote for the same inputs; the
+generator is a separate tool of the maintainers and is not published (see the genesis class
+below).
 
 ## The oracle image
 
@@ -181,22 +223,23 @@ The oracle always runs with `--network none`: Node 18 is past its end of life, a
 (`sha256sum` format; `difftest vectors verify` checks it). The committed set of `heartwood-crypto`
 is in [packages/crypto/tests/vectors](packages/crypto/tests/vectors); `make e2e` followed by
 `make vectors-install` regenerates it, and a regeneration must be bit-identical unless the oracle
-changed.
+changed. `make vectors-install` refuses a run that lacks a class the committed manifest lists, such
+as the genesis class of a run without `DEVNET_GENERATOR`, and then installs nothing.
 
 | File | Content |
 |---|---|
 | `V01-keys-addresses.jsonl` | passphrase keys; addresses for network bytes 90, 63 and 30; `Address.validate` and `Address.toBuffer` (the network-byte complaint, a bad checksum, 33 and 35 characters, a valid checksum over a 20- or 22-byte payload); the public-key encodings the reference accepts (`02`/`03`, `04`, `06`/`07` with matching parity) and refuses |
-| `V02-transactions.jsonl` | the six kept types (1/1, 1/2, 1/6, 1/7, 2/0, 2/2), v3, BIP340 with fixed aux: memos of 0, 1 and 255 bytes (2-, 3- and 4-byte characters at the end), 256 bytes refused; 1, 2, 255 and 256 recipients, 0 and 257 refused; resignation types 0 to 2; votes of 1 to 53 entries; doubly signed variants. Each built case is recorded as `tx.build`, `tx.fromBytes` and `tx.fromJson` |
-| `V03-noncanonical-removed.jsonl` | wire forms the reference decodes to other bytes or refuses, with the strict verdict and the id it computes: version bytes, duplicate, `__proto__` and pattern-failing vote names, a stray resignation byte, memos that are not UTF-8, trailing bytes, signatures of unusual lengths, extended headers; the removed types 1/0, 1/3, 1/4, 1/5, 1/8, 1/9 and 1/10 and their inactive handlers; unknown types |
-| `V04-signatures.jsonl` | BIP340 with fixed aux over messages and over the preimages of a transaction's first and second signature and of a block header, with a verify matrix (mutated signature, message and key, the prefix-agnostic key slice, out-of-range values); legacy Schnorr over 0 bytes to 4 KB and over real P2P status preimages, with R at infinity (at least 235 records) |
-| `V05-blocks.jsonl` | `BlockFactory.make` with fixed aux for 0, 1, 9 (the kept types) and 150 transactions and for the largest block the devnet rules allow (its bytes and JSON as SHA-256), each decoded and re-encoded; 151 transactions; `maxPayload` at its boundary; `payloadLength` 32n - 1, 32n + 1 and 0; the block version; BIP340 and legacy block signatures under `bip340: false` |
+| `V02-transactions.jsonl` | the six kept types (1/1, 1/2, 1/6, 1/7, 2/0, 2/2), v3, BIP340 with fixed aux: memos of 0, 1 and 255 bytes (2-, 3- and 4-byte characters at the end), 256 bytes refused, and a memo of replacement characters; 1, 2, 255 and 256 recipients, 0 and 257 refused; resignation types 0 to 2; votes of 1 to 53 entries; doubly signed variants. Each built case is recorded as `tx.build`, `tx.fromBytes` and `tx.fromJson`. JSON forms the builders do not write: `burnedFee` values, `asset.payments` beside a falsy `asset.transfers`, `asset.votes` values that are not objects, a vote share a few units in the last place from a cent |
+| `V03-noncanonical-removed.jsonl` | wire forms the reference decodes to other bytes or refuses, with the strict verdict and the id it computes: version bytes, network byte 0, duplicate, `__proto__` and pattern-failing vote names, a stray resignation byte, memos that are not UTF-8, trailing bytes, signatures of unusual lengths, extended headers; the removed types 1/0, 1/3, 1/4, 1/5, 1/8, 1/9 and 1/10 and their inactive handlers; unknown types |
+| `V04-signatures.jsonl` | BIP340 with fixed aux over messages and over the preimages of a transaction's first and second signature (also for a copy with network byte 0, which the reference writes as the configured byte) and of a block header, with a verify matrix (mutated signature, message and key, the prefix-agnostic key slice, out-of-range values); legacy Schnorr over 0 bytes to 4 KB and over real P2P status preimages, with R at infinity (at least 235 records) |
+| `V05-blocks.jsonl` | `BlockFactory.make` with fixed aux for 0, 1, 9 (the kept types) and 150 transactions and for the largest block the devnet rules allow (its bytes and JSON as SHA-256), each decoded and re-encoded; 151 transactions; `maxPayload` at its boundary; `payloadLength` 32n - 1, 32n + 1 and 0; the block version; BIP340 and legacy block signatures under `bip340: false`; a transaction with network byte 0. Blocks as a node receives them from another node (`block.receive`: decoded, then built again from the fields), next to `block.fromBytes`, for transactions in wire forms that are not canonical: vote names the rules remove (the payload hash over either id), a repeated vote name, a stray resignation byte, version 0, a memo of 0xff bytes in place of replacement characters, a block at `maxPayload` under milestones of its own, and a header that counts transactions that are not sent |
 | `V06-arithmetic.jsonl` | the burned fee at 9,000 basis points; the reward by rank and tier; donations at 500 basis points; the dynamic fee floor per type and size; `totalAmount`, which counts top-level amounts only |
-| `V07-vote-rules.jsonl` | all 9,999 two-way cent splits (one compact record per name pair: the refused splits and SHA-256 over the verdicts and the vote assets); the vote schema on single cases; `sortVotes` orders; the vote asset at 1,024 and 1,025 bytes |
-| `V10-genesis.jsonl` | the devnet chain definition that the reference's devnet generator (`gen-network.js`) writes for three seeds and a fixed epoch: the exact text of the four `crypto/*.json` files, the delegate and wallet keys, the nethash, the genesis id and the issued amount, and `BlockFactory.fromJson` on the result |
+| `V07-vote-rules.jsonl` | all 9,999 two-way cent splits (one compact record per name pair: the refused splits and SHA-256 over the verdicts and the vote assets); the vote schema on every double within 40 units in the last place of every cent (compact: the accepted count, the accepted shares that are not exact cents, SHA-256 over the verdicts), since the `multipleOf` rule works in double arithmetic; the vote schema on single cases; `sortVotes` orders; the vote asset at 1,024 and 1,025 bytes |
+| `V10-genesis.jsonl` | the devnet chain definition that the devnet generator (`gen-network.js`, see below) writes for three seeds and a fixed epoch: the exact text of the four `crypto/*.json` files, the delegate and wallet keys, the nethash, the genesis id and the issued amount, and the reference's `BlockFactory.fromJson` on the result |
 | `V11-external.jsonl` | the published vector files in `external/` (BIP340, the bip-schnorr draft at `d194620`, BIP39 English), each with its source URL and SHA-256 in `external/SOURCES.json`, and the reference's answers on their inputs |
 | `V12-milestone-config.jsonl` | milestone files as JSON text, accepted (with the merged milestones, rewards and donations) or refused by the configuration manager's start-up checks; transaction rules at the block's height |
 
-The first line of each file is a meta record: format `heartwood-vectors/1`; the Solar version,
+The first line of each file is a meta record: format `heartwood-vectors/1`; the reference's version,
 commit and tree, and the SHA-256 of the reference's patch register (null when the commit has none);
 the oracle mode and image id; the Node and ICU versions; the bcrypto backend; the network
 description (with the milestones SHA-256 and the detected key format); the aux; and, where a class
@@ -215,9 +258,14 @@ burn and donation keys follow the reference's own mainnet preset, so the patched
 input has `milestones` (JSON text, read with `JSON.parse` as the reference reads a file) runs under
 those milestones on the devnet network instead.
 
-The genesis class runs the reference's devnet generator, which is not part of the oracle image:
-set `DEVNET_GENERATOR` to its `gen-network.js` (`difftest oracle gen --devnet-generator FILE`). A
-container run mounts the generator's directory read-only; without it the class is not written.
+The genesis class runs the devnet generator, `gen-network.js`: a separate tool of the maintainers,
+which is not part of the reference implementation, of the oracle image or of this repository, and
+is not published. `V10-genesis.jsonl` is therefore a frozen, committed class that only the
+maintainers regenerate, with `DEVNET_GENERATOR` set to the generator (`difftest oracle gen
+--devnet-generator FILE`); a container run mounts the generator's directory read-only. Without it
+the class is not written, and the committed one stays: the tests read the devnet configuration
+from it. Its meta record names the SHA-256 of the generator's files, so a regeneration shows which
+generator wrote it.
 
 ## difftest
 
@@ -235,12 +283,13 @@ difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--
 
 Library modules: `oracle` (run the scripts in the image or locally; `OracleServer` for L1),
 `vectors` (files, meta records, manifest), `subject` (a Rust implementation of one oracle
-operation, shared by L0 and L1, and the registry), `subjects` (the operations answered with
-`heartwood-crypto`), `compare` (a JSON diff that names the path and, for hex values, the first
-differing byte with the bytes around it; numbers compare by their double value and object keys by
-their JavaScript order), `report`, `replay` (a corpus through the oracle and Heartwood), `genesis`
-(the chain-definition driver) and `levels` (L0 runs; L1 to L4 are described with what each one
-arrives with).
+operation, shared by L0 and L1, its verdict, and the registry), `subjects` (the operations answered
+with `heartwood-crypto`, with the reference's error class of a refusal where it is observable, and
+each documented difference checked on the input's bytes), `compare` (a JSON diff that names the
+path and, for hex values, the first differing byte with the bytes around it; numbers compare by
+their double value and object keys by their JavaScript order), `report`, `replay` (a corpus through
+the oracle and Heartwood), `genesis` (the chain-definition driver) and `levels` (L0 runs; L1 to L4
+are described with what each one arrives with).
 
 A difference names the JSON path and, for bytes, the first differing offset. This is
 `difftest vectors diff` against a copy of the vectors with one byte and one fee changed; an L0
@@ -252,7 +301,7 @@ failure (`FAIL <file>:<line> <op> "<name>" (height H)`) prints the same lines:
           expected ...00032b7179bebd24[9c]e23311e958fa95e7...
           actual   ...00032b7179bebd24[0c]e23311e958fa95e7...
       $.output.json.fee: expected "50000000", actual "10000000"
-  1 of 1445 records differ, 0 files missing
+  1 of 1518 records differ, 0 files missing
 ```
 
 The subjects take the devnet configuration from the vector set itself: the network and milestone
@@ -261,7 +310,7 @@ aux of the meta records. Later crates plug in by adding subjects to `subjects`; 
 then compares them, with no other change.
 
 `make test-oracle` runs the cargo test that pings `oracle-server.js` in the image and locally
-(`DIFFTEST_TEST_IMAGE`, `DIFFTEST_TEST_SOLAR_DIR`); plain `cargo test` skips it.
+(`DIFFTEST_TEST_IMAGE`, `DIFFTEST_TEST_SOLAR_DIR`); `make test` skips it.
 
 ## Licence
 
