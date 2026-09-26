@@ -439,8 +439,12 @@ function settle() {
 }
 
 let tempDir;
+/** An empty directory for the reference's CORE_PATH_TEMP, removed when the process exits. */
 function emptyTempDir() {
-    if (!tempDir) tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "heartwood-oracle-state-"));
+    if (!tempDir) {
+        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "heartwood-oracle-state-"));
+        process.on("exit", () => fs.rmSync(tempDir, { recursive: true, force: true }));
+    }
     return tempDir;
 }
 
