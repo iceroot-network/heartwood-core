@@ -1,19 +1,17 @@
 //! A transaction and its fields.
 
-#![expect(
-    unused_variables,
-    reason = "the bodies are not written yet; remove this once they are"
-)]
-
 use std::fmt;
 
 use indexmap::IndexMap;
+use serde_json::{Map, Value};
 
 use crate::crypto::sig::Signature;
-use crate::errors::{DecodeError, HexError};
+use crate::errors::{HexError, MemoError};
 use crate::identities::{Address, PublicKey, PublicKeyBytes};
 use crate::managers::Params;
 use crate::transactions::TransactionType;
+use crate::transactions::registry::TYPE_GROUP_CORE;
+use crate::utils::amounts::format_amount;
 use crate::utils::hex;
 
 pub mod core;
@@ -51,14 +49,27 @@ impl fmt::Display for TransactionId {
     }
 }
 
-/// A memo: at most 255 bytes of UTF-8. An empty memo and no memo are the same on the wire.
+/// A memo: 1 to 255 bytes of UTF-8. An empty memo and no memo are the same on the wire, so an
+/// empty memo is written as `None`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Memo(String);
 
 impl Memo {
+    /// The most bytes a memo may have.
+    pub const MAX_BYTES: usize = 255;
+
     /// The memo `text`, if it is 1 to 255 bytes long.
-    pub fn new(text: &str) -> Result<Memo, DecodeError> {
-        todo!()
+    pub fn new(text: &str) -> Result<Memo, MemoError> {
+        match text.len() {
+            0 => Err(MemoError::Empty),
+            length if length > Memo::MAX_BYTES => Err(MemoError::TooLong { length }),
+            _ => Ok(Memo(text.to_owned())),
+        }
+    }
+
+    /// A memo read from the wire, which holds 1 to 255 bytes.
+    pub(crate) fn from_wire(text: &str) -> Memo {
+        Memo(text.to_owned())
     }
 
     /// The memo text.
@@ -87,8 +98,29 @@ pub enum ResignationType {
     NotResigned,
 }
 
+impl ResignationType {
+    /// The type with the reference's number `value` (0, 1 or 2).
+    pub const fn from_number(value: u8) -> Option<ResignationType> {
+        match value {
+            0 => Some(ResignationType::TemporaryResign),
+            1 => Some(ResignationType::PermanentResign),
+            2 => Some(ResignationType::NotResigned),
+            _ => None,
+        }
+    }
+
+    /// The reference's number of the type.
+    pub const fn number(self) -> u8 {
+        match self {
+            ResignationType::TemporaryResign => 0,
+            ResignationType::PermanentResign => 1,
+            ResignationType::NotResigned => 2,
+        }
+    }
+}
+
 /// A vote asset: delegate names and their shares in basis points (10,000 is 100 %), in the order
-/// they appear on the wire.
+/// of the reference's vote object (see [`crate::utils::sort_votes`]).
 pub type Votes = IndexMap<String, u16>;
 
 /// The type-specific part of a transaction.
@@ -109,7 +141,9 @@ pub enum Asset {
         /// The delegate name.
         username: String,
     },
-    /// 1/7: the kind of resignation; `None` when the wire has no resignation byte.
+    /// 1/7: the kind of resignation; `None` when the wire has no resignation byte. A temporary
+    /// resignation is written as no byte, so `Some(TemporaryResign)` comes only from a wire byte
+    /// `0xff`, which the reference decodes and writes back as no byte.
     DelegateResignation {
         /// The kind of resignation.
         resignation_type: Option<ResignationType>,
@@ -124,6 +158,20 @@ pub enum Asset {
         /// The votes, in wire order.
         votes: Votes,
     },
+}
+
+impl Asset {
+    /// The transaction type this asset belongs to.
+    pub const fn kind(&self) -> TransactionType {
+        match self {
+            Asset::Transfer { .. } => TransactionType::Transfer,
+            Asset::SecondSignature { .. } => TransactionType::SecondSignature,
+            Asset::DelegateRegistration { .. } => TransactionType::DelegateRegistration,
+            Asset::DelegateResignation { .. } => TransactionType::DelegateResignation,
+            Asset::Burn { .. } => TransactionType::Burn,
+            Asset::Vote { .. } => TransactionType::Vote,
+        }
+    }
 }
 
 /// A transaction's fields.
@@ -155,13 +203,25 @@ impl TransactionData {
     /// The sender's address on the network of `params`, as the reference derives it from the
     /// sender key.
     pub fn sender_address(&self, params: &Params) -> Address {
-        todo!()
+        Address::from_public_key(&self.sender_public_key, params.network())
     }
 
     /// The top-level amount: the burned amount of a burn, 0 for every other type. A block's total
     /// amount sums this value; transfer items do not count.
     pub fn amount(&self) -> u64 {
-        todo!()
+        match &self.asset {
+            Asset::Burn { amount } => *amount,
+            Asset::Transfer { .. }
+            | Asset::SecondSignature { .. }
+            | Asset::DelegateRegistration { .. }
+            | Asset::DelegateResignation { .. }
+            | Asset::Vote { .. } => 0,
+        }
+    }
+
+    /// The version the reference reads: the wire byte 0 is version 3.
+    pub fn effective_version(&self) -> u8 {
+        if self.version == 0 { 3 } else { self.version }
     }
 }
 
@@ -212,8 +272,107 @@ impl Transaction {
     }
 
     /// The transaction as the reference's `toJson` writes it: amounts as decimal strings, bytes as
-    /// lowercase hex, `typeGroup` left out for type group 1.
-    pub fn to_json(&self, params: &Params) -> serde_json::Value {
-        todo!()
+    /// lowercase hex, `typeGroup` left out for type group 1, and the keys in the reference's order.
+    /// Vote shares are percentages, written as integers when they are whole.
+    pub fn to_json(&self, params: &Params) -> Value {
+        let data = &self.data;
+        let mut out = Map::new();
+        out.insert("headerType".into(), Value::from(0));
+        out.insert("version".into(), Value::from(data.effective_version()));
+        out.insert("network".into(), Value::from(data.network));
+        if data.kind.type_group() != TYPE_GROUP_CORE {
+            out.insert("typeGroup".into(), Value::from(data.kind.type_group()));
+        }
+        out.insert("type".into(), Value::from(data.kind.type_id()));
+        out.insert("nonce".into(), Value::from(format_amount(data.nonce)));
+        out.insert(
+            "senderPublicKey".into(),
+            Value::from(data.sender_public_key.to_hex()),
+        );
+        out.insert(
+            "senderId".into(),
+            Value::from(data.sender_address(params).to_base58()),
+        );
+        out.insert("fee".into(), Value::from(format_amount(data.fee)));
+        if let Some(memo) = &data.memo {
+            out.insert("memo".into(), Value::from(memo.as_str()));
+        }
+        match &data.asset {
+            Asset::Burn { amount } => {
+                out.insert("amount".into(), Value::from(format_amount(*amount)));
+            }
+            Asset::DelegateResignation {
+                resignation_type: None,
+            } => {}
+            asset => {
+                out.insert("asset".into(), asset_json(asset));
+            }
+        }
+        if let Some(signature) = &data.signature {
+            out.insert("signature".into(), Value::from(signature.to_hex()));
+        }
+        if let Some(signature) = &data.second_signature {
+            out.insert("secondSignature".into(), Value::from(signature.to_hex()));
+        }
+        out.insert("id".into(), Value::from(self.id.to_hex()));
+        Value::Object(out)
+    }
+}
+
+/// The `asset` object of the reference's JSON form.
+fn asset_json(asset: &Asset) -> Value {
+    let mut out = Map::new();
+    match asset {
+        Asset::Transfer { transfers } => {
+            let items = transfers
+                .iter()
+                .map(|item| {
+                    let mut entry = Map::new();
+                    entry.insert("amount".into(), Value::from(format_amount(item.amount)));
+                    entry.insert(
+                        "recipientId".into(),
+                        Value::from(item.recipient.to_base58()),
+                    );
+                    Value::Object(entry)
+                })
+                .collect();
+            out.insert("transfers".into(), Value::Array(items));
+        }
+        Asset::SecondSignature { public_key } => {
+            let mut signature = Map::new();
+            signature.insert("publicKey".into(), Value::from(public_key.to_hex()));
+            out.insert("signature".into(), Value::Object(signature));
+        }
+        Asset::DelegateRegistration { username } => {
+            let mut delegate = Map::new();
+            delegate.insert("username".into(), Value::from(username.as_str()));
+            out.insert("delegate".into(), Value::Object(delegate));
+        }
+        Asset::DelegateResignation { resignation_type } => {
+            if let Some(kind) = resignation_type {
+                out.insert("resignationType".into(), Value::from(kind.number()));
+            }
+        }
+        Asset::Burn { amount } => {
+            out.insert("amount".into(), Value::from(format_amount(*amount)));
+        }
+        Asset::Vote { votes } => {
+            let shares = votes
+                .iter()
+                .map(|(name, &basis_points)| (name.clone(), percent_value(basis_points)))
+                .collect();
+            out.insert("votes".into(), Value::Object(shares));
+        }
+    }
+    Value::Object(out)
+}
+
+/// A vote share as the reference holds it: the JavaScript number `basis_points / 100`, which is an
+/// integer when the share is whole.
+pub(crate) fn percent_value(basis_points: u16) -> Value {
+    if basis_points.is_multiple_of(100) {
+        Value::from(basis_points / 100)
+    } else {
+        Value::from(f64::from(basis_points) / 100.0)
     }
 }

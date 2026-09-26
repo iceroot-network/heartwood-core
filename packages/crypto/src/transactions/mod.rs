@@ -21,6 +21,8 @@ pub mod factory;
 pub mod registry;
 pub mod serialiser;
 pub mod signer;
+#[cfg(test)]
+pub(crate) mod testing;
 pub mod types;
 pub mod verifier;
 

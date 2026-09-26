@@ -6,8 +6,15 @@ use super::{AddressError, HexError, KeyError, SigError, UnexpectedEnd};
 
 /// Transaction bytes were refused at decode.
 ///
-/// The reference wraps most decode failures in one error class; the variants here say why, and
-/// [`DecodeError::Schema`] marks a refusal by the transaction rules rather than by the codec.
+/// The reference wraps most decode failures in one error class; the variants here say why.
+/// [`DecodeError::Schema`] marks a refusal by the transaction rules rather than by the codec, and
+/// [`DecodeError::UnsupportedVersion`] a refused version.
+///
+/// Four refusals are deliberate differences from the reference, which decodes these forms and
+/// refuses them later, when the transaction is applied: an extended header
+/// ([`DecodeError::UnsupportedHeaderType`]), a removed type ([`DecodeError::RemovedType`]), a memo
+/// that is not valid UTF-8 ([`DecodeError::InvalidMemo`]) and multi-signature entries
+/// ([`DecodeError::MultiSignature`]). A block that holds such a transaction is refused either way.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DecodeError {
     /// The bytes end inside a field.
@@ -16,7 +23,7 @@ pub enum DecodeError {
     /// Only version 3 is accepted (the wire byte 0 reads as version 3).
     #[error("unsupported transaction version {0}")]
     UnsupportedVersion(u8),
-    /// Only the standard header is accepted.
+    /// Only the standard header (header type 0) is accepted.
     #[error("unsupported header type {0}")]
     UnsupportedHeaderType(u8),
     /// A type that the reference registers but that this implementation does not carry.
@@ -38,7 +45,7 @@ pub enum DecodeError {
     /// The sender key is not a public key the reference accepts.
     #[error("invalid sender public key: {0}")]
     SenderKey(KeyError),
-    /// The memo is not canonical UTF-8.
+    /// The memo is not valid UTF-8.
     #[error("the memo is not valid UTF-8")]
     InvalidMemo,
     /// The vote asset is over 1,024 bytes.
@@ -47,12 +54,17 @@ pub enum DecodeError {
         /// Size of the vote asset in bytes.
         size: usize,
     },
-    /// The bytes after the asset are not a whole number of signatures.
+    /// The bytes after the asset are neither signatures nor multi-signature entries.
     #[error("signature buffer not exhausted")]
     SignatureBytes,
-    /// A recipient address has another network byte, so the id cannot be computed.
-    #[error(transparent)]
-    AddressNetwork(AddressError),
+    /// The bytes after the signatures are multi-signature entries (65 bytes each). No sender can
+    /// hold a multi-signature wallet, so no such transaction can be applied.
+    #[error("multi-signature entries are not accepted")]
+    MultiSignature,
+    /// The decoded fields do not serialise again, so the id cannot be computed: a transfer to an
+    /// address of another network, or a value that does not fit its field.
+    #[error("cannot compute the transaction id: {0}")]
+    Id(#[source] EncodeError),
     /// The decoded transaction breaks a transaction rule.
     #[error(transparent)]
     Schema(#[from] SchemaError),
@@ -78,6 +90,13 @@ pub enum EncodeError {
     /// A recipient address has another network byte.
     #[error(transparent)]
     AddressNetwork(AddressError),
+    /// A value does not fit its wire field: a nonce or fee over `2^63 − 1`, a length over its
+    /// length byte, or a sender key that is not 33 bytes.
+    #[error("{field} does not fit its wire field")]
+    OutOfRange {
+        /// Name of the field, in the reference's JSON naming.
+        field: &'static str,
+    },
 }
 
 /// A transaction breaks one of the rules the reference writes as JSON schemas.
@@ -102,6 +121,37 @@ pub enum SchemaError {
     VoteSum {
         /// The sum, in basis points.
         basis_points: u32,
+    },
+}
+
+impl SchemaError {
+    /// A refused value of `field`.
+    pub(crate) fn invalid(field: impl Into<String>, reason: &'static str) -> SchemaError {
+        SchemaError::Invalid {
+            field: field.into(),
+            reason,
+        }
+    }
+
+    /// A missing `field`.
+    pub(crate) fn missing(field: impl Into<String>) -> SchemaError {
+        SchemaError::Missing {
+            field: field.into(),
+        }
+    }
+}
+
+/// A memo was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum MemoError {
+    /// An empty memo is no memo: leave it out instead.
+    #[error("a memo is 1 to 255 bytes; an empty memo is written as no memo")]
+    Empty,
+    /// The memo is over 255 bytes of UTF-8.
+    #[error("the memo is {length} bytes, over 255")]
+    TooLong {
+        /// Length of the memo in bytes.
+        length: usize,
     },
 }
 
@@ -143,6 +193,17 @@ pub enum BuildError {
     /// A byte field in the JSON is not hex.
     #[error(transparent)]
     Hex(#[from] HexError),
+    /// A memo is refused.
+    #[error(transparent)]
+    Memo(#[from] MemoError),
+    /// A transfer has more items than the milestone allows.
+    #[error("{count} transfer items, over the maximum of {maximum}")]
+    TooManyTransfers {
+        /// Items in the transfer.
+        count: usize,
+        /// The most items the milestone allows.
+        maximum: usize,
+    },
     /// The JSON does not have the shape of a transaction.
     #[error("invalid transaction JSON: {0}")]
     Json(String),

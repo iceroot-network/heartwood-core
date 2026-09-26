@@ -1,0 +1,24 @@
+# cargo-fuzz targets of the decoders. This package is excluded from the workspace and builds with
+# its own lockfile: cargo fuzz run <target> (nightly), or cargo check here on stable.
+[package]
+name = "heartwood-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+heartwood-crypto = { path = "../packages/crypto" }
+libfuzzer-sys = "0.4"
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "transaction_decode"
+path = "fuzz_targets/transaction_decode.rs"
+test = false
+doc = false
+bench = false
