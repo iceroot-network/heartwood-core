@@ -101,6 +101,18 @@ pub struct SectionHashes {
 }
 
 impl Sections {
+    /// The sections of `wallets` alone, the digest of a wallet fixture: with no block, no round
+    /// and no missed slot, `#B`, `#R` and `#M` are their tag lines; `#S` issues 0.
+    pub fn of_wallets(wallets: &WalletRepository) -> Sections {
+        Sections {
+            block: section("#B", []),
+            supply: supply_section(&Totals::default(), wallets),
+            round: section("#R", []),
+            missed: section("#M", []),
+            wallets: wallet_section(wallets),
+        }
+    }
+
     /// The hash of each section.
     pub fn hashes(&self) -> SectionHashes {
         let hash =
@@ -439,4 +451,48 @@ fn json_string(text: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_is_escaped_as_json_stringify_escapes_it() {
+        assert_eq!(
+            json_string("we\"ird\\name\u{1}\t\u{8}\u{c}\r\n\u{1f}\u{7f}é"),
+            "\"we\\\"ird\\\\name\\u0001\\t\\b\\f\\r\\n\\u001f\u{7f}é\""
+        );
+    }
+
+    #[test]
+    fn records_and_arrays() {
+        let record = Record::new()
+            .integer("h", 5_u32)
+            .amount("bal", u64::MAX)
+            .maybe(None::<u8>, |record, value| record.integer("absent", value))
+            .maybe(Some("x"), |record, value| record.text("t", value))
+            .raw("a", &array([quoted(1_u8), array([])]))
+            .close();
+        assert_eq!(
+            record,
+            r#"{"h":5,"bal":"18446744073709551615","t":"x","a":["1",[]]}"#
+        );
+        assert_eq!(Record::new().close(), "{}");
+        assert_eq!(section("#X", []), "#X\n");
+        assert_eq!(
+            section("#X", ["1".to_owned(), "2".to_owned()]),
+            "#X\n1\n2\n"
+        );
+    }
+
+    #[test]
+    fn a_fixture_has_no_block_round_or_missed_slot() {
+        let sections = Sections::of_wallets(&WalletRepository::new(90));
+        assert_eq!(sections.block, "#B\n");
+        assert_eq!(sections.supply, "#S\n{\"issued\":\"0\",\"supply\":\"0\"}\n");
+        assert_eq!(sections.round, "#R\n");
+        assert_eq!(sections.missed, "#M\n");
+        assert_eq!(sections.wallets, "#W\n");
+    }
 }
