@@ -16,7 +16,14 @@ const CLASS: &str = "V13-p2p-wire";
 /// equal to the reference's result), and for each documented difference the records that assert
 /// it. They change only on purpose: a new subject, a new documented difference, or new vectors.
 /// `None` while the class is not installed.
-const PINNED: Option<(usize, [(Documented, usize); 3])> = None;
+const PINNED: Option<(usize, [(Documented, usize); 3])> = Some((
+    1178,
+    [
+        (Documented::PluginsPrototype, 2),
+        (Documented::DeepGroups, 2),
+        (Documented::WideAmount, 11),
+    ],
+));
 
 fn vector_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/p2p-wire/tests/vectors")
