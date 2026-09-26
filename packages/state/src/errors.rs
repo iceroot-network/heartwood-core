@@ -114,6 +114,12 @@ pub enum RewardError {
     /// The rank table has no reward for the delegate's rank.
     #[error(transparent)]
     Reward(#[from] heartwood_crypto::errors::RewardError),
+    /// No registered delegate has bound the generator key.
+    #[error("the generator {} is not a registered delegate", generator.to_hex())]
+    NotADelegate {
+        /// The generator's public key.
+        generator: PublicKeyBytes,
+    },
 }
 
 /// A block could not be applied. The state is unchanged.
@@ -199,6 +205,10 @@ pub enum GenesisError {
     /// The issuance records add up to more than `2^63 − 1`.
     #[error("the genesis block issues more than 2^63 - 1")]
     Issuance,
+    /// The milestone at height 1 has donations. The genesis block then carries donation entries
+    /// with no forger to take them from, and the reference's start-up refuses to build the state.
+    #[error("the milestone at height 1 has donations, which the genesis block cannot pay")]
+    Donations,
     /// A wallet's built balance is negative.
     #[error("wallet {address} has a negative balance")]
     NegativeBalance {

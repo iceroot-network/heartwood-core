@@ -9,15 +9,17 @@
 //! Every applied block keeps its undo record in memory, so any number of blocks can be reverted.
 //! A refused block leaves the state exactly as it was.
 
-use heartwood_crypto::identities::PublicKeyBytes;
+use heartwood_crypto::identities::{Address, PublicKeyBytes};
 use heartwood_crypto::{Block, BlockHeader, Milestones};
+use heartwood_kernel::is_new_round;
 
+use crate::block_state;
 use crate::errors::{ApplyError, GenesisError, RevertError, RewardError};
 use crate::handlers::TransactionHandlers;
 use crate::round_state::{MissedBlock, RoundDelegate, RoundReward, RoundState};
 use crate::stores::state::{StateStore, Totals};
 use crate::undo::BlockUndo;
-use crate::wallets::WalletRepository;
+use crate::wallets::{Wallet, WalletRepository};
 
 /// The consensus state after the last applied block.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +57,12 @@ pub struct Reverted {
     pub round_reverted: Option<u64>,
 }
 
+/// The round state and ranks before a round step, kept until the step succeeds.
+struct SavedRound {
+    round: RoundState,
+    ranks: Option<Vec<(Address, Option<u32>)>>,
+}
+
 impl State {
     /// The state after `genesis`, as the reference builds it at its first start (see
     /// [`crate::genesis`]).
@@ -66,25 +74,157 @@ impl State {
         crate::genesis::build(genesis, milestones, handlers)
     }
 
-    /// Apply `block`, the block after the last one.
+    /// The state made of these parts, as the genesis block builds it.
+    pub(crate) fn from_parts(
+        wallets: WalletRepository,
+        round: RoundState,
+        store: StateStore,
+    ) -> State {
+        State {
+            wallets,
+            round,
+            store,
+            journal: Vec::new(),
+        }
+    }
+
+    /// Apply `block`, the block after the last one: detect the slots missed before it, apply its
+    /// transactions and pay its forger, make it the last block, and record it in the round,
+    /// starting the next round when it ends one. On an error the state is unchanged.
+    ///
+    /// The block's rules (chaining, signatures, the scheduled generator, the reward) are the
+    /// block processor's; this only requires the height to follow and the generator to be a
+    /// registered delegate.
     pub fn apply_block<H: TransactionHandlers>(
         &mut self,
         block: &Block,
         milestones: &Milestones,
         handlers: &H,
     ) -> Result<Applied, ApplyError> {
-        let _ = (block, milestones, handlers);
-        todo!()
+        let height = block.height();
+        let expected = self
+            .height()
+            .checked_add(1)
+            .filter(|expected| *expected == height)
+            .ok_or(ApplyError::Height {
+                expected: self.height().saturating_add(1),
+                height,
+            })?;
+        let missed = self.detect_missed_blocks(block.header(), milestones);
+        let generator = block.header().generator_public_key;
+        let username = self
+            .wallets
+            .find_by_public_key(&generator)
+            .and_then(Wallet::delegate)
+            .map(|delegate| delegate.username().to_owned())
+            .ok_or(ApplyError::GeneratorNotDelegate { generator })?;
+
+        let mut undo = block_state::apply_block(
+            &mut self.wallets,
+            self.store.totals_mut(),
+            block,
+            milestones,
+            handlers,
+        )?;
+        let previous_block = self.store.replace_last_block(block.clone());
+        let saved = self.save_round(is_new_round(expected.saturating_add(1), milestones));
+        match self
+            .round
+            .apply_block(&mut self.wallets, height, &username, milestones)
+        {
+            Ok(round) => undo.round = round,
+            Err(error) => {
+                self.restore_round(saved);
+                let _ = block_state::revert_block(
+                    &mut self.wallets,
+                    self.store.totals_mut(),
+                    &undo,
+                    milestones,
+                    handlers,
+                );
+                self.store.set_last_block(previous_block);
+                return Err(error.into());
+            }
+        }
+        let round_started = undo.round.as_ref().map(|_| RoundStart {
+            round: self.round.info().round,
+            delegates: self.round.round_delegates().to_vec(),
+        });
+        self.journal.push(undo);
+        Ok(Applied {
+            missed,
+            round_started,
+        })
     }
 
-    /// Revert the last block.
+    /// Revert the last block: take back the round it started, if any, then its forger's payout,
+    /// then its transactions in reverse order; the block before it becomes the last block. On an
+    /// error the state is unchanged.
     pub fn revert_block<H: TransactionHandlers>(
         &mut self,
         milestones: &Milestones,
         handlers: &H,
     ) -> Result<Reverted, RevertError> {
-        let _ = (milestones, handlers);
-        todo!()
+        let undo = self.journal.pop().ok_or(RevertError::Genesis)?;
+        let height = undo.block.height();
+        let saved = self.save_round(undo.round.is_some());
+        let round_reverted = undo.round.as_ref().map(|_| self.round.info().round);
+        let result = self
+            .round
+            .revert_block(&mut self.wallets, height, undo.round.clone())
+            .map_err(RevertError::from)
+            .and_then(|()| {
+                block_state::revert_block(
+                    &mut self.wallets,
+                    self.store.totals_mut(),
+                    &undo,
+                    milestones,
+                    handlers,
+                )
+            });
+        if let Err(error) = result {
+            self.restore_round(saved);
+            self.journal.push(undo);
+            return Err(error);
+        }
+        let previous = self
+            .journal
+            .last()
+            .map_or_else(|| self.store.genesis_block(), |previous| &previous.block)
+            .clone();
+        self.store.set_last_block(previous);
+        Ok(Reverted {
+            block: undo.block,
+            round_reverted,
+        })
+    }
+
+    /// The round state and, when `with_ranks`, every delegate's rank, to restore them if a round
+    /// step fails.
+    fn save_round(&self, with_ranks: bool) -> SavedRound {
+        SavedRound {
+            round: self.round.clone(),
+            ranks: with_ranks.then(|| {
+                self.wallets
+                    .delegates()
+                    .filter_map(|wallet| Some((*wallet.address(), wallet.delegate()?.rank)))
+                    .collect()
+            }),
+        }
+    }
+
+    /// Put back what [`State::save_round`] saved.
+    fn restore_round(&mut self, saved: SavedRound) {
+        self.round = saved.round;
+        for (address, rank) in saved.ranks.into_iter().flatten() {
+            if let Some(delegate) = self
+                .wallets
+                .wallet_mut(&address)
+                .and_then(Wallet::delegate_mut)
+            {
+                delegate.rank = rank;
+            }
+        }
     }
 
     /// The slots missed between the last block and `next`, without applying anything.
@@ -104,8 +244,15 @@ impl State {
         generator: &PublicKeyBytes,
         milestones: &Milestones,
     ) -> Result<RoundReward, RewardError> {
-        let _ = (height, generator, milestones);
-        todo!()
+        let delegate = self
+            .wallets
+            .find_by_public_key(generator)
+            .and_then(Wallet::delegate)
+            .ok_or(RewardError::NotADelegate {
+                generator: *generator,
+            })?;
+        self.round
+            .reward_for_block_in_round(height, delegate, milestones)
     }
 
     /// The forging list that schedules the next block.
