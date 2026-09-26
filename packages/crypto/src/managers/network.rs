@@ -139,7 +139,7 @@ mod tests {
 
     const DEVNET: &str = r#"{
     "name": "devnet",
-    "messagePrefix": "Solar devnet message:\n",
+    "messagePrefix": "devnet message:\n",
     "addressCharacter": "d",
     "bip32": {
         "public": 70617039,

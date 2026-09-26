@@ -808,7 +808,7 @@ mod tests {
     fn network() -> Network {
         Network {
             name: "devnet".into(),
-            message_prefix: "Solar devnet message:\n".into(),
+            message_prefix: "devnet message:\n".into(),
             address_character: Some("d".into()),
             bip32_public: 70_617_039,
             bip32_private: 70_615_956,
