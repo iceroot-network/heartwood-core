@@ -30,7 +30,7 @@ use crate::report::{CaseResult, Outcome, Report};
 use crate::strategies::transactions::{TxContext, fee_cases, handler_cases};
 use crate::strategies::{fixtures, kernel, state};
 use crate::subject::{Case, Registry};
-use crate::vectors::{ErrorRecord, Expected};
+use crate::vectors::Expected;
 
 /// A property of L1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -140,19 +140,11 @@ pub struct L1Case {
     pub height: u64,
     /// The operation's input.
     pub input: Value,
-    /// For a transaction applied to a fixture: its sender, and whether the fixture gives the
-    /// sender no public key.
-    pub sender: Option<(Address, bool)>,
 }
 
 impl L1Case {
     fn plain((op, height, input): kernel::OpCase) -> L1Case {
-        L1Case {
-            op,
-            height,
-            input,
-            sender: None,
-        }
+        L1Case { op, height, input }
     }
 }
 
@@ -164,7 +156,6 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
                 op: "fee.minimum",
                 height,
                 input,
-                sender: None,
             })
             .boxed(),
         Property::Rounds => kernel::round_cases(context.clone())
@@ -179,7 +170,6 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
                 op: "state.applyTransaction",
                 height: c.height,
                 input: c.input,
-                sender: Some((c.sender, c.sender_unbound)),
             })
             .boxed(),
         Property::KernelText => kernel::kernel_text_cases().prop_map(L1Case::plain).boxed(),
@@ -188,7 +178,6 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
                 op: "state.digest",
                 height: 2,
                 input: json!({"fixture": f.to_json()}),
-                sender: None,
             })
             .boxed(),
     }
@@ -224,23 +213,6 @@ pub fn without_bound_key(section: &str, address: &Address) -> String {
         out.push('\n');
     }
     out
-}
-
-/// The oracle's answer to `case`, with the documented difference applied.
-fn expected(case: &L1Case, answer: std::result::Result<Value, ErrorRecord>) -> Expected {
-    match answer {
-        Err(error) => Expected::Error(error),
-        Ok(mut output) => {
-            if let Some((sender, true)) = case.sender
-                && output.get("error").is_some()
-                && let Some(w) = output.pointer("/after/W").and_then(Value::as_str)
-            {
-                let w = without_bound_key(w, &sender);
-                output["after"]["W"] = Value::String(w);
-            }
-            Expected::Output(output)
-        }
-    }
 }
 
 /// The error class of a refused transaction in an oracle answer (P7).
@@ -306,21 +278,22 @@ pub fn run(
                     return Err(TestCaseError::fail("the oracle failed"));
                 }
             };
-            let expected = expected(&case, answer);
+            let answer = match answer {
+                Ok(output) => Expected::Output(output),
+                Err(error) => Expected::Error(error),
+            };
+            let request = Case {
+                op: case.op,
+                network: "devnet",
+                height: case.height,
+                input: &case.input,
+            };
+            let expected = super::documented_expected(&request, &answer);
             if *property == Property::Handlers {
                 let class = refusal_class(&expected).unwrap_or_else(|| "applied".into());
                 *seen.borrow_mut().entry(class).or_insert(0) += 1;
             }
-            let judged = judge_case(
-                &Case {
-                    op: case.op,
-                    network: "devnet",
-                    height: case.height,
-                    input: &case.input,
-                },
-                &expected,
-                registry,
-            );
+            let judged = judge_case(&request, &expected, registry);
             let failed = judged.is_failure();
             let message = format!("{judged:?}");
             recorded.borrow_mut().push((case, judged));

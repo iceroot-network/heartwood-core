@@ -46,7 +46,11 @@ fn judge(record: &Record, registry: &Registry) -> Outcome {
         height: record.height,
         input: &record.input,
     };
-    judge_case(&case, &record.expected, registry)
+    judge_case(
+        &case,
+        &super::documented_expected(&case, &record.expected),
+        registry,
+    )
 }
 
 /// Run `case` with the subject registered for its operation and judge the result against the

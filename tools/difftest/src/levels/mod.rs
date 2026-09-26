@@ -18,7 +18,14 @@ pub mod l2;
 use std::fmt;
 use std::str::FromStr;
 
+use heartwood_crypto::identities::{Address, PublicKey};
+use heartwood_crypto::utils::hex;
+use serde_json::Value;
+
 use crate::errors::Error;
+use crate::fixture::Fixture;
+use crate::subject::Case;
+use crate::vectors::Expected;
 
 /// A level of differential testing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +74,48 @@ impl Level {
     }
 }
 
+/// The sender of the transaction of a `state.applyTransaction` case when the reference refused
+/// it and the case's fixture gives the sender no public key: the reference has then bound the
+/// key (it binds it before its checks), where Heartwood leaves the state as it was.
+pub fn refused_unbound_sender(case: &Case<'_>, expected: &Expected) -> Option<Address> {
+    if case.op != "state.applyTransaction" {
+        return None;
+    }
+    let Expected::Output(output) = expected else {
+        return None;
+    };
+    output.get("error")?;
+    let bytes = hex::decode(case.input.get("hex")?.as_str()?).ok()?;
+    // A standard header: marker, version, network, type group (4), type (2), nonce (8), then
+    // the sender's public key.
+    let network = *bytes.get(2)?;
+    let key = PublicKey::from_bytes(bytes.get(17..50)?).ok()?;
+    let sender = Address::from_public_key(&key, network);
+    let fixture = Fixture::from_json(case.input.get("fixture")?).ok()?;
+    let bound = fixture
+        .wallets
+        .iter()
+        .any(|w| w.address == sender && w.public_key.is_some());
+    (!bound).then_some(sender)
+}
+
+/// The oracle's answer to `case` with the documented differences applied: for a transaction the
+/// reference refused whose sender had no key, the key it bound is left out of its wallets (see
+/// [`refused_unbound_sender`] and [`l1::without_bound_key`]).
+pub fn documented_expected(case: &Case<'_>, expected: &Expected) -> Expected {
+    let Some(sender) = refused_unbound_sender(case, expected) else {
+        return expected.clone();
+    };
+    let mut expected = expected.clone();
+    if let Expected::Output(output) = &mut expected
+        && let Some(w) = output.pointer("/after/W").and_then(Value::as_str)
+    {
+        let w = l1::without_bound_key(w, &sender);
+        output["after"]["W"] = Value::String(w);
+    }
+    expected
+}
+
 impl fmt::Display for Level {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
@@ -94,6 +143,63 @@ impl FromStr for Level {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refused_sender_without_a_key_loses_the_key_the_reference_bound() {
+        use heartwood_crypto::Aux;
+        use heartwood_crypto::transactions::builders::TransactionBuilder;
+        use heartwood_crypto::transactions::types::TransferItem;
+        use serde_json::json;
+
+        use crate::strategies::transactions::TxContext;
+        use crate::strategies::{keys, wallet_keys};
+
+        let vectors = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/crypto/tests/vectors");
+        let set = crate::vectors::VectorSet::load(&vectors).unwrap();
+        let devnet = crate::subjects::Devnet::from_vectors(&set)
+            .unwrap()
+            .unwrap();
+        let context =
+            TxContext::new(devnet.network.clone(), l1::devnet_milestones(&set).unwrap()).unwrap();
+        let sender = wallet_keys(0);
+        let address = Address::from_public_key(sender.public_key(), 90);
+        let recipient = Address::from_public_key(keys("l1 recipient 0").public_key(), 90);
+        let tx = TransactionBuilder::transfer(vec![TransferItem {
+            amount: 1,
+            recipient,
+        }])
+        .nonce(1)
+        .fee(1)
+        .build(&sender, Aux::fixed([1; 32]), context.milestones.at(2))
+        .unwrap();
+        let input = json!({
+            "fixture": [{"a": address.to_base58(), "bal": "0", "n": "0"}],
+            "hex": hex::encode(tx.bytes()),
+            "lastBlockHeight": 1,
+        });
+        let case = Case {
+            op: "state.applyTransaction",
+            network: "devnet",
+            height: 2,
+            input: &input,
+        };
+        let bound = format!(
+            "#W\n{{\"a\":\"{}\",\"pk\":\"{}\",\"bal\":\"0\",\"n\":\"0\"}}\n",
+            address.to_base58(),
+            sender.public_key().to_hex()
+        );
+        let refused = Expected::Output(
+            json!({"error": {"class": "InsufficientBalanceError"}, "after": {"W": bound}}),
+        );
+        assert_eq!(refused_unbound_sender(&case, &refused), Some(address));
+        let Expected::Output(out) = documented_expected(&case, &refused) else {
+            panic!("an output");
+        };
+        assert_eq!(out["after"]["W"], json!("#W\n"));
+        let applied = Expected::Output(json!({"applied": {"W": "#W\n"}}));
+        assert_eq!(refused_unbound_sender(&case, &applied), None);
+    }
 
     #[test]
     fn levels_parse_and_l0_to_l2_run() {
