@@ -151,14 +151,12 @@ fn map_output(verdict: Verdict, wrap: &dyn Fn(Value) -> Value) -> Verdict {
 // Shared by the area files. A helper keeps its `expect(dead_code)` until an area first calls it.
 
 /// Bytes in the oracle's JSON: lowercase hex text.
-#[expect(dead_code, reason = "the area subjects call it")]
 fn bytes_value(bytes: &[u8]) -> Value {
     Value::String(hex::encode(bytes))
 }
 
 /// The JSON object of a decoded `message`: its own keys in the reference's order
 /// ([`Proto::own_keys`]), each with the value that `field` gives for its (JavaScript) name.
-#[expect(dead_code, reason = "the area subjects call it")]
 fn object<M: Proto>(
     message: &M,
     mut field: impl FnMut(&'static str) -> Outcome<Value>,
@@ -173,7 +171,6 @@ fn object<M: Proto>(
 /// Heartwood's verdict on a payload it decoded to `value`. Heartwood skips protobuf groups at any
 /// depth, where the reference's stack overflows: an accepted payload whose oracle answer is that
 /// overflow is the documented difference, and any other is compared as usual.
-#[expect(dead_code, reason = "the area subjects call it")]
 fn accepted(value: Value) -> Verdict {
     Verdict::DiffersWhereShown {
         difference: Documented::DeepGroups,
@@ -183,7 +180,6 @@ fn accepted(value: Value) -> Verdict {
 
 /// Heartwood's verdict on a payload it refused with `error`: the reference's error class, or, for
 /// an amount beyond 128 bits, the documented difference where the oracle shows it.
-#[expect(dead_code, reason = "the area subjects call it")]
 fn refused(error: DecodeError) -> Verdict {
     match error.js_class() {
         Some(class) => rejected(class),
