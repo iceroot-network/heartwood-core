@@ -331,6 +331,7 @@ mod tests {
 
     /// Pings the oracle when a test oracle is configured: DIFFTEST_TEST_SOLAR_DIR (local) or
     /// DIFFTEST_TEST_IMAGE (container). When neither is set, the test pings nothing.
+    /// `make test-oracle` sets both.
     #[test]
     fn ping_configured_oracles() {
         let mut modes = Vec::new();
