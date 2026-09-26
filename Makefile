@@ -147,3 +147,40 @@ test-oracle: ## the oracle ping test of cargo test, against IMAGE and LOCAL_SOLA
 	    cargo test --locked --lib ping_configured_oracles -- --nocapture
 
 e2e: vectors vectors-local vectors-diff l0 ## end to end: generate, diff, compare (needs oracle-image first)
+
+# ---- heartwood-p2p-wire: the peer-to-peer wire codec ----
+# Its golden vectors (class V13) live beside the crate, with their own manifest.
+WIRE_VECTORS  ?= packages/p2p-wire/tests/vectors
+WIRE_FUZZ     := nes_frame wire_message status_verify
+FUZZ_SECONDS  ?= 600
+FUZZ_FORK     ?= 8
+# The only packages that may enable the legacy-schnorr feature of heartwood-crypto.
+WIRE_SCHNORR  := heartwood-difftest heartwood-p2p-wire
+RELEASE_PACKAGES += heartwood-p2p-wire
+
+.PHONY: test-wire wire-features vectors-install-wire fuzz-wire replay-wire
+
+check: test-wire wire-features
+
+test-wire: ## heartwood-p2p-wire alone: clippy (warnings are errors) and cargo test; it has no features
+	$(TOOLCHAIN) && cargo clippy -p heartwood-p2p-wire --all-targets --locked -- -D warnings
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-p2p-wire
+
+wire-features: ## only WIRE_SCHNORR enable the legacy-schnorr feature of heartwood-crypto
+	@$(TOOLCHAIN) && set -o pipefail && enablers=$$(cargo tree --locked --workspace -e features,normal,build -i heartwood-crypto \
+	        --prefix depth | awk '/^1/ { on = /feature "legacy-schnorr"/ } on && /^2/ { sub(/^2/, ""); print $$1 }' \
+	        | sort -u | tr '\n' ' ') || exit 1; \
+	if [ "$$enablers" != "$(WIRE_SCHNORR) " ]; then \
+	    echo "wire-features: legacy-schnorr is enabled by $$enablers, not by $(WIRE_SCHNORR) only" >&2; exit 1; \
+	fi; \
+	echo "wire-features: legacy-schnorr is enabled by $(WIRE_SCHNORR) only"
+
+vectors-install-wire: ## V13 of the container run, with its manifest, into WIRE_VECTORS (not written yet)
+	@echo "vectors-install-wire: not written yet" >&2; exit 1
+
+fuzz-wire: ## the three wire fuzz targets at once, FUZZ_SECONDS each (not written yet)
+	@echo "fuzz-wire: not written yet" >&2; exit 1
+
+replay-wire: ## each wire fuzz corpus through the oracle IMAGE and Heartwood (not written yet)
+	@echo "replay-wire: not written yet" >&2; exit 1
+# ---- end of heartwood-p2p-wire ----

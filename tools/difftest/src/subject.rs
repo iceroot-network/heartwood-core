@@ -13,6 +13,7 @@ use thiserror::Error;
 
 use crate::errors::Error;
 use crate::subjects::{self, Devnet};
+use crate::vectors::Expected;
 
 /// Heartwood's answer to one case.
 #[derive(Debug, Clone, PartialEq)]
@@ -38,11 +39,27 @@ pub enum Verdict {
         /// Whether the input has the documented form.
         holds: bool,
     },
+    /// Heartwood took the path of a documented difference whose reference side only the oracle's
+    /// answer shows (a JavaScript prototype, the depth of the Node stack, an integer of any size).
+    /// When the oracle's answer shows it ([`Documented::shown_by`]), the case is a documented
+    /// difference; otherwise `verdict` is judged as usual.
+    DiffersWhereShown {
+        /// The documented difference.
+        difference: Documented,
+        /// Heartwood's verdict, judged when the oracle's answer does not show the difference.
+        verdict: Box<Verdict>,
+    },
 }
 
-/// A form of input that Heartwood refuses on purpose where the reference accepts it.
+/// A form of input that Heartwood treats differently from the reference on purpose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Documented {
+    /// A getStatus reply with a plugin named `__proto__`.
+    PluginsPrototype,
+    /// Protobuf groups nested deeper than the reference's stack allows.
+    DeepGroups,
+    /// An amount in a peer-to-peer payload whose value needs more than 128 bits.
+    WideAmount,
     /// A transaction of a removed type (type group 1, types 0, 3, 4, 5, 8, 9 and 10).
     RemovedType,
     /// A transaction with the extended header (header type 1), which carries the sender address.
@@ -59,6 +76,21 @@ impl Documented {
     /// What the reference does instead, and why the difference is harmless or accepted.
     pub fn reason(self) -> &'static str {
         match self {
+            Documented::PluginsPrototype => {
+                "a status plugin named __proto__: the reference's decoder replaces the plugins \
+                 object's prototype, and its reply check then sees the prototype's properties; \
+                 Heartwood drops the entry and checks the own names only (crafted replies only)"
+            }
+            Documented::DeepGroups => {
+                "protobuf groups nested beyond the reference's stack: the reference fails with a \
+                 stack overflow, Heartwood skips groups at any depth (no honest message has a \
+                 group, and the reference's result depends on its stack size)"
+            }
+            Documented::WideAmount => {
+                "an amount beyond 128 bits: the reference reads an integer of any size and \
+                 refuses it at a later step, Heartwood refuses it when it decodes (crafted \
+                 payloads only; reading it is unbounded work)"
+            }
             Documented::RemovedType => {
                 "a removed type: the reference decodes it and refuses it when it is applied (its \
                  handler is inactive), so a block that holds one is refused either way"
@@ -83,6 +115,36 @@ impl Documented {
                  indices as vote names and removes them after it has computed the id (the JSON \
                  path only; the wire form is exact)"
             }
+        }
+    }
+}
+
+/// The key of an oracle output that holds the oracle's notes: what it observed of the reference
+/// that the output's value cannot show, for [`Documented::shown_by`]. L0 does not compare it.
+pub const NOTES: &str = "notes";
+
+/// The start of the message of the `RangeError` that Node raises when its stack overflows.
+const STACK_OVERFLOW: &str = "Maximum call stack size exceeded";
+
+impl Documented {
+    /// Whether the oracle's answer `expected` shows the reference's side of this difference: a
+    /// `true` note in the output's `notes` (`pluginsPrototype`, `stackOverflow`, `wideAmount`),
+    /// or, for deep groups, a `RangeError` for the overflow of the Node stack. The differences
+    /// that Heartwood checks on the input ([`Verdict::RefusedByDesign`]) are never shown.
+    pub fn shown_by(self, expected: &Expected) -> bool {
+        let note = |name: &str| match expected {
+            Expected::Output(output) => output[NOTES][name] == Value::Bool(true),
+            Expected::Error(_) => false,
+        };
+        match self {
+            Documented::PluginsPrototype => note("pluginsPrototype"),
+            Documented::DeepGroups => {
+                note("stackOverflow")
+                    || matches!(expected, Expected::Error(error)
+                        if error.class == "RangeError" && error.message.starts_with(STACK_OVERFLOW))
+            }
+            Documented::WideAmount => note("wideAmount"),
+            _ => false,
         }
     }
 }

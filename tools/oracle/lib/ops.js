@@ -544,6 +544,21 @@ function makeOps(solar, devnet) {
         },
     };
 
+    // ---- peer-to-peer wire: the operations of lib/ops/wire-*.js ----
+    // Each file exports a function that takes this context and returns operations of the same
+    // shape as those above. An operation name may be defined only once.
+    {
+        const wireContext = { solar, devnet, cm, describe, plain, hexBuffer };
+        for (const file of ["wire-nes.js", "wire-codecs.js", "wire-status.js"]) {
+            const extra = require(path.join(__dirname, "ops", file))(wireContext);
+            for (const [name, fn] of Object.entries(extra)) {
+                if (Object.prototype.hasOwnProperty.call(ops, name)) throw new Error(`operation ${name} of lib/ops/${file} is already defined`);
+                ops[name] = fn;
+            }
+        }
+    }
+    // ---- end of the peer-to-peer wire ----
+
     /**
      * Run one operation at a height. Resolves to {output} or {error}; never rejects for errors the
      * reference raises.

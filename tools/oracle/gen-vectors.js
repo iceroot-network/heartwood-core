@@ -53,6 +53,9 @@ const CLASSES = [
     ["V11-external", require("./lib/vectors/external")],
     ["V12-milestone-config", require("./lib/vectors/config")],
 ];
+// The peer-to-peer wire (heartwood-p2p-wire), generated last; its builder returns null while it
+// has no records, and the class is then not written.
+CLASSES.push(["V13-p2p-wire", require("./lib/vectors/wire")]);
 
 function parseArgs(argv) {
     const opts = {

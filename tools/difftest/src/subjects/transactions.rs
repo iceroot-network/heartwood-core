@@ -94,6 +94,8 @@ fn json_refused(error: &BuildError, json: &Value) -> Verdict {
 fn has_json_form(difference: Documented, json: &Value) -> bool {
     let number = |key: &str| json.get(key).and_then(Value::as_f64);
     match difference {
+        // The wire's differences are shown by the oracle's answer, not by a transaction.
+        Documented::PluginsPrototype | Documented::DeepGroups | Documented::WideAmount => false,
         Documented::ExtendedHeader => number("headerType") == Some(1.0),
         Documented::MultiSignature => json.get("signatures").is_some(),
         Documented::RemovedType => {

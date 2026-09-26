@@ -303,9 +303,20 @@ name = "heartwood-difftest"
 version = "0.1.0"
 dependencies = [
  "heartwood-crypto",
+ "heartwood-p2p-wire",
  "serde",
  "serde_json",
  "sha2",
+ "thiserror",
+]
+
+[[package]]
+name = "heartwood-p2p-wire"
+version = "0.1.0"
+dependencies = [
+ "heartwood-crypto",
+ "hex",
+ "serde_json",
  "thiserror",
 ]
 
