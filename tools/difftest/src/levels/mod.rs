@@ -24,8 +24,15 @@ use serde_json::Value;
 
 use crate::errors::Error;
 use crate::fixture::Fixture;
-use crate::subject::Case;
+use crate::report::Outcome;
+use crate::subject::{Case, Registry};
 use crate::vectors::Expected;
+
+/// The reason of a case that differs only by the key the reference binds for a refused sender
+/// (see [`refused_unbound_sender`]).
+pub const BOUND_KEY: &str = "a refused transaction from a sender without a public key: the \
+     reference binds the key before its checks run and keeps it after the refusal, Heartwood \
+     leaves the wallet as it was (the verdict and the error class are the same)";
 
 /// A level of differential testing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,17 +110,38 @@ pub fn refused_unbound_sender(case: &Case<'_>, expected: &Expected) -> Option<Ad
 /// reference refused whose sender had no key, the key it bound is left out of its wallets (see
 /// [`refused_unbound_sender`] and [`l1::without_bound_key`]).
 pub fn documented_expected(case: &Case<'_>, expected: &Expected) -> Expected {
-    let Some(sender) = refused_unbound_sender(case, expected) else {
-        return expected.clone();
+    without_bound_sender_key(case, expected).unwrap_or_else(|| expected.clone())
+}
+
+/// The oracle's answer without the key it bound for a refused sender that had none, when that
+/// changes the answer; `None` otherwise.
+fn without_bound_sender_key(case: &Case<'_>, expected: &Expected) -> Option<Expected> {
+    let sender = refused_unbound_sender(case, expected)?;
+    let Expected::Output(output) = expected else {
+        return None;
     };
-    let mut expected = expected.clone();
-    if let Expected::Output(output) = &mut expected
-        && let Some(w) = output.pointer("/after/W").and_then(Value::as_str)
-    {
-        let w = l1::without_bound_key(w, &sender);
-        output["after"]["W"] = Value::String(w);
+    let w = output.pointer("/after/W").and_then(Value::as_str)?;
+    let without = l1::without_bound_key(w, &sender);
+    if without == w {
+        return None;
     }
-    expected
+    let mut output = output.clone();
+    output["after"]["W"] = Value::String(without);
+    Some(Expected::Output(output))
+}
+
+/// Judge `case` against the oracle's `expected` answer as [`l0::judge_case`] does, with the
+/// documented differences applied. A case that passes only once the key the reference bound for
+/// a refused sender is left out counts as that documented difference ([`BOUND_KEY`]), so reports
+/// list it.
+pub fn judge_documented(case: &Case<'_>, expected: &Expected, registry: &Registry) -> Outcome {
+    match without_bound_sender_key(case, expected) {
+        Some(adjusted) => match l0::judge_case(case, &adjusted, registry) {
+            Outcome::Pass => Outcome::Documented(BOUND_KEY.to_owned()),
+            other => other,
+        },
+        None => l0::judge_case(case, expected, registry),
+    }
 }
 
 impl fmt::Display for Level {

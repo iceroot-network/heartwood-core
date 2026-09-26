@@ -24,7 +24,6 @@ use serde_json::{Value, json};
 
 use crate::errors::{Error, Result};
 use crate::fixture::Fixture;
-use crate::levels::l0::judge_case;
 use crate::oracle::OracleServer;
 use crate::report::{CaseResult, Outcome, Report};
 use crate::strategies::transactions::{TxContext, fee_cases, handler_cases};
@@ -288,12 +287,11 @@ pub fn run(
                 height: case.height,
                 input: &case.input,
             };
-            let expected = super::documented_expected(&request, &answer);
             if *property == Property::Handlers {
-                let class = refusal_class(&expected).unwrap_or_else(|| "applied".into());
+                let class = refusal_class(&answer).unwrap_or_else(|| "applied".into());
                 *seen.borrow_mut().entry(class).or_insert(0) += 1;
             }
-            let judged = judge_case(&request, &expected, registry);
+            let judged = super::judge_documented(&request, &answer, registry);
             let failed = judged.is_failure();
             let message = format!("{judged:?}");
             recorded.borrow_mut().push((case, judged));
