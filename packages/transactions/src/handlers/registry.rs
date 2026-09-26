@@ -1,6 +1,8 @@
-//! The closed registry of handlers: one per transaction type, chosen by a `match` on the type.
+//! The closed registry of handlers: one per transaction type, chosen by a `match` on the
+//! transaction's asset, which the decoder makes match its type.
 
-use heartwood_crypto::{Transaction, TransactionType};
+use heartwood_crypto::Transaction;
+use heartwood_crypto::transactions::types::Asset;
 use heartwood_state::undo::TxUndo;
 use heartwood_state::wallets::WalletRepository;
 use heartwood_state::{ApplyContext, TransactionHandlers, TransactionRejected};
@@ -17,26 +19,27 @@ pub struct Handlers;
 
 impl Handlers {
     /// Run every check of `transaction` against `wallets` without changing them: the type's
-    /// checks, then the base checks (the reference's `throwIfCannotBeApplied`).
+    /// checks, then the base checks (the reference's `throwIfCannotBeApplied`, on the sender as
+    /// apply sees it, with the transaction's key bound when the wallet has none).
     pub fn throw_if_cannot_be_applied(
         &self,
         ctx: &ApplyContext<'_>,
         wallets: &WalletRepository,
         transaction: &Transaction,
     ) -> Result<(), TransactionError> {
-        match transaction.kind() {
-            TransactionType::Transfer => transfer::check(ctx, wallets, transaction),
-            TransactionType::SecondSignature => {
-                second_signature_registration::check(ctx, wallets, transaction)
+        match &transaction.data().asset {
+            Asset::Transfer { transfers } => transfer::check(ctx, wallets, transaction, transfers),
+            Asset::SecondSignature { public_key } => {
+                second_signature_registration::check(ctx, wallets, transaction, public_key)
             }
-            TransactionType::DelegateRegistration => {
-                delegate_registration::check(ctx, wallets, transaction)
+            Asset::DelegateRegistration { username } => {
+                delegate_registration::check(ctx, wallets, transaction, username)
             }
-            TransactionType::DelegateResignation => {
-                delegate_resignation::check(ctx, wallets, transaction)
+            Asset::DelegateResignation { resignation_type } => {
+                delegate_resignation::check(ctx, wallets, transaction, *resignation_type)
             }
-            TransactionType::Burn => burn::check(ctx, wallets, transaction),
-            TransactionType::Vote => vote::check(ctx, wallets, transaction),
+            Asset::Burn { .. } => burn::check(ctx, wallets, transaction),
+            Asset::Vote { votes } => vote::check(ctx, wallets, transaction, votes),
         }
     }
 }
@@ -49,19 +52,21 @@ impl TransactionHandlers for Handlers {
         transaction: &Transaction,
         issuance: bool,
     ) -> Result<u64, TransactionRejected> {
-        let owed = match transaction.kind() {
-            TransactionType::Transfer => transfer::bootstrap(ctx, wallets, transaction, issuance),
-            TransactionType::SecondSignature => {
-                second_signature_registration::bootstrap(ctx, wallets, transaction)
+        let owed = match &transaction.data().asset {
+            Asset::Transfer { transfers } => {
+                transfer::bootstrap(ctx, wallets, transaction, transfers, issuance)
             }
-            TransactionType::DelegateRegistration => {
-                delegate_registration::bootstrap(ctx, wallets, transaction)
+            Asset::SecondSignature { public_key } => {
+                second_signature_registration::bootstrap(ctx, wallets, transaction, public_key)
             }
-            TransactionType::DelegateResignation => {
-                delegate_resignation::bootstrap(ctx, wallets, transaction)
+            Asset::DelegateRegistration { username } => {
+                delegate_registration::bootstrap(ctx, wallets, transaction, username)
             }
-            TransactionType::Burn => burn::bootstrap(ctx, wallets, transaction),
-            TransactionType::Vote => vote::bootstrap(ctx, wallets, transaction),
+            Asset::DelegateResignation { resignation_type } => {
+                delegate_resignation::bootstrap(ctx, wallets, transaction, *resignation_type)
+            }
+            Asset::Burn { .. } => burn::bootstrap(ctx, wallets, transaction),
+            Asset::Vote { votes } => vote::bootstrap(ctx, wallets, transaction, votes),
         };
         Ok(owed?)
     }
@@ -72,19 +77,19 @@ impl TransactionHandlers for Handlers {
         wallets: &mut WalletRepository,
         transaction: &Transaction,
     ) -> Result<TxUndo, TransactionRejected> {
-        let undo = match transaction.kind() {
-            TransactionType::Transfer => transfer::apply(ctx, wallets, transaction),
-            TransactionType::SecondSignature => {
-                second_signature_registration::apply(ctx, wallets, transaction)
+        let undo = match &transaction.data().asset {
+            Asset::Transfer { transfers } => transfer::apply(ctx, wallets, transaction, transfers),
+            Asset::SecondSignature { public_key } => {
+                second_signature_registration::apply(ctx, wallets, transaction, public_key)
             }
-            TransactionType::DelegateRegistration => {
-                delegate_registration::apply(ctx, wallets, transaction)
+            Asset::DelegateRegistration { username } => {
+                delegate_registration::apply(ctx, wallets, transaction, username)
             }
-            TransactionType::DelegateResignation => {
-                delegate_resignation::apply(ctx, wallets, transaction)
+            Asset::DelegateResignation { resignation_type } => {
+                delegate_resignation::apply(ctx, wallets, transaction, *resignation_type)
             }
-            TransactionType::Burn => burn::apply(ctx, wallets, transaction),
-            TransactionType::Vote => vote::apply(ctx, wallets, transaction),
+            Asset::Burn { .. } => burn::apply(ctx, wallets, transaction),
+            Asset::Vote { votes } => vote::apply(ctx, wallets, transaction, votes),
         };
         Ok(undo?)
     }
@@ -96,19 +101,21 @@ impl TransactionHandlers for Handlers {
         transaction: &Transaction,
         undo: &TxUndo,
     ) -> Result<(), TransactionRejected> {
-        let reverted = match transaction.kind() {
-            TransactionType::Transfer => transfer::revert(ctx, wallets, transaction, undo),
-            TransactionType::SecondSignature => {
+        let reverted = match &transaction.data().asset {
+            Asset::Transfer { transfers } => {
+                transfer::revert(ctx, wallets, transaction, transfers, undo)
+            }
+            Asset::SecondSignature { .. } => {
                 second_signature_registration::revert(ctx, wallets, transaction, undo)
             }
-            TransactionType::DelegateRegistration => {
+            Asset::DelegateRegistration { .. } => {
                 delegate_registration::revert(ctx, wallets, transaction, undo)
             }
-            TransactionType::DelegateResignation => {
+            Asset::DelegateResignation { .. } => {
                 delegate_resignation::revert(ctx, wallets, transaction, undo)
             }
-            TransactionType::Burn => burn::revert(ctx, wallets, transaction, undo),
-            TransactionType::Vote => vote::revert(ctx, wallets, transaction, undo),
+            Asset::Burn { .. } => burn::revert(ctx, wallets, transaction, undo),
+            Asset::Vote { .. } => vote::revert(ctx, wallets, transaction, undo),
         };
         Ok(reverted?)
     }

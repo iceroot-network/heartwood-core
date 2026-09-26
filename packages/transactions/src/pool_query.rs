@@ -6,6 +6,7 @@
 //! has exactly one implementation in a node, chosen at compile time.
 
 use heartwood_crypto::identities::Address;
+use heartwood_crypto::transactions::types::Asset;
 use heartwood_crypto::{Transaction, TransactionType};
 use heartwood_state::ApplyContext;
 use heartwood_state::wallets::WalletRepository;
@@ -32,7 +33,8 @@ pub trait OnlineDelegates {
 }
 
 /// Refuse `transaction` at pool entry, as the reference's `throwIfCannotEnterPool` of its type
-/// does. Transfers and burns have no pool-entry rule.
+/// does. Transfers and burns have no pool-entry rule. `ctx` is the pool's: the rules of the tip
+/// plus one.
 pub fn throw_if_cannot_enter_pool<P: PoolQuery, O: OnlineDelegates>(
     ctx: &ApplyContext<'_>,
     wallets: &WalletRepository,
@@ -40,33 +42,37 @@ pub fn throw_if_cannot_enter_pool<P: PoolQuery, O: OnlineDelegates>(
     pool: &P,
     online: &O,
 ) -> Result<(), PoolError> {
-    match transaction.kind() {
-        TransactionType::Transfer | TransactionType::Burn => Ok(()),
-        TransactionType::SecondSignature => {
-            second_signature_registration::throw_if_cannot_enter_pool(
+    match &transaction.data().asset {
+        Asset::Transfer { .. } | Asset::Burn { .. } => Ok(()),
+        Asset::SecondSignature { .. } => second_signature_registration::throw_if_cannot_enter_pool(
+            ctx,
+            wallets,
+            transaction,
+            pool,
+            online,
+        ),
+        Asset::DelegateRegistration { username } => {
+            delegate_registration::throw_if_cannot_enter_pool(
                 ctx,
                 wallets,
                 transaction,
+                username,
                 pool,
                 online,
             )
         }
-        TransactionType::DelegateRegistration => delegate_registration::throw_if_cannot_enter_pool(
-            ctx,
-            wallets,
-            transaction,
-            pool,
-            online,
-        ),
-        TransactionType::DelegateResignation => delegate_resignation::throw_if_cannot_enter_pool(
-            ctx,
-            wallets,
-            transaction,
-            pool,
-            online,
-        ),
-        TransactionType::Vote => {
-            vote::throw_if_cannot_enter_pool(ctx, wallets, transaction, pool, online)
+        Asset::DelegateResignation { resignation_type } => {
+            delegate_resignation::throw_if_cannot_enter_pool(
+                ctx,
+                wallets,
+                transaction,
+                *resignation_type,
+                pool,
+                online,
+            )
+        }
+        Asset::Vote { votes } => {
+            vote::throw_if_cannot_enter_pool(ctx, wallets, transaction, votes, pool, online)
         }
     }
 }
