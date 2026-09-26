@@ -13,7 +13,7 @@
 //! - `corpus.json`: the reference commit and tree, the oracle image, heights and counts;
 //! - `MANIFEST.sha256`: the SHA-256 of every other file.
 //!
-//! [`import`] builds a corpus from the devnet tooling's archives (format `solar-devnet-archive/1`):
+//! [`import`] builds a corpus from the devnet tooling's archives (format [`ARCHIVE_FORMAT`]):
 //! one or more increments of the same chain, each continuing the one before it.
 
 use std::collections::BTreeMap;

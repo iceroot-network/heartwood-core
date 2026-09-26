@@ -91,6 +91,8 @@ impl SyntheticCase {
 
 /// The key-derivation tag of the devnet tooling.
 pub const DERIVATION_TAG: &str = "solar-devnet-v1/";
+/// The devnet tooling's default key-derivation seed, which is public.
+pub const DEVNET_SEED: &str = "solar-devnet";
 /// The aux of every synthetic signature.
 const AUX: [u8; 32] = [0x5a; 32];
 /// A fee above every floor of the devnet for the small transactions of the cases.
@@ -978,7 +980,7 @@ mod tests {
 
     #[test]
     fn the_default_seed_derives_the_devnet_roles() {
-        let keys = Keys::derive("solar-devnet", 90).unwrap();
+        let keys = Keys::derive(DEVNET_SEED, 90).unwrap();
         assert_eq!(keys.keys.len(), 4 + 53 + 20);
         assert!(keys.role("delegate/53").is_some());
         assert_eq!(keys.wallets().count(), 20);

@@ -44,7 +44,8 @@ Usage:
   difftest corpus import ARCHIVE... --out DIR [--seed TEXT]
                                   join the devnet tooling's archives of one chain (in order)
                                   into a corpus; TEXT is the chain's public key-derivation
-                                  seed, checked against the genesis block [solar-devnet]
+                                  seed, checked against the genesis block [the devnet
+                                  tooling's default seed]
   difftest corpus judge DIR [--dump H,...] [ORACLE]
                                   run the oracle's judge on the corpus: its digest lines and
                                   anchor results are added to the corpus
@@ -292,7 +293,8 @@ pub fn parse(args: &[String]) -> Result<Command> {
             }
         }
         ["corpus", "import", rest @ ..] => {
-            let (mut archives, mut out, mut seed) = (Vec::new(), None, "solar-devnet".to_string());
+            let (mut archives, mut out, mut seed) =
+                (Vec::new(), None, crate::synthetic::DEVNET_SEED.to_string());
             let mut it = rest.iter();
             while let Some(&arg) = it.next() {
                 match arg {
@@ -599,7 +601,7 @@ mod tests {
             Command::CorpusImport {
                 archives: vec!["a".into(), "b".into()],
                 out: "c".into(),
-                seed: "solar-devnet".into()
+                seed: crate::synthetic::DEVNET_SEED.into()
             }
         );
         assert_eq!(

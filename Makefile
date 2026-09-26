@@ -47,11 +47,12 @@ L1_CASES      ?= 256
 L1_SEED       ?= 1
 L1_PROPERTY   ?=
 # L2: the corpus directory CORPUS/NAME; ARCHIVE the devnet archives to import (in chain order);
-# CORPUS_SEED the chain's public key-derivation seed; DUMP heights whose records the judge writes.
+# CORPUS_SEED the chain's public key-derivation seed (difftest's default when empty); DUMP heights
+# whose records the judge writes.
 CORPUS        ?= target/corpus
 NAME          ?=
 ARCHIVE       ?=
-CORPUS_SEED   ?= solar-devnet
+CORPUS_SEED   ?=
 DUMP          ?=
 # Where the oracle of l1, corpus-judge and l2-synthetic runs: the image by default, or
 # ORACLE_ARGS='--solar-dir $(LOCAL_SOLAR)' for a local reference.
@@ -209,7 +210,7 @@ l1: build ## L1 properties against the oracle (ORACLE_ARGS): L1_CASES, L1_SEED, 
 corpus-import: build ## devnet archives (ARCHIVE='dir ...', in chain order) to the corpus CORPUS/NAME
 	$(need-name)
 	$(if $(ARCHIVE),,$(error set ARCHIVE, the devnet archives of the chain in order))
-	$(DIFFTEST) corpus import $(ARCHIVE) --out $(CORPUS)/$(NAME) --seed '$(CORPUS_SEED)'
+	$(DIFFTEST) corpus import $(ARCHIVE) --out $(CORPUS)/$(NAME) $(if $(CORPUS_SEED),--seed '$(CORPUS_SEED)')
 
 corpus-judge: build ## the oracle's judge of CORPUS/NAME: digest lines and anchors (DUMP=H,...)
 	$(need-name)
