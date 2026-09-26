@@ -15,18 +15,7 @@ use libfuzzer_sys::fuzz_target;
 
 /// The transaction rules of the golden vectors' devnet: network byte 90, 150 transactions and
 /// 2,097,152 bytes per block, 1 to 256 transfer items.
-const MILESTONES: &str = r#"[{
-    "height": 1,
-    "activeDelegates": 53,
-    "blockTime": 8,
-    "block": { "version": 0, "maxTransactions": 150, "maxPayload": 2097152 },
-    "burn": { "feeBasisPoints": 9000, "txAmount": 2000000 },
-    "epoch": "2026-01-01T00:00:00.000Z",
-    "transfer": { "maximum": 256, "minimum": 1 },
-    "reward": 0,
-    "dynamicReward": { "enabled": false },
-    "donations": {}
-}]"#;
+const MILESTONES: &str = include_str!("../milestones/transaction_decode.json");
 
 static PARAMS: LazyLock<Params> = LazyLock::new(|| {
     let network = Network {

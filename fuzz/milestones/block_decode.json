@@ -1,0 +1,20 @@
+[
+    {
+        "height": 1,
+        "activeDelegates": 53,
+        "blockTime": 8,
+        "block": { "version": 0, "maxTransactions": 150, "maxPayload": 2097152 },
+        "blocksToRevokeDelegateResignation": 106,
+        "epoch": "2026-01-01T00:00:00.000Z",
+        "reward": 0,
+        "burn": { "feeBasisPoints": 9000, "txAmount": 2000000 },
+        "donations": {},
+        "dynamicReward": { "enabled": false },
+        "transfer": { "maximum": 256, "minimum": 1 },
+        "legacyTransfer": false,
+        "legacyVote": false,
+        "acceptLegacySchnorrTransactions": false,
+        "bip340": true
+    },
+    { "height": 10, "transfer": { "maximum": 2 } }
+]

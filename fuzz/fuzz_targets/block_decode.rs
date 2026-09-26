@@ -21,26 +21,7 @@ const NETWORK: &str = r#"{
 
 /// Two milestones, so that inputs decode under the genesis rules of height 1, the rules of the
 /// first milestone, and a later milestone with a smaller transfer limit.
-const MILESTONES: &str = r#"[
-    {
-        "height": 1,
-        "activeDelegates": 53,
-        "blockTime": 8,
-        "block": { "version": 0, "maxTransactions": 150, "maxPayload": 2097152 },
-        "blocksToRevokeDelegateResignation": 106,
-        "epoch": "2026-01-01T00:00:00.000Z",
-        "reward": 0,
-        "burn": { "feeBasisPoints": 9000, "txAmount": 2000000 },
-        "donations": {},
-        "dynamicReward": { "enabled": false },
-        "transfer": { "maximum": 256, "minimum": 1 },
-        "legacyTransfer": false,
-        "legacyVote": false,
-        "acceptLegacySchnorrTransactions": false,
-        "bip340": true
-    },
-    { "height": 10, "transfer": { "maximum": 2 } }
-]"#;
+const MILESTONES: &str = include_str!("../milestones/block_decode.json");
 
 static RULES: LazyLock<Milestones> = LazyLock::new(|| {
     let network = Network::load(NETWORK).expect("the fuzz network loads");
