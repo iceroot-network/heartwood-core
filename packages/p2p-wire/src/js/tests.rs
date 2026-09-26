@@ -1,47 +1,6 @@
 use super::*;
 
 #[test]
-fn assignment_follows_the_own_key_order_of_a_plain_object() {
-    let mut entries = Vec::new();
-    assert_eq!(
-        assign(&mut entries, "b-plugin".into(), 1),
-        Assigned::Inserted
-    );
-    assert_eq!(assign(&mut entries, "1234".into(), 2), Assigned::Inserted);
-    assert_eq!(
-        assign(&mut entries, "a-plugin".into(), 3),
-        Assigned::Inserted
-    );
-    assert_eq!(assign(&mut entries, "7".into(), 4), Assigned::Inserted);
-    assert_eq!(
-        assign(&mut entries, "b-plugin".into(), 5),
-        Assigned::Replaced
-    );
-    assert_eq!(
-        assign(&mut entries, "__proto__".into(), 6),
-        Assigned::Prototype
-    );
-    // 4294967295 is not an array index, so it keeps its insertion order.
-    assert_eq!(
-        assign(&mut entries, "4294967295".into(), 7),
-        Assigned::Inserted
-    );
-    assert_eq!(assign(&mut entries, "01".into(), 8), Assigned::Inserted);
-    let keys: Vec<(&str, i32)> = entries.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-    assert_eq!(
-        keys,
-        [
-            ("7", 4),
-            ("1234", 2),
-            ("b-plugin", 5),
-            ("a-plugin", 3),
-            ("4294967295", 7),
-            ("01", 8),
-        ]
-    );
-}
-
-#[test]
 fn bigint_reads_text_as_javascript_does() {
     let ok = |text: &str| parse_bigint(text);
     assert_eq!(ok(""), Ok(0));

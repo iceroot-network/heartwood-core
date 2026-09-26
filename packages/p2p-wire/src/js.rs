@@ -1,60 +1,15 @@
-//! The parts of JavaScript that decide the reference's bytes and values on the wire: the own-key
-//! order of a plain object, how `BigInt` reads text, UTF-16 lengths, order and cuts, Node's lossy
-//! UTF-8 decoding, and how `JSON.stringify` escapes a string.
+//! The parts of JavaScript that decide the reference's bytes and values on the wire: the key that
+//! replaces a plain object's prototype, how `BigInt` reads text, UTF-16 lengths, order and cuts,
+//! Node's lossy UTF-8 decoding, and how `JSON.stringify` escapes a string. The own-key order of a
+//! plain object is kept by [`Plugins`](crate::messages::peer::Plugins), its one user.
 
 use std::cmp::Ordering;
-
-use heartwood_crypto::utils::js::is_array_index;
 
 #[cfg(test)]
 mod tests;
 
 /// The key whose assignment replaces a plain object's prototype instead of adding an own key.
 pub(crate) const PROTO_KEY: &str = "__proto__";
-
-/// What the assignment `object[key] = value` did to a plain object.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Assigned {
-    /// A new own key.
-    Inserted,
-    /// An existing own key took the value and kept its position.
-    Replaced,
-    /// The key was `__proto__`: the object's prototype was replaced and no own key was added.
-    Prototype,
-}
-
-/// `object[key] = value` on a plain object whose own keys are `entries`, in enumeration order.
-///
-/// An existing key keeps its position and takes the value. A new array-index key goes among the
-/// array-index keys, which come first, in numeric order; any other new key goes last. The key
-/// `__proto__` adds nothing (the reference's object takes the value as its prototype).
-pub(crate) fn assign<V>(entries: &mut Vec<(String, V)>, key: String, value: V) -> Assigned {
-    if key == PROTO_KEY {
-        return Assigned::Prototype;
-    }
-    if let Some(entry) = entries.iter_mut().find(|(existing, _)| *existing == key) {
-        entry.1 = value;
-        return Assigned::Replaced;
-    }
-    let at = match array_index(&key) {
-        Some(index) => entries
-            .iter()
-            .position(|(existing, _)| array_index(existing).is_none_or(|other| other > index))
-            .unwrap_or(entries.len()),
-        None => entries.len(),
-    };
-    entries.insert(at, (key, value));
-    Assigned::Inserted
-}
-
-/// The numeric value of an array-index key.
-fn array_index(key: &str) -> Option<u64> {
-    if is_array_index(key) {
-        key.parse().ok()
-    } else {
-        None
-    }
-}
 
 /// Why `BigInt(text)` gives no `i128`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,10 +86,6 @@ fn is_js_space(c: char) -> bool {
 
 /// The text of `bytes` as Node's `Buffer.toString()` decodes it: each maximal invalid UTF-8
 /// subpart becomes U+FFFD.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the frame and protobuf readers call it")
-)]
 pub(crate) fn utf8_lossy(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
