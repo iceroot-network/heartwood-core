@@ -1,18 +1,18 @@
 //! A block, its id and its verification rules.
 
-#![expect(
-    unused_variables,
-    reason = "the bodies are not written yet; remove this once they are"
-)]
-
+use std::collections::HashSet;
 use std::fmt;
 
-use crate::crypto::sig::Signature;
+use serde_json::{Map, Value, json};
+
+use crate::blocks::serialiser;
+use crate::crypto::hash::sha256_concat;
+use crate::crypto::sig::{self, SchemeId, Signature, SigningDomain};
 use crate::errors::HexError;
 use crate::identities::{Address, PublicKeyBytes};
 use crate::managers::Milestones;
 use crate::transactions::{Transaction, TransactionId};
-use crate::utils::hex;
+use crate::utils::{burn, donations, hex};
 
 /// A block id: the SHA-256 of the serialised header, signature included.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -110,39 +110,184 @@ impl Block {
     }
 
     /// The sum of the burned part of every fee, under the merged milestone at the block's height.
-    pub fn burned_fee(&self, milestones: &Milestones) -> u64 {
-        todo!()
+    ///
+    /// The sum is exact whatever the fees; for a block that verifies it is at most the header's
+    /// total fee, so it fits 64 bits.
+    pub fn burned_fee(&self, milestones: &Milestones) -> u128 {
+        let params = milestones.at(self.header.height);
+        self.transactions
+            .iter()
+            .map(|transaction| u128::from(burn::burned_fee(transaction.fee(), params)))
+            .sum()
     }
 
     /// The donations taken from the block reward, under the merged milestone at the block's height,
     /// in file order.
     pub fn donations(&self, milestones: &Milestones) -> Vec<(Address, u64)> {
-        todo!()
+        donations::calculate_donations(self.header.reward, milestones.at(self.header.height))
     }
 
     /// Check the block as the reference's `Block.verify` does, under the merged milestone at the
     /// block's height. `current_time` is the time in seconds since the network epoch, which a block
     /// timestamp may not exceed by more than one block time.
+    ///
+    /// Every rule is checked, and every failure is listed in the reference's order. The
+    /// reference's check for expired transactions has no counterpart: none of the transaction
+    /// types this crate carries has an expiration.
     pub fn verify(&self, milestones: &Milestones, current_time: i64) -> Verification {
-        todo!()
+        let header = &self.header;
+        let params = milestones.at(header.height);
+        let mut failures = Vec::new();
+
+        if !self.verify_signature() {
+            failures.push(VerifyFailure::Signature);
+        }
+        if header.version != params.block_version() {
+            failures.push(VerifyFailure::Version);
+        }
+        if i128::from(header.timestamp) > i128::from(current_time) + i128::from(params.block_time())
+        {
+            failures.push(VerifyFailure::Timestamp);
+        }
+        let size = serialiser::size(self);
+        if let Some(max) = params.max_payload()
+            && size > max as usize
+        {
+            failures.push(VerifyFailure::PayloadTooLarge { size, max });
+        }
+        let unverified: Vec<TransactionId> = self
+            .transactions
+            .iter()
+            .filter(|transaction| !transaction.is_verified())
+            .map(|transaction| *transaction.id())
+            .collect();
+        if !unverified.is_empty() {
+            failures.push(VerifyFailure::UnverifiedTransactions(unverified));
+        }
+        if self.transactions.len() != header.number_of_transactions as usize {
+            failures.push(VerifyFailure::TransactionCount);
+        }
+        if u64::from(header.payload_length) != 32 * u64::from(header.number_of_transactions) {
+            failures.push(VerifyFailure::PayloadLength);
+        }
+        if let Some(max) = params.max_transactions()
+            && self.transactions.len() > max as usize
+            && header.height > 1
+        {
+            failures.push(VerifyFailure::TooManyTransactions);
+        }
+
+        let mut seen = HashSet::with_capacity(self.transactions.len());
+        let mut total_amount: u128 = 0;
+        let mut total_fee: u128 = 0;
+        for transaction in &self.transactions {
+            if !seen.insert(*transaction.id()) {
+                failures.push(VerifyFailure::DuplicateTransaction(*transaction.id()));
+            }
+            total_amount += u128::from(transaction.amount());
+            total_fee += u128::from(transaction.fee());
+        }
+        if total_amount != u128::from(header.total_amount) {
+            failures.push(VerifyFailure::TotalAmount);
+        }
+        if total_fee != u128::from(header.total_fee) {
+            failures.push(VerifyFailure::TotalFee);
+        }
+        let payload_hash = sha256_concat(self.transaction_ids().map(|id| id.as_bytes().as_slice()));
+        if payload_hash != header.payload_hash {
+            failures.push(VerifyFailure::PayloadHash);
+        }
+
+        Verification { failures }
     }
 
     /// Whether the header signature is a valid BIP340 signature by the generator key.
+    ///
+    /// The 33-byte generator key is read as its x coordinate, whatever its prefix byte, as in the
+    /// reference.
     pub fn verify_signature(&self) -> bool {
-        todo!()
+        sig::verify(
+            SchemeId::Secp256k1Bip340,
+            SigningDomain::Block,
+            &serialiser::signing_hash(&self.header),
+            &self.header.block_signature,
+            self.header.generator_public_key.as_bytes(),
+        )
     }
 
     /// The block as the reference's `toJson` writes it, transactions included.
-    pub fn to_json(&self, milestones: &Milestones) -> serde_json::Value {
-        todo!()
+    ///
+    /// Each transaction carries, after its own keys, the block id, the height, its position in
+    /// the block and its burned fee, as the reference adds them.
+    pub fn to_json(&self, milestones: &Milestones) -> Value {
+        let header = &self.header;
+        let params = milestones.at(header.height);
+        let donations: Map<String, Value> = self
+            .donations(milestones)
+            .into_iter()
+            .map(|(address, amount)| (address.to_base58(), json!(amount.to_string())))
+            .collect();
+        let transactions: Vec<Value> = self
+            .transactions
+            .iter()
+            .enumerate()
+            .map(|(sequence, transaction)| {
+                let mut json = transaction.to_json(params);
+                if let Value::Object(map) = &mut json {
+                    map.insert("blockId".into(), json!(self.id.to_hex()));
+                    map.insert("blockHeight".into(), json!(header.height));
+                    map.insert("sequence".into(), json!(sequence));
+                    map.insert(
+                        "burnedFee".into(),
+                        json!(burn::burned_fee(transaction.fee(), params).to_string()),
+                    );
+                }
+                json
+            })
+            .collect();
+
+        let mut map = Map::new();
+        map.insert("version".into(), json!(header.version));
+        map.insert("timestamp".into(), json!(header.timestamp));
+        map.insert("height".into(), json!(header.height));
+        map.insert(
+            "previousBlock".into(),
+            json!(hex::encode(&header.previous_block)),
+        );
+        map.insert(
+            "numberOfTransactions".into(),
+            json!(header.number_of_transactions),
+        );
+        map.insert("totalAmount".into(), json!(header.total_amount.to_string()));
+        map.insert("totalFee".into(), json!(header.total_fee.to_string()));
+        map.insert("reward".into(), json!(header.reward.to_string()));
+        map.insert("payloadLength".into(), json!(header.payload_length));
+        map.insert(
+            "payloadHash".into(),
+            json!(hex::encode(&header.payload_hash)),
+        );
+        map.insert(
+            "generatorPublicKey".into(),
+            json!(header.generator_public_key.to_hex()),
+        );
+        map.insert(
+            "blockSignature".into(),
+            json!(header.block_signature.to_hex()),
+        );
+        map.insert("id".into(), json!(self.id.to_hex()));
+        map.insert(
+            "burnedFee".into(),
+            json!(self.burned_fee(milestones).to_string()),
+        );
+        map.insert("donations".into(), Value::Object(donations));
+        map.insert("transactions".into(), Value::Array(transactions));
+        Value::Object(map)
     }
 }
 
 /// One failed block rule, in the order the reference checks them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerifyFailure {
-    /// A block above height 1 without a previous block.
-    PreviousBlock,
     /// The header signature does not verify.
     Signature,
     /// The version is not the milestone's block version.
@@ -172,6 +317,36 @@ pub enum VerifyFailure {
     TotalFee,
     /// The payload hash differs from the hash of the transaction ids.
     PayloadHash,
+}
+
+impl fmt::Display for VerifyFailure {
+    /// The reference's text for the failure; the unverified transactions are named by id.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VerifyFailure::Signature => f.write_str("Failed to verify block signature"),
+            VerifyFailure::Version => f.write_str("Invalid block version"),
+            VerifyFailure::Timestamp => f.write_str("Invalid block timestamp"),
+            VerifyFailure::PayloadTooLarge { size, max } => {
+                write!(f, "Payload is too large: {size} > {max}")
+            }
+            VerifyFailure::UnverifiedTransactions(ids) => {
+                f.write_str("One or more transactions are not verified:")?;
+                for id in ids {
+                    write!(f, " {id}")?;
+                }
+                Ok(())
+            }
+            VerifyFailure::TransactionCount => f.write_str("Invalid number of transactions"),
+            VerifyFailure::PayloadLength => f.write_str("Invalid payload length"),
+            VerifyFailure::TooManyTransactions => f.write_str("Transactions length is too high"),
+            VerifyFailure::DuplicateTransaction(id) => {
+                write!(f, "Encountered duplicate transaction: {id}")
+            }
+            VerifyFailure::TotalAmount => f.write_str("Invalid total amount"),
+            VerifyFailure::TotalFee => f.write_str("Invalid total fee"),
+            VerifyFailure::PayloadHash => f.write_str("Invalid payload hash"),
+        }
+    }
 }
 
 /// The outcome of [`Block::verify`]: every failed rule.

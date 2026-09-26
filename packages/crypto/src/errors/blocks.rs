@@ -2,12 +2,12 @@
 
 use thiserror::Error;
 
-use super::{DecodeError, EncodeError, HexError, KeyError, SchemaError, SigError, UnexpectedEnd};
+use super::{BuildError, DecodeError, EncodeError, HexError, KeyError, SigError, UnexpectedEnd};
 
 /// Block bytes were refused at decode.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum BlockDecodeError {
-    /// The bytes end inside the header or the transaction table.
+    /// The bytes end inside the header, the transaction lengths or a transaction.
     #[error(transparent)]
     Truncated(#[from] UnexpectedEnd),
     /// A transaction of the block does not decode.
@@ -34,15 +34,20 @@ pub enum BlockError {
     /// Signing the header failed.
     #[error(transparent)]
     Sign(#[from] SigError),
-    /// A transaction cannot be serialised.
+    /// A transaction cannot be serialised under the rules of the block's height.
     #[error(transparent)]
     Encode(#[from] EncodeError),
     /// The serialised block does not decode.
     #[error(transparent)]
     Decode(#[from] BlockDecodeError),
     /// A transaction in the JSON is refused.
-    #[error(transparent)]
-    Transaction(#[from] SchemaError),
+    #[error("transaction {index} of the block JSON: {source}")]
+    Transaction {
+        /// Position of the transaction in the block.
+        index: usize,
+        /// Why it was refused.
+        source: BuildError,
+    },
     /// A key in the JSON is refused.
     #[error(transparent)]
     Key(#[from] KeyError),
