@@ -47,6 +47,15 @@ pub enum Error {
         problems: Vec<String>,
     },
 
+    /// A devnet archive or a corpus directory breaks its format, or does not link up.
+    #[error("{path}: {message}")]
+    Corpus {
+        /// The file or directory.
+        path: PathBuf,
+        /// What is wrong.
+        message: String,
+    },
+
     /// The oracle could not be started or answered wrongly.
     #[error("oracle: {0}")]
     Oracle(String),
