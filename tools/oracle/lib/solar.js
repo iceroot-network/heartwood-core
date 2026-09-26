@@ -43,7 +43,10 @@ function provenance(solarDir) {
     };
 }
 
-/** Load @solar-network/crypto (and bcrypto and bip39 as it resolves them) from a built reference. */
+/**
+ * Load @solar-network/crypto (and bcrypto and bip39 as it resolves them) from a built reference.
+ * The transaction handlers and the kernel's stringify are loaded on first use.
+ */
 function loadSolar(dir) {
     const given = dir || process.env.SOLAR_DIR;
     if (!given) {
@@ -60,6 +63,8 @@ function loadSolar(dir) {
     const bcrypto = require(require.resolve("bcrypto", { paths: [cryptoDir] }));
     const bip39 = require(require.resolve("bip39", { paths: [cryptoDir] }));
     const seriesFile = path.join(solarDir, "patches", "series", "SERIES.md");
+    let transactions;
+    let stringify;
     return {
         solarDir,
         cryptoDir,
@@ -70,6 +75,24 @@ function loadSolar(dir) {
         bcryptoBackend: bcrypto.native === 2 ? "native" : "js",
         provenance: provenance(solarDir),
         seriesSha256: fs.existsSync(seriesFile) ? sha256Hex(fs.readFileSync(seriesFile)) : null,
+        /**
+         * @solar-network/transactions (the transaction handlers), loaded on first use. It resolves
+         * @solar-network/crypto to the same module instance as `lib`, so both share one
+         * configuration manager.
+         */
+        transactions() {
+            if (!transactions) {
+                transactions = require(path.join(solarDir, "packages", "transactions", "dist", "index.js"));
+                const shared = require(require.resolve("@solar-network/crypto", { paths: [path.join(solarDir, "packages", "transactions")] }));
+                if (shared !== lib) throw new Error("@solar-network/transactions loaded a second copy of @solar-network/crypto");
+            }
+            return transactions;
+        },
+        /** The key-sorted JSON stringify of @solar-network/kernel, which signs the P2P status. */
+        stringify(value) {
+            if (!stringify) stringify = require(path.join(solarDir, "packages", "kernel", "dist", "utils", "stringify.js")).stringify;
+            return stringify(value);
+        },
     };
 }
 

@@ -10,8 +10,9 @@
 //   <- {"id":18,"ok":false,"error":{"class":"TransactionSchemaError","message":"..."}}
 //
 // The operations are those of lib/ops.js, the same code that writes the L0 vectors. Every request
-// sets its height first. Only the devnet network is served; `ping` needs no network or height.
-// The process never opens a socket: in the image it runs with --network none.
+// sets its height first; requests are answered in order, one at a time. Only the devnet network is
+// served (operations that take milestones run under those, on the devnet network); `ping` needs
+// no network or height. The process never opens a socket: in the image it runs with --network none.
 
 const readline = require("readline");
 
@@ -36,9 +37,8 @@ function main() {
     const { ops, run } = makeOps(solar, devnet);
 
     const respond = (value) => process.stdout.write(JSON.stringify(value) + "\n");
-    const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-    rl.on("line", (line) => {
-        if (line.trim() === "") return;
+
+    async function handle(line) {
         let request;
         try {
             request = JSON.parse(line);
@@ -55,11 +55,20 @@ function main() {
             if (!Object.prototype.hasOwnProperty.call(ops, op)) throw new Error(`unknown operation ${op}`);
             if (network !== devnet.info.name) throw new Error(`network ${network} is not served (only ${devnet.info.name})`);
             if (!Number.isSafeInteger(height) || height < 1) throw new Error("height must be a positive integer");
-            const result = run(op, height, args);
+            const result = await run(op, height, args);
             respond(result.error ? { id, ok: false, error: result.error } : { id, ok: true, result: result.output });
         } catch (error) {
             respond({ id, ok: false, error: { ...errorInfo(error), class: "RequestError" } });
         }
+    }
+
+    // Requests are answered one at a time, in order: some operations are asynchronous, and some
+    // change the configuration for their duration.
+    let queue = Promise.resolve();
+    const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+    rl.on("line", (line) => {
+        if (line.trim() === "") return;
+        queue = queue.then(() => handle(line));
     });
 }
 

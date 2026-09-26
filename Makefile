@@ -3,6 +3,7 @@
 #   make check          build, clippy (warnings are errors), fmt check and tests of the workspace
 #   make oracle-image   build the oracle image for COMMIT from scratch (needs Docker and the network)
 #   make e2e            vectors in the container and locally, diff the two runs, run L0
+#   make vectors-install  copy the container run into packages/crypto/tests/vectors
 #
 # Settings for this machine (SOLAR_REPO, LOCAL_SOLAR, TOOLCHAIN_ENV, ...) go in local.mk, which is
 # git-ignored, or on the command line: make e2e SOLAR_REPO=/path/to/solar-core-ref
@@ -27,6 +28,12 @@ SHORT         := $(shell git -C '$(SOLAR_REPO)' rev-parse --verify -q '$(COMMIT)
 IMAGE         ?= heartwood-oracle:$(SHORT)
 VECTORS       ?= target/vectors
 IMAGE_DIR     ?= target/oracle-images
+# The reference's devnet generator, gen-network.js, which the genesis class (V10) runs. When it is
+# empty, V10 is not written; its directory is mounted read-only in container runs.
+DEVNET_GENERATOR ?=
+GENERATOR_ARG := $(if $(DEVNET_GENERATOR),--devnet-generator '$(DEVNET_GENERATOR)',)
+# Where the committed golden vectors of heartwood-crypto live.
+CRYPTO_VECTORS ?= packages/crypto/tests/vectors
 DIFFTEST      := target/debug/difftest
 
 export DIFFTEST_DOCKER ?= $(CURDIR)/tools/oracle/docker.sh
@@ -35,12 +42,13 @@ export DIFFTEST_DOCKER ?= $(CURDIR)/tools/oracle/docker.sh
 need-image = $(if $(SHORT)$(filter-out heartwood-oracle:,$(IMAGE)),,$(error cannot resolve COMMIT=$(COMMIT) in SOLAR_REPO=$(SOLAR_REPO): set SOLAR_REPO to a clone of iceroot-network/solar-core-ref (in local.mk or on the command line), or set IMAGE))
 
 .PHONY: help check build clippy fmt fmt-check test oracle-context oracle-image oracle-save \
-        vectors vectors-local vectors-diff l0 ping test-oracle e2e
+        vectors vectors-local vectors-diff vectors-install l0 ping test-oracle e2e
 
 help: ## this list
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | awk -F'\t' '{ printf "  make %-15s %s\n", $$1, $$2 }'
 	@echo "Variables: SOLAR_REPO=$(SOLAR_REPO) COMMIT=$(COMMIT) IMAGE=$(IMAGE) LOCAL_SOLAR=$(LOCAL_SOLAR)"
 	@echo "           VECTORS=$(VECTORS) IMAGE_DIR=$(IMAGE_DIR) TOOLCHAIN_ENV=$(TOOLCHAIN_ENV)"
+	@echo "           DEVNET_GENERATOR=$(DEVNET_GENERATOR) CRYPTO_VECTORS=$(CRYPTO_VECTORS)"
 
 check: build clippy fmt-check test ## build, clippy, fmt check and tests
 
@@ -74,13 +82,19 @@ oracle-save: ## docker save IMAGE to IMAGE_DIR (git-ignored under target/), gzip
 
 vectors: build ## L0 vectors from the oracle image into VECTORS/container
 	$(need-image)
-	$(TOOLCHAIN) && $(DIFFTEST) oracle gen --image $(IMAGE) --out $(VECTORS)/container
+	$(TOOLCHAIN) && $(DIFFTEST) oracle gen --image $(IMAGE) --out $(VECTORS)/container $(GENERATOR_ARG)
 
 vectors-local: build ## L0 vectors from LOCAL_SOLAR into VECTORS/local
-	$(TOOLCHAIN) && $(DIFFTEST) oracle gen --solar-dir '$(LOCAL_SOLAR)' --out $(VECTORS)/local
+	$(TOOLCHAIN) && $(DIFFTEST) oracle gen --solar-dir '$(LOCAL_SOLAR)' --out $(VECTORS)/local $(GENERATOR_ARG)
 
 vectors-diff: build ## the container and local runs must agree on every record
 	$(DIFFTEST) vectors diff $(VECTORS)/container $(VECTORS)/local
+
+vectors-install: vectors-diff ## copy the container run (vector files and manifest) into CRYPTO_VECTORS
+	mkdir -p $(CRYPTO_VECTORS)
+	rm -f $(CRYPTO_VECTORS)/*.jsonl $(CRYPTO_VECTORS)/MANIFEST.sha256
+	cp $(VECTORS)/container/*.jsonl $(VECTORS)/container/MANIFEST.sha256 $(CRYPTO_VECTORS)/
+	$(DIFFTEST) vectors verify $(CRYPTO_VECTORS)
 
 l0: build ## compare VECTORS/container with Heartwood (0 compared until the first subjects exist)
 	$(DIFFTEST) run l0 $(VECTORS)/container

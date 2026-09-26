@@ -11,8 +11,10 @@ pub const USAGE: &str = "\
 difftest: Heartwood's differential-test harness
 
 Usage:
-  difftest oracle gen --out DIR [--no-backend-check] [ORACLE]
-                                  write the L0 golden vectors with the Solar reference
+  difftest oracle gen --out DIR [--no-backend-check] [--devnet-generator FILE] [ORACLE]
+                                  write the L0 golden vectors with the Solar reference; the
+                                  genesis class needs the reference's devnet generator,
+                                  gen-network.js       [$DIFFTEST_DEVNET_GENERATOR]
   difftest oracle ping [ORACLE]   start oracle-server.js and check that it answers
   difftest vectors verify DIR     check a vector directory: manifest, meta records, record shape
   difftest vectors diff DIR DIR   compare two oracle runs record by record (meta excluded)
@@ -89,6 +91,7 @@ pub enum Command {
         oracle: OracleArgs,
         out: PathBuf,
         backend_check: bool,
+        devnet_generator: Option<PathBuf>,
     },
     OraclePing {
         oracle: OracleArgs,
@@ -141,12 +144,15 @@ pub fn parse(args: &[String]) -> Result<Command> {
             let mut oracle = OracleArgs::default();
             let mut out = None;
             let mut backend_check = true;
+            let mut devnet_generator = None;
             let mut it = rest.iter();
             while let Some(&flag) = it.next() {
                 if flag == "--no-backend-check" {
                     backend_check = false;
                 } else if flag == "--out" {
                     out = Some(PathBuf::from(value(flag, it.next())?));
+                } else if flag == "--devnet-generator" {
+                    devnet_generator = Some(PathBuf::from(value(flag, it.next())?));
                 } else {
                     oracle_flag(&mut oracle, flag, it.next())?;
                 }
@@ -156,6 +162,7 @@ pub fn parse(args: &[String]) -> Result<Command> {
                 oracle,
                 out,
                 backend_check,
+                devnet_generator,
             })
         }
         ["oracle", "ping", rest @ ..] => {
@@ -224,6 +231,19 @@ mod tests {
                 },
                 out: "v".into(),
                 backend_check: false,
+                devnet_generator: None,
+            }
+        );
+        assert_eq!(
+            p("oracle gen --out v --devnet-generator tools/gen-network.js --solar-dir /s").unwrap(),
+            Command::OracleGen {
+                oracle: OracleArgs {
+                    solar_dir: Some("/s".into()),
+                    ..OracleArgs::default()
+                },
+                out: "v".into(),
+                backend_check: true,
+                devnet_generator: Some("tools/gen-network.js".into()),
             }
         );
         assert_eq!(
@@ -242,6 +262,7 @@ mod tests {
             "run l2 x",
             "run l9",
             "oracle gen --image x",
+            "oracle gen --out v --devnet-generator",
             "oracle ping --image",
             "oracle ping --colour red",
             "vectors verify",
