@@ -93,6 +93,8 @@ pub(crate) fn encode(entropy: &[u8]) -> Zeroizing<String> {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
     use crate::utils::hex;
 
@@ -145,6 +147,38 @@ mod tests {
         for length in [16, 20, 24, 28, 32] {
             let words = entropy_to_mnemonic(&vec![0x5a; length]).unwrap();
             assert_eq!(words.split(' ').count(), length * 3 / 4);
+        }
+    }
+
+    /// The bits that the words of `mnemonic` stand for, as bytes (the last one padded with zeros).
+    fn bits_of(mnemonic: &str) -> Vec<u8> {
+        let mut bits = Vec::new();
+        for word in mnemonic.split(' ') {
+            let index = WORDS.iter().position(|w| *w == word).unwrap();
+            bits.extend((0..11).rev().map(|shift| (index >> shift) & 1 == 1));
+        }
+        bits.chunks(8)
+            .map(|chunk| {
+                chunk
+                    .iter()
+                    .enumerate()
+                    .fold(0u8, |byte, (i, &bit)| byte | (u8::from(bit) << (7 - i)))
+            })
+            .collect()
+    }
+
+    proptest! {
+        #[test]
+        fn the_words_hold_the_entropy_and_its_checksum(
+            entropy in (0usize..5).prop_flat_map(|k| prop::collection::vec(any::<u8>(), 16 + 4 * k)),
+        ) {
+            let mnemonic = entropy_to_mnemonic(&entropy).unwrap();
+            let bits = bits_of(&mnemonic);
+            let checksum_bits = entropy.len() / 4;
+            prop_assert_eq!(bits.len(), entropy.len() + 1);
+            prop_assert_eq!(&bits[..entropy.len()], &entropy[..]);
+            let [first, ..] = sha256(&entropy);
+            prop_assert_eq!(bits[entropy.len()], first >> (8 - checksum_bits) << (8 - checksum_bits));
         }
     }
 }

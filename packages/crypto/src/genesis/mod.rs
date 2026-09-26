@@ -603,6 +603,8 @@ fn array_index(key: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     fn object(value: Value) -> Map<String, Value> {
@@ -675,6 +677,69 @@ mod tests {
                 Err(GenesisError::Epoch(bad.into())),
                 "{bad}"
             );
+        }
+    }
+
+    fn key() -> impl Strategy<Value = String> {
+        prop::sample::select(vec!["a", "b", "0", "1", "10", "01", "x.y"]).prop_map(str::to_owned)
+    }
+
+    fn tree() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![Just(Value::Null), any::<u32>().prop_map(Value::from)];
+        leaf.prop_recursive(3, 16, 4, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..3).prop_map(Value::Array),
+                prop::collection::vec((key(), inner), 0..4)
+                    .prop_map(|entries| Value::Object(entries.into_iter().collect())),
+            ]
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn set_leaf_sets_the_value_and_keeps_the_other_keys_in_place(
+            root in prop::collection::vec((key(), tree()), 0..5),
+            path in prop::collection::vec(prop::sample::select(vec!["a", "b", "1"]), 1..4),
+            value in any::<u32>(),
+        ) {
+            let mut map: Map<String, Value> = root.into_iter().collect();
+            let before: Vec<String> = map.keys().cloned().collect();
+            set_leaf(&mut map, &path.join("."), Value::from(value));
+            let whole = Value::Object(map.clone());
+            let found = path.iter().try_fold(&whole, |v, k| v.get(k));
+            prop_assert_eq!(found, Some(&Value::from(value)));
+            let after: Vec<&String> = map.keys().collect();
+            prop_assert_eq!(&after[..before.len()], &before.iter().collect::<Vec<_>>()[..]);
+        }
+
+        #[test]
+        fn javascript_key_order_puts_indexes_first_and_is_stable(value in tree()) {
+            let once = js_key_order(value.clone());
+            prop_assert_eq!(&js_key_order(once.clone()), &once);
+            prop_assert_eq!(&once, &value);
+            fn check(value: &Value) -> bool {
+                match value {
+                    Value::Object(map) => {
+                        let indexes: Vec<Option<u32>> = map.keys().map(|k| array_index(k)).collect();
+                        let first_name = indexes.iter().position(Option::is_none).unwrap_or(indexes.len());
+                        indexes[first_name..].iter().all(Option::is_none)
+                            && indexes[..first_name].windows(2).all(|w| w[0] < w[1])
+                            && map.values().all(check)
+                    }
+                    Value::Array(items) => items.iter().all(check),
+                    _ => true,
+                }
+            }
+            prop_assert!(check(&once));
+        }
+
+        #[test]
+        fn every_whole_second_is_an_epoch(
+            year in 0u32..10_000, month in 1u32..=12, day in 1u32..=28,
+            hour in 0u32..24, minute in 0u32..60, second in 0u32..60,
+        ) {
+            let epoch = format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.000Z");
+            prop_assert_eq!(check_epoch(&epoch), Ok(()));
         }
     }
 }
