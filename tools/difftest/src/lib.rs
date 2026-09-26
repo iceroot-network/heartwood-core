@@ -10,12 +10,14 @@
 //! - [`compare`]: the structural diff, with byte offsets for hex values.
 //! - [`report`]: outcomes and the text report.
 //! - [`levels`]: L0 to L4; L0 runs today, the others plug in as the node's crates arrive.
+//! - [`genesis`]: the devnet chain-definition driver (`difftest genesis`).
 //!
 //! No Heartwood subject exists yet, so an L0 run reports "0 compared".
 
 pub mod cli;
 pub mod compare;
 pub mod errors;
+pub mod genesis;
 pub mod levels;
 pub mod oracle;
 pub mod report;

@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use heartwood_difftest::cli::{self, Command, USAGE};
+use heartwood_difftest::cli::{self, Command, GenesisArgs, USAGE};
+use heartwood_difftest::genesis::{self, Built};
 use heartwood_difftest::levels::{Level, l0};
 use heartwood_difftest::oracle::GenOptions;
 use heartwood_difftest::report::describe_meta;
@@ -146,10 +147,53 @@ fn execute(command: Command) -> Result<bool> {
             print!("{report}");
             Ok(report.is_success())
         }
+        Command::Genesis(args) => write_genesis(&args),
         Command::Run { level, .. } => Err(Error::NotYet(format!(
             "{} is not built yet; it arrives with {}",
             level.title(),
             level.arrives_with()
         ))),
     }
+}
+
+/// Write a chain definition, and compare it with the devnet generator's output when asked.
+fn write_genesis(args: &GenesisArgs) -> Result<bool> {
+    let built = Built::new(&args.profile, &args.seed, &args.epoch)?;
+    built.write(&args.out, args.force)?;
+    let summary = &built.definition.summary;
+    println!(
+        "difftest: chain definition of profile {} written to {}",
+        built.profile.name,
+        args.out.display()
+    );
+    println!("  epoch       {}", built.input.epoch);
+    println!(
+        "  nethash     {}",
+        heartwood_crypto::utils::hex::encode(&summary.nethash)
+    );
+    println!(
+        "  genesis id  {}  ({} transactions)",
+        summary.genesis_id, summary.transactions
+    );
+    println!("  issued      {}", summary.issued);
+    let Some(dir) = &args.compare else {
+        return Ok(true);
+    };
+    let differences = genesis::compare(&built, dir)?;
+    if differences.is_empty() {
+        println!(
+            "  compared with {}: the crypto files, the keys and the summary are identical",
+            dir.display()
+        );
+    } else {
+        println!(
+            "  compared with {}: {} differences",
+            dir.display(),
+            differences.len()
+        );
+        for difference in &differences {
+            println!("    {difference}");
+        }
+    }
+    Ok(differences.is_empty())
 }

@@ -21,6 +21,11 @@ Usage:
   difftest run l0 DIR             compare golden vectors with Heartwood's implementations
   difftest run l1|l2|l3|l4        later levels (see `difftest levels`)
   difftest levels                 the five levels and what each one arrives with
+  difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--compare DIR]
+                                  write the devnet chain definition of a genesis profile for a
+                                  seed and an epoch (a whole second, 2026-01-01T00:00:00.000Z);
+                                  --compare checks it against the output of the reference's
+                                  devnet generator for the same inputs
 
 ORACLE, where the Solar TypeScript reference runs (the flags win over the environment):
   --image TAG        in the oracle container                     [$DIFFTEST_IMAGE]
@@ -109,6 +114,24 @@ pub enum Command {
     },
     Levels,
     Help,
+    Genesis(GenesisArgs),
+}
+
+/// The arguments of `difftest genesis`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenesisArgs {
+    /// The genesis profile file.
+    pub profile: PathBuf,
+    /// The seed text.
+    pub seed: String,
+    /// The epoch.
+    pub epoch: String,
+    /// The output directory.
+    pub out: PathBuf,
+    /// Overwrite the files of a directory that is not empty.
+    pub force: bool,
+    /// A directory written by the reference's devnet generator, to compare with.
+    pub compare: Option<PathBuf>,
 }
 
 fn usage(message: impl Into<String>) -> Error {
@@ -165,6 +188,7 @@ pub fn parse(args: &[String]) -> Result<Command> {
                 devnet_generator,
             })
         }
+        ["genesis", rest @ ..] => parse_genesis(rest),
         ["oracle", "ping", rest @ ..] => {
             let mut oracle = OracleArgs::default();
             let mut it = rest.iter();
@@ -175,6 +199,33 @@ pub fn parse(args: &[String]) -> Result<Command> {
         }
         _ => Err(usage(format!("unknown command: {}", words.join(" ")))),
     }
+}
+
+fn parse_genesis(args: &[&str]) -> Result<Command> {
+    let (mut profile, mut seed, mut epoch, mut out) = (None, None, None, None);
+    let mut force = false;
+    let mut compare = None;
+    let mut it = args.iter();
+    while let Some(&flag) = it.next() {
+        match flag {
+            "--force" => force = true,
+            "--profile" => profile = Some(PathBuf::from(value(flag, it.next())?)),
+            "--seed" => seed = Some(value(flag, it.next())?.to_string()),
+            "--epoch" => epoch = Some(value(flag, it.next())?.to_string()),
+            "--out" => out = Some(PathBuf::from(value(flag, it.next())?)),
+            "--compare" => compare = Some(PathBuf::from(value(flag, it.next())?)),
+            _ => return Err(usage(format!("unknown option {flag}"))),
+        }
+    }
+    let need = |what: &str| usage(format!("genesis needs {what}"));
+    Ok(Command::Genesis(GenesisArgs {
+        profile: profile.ok_or_else(|| need("--profile FILE"))?,
+        seed: seed.ok_or_else(|| need("--seed TEXT"))?,
+        epoch: epoch.ok_or_else(|| need("--epoch TIME"))?,
+        out: out.ok_or_else(|| need("--out DIR"))?,
+        force,
+        compare,
+    }))
 }
 
 fn value<'a>(flag: &str, next: Option<&&'a str>) -> Result<&'a str> {
@@ -247,6 +298,29 @@ mod tests {
             }
         );
         assert_eq!(
+            p("genesis --profile p.json --seed s --epoch 2026-01-01T00:00:00.000Z --out o")
+                .unwrap(),
+            Command::Genesis(GenesisArgs {
+                profile: "p.json".into(),
+                seed: "s".into(),
+                epoch: "2026-01-01T00:00:00.000Z".into(),
+                out: "o".into(),
+                force: false,
+                compare: None,
+            })
+        );
+        assert_eq!(
+            p("genesis --out o --force --compare g --epoch e --seed s --profile p").unwrap(),
+            Command::Genesis(GenesisArgs {
+                profile: "p".into(),
+                seed: "s".into(),
+                epoch: "e".into(),
+                out: "o".into(),
+                force: true,
+                compare: Some("g".into()),
+            })
+        );
+        assert_eq!(
             p("vectors diff a b").unwrap(),
             Command::VectorsDiff {
                 a: "a".into(),
@@ -266,6 +340,10 @@ mod tests {
             "oracle ping --image",
             "oracle ping --colour red",
             "vectors verify",
+            "genesis",
+            "genesis --profile p --seed s --epoch e",
+            "genesis --profile p --seed s --epoch e --out o --colour red",
+            "genesis --profile p --seed s --epoch e --out",
             "frobnicate",
         ] {
             assert!(matches!(p(line), Err(Error::Usage(_))), "{line}");
