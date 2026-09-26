@@ -28,9 +28,11 @@ equal byte for byte, including which inputs each side rejects.
 ```text
 Cargo.toml            workspace: edition 2024, resolver 3, rust-version 1.98, workspace lints
 Makefile              `make help` lists the targets
-NOTICE                credits for ARK Core and Solar Core
+NOTICE                credits for ARK Core and Solar Core, and the licence notice of nes
 packages/crypto/      heartwood-crypto: keys, signatures, the transaction and block codecs,
                       milestones and the devnet chain-definition builder (feature `genesis`)
+packages/p2p-wire/    heartwood-p2p-wire: the peer-to-peer wire codec (nes frames, the protobuf
+                      messages of the public routes, list framing, the signed peer status)
 tools/difftest/       heartwood-difftest: the harness library and the `difftest` binary
 tools/oracle/         the oracle: Node scripts and the image recipe
   Dockerfile            the oracle image, built from scratch with pinned inputs
@@ -44,6 +46,8 @@ tools/oracle/         the oracle: Node scripts and the image recipe
   check-native.js       checks that the reference's native modules build and load
 packages/crypto/tests/vectors/  the golden vectors of heartwood-crypto, with MANIFEST.sha256
   external/             published vector files, with their source URLs and SHA-256
+packages/p2p-wire/tests/vectors/  the golden vectors of heartwood-p2p-wire, with MANIFEST.sha256
+tools/wire-fuzz-seeds.js  seeds the wire fuzz corpora from the wire vectors
 fuzz/                 cargo-fuzz targets for the transaction and block decoders (own workspace)
 ```
 
@@ -89,6 +93,11 @@ the image run. `make help` lists the other targets: `make ping` and
 | `DIFFTEST_DOCKER` | `tools/oracle/docker.sh` | the docker command |
 | `DEVNET_GENERATOR` | empty | the devnet generator, `gen-network.js`, for the genesis class; a separate tool that is not published |
 | `CRYPTO_VECTORS` | `packages/crypto/tests/vectors` | where `make vectors-install` puts the container run |
+| `WIRE_VECTORS` | `packages/p2p-wire/tests/vectors` | where `make vectors-install-wire` puts the wire class of the container run |
+| `FUZZ_SECONDS`, `FUZZ_FORK` | `600`, `8` | how long each wire fuzz target runs, and its libFuzzer jobs |
+| `WIRE_SEEDS`, `WIRE_SEED_MAX` | the installed wire class, `65536` | the vector file that seeds the wire fuzz corpora, and the longest seed in bytes |
+| `WIRE_LOGS` | `target/wire-fuzz` | the logs of `make fuzz-wire` and `make replay-wire` |
+| `ORACLE_ARGS` | `--image $(IMAGE)` | where the oracle of `make replay-wire` runs; `--solar-dir DIR` for a local reference |
 
 Settings for one machine go in `local.mk` beside the Makefile. It is git-ignored and read before
 the defaults, for example:
@@ -194,6 +203,96 @@ that the driver writes, byte for byte, the files those records hold. `--compare 
 chain definition against a directory that the devnet generator wrote for the same inputs; the
 generator is a separate tool of the maintainers and is not published (see the genesis class
 below).
+
+## heartwood-p2p-wire
+
+`packages/p2p-wire` is the codec of the peer-to-peer port. It writes and reads the bytes that
+nodes exchange exactly as the reference does, including how the reference reads malformed bytes,
+so that both implementations accept the same payloads and decode them to the same values. It has
+no I/O and no clock: the nes sessions (hello, pings, heartbeats, request ids) and the WebSocket
+transport arrive with the crate that uses the codec.
+
+- **nes frames**: the frames of the port (hello, ping, request, response and error), parsed and
+  written with the reference's defaults and limits; the other nes types are refused, as the
+  reference's parser refuses them on this port. A frame's path is normalised as the reference's
+  parser does it with the WHATWG URL parser, and the path and the socket id are read as lossy
+  UTF-8.
+- **protobuf messages** of the seven public routes, with field presence: an absent field and a
+  field present with its default value are different values. A hand-written reader and writer
+  reproduce the code that protobufjs 7.2.4 generates, including how it reads bytes that are not
+  canonical: a known field is read by its declared type whatever its wire type, a string is cut
+  at the end of the buffer, a varint may take ten bytes, a later field replaces an earlier one,
+  and a decoded object has the reference's key order.
+- **route codecs**: the reference's encoder and decoder of each public route, request and
+  response (14 directions), with their post-processing: amounts read as BigInt text, the
+  length-prefixed block and transaction lists with the reference's framing and caps, and the
+  exclude list of 32-byte ids. The route table holds the twelve routes with their ids, paths,
+  payload limits and codec kinds; the JSON bodies of the five internal routes are not in the
+  crate yet.
+- **signed peer status**: the tree a relay signs over its last block and its configuration, its
+  canonical JSON, the slot before the network epoch (negative in the signed text, wrapped on the
+  wire), the attestations (legacy Schnorr over the text, one per key; a key listed twice is signed
+  twice), and what a node does with a status it receives: the reply check with the changes it
+  makes to the value (plugin names outside 4 to 64 characters removed, the generator key
+  lowercased), the text the sender signed, and the signature checks.
+
+The crate depends on `heartwood-crypto`, with `legacy-schnorr`, and on `thiserror` only. It is the
+one production crate that enables `legacy-schnorr`, which only peer status messages use, and
+`make wire-features` (part of `make check`) fails when another package enables it. Every decoder
+takes untrusted bytes: none panics, and none recurses on the nesting of its input.
+
+The reference's leniency with malformed protobuf bytes and lists is kept: every value it produces
+is one that a well-formed message could carry, so keeping it keeps both implementations' verdicts
+equal. Three inputs, which only a crafted message contains, are read differently on purpose. For
+each, the oracle reports what the reference did, and the harness counts a case as a documented
+difference only when that report shows it:
+
+- a status plugin named `__proto__`: the reference's decoder replaces the prototype of the plugins
+  object with the entry, and its reply check then sees the prototype's properties, which can
+  refuse the reply. Heartwood drops the entry and checks the plugins the object holds itself;
+- protobuf groups nested deeper than the reference's stack: the reference fails with a stack
+  overflow (between 5,000 and 20,000 levels on Node 18), and Heartwood skips groups at any depth;
+- an amount beyond 128 bits: the reference reads integers of any size and refuses such a value at
+  a later step. Heartwood refuses it when it decodes, since reading it is unbounded work.
+
+```sh
+make test-wire                  # clippy on heartwood-p2p-wire alone, then its tests
+make vectors-install-wire       # copy the wire class of the image run beside the crate
+make fuzz-wire                  # the three wire fuzz targets at once, FUZZ_SECONDS each
+make replay-wire                # each wire fuzz corpus through the oracle and Heartwood
+```
+
+`cargo test -p heartwood-p2p-wire` runs the unit tests and checks every record of the wire class,
+`V13-p2p-wire.jsonl`, which lives beside the crate in
+[packages/p2p-wire/tests/vectors](packages/p2p-wire/tests/vectors) with its own manifest.
+`gen-vectors.js` writes it with the other classes; `make vectors-install` leaves it out of the set
+of `heartwood-crypto`, and `make vectors-install-wire` installs it. Its records carry their own
+configuration, so the crate tests them with no other class. They cover the frames the reference
+sends on the port for every route and the parser's edges (every type byte, short and overrunning
+lengths, path normalisation, invalid UTF-8, the writer's defaults and limits); every message with
+fields present, absent and present with their defaults, with long varints, repeated and unknown
+fields, groups, overruns and map entries; every codec direction both ways, the requests the
+reference's clients send, the list caps and framing edges and the amount texts; and statuses
+signed over blocks, verified with the verifier's own slot negative and not, and replies built to
+hit each rule of the reply check. `tools/difftest/tests/l0_wire.rs` runs L0 over the class and
+pins its counts: every record is compared, none is skipped, and the three documented differences
+appear only in the records that assert them.
+
+The fuzz targets take arbitrary bytes, and `make replay-wire` sends each file of their corpora to
+the oracle and to Heartwood (`difftest oracle replay`), which must agree on every one:
+
+| Target | Input | Checks | Replayed with |
+|---|---|---|---|
+| `nes_frame` | a frame | no panic; an accepted frame encodes to bytes that parse to the same frame | `nes.parse` |
+| `wire_message` | a selector byte (modulo 14: the codecs in route order, the request before the response), then a payload | no panic; an accepted value encodes, and the encoding decodes to the same value | `wire.decodeSelected` |
+| `status_verify` | a getStatus response | no panic; the decoder, the reply check, the signed text and the signature checks | `status.verify` |
+
+`make fuzz-wire` builds the three targets, seeds their corpora (`fuzz/corpus/`, git-ignored) from
+the installed wire class with `tools/wire-fuzz-seeds.js`, and runs them at the same time for
+`FUZZ_SECONDS` each with `FUZZ_FORK` libFuzzer jobs. A crash, an input that runs longer than 30
+seconds and an out-of-memory stop each end the run and fail it; the logs, with each target's runs,
+coverage and corpus size, go to `target/wire-fuzz`. `make replay-wire` fails on a difference and
+on an input that was not compared.
 
 ## The oracle image
 
