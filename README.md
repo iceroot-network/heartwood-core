@@ -11,7 +11,7 @@ Solar Core; Solar Core serves as the reference implementation for compatibility 
 
 The reference implementation is Solar Core 4.3.1 with a patch series, kept in
 [iceroot-network/solar-core-ref](https://github.com/iceroot-network/solar-core-ref). The tests use
-its tag `s1-ref-v1`. Heartwood must behave exactly like it, and differential testing shows that it
+its tag `s1-ref-v2` (29 patches; `s1-ref-v1` holds the first 18). Heartwood must behave exactly like it, and differential testing shows that it
 does: the same inputs go to the reference (the oracle) and to Heartwood, and the results must be
 equal byte for byte, including which inputs each side rejects.
 
@@ -72,7 +72,7 @@ no Rust implementation yet. `make help` lists the other targets: `make ping` and
 | Variable | Default | Meaning |
 |---|---|---|
 | `SOLAR_REPO` | `../solar-core-ref` | a clone of the reference repository, with its tags |
-| `COMMIT` | `s1-ref-v1` | the reference commit or tag the image is built from |
+| `COMMIT` | `s1-ref-v2` | the reference commit or tag the image is built from |
 | `LOCAL_SOLAR` | `$(SOLAR_REPO)` | a built checkout of the reference at `COMMIT`, for local runs |
 | `TOOLCHAIN_ENV` | empty | a shell file that every cargo and node recipe sources first; when it is empty, the tools come from `PATH` |
 | `IMAGE` | `heartwood-oracle:<first 9 characters of the commit id COMMIT resolves to>` | the oracle image |

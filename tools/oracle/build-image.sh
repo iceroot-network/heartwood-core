@@ -8,7 +8,7 @@
 # target/oracle-image-<short commit>.id.
 #
 # --repo   a clone of iceroot-network/solar-core-ref with its tags [$SOLAR_REPO; one is required]
-# --commit the reference commit or tag [s1-ref-v1]
+# --commit the reference commit or tag [s1-ref-v2]
 # --tag    the image tag [heartwood-oracle:<first 9 characters of the commit>]
 #
 # Environment: DIFFTEST_DOCKER, the docker command [tools/oracle/docker.sh].
@@ -17,7 +17,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 DOCKER=${DIFFTEST_DOCKER:-$HERE/docker.sh}
-REV=s1-ref-v1
+REV=s1-ref-v2
 REPO=${SOLAR_REPO:-}
 TAG=
 CONTEXT=$ROOT/target/oracle-context

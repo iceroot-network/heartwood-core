@@ -2,7 +2,7 @@
 // Load a built Solar Core reference (the TypeScript oracle) and describe where it came from.
 //
 // The reference is Solar Core 4.3.1 plus a patch series, from iceroot-network/solar-core-ref at a
-// given commit (by default the tag s1-ref-v1), installed and built with pnpm. Inside the oracle
+// given commit (by default the tag s1-ref-v2), installed and built with pnpm. Inside the oracle
 // image it lives at /opt/solar and the image sets SOLAR_DIR to it; locally it is any built checkout,
 // passed as --solar-dir or SOLAR_DIR.
 

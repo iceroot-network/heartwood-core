@@ -13,14 +13,14 @@
 #
 # --repo   a clone of the reference implementation, iceroot-network/solar-core-ref, with its tags
 #          [$SOLAR_REPO; one of the two is required]
-# --commit the reference commit or tag [s1-ref-v1]
+# --commit the reference commit or tag [s1-ref-v2]
 # --out    the context directory [target/oracle-context in this repository, git-ignored]
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 REPO=${SOLAR_REPO:-}
-REV=s1-ref-v1
+REV=s1-ref-v2
 OUT=$ROOT/target/oracle-context
 
 while [ $# -gt 0 ]; do

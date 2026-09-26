@@ -16,7 +16,7 @@ SHELL := /bin/bash
 SOLAR_REPO    ?= ../solar-core-ref
 # The reference commit (or tag) the oracle image is built from: Solar Core 4.3.1 plus the
 # reference's patch series.
-COMMIT        ?= s1-ref-v1
+COMMIT        ?= s1-ref-v2
 # A checkout of the reference at COMMIT, installed and built, for local oracle runs.
 LOCAL_SOLAR   ?= $(SOLAR_REPO)
 # Optional shell file that puts the toolchain (Node 18.20.8, Rust) on PATH. When it is set, every
