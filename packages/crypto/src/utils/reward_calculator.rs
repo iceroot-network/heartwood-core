@@ -1,10 +1,5 @@
 //! The block reward by delegate rank.
 
-#![expect(
-    unused_variables,
-    reason = "the bodies are not written yet; remove this once they are"
-)]
-
 use crate::errors::RewardError;
 use crate::managers::Params;
 
@@ -13,5 +8,10 @@ use crate::managers::Params;
 /// With the dynamic reward enabled, the rank table decides and a missing rank is an error;
 /// otherwise the milestone's `reward` applies (0 when absent).
 pub fn calculate_reward(params: &Params, rank: u32) -> Result<u64, RewardError> {
-    todo!()
+    match params.dynamic_reward() {
+        Some(table) if table.enabled() => {
+            table.rank(rank).ok_or(RewardError::NoRankReward { rank })
+        }
+        _ => Ok(params.reward()),
+    }
 }
