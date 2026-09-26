@@ -7,11 +7,14 @@ use heartwood_crypto::Transaction;
 use heartwood_crypto::errors::ConfigError;
 use heartwood_crypto::managers::Milestones;
 use heartwood_crypto::utils::js;
-use heartwood_transactions::minimum_fee;
+use heartwood_state::digest::wallet_section;
+use heartwood_state::{ApplyContext, TransactionRejected, block_state};
+use heartwood_transactions::{Handlers, minimum_fee};
 use serde_json::{Map, Value, json};
 
-use super::{Env, Outcome, decode_refused, failed, hex_bytes, params, rejected};
-use crate::subject::{Case, Documented, SubjectError, Verdict};
+use super::{Env, Outcome, decode_refused, failed, hex_bytes, integer, params, rejected};
+use crate::fixture::Fixture;
+use crate::subject::{Case, Documented, Verdict};
 
 /// The key of the revoke delay in a milestone.
 const REVOKE_DELAY: &str = "blocksToRevokeDelegateResignation";
@@ -37,9 +40,56 @@ pub(super) fn fee_minimum(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     })
 }
 
-/// `state.applyTransaction`: a transaction applied to a fixture, then reverted.
-pub(super) fn apply_transaction(_env: &Env<'_>, _case: &Case<'_>) -> Outcome<Verdict> {
-    Err(SubjectError::Unsupported("not implemented yet".into()))
+/// `state.applyTransaction`: a transaction applied to a wallet fixture as block
+/// `lastBlockHeight + 1` applies it (the handler, then the vote balances of the wallets it
+/// changed, under the rules of that height), then reverted. The output holds the `#W` section
+/// after each step, or the refusal's class and the `#W` section after the refused attempt.
+pub(super) fn apply_transaction(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
+    let milestones = match milestones(env, case)? {
+        Ok(milestones) => milestones,
+        Err(refused) => return Ok(refused),
+    };
+    let last_block_height: u32 = integer(case.input, "lastBlockHeight")?;
+    let height = last_block_height
+        .checked_add(1)
+        .ok_or_else(|| failed("input.lastBlockHeight is the last height there is"))?;
+    let params = milestones.at(height);
+    let fixture = Fixture::from_json(&case.input["fixture"]).map_err(failed)?;
+    let mut wallets = fixture.to_wallets(params.network()).map_err(failed)?;
+    let Some(bytes) = hex_bytes(case.input, "hex")? else {
+        return Ok(rejected("TypeError"));
+    };
+    let transaction = match Transaction::decode(&bytes, params) {
+        Ok(transaction) => transaction,
+        Err(error) => return Ok(decode_refused(&error, &bytes)),
+    };
+    let ctx = ApplyContext {
+        height,
+        params,
+        last_block_height,
+    };
+    let error = |rejected: TransactionRejected| json!({ "class": rejected.class, "message": rejected.detail });
+    let output = match block_state::apply_transaction(&ctx, &mut wallets, &transaction, &Handlers) {
+        Ok(undo) => {
+            let applied = wallet_section(&wallets);
+            let reverted = match block_state::revert_transaction(
+                &ctx,
+                &mut wallets,
+                &transaction,
+                &undo,
+                &Handlers,
+            ) {
+                Ok(()) => json!({ "W": wallet_section(&wallets) }),
+                // Only the verdict of a failed revert is compared.
+                Err(rejected) => json!({ "error": error(rejected) }),
+            };
+            json!({ "applied": { "W": applied }, "reverted": reverted })
+        }
+        Err(rejected) => {
+            json!({ "error": error(rejected), "after": { "W": wallet_section(&wallets) } })
+        }
+    };
+    Ok(Verdict::Output(output))
 }
 
 /// The milestones a case runs under (its own file, or the devnet's), or the verdict on a file
