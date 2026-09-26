@@ -328,13 +328,11 @@ fn transfer_chunks<'a>(
     let maximum = usize::try_from(params.transfer_maximum())
         .ok()
         .filter(|&n| n > 0)
-        .ok_or_else(|| GenesisError::Input("transfer.maximum is 0".into()))?;
+        .ok_or(GenesisError::ZeroTransferMaximum)?;
     let minimum = usize::try_from(params.transfer_minimum()).unwrap_or(usize::MAX);
     let chunks = items.chunks(maximum);
     if chunks.clone().any(|chunk| chunk.len() < minimum) {
-        return Err(GenesisError::Input(format!(
-            "the allocations do not split into transfers of {minimum} to {maximum} items"
-        )));
+        return Err(GenesisError::TransferSplit { minimum, maximum });
     }
     Ok(chunks)
 }
@@ -391,7 +389,7 @@ fn genesis_block(
     aux: Aux,
     params: &Params,
 ) -> Result<Block, GenesisError> {
-    let too_many = || GenesisError::Input("too many genesis transactions".into());
+    let too_many = || GenesisError::TooManyTransactions;
     let count = u32::try_from(transactions.len()).map_err(|_| too_many())?;
     let mut header = BlockHeader {
         version: params.block_version(),
@@ -424,9 +422,8 @@ fn genesis_block(
 
 /// Check the inputs that the later steps do not check, and return the sum of the allocations.
 fn check_input(input: &GenesisInput) -> Result<u64, GenesisError> {
-    let refuse = |message: &str| Err(GenesisError::Input(message.to_owned()));
     if input.seed.is_empty() {
-        return refuse("the seed is empty");
+        return Err(GenesisError::EmptySeed);
     }
     check_epoch(&input.epoch)?;
     let mut roles = std::iter::once(&input.generator_role)
@@ -435,36 +432,38 @@ fn check_input(input: &GenesisInput) -> Result<u64, GenesisError> {
         .chain(input.donations.iter().map(|d| &d.role))
         .chain(&input.wallet_roles);
     if roles.any(|role| role.is_empty()) {
-        return refuse("a role name is empty");
+        return Err(GenesisError::EmptyRole);
     }
     if input.delegates.is_empty() {
-        return refuse("there are no delegates");
+        return Err(GenesisError::NoDelegates);
     }
     // A transfer item of the reference is at least 1 base unit, in the genesis block too.
-    if input.allocations.iter().any(|a| a.amount == 0) {
-        return refuse("an allocation is 0");
+    if let Some(allocation) = input.allocations.iter().find(|a| a.amount == 0) {
+        return Err(GenesisError::ZeroAllocation {
+            role: allocation.role.clone(),
+        });
     }
     // Every signing key must be a different key: each sender's nonces start at 1.
     let mut signers = HashSet::from([input.generator_role.as_str()]);
     let mut usernames = HashSet::new();
     for delegate in &input.delegates {
         if !signers.insert(delegate.role.as_str()) {
-            return Err(GenesisError::Input(format!(
-                "role {:?} signs more than once",
-                delegate.role
-            )));
+            return Err(GenesisError::DuplicateSigner {
+                role: delegate.role.clone(),
+            });
         }
         if !usernames.insert(delegate.username.as_str()) {
-            return Err(GenesisError::Input(format!(
-                "delegate name {:?} is registered twice",
-                delegate.username
-            )));
+            return Err(GenesisError::DuplicateUsername {
+                name: delegate.username.clone(),
+            });
         }
     }
     // The reference cannot build its state with donations at height 1, whose block has no
     // generating delegate; the genesis reward is 0 anyway.
     if !input.donations.is_empty() && input.donations_from_height < 2 {
-        return refuse("donations can start at height 2 at the earliest");
+        return Err(GenesisError::DonationsTooEarly {
+            height: input.donations_from_height,
+        });
     }
     checked_sum(input.allocations.iter().map(|a| a.amount))
 }
@@ -519,7 +518,7 @@ fn checked_sum(values: impl IntoIterator<Item = u64>) -> Result<u64, GenesisErro
     values
         .into_iter()
         .try_fold(0u64, u64::checked_add)
-        .ok_or_else(|| GenesisError::Input("an amount adds up to more than 2^64 - 1".into()))
+        .ok_or(GenesisError::AmountOverflow)
 }
 
 /// The first character of the network's addresses, which must not depend on the key hash.

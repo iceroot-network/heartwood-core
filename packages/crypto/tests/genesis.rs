@@ -460,33 +460,57 @@ fn inconsistent_inputs_are_refused() {
         change(&mut input);
         genesis::build(&input).unwrap_err()
     };
-    let is_input = |e: GenesisError| matches!(e, GenesisError::Input(_));
-    assert!(is_input(refused(&|i| i.seed.clear())));
-    assert!(is_input(refused(&|i| i.delegates.clear())));
-    assert!(is_input(refused(&|i| i.generator_role.clear())));
-    assert!(is_input(refused(&|i| i.wallet_roles.push(String::new()))));
-    assert!(is_input(refused(&|i| {
-        let first = i.delegates[0].clone();
-        i.delegates.push(GenesisDelegate {
-            username: format!("{}x", first.username),
-            ..first
-        });
-    })));
-    assert!(is_input(refused(&|i| {
-        let first = i.delegates[0].clone();
-        i.delegates.push(GenesisDelegate {
-            role: format!("{}x", first.role),
-            ..first
-        });
-    })));
-    assert!(is_input(refused(&|i| {
-        i.delegates[1].role = i.generator_role.clone();
-    })));
-    assert!(is_input(refused(&|i| i.donations_from_height = 1)));
-    assert!(is_input(refused(&|i| {
-        i.allocations[0].amount = u64::MAX;
-    })));
-    assert!(is_input(refused(&|i| i.allocations[1].amount = 0)));
+    assert_eq!(refused(&|i| i.seed.clear()), GenesisError::EmptySeed);
+    assert_eq!(refused(&|i| i.delegates.clear()), GenesisError::NoDelegates);
+    assert_eq!(
+        refused(&|i| i.generator_role.clear()),
+        GenesisError::EmptyRole
+    );
+    assert_eq!(
+        refused(&|i| i.wallet_roles.push(String::new())),
+        GenesisError::EmptyRole
+    );
+    let first = base_input().delegates[0].clone();
+    assert_eq!(
+        refused(&|i| {
+            i.delegates.push(GenesisDelegate {
+                username: format!("{}x", first.username),
+                ..first.clone()
+            });
+        }),
+        GenesisError::DuplicateSigner {
+            role: first.role.clone()
+        }
+    );
+    assert_eq!(
+        refused(&|i| {
+            i.delegates.push(GenesisDelegate {
+                role: format!("{}x", first.role),
+                ..first.clone()
+            });
+        }),
+        GenesisError::DuplicateUsername {
+            name: first.username.clone()
+        }
+    );
+    let generator = base_input().generator_role;
+    assert_eq!(
+        refused(&|i| i.delegates[1].role = i.generator_role.clone()),
+        GenesisError::DuplicateSigner { role: generator }
+    );
+    assert_eq!(
+        refused(&|i| i.donations_from_height = 1),
+        GenesisError::DonationsTooEarly { height: 1 }
+    );
+    assert_eq!(
+        refused(&|i| i.allocations[0].amount = u64::MAX),
+        GenesisError::AmountOverflow
+    );
+    let role = base_input().allocations[1].role.clone();
+    assert_eq!(
+        refused(&|i| i.allocations[1].amount = 0),
+        GenesisError::ZeroAllocation { role }
+    );
     assert_eq!(
         refused(&|i| i.epoch = "2026-01-01T00:00:00Z".into()),
         GenesisError::Epoch("2026-01-01T00:00:00Z".into())
