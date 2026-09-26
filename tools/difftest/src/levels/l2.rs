@@ -10,7 +10,6 @@
 //! the reverted blocks. The oracle's judge (`replay-chain.js`) walks the same steps, so line `i`
 //! of both files describes the same state.
 
-use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
 
 use heartwood_crypto::Block;
@@ -236,21 +235,6 @@ pub fn replay(corpus: &Corpus, stop_at: Option<usize>) -> Replay {
         }
     }
     out
-}
-
-/// Whether this build's state machine can replay a chain: the transaction handlers and the
-/// machine of `heartwood-state` exist. A machine that is not built yet panics; the panic is
-/// caught and the answer is no.
-pub fn machine_available(corpus: &Corpus) -> bool {
-    let genesis = corpus.genesis.clone();
-    let milestones = corpus.milestones.clone();
-    let hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
-    let built = panic::catch_unwind(AssertUnwindSafe(|| {
-        State::from_genesis(&genesis, &milestones, &Handlers).is_ok()
-    }));
-    panic::set_hook(hook);
-    built.unwrap_or(false)
 }
 
 /// The judge's anchor results of a corpus, and whether they hold.

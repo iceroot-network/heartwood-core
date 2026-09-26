@@ -44,12 +44,6 @@ fn the_committed_corpus_is_intact_and_judged() {
 #[test]
 fn the_committed_corpus_replays_in_heartwood() {
     let loaded = Corpus::load(&committed()).expect("the corpus loads");
-    if !l2::machine_available(&loaded) {
-        eprintln!(
-            "the state machine of heartwood-state is not built in this tree: nothing replayed"
-        );
-        return;
-    }
     let report = l2::run(&loaded, &L2Options::default(), None).expect("the replay runs");
     assert!(report.is_success(), "{report}");
     assert_eq!(report.compared(), report.passed(), "{report}");
