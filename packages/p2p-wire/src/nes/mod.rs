@@ -14,6 +14,16 @@ mod path;
 use crate::errors::FrameError;
 use crate::routes::RouteId;
 
+#[cfg(test)]
+mod tests;
+
+/// The version byte of the client's hello: the nes protocol version the reference speaks.
+const CLIENT_VERSION: u8 = 2;
+/// The status code of a request and a response.
+const OK_STATUS: u16 = 200;
+/// The status code of a graceful error, which leaves the socket open.
+const GRACEFUL_ERROR_STATUS: u16 = 499;
+
 /// The kind of a frame: the frame types the peer-to-peer port accepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
@@ -78,39 +88,60 @@ impl Message {
 
     /// The client's hello: version 2, id `id`, status 200, no path, socket or payload.
     pub fn client_hello(id: u32) -> Message {
-        let _ = id;
-        todo!()
+        Message {
+            version: CLIENT_VERSION,
+            ..Message::new(Kind::Hello, id, Vec::new())
+        }
     }
 
     /// A request for `route`: version 0, id `id`, status 200, the route id as the path, and the
     /// route codec's bytes as the payload.
     pub fn request(id: u32, route: RouteId, payload: Vec<u8>) -> Message {
-        let _ = (id, route, payload);
-        todo!()
+        Message {
+            path: route.id().to_owned(),
+            ..Message::new(Kind::Request, id, payload)
+        }
     }
 
     /// The response to request `id`: version 0, status 200, no path, the route codec's bytes as
     /// the payload.
     pub fn response(id: u32, payload: Vec<u8>) -> Message {
-        let _ = (id, payload);
-        todo!()
+        Message::new(Kind::Request, id, payload)
     }
 
     /// A ping with id `id`: the server's heartbeat, or the client's reply to it.
     pub fn ping(id: u32) -> Message {
-        let _ = id;
-        todo!()
+        Message::new(Kind::Ping, id, Vec::new())
     }
 
     /// The server's reply to a hello with id `id`: its heartbeat and its socket id.
     pub fn server_hello(id: u32, heartbeat: Heartbeat, socket: String) -> Message {
-        let _ = (id, heartbeat, socket);
-        todo!()
+        Message {
+            heartbeat,
+            socket,
+            ..Message::new(Kind::Hello, id, Vec::new())
+        }
     }
 
     /// A graceful error answering request `id`: status 499 and the JSON `body` as the payload.
     pub fn graceful_error(id: u32, body: &[u8]) -> Message {
-        let _ = (id, body);
-        todo!()
+        Message {
+            status_code: GRACEFUL_ERROR_STATUS,
+            ..Message::new(Kind::Request, id, body.to_vec())
+        }
+    }
+
+    /// A frame of `kind` with version 0, status 200 and no path, socket id or heartbeat.
+    fn new(kind: Kind, id: u32, payload: Vec<u8>) -> Message {
+        Message {
+            kind,
+            version: 0,
+            id,
+            status_code: OK_STATUS,
+            path: String::new(),
+            socket: String::new(),
+            heartbeat: Heartbeat::default(),
+            payload,
+        }
     }
 }
