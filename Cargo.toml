@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+# "packages/*" joins when the first crate exists (heartwood-crypto): cargo refuses a glob member
+# that matches no Cargo.toml.
+members = ["tools/difftest"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+# The licence is not decided yet.
+license = "UNLICENSED"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+sha2 = "0.10"
+thiserror = "2"
+
+[profile.release]
+overflow-checks = true
+
+[profile.release.package."*"]
+overflow-checks = false
