@@ -35,8 +35,6 @@ IMAGE_DIR     ?= target/oracle-images
 # committed V10); its directory is mounted read-only in container runs.
 DEVNET_GENERATOR ?=
 GENERATOR_ARG := $(if $(DEVNET_GENERATOR),--devnet-generator '$(DEVNET_GENERATOR)',)
-# Where the committed golden vectors of heartwood-crypto live.
-CRYPTO_VECTORS ?= packages/crypto/tests/vectors
 # The vector classes of each crate: crate=class prefixes. vectors-install writes each crate's
 # classes, with their own MANIFEST.sha256, into packages/<crate>/tests/vectors.
 VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12 kernel=V09-rounds,V16 logger=V20 \
@@ -84,7 +82,7 @@ help: ## this list
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | awk -F'\t' '{ printf "  make %-15s %s\n", $$1, $$2 }'
 	@echo "Variables: SOLAR_REPO=$(SOLAR_REPO) COMMIT=$(COMMIT) IMAGE=$(IMAGE) LOCAL_SOLAR=$(LOCAL_SOLAR)"
 	@echo "           VECTORS=$(VECTORS) IMAGE_DIR=$(IMAGE_DIR) TOOLCHAIN_ENV=$(TOOLCHAIN_ENV)"
-	@echo "           DEVNET_GENERATOR=$(DEVNET_GENERATOR) CRYPTO_VECTORS=$(CRYPTO_VECTORS)"
+	@echo "           DEVNET_GENERATOR=$(DEVNET_GENERATOR) CORPUS=$(CORPUS) ORACLE_ARGS=$(ORACLE_ARGS)"
 
 check: build clippy fmt-check test release-check ## build, clippy, fmt check, tests, release check
 
