@@ -232,6 +232,18 @@ fn amounts_are_read_as_bigint_reads_them() {
         blocks::get_blocks_decode_response(&bad_then_malformed),
         Err(DecodeError::AmountSyntax)
     );
+    // An amount beyond 128 bits is refused only where the reference raises no error.
+    let wide = "9".repeat(50);
+    let wide_then_malformed = list::encode(&[field(9, wide.as_bytes()), vec![0x17]]);
+    assert_eq!(
+        blocks::get_blocks_decode_response(&wide_then_malformed),
+        Err(DecodeError::InvalidWireType(7))
+    );
+    let wide_then_bad = list::encode(&[[field(9, wide.as_bytes()), field(10, b"x")].concat()]);
+    assert_eq!(
+        blocks::get_blocks_decode_response(&wide_then_bad),
+        Err(DecodeError::AmountSyntax)
+    );
     let malformed_then_bad = list::encode(&[vec![0x17], field(10, b"x")]);
     assert_eq!(
         blocks::get_blocks_decode_response(&malformed_then_bad),
@@ -450,10 +462,11 @@ fn the_codec_records_of_the_wire_vectors_match_the_reference() {
                         );
                     }
                     (Err(error), None) => {
-                        let class = error.js_class();
-                        if class.is_some() {
-                            assert_eq!(class, record["error"]["class"].as_str(), "{label}");
-                        }
+                        assert_eq!(
+                            error.js_class(),
+                            record["error"]["class"].as_str(),
+                            "{label}"
+                        );
                     }
                     (ours, _) => panic!("{label}: Heartwood {ours:?}, the reference {record}"),
                 }

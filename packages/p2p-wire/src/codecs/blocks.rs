@@ -68,32 +68,43 @@ pub fn get_blocks_encode_response(blocks: &[ListedBlock]) -> Vec<u8> {
 /// The getBlocks response: at most 401 blocks, each with at most 501 transactions.
 ///
 /// The blocks are read in order, each header and then its three amounts, so the refusal is the
-/// first one the reference meets.
+/// first one the reference meets. An amount beyond 128 bits, which the reference reads, is
+/// refused only where the reference raises no error.
 pub fn get_blocks_decode_response(bytes: &[u8]) -> Result<Vec<ListedBlock>, DecodeError> {
-    list::items(bytes, list::MAX_BLOCKS)
-        .into_iter()
-        .map(|item| {
-            let mut header = BlockHeader::decode(item)?;
-            let transactions = list::decode(
-                header.transactions.get_or_insert_default(),
-                list::MAX_BLOCK_TRANSACTIONS,
-            );
-            let amount = |text: &mut Option<String>| Amount::parse(text.get_or_insert_default());
-            let total_amount = amount(&mut header.total_amount)?;
-            let total_fee = amount(&mut header.total_fee)?;
-            let reward = amount(&mut header.reward)?;
-            for number in SPREAD_BLOCK_KEYS {
-                header.wire_order.note(number);
-            }
-            Ok(ListedBlock {
-                header,
-                total_amount,
-                total_fee,
-                reward,
-                transactions,
-            })
-        })
-        .collect()
+    let mut too_wide = false;
+    let mut listed = Vec::new();
+    for item in list::items(bytes, list::MAX_BLOCKS) {
+        let mut header = BlockHeader::decode(item)?;
+        let transactions = list::decode(
+            header.transactions.get_or_insert_default(),
+            list::MAX_BLOCK_TRANSACTIONS,
+        );
+        let mut amount =
+            |text: &mut Option<String>| match Amount::parse(text.get_or_insert_default()) {
+                Err(DecodeError::AmountTooWide) => {
+                    too_wide = true;
+                    Ok(Amount::ZERO)
+                }
+                read => read,
+            };
+        let total_amount = amount(&mut header.total_amount)?;
+        let total_fee = amount(&mut header.total_fee)?;
+        let reward = amount(&mut header.reward)?;
+        for number in SPREAD_BLOCK_KEYS {
+            header.wire_order.note(number);
+        }
+        listed.push(ListedBlock {
+            header,
+            total_amount,
+            total_fee,
+            reward,
+            transactions,
+        });
+    }
+    if too_wide {
+        return Err(DecodeError::AmountTooWide);
+    }
+    Ok(listed)
 }
 
 /// The postBlock request: the message.
