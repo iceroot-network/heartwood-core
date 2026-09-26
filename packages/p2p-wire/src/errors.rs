@@ -66,7 +66,10 @@ pub enum DecodeError {
     AmountSyntax,
     /// An amount's value needs more than 128 bits. The reference reads integers of any size; this
     /// crate refuses them on purpose (a documented difference), because reading them is unbounded
-    /// work and the reference refuses every such amount at a later step anyway.
+    /// work. The reference refuses such a getBlocks response at a later step (its reply schema, or
+    /// when it writes the amount in 64 bits), but accepts the total amount and total fee of a
+    /// getStatus reply whose header is at height 1 and verifies its attestations over the whole
+    /// integer. Only a crafted payload has such an amount.
     #[error("an amount needs more than 128 bits")]
     AmountTooWide,
 }

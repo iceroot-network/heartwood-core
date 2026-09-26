@@ -204,6 +204,9 @@ fn reads_as_zero(text: &str) -> bool {
 /// of the checked reply, with the configuration as its own fields only (an empty `plugins` left
 /// out). When the verifier's own slot is negative and the reply's slot is not 0, the slot is read
 /// as a signed 32-bit value (`currentSlot >> 0`).
+///
+/// `status` must be a reply that [`check_reply`] accepted: the reference verifies the reply as
+/// its check changed it (plugin names removed, the generator key lowercased).
 pub fn verifying_preimage(status: &ReceivedStatus, local_slot_negative: bool) -> Vec<u8> {
     let (empty_state, empty_config) = (State::default(), Config::default());
     let state = status.message.state.as_ref().unwrap_or(&empty_state);

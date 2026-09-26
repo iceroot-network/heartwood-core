@@ -4,7 +4,7 @@
 //! Signer side. The relay builds the tree `{state, config}` ([`SignedState`], [`PeerConfig`]) and
 //! its canonical JSON ([`signing_preimage`]): the kernel's key-sorted `stringify`, keys ordered by
 //! UTF-16 code units at every level, no white space. The forger signs the preimage with each of its
-//! keys ([`attest`], legacy Schnorr with no hash), a key listed twice signing twice; the relay
+//! keys ([`attest()`], legacy Schnorr with no hash), a key listed twice signing twice; the relay
 //! assembles the response ([`response`]). Before the network's epoch the slot is negative: the
 //! preimage carries the negative number and the wire its unsigned 32-bit value.
 //!
