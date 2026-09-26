@@ -40,24 +40,52 @@ pub enum SigningDomain {
     PeerStatus,
 }
 
-/// The auxiliary randomness of a signature.
+/// The auxiliary randomness of a BIP340 signature.
 ///
-/// Every signing call takes one. [`Aux::Random`] draws 32 bytes from the operating system for each
-/// signature. [`Aux::Fixed`] makes a signature reproducible, for chain definitions and test vectors.
+/// Every signing call takes one. [`Aux::random`] draws 32 fresh bytes from the operating system for
+/// each signature, which is what a node signs with.
+///
+/// Reproducible signatures are a test seam. `Aux::fixed`, which takes the 32 bytes, exists only
+/// with the feature `fixed-aux`, which only test code enables; a release build has no way to
+/// choose the aux. The chain-definition builder (feature `genesis`) derives its aux from the seed
+/// inside the crate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Aux {
+pub struct Aux(AuxSource);
+
+/// Where the aux bytes come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuxSource {
     /// 32 fresh random bytes per signature.
     Random,
     /// These 32 bytes.
+    #[cfg(any(test, feature = "fixed-aux", feature = "genesis"))]
     Fixed([u8; 32]),
 }
 
 impl Aux {
+    /// 32 fresh random bytes per signature.
+    pub const fn random() -> Aux {
+        Aux(AuxSource::Random)
+    }
+
+    /// These 32 bytes, for reproducible signatures in tests (feature `fixed-aux`).
+    #[cfg(any(test, feature = "fixed-aux"))]
+    pub const fn fixed(bytes: [u8; 32]) -> Aux {
+        Aux(AuxSource::Fixed(bytes))
+    }
+
+    /// These 32 bytes, derived by the chain-definition builder from its seed.
+    #[cfg(feature = "genesis")]
+    pub(crate) const fn derived(bytes: [u8; 32]) -> Aux {
+        Aux(AuxSource::Fixed(bytes))
+    }
+
     /// The 32 aux bytes: the fixed ones, or fresh random ones.
     pub(crate) fn resolve(self) -> Result<[u8; 32], SigError> {
-        match self {
-            Aux::Fixed(bytes) => Ok(bytes),
-            Aux::Random => {
+        match self.0 {
+            #[cfg(any(test, feature = "fixed-aux", feature = "genesis"))]
+            AuxSource::Fixed(bytes) => Ok(bytes),
+            AuxSource::Random => {
                 let mut bytes = [0u8; 32];
                 getrandom::fill(&mut bytes).map_err(|_| SigError::Randomness)?;
                 Ok(bytes)
@@ -65,6 +93,15 @@ impl Aux {
         }
     }
 }
+
+/// A build without the feature `fixed-aux` has no way to choose the aux: this doctest must fail to
+/// compile, and `cargo test -p heartwood-crypto` (no features) runs it.
+///
+/// ```compile_fail
+/// let _ = heartwood_crypto::Aux::fixed([0; 32]);
+/// ```
+#[cfg(not(feature = "fixed-aux"))]
+mod no_fixed_aux {}
 
 /// A 64-byte Schnorr signature of either scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

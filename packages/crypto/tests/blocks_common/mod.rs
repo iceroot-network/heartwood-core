@@ -162,7 +162,7 @@ pub fn make_block(
         ),
     };
     let keys = KeyPair::from_passphrase(text(input, "passphrase")?).map_err(|e| e.to_string())?;
-    let aux = Aux::Fixed(bytes32(input, "aux")?);
+    let aux = Aux::fixed(bytes32(input, "aux")?);
 
     match input
         .get("scheme")
@@ -206,7 +206,8 @@ fn legacy_signature(
         SigningDomain::Block,
         &serialiser::signing_hash(header),
         keys.secret_key(),
-        Aux::Fixed([0; 32]),
+        // Not used: the legacy scheme derives its nonce from the key and the message.
+        Aux::random(),
     )
     .map_err(|error| error.to_string())?;
     if let Some(expected) = expected {

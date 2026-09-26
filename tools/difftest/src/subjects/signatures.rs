@@ -64,7 +64,7 @@ fn verify(case: &Case<'_>, scheme: SchemeId, domain: SigningDomain) -> Outcome<V
 
 /// `sig.bip340.sign`: a 32-byte message is signed as given, any other length is hashed first.
 pub(super) fn bip340_sign(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
-    let aux = Aux::Fixed(bytes32(case.input, "aux")?);
+    let aux = Aux::fixed(bytes32(case.input, "aux")?);
     sign(
         case,
         SchemeId::Secp256k1Bip340,
@@ -84,7 +84,8 @@ pub(super) fn legacy_sign(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         case,
         SchemeId::Secp256k1Legacy,
         SigningDomain::PeerStatus,
-        Aux::Fixed([0; 32]),
+        // Not used: the legacy scheme derives its nonce from the key and the message.
+        Aux::random(),
     )
 }
 

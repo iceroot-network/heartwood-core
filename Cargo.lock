@@ -285,7 +285,6 @@ version = "0.1.0"
 dependencies = [
  "bs58",
  "getrandom 0.4.3",
- "heartwood-crypto",
  "hex",
  "indexmap",
  "k256",

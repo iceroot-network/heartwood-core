@@ -205,7 +205,7 @@ proptest! {
     #[test]
     fn bip340_agrees(secret in secret_strategy(), message in message_strategy(), aux in any::<[u8; 32]>()) {
         let key = SecretKey::from_bytes(secret).unwrap();
-        let ours = sig::sign(SchemeId::Secp256k1Bip340, SigningDomain::Transaction, &message, &key, Aux::Fixed(aux)).unwrap();
+        let ours = sig::sign(SchemeId::Secp256k1Bip340, SigningDomain::Transaction, &message, &key, Aux::fixed(aux)).unwrap();
         prop_assert_eq!(ours.as_bytes(), &k256_bip340_sign(&secret, &message, &aux));
         let public = PublicKey::from_secret_key(&key);
         prop_assert!(k256_bip340_verify(public.as_bytes(), &message, ours.as_bytes()));
@@ -219,7 +219,7 @@ proptest! {
         flip in 0usize..(64 * 8),
     ) {
         let key = SecretKey::from_bytes(secret).unwrap();
-        let signature = sig::sign(SchemeId::Secp256k1Bip340, SigningDomain::Block, &message, &key, Aux::Fixed([7; 32])).unwrap();
+        let signature = sig::sign(SchemeId::Secp256k1Bip340, SigningDomain::Block, &message, &key, Aux::fixed([7; 32])).unwrap();
         let mut bytes = *signature.as_bytes();
         bytes[flip / 8] ^= 1 << (flip % 8);
         let public = PublicKey::from_secret_key(&key);
@@ -236,7 +236,7 @@ proptest! {
     #[test]
     fn legacy_agrees(secret in secret_strategy(), message in message_strategy()) {
         let key = SecretKey::from_bytes(secret).unwrap();
-        let ours = sig::sign(SchemeId::Secp256k1Legacy, SigningDomain::PeerStatus, &message, &key, Aux::Random).unwrap();
+        let ours = sig::sign(SchemeId::Secp256k1Legacy, SigningDomain::PeerStatus, &message, &key, Aux::random()).unwrap();
         prop_assert_eq!(ours.as_bytes(), &k256_legacy_sign(&secret, &message));
         let public = PublicKey::from_secret_key(&key);
         prop_assert!(k256_legacy_verify(public.as_bytes(), &message, ours.as_bytes()));
@@ -250,7 +250,7 @@ proptest! {
         flip in 0usize..(64 * 8),
     ) {
         let key = SecretKey::from_bytes(secret).unwrap();
-        let signature = sig::sign(SchemeId::Secp256k1Legacy, SigningDomain::PeerStatus, &message, &key, Aux::Random).unwrap();
+        let signature = sig::sign(SchemeId::Secp256k1Legacy, SigningDomain::PeerStatus, &message, &key, Aux::random()).unwrap();
         let mut bytes = *signature.as_bytes();
         bytes[flip / 8] ^= 1 << (flip % 8);
         let public = PublicKey::from_secret_key(&key);

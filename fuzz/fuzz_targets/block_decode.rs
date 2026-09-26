@@ -32,7 +32,8 @@ fuzz_target!(|bytes: &[u8]| {
     if let Ok(block) = Block::decode(bytes, &RULES) {
         let _ = block.verify(&RULES, 0);
         let _ = block.to_json(&RULES);
-        let again = Block::decode(&block.encode(), &RULES).expect("an accepted block decodes again");
+        let again =
+            Block::decode(&block.encode(), &RULES).expect("an accepted block decodes again");
         assert_eq!(again, block);
     }
     let _ = Block::decode_trusted(bytes, &RULES);

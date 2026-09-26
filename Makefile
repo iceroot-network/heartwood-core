@@ -1,6 +1,6 @@
 # Heartwood Core: Rust checks and the differential-test workflow. `make help` lists the targets.
 #
-#   make check          build, clippy (warnings are errors), fmt check and tests of the workspace
+#   make check          build, clippy (warnings are errors), fmt check, tests and the release check
 #   make oracle-image   build the oracle image for COMMIT from scratch (needs Docker and the network)
 #   make e2e            vectors in the container and locally, diff the two runs, run L0
 #   make vectors-install  copy the container run into packages/crypto/tests/vectors
@@ -35,14 +35,22 @@ GENERATOR_ARG := $(if $(DEVNET_GENERATOR),--devnet-generator '$(DEVNET_GENERATOR
 # Where the committed golden vectors of heartwood-crypto live.
 CRYPTO_VECTORS ?= packages/crypto/tests/vectors
 DIFFTEST      := target/debug/difftest
+# The packages whose builds are release artefacts, each built on its own (cargo build -p). None of
+# them may enable a test seam of heartwood-crypto (TEST_SEAMS); `make release-check` checks it.
+RELEASE_PACKAGES ?= heartwood-crypto
+TEST_SEAMS    := fixed-aux
+empty         :=
+space         := $(empty) $(empty)
+# The cargo-fuzz targets, a package of their own outside the workspace.
+FUZZ_MANIFEST := fuzz/Cargo.toml
 
 export DIFFTEST_DOCKER ?= $(CURDIR)/tools/oracle/docker.sh
 
 # Stops a recipe that needs IMAGE when COMMIT cannot be resolved in SOLAR_REPO and IMAGE is not set.
 need-image = $(if $(SHORT)$(filter-out heartwood-oracle:,$(IMAGE)),,$(error cannot resolve COMMIT=$(COMMIT) in SOLAR_REPO=$(SOLAR_REPO): set SOLAR_REPO to a clone of iceroot-network/solar-core-ref (in local.mk or on the command line), or set IMAGE))
 
-.PHONY: help check build clippy fmt fmt-check test oracle-context oracle-image oracle-save \
-        vectors vectors-local vectors-diff vectors-install l0 ping test-oracle e2e
+.PHONY: help check build clippy fmt fmt-check test release-check oracle-context oracle-image \
+        oracle-save vectors vectors-local vectors-diff vectors-install l0 ping test-oracle e2e
 
 help: ## this list
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | awk -F'\t' '{ printf "  make %-15s %s\n", $$1, $$2 }'
@@ -50,22 +58,38 @@ help: ## this list
 	@echo "           VECTORS=$(VECTORS) IMAGE_DIR=$(IMAGE_DIR) TOOLCHAIN_ENV=$(TOOLCHAIN_ENV)"
 	@echo "           DEVNET_GENERATOR=$(DEVNET_GENERATOR) CRYPTO_VECTORS=$(CRYPTO_VECTORS)"
 
-check: build clippy fmt-check test ## build, clippy, fmt check and tests
+check: build clippy fmt-check test release-check ## build, clippy, fmt check, tests, release check
 
 build: ## cargo build (the difftest binary)
 	$(TOOLCHAIN) && cargo build --locked
 
-clippy: ## cargo clippy, warnings are errors
-	$(TOOLCHAIN) && cargo clippy --all-targets --locked -- -D warnings
+clippy: ## cargo clippy, warnings are errors: the workspace, heartwood-crypto alone, the fuzz targets
+	$(TOOLCHAIN) && cargo clippy --workspace --all-targets --locked -- -D warnings
+	$(TOOLCHAIN) && cargo clippy -p heartwood-crypto --all-targets --locked -- -D warnings
+	$(TOOLCHAIN) && cargo clippy --manifest-path $(FUZZ_MANIFEST) --locked -- -D warnings
 
-fmt: ## cargo fmt
-	$(TOOLCHAIN) && cargo fmt --all
+fmt: ## cargo fmt, the workspace and the fuzz targets
+	$(TOOLCHAIN) && cargo fmt --all && cargo fmt --manifest-path $(FUZZ_MANIFEST)
 
-fmt-check: ## cargo fmt --check
-	$(TOOLCHAIN) && cargo fmt --all -- --check
+fmt-check: ## cargo fmt --check, the workspace and the fuzz targets
+	$(TOOLCHAIN) && cargo fmt --all -- --check && cargo fmt --manifest-path $(FUZZ_MANIFEST) -- --check
 
-test: ## cargo test (the oracle ping test is skipped unless test-oracle sets it up)
-	$(TOOLCHAIN) && cargo test --locked
+# heartwood-crypto is tested on its own, so that Cargo does not unify its features with those that
+# difftest turns on: with no features (unit tests, and the doctest that the test seams are absent)
+# and with every feature (every vector class). The oracle ping test of difftest is skipped unless
+# test-oracle sets it up.
+test: ## cargo test: heartwood-crypto with no features and with all, then difftest
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-crypto
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-crypto --all-features
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-difftest
+
+release-check: ## each release package builds heartwood-crypto without its test seams
+	@$(TOOLCHAIN) && for package in $(RELEASE_PACKAGES); do \
+	    seams=$$(cargo tree --locked -p "$$package" -e normal,build,features -i heartwood-crypto --prefix none \
+	        | grep -oE 'feature "($(subst $(space),|,$(TEST_SEAMS)))"' | sort -u | tr '\n' ' '); \
+	    if [ -n "$$seams" ]; then echo "release-check: $$package enables $$seams" >&2; exit 1; fi; \
+	    echo "release-check: $$package builds heartwood-crypto without $(TEST_SEAMS)"; \
+	done
 
 oracle-context: ## the image's build context in target/oracle-context (git archive of COMMIT)
 	tools/oracle/make-context.sh --repo '$(SOLAR_REPO)' --commit '$(COMMIT)'

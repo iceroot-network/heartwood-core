@@ -468,7 +468,7 @@ mod tests {
     use crate::transactions::signer;
     use crate::transactions::testing::{NETWORK, devnet, keys, memo, valid_asset};
 
-    const AUX: Aux = Aux::Fixed([7; 32]);
+    const AUX: Aux = Aux::fixed([7; 32]);
 
     /// Signed fields with `asset`, and the second key when the transaction is second-signed.
     fn signed(

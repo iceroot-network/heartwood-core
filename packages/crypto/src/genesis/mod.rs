@@ -228,7 +228,7 @@ pub fn build(input: &GenesisInput) -> Result<ChainDefinition, GenesisError> {
     let delegates = derive_all(input.delegates.iter().map(|d| &d.role), key)?;
     let donations = derive_all(input.donations.iter().map(|d| &d.role), key)?;
     let wallets = derive_all(input.wallet_roles.iter(), key)?;
-    let aux = |label: &str| Aux::Fixed(derive::aux(&input.derivation_tag, label, &input.seed));
+    let aux = |label: &str| Aux::derived(derive::aux(&input.derivation_tag, label, &input.seed));
 
     let mut network = input.network.clone();
     network.address_character = Some(address_character(network_byte)?.to_string());

@@ -85,7 +85,7 @@ pub(super) fn make(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     };
     let keys = KeyPair::from_passphrase(text(input, "passphrase")?)
         .map_err(|e| failed(format!("passphrase: {e}")))?;
-    let aux = Aux::Fixed(bytes32(input, "aux")?);
+    let aux = Aux::fixed(bytes32(input, "aux")?);
     let block = match input
         .get("scheme")
         .and_then(Value::as_str)
@@ -112,7 +112,8 @@ pub(super) fn make(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
                 SigningDomain::Block,
                 &serialiser::signing_hash(&header),
                 keys.secret_key(),
-                Aux::Fixed([0; 32]),
+                // The legacy scheme derives its nonce from the key and the message.
+                Aux::random(),
             )
             .map_err(|e| failed(format!("legacy block signature: {e}")))?;
             factory::from_data(header, &transactions, &milestones)

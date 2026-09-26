@@ -26,7 +26,9 @@
 //! - Every signing call takes an [`Aux`] value; there is no signing entry point without one.
 //!
 //! Features: `legacy-schnorr` enables the pre-BIP340 Schnorr scheme, which is used only for peer
-//! status attestations; `genesis` enables the chain-definition builder.
+//! status attestations; `genesis` enables the chain-definition builder. `fixed-aux` is a test seam
+//! (`Aux::fixed`, reproducible signatures) that only test code enables; a release build never
+//! has it.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

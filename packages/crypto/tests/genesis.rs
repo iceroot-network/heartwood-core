@@ -8,8 +8,6 @@
 //! nethash, genesis id and issued amount. The block it writes must then read back and verify as the
 //! reference's check of the same files did (see [`check_reads_back`] for what is compared).
 
-#![cfg(feature = "genesis")]
-
 #[macro_use]
 mod common;
 

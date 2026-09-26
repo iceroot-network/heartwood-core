@@ -86,7 +86,7 @@ pub(super) fn build(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let devnet = env.devnet()?;
     let milestones = env.milestones(case)?;
     let params = params(&milestones, case)?;
-    let aux = Aux::Fixed(devnet.aux);
+    let aux = Aux::fixed(devnet.aux);
     let input = case.input;
     let builder = text(input, "builder")?;
     if !BUILDERS.contains(&builder) {

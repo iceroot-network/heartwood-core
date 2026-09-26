@@ -26,7 +26,7 @@ use heartwood_crypto::{Aux, Milestones, Network, Params, Transaction, Transactio
 use serde_json::{Map, Value, json};
 
 /// The fixed aux the reference's oracle signs every transaction with.
-const AUX: Aux = Aux::Fixed([0x42; 32]);
+const AUX: Aux = Aux::fixed([0x42; 32]);
 
 /// The devnet network of the vector files: network byte 90.
 fn network() -> Network {

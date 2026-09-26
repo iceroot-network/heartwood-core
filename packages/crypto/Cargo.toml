@@ -16,6 +16,9 @@ default = []
 legacy-schnorr = []
 # The chain-definition builder for devnets (genesis block, milestones, network and key material).
 genesis = []
+# Test seam: `Aux::fixed`, reproducible BIP340 signatures for test vectors. Only test code enables
+# it (the integration tests below and the difftest harness); a release build never does.
+fixed-aux = []
 
 [dependencies]
 bs58.workspace = true
@@ -30,10 +33,34 @@ thiserror.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-# The crate itself with every feature, so that `cargo test -p heartwood-crypto` also runs the
-# legacy Schnorr and genesis tests and vectors.
-heartwood-crypto = { path = ".", features = ["legacy-schnorr", "genesis"] }
 hex.workspace = true
 k256.workspace = true
 num-bigint.workspace = true
 proptest.workspace = true
+
+# The vector tests sign with the oracle's fixed aux. `cargo test -p heartwood-crypto` runs the unit
+# tests and doctests of the default build; `--all-features` runs everything.
+[[test]]
+name = "blocks"
+required-features = ["fixed-aux"]
+
+[[test]]
+name = "genesis"
+required-features = ["genesis", "fixed-aux"]
+
+[[test]]
+name = "milestones"
+required-features = ["fixed-aux"]
+
+[[test]]
+name = "milestones_rewards"
+required-features = ["fixed-aux"]
+
+[[test]]
+name = "primitives"
+path = "tests/primitives/main.rs"
+required-features = ["fixed-aux"]
+
+[[test]]
+name = "transactions"
+required-features = ["fixed-aux"]

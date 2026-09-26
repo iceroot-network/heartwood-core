@@ -212,7 +212,7 @@ mod tests {
     use crate::identities::Address;
     use crate::transactions::testing::{NETWORK, devnet, keys};
 
-    const AUX: Aux = Aux::Fixed([9; 32]);
+    const AUX: Aux = Aux::fixed([9; 32]);
 
     fn votes(entries: &[(&str, u16)]) -> Votes {
         entries

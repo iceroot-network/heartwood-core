@@ -187,7 +187,7 @@ fn pairs(input: &Value, key: &str) -> Result<Vec<(u32, u64)>, String> {
 fn build_record(record: &Record, meta: &Value) -> Result<(), String> {
     let height = u32::try_from(record.height).map_err(|error| error.to_string())?;
     let params = DEVNET.milestones.at(height);
-    let aux = Aux::Fixed(
+    let aux = Aux::fixed(
         hex::decode_array(meta["aux"].as_str().ok_or("no aux")?).map_err(|e| e.to_string())?,
     );
     if text(&record.input, "builder")? != "transfer" {

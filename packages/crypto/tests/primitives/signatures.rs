@@ -33,7 +33,7 @@ pub fn check_bip340_sign(case: Case<'_>) {
             domain,
             &message,
             &secret,
-            Aux::Fixed(aux),
+            Aux::fixed(aux),
         )
         .unwrap();
         assert_eq!(signature.to_hex(), expected, "{} {domain:?}", case.label());
@@ -62,7 +62,7 @@ pub fn check_legacy_sign(case: Case<'_>) {
     for (domain, aux) in
         DOMAINS
             .into_iter()
-            .zip([Aux::Random, Aux::Fixed([0; 32]), Aux::Fixed([0xff; 32])])
+            .zip([Aux::random(), Aux::fixed([0; 32]), Aux::fixed([0xff; 32])])
     {
         let signature =
             sig::sign(SchemeId::Secp256k1Legacy, domain, &message, &secret, aux).unwrap();

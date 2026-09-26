@@ -27,7 +27,7 @@ pub enum SigError {
         /// Bytes given.
         actual: usize,
     },
-    /// The operating system could not supply random bytes for [`crate::Aux::Random`].
+    /// The operating system could not supply random bytes for [`crate::Aux::random`].
     #[error("no random bytes available for the signing aux")]
     Randomness,
     /// No signature exists for this key and message: the legacy scheme derived a nonce of zero,
