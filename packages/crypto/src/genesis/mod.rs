@@ -26,9 +26,9 @@
 //! rules ([`Block::verify`]).
 //!
 //! JSON is written as `JSON.stringify(value, null, 4)` followed by a newline writes it (see
-//! [`crate::utils::js::stringify`]), with the keys of every object in the order a JavaScript object
-//! enumerates them. The genesis block and its transactions have their keys in alphabetical order,
-//! as the reference's genesis files do.
+//! [`crate::utils::js::stringify`]), which also puts the keys of every object in the order a
+//! JavaScript object enumerates them. The genesis block and its transactions have their keys in
+//! alphabetical order, as the reference's genesis files do.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -220,7 +220,7 @@ pub fn build(input: &GenesisInput) -> Result<ChainDefinition, GenesisError> {
     network.address_character = Some(address_character(network_byte)?.to_string());
     network.nethash = String::new();
 
-    let milestones_json = write_json(milestones(input, &donations));
+    let milestones_json = write_json(&milestones(input, &donations));
     let milestones = Milestones::load(&milestones_json, &network)?;
     let params = milestones.at(1);
 
@@ -319,10 +319,10 @@ pub fn build(input: &GenesisInput) -> Result<ChainDefinition, GenesisError> {
 
     network.nethash = hex::encode(&payload_hash);
     Ok(ChainDefinition {
-        network_json: write_json(network.to_json()),
+        network_json: write_json(&network.to_json()),
         milestones_json,
-        genesis_block_json: write_json(block_json(&block, assets)),
-        exceptions_json: write_json(Value::Object(Map::new())),
+        genesis_block_json: write_json(&block_json(&block, assets)),
+        exceptions_json: write_json(&Value::Object(Map::new())),
         summary: GenesisSummary {
             issued,
             nethash: payload_hash,
@@ -566,39 +566,10 @@ fn transaction_json(tx: &Transaction, asset: Value) -> Value {
 }
 
 /// `value` as `JSON.stringify(value, null, 4) + "\n"` writes the JavaScript object it describes.
-fn write_json(value: Value) -> String {
-    let mut text = js::stringify(&js_key_order(value), 4);
+fn write_json(value: &Value) -> String {
+    let mut text = js::stringify(value, 4);
     text.push('\n');
     text
-}
-
-/// `value` with the keys of every object in the order a JavaScript object enumerates them: array
-/// indexes (`"0"` to `"4294967294"` without leading zeros) first, in numeric order, then the other
-/// keys in insertion order.
-fn js_key_order(value: Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let (mut indexes, names): (Vec<_>, Vec<_>) = map
-                .into_iter()
-                .map(|(key, value)| (key, js_key_order(value)))
-                .partition(|(key, _)| array_index(key).is_some());
-            indexes.sort_by_key(|(key, _)| array_index(key));
-            Value::Object(indexes.into_iter().chain(names).collect())
-        }
-        Value::Array(items) => Value::Array(items.into_iter().map(js_key_order).collect()),
-        other => other,
-    }
-}
-
-/// The array index that `key` names, if it names one.
-fn array_index(key: &str) -> Option<u32> {
-    let canonical = !key.is_empty()
-        && key.bytes().all(|b| b.is_ascii_digit())
-        && (key == "0" || !key.starts_with('0'));
-    canonical
-        .then(|| key.parse::<u32>().ok())
-        .flatten()
-        .filter(|&index| index != u32::MAX)
 }
 
 #[cfg(test)]
@@ -627,21 +598,6 @@ mod tests {
             serde_json::to_string(&m).unwrap(),
             r#"{"a":{"b":10,"c":2,"x":11},"d":{"y":12},"e":{"z":13},"f":{"g":14},"n":{"o":{"p":15}}}"#
         );
-    }
-
-    #[test]
-    fn keys_are_ordered_as_javascript_enumerates_them() {
-        let value = json!({ "b": 1, "10": 2, "a": { "2": 0, "x": 0, "1": 0 }, "01": 3, "2": 4,
-            "4294967295": 5, "4294967294": 6, "-1": 7 });
-        assert_eq!(
-            serde_json::to_string(&js_key_order(value)).unwrap(),
-            r#"{"2":4,"10":2,"4294967294":6,"b":1,"a":{"1":0,"2":0,"x":0},"01":3,"4294967295":5,"-1":7}"#
-        );
-        assert_eq!(array_index("0"), Some(0));
-        assert_eq!(array_index("00"), None);
-        assert_eq!(array_index(""), None);
-        assert_eq!(array_index("+1"), None);
-        assert_eq!(array_index("99999999999"), None);
     }
 
     #[test]
@@ -710,27 +666,6 @@ mod tests {
             prop_assert_eq!(found, Some(&Value::from(value)));
             let after: Vec<&String> = map.keys().collect();
             prop_assert_eq!(&after[..before.len()], &before.iter().collect::<Vec<_>>()[..]);
-        }
-
-        #[test]
-        fn javascript_key_order_puts_indexes_first_and_is_stable(value in tree()) {
-            let once = js_key_order(value.clone());
-            prop_assert_eq!(&js_key_order(once.clone()), &once);
-            prop_assert_eq!(&once, &value);
-            fn check(value: &Value) -> bool {
-                match value {
-                    Value::Object(map) => {
-                        let indexes: Vec<Option<u32>> = map.keys().map(|k| array_index(k)).collect();
-                        let first_name = indexes.iter().position(Option::is_none).unwrap_or(indexes.len());
-                        indexes[first_name..].iter().all(Option::is_none)
-                            && indexes[..first_name].windows(2).all(|w| w[0] < w[1])
-                            && map.values().all(check)
-                    }
-                    Value::Array(items) => items.iter().all(check),
-                    _ => true,
-                }
-            }
-            prop_assert!(check(&once));
         }
 
         #[test]
