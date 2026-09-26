@@ -13,7 +13,8 @@ const EXCLUDE: u32 = 2;
 
 /// A getUnconfirmedTransactions request: `{...decoded, exclude}`.
 ///
-/// The message's `exclude` holds the bytes as they came, and is noted in the wire order;
+/// The message's `exclude` holds the bytes as they came (none where it was absent, as it is
+/// always present in a decoded request), and is noted in the wire order;
 /// [`UnconfirmedRequest::exclude`] is the list the reference reads from them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UnconfirmedRequest {
@@ -26,7 +27,8 @@ pub struct UnconfirmedRequest {
 
 /// A message whose `transactions` field is a list of transactions: `{...decoded, transactions}`.
 ///
-/// The message's `transactions` holds the bytes as they came, and is noted in the wire order;
+/// The message's `transactions` holds the bytes as they came (none where it was absent, as it is
+/// always present in a decoded message), and is noted in the wire order;
 /// [`WithTransactions::transactions`] is the list the reference reads from them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WithTransactions<M> {
