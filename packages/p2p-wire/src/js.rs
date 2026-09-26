@@ -91,10 +91,6 @@ pub(crate) fn utf8_lossy(bytes: &[u8]) -> String {
 }
 
 /// The length of `text` in UTF-16 code units, JavaScript's `text.length`.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the frame writer and the reply check call it")
-)]
 pub(crate) fn utf16_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
@@ -111,7 +107,6 @@ pub(crate) fn utf16_cmp(a: &str, b: &str) -> Ordering {
 /// `text.slice(0, at)` and `text.slice(at)` in UTF-16 code units, as `Buffer.from` then writes
 /// them: a surrogate pair cut in half becomes U+FFFD on each side. An `at` beyond the end gives
 /// the whole text and an empty rest.
-#[cfg_attr(not(test), expect(dead_code, reason = "the frame writer calls it"))]
 pub(crate) fn utf16_split(text: &str, at: usize) -> (String, String) {
     let mut units = 0usize;
     for (offset, c) in text.char_indices() {
