@@ -231,14 +231,15 @@ fuzz-wire: ## the wire fuzz targets at once, FUZZ_SECONDS each (nightly and carg
 	done; \
 	exit $$fail
 
-# Every input of a corpus must be compared: a skipped input or one without a subject fails too.
+# Every input of a corpus must be compared: an empty corpus, a skipped input or one without a
+# subject fails too.
 replay-wire: build ## each wire fuzz corpus through the oracle (ORACLE_ARGS) and Heartwood; logs in WIRE_LOGS
 	$(need-image)
 	@$(TOOLCHAIN) && mkdir -p $(WIRE_LOGS) && fail=0; \
 	for pair in $(WIRE_REPLAY); do \
 	    target=$${pair%%=*}; op=$${pair#*=}; log=$(WIRE_LOGS)/replay-$$target.log; \
-	    if [ ! -d $(FUZZ_CORPUS)/$$target ]; then \
-	        echo "replay-wire: $(FUZZ_CORPUS)/$$target does not exist (make fuzz-wire)" >&2; fail=1; continue; \
+	    if [ -z "$$(ls -A $(FUZZ_CORPUS)/$$target 2>/dev/null)" ]; then \
+	        echo "replay-wire: $(FUZZ_CORPUS)/$$target is missing or empty (make fuzz-wire)" >&2; fail=1; continue; \
 	    fi; \
 	    $(DIFFTEST) oracle replay $$op $(FUZZ_CORPUS)/$$target --vectors $(CRYPTO_VECTORS) $(ORACLE_ARGS) \
 	        > $$log 2>&1; status=$$?; cat $$log; \
