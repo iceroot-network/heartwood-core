@@ -10,7 +10,7 @@ use heartwood_difftest::oracle::GenOptions;
 use heartwood_difftest::report::describe_meta;
 use heartwood_difftest::subjects::Devnet;
 use heartwood_difftest::vectors::VectorSet;
-use heartwood_difftest::{Error, Result, subject};
+use heartwood_difftest::{Error, Result, replay, subject};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -157,6 +157,43 @@ fn execute(command: Command) -> Result<bool> {
             Ok(report.is_success())
         }
         Command::Genesis(args) => write_genesis(&args),
+        Command::OracleReplay(args) => {
+            let set = VectorSet::load(&args.vectors)?;
+            let devnet = Devnet::from_vectors(&set)?
+                .ok_or_else(|| {
+                    Error::Usage(format!(
+                        "{} has no genesis class, so the devnet rules are unknown",
+                        args.vectors.display()
+                    ))
+                })?
+                .at_current_time()?;
+            let milestones = match &args.milestones {
+                Some(path) => Some(std::fs::read_to_string(path).map_err(|e| Error::Io {
+                    path: path.clone(),
+                    source: e,
+                })?),
+                None => None,
+            };
+            let oracle = args.oracle.resolve(env)?;
+            let mut server = oracle.server()?;
+            let replayed = replay::run(
+                &mut server,
+                &subject::heartwood(Some(devnet)),
+                &replay::Replay {
+                    op: &args.op,
+                    corpus: &args.corpus,
+                    height: args.height,
+                    milestones: milestones.as_deref(),
+                },
+            )?;
+            print!("{}", replayed.report);
+            println!(
+                "  the reference accepted {} of the {} inputs",
+                replayed.accepted,
+                replayed.report.results.len()
+            );
+            Ok(replayed.report.is_success())
+        }
         Command::Run { level, .. } => Err(Error::NotYet(format!(
             "{} is not built yet; it arrives with {}",
             level.title(),

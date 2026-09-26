@@ -16,6 +16,13 @@ Usage:
                                   genesis class needs the reference's devnet generator,
                                   gen-network.js       [$DIFFTEST_DEVNET_GENERATOR]
   difftest oracle ping [ORACLE]   start oracle-server.js and check that it answers
+  difftest oracle replay OP CORPUS --vectors DIR [--height N] [--milestones FILE] [ORACLE]
+                                  send each file of CORPUS (raw bytes, for example a fuzz
+                                  corpus) as the hex input of OP (tx.fromBytes,
+                                  block.fromBytes) to the oracle and to Heartwood, and
+                                  compare them as L0 does; DIR is a vector set with the
+                                  genesis class, for the devnet rules; --milestones runs
+                                  both sides under that milestone file; height 2 by default
   difftest vectors verify DIR     check a vector directory: manifest, meta records, record shape
   difftest vectors diff DIR DIR   compare two oracle runs record by record (meta excluded)
   difftest run l0 DIR             compare golden vectors with Heartwood's implementations
@@ -101,6 +108,7 @@ pub enum Command {
     OraclePing {
         oracle: OracleArgs,
     },
+    OracleReplay(ReplayArgs),
     VectorsVerify {
         dir: PathBuf,
     },
@@ -115,6 +123,22 @@ pub enum Command {
     Levels,
     Help,
     Genesis(GenesisArgs),
+}
+
+/// The arguments of `difftest oracle replay`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayArgs {
+    pub oracle: OracleArgs,
+    /// The operation.
+    pub op: String,
+    /// The corpus directory.
+    pub corpus: PathBuf,
+    /// A vector set with the genesis class, for the devnet configuration.
+    pub vectors: PathBuf,
+    /// The rule height.
+    pub height: u64,
+    /// A milestone file for both sides.
+    pub milestones: Option<PathBuf>,
 }
 
 /// The arguments of `difftest genesis`.
@@ -189,6 +213,33 @@ pub fn parse(args: &[String]) -> Result<Command> {
             })
         }
         ["genesis", rest @ ..] => parse_genesis(rest),
+        ["oracle", "replay", op, corpus, rest @ ..] => {
+            let mut oracle = OracleArgs::default();
+            let (mut vectors, mut milestones, mut height) = (None, None, 2);
+            let mut it = rest.iter();
+            while let Some(&flag) = it.next() {
+                match flag {
+                    "--vectors" => vectors = Some(PathBuf::from(value(flag, it.next())?)),
+                    "--milestones" => milestones = Some(PathBuf::from(value(flag, it.next())?)),
+                    "--height" => {
+                        height = value(flag, it.next())?
+                            .parse()
+                            .ok()
+                            .filter(|&h| h >= 1)
+                            .ok_or_else(|| usage("--height needs a positive integer"))?;
+                    }
+                    _ => oracle_flag(&mut oracle, flag, it.next())?,
+                }
+            }
+            Ok(Command::OracleReplay(ReplayArgs {
+                oracle,
+                op: (*op).to_owned(),
+                corpus: corpus.into(),
+                vectors: vectors.ok_or_else(|| usage("oracle replay needs --vectors DIR"))?,
+                height,
+                milestones,
+            }))
+        }
         ["oracle", "ping", rest @ ..] => {
             let mut oracle = OracleArgs::default();
             let mut it = rest.iter();
@@ -253,6 +304,27 @@ mod tests {
     fn p(line: &str) -> Result<Command> {
         let args: Vec<String> = line.split_whitespace().map(str::to_string).collect();
         parse(&args)
+    }
+
+    #[test]
+    fn parses_a_replay() {
+        assert_eq!(
+            p("oracle replay tx.fromBytes corpus --vectors v --milestones m.json --height 3 --image i")
+                .unwrap(),
+            Command::OracleReplay(ReplayArgs {
+                oracle: OracleArgs {
+                    image: Some("i".into()),
+                    ..OracleArgs::default()
+                },
+                op: "tx.fromBytes".into(),
+                corpus: "corpus".into(),
+                vectors: "v".into(),
+                height: 3,
+                milestones: Some("m.json".into()),
+            })
+        );
+        assert!(p("oracle replay tx.fromBytes corpus").is_err());
+        assert!(p("oracle replay tx.fromBytes corpus --vectors v --height 0").is_err());
     }
 
     #[test]

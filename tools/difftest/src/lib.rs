@@ -12,6 +12,7 @@
 //!   `heartwood-crypto`.
 //! - [`compare`]: the structural diff, with byte offsets for hex values.
 //! - [`report`]: outcomes and the text report.
+//! - [`replay`]: a corpus of inputs (a fuzz corpus) through the oracle and Heartwood.
 //! - [`levels`]: L0 to L4; L0 runs today, the others plug in as the node's crates arrive.
 //! - [`genesis`]: the devnet chain-definition driver (`difftest genesis`).
 
@@ -21,6 +22,7 @@ pub mod errors;
 pub mod genesis;
 pub mod levels;
 pub mod oracle;
+pub mod replay;
 pub mod report;
 pub mod subject;
 pub mod subjects;
