@@ -5,6 +5,7 @@
 
 use heartwood_crypto::transactions::types::Votes;
 use heartwood_crypto::{Address, KeyPair, PublicKey};
+use heartwood_state::dpos::build_vote_balances;
 use heartwood_state::errors::WalletError;
 use heartwood_state::wallets::vote_balances::{
     calculate_vote_amounts, decrease_vote_balances, increase_vote_balances, update_vote_shares,
@@ -375,4 +376,47 @@ fn a_refused_change_leaves_every_delegate_as_it_was() {
         })
     );
     assert_eq!(wallets, before);
+}
+
+#[test]
+fn start_up_vote_balances_count_every_voter_with_a_key() {
+    let mut wallets = WalletRepository::new(NETWORK);
+    add(&mut wallets, "d1", Some("d1"));
+    add(&mut wallets, "d2", Some("d2"));
+    let keyed = add(&mut wallets, "keyed voter", None);
+    let wallet = wallets.get_or_create(&keyed);
+    wallet.credit(10).unwrap();
+    wallet.set_votes(&votes(&[("d1", 7_000), ("d2", 3_000)]));
+    // A wallet with votes but no key is not a voter at start.
+    let (_, keyless) = key("keyless voter");
+    let wallet = wallets.get_or_create(&keyless);
+    wallet.credit(1_000).unwrap();
+    wallet.set_votes(&votes(&[("d1", 10_000)]));
+    // A delegate's own vote.
+    let d2 = wallets.find_by_username("d2").unwrap().address().to_owned();
+    let wallet = wallets.get_or_create(&d2);
+    wallet.credit(3).unwrap();
+    wallet.set_votes(&votes(&[("d2", 10_000)]));
+
+    build_vote_balances(&mut wallets).unwrap();
+    assert_eq!(tallies(&wallets, &["d1", "d2"]), [(7, 1), (6, 2)]);
+    assert!(
+        wallets
+            .find_by_address(&keyless)
+            .unwrap()
+            .vote_shares()
+            .is_empty()
+    );
+
+    let mut refused = WalletRepository::new(NETWORK);
+    let voter = add(&mut refused, "voter", None);
+    let wallet = refused.get_or_create(&voter);
+    wallet.credit(1).unwrap();
+    wallet.set_votes(&votes(&[("nobody", 10_000)]));
+    assert_eq!(
+        build_vote_balances(&mut refused),
+        Err(WalletError::UnknownDelegate {
+            username: "nobody".into()
+        })
+    );
 }
