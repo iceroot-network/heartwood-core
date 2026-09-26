@@ -827,12 +827,12 @@ pub fn import(archives: &[PathBuf], out: &Path, seed: &str) -> Result<()> {
     let tip = u32::try_from(next_height - 1)
         .map_err(|_| corpus_error(&first.dir, "the chain is too long"))?;
     let tip_id = previous_id.unwrap_or_default();
-    let seed = hex::decode(&tip_id)
+    let revert_seed = hex::decode(&tip_id)
         .ok()
         .and_then(|b| b.get(..8).map(<[u8]>::to_vec))
         .and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
         .map_or(0, u64::from_be_bytes);
-    let plan = RevertPlan::generate(seed, tip, round_length);
+    let plan = RevertPlan::generate(revert_seed, tip, round_length);
 
     let mut files: Vec<(String, String)> = Vec::new();
     for (name, bytes) in CRYPTO_FILES.iter().zip(&crypto) {
@@ -885,6 +885,7 @@ pub fn import(archives: &[PathBuf], out: &Path, seed: &str) -> Result<()> {
         "checkpoints": checkpoints.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
         "archives": archive_notes,
         "revertSteps": plan.steps.len(),
+        "revertSeed": revert_seed.to_string(),
     });
     files.push((
         "corpus.json".into(),

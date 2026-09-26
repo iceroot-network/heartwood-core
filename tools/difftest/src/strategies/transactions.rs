@@ -348,6 +348,7 @@ struct Plan {
     pick: usize,
     revoke_offset: i64,
     shares: Vec<u16>,
+    rich: bool,
 }
 
 fn plan() -> impl Strategy<Value = Plan> {
@@ -362,8 +363,9 @@ fn plan() -> impl Strategy<Value = Plan> {
         any::<usize>(),
         prop_oneof![3 => Just(i64::MIN), 1 => -1i64..=1],
         (1usize..=4).prop_flat_map(super::split),
+        prop::bool::weighted(0.8),
     )
-        .prop_map(|(variant, sender, kind, nonce, fee, second, amount_edge, pick, revoke_offset, shares)| Plan {
+        .prop_map(|(variant, sender, kind, nonce, fee, second, amount_edge, pick, revoke_offset, shares, rich)| Plan {
             variant,
             sender,
             kind,
@@ -374,6 +376,7 @@ fn plan() -> impl Strategy<Value = Plan> {
             pick,
             revoke_offset,
             shares,
+            rich,
         })
 }
 
@@ -413,8 +416,37 @@ fn build_handler_case(
     let params = milestones.at(height);
     let active = params.active_delegates();
     let n = fixture.wallets.len();
-    let stranger = plan.sender >= n;
-    let index = if stranger { n } else { plan.sender };
+    // The sender: for most kinds a wallet the kind's checks care about (a delegate for
+    // registrations and resignations, a voter for votes), now and then any wallet or one the
+    // fixture does not hold.
+    let wants = |w: &crate::fixture::FixtureWallet| match plan.kind {
+        2 | 3 => w.delegate.is_some(),
+        5 => !w.votes.is_empty(),
+        _ => w.public_key.is_some(),
+    };
+    let preferred: Vec<usize> = (0..n).filter(|i| wants(&fixture.wallets[*i])).collect();
+    let stranger = plan.sender >= 13;
+    let index = if stranger {
+        n
+    } else if plan.sender < 9 && !preferred.is_empty() {
+        preferred[plan.pick % preferred.len()]
+    } else {
+        plan.sender % n
+    };
+    if plan.rich && !stranger {
+        // Most senders can pay: raise the sender's balance, within the fixture's supply bound.
+        let others: u64 = fixture
+            .wallets
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != index)
+            .map(|(_, w)| w.balance)
+            .sum();
+        let room = MAX_SUPPLY.saturating_sub(others);
+        if let Some(w) = fixture.wallets.get_mut(index) {
+            w.balance = w.balance.max(room.min(100_000_000_000_000));
+        }
+    }
     let sender_keys = if stranger {
         keys("l1 stranger")
     } else {
