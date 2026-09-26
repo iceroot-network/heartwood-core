@@ -10,6 +10,12 @@ pub enum GenesisError {
     /// The inputs are inconsistent (for example, an empty role name or no delegates).
     #[error("invalid genesis input: {0}")]
     Input(String),
+    /// BIP39 entropy must be 16 to 32 bytes long, a multiple of 4.
+    #[error("BIP39 entropy must be 16 to 32 bytes long, a multiple of 4; got {length} bytes")]
+    Entropy {
+        /// The length given.
+        length: usize,
+    },
     /// A derived key is refused.
     #[error(transparent)]
     Key(#[from] KeyError),
