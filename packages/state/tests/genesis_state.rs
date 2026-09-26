@@ -1,8 +1,10 @@
 //! The state after the genesis block, for the three devnet chain definitions of the
-//! `V10-genesis` vectors: the issued amount, the funded wallets, the generator paid nothing, the
-//! delegates with their nonces, votes and ranks, round 1 and its forging list, and the supply.
-//! Then the genesis refusals: a block that does not verify, an issuance over `2^63 − 1`, a sender
-//! that cannot pay, and donations at height 1.
+//! `V10-genesis` vectors: its digest sections and hashes against the reference's own state after
+//! its first start (`V18-genesis-state`), then the values behind them (the issued amount, the
+//! funded wallets, the generator paid nothing, the delegates with their nonces, votes and ranks,
+//! round 1 and its forging list, the supply). Then the genesis refusals: a block that does not
+//! verify, no delegates for round 1, an issuance over `2^63 − 1`, a sender that cannot pay, and
+//! donations at height 1.
 
 use heartwood_crypto::blocks::factory::{self, BlockDraft};
 use heartwood_crypto::blocks::{VerifyFailure, serialiser};
@@ -21,6 +23,7 @@ use heartwood_transactions::Handlers;
 use serde_json::Value;
 
 const V10: &str = include_str!("../../crypto/tests/vectors/V10-genesis.jsonl");
+const V18: &str = include_str!("vectors/V18-genesis-state.jsonl");
 
 /// The round-1 order of 53 delegates: position `k` of the forging list holds the delegate of
 /// rank `ROUND_1[k] + 1`.
@@ -61,6 +64,42 @@ fn definitions() -> Vec<Definition> {
 
 fn text<'a>(value: &'a Value, key: &str) -> &'a str {
     value[key].as_str().unwrap()
+}
+
+/// The `state.digest` records of `V18-genesis-state` for the state after a genesis block: every
+/// section, every section hash and the height digest are the reference's. (The records for wallet
+/// fixtures are compared by the differential harness, which reads fixtures.)
+#[test]
+fn the_genesis_digests_are_the_reference_digests() {
+    let hex = |bytes: &[u8; 32]| heartwood_crypto::utils::hex::encode(bytes);
+    let mut compared = 0;
+    for line in V18.lines() {
+        let record: Value = serde_json::from_str(line).unwrap();
+        let Some(crypto) = record["input"].get("crypto") else {
+            continue;
+        };
+        let network = Network::load(&crypto["network"].to_string()).unwrap();
+        let milestones = Milestones::load(&crypto["milestones"].to_string(), &network).unwrap();
+        let genesis = factory::from_json(&crypto["genesisBlock"], &milestones).unwrap();
+        let state = State::from_genesis(&genesis, &milestones, &Handlers).unwrap();
+        let sections = records(&state, &milestones, &[]);
+        let hashes = sections.hashes();
+        let output = &record["output"];
+        let name = &record["name"];
+        for (key, section, hash) in [
+            ("B", &sections.block, &hashes.block),
+            ("S", &sections.supply, &hashes.supply),
+            ("R", &sections.round, &hashes.round),
+            ("M", &sections.missed, &hashes.missed),
+            ("W", &sections.wallets, &hashes.wallets),
+        ] {
+            assert_eq!(section, text(&output["sections"], key), "{name} {key}");
+            assert_eq!(hex(hash), text(&output["hashes"], key), "{name} {key}");
+        }
+        assert_eq!(hex(&hashes.state_digest()), text(output, "sd"), "{name}");
+        compared += 1;
+    }
+    assert_eq!(compared, 3);
 }
 
 #[test]
