@@ -292,7 +292,6 @@ dependencies = [
  "proptest",
  "ripemd",
  "secp256k1",
- "serde",
  "serde_json",
  "sha2",
  "thiserror",
@@ -335,8 +334,6 @@ checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown",
- "serde",
- "serde_core",
 ]
 
 [[package]]
