@@ -20,3 +20,4 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 heartwood-kernel = { workspace = true, features = ["difftest"] }
+serde_json.workspace = true

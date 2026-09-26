@@ -3,6 +3,9 @@
 //! With `n = activeDelegates` (from the milestone at height 1): round `r` holds the heights
 //! `(r − 1) × n + 1` to `r × n`, and a new round starts at every height `h` with `h = 1` or
 //! `(h − 1) mod n = 0`.
+//!
+//! Height 0 is not a block height. It gives round 0, round height 0 and next round 1, and it
+//! starts no round; the reference has no defined answer there.
 
 use heartwood_crypto::Milestones;
 
@@ -20,14 +23,38 @@ pub struct RoundInfo {
     pub max_delegates: u64,
 }
 
+/// The round length: `activeDelegates` at height 1, which the loader keeps at 1 or more.
+fn round_length(milestones: &Milestones) -> u64 {
+    milestones.at(1).active_delegates().max(1)
+}
+
 /// The round of `height` (1 or more).
 pub fn calculate_round(height: u32, milestones: &Milestones) -> RoundInfo {
-    let _ = (height, milestones);
-    todo!()
+    let n = round_length(milestones);
+    let height = u64::from(height);
+    let Some(index) = height.checked_sub(1).and_then(|h| h.checked_div(n)) else {
+        return RoundInfo {
+            round: 0,
+            round_height: 0,
+            next_round: 1,
+            max_delegates: n,
+        };
+    };
+    // index ≤ height − 1 < 2^32 and index × n ≤ height − 1, so nothing here can overflow.
+    let round = index.saturating_add(1);
+    let ends_round = height.checked_rem(n) == Some(0);
+    RoundInfo {
+        round,
+        round_height: index.saturating_mul(n).saturating_add(1),
+        next_round: round.saturating_add(u64::from(ends_round)),
+        max_delegates: n,
+    }
 }
 
 /// Whether a new round starts at `height`.
 pub fn is_new_round(height: u32, milestones: &Milestones) -> bool {
-    let _ = (height, milestones);
-    todo!()
+    u64::from(height)
+        .checked_sub(1)
+        .and_then(|h| h.checked_rem(round_length(milestones)))
+        == Some(0)
 }

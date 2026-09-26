@@ -2,8 +2,10 @@
 //!
 //! What the other crates share, without a service container or runtime plugins:
 //!
-//! - [`utils`]: the consensus utilities (the round of a height, the forger index of a slot, block
-//!   chaining) and the shared helpers (the status canonical JSON, epoch timestamps, IP matching).
+//! - [`utils`]: the consensus utilities: the round of a height, the forger index of a slot, block
+//!   chaining, and the status canonical JSON that relays sign.
+//! - [`timestamp`]: epoch timestamps as the API and log lines show them.
+//! - [`ip`]: IP addresses, and the address lists of the API, peers and remote access.
 //! - [`clock`]: the time seam, [`Clock`], with [`SystemClock`] for nodes and `ManualClock` for
 //!   tests.
 //! - [`events`]: the event names, [`Event`].
@@ -36,9 +38,11 @@ pub mod clock;
 pub mod config;
 pub mod errors;
 pub mod events;
+pub mod ip;
 pub mod lifecycle;
 pub mod log;
 pub mod paths;
+pub mod timestamp;
 pub mod utils;
 
 #[cfg(feature = "difftest")]
