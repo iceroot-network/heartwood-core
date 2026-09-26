@@ -22,3 +22,10 @@ path = "fuzz_targets/transaction_decode.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "block_decode"
+path = "fuzz_targets/block_decode.rs"
+test = false
+doc = false
+bench = false
