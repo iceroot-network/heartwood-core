@@ -17,7 +17,7 @@ equal byte for byte, including which inputs each side rejects.
 
 | Level | What is compared | Status |
 |---|---|---|
-| L0 | golden vectors written by the reference, against Heartwood | runs against `heartwood-crypto`: 1,468 of 1,518 records compared, all equal (see below) |
+| L0 | golden vectors written by the reference, against Heartwood | runs against `heartwood-crypto` (1,473 of 1,518 records compared) and `heartwood-p2p-wire` (1,178 of 1,193 compared, the other 15 documented), all equal (see below) |
 | L1 | random and mutated cases, one oracle call each | planned |
 | L2 | block sequences replayed on both sides, a state digest per block | planned |
 | L3 | the same scenario on a reference devnet and on a Heartwood devnet | planned |
@@ -163,11 +163,12 @@ reference's class. On the committed vectors (reference tag `s1-ref-v2`) it repor
 
 | Outcome | Records |
 |---|---|
-| compared, equal to the reference | 1,468 |
+| compared, equal to the reference | 1,473 |
 | documented differences, each with its form checked on the input | 23 |
-| skipped: the dynamic fee floor (transaction handlers) and the peer status message (P2P codec) | 27 |
+| skipped: the dynamic fee floor (transaction handlers) and the builders of removed forms | 22 |
 
-The documented differences are inputs that Heartwood refuses and the reference accepts:
+The documented differences of `heartwood-crypto` are inputs that Heartwood refuses and the
+reference accepts:
 
 - three wire forms that the reference decodes and only refuses when the transaction is applied, so
   a block that holds one is refused either way: the removed transaction types, the extended header,
@@ -183,6 +184,12 @@ The documented differences are inputs that Heartwood refuses and the reference a
   reference writes as vote names and removes after it has computed the id. A vote asset that is a
   truthy value without keys of its own (a number, `true`, an empty array) is no votes, as in the
   reference.
+
+On the wire class of `heartwood-p2p-wire` it compares 1,178 records, all equal, skips none, and
+counts 15 documented differences, each shown by the oracle's answer: 2 status plugins named
+`__proto__`, 2 payloads with groups nested 50,000 deep and 11 amounts beyond 128 bits (see
+heartwood-p2p-wire below). `tools/difftest/tests/l0.rs` and `tools/difftest/tests/l0_wire.rs` pin
+these counts.
 
 ### Fuzz targets and the chain-definition driver
 
@@ -264,7 +271,9 @@ make replay-wire                # each wire fuzz corpus through the oracle and H
 
 `cargo test -p heartwood-p2p-wire` runs the unit tests and checks every record of the wire class,
 `V13-p2p-wire.jsonl`, which lives beside the crate in
-[packages/p2p-wire/tests/vectors](packages/p2p-wire/tests/vectors) with its own manifest.
+[packages/p2p-wire/tests/vectors](packages/p2p-wire/tests/vectors) with its own manifest. The
+tests fail when it is missing; `WIRE_VECTORS=target/vectors/local` points them at a local oracle
+run instead.
 `gen-vectors.js` writes it with the other classes; `make vectors-install` leaves it out of the set
 of `heartwood-crypto`, and `make vectors-install-wire` installs it. Its records carry their own
 configuration, so the crate tests them with no other class. They cover the frames the reference
@@ -337,6 +346,7 @@ as the genesis class of a run without `DEVNET_GENERATOR`, and then installs noth
 | `V10-genesis.jsonl` | the devnet chain definition that the devnet generator (`gen-network.js`, see below) writes for three seeds and a fixed epoch: the exact text of the four `crypto/*.json` files, the delegate and wallet keys, the nethash, the genesis id and the issued amount, and the reference's `BlockFactory.fromJson` on the result |
 | `V11-external.jsonl` | the published vector files in `external/` (BIP340, the bip-schnorr draft at `d194620`, BIP39 English), each with its source URL and SHA-256 in `external/SOURCES.json`, and the reference's answers on their inputs |
 | `V12-milestone-config.jsonl` | milestone files as JSON text, accepted (with the merged milestones, rewards and donations) or refused by the configuration manager's start-up checks; transaction rules at the block's height |
+| `V13-p2p-wire.jsonl` | installed beside `heartwood-p2p-wire`, in `packages/p2p-wire/tests/vectors` with its own manifest (see heartwood-p2p-wire above): nes frames, protobuf messages, every route codec both ways, and signed and received peer statuses |
 
 The first line of each file is a meta record: format `heartwood-vectors/1`; the reference's version,
 commit and tree, and the SHA-256 of the reference's patch register (null when the commit has none);
