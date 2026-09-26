@@ -340,7 +340,7 @@ impl Built {
             .zip(&self.input.allocations)
             .map(|(key, a)| {
                 with(
-                    key_json(key),
+                    labelled(key),
                     json!({ "genesisBalance": a.amount.to_string() }),
                 )
             })
@@ -351,7 +351,7 @@ impl Built {
             .zip(&self.input.donations)
             .map(|(key, share)| {
                 with(
-                    key_json(key),
+                    labelled(key),
                     json!({
                         "genesisBalance": "0",
                         "basisPoints": share.basis_points,
@@ -451,6 +451,12 @@ fn key_json(key: &DerivedKey) -> Value {
         "publicKey": key.keys.public_key().to_hex(),
         "passphrase": key.passphrase.as_str(),
     })
+}
+
+/// [`key_json`] with a `label` first, the role, as the devnet generator labels the genesis and
+/// donation wallets (the reference's `verify-network.js` reads them).
+fn labelled(key: &DerivedKey) -> Value {
+    with(json!({ "label": key.role }), key_json(key))
 }
 
 fn with(mut value: Value, extra: Value) -> Value {
@@ -694,12 +700,21 @@ mod tests {
             "delegate-keys.json",
             json!({ "delegates": output["delegates"] }),
         );
+        // The generator labels its genesis and donation wallets with their roles.
+        let labelled = |wallets: &Value| -> Value {
+            wallets
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|w| with(json!({ "label": w["role"] }), w.clone()))
+                .collect()
+        };
         json(
             "wallets.json",
             json!({
                 "generator": output["generator"],
-                "genesis": output["genesisWallets"],
-                "donations": output["donationWallets"],
+                "genesis": labelled(&output["genesisWallets"]),
+                "donations": labelled(&output["donationWallets"]),
                 "wallets": output["testWallets"],
             }),
         );
