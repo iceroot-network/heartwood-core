@@ -151,7 +151,6 @@ fn map_output(verdict: Verdict, wrap: &dyn Fn(Value) -> Value) -> Verdict {
 // Shared by the area files. A helper keeps its `expect(dead_code)` until an area first calls it.
 
 /// Bytes in the oracle's JSON: lowercase hex text.
-#[expect(dead_code, reason = "the area subjects call it")]
 fn bytes_value(bytes: &[u8]) -> Value {
     Value::String(hex::encode(bytes))
 }
