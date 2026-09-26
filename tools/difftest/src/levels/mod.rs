@@ -3,12 +3,13 @@
 //! | Level | What it compares | Where it plugs in | Arrives with |
 //! |---|---|---|---|
 //! | L0 | golden vectors against Heartwood, byte-exact and accept/reject | [`l0`]: records to [`crate::subject`] | `heartwood-crypto` (runs) |
-//! | L1 | random and mutated cases, one oracle call each | [`crate::oracle::OracleServer`] and the same subjects, driven by `proptest` | the first oracle operations, then property tests |
-//! | L2 | block sequences replayed on both sides, a state digest per block | a replay driver over `heartwood-blockchain` and a TypeScript harness plugin | block processing |
+//! | L1 | random and mutated cases, one oracle call each | [`l1`]: [`crate::oracle::OracleServer`] and the same subjects, driven by `proptest` | the state machine's operations |
+//! | L2 | block sequences replayed on both sides, a state digest per block | [`l2`]: `heartwood-state`'s machine against the oracle's headless replay of the reference's state | the state machine |
 //! | L3 | the same scenario on a reference devnet and a Heartwood devnet | a scenario runner over both devnets | the first Heartwood devnet |
 //! | L4 | a mixed network of reference and Heartwood nodes | the scenario runner with mixed nodes | mixed networks |
 //!
-//! Only L0 runs today, with the subjects of `heartwood-crypto` ([`crate::subjects`]).
+//! L0, L1 and L2 run: L0 and L1 with the subjects of [`crate::subjects`], L2 with the state
+//! machine of `heartwood-state` and the judge's digest lines of a corpus ([`crate::corpus`]).
 
 pub mod l0;
 pub mod l1;
@@ -53,8 +54,8 @@ impl Level {
     pub fn arrives_with(self) -> &'static str {
         match self {
             Level::L0 => "heartwood-crypto",
-            Level::L1 => "the first oracle operations, then property tests",
-            Level::L2 => "block processing",
+            Level::L1 => "the state machine's operations",
+            Level::L2 => "the state machine",
             Level::L3 => "the first Heartwood devnet",
             Level::L4 => "mixed networks",
         }
@@ -62,7 +63,7 @@ impl Level {
 
     /// Whether this build can run the level.
     pub fn is_available(self) -> bool {
-        self == Level::L0
+        matches!(self, Level::L0 | Level::L1 | Level::L2)
     }
 }
 
@@ -95,13 +96,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn levels_parse_and_only_l0_runs() {
+    fn levels_parse_and_l0_to_l2_run() {
         assert_eq!("L2".parse::<Level>().unwrap(), Level::L2);
         assert!("l5".parse::<Level>().is_err());
         let available: Vec<Level> = Level::ALL
             .into_iter()
             .filter(|l| l.is_available())
             .collect();
-        assert_eq!(available, vec![Level::L0]);
+        assert_eq!(available, vec![Level::L0, Level::L1, Level::L2]);
     }
 }
