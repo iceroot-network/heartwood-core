@@ -12,8 +12,9 @@
 //! in its round, the donations and the fee burn of the milestone at its height, and a timestamp
 //! in the first slot at or after the requested gap whose delegate's key the seed derives.
 
-use heartwood_crypto::blocks::{BlockDraft, factory};
+use heartwood_crypto::blocks::{BlockHeader, serialiser};
 use heartwood_crypto::crypto::hash::sha256;
+use heartwood_crypto::crypto::sig::{self, SchemeId, Signature, SigningDomain};
 use heartwood_crypto::genesis::DerivedKey;
 use heartwood_crypto::genesis::derive::role_key;
 use heartwood_crypto::identities::{Address, PublicKeyBytes};
@@ -184,6 +185,7 @@ struct Sides<'a> {
     results: Vec<CaseResult>,
     step: usize,
     last_missed: Vec<MissedBlock>,
+    oracle_missed: usize,
 }
 
 fn missed_json(rows: &[MissedBlock]) -> Vec<Value> {
@@ -257,6 +259,7 @@ impl<'a> Sides<'a> {
             results: Vec::new(),
             step: 0,
             last_missed: Vec::new(),
+            oracle_missed: 0,
         })
     }
 
@@ -357,7 +360,10 @@ impl<'a> Sides<'a> {
                 total_fee = total_fee.saturating_add(t.fee());
             }
             let count = u32::try_from(transactions.len()).unwrap_or(u32::MAX);
-            let draft = BlockDraft {
+            // The block is assembled and signed here rather than by the block factory, which
+            // refuses a transaction the rules of the block's height refuse: a case may need such
+            // a block, and the receiving sides judge it.
+            let mut header = BlockHeader {
                 version: params.block_version(),
                 timestamp,
                 height,
@@ -368,16 +374,21 @@ impl<'a> Sides<'a> {
                 reward,
                 payload_length: count.saturating_mul(32),
                 payload_hash: sha256(&ids),
+                generator_public_key: signer.keys.public_key().to_compressed(),
+                block_signature: Signature::from_array([0; 64]),
             };
-            let block = factory::make(
-                draft,
-                transactions,
-                &signer.keys,
+            header.block_signature = sig::sign(
+                SchemeId::Secp256k1Bip340,
+                SigningDomain::Block,
+                &serialiser::signing_hash(&header),
+                signer.keys.secret_key(),
                 Aux::fixed(AUX),
-                &self.milestones,
             )
-            .map_err(|e| Error::Oracle(format!("{}: building a block: {e}", self.case.name())))?;
-            return Ok(block.encode());
+            .map_err(|e| Error::Oracle(format!("{}: signing a block: {e}", self.case.name())))?;
+            return Ok(serialiser::serialise_with_transactions(
+                &header,
+                &transactions,
+            ));
         }
         Err(Error::Oracle(format!(
             "{}: no slot has a derived delegate",
@@ -510,6 +521,7 @@ impl<'a> Sides<'a> {
             );
         }
         let their_missed = theirs.get("missed").cloned().unwrap_or(Value::Null);
+        self.oracle_missed = their_missed.as_array().map_or(0, Vec::len);
         let missed_differences = compare::diff(&their_missed, &Value::Array(ours.missed.clone()));
         if !missed_differences.is_empty() {
             self.record(
@@ -644,6 +656,25 @@ impl<'a> Sides<'a> {
             );
         }
         Ok(())
+    }
+
+    /// Record a failed premise: the case did not set up what it tests.
+    fn premise(&mut self, holds: bool, what: &str) {
+        if !holds {
+            self.record(
+                what,
+                Outcome::HarnessError(format!("the case's premise does not hold: {what}")),
+            );
+        }
+    }
+
+    /// The rank of the delegate `username` in Heartwood's state.
+    fn rank(&self, username: &str) -> Option<u32> {
+        self.state
+            .wallets()
+            .find_by_username(username)
+            .and_then(|w| w.delegate())
+            .and_then(|d| d.rank)
     }
 
     /// Revert the corpus's last blocks until the state ends a round minus `before_end` blocks.
@@ -837,8 +868,12 @@ fn run_case(
                 )?;
             }
             s.compare_records("the round started with the new delegate", server)?;
+            let ranked = s.rank("synthreg").is_some();
+            s.premise(ranked, "the new delegate is ranked at the round start");
             s.revert("the revert across the round's end", 1, server)?;
             s.compare_records("the ranks of the round start again", server)?;
+            let unranked = s.rank("synthreg").is_none();
+            s.premise(unranked, "the revert takes the new delegate's rank back");
         }
         SyntheticCase::NonDelegateGenerator => {
             let stranger = s.wallet(|s, k| {

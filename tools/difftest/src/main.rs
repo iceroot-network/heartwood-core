@@ -322,6 +322,17 @@ fn run_l2(args: &L2Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
         server.as_mut(),
     )?;
     print!("{report}");
+    if args.synthetic {
+        println!("  synthetic steps:");
+        for r in report
+            .results
+            .iter()
+            .filter(|r| r.file.ends_with("/synthetic"))
+        {
+            let verdict = if r.outcome.is_failure() { "FAIL" } else { "ok" };
+            println!("    {verdict:<4} {}", r.label);
+        }
+    }
     Ok(report.is_success())
 }
 

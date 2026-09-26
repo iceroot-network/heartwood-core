@@ -18,23 +18,32 @@ pub fn shuffle_cases() -> BoxedStrategy<OpCase> {
         .boxed()
 }
 
-fn public_key() -> impl Strategy<Value = String> {
-    (prop_oneof![Just(2u8), Just(3u8)], any::<[u8; 32]>()).prop_map(|(prefix, rest)| {
-        let mut bytes = vec![prefix];
-        bytes.extend_from_slice(&rest);
-        heartwood_crypto::utils::hex::encode(&bytes)
+/// Valid public keys for the delegates of the ranking cases, derived once.
+fn key_pool() -> &'static [String] {
+    static POOL: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        (0..160)
+            .map(|i| super::keys(&format!("l1 rank {i}")).public_key().to_hex())
+            .collect()
     })
 }
 
-/// P5: `state.rank` for 1 to 80 delegates with many equal vote balances, resigned delegates, and
-/// now and then two delegates with the same key.
+/// P5: `state.rank` for 1 to 80 delegates with many equal vote balances, resigned delegates (a
+/// resignation type, 0 or 1), and now and then two delegates with the same key.
 pub fn ranking_cases() -> BoxedStrategy<OpCase> {
     let delegate = (
-        public_key(),
         prop_oneof![3 => (0u64..=5).prop_map(|b| b * 1_000), 2 => 0u64..=MAX_SUPPLY, 1 => Just(0u64)],
         prop::bool::weighted(0.15),
     );
-    (prop::collection::vec(delegate, 1..=80), prop::bool::weighted(0.05), any::<usize>())
+    (1usize..=80)
+        .prop_flat_map(move |n| {
+            (
+                prop::collection::vec(delegate.clone(), n),
+                prop::sample::subsequence(key_pool().to_vec(), n).prop_shuffle(),
+            )
+        })
+        .prop_map(|(list, keys)| list.into_iter().zip(keys).map(|((balance, resigned), key)| (key, balance, resigned)).collect::<Vec<_>>())
+        .prop_flat_map(|list| (Just(list), prop::bool::weighted(0.05), any::<usize>()))
         .prop_map(|(list, duplicate, pick)| {
             let mut keys: Vec<String> = list.iter().map(|(k, _, _)| k.clone()).collect();
             if duplicate && keys.len() > 1 {
@@ -49,7 +58,8 @@ pub fn ranking_cases() -> BoxedStrategy<OpCase> {
                 .map(|(i, ((_, balance, resigned), key))| {
                     let mut d = json!({"username": format!("rank{i}"), "publicKey": key, "voteBalance": balance.to_string()});
                     if *resigned {
-                        d["resigned"] = json!(true);
+                        // The resignation type: 0 temporary, 1 permanent.
+                        d["resigned"] = json!(i % 2);
                     }
                     d
                 })

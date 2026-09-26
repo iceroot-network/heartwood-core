@@ -20,7 +20,9 @@ use proptest::test_runner::TestRunner;
 fn devnet() -> (VectorSet, Devnet, Arc<TxContext>) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/crypto/tests/vectors");
     let set = VectorSet::load(&dir).expect("the committed vectors load");
-    let devnet = Devnet::from_vectors(&set).unwrap().expect("a genesis class");
+    let devnet = Devnet::from_vectors(&set)
+        .unwrap()
+        .expect("a genesis class");
     let text = l1::devnet_milestones(&set).expect("the devnet milestone file");
     let context = TxContext::new(devnet.network.clone(), text).expect("the milestones load");
     (set, devnet, Arc::new(context))
@@ -35,18 +37,35 @@ fn handler_cases_are_well_formed() {
     for _ in 0..300 {
         let case = strategy.new_tree(&mut runner).unwrap().current();
         let fixture = Fixture::from_json(&case.input["fixture"]).expect("the fixture parses");
-        assert!(fixture.total_balance().is_some_and(|t| t <= i64::MAX as u64));
+        assert!(
+            fixture
+                .total_balance()
+                .is_some_and(|t| t <= i64::MAX as u64)
+        );
         let last = case.input["lastBlockHeight"].as_u64().unwrap();
         assert_eq!(case.height, last + 1);
         assert!((1..1_000_000).contains(&last));
         let bytes = hex::decode(case.input["hex"].as_str().unwrap()).unwrap();
         let params = devnet.milestones.at(u32::try_from(case.height).unwrap());
         let tx = Transaction::decode(&bytes, params);
-        assert!(tx.is_ok() || case.input.get("milestones").is_some(), "{:?}", tx.err());
+        assert!(
+            tx.is_ok() || case.input.get("milestones").is_some(),
+            "{:?}",
+            tx.err()
+        );
         aims.insert(case.aim.split(',').next().unwrap_or_default().to_owned());
     }
-    for aim in ["transfer", "vote", "burn", "delegate registration", "revoke"] {
-        assert!(aims.iter().any(|a| a.starts_with(aim)), "{aim} not reached: {aims:?}");
+    for aim in [
+        "transfer",
+        "vote",
+        "burn",
+        "delegate registration",
+        "revoke",
+    ] {
+        assert!(
+            aims.iter().any(|a| a.starts_with(aim)),
+            "{aim} not reached: {aims:?}"
+        );
     }
 }
 
@@ -68,7 +87,9 @@ fn fee_cases_decode() {
 fn properties_agree_with_the_configured_oracles() {
     let mut modes = Vec::new();
     if let Ok(dir) = std::env::var("DIFFTEST_TEST_SOLAR_DIR") {
-        modes.push(Mode::Local { solar_dir: dir.into() });
+        modes.push(Mode::Local {
+            solar_dir: dir.into(),
+        });
     }
     if let Ok(image) = std::env::var("DIFFTEST_TEST_IMAGE") {
         modes.push(Mode::Container { image });

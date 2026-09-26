@@ -18,11 +18,19 @@ fn the_committed_corpus_is_intact_and_judged() {
     let dir = committed();
     corpus::verify(&dir).expect("the manifest holds");
     let loaded = Corpus::load(&dir).expect("the corpus loads");
-    assert!(loaded.tip() >= 5 * 53, "at least five rounds, tip {}", loaded.tip());
+    assert!(
+        loaded.tip() >= 5 * 53,
+        "at least five rounds, tip {}",
+        loaded.tip()
+    );
     let (ok, judge) = l2::judge_report(&dir).expect("anchors.json");
     assert!(ok, "the judge's anchors hold: {judge}");
     let lines = digests::read(&dir.join(corpus::TS_DIGESTS)).expect("the digest lines");
-    assert_eq!(lines.len(), 1 + l2::actions(&loaded).len(), "one oracle line per step");
+    assert_eq!(
+        lines.len(),
+        1 + l2::actions(&loaded).len(),
+        "one oracle line per step"
+    );
     assert!(
         digests::revert_asymmetries(&lines).is_empty(),
         "{:?}",
@@ -37,7 +45,9 @@ fn the_committed_corpus_is_intact_and_judged() {
 fn the_committed_corpus_replays_in_heartwood() {
     let loaded = Corpus::load(&committed()).expect("the corpus loads");
     if !l2::machine_available(&loaded) {
-        eprintln!("the state machine of heartwood-state is not built in this tree: nothing replayed");
+        eprintln!(
+            "the state machine of heartwood-state is not built in this tree: nothing replayed"
+        );
         return;
     }
     let report = l2::run(&loaded, &L2Options::default(), None).expect("the replay runs");
