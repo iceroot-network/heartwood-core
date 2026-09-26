@@ -10,10 +10,13 @@
 //
 //   nes_frame      the frames of nes.parse, and the frames nes.stringify wrote
 //   wire_message   a selector byte, then a payload: wire.decodeSelected inputs as they are, and the
-//                  inputs of wire.decode and outputs of wire.encode after the byte of their codec
-//                  (its index in route order, the request before the response)
+//                  inputs of wire.decode and proto.decode and the outputs of wire.encode and
+//                  proto.encode after the byte of their codec (its index in route order, the request
+//                  before the response); a proto record counts when its message is the payload of
+//                  a route's request or response, such as peer.GetStatusResponse (not
+//                  blocks.GetBlocksResponse: that codec writes a list of block headers)
 //   status_verify  getStatus responses: status.verify inputs, status.sign outputs, and the
-//                  getStatus response payloads of wire.decode and wire.encode
+//                  getStatus response payloads of the records above
 
 const crypto = require("crypto");
 const fs = require("fs");
@@ -33,18 +36,28 @@ function selector(route, direction) {
     return index * 2 + (direction === "response" ? 1 : 0);
 }
 
+/** The route and direction whose payload is the protobuf message `name`, such as
+ * peer.GetStatusResponse; null for a nested message such as peer.GetStatusResponse.State, and for
+ * blocks.GetBlocksResponse, whose codec writes a list of headers instead. */
+function codecOfMessage(name) {
+    const match = /^(?:peer|blocks|transactions)\.([A-Z]\w*?)(Request|Response)$/.exec(name ?? "");
+    if (!match || name === "blocks.GetBlocksResponse") return null;
+    return { route: match[1][0].toLowerCase() + match[1].slice(1), direction: match[2].toLowerCase() };
+}
+
 /** The seeds of one record, as [target, bytes] pairs. */
 function seeds(record) {
     const input = record.input ?? {};
     const output = record.output ?? {};
     const out = [];
     const add = (target, buffer) => buffer && out.push([target, buffer]);
-    const codec = (payload) => {
-        const byte = selector(input.route, input.direction);
+    const codec = (payload, { route, direction } = input) => {
+        const byte = selector(route, direction);
         if (!payload || byte === null) return;
         add("wire_message", Buffer.concat([Buffer.from([byte]), payload]));
-        if (input.route === "getStatus" && input.direction === "response") add("status_verify", payload);
+        if (route === "getStatus" && direction === "response") add("status_verify", payload);
     };
+    const message = codecOfMessage(input.message) ?? {};
     switch (record.op) {
         case "nes.parse":
             add("nes_frame", bytes(input.hex));
@@ -60,6 +73,12 @@ function seeds(record) {
             break;
         case "wire.encode":
             codec(bytes(output.hex));
+            break;
+        case "proto.decode":
+            codec(bytes(input.hex), message);
+            break;
+        case "proto.encode":
+            codec(bytes(output.hex), message);
             break;
         case "status.verify":
             add("status_verify", bytes(input.hex));
