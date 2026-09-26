@@ -84,7 +84,8 @@ function deriveRoleKeys(solar, role, seed) {
 
 /**
  * Build the devnet configuration and load it into the reference's ConfigManager.
- * Returns { config, info } where config is the object passed to setConfig().
+ * Returns { config, info, restore, withMilestones }: config is the object passed to setConfig(),
+ * restore() loads it again, and withMilestones() runs a function under other milestones.
  */
 function buildDevnet(solar, { seed = DEFAULT_SEED, epoch = DEFAULT_EPOCH } = {}) {
     const { Identities, Managers } = solar.lib;
@@ -128,12 +129,34 @@ function buildDevnet(solar, { seed = DEFAULT_SEED, epoch = DEFAULT_EPOCH } = {})
     };
 
     const config = { network, milestones, exceptions: {}, genesisBlock: { transactions: [] } };
-    cm.setConfig(clone(config));
-    cm.setHeight(1);
+    // setConfig sorts and merges the milestone list it is given in place, so it always gets a copy.
+    const restore = () => {
+        cm.setConfig(clone(config));
+        cm.setHeight(1);
+    };
+    restore();
+
+    /**
+     * Run fn under this network with the milestones of `text`, a milestone file as JSON text, and
+     * restore the devnet configuration afterwards. The text is parsed with JSON.parse, as the
+     * reference reads a file, so a refusal of the text or of the milestones is fn's refusal too.
+     */
+    const withMilestones = async (text, fn) => {
+        if (typeof text !== "string") throw new TypeError("milestones must be JSON text");
+        const parsed = JSON.parse(text);
+        try {
+            cm.setConfig({ network: clone(network), milestones: parsed, exceptions: {}, genesisBlock: { transactions: [] } });
+            return await fn();
+        } finally {
+            restore();
+        }
+    };
 
     const milestonesJson = JSON.stringify(milestones, null, 4) + "\n";
     return {
         config,
+        restore,
+        withMilestones,
         info: {
             name: network.name,
             pubKeyHash: PUB_KEY_HASH,

@@ -1,9 +1,11 @@
 //! The `difftest` binary. `difftest help` lists the commands.
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use heartwood_difftest::cli::{self, Command, USAGE};
 use heartwood_difftest::levels::{Level, l0};
+use heartwood_difftest::oracle::GenOptions;
 use heartwood_difftest::report::describe_meta;
 use heartwood_difftest::vectors::VectorSet;
 use heartwood_difftest::{Error, Result, subject};
@@ -57,9 +59,19 @@ fn execute(command: Command) -> Result<bool> {
             oracle,
             out,
             backend_check,
+            devnet_generator,
         } => {
             let oracle = oracle.resolve(env)?;
-            oracle.gen_vectors(&out, backend_check)?;
+            let devnet_generator = devnet_generator.or_else(|| {
+                env("DIFFTEST_DEVNET_GENERATOR")
+                    .filter(|v| !v.is_empty())
+                    .map(PathBuf::from)
+            });
+            let options = GenOptions {
+                backend_check,
+                devnet_generator,
+            };
+            oracle.gen_vectors(&out, &options)?;
             let set = VectorSet::load(&out)?;
             println!(
                 "difftest: {} records in {} files at {}, manifest verified",

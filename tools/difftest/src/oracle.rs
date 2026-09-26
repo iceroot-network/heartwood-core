@@ -17,6 +17,19 @@ use crate::vectors::ErrorRecord;
 
 /// Script paths inside the oracle image.
 const IMAGE_SCRIPTS: &str = "/opt/oracle";
+/// Where a container run sees the directory of the devnet generator (mounted read-only).
+const IMAGE_DEVNET_GENERATOR: &str = "/opt/devnet-generator";
+
+/// Options of a golden-vector run.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GenOptions {
+    /// Run gen-vectors.js again under the JavaScript bcrypto backend and require equal records.
+    pub backend_check: bool,
+    /// The reference implementation's devnet generator (`gen-network.js`), which the genesis class
+    /// runs. Its directory, with the generator's `lib/`, is mounted read-only in a container run.
+    /// Without it the genesis class is not written.
+    pub devnet_generator: Option<PathBuf>,
+}
 
 /// Where the reference runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,7 +107,7 @@ impl Oracle {
 
     /// The command that runs `script` with `args`. In container mode `out` is mounted at `/out`
     /// and the process runs with the user and group ids of `out`, so the files it writes belong
-    /// to the caller.
+    /// to the caller; each of `read_only` (host directory, container path) is mounted read-only.
     fn script_command(
         &self,
         script: &str,
@@ -102,6 +115,7 @@ impl Oracle {
         out: Option<&Path>,
         image_id: Option<&str>,
         interactive: bool,
+        read_only: &[(&Path, &str)],
     ) -> Result<Command> {
         match &self.mode {
             Mode::Container { image } => {
@@ -115,6 +129,10 @@ impl Oracle {
                     let abs = out.canonicalize().map_err(|e| Error::io(out, e))?;
                     cmd.args(["--user", &format!("{}:{}", meta.uid(), meta.gid())]);
                     cmd.args(["-v", &format!("{}:/out", abs.display())]);
+                }
+                for (host, target) in read_only {
+                    let abs = host.canonicalize().map_err(|e| Error::io(host, e))?;
+                    cmd.args(["-v", &format!("{}:{target}:ro", abs.display())]);
                 }
                 if let Some(id) = image_id {
                     cmd.args(["-e", &format!("ORACLE_IMAGE_ID={id}")]);
@@ -137,16 +155,38 @@ impl Oracle {
     }
 
     /// The command that writes the L0 vectors into `out` (created if needed).
-    pub fn gen_vectors_command(&self, out: &Path, backend_check: bool) -> Result<Command> {
+    pub fn gen_vectors_command(&self, out: &Path, options: &GenOptions) -> Result<Command> {
         std::fs::create_dir_all(out).map_err(|e| Error::io(out, e))?;
         let image_id = self.image_id()?;
-        let target = match self.mode {
-            Mode::Container { .. } => "/out".to_string(),
-            Mode::Local { .. } => out.to_string_lossy().into_owned(),
+        let container = matches!(self.mode, Mode::Container { .. });
+        let target = if container {
+            "/out".to_string()
+        } else {
+            out.to_string_lossy().into_owned()
         };
         let mut args = vec!["--out".to_string(), target];
-        if !backend_check {
+        if !options.backend_check {
             args.push("--no-backend-check".to_string());
+        }
+        let generator = match &options.devnet_generator {
+            Some(path) => Some(path.canonicalize().map_err(|e| Error::io(path, e))?),
+            None => None,
+        };
+        let mut read_only = Vec::new();
+        if let Some(generator) = &generator {
+            let (Some(dir), Some(file)) = (generator.parent(), generator.file_name()) else {
+                return Err(Error::Oracle(format!(
+                    "{} is not a file in a directory",
+                    generator.display()
+                )));
+            };
+            let path = if container {
+                read_only.push((dir, IMAGE_DEVNET_GENERATOR));
+                format!("{IMAGE_DEVNET_GENERATOR}/{}", file.to_string_lossy())
+            } else {
+                generator.to_string_lossy().into_owned()
+            };
+            args.extend(["--devnet-generator".to_string(), path]);
         }
         self.script_command(
             "gen-vectors.js",
@@ -154,12 +194,13 @@ impl Oracle {
             Some(out),
             image_id.as_deref(),
             false,
+            &read_only,
         )
     }
 
     /// Run gen-vectors.js; its progress lines go to this process's output.
-    pub fn gen_vectors(&self, out: &Path, backend_check: bool) -> Result<()> {
-        let mut cmd = self.gen_vectors_command(out, backend_check)?;
+    pub fn gen_vectors(&self, out: &Path, options: &GenOptions) -> Result<()> {
+        let mut cmd = self.gen_vectors_command(out, options)?;
         let status = cmd
             .status()
             .map_err(|e| Error::Oracle(format!("cannot start gen-vectors.js: {e}")))?;
@@ -171,7 +212,7 @@ impl Oracle {
 
     /// Start oracle-server.js (L1).
     pub fn server(&self) -> Result<OracleServer> {
-        let mut cmd = self.script_command("oracle-server.js", &[], None, None, true)?;
+        let mut cmd = self.script_command("oracle-server.js", &[], None, None, true, &[])?;
         let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -296,6 +337,7 @@ mod tests {
                 Some(dir.path()),
                 Some("sha256:ab"),
                 false,
+                &[],
             )
             .unwrap();
         let a = args(&cmd);
@@ -316,12 +358,53 @@ mod tests {
     }
 
     #[test]
+    fn the_devnet_generator_is_mounted_read_only_in_the_container() {
+        let out = TestDir::new("oracle-gen-out");
+        let tools = TestDir::new("oracle-gen-tools");
+        let generator = tools.path().join("gen-network.js");
+        std::fs::write(&generator, "").unwrap();
+        let options = GenOptions {
+            backend_check: true,
+            devnet_generator: Some(generator.clone()),
+        };
+
+        let mut container = Oracle::new(Mode::Container {
+            image: "heartwood-oracle:test".into(),
+        });
+        container.docker = vec!["true".into()];
+        let a = args(&container.gen_vectors_command(out.path(), &options).unwrap());
+        let mount = format!(
+            "{}:{IMAGE_DEVNET_GENERATOR}:ro",
+            tools.path().canonicalize().unwrap().display()
+        );
+        assert!(a.contains(&mount), "{a:?}");
+        assert_eq!(
+            &a[a.len() - 2..],
+            [
+                "--devnet-generator",
+                &format!("{IMAGE_DEVNET_GENERATOR}/gen-network.js")
+            ]
+        );
+
+        let local = Oracle::new(Mode::Local {
+            solar_dir: "/some/solar".into(),
+        });
+        let a = args(&local.gen_vectors_command(out.path(), &options).unwrap());
+        let file = generator.canonicalize().unwrap();
+        assert_eq!(
+            &a[a.len() - 2..],
+            ["--devnet-generator", &file.to_string_lossy()]
+        );
+        assert!(!a.iter().any(|x| x.contains(":ro")), "{a:?}");
+    }
+
+    #[test]
     fn local_runs_use_the_given_reference() {
         let oracle = Oracle::new(Mode::Local {
             solar_dir: "/some/solar".into(),
         });
         let cmd = oracle
-            .script_command("oracle-server.js", &[], None, None, true)
+            .script_command("oracle-server.js", &[], None, None, true, &[])
             .unwrap();
         assert_eq!(cmd.get_program(), "node");
         let a = args(&cmd);

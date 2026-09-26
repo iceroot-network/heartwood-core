@@ -1,0 +1,29 @@
+{
+    "description": "Published test vectors, fetched once from their source URL on the date given and committed unchanged. Each file must have the SHA-256 listed here.",
+    "files": [
+        {
+            "id": "bip340",
+            "file": "bip340-test-vectors.csv",
+            "url": "https://raw.githubusercontent.com/bitcoin/bips/master/bip-0340/test-vectors.csv",
+            "retrieved": "2026-09-26",
+            "sha256": "34c9d1d9c3a88d524bc80778540dc43f8306ec249a7485293063c376db851c2d",
+            "content": "BIP340 Schnorr signatures: the official test vectors (sign with aux_rand, and verify)"
+        },
+        {
+            "id": "draft",
+            "file": "bip-schnorr-d194620-test-vectors.csv",
+            "url": "https://raw.githubusercontent.com/sipa/bips/d194620/bip-schnorr/test-vectors.csv",
+            "retrieved": "2026-09-26",
+            "sha256": "3d83ce28e0f2a63776e7fc6ae16232cbafe4338f305c392d283fc9b172966041",
+            "content": "the bip-schnorr draft at commit d194620, the legacy Schnorr scheme of the P2P status (16 verify rows, 3 with a secret key)"
+        },
+        {
+            "id": "bip39",
+            "file": "bip39-vectors.json",
+            "url": "https://raw.githubusercontent.com/trezor/python-mnemonic/master/vectors.json",
+            "retrieved": "2026-09-26",
+            "sha256": "fa3b937b7cff9c9b8ecd3aa011faeb8d6dd67993174b72326e83f4de8fdb30f8",
+            "content": "BIP39 test vectors of the reference Python implementation; the english list gives entropy, mnemonic, seed and xprv"
+        }
+    ]
+}
