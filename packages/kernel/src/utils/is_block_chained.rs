@@ -1,6 +1,7 @@
 //! Whether a block chains onto the one before it: it names the previous block's id, its height is
 //! one more, and its slot is later.
 
+use heartwood_crypto::crypto::slots;
 use heartwood_crypto::{Block, BlockHeader, BlockId, Milestones};
 
 use crate::errors::NotChained;
@@ -41,6 +42,21 @@ pub fn is_block_chained(
     next: &ChainLink,
     milestones: &Milestones,
 ) -> Result<(), NotChained> {
-    let _ = (previous, next, milestones);
-    todo!()
+    if next.previous_block != previous.id {
+        return Err(NotChained::PreviousBlock);
+    }
+    if previous.height.checked_add(1) != Some(next.height) {
+        return Err(NotChained::HeightNotPlusOne);
+    }
+    let block_time = milestones.at(1).block_time();
+    let previous_slot = slots::slot_number(i64::from(previous.timestamp), block_time);
+    let next_slot = slots::slot_number(i64::from(next.timestamp), block_time);
+    if previous_slot < next_slot {
+        Ok(())
+    } else {
+        Err(NotChained::SlotNotAfterPrevious {
+            previous: previous_slot,
+            next: next_slot,
+        })
+    }
 }
