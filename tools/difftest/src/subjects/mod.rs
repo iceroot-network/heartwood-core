@@ -4,14 +4,14 @@
 //! in the JSON shape the oracle writes (`tools/oracle/lib/ops.js`), so that L0 can compare them
 //! value for value.
 //!
-//! - [`keys`]: passphrase keys, public keys and addresses.
-//! - [`signatures`]: BIP340 and legacy Schnorr, transaction preimages, the published vector files
+//! - `keys`: passphrase keys, public keys and addresses.
+//! - `signatures`: BIP340 and legacy Schnorr, transaction preimages, the published vector files
 //!   and BIP39 mnemonics.
-//! - [`transactions`]: the builders, both decoders, the JSON reader, the handler table and the vote
+//! - `transactions`: the builders, both decoders, the JSON reader, the handler table and the vote
 //!   rules.
-//! - [`blocks`]: the block factory and decoder, rewards, donations, the fee burn and the milestone
+//! - `blocks`: the block factory and decoder, rewards, donations, the fee burn and the milestone
 //!   loader.
-//! - [`genesis`]: the devnet chain-definition builder.
+//! - `genesis`: the devnet chain-definition builder.
 //!
 //! Most operations run under the devnet configuration the oracle was set up with, which the
 //! [`Devnet`] context carries; a case that brings its own milestone file runs under that file.
