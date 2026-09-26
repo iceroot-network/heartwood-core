@@ -24,32 +24,55 @@ const MAX_SHOWN: usize = 96;
 pub enum Difference {
     /// Two scalars, or two values of different JSON types, differ.
     Value {
+        /// The JSON path.
         path: String,
+        /// The oracle's value.
         expected: Value,
+        /// Heartwood's value.
         actual: Value,
     },
     /// Two byte strings (lowercase hex) differ; `offset` is the first differing byte.
     Bytes {
+        /// The JSON path.
         path: String,
+        /// The first byte that differs.
         offset: usize,
+        /// The oracle's length in bytes.
         expected_len: usize,
+        /// Heartwood's length in bytes.
         actual_len: usize,
+        /// The oracle's bytes around the offset, as hex.
         expected_window: String,
+        /// Heartwood's bytes around the offset, as hex.
         actual_window: String,
     },
     /// The oracle has a value that Heartwood does not.
-    Missing { path: String, expected: Value },
+    Missing {
+        /// The JSON path.
+        path: String,
+        /// The oracle's value.
+        expected: Value,
+    },
     /// Heartwood has a value that the oracle does not.
-    Extra { path: String, actual: Value },
+    Extra {
+        /// The JSON path.
+        path: String,
+        /// Heartwood's value.
+        actual: Value,
+    },
     /// An object has the same keys on both sides, in another order.
     Order {
+        /// The JSON path.
         path: String,
+        /// The oracle's key order.
         expected: Vec<String>,
+        /// Heartwood's key order.
         actual: Vec<String>,
     },
 }
 
 impl Difference {
+    /// The JSON path of the difference.
     pub fn path(&self) -> &str {
         match self {
             Difference::Value { path, .. }

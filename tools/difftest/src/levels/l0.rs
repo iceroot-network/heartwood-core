@@ -130,6 +130,7 @@ pub struct RunDiff {
 }
 
 impl RunDiff {
+    /// Whether the runs have the same files and the same records.
     pub fn is_identical(&self) -> bool {
         self.missing_files.is_empty() && self.records.is_empty()
     }

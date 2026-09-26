@@ -7,6 +7,7 @@ use crate::errors::{Error, Result};
 use crate::levels::Level;
 use crate::oracle::{Mode, Oracle};
 
+/// The usage text of the `difftest` binary.
 pub const USAGE: &str = "\
 difftest: Heartwood's differential-test harness
 
@@ -46,10 +47,15 @@ Exit status: 0 success, 1 differences or a failed check, 2 usage error or a leve
 /// Where the oracle runs, as given on the command line.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OracleArgs {
+    /// `--image TAG`: run in the oracle container.
     pub image: Option<String>,
+    /// `--solar-dir DIR`: run locally against a built checkout of the reference.
     pub solar_dir: Option<PathBuf>,
+    /// `--docker CMD`: the docker command.
     pub docker: Option<String>,
+    /// `--node BIN`: the Node binary of local runs.
     pub node: Option<String>,
+    /// `--scripts DIR`: the oracle scripts of local runs.
     pub scripts: Option<PathBuf>,
 }
 
@@ -99,35 +105,55 @@ impl OracleArgs {
 /// A parsed command line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
+    /// `difftest oracle gen`: write the golden vectors.
     OracleGen {
+        /// Where the oracle runs.
         oracle: OracleArgs,
+        /// The directory the vectors are written to.
         out: PathBuf,
+        /// Run the generator again under the JavaScript bcrypto backend and compare.
         backend_check: bool,
+        /// The devnet generator, for the genesis class.
         devnet_generator: Option<PathBuf>,
     },
+    /// `difftest oracle ping`: check that the oracle answers.
     OraclePing {
+        /// Where the oracle runs.
         oracle: OracleArgs,
     },
+    /// `difftest oracle replay`: a corpus through the oracle and Heartwood.
     OracleReplay(ReplayArgs),
+    /// `difftest vectors verify`: check a vector directory.
     VectorsVerify {
+        /// The vector directory.
         dir: PathBuf,
     },
+    /// `difftest vectors diff`: compare two oracle runs record by record.
     VectorsDiff {
+        /// The first run.
         a: PathBuf,
+        /// The second run.
         b: PathBuf,
     },
+    /// `difftest run LEVEL`: run a level.
     Run {
+        /// The level.
         level: Level,
+        /// The vector directory, for L0.
         dir: Option<PathBuf>,
     },
+    /// `difftest levels`: describe the levels.
     Levels,
+    /// `difftest help`: print the usage text.
     Help,
+    /// `difftest genesis`: write a devnet chain definition.
     Genesis(GenesisArgs),
 }
 
 /// The arguments of `difftest oracle replay`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayArgs {
+    /// Where the oracle runs.
     pub oracle: OracleArgs,
     /// The operation.
     pub op: String,

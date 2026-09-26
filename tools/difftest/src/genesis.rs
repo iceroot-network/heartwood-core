@@ -69,17 +69,29 @@ pub const CRYPTO_FILES: [&str; 4] = [
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Profile {
+    /// A label for the summary.
     pub name: String,
+    /// The first part of every key-derivation input.
     pub derivation_tag: String,
+    /// `network.json` without `nethash` and `addressCharacter`.
     pub network: ProfileNetwork,
+    /// The rules the first milestone starts from, keys in file order.
     pub rules: Map<String, Value>,
+    /// Values set on the first milestone, by dotted path, in order.
     pub overrides: Map<String, Value>,
+    /// The role of the key that signs the genesis block and the issuance record.
     pub generator_role: String,
+    /// The genesis allocations, in the order of the issuance record's items.
     pub allocations: Vec<ProfileAllocation>,
+    /// The sum of the allocations, as a decimal string.
     pub supply: String,
+    /// The genesis delegates: roles and names count from 1.
     pub delegates: DelegatePattern,
+    /// The donation recipients, in file order.
     pub donations: Vec<ProfileDonation>,
+    /// The height of the milestone that sets the donations.
     pub donations_from_height: u32,
+    /// Test wallets: derived, but not funded at genesis.
     pub wallets: WalletPattern,
 }
 
@@ -87,58 +99,87 @@ pub struct Profile {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProfileNetwork {
+    /// The network name.
     pub name: String,
+    /// The prefix of signed messages.
     pub message_prefix: String,
+    /// The BIP32 version bytes.
     pub bip32: Bip32,
+    /// The network byte of addresses.
     pub pub_key_hash: u8,
+    /// The WIF version byte.
     pub wif: u8,
+    /// The SLIP-44 coin type.
     pub slip44: u32,
+    /// The client names.
     pub client: Client,
 }
 
+/// The BIP32 version bytes of `network.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bip32 {
+    /// The version of public keys.
     pub public: u32,
+    /// The version of private keys.
     pub private: u32,
 }
 
+/// The client names of `network.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Client {
+    /// The token name.
     pub token: String,
+    /// The token symbol.
     pub symbol: String,
+    /// The explorer URL.
     pub explorer: String,
 }
 
+/// An amount issued at genesis to the key of a role.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileAllocation {
+    /// The role.
     pub role: String,
+    /// The amount in base units, as a decimal string.
     pub amount: String,
 }
 
+/// The genesis delegates: `count` of them, with roles `role_prefix1`, `role_prefix2`, ... and
+/// names `username_prefix1`, `username_prefix2`, ...
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DelegatePattern {
+    /// The number of delegates.
     pub count: u32,
+    /// The prefix of their roles.
     pub role_prefix: String,
+    /// The prefix of their names.
     pub username_prefix: String,
 }
 
+/// A donation recipient whose address is derived from a role.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProfileDonation {
+    /// The role.
     pub role: String,
+    /// The share of the block reward, in basis points.
     pub basis_points: u16,
+    /// The purpose written next to the share, if any.
     #[serde(default)]
     pub purpose: Option<String>,
 }
 
+/// The test wallets: `count` of them, with roles `role_prefix1`, `role_prefix2`, ...
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WalletPattern {
+    /// The number of wallets.
     pub count: u32,
+    /// The prefix of their roles.
     pub role_prefix: String,
 }
 

@@ -45,6 +45,7 @@ pub enum Outcome {
 }
 
 impl Outcome {
+    /// Whether the case failed.
     pub fn is_failure(&self) -> bool {
         matches!(
             self,
@@ -72,21 +73,30 @@ impl Outcome {
 /// One case and its outcome.
 #[derive(Debug, Clone)]
 pub struct CaseResult {
+    /// The vector file, or the corpus, the case came from.
     pub file: String,
+    /// The line in the file, from 1.
     pub line: usize,
+    /// The oracle operation.
     pub op: String,
+    /// The case's label: the operation and its name.
     pub label: String,
+    /// The rule height.
     pub height: u64,
+    /// What happened.
     pub outcome: Outcome,
 }
 
 /// The results of one level's run over one source of cases.
 #[derive(Debug, Clone)]
 pub struct Report {
+    /// The level's title.
     pub title: String,
     /// One line describing the oracle run the cases came from.
     pub source: String,
+    /// The number of files the cases came from.
     pub files: usize,
+    /// Every case, in order.
     pub results: Vec<CaseResult>,
 }
 
@@ -95,22 +105,27 @@ impl Report {
         self.results.iter().filter(|r| f(&r.outcome)).count()
     }
 
+    /// Cases whose result was compared with the oracle's.
     pub fn compared(&self) -> usize {
         self.count(Outcome::is_compared)
     }
 
+    /// Cases that passed.
     pub fn passed(&self) -> usize {
         self.count(|o| *o == Outcome::Pass)
     }
 
+    /// Cases that failed.
     pub fn failed(&self) -> usize {
         self.count(Outcome::is_failure)
     }
 
+    /// Cases a subject skipped.
     pub fn skipped(&self) -> usize {
         self.count(|o| matches!(o, Outcome::Skipped(_)))
     }
 
+    /// Cases that are documented differences.
     pub fn documented(&self) -> usize {
         self.count(|o| matches!(o, Outcome::Documented(_)))
     }
@@ -150,6 +165,7 @@ impl Report {
         out
     }
 
+    /// Whether no case failed.
     pub fn is_success(&self) -> bool {
         self.failed() == 0
     }

@@ -35,14 +35,21 @@ pub struct GenOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
     /// In the oracle image (`docker run --network none`).
-    Container { image: String },
+    Container {
+        /// The image tag or id.
+        image: String,
+    },
     /// On this machine, against a built reference checkout.
-    Local { solar_dir: PathBuf },
+    Local {
+        /// The checkout.
+        solar_dir: PathBuf,
+    },
 }
 
 /// How to start oracle scripts.
 #[derive(Debug, Clone)]
 pub struct Oracle {
+    /// Where the reference runs.
     pub mode: Mode,
     /// The docker command (program and leading arguments), for container mode.
     pub docker: Vec<String>,
@@ -58,6 +65,8 @@ impl Oracle {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../oracle")
     }
 
+    /// An oracle in `mode` with the default docker command, `node` from `PATH` and this
+    /// repository's scripts.
     pub fn new(mode: Mode) -> Oracle {
         let scripts = Oracle::default_scripts();
         let wrapper = scripts.join("docker.sh");

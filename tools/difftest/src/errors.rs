@@ -8,29 +8,50 @@ use thiserror::Error;
 /// not errors: they are reported as results (see [`crate::report`]).
 #[derive(Debug, Error)]
 pub enum Error {
+    /// A file or directory could not be read or written.
     #[error("{path}: {source}")]
     Io {
+        /// The path.
         path: PathBuf,
+        /// The error.
         #[source]
         source: std::io::Error,
     },
 
+    /// A line of a file is not valid JSON.
     #[error("{path}:{line}: {message}")]
     Parse {
+        /// The file.
         path: PathBuf,
+        /// The line, from 1.
         line: usize,
+        /// What is wrong.
         message: String,
     },
 
+    /// A vector file or directory breaks the vector format.
     #[error("{path}: {message}")]
-    Vectors { path: PathBuf, message: String },
+    Vectors {
+        /// The file or directory.
+        path: PathBuf,
+        /// What is wrong.
+        message: String,
+    },
 
+    /// The files of a vector directory do not match its manifest.
     #[error("manifest check failed in {}:\n  {}", dir.display(), problems.join("\n  "))]
-    Manifest { dir: PathBuf, problems: Vec<String> },
+    Manifest {
+        /// The vector directory.
+        dir: PathBuf,
+        /// One line per problem.
+        problems: Vec<String>,
+    },
 
+    /// The oracle could not be started or answered wrongly.
     #[error("oracle: {0}")]
     Oracle(String),
 
+    /// The command line or a setting is wrong.
     #[error("{0}")]
     Usage(String),
 
@@ -38,12 +59,18 @@ pub enum Error {
     #[error("{0}")]
     NotYet(String),
 
+    /// Two subjects were registered for the same operation.
     #[error("two subjects registered for operation {0}")]
     DuplicateSubject(String),
 
     /// A genesis profile that cannot be read or does not describe a chain definition.
     #[error("{path}: {message}")]
-    Profile { path: PathBuf, message: String },
+    Profile {
+        /// The profile file.
+        path: PathBuf,
+        /// What is wrong.
+        message: String,
+    },
 
     /// The chain definition could not be built.
     #[error("genesis: {0}")]
@@ -59,4 +86,5 @@ impl Error {
     }
 }
 
+/// A result with the harness's [`enum@Error`].
 pub type Result<T> = std::result::Result<T, Error>;

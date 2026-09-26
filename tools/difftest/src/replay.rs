@@ -54,7 +54,9 @@ fn describe_ping(pong: &Value) -> String {
 /// The judged cases of a replay, and how many inputs the reference accepted.
 #[derive(Debug, Clone)]
 pub struct ReplayReport {
+    /// The judged cases.
     pub report: Report,
+    /// How many inputs the reference accepted.
     pub accepted: usize,
 }
 

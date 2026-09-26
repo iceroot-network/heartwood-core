@@ -33,14 +33,23 @@ pub const EXTENSION: &str = "jsonl";
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Meta {
+    /// The vector format, [`FORMAT`].
     pub format: String,
+    /// The vector class, the file name without its extension.
     pub class: String,
+    /// The number of records after the meta record.
     pub records: usize,
+    /// The reference the records came from (its field in the file is `solar`).
     pub solar: SolarInfo,
+    /// How the oracle ran.
     pub oracle: OracleInfo,
+    /// The Node version.
     pub node: String,
+    /// The ICU version of that Node.
     pub icu: Option<String>,
+    /// The bcrypto backend, `native` or `js`.
     pub bcrypto: String,
+    /// The network configuration every record was produced under.
     pub network: Value,
     /// Anything else the generator recorded (generator name, aux, ...).
     #[serde(flatten)]
@@ -51,18 +60,26 @@ pub struct Meta {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SolarInfo {
+    /// The reference's version.
     pub version: String,
+    /// The commit it was built from.
     pub commit: Option<String>,
+    /// The git tree of that commit.
     pub tree: Option<String>,
+    /// Whether the checkout had changes against the commit.
     pub dirty: Option<bool>,
+    /// Where the provenance came from: `image`, `git` or `unknown`.
     pub source: String,
+    /// The SHA-256 of the reference's patch register, when the commit has one.
     pub series_sha256: Option<String>,
 }
 
 /// How the oracle ran: `container` (with the image id) or `local`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct OracleInfo {
+    /// `container` or `local`.
     pub mode: String,
+    /// The image id of a container run.
     pub image: Option<String>,
 }
 
@@ -70,14 +87,18 @@ pub struct OracleInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ErrorRecord {
+    /// The error's class name.
     pub class: String,
+    /// The error's message, with install paths replaced.
     pub message: String,
 }
 
 /// What the reference produced for a record: an output value or an error.
 #[derive(Debug, Clone)]
 pub enum Expected {
+    /// The operation's output.
     Output(Value),
+    /// The error the reference raised.
     Error(ErrorRecord),
 }
 
@@ -107,6 +128,7 @@ pub struct Record {
     pub height: u64,
     /// An optional label, for example `transfer-256`.
     pub name: Option<String>,
+    /// The operation's input.
     pub input: Value,
     /// The reference's output or error.
     pub expected: Expected,
@@ -161,8 +183,11 @@ impl Record {
 /// One vector file: its meta record and its records.
 #[derive(Debug, Clone)]
 pub struct VectorFile {
+    /// The file.
     pub path: PathBuf,
+    /// Its meta record.
     pub meta: Meta,
+    /// Its other records, in order.
     pub records: Vec<Record>,
 }
 
@@ -175,6 +200,7 @@ impl VectorFile {
             .unwrap_or_default()
     }
 
+    /// Read and check the vector file at `path`.
     pub fn load(path: &Path) -> Result<VectorFile> {
         let text = fs::read_to_string(path).map_err(|e| Error::io(path, e))?;
         let mut lines = text
@@ -235,7 +261,9 @@ impl VectorFile {
 /// A directory of vector files, checked against its manifest.
 #[derive(Debug, Clone)]
 pub struct VectorSet {
+    /// The directory.
     pub dir: PathBuf,
+    /// Its vector files, in name order.
     pub files: Vec<VectorFile>,
 }
 
@@ -253,6 +281,7 @@ impl VectorSet {
         })
     }
 
+    /// The number of records in every file, meta records excluded.
     pub fn record_count(&self) -> usize {
         self.files.iter().map(|f| f.records.len()).sum()
     }

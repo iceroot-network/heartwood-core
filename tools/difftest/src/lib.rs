@@ -16,6 +16,8 @@
 //! - [`levels`]: L0 to L4; L0 runs today, the others plug in as the node's crates arrive.
 //! - [`genesis`]: the devnet chain-definition driver (`difftest genesis`).
 
+#![warn(missing_docs)]
+
 pub mod cli;
 pub mod compare;
 pub mod errors;

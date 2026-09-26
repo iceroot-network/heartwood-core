@@ -20,16 +20,23 @@ use crate::errors::Error;
 /// A level of differential testing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
+    /// Golden vectors written by the reference.
     L0,
+    /// Random and mutated cases, one oracle call each.
     L1,
+    /// Block sequences replayed on both sides.
     L2,
+    /// The same scenario on a reference devnet and a Heartwood devnet.
     L3,
+    /// A mixed network of reference and Heartwood nodes.
     L4,
 }
 
 impl Level {
+    /// Every level, in order.
     pub const ALL: [Level; 5] = [Level::L0, Level::L1, Level::L2, Level::L3, Level::L4];
 
+    /// The level's title in reports.
     pub fn title(self) -> &'static str {
         match self {
             Level::L0 => "L0 golden vectors",
