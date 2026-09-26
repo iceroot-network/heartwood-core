@@ -1,13 +1,17 @@
 //! The comparison engine: a structural JSON diff with byte-level detail for hex strings.
 //!
-//! Values are compared exactly (amounts are decimal strings, bytes are lowercase hex).
-//! A difference names its JSON path. When both sides are byte strings, it also names the first
+//! Values are compared exactly (amounts are decimal strings, bytes are lowercase hex), with two
+//! rules from JavaScript, where the oracle's values come from: numbers are equal when their double
+//! values are (`8` and `8.0` are one number), and the keys of an object must come in the same
+//! order, where the actual object's keys are taken in JavaScript's enumeration order (array-index
+//! keys first, ascending, then the others in insertion order). A difference names its JSON path. When both sides are byte strings, it also names the first
 //! differing byte offset and shows the bytes around it, so a codec mismatch points at the field.
 //! Normalisers (for example for a defaulted `typeGroup`) are applied by the caller before
 //! the diff, per operation, when the Rust side needs them.
 
 use std::fmt;
 
+use heartwood_crypto::utils::js;
 use serde_json::Value;
 
 /// Bytes of context shown on each side of the first differing byte.
@@ -37,6 +41,12 @@ pub enum Difference {
     Missing { path: String, expected: Value },
     /// Heartwood has a value that the oracle does not.
     Extra { path: String, actual: Value },
+    /// An object has the same keys on both sides, in another order.
+    Order {
+        path: String,
+        expected: Vec<String>,
+        actual: Vec<String>,
+    },
 }
 
 impl Difference {
@@ -45,7 +55,8 @@ impl Difference {
             Difference::Value { path, .. }
             | Difference::Bytes { path, .. }
             | Difference::Missing { path, .. }
-            | Difference::Extra { path, .. } => path,
+            | Difference::Extra { path, .. }
+            | Difference::Order { path, .. } => path,
         }
     }
 }
@@ -98,6 +109,16 @@ impl fmt::Display for Difference {
             Difference::Extra { path, actual } => {
                 write!(f, "{path}: not expected, actual {}", shown(actual))
             }
+            Difference::Order {
+                path,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "{path}: keys in another order: expected {}, actual {}",
+                shown(&Value::from(expected.clone())),
+                shown(&Value::from(actual.clone()))
+            ),
         }
     }
 }
@@ -112,6 +133,17 @@ pub fn diff(expected: &Value, actual: &Value) -> Vec<Difference> {
 fn diff_at(path: &str, expected: &Value, actual: &Value, out: &mut Vec<Difference>) {
     match (expected, actual) {
         (Value::Object(e), Value::Object(a)) => {
+            let same_keys = e.len() == a.len() && e.keys().all(|key| a.contains_key(key));
+            let expected_order: Vec<&String> = e.keys().collect();
+            let actual_order: Vec<&String> =
+                js::property_order(a).into_iter().map(|(k, _)| k).collect();
+            if same_keys && expected_order != actual_order {
+                out.push(Difference::Order {
+                    path: path.to_string(),
+                    expected: expected_order.into_iter().cloned().collect(),
+                    actual: actual_order.into_iter().cloned().collect(),
+                });
+            }
             for (key, ev) in e {
                 let child = child_key(path, key);
                 match a.get(key) {
@@ -154,6 +186,7 @@ fn diff_at(path: &str, expected: &Value, actual: &Value, out: &mut Vec<Differenc
         {
             out.push(bytes_difference(path, e, a));
         }
+        (Value::Number(e), Value::Number(a)) if js::number_value(e) == js::number_value(a) => {}
         _ if expected != actual => out.push(Difference::Value {
             path: path.to_string(),
             expected: expected.clone(),
@@ -313,6 +346,30 @@ mod tests {
             }
             other => panic!("not a byte difference: {other:?}"),
         }
+    }
+
+    #[test]
+    fn numbers_compare_by_their_double_value() {
+        assert!(diff(&json!({"a": 8}), &json!({"a": 8.0})).is_empty());
+        assert!(diff(&json!([0.5]), &json!([0.5])).is_empty());
+        let d = diff(&json!({"a": 8}), &json!({"a": 8.5}));
+        assert_eq!(d[0].to_string(), "$.a: expected 8, actual 8.5");
+    }
+
+    #[test]
+    fn key_order_counts_in_javascript_enumeration_order() {
+        let e: Value = serde_json::from_str(r#"{"b": 1, "a": 2}"#).unwrap();
+        let a: Value = serde_json::from_str(r#"{"a": 2, "b": 1}"#).unwrap();
+        let d = diff(&e, &a);
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            d[0].to_string(),
+            r#"$: keys in another order: expected ["b","a"], actual ["a","b"]"#
+        );
+        // Array-index keys enumerate first in JavaScript, whatever the insertion order.
+        let e: Value = serde_json::from_str(r#"{"1": 1, "2": 2, "x": 3}"#).unwrap();
+        let a: Value = serde_json::from_str(r#"{"x": 3, "2": 2, "1": 1}"#).unwrap();
+        assert!(diff(&e, &a).is_empty());
     }
 
     #[test]
