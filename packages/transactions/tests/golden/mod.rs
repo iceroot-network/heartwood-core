@@ -14,6 +14,8 @@ use serde_json::Value;
 
 /// V06 of `heartwood-crypto`, whose `fee.minimum` records this crate answers.
 pub const V06: &str = include_str!("../../../crypto/tests/vectors/V06-arithmetic.jsonl");
+/// V19 of this crate: the fee floor.
+pub const V19: &str = include_str!("../vectors/V19-fee-floor.jsonl");
 /// V10 of `heartwood-crypto`: the devnet chain definitions.
 const V10: &str = include_str!("../../../crypto/tests/vectors/V10-genesis.jsonl");
 

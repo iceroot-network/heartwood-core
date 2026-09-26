@@ -176,3 +176,38 @@ fn v06_fee_floor_records() {
     devnet.check(&file);
     assert_eq!(check_fee_records(&file, &devnet), 16);
 }
+
+#[test]
+fn v19_fee_floor() {
+    let devnet = Devnet::load();
+    let file = VectorFile::parse("V19-fee-floor", golden::V19);
+    devnet.check(&file);
+    let (mut compared, mut refused_files) = (0, 0);
+    for record in &file.records {
+        let label = record.label(&file.class);
+        assert_eq!(record.op, "fee.minimum", "{label}");
+        match devnet.milestones_of(&record.input) {
+            Ok(_) => {
+                let expected = record
+                    .expected
+                    .as_ref()
+                    .unwrap_or_else(|class| panic!("{label}: the oracle refused with {class}"));
+                let actual = fee_minimum(&devnet, &record.input, record.height)
+                    .unwrap_or_else(|error| panic!("{label}: {error}"));
+                assert_eq!(&actual, expected, "{label}");
+                compared += 1;
+            }
+            // A fee or revoke-delay value the reference loads, and coerces or fails on when it
+            // checks a fee: Heartwood refuses the file.
+            Err(error) => {
+                assert!(
+                    error.contains("dynamicFees")
+                        || error.contains("blocksToRevokeDelegateResignation"),
+                    "{label}: {error}"
+                );
+                refused_files += 1;
+            }
+        }
+    }
+    assert_eq!((compared, refused_files), (204, 43));
+}
