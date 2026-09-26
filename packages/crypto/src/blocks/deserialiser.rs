@@ -6,7 +6,11 @@
 //! - bytes that end right after the signature make a block without transactions, whatever the
 //!   header counts (the block then fails [`Block::verify`]);
 //! - bytes after the last transaction are ignored;
-//! - the transactions of a block are decoded under the merged milestone at the block's height.
+//! - the transactions of a block are decoded under the merged milestone at the block's height;
+//! - the transactions of the block at height 1, the genesis block, are decoded under the rules for
+//!   genesis transactions ([`Mode::GENESIS`]: a zero fee passes). The reference exempts the
+//!   transactions its network configuration lists as the genesis block's, and a node's only block
+//!   at height 1 is that genesis block.
 
 use crate::blocks::{Block, BlockHeader, serialiser};
 use crate::crypto::sig::Signature;
@@ -15,6 +19,7 @@ use crate::identities::PublicKeyBytes;
 use crate::managers::{Milestones, Params};
 use crate::transactions::Transaction;
 use crate::utils::bytes::Reader;
+use crate::validation::Mode;
 
 /// The largest total amount, total fee and reward the reference's block schema accepts: the
 /// largest signed 64-bit integer. The totals of the block at height 1 are exempt.
@@ -39,11 +44,14 @@ pub fn deserialise_header(reader: &mut Reader<'_>) -> Result<BlockHeader, BlockD
 }
 
 impl Block {
-    /// Decode `bytes`: the header, then each transaction with [`crate::Transaction::decode`] under
-    /// the merged milestone at the block's height, then the block rules the reference applies as a
-    /// schema.
+    /// Decode `bytes`: the header, then each transaction as [`crate::Transaction::decode`] does
+    /// under the merged milestone at the block's height (with the genesis rules at height 1), then
+    /// the block rules the reference applies as a schema.
     pub fn decode(bytes: &[u8], milestones: &Milestones) -> Result<Block, BlockDecodeError> {
-        decode_with(bytes, milestones, Transaction::decode)
+        decode_with(bytes, milestones, |bytes, params, genesis| {
+            let mode = if genesis { Mode::GENESIS } else { Mode::STRICT };
+            Transaction::decode_with(bytes, params, mode)
+        })
     }
 
     /// Decode `bytes` that this node verified before, with
@@ -53,7 +61,9 @@ impl Block {
         bytes: &[u8],
         milestones: &Milestones,
     ) -> Result<Block, BlockDecodeError> {
-        decode_with(bytes, milestones, Transaction::decode_trusted)
+        decode_with(bytes, milestones, |bytes, params, _| {
+            Transaction::decode_trusted(bytes, params)
+        })
     }
 
     /// The block's bytes (see [`crate::blocks::serialiser::serialise`]).
@@ -65,11 +75,12 @@ impl Block {
 fn decode_with(
     bytes: &[u8],
     milestones: &Milestones,
-    decode_transaction: fn(&[u8], &Params) -> Result<Transaction, DecodeError>,
+    decode_transaction: fn(&[u8], &Params, bool) -> Result<Transaction, DecodeError>,
 ) -> Result<Block, BlockDecodeError> {
     let mut reader = Reader::new(bytes);
     let header = deserialise_header(&mut reader)?;
     let params = milestones.at(header.height);
+    let genesis = header.height == 1;
 
     let mut transactions = Vec::new();
     if !reader.is_empty() {
@@ -81,7 +92,7 @@ fn decode_with(
         for index in 0..count {
             let length = lengths.u32_le()?;
             let transaction_bytes = reader.bytes(length as usize)?;
-            let transaction = decode_transaction(transaction_bytes, params)
+            let transaction = decode_transaction(transaction_bytes, params, genesis)
                 .map_err(|source| BlockDecodeError::Transaction { index, source })?;
             transactions.push(transaction);
         }

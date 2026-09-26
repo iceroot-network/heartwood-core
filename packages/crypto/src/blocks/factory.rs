@@ -16,6 +16,7 @@ use crate::managers::Milestones;
 use crate::transactions::Transaction;
 use crate::transactions::serialiser::{SerialiseOptions, serialise as serialise_transaction};
 use crate::utils::{hex, js};
+use crate::validation::Mode;
 
 /// The header fields of a block to sign; the generator key comes from the signing keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,7 +111,8 @@ pub fn from_data(
 /// Amounts are decimal strings of digits, or JSON numbers with an integer value; hex fields have
 /// their exact lengths; every header field is required except `numberOfTransactions`, which
 /// defaults to the number of transactions. Each transaction is read with
-/// [`Transaction::from_json`] under the merged milestone at the block's height.
+/// [`Transaction::from_json`] under the merged milestone at the block's height, and at height 1,
+/// the genesis block, under the rules for genesis transactions (see [`Block::decode`]).
 pub fn from_json(json: &Value, milestones: &Milestones) -> Result<Block, BlockError> {
     let Value::Object(fields) = json else {
         return Err(BlockError::Json("a block is a JSON object".into()));
@@ -118,13 +120,18 @@ pub fn from_json(json: &Value, milestones: &Milestones) -> Result<Block, BlockEr
     hex::decode_array::<32>(text(fields, "id")?)?;
     let height = integer(fields, "height")?;
     let params = milestones.at(height);
+    let mode = if height == 1 {
+        Mode::GENESIS
+    } else {
+        Mode::STRICT
+    };
     let transactions = match fields.get("transactions") {
         None => Vec::new(),
         Some(Value::Array(items)) => items
             .iter()
             .enumerate()
             .map(|(index, item)| {
-                Transaction::from_json(item, params)
+                Transaction::from_json_with(item, params, mode)
                     .map_err(|source| BlockError::Transaction { index, source })
             })
             .collect::<Result<Vec<Transaction>, BlockError>>()?,
