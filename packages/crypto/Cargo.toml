@@ -52,6 +52,10 @@ name = "milestones"
 required-features = ["fixed-aux"]
 
 [[test]]
+name = "milestones_fees"
+required-features = ["fixed-aux"]
+
+[[test]]
 name = "milestones_rewards"
 required-features = ["fixed-aux"]
 
