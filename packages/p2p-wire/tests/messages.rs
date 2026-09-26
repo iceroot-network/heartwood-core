@@ -3,16 +3,15 @@
 //! message through as it is (getPeers, getCommonBlocks, the getStatus request, the getBlocks
 //! request, the postBlock response and the postTransactions response).
 //!
-//! The vectors are read from `tests/vectors/V13-p2p-wire.jsonl`, or from the directory that
-//! `HEARTWOOD_WIRE_VECTORS` names. Before the class is installed (no manifest there lists it),
-//! the test has nothing to check and says so.
+//! The records are read as `common::records` says.
 //!
 //! Encode records must give the oracle's bytes; decode records the oracle's value, with its keys
 //! in the same order, or a refusal with the same JavaScript error class. Groups nested beyond the
 //! reference's stack are a documented difference: the reference overflows, the crate decodes.
 
-use std::path::PathBuf;
+mod common;
 
+use common::CLASS;
 use heartwood_p2p_wire::codecs::{blocks, peer, transactions};
 use heartwood_p2p_wire::messages::blocks::{
     BlockHeader, GetBlocksRequest, GetBlocksResponse, PostBlockRequest, PostBlockResponse,
@@ -30,38 +29,8 @@ use heartwood_p2p_wire::messages::transactions::{
 use heartwood_p2p_wire::{Codec, DecodeError, Proto};
 use serde_json::{Map, Value, json};
 
-const CLASS: &str = "V13-p2p-wire";
-
 /// The message of Node's `RangeError` when its stack overflows.
 const STACK_OVERFLOW: &str = "Maximum call stack size exceeded";
-
-/// The records of the installed class, or `None` before it is installed.
-fn records() -> Option<Vec<Value>> {
-    let dir = std::env::var_os("HEARTWOOD_WIRE_VECTORS").map_or_else(
-        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/vectors"),
-        PathBuf::from,
-    );
-    let file = dir.join(format!("{CLASS}.jsonl"));
-    let manifest = std::fs::read_to_string(dir.join("MANIFEST.sha256")).unwrap_or_default();
-    let Ok(text) = std::fs::read_to_string(&file) else {
-        assert!(
-            !manifest.contains(&format!("{CLASS}.jsonl")),
-            "{} is listed in the manifest but cannot be read",
-            file.display()
-        );
-        eprintln!(
-            "{CLASS} is not installed in {}: nothing to check",
-            dir.display()
-        );
-        return None;
-    };
-    let mut lines = text
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap());
-    let meta = lines.next().expect("a meta record");
-    assert_eq!(meta["class"], CLASS);
-    Some(lines.collect())
-}
 
 /// A message in the oracle's JSON.
 trait Json: Proto {
@@ -370,7 +339,7 @@ fn check_decode(
 
 #[test]
 fn message_records_both_ways() {
-    let Some(records) = records() else { return };
+    let records = common::records();
     let mut checked = 0;
     for (index, record) in records.iter().enumerate() {
         let label = format!("{CLASS}:{} {} {}", index + 2, record["op"], record["name"]);

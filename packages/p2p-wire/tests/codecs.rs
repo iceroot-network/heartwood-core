@@ -1,8 +1,10 @@
 //! The block and transaction codecs: the list edges and caps, the amounts, the keys the codecs set,
 //! and every record of the wire vectors (class V13) for their routes, encoded and decoded, with
-//! the reference's bytes, values, key order and error classes.
+//! the reference's bytes, values, key order and error classes. The records are read as
+//! `common::records` says; a `wire.decodeSelected` record whose first byte selects one of these
+//! codecs is checked as that codec's decode record.
 
-use std::path::Path;
+mod common;
 
 use heartwood_p2p_wire::codecs::blocks::{self, ListedBlock};
 use heartwood_p2p_wire::codecs::transactions::{self, UnconfirmedRequest, WithTransactions};
@@ -390,24 +392,6 @@ fn a_headers_only_block_writes_an_empty_transaction_list() {
 
 // The wire vectors.
 
-/// The records of the wire vector class, when it is installed beside the crate.
-fn vector_records() -> Option<Vec<Value>> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors/V13-p2p-wire.jsonl");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(error) => panic!("{}: {error}", path.display()),
-    };
-    let mut lines = text
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap());
-    assert_eq!(
-        lines.next().map(|meta| meta["op"].clone()),
-        Some(json!("meta"))
-    );
-    Some(lines.collect())
-}
-
 const ROUTES: [&str; 4] = [
     "getBlocks",
     "postBlock",
@@ -417,12 +401,9 @@ const ROUTES: [&str; 4] = [
 
 #[test]
 fn the_codec_records_of_the_wire_vectors_match_the_reference() {
-    let Some(records) = vector_records() else {
-        eprintln!("the wire vectors are not installed: no records checked");
-        return;
-    };
     let mut checked = 0;
-    for record in &records {
+    for record in common::records().iter().map(common::selected_as_decode) {
+        let record = &record;
         let input = &record["input"];
         let (Some(route), Some(direction)) = (input["route"].as_str(), input["direction"].as_str())
         else {

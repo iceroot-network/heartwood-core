@@ -3,49 +3,14 @@
 //! record is written and compared byte for byte, and each frame the reference sends on the
 //! peer-to-peer port (records named `sent: ...`) is also built with its constructor.
 //!
-//! The vector file is read from `tests/vectors`, or from the directory in `WIRE_VECTORS` (a
-//! relative path is taken from the workspace root), for example a local oracle run in
-//! `target/vectors/local`. Without `WIRE_VECTORS`, a missing file is reported and the test passes,
-//! so the crate's tests run before its vectors are installed.
+//! The records are read as `common::records` says.
 
-use std::path::{Path, PathBuf};
+mod common;
 
+use common::CLASS;
 use heartwood_p2p_wire::nes::{Heartbeat, Kind, Message};
 use heartwood_p2p_wire::routes::RouteId;
 use serde_json::{Value, json};
-
-const CLASS: &str = "V13-p2p-wire";
-
-/// The records of the V13 file, without its meta record; `None` when the file is not installed.
-fn records() -> Option<Vec<Value>> {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let explicit = std::env::var_os("WIRE_VECTORS").map(PathBuf::from);
-    let dir = match &explicit {
-        Some(dir) => manifest.join("../..").join(dir),
-        None => manifest.join("tests/vectors"),
-    };
-    let file = dir.join(format!("{CLASS}.jsonl"));
-    let text = match std::fs::read_to_string(&file) {
-        Ok(text) => text,
-        Err(error) if explicit.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!(
-                "frames: {} is not installed; nothing checked",
-                file.display()
-            );
-            return None;
-        }
-        Err(error) => panic!("{}: {error}", file.display()),
-    };
-    let mut lines = text
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap());
-    let meta = lines.next().expect("the meta record");
-    assert_eq!(
-        (&meta["op"], &meta["class"]),
-        (&json!("meta"), &json!(CLASS))
-    );
-    Some(lines.collect())
-}
 
 fn unhex(text: &Value) -> Vec<u8> {
     hex::decode(text.as_str().unwrap()).unwrap()
@@ -139,7 +104,7 @@ fn constructed(name: &str, input: &Message) -> (&'static str, Message) {
 
 #[test]
 fn frame_records_both_ways() {
-    let Some(records) = records() else { return };
+    let records = common::records();
     let (mut parsed, mut written, mut sent) = (0, 0, std::collections::BTreeSet::new());
     for (index, record) in records.iter().enumerate() {
         let name = record["name"].as_str().unwrap_or_default();

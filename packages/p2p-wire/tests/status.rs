@@ -12,13 +12,12 @@
 //! Where the reference's result depends on its prototype chain, its stack or integers beyond 128
 //! bits, the record is one of the documented differences and is skipped here.
 //!
-//! The vector file is read from `tests/vectors`, or from the directory in `WIRE_VECTORS` (a
-//! relative path is taken from the workspace root), for example a local oracle run in
-//! `target/vectors/local`. Without `WIRE_VECTORS`, a missing file is reported and the vector test
-//! passes, so the crate's tests run before its vectors are installed.
+//! The records are read as `common::records` says; a `wire.decodeSelected` record whose first
+//! byte selects the getStatus response is checked as that codec's decode record.
 
-use std::path::{Path, PathBuf};
+mod common;
 
+use common::CLASS;
 use heartwood_crypto::blocks::deserialiser::deserialise_header;
 use heartwood_crypto::utils::bytes::Reader;
 use heartwood_crypto::{KeyPair, SecretKey};
@@ -27,40 +26,8 @@ use heartwood_p2p_wire::errors::ReplyRefused;
 use heartwood_p2p_wire::status;
 use serde_json::{Value, json};
 
-const CLASS: &str = "V13-p2p-wire";
 /// The signature class of `heartwood-crypto`, whose legacy records sign status preimages.
 const SIGNATURES: &str = include_str!("../../crypto/tests/vectors/V04-signatures.jsonl");
-
-/// The records of the V13 file, without its meta record; `None` when the file is not installed.
-fn records() -> Option<Vec<Value>> {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let explicit = std::env::var_os("WIRE_VECTORS").map(PathBuf::from);
-    let dir = match &explicit {
-        Some(dir) => manifest.join("../..").join(dir),
-        None => manifest.join("tests/vectors"),
-    };
-    let file = dir.join(format!("{CLASS}.jsonl"));
-    let text = match std::fs::read_to_string(&file) {
-        Ok(text) => text,
-        Err(error) if explicit.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!(
-                "status: {} is not installed; nothing checked",
-                file.display()
-            );
-            return None;
-        }
-        Err(error) => panic!("{}: {error}", file.display()),
-    };
-    let mut lines = text
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap());
-    let meta = lines.next().expect("the meta record");
-    assert_eq!(
-        (&meta["op"], &meta["class"]),
-        (&json!("meta"), &json!(CLASS))
-    );
-    Some(lines.collect())
-}
 
 fn unhex(text: &Value) -> Vec<u8> {
     hex::decode(text.as_str().unwrap()).unwrap()
@@ -273,11 +240,9 @@ fn check_codec(record: &Value) {
 
 #[test]
 fn the_status_records_of_the_wire_class() {
-    let Some(records) = records() else {
-        return;
-    };
     let mut checked = 0;
-    for record in &records {
+    for record in common::records().iter().map(common::selected_as_decode) {
+        let record = &record;
         let codec =
             record["input"]["route"] == "getStatus" && record["input"]["direction"] == "response";
         match record["op"].as_str().unwrap() {
