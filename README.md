@@ -291,8 +291,8 @@ the oracle and to Heartwood (`difftest oracle replay`), which must agree on ever
 the installed wire class with `tools/wire-fuzz-seeds.js`, and runs them at the same time for
 `FUZZ_SECONDS` each with `FUZZ_FORK` libFuzzer jobs. A crash, an input that runs longer than 30
 seconds and an out-of-memory stop each end the run and fail it; the logs, with each target's runs,
-coverage and corpus size, go to `target/wire-fuzz`. `make replay-wire` fails on a difference and
-on an input that was not compared.
+coverage and corpus size, go to `target/wire-fuzz`. `make replay-wire` fails on a difference, on
+an input that was not compared, and on a missing or empty corpus.
 
 ## The oracle image
 
