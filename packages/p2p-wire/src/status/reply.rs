@@ -84,13 +84,13 @@ pub fn encode_response(status: &ReceivedStatus) -> Vec<u8> {
 /// the public keys and signatures: the largest number of active delegates of the milestones.
 ///
 /// The rules run in the reference's order, and the error names the part of the first rule that
-/// fails. A refused reply may have been changed in part.
+/// fails: the schema library checks a required key that has a schema of its own where it checks
+/// that key's schema, so the keys `state`, `config`, `publicKeys` and `signatures` are checked in
+/// this order, each with its presence. A refused reply may have been changed in part.
 pub fn check_reply(status: &mut ReceivedStatus, max_delegates: usize) -> Result<(), ReplyRefused> {
     let amounts = [status.total_amount, status.total_fee, status.reward];
     let message = &mut status.message;
-    let (Some(state), Some(config)) = (message.state.as_mut(), message.config.as_mut()) else {
-        return Err(ReplyRefused::Root);
-    };
+    let state = message.state.as_mut().ok_or(ReplyRefused::Root)?;
     // `height < Some(1)` holds for an absent height too.
     if state.forging_allowed.is_none() || state.current_slot.is_none() || state.height < Some(1) {
         return Err(ReplyRefused::State);
@@ -104,6 +104,7 @@ pub fn check_reply(status: &mut ReceivedStatus, max_delegates: usize) -> Result<
     }
     // The decoded config is an object of the protobuf library: an absent field reads as its
     // default, which satisfies `required`, and the length and type rules then decide.
+    let config = message.config.as_mut().ok_or(ReplyRefused::Root)?;
     if !(5..=24).contains(&code_points(&config.version)) {
         return Err(ReplyRefused::Config);
     }
@@ -118,13 +119,8 @@ pub fn check_reply(status: &mut ReceivedStatus, max_delegates: usize) -> Result<
             && !name.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
     });
     // An entry without a value is `null`, which is not an object.
-    let plugin_passes =
-        |plugin: Option<&Plugin>| plugin.is_some_and(|p| p.port.unwrap_or(0) <= 65_535);
-    if !config
-        .plugins
-        .iter()
-        .all(|(_, plugin)| plugin_passes(plugin))
-    {
+    let passes = |plugin: Option<&Plugin>| plugin.is_some_and(|p| p.port.unwrap_or(0) <= 65_535);
+    if !config.plugins.iter().all(|(_, plugin)| passes(plugin)) {
         return Err(ReplyRefused::Plugins);
     }
     let listed = |items: &[String], length: usize| {

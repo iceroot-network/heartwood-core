@@ -356,7 +356,7 @@ type Change = Box<dyn FnOnce(&mut ReceivedStatus)>;
 
 #[test]
 fn the_first_rule_that_fails_names_its_part() {
-    let cases: [(ReplyRefused, Change); 9] = [
+    let cases: [(ReplyRefused, Change); 11] = [
         (ReplyRefused::Root, Box::new(|s| s.message.config = None)),
         (
             ReplyRefused::State,
@@ -385,6 +385,22 @@ fn the_first_rule_that_fails_names_its_part() {
         (
             ReplyRefused::Signatures,
             Box::new(|s| s.message.signatures = vec!["zz".repeat(64)]),
+        ),
+        // A required key with a schema of its own is checked where its schema is: a missing
+        // configuration is found after the state and its header.
+        (
+            ReplyRefused::Header,
+            Box::new(|s| {
+                header(s).id = None;
+                s.message.config = None;
+            }),
+        ),
+        (
+            ReplyRefused::State,
+            Box::new(|s| {
+                s.message.state.as_mut().unwrap().forging_allowed = None;
+                s.message.config = None;
+            }),
         ),
         // A header and a configuration that both fail: the header is checked first.
         (

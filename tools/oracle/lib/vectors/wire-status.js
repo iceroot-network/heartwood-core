@@ -133,6 +133,16 @@ module.exports = async function wireStatusVectors({ solar, rec, must, shared }) 
 
     // The reply object and the state.
     await crafted("no config", (r) => delete r.config);
+    // A required key with a schema of its own is checked where its schema is checked, so a missing
+    // config is found only after the state and its header pass.
+    await crafted("no config, and a header that fails", (r) => {
+        delete r.config;
+        header(r).id = "x";
+    });
+    await crafted("no config, and a state that fails", (r) => {
+        delete r.config;
+        r.state.height = 0;
+    });
     await crafted("no signatures", (r) => (r.signatures = []));
     await crafted("height 0", (r) => (r.state.height = 0));
     await crafted("no forgingAllowed", (r) => delete r.state.forgingAllowed);
