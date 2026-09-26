@@ -100,6 +100,10 @@ pub enum TransactionError {
         /// The blocks still to wait.
         blocks: u64,
     },
+    /// A revoke by a delegate whose resignation transaction is not found up to the last block;
+    /// the reference reads a field of the missing lookup result.
+    #[error("Failed to apply transaction, because the delegate's resignation was not found")]
+    ResignationNotFound,
     /// A revoke by a delegate that has not resigned.
     #[error("Failed to apply transaction, because the wallet has not resigned as a delegate")]
     WalletNotResigned,
@@ -136,6 +140,9 @@ pub enum TransactionError {
         /// The name.
         vote: String,
     },
+    /// The undo record given to a revert is not of the transaction's type.
+    #[error("The undo record does not belong to the transaction")]
+    UndoMismatch,
     /// A wallet value left its range, or a wallet or delegate is missing where the reference
     /// throws.
     #[error(transparent)]
@@ -174,6 +181,7 @@ impl TransactionError {
             TransactionError::NotEnoughTimeSinceResignation { .. } => {
                 "NotEnoughTimeSinceResignationError"
             }
+            TransactionError::ResignationNotFound => "TypeError",
             TransactionError::WalletNotResigned => "WalletNotResignedError",
             TransactionError::NotEnoughDelegates => "NotEnoughDelegatesError",
             TransactionError::InsufficientBurnAmount { .. } => "InsufficientBurnAmountError",
@@ -181,6 +189,7 @@ impl TransactionError {
             TransactionError::NoVote => "NoVoteError",
             TransactionError::AlreadyVotedForSameDelegates => "AlreadyVotedForSameDelegatesError",
             TransactionError::VotedForNonDelegate { .. } => "VotedForNonDelegateError",
+            TransactionError::UndoMismatch => "Error",
             // The reference's `assert` on a negative balance throws an AssertionError; its other
             // failures here are lookups of missing index entries, which throw a plain Error.
             TransactionError::State(WalletError::NegativeBalance { .. }) => "AssertionError",

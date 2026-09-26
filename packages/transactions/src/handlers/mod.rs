@@ -8,10 +8,11 @@
 //! - [`group2`]: the types of type group 2: burn and vote.
 //! - [`registry`]: [`registry::Handlers`], which dispatches on the transaction type.
 //!
-//! Each type's module has the same functions: `check` (the type's checks, then the base checks),
-//! `apply` (check, then change the wallets, returning the undo record), `revert` (with that
-//! record) and `bootstrap` (the genesis path); the types with pool-entry rules also have
-//! `throw_if_cannot_enter_pool`.
+//! Each type's module has the same functions, which take the context, the wallets, the
+//! transaction and, where the type has one, the part of the asset they read: `check` (the type's
+//! checks, then the base checks), `apply` (check, then change the wallets, returning the undo
+//! record), `revert` (with that record) and `bootstrap` (the genesis path); the types with
+//! pool-entry rules also have `throw_if_cannot_enter_pool`.
 
 pub mod core;
 pub mod group2;

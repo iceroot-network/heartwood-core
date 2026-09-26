@@ -9,6 +9,7 @@ use heartwood_state::undo::TxUndo;
 use heartwood_state::wallets::WalletRepository;
 
 use crate::errors::TransactionError;
+use crate::handlers::transaction::{self, Sender};
 
 /// Run the type's checks, then the base checks, without changing `wallets`.
 pub fn check(
@@ -16,8 +17,13 @@ pub fn check(
     wallets: &WalletRepository,
     transaction: &Transaction,
 ) -> Result<(), TransactionError> {
-    let _ = (ctx, wallets, transaction);
-    todo!()
+    let minimum = ctx.params.burn_tx_amount();
+    let amount = transaction.amount();
+    if amount < minimum {
+        return Err(TransactionError::InsufficientBurnAmount { amount, minimum });
+    }
+    let sender = Sender::of(ctx, wallets, transaction);
+    transaction::check_base(ctx, wallets, transaction, &sender)
 }
 
 /// Check, then apply `transaction`; returns what its revert needs.
@@ -26,8 +32,9 @@ pub fn apply(
     wallets: &mut WalletRepository,
     transaction: &Transaction,
 ) -> Result<TxUndo, TransactionError> {
-    let _ = (ctx, wallets, transaction);
-    todo!()
+    check(ctx, wallets, transaction)?;
+    transaction::apply_to_sender(ctx, wallets, transaction)?;
+    Ok(TxUndo::None)
 }
 
 /// Revert `transaction` with the undo record its apply returned.
@@ -37,17 +44,18 @@ pub fn revert(
     transaction: &Transaction,
     undo: &TxUndo,
 ) -> Result<(), TransactionError> {
-    let _ = (ctx, wallets, transaction, undo);
-    todo!()
+    let _ = undo;
+    transaction::revert_for_sender(ctx, wallets, transaction)?;
+    Ok(())
 }
 
-/// The genesis path: bind the sender's key and set the type's effect. Returns 0: the sender owes
-/// nothing beyond the amount and the fee, which the caller takes.
+/// The genesis path: bind the sender's key. Returns 0: the sender owes nothing beyond the amount
+/// and the fee, which the caller takes.
 pub fn bootstrap(
     ctx: &ApplyContext<'_>,
     wallets: &mut WalletRepository,
     transaction: &Transaction,
 ) -> Result<u64, TransactionError> {
-    let _ = (ctx, wallets, transaction);
-    todo!()
+    transaction::bind_sender_key(ctx, wallets, transaction);
+    Ok(0)
 }

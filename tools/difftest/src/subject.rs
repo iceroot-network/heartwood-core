@@ -53,6 +53,9 @@ pub enum Documented {
     NonUtf8Memo,
     /// A transaction in JSON form whose `asset.votes` is a non-empty array or string.
     VotesWithIndices,
+    /// A milestone file with a `dynamicFees` or `blocksToRevokeDelegateResignation` value of a
+    /// type the reference coerces or fails on when it checks a fee or a revoke.
+    FeeKeyValueType,
 }
 
 impl Documented {
@@ -82,6 +85,11 @@ impl Documented {
                 "asset.votes as a non-empty array or string in JSON: the reference writes its \
                  indices as vote names and removes them after it has computed the id (the JSON \
                  path only; the wire form is exact)"
+            }
+            Documented::FeeKeyValueType => {
+                "a fee table or revoke delay of a type the reference coerces or fails on later: \
+                 Heartwood refuses the milestone file at load, the reference loads it (a \
+                 configuration-only difference; generated devnets never contain one)"
             }
         }
     }
