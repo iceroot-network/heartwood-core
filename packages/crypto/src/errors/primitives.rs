@@ -30,6 +30,10 @@ pub enum SigError {
     /// The operating system could not supply random bytes for [`crate::Aux::Random`].
     #[error("no random bytes available for the signing aux")]
     Randomness,
+    /// No signature exists for this key and message: the legacy scheme derived a nonce of zero,
+    /// a chance of about 2^-256. The reference fails in the same case.
+    #[error("signing failed: no signature exists for this key and message")]
+    SigningFailed,
     /// The signature text is not hex.
     #[error("invalid signature encoding: {0}")]
     Hex(#[from] HexError),

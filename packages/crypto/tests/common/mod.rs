@@ -65,8 +65,14 @@ impl VectorFile {
             .unwrap_or_else(|| panic!("{class}: empty vector file"));
         let meta: Value = serde_json::from_str(first)
             .unwrap_or_else(|e| panic!("{class}:1: meta record is not JSON: {e}"));
-        assert_eq!(meta["op"], "meta", "{class}:1: the first record is not the meta record");
-        assert_eq!(meta["class"], class, "{class}:1: meta record of another class");
+        assert_eq!(
+            meta["op"], "meta",
+            "{class}:1: the first record is not the meta record"
+        );
+        assert_eq!(
+            meta["class"], class,
+            "{class}:1: meta record of another class"
+        );
 
         let records: Vec<Record> = lines
             .map(|(index, line)| parse_record(class, index + 1, line))
