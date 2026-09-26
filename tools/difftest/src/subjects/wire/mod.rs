@@ -28,7 +28,7 @@ use heartwood_crypto::utils::hex;
 use heartwood_p2p_wire::{Codec, DecodeError, Direction, Proto, RouteId};
 use serde_json::{Map, Value, json};
 
-use super::{Env, Outcome, Run, failed, hex_bytes, rejected, text, unclassified};
+use super::{Env, Outcome, Run, failed, hex_bytes, rejected, text};
 use crate::subject::{Case, Documented, Verdict};
 
 /// Every operation of the wire, with the function that answers it.
@@ -184,13 +184,22 @@ fn accepted(value: Value) -> Verdict {
 }
 
 /// Heartwood's verdict on a payload it refused with `error`: the reference's error class, or, for
-/// an amount beyond 128 bits, the documented difference where the oracle shows it.
+/// an amount beyond 128 bits, the documented difference where the oracle shows it. The reference
+/// raises no error for such an amount, so where the oracle does not show the difference, the
+/// refusal fails against any answer: a verdict mismatch where the reference accepts, and a class
+/// mismatch where it raises an error.
 fn refused(error: DecodeError) -> Verdict {
     match error.js_class() {
         Some(class) => rejected(class),
         None => Verdict::DiffersWhereShown {
             difference: Documented::WideAmount,
-            verdict: Box::new(unclassified(error)),
+            verdict: Box::new(Verdict::Rejected {
+                class: Some(NO_ERROR_FOR_WIDE_AMOUNTS),
+                detail: format!("{error:?}"),
+            }),
         },
     }
 }
+
+/// The class Heartwood's refusal of a wide amount names: none that the reference raises.
+const NO_ERROR_FOR_WIDE_AMOUNTS: &str = "none (the reference raises no error for a wide amount)";

@@ -3,8 +3,10 @@
 //! signature checks of a received response).
 //!
 //! Every verdict on a status payload may be the documented difference of protobuf groups nested
-//! beyond the reference's stack, which the oracle's answer shows; a reply whose plugins set the
-//! reference object's prototype is the documented difference of that name.
+//! beyond the reference's stack, which the oracle's answer shows. A reply whose plugins make a
+//! plugin the prototype of the reference's object is the documented difference of that name only
+//! where the reference's reply check refuses the plugins and Heartwood's check gets past them;
+//! everything else about such a reply is compared.
 
 use heartwood_crypto::blocks::deserialiser::deserialise_header;
 use heartwood_crypto::utils::bytes::Reader;
@@ -126,12 +128,17 @@ pub(super) fn verify(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         Ok(received) => received,
         Err(error) => return Ok(deep(refused(error))),
     };
-    let prototype = received
-        .message
-        .config
-        .as_ref()
-        .is_some_and(|config| config.plugins.replaced_prototype());
-    let output = match status::check_reply(&mut received, max_delegates) {
+    let inherits =
+        (received.message.config.as_ref()).is_some_and(|config| config.plugins.inherits_plugin());
+    let checked = status::check_reply(&mut received, max_delegates);
+    // The reference's check sees the inherited plugin's properties among the plugins, so it refuses
+    // there; Heartwood's check drops the entry, accepts, or refuses at a later part.
+    let documented = inherits
+        && matches!(
+            checked,
+            Ok(()) | Err(ReplyRefused::PublicKeys | ReplyRefused::Signatures)
+        );
+    let output = match checked {
         Err(part) => json!({ "valid": false, "refused": part_name(part) }),
         Ok(()) => {
             let message = &received.message;
@@ -156,7 +163,7 @@ pub(super) fn verify(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         }
     };
     let verdict = Verdict::Output(output);
-    Ok(deep(if prototype {
+    Ok(deep(if documented {
         Verdict::DiffersWhereShown {
             difference: Documented::PluginsPrototype,
             verdict: Box::new(verdict),

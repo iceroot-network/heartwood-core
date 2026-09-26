@@ -9,8 +9,9 @@
 //! - The getStatus response codec: each decoded reply's verdict and amounts, and each encoded
 //!   reply's bytes, read back and written again.
 //!
-//! Where the reference's result depends on its prototype chain, its stack or integers beyond 128
-//! bits, the record is one of the documented differences and is skipped here.
+//! Where the reference's result depends on its stack, the record is skipped here. Where it
+//! depends on a plugin made the prototype or on integers beyond 128 bits, the record is one of the
+//! documented differences, and only Heartwood's side of it is checked.
 //!
 //! The records are read as `common::records` says; a `wire.decodeSelected` record whose first
 //! byte selects the getStatus response is checked as that codec's decode record.
@@ -22,7 +23,7 @@ use heartwood_crypto::blocks::deserialiser::deserialise_header;
 use heartwood_crypto::utils::bytes::Reader;
 use heartwood_crypto::{KeyPair, SecretKey};
 use heartwood_p2p_wire::Proto;
-use heartwood_p2p_wire::errors::ReplyRefused;
+use heartwood_p2p_wire::errors::{DecodeError, ReplyRefused};
 use heartwood_p2p_wire::status;
 use serde_json::{Value, json};
 
@@ -136,11 +137,15 @@ fn check_sign(record: &Value) {
 
 /// A `status.verify` record.
 fn check_verify(record: &Value) {
-    if note(record, "pluginsPrototype") || note(record, "wideAmount") || overflowed(record) {
+    if overflowed(record) {
         return;
     }
     let max_delegates = usize::try_from(record["input"]["maxDelegates"].as_u64().unwrap()).unwrap();
-    let mut received = match status::decode_response(&unhex(&record["input"]["hex"])) {
+    let decoded = status::decode_response(&unhex(&record["input"]["hex"]));
+    if wide(record, &decoded) {
+        return;
+    }
+    let mut received = match decoded {
         Ok(received) => received,
         Err(error) => {
             assert_eq!(
@@ -154,7 +159,23 @@ fn check_verify(record: &Value) {
     };
     let output = &record["output"];
     assert!(output.is_object(), "{}: Heartwood accepted", label(record));
-    match status::check_reply(&mut received, max_delegates) {
+    let inherits =
+        (received.message.config.as_ref()).is_some_and(|config| config.plugins.inherits_plugin());
+    let checked = status::check_reply(&mut received, max_delegates);
+    if note(record, "pluginsPrototype") && output["refused"] == "plugins" {
+        // The reference refuses the plugin it made the prototype; Heartwood drops that entry.
+        assert!(inherits, "{}", label(record));
+        assert!(
+            matches!(
+                checked,
+                Ok(()) | Err(ReplyRefused::PublicKeys | ReplyRefused::Signatures)
+            ),
+            "{}",
+            label(record)
+        );
+        return;
+    }
+    match checked {
         Err(part) => assert_eq!(
             (json!(false), json!(part_name(part))),
             (output["valid"].clone(), output["refused"].clone()),
@@ -196,9 +217,23 @@ fn check_verify(record: &Value) {
     }
 }
 
+/// Whether the record reads an amount beyond 128 bits, which Heartwood refuses at decode.
+fn wide(record: &Value, decoded: &Result<status::ReceivedStatus, DecodeError>) -> bool {
+    let wide = note(record, "wideAmount");
+    if wide {
+        assert_eq!(
+            decoded.as_ref().err(),
+            Some(&DecodeError::AmountTooWide),
+            "{}",
+            label(record)
+        );
+    }
+    wide
+}
+
 /// A record of the getStatus response codec.
 fn check_codec(record: &Value) {
-    if note(record, "wideAmount") || overflowed(record) {
+    if overflowed(record) {
         return;
     }
     if record["op"] == "wire.encode" {
@@ -212,7 +247,11 @@ fn check_codec(record: &Value) {
         );
         return;
     }
-    match status::decode_response(&unhex(&record["input"]["hex"])) {
+    let decoded = status::decode_response(&unhex(&record["input"]["hex"]));
+    if wide(record, &decoded) {
+        return;
+    }
+    match decoded {
         Err(error) => assert_eq!(
             error.js_class(),
             record["error"]["class"].as_str(),

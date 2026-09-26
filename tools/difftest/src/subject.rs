@@ -77,9 +77,10 @@ impl Documented {
     pub fn reason(self) -> &'static str {
         match self {
             Documented::PluginsPrototype => {
-                "a status plugin named __proto__: the reference's decoder replaces the plugins \
-                 object's prototype, and its reply check then sees the prototype's properties; \
-                 Heartwood drops the entry and checks the own names only (crafted replies only)"
+                "a status plugin named __proto__ with a value: the reference's decoder makes the \
+                 plugin the prototype of the plugins object, and its reply check then refuses the \
+                 plugin's properties; Heartwood drops the entry and checks the own names only \
+                 (crafted replies only)"
             }
             Documented::DeepGroups => {
                 "protobuf groups nested beyond the reference's stack: the reference fails with a \
@@ -87,9 +88,10 @@ impl Documented {
                  group, and the reference's result depends on its stack size)"
             }
             Documented::WideAmount => {
-                "an amount beyond 128 bits: the reference reads an integer of any size and \
-                 refuses it at a later step, Heartwood refuses it when it decodes (crafted \
-                 payloads only; reading it is unbounded work)"
+                "an amount beyond 128 bits: the reference reads an integer of any size, refuses a \
+                 getBlocks response at a later step and accepts the totals of a getStatus reply at \
+                 height 1; Heartwood refuses the payload when it decodes (crafted payloads only; \
+                 reading such an integer is unbounded work)"
             }
             Documented::RemovedType => {
                 "a removed type: the reference decodes it and refuses it when it is applied (its \
@@ -129,15 +131,21 @@ const STACK_OVERFLOW: &str = "Maximum call stack size exceeded";
 impl Documented {
     /// Whether the oracle's answer `expected` shows the reference's side of this difference: a
     /// `true` note in the output's `notes` (`pluginsPrototype`, `stackOverflow`, `wideAmount`),
-    /// or, for deep groups, a `RangeError` for the overflow of the Node stack. The differences
-    /// that Heartwood checks on the input ([`Verdict::RefusedByDesign`]) are never shown.
+    /// or, for deep groups, a `RangeError` for the overflow of the Node stack. A replaced
+    /// prototype is shown only with the reply check's refusal of the plugins, the one step it
+    /// changes. The differences that Heartwood checks on the input ([`Verdict::RefusedByDesign`])
+    /// are never shown.
     pub fn shown_by(self, expected: &Expected) -> bool {
         let note = |name: &str| match expected {
             Expected::Output(output) => output[NOTES][name] == Value::Bool(true),
             Expected::Error(_) => false,
         };
         match self {
-            Documented::PluginsPrototype => note("pluginsPrototype"),
+            Documented::PluginsPrototype => {
+                note("pluginsPrototype")
+                    && matches!(expected, Expected::Output(output)
+                        if output["valid"] == Value::Bool(false) && output["refused"] == "plugins")
+            }
             Documented::DeepGroups => {
                 note("stackOverflow")
                     || matches!(expected, Expected::Error(error)
