@@ -1,0 +1,18 @@
+[{
+    "height": 1,
+    "activeDelegates": 3,
+    "blockTime": 8,
+    "block": { "version": 0, "maxTransactions": 150, "maxPayload": 2097152 },
+    "blocksToRevokeDelegateResignation": 106,
+    "burn": { "feeBasisPoints": 9000, "txAmount": 1000 },
+    "dynamicFees": {
+        "enabled": true,
+        "minFee": 10,
+        "addonBytes": { "transfer": 85, "delegateRegistration": 1000, "vote": 98, "secondSignature": 99 }
+    },
+    "epoch": "2026-01-01T00:00:00.000Z",
+    "transfer": { "maximum": 256, "minimum": 1 },
+    "reward": 0,
+    "dynamicReward": { "enabled": false },
+    "donations": {}
+}]
