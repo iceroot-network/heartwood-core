@@ -18,20 +18,9 @@ use crate::js;
 use crate::messages::peer::{Config, Plugin, State, StatusHeader};
 
 /// The names of the properties of `Object.prototype` in Node 18, which `stringify` leaves out.
-const PROTOTYPE_NAMES: [&str; 12] = [
-    "constructor",
-    "__defineGetter__",
-    "__defineSetter__",
-    "hasOwnProperty",
-    "__lookupGetter__",
-    "__lookupSetter__",
-    "isPrototypeOf",
-    "propertyIsEnumerable",
-    "toString",
-    "valueOf",
-    "__proto__",
-    "toLocaleString",
-];
+const PROTOTYPE_NAMES: &str = "constructor __defineGetter__ __defineSetter__ hasOwnProperty \
+    __lookupGetter__ __lookupSetter__ isPrototypeOf propertyIsEnumerable toString valueOf __proto__ \
+    toLocaleString";
 
 /// A value of the status tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,24 +33,24 @@ pub(super) enum Json {
     Object(Vec<(String, Json)>),
 }
 
-impl Json {
-    /// An object of the entries whose value is not `undefined` (`None`).
-    fn object<const N: usize>(entries: [(&str, Option<Json>); N]) -> Json {
-        Json::Object(
-            entries
-                .into_iter()
-                .filter_map(|(key, value)| Some((key.to_owned(), value?)))
-                .collect(),
-        )
-    }
+/// An object of the entries whose value is not `undefined` (`None`).
+fn object<const N: usize>(entries: [(&str, Option<Json>); N]) -> Json {
+    let present = entries
+        .into_iter()
+        .filter_map(|(key, value)| Some((key.to_owned(), value?)));
+    Json::Object(present.collect())
+}
 
-    fn text(text: &Option<String>) -> Option<Json> {
-        text.clone().map(Json::Str)
-    }
+fn text(text: &Option<String>) -> Option<Json> {
+    text.clone().map(Json::Str)
+}
 
-    fn int(value: Option<u32>) -> Option<Json> {
-        value.map(|n| Json::Int(i64::from(n)))
-    }
+fn int(value: Option<u32>) -> Option<Json> {
+    value.map(|n| Json::Int(i64::from(n)))
+}
+
+fn flag(value: Option<bool>) -> Option<Json> {
+    value.map(Json::Bool)
 }
 
 /// Append the canonical JSON of `value` to `out`. The status tree has a fixed depth, so the
@@ -75,10 +64,8 @@ pub(super) fn write(value: &Json, out: &mut String) {
         }
         Json::Str(text) => js::json_string(out, text),
         Json::Object(entries) => {
-            let mut kept: Vec<&(String, Json)> = entries
-                .iter()
-                .filter(|(key, _)| !PROTOTYPE_NAMES.contains(&key.as_str()))
-                .collect();
+            let listed = |key: &str| !PROTOTYPE_NAMES.split_whitespace().any(|name| name == key);
+            let mut kept: Vec<_> = entries.iter().filter(|(key, _)| listed(key)).collect();
             kept.sort_by(|a, b| js::utf16_cmp(&a.0, &b.0));
             out.push('{');
             for (index, (key, value)) in kept.into_iter().enumerate() {
@@ -108,45 +95,39 @@ pub(super) fn preimage(
     config: &Config,
     empty_plugins: bool,
 ) -> Vec<u8> {
-    let header = state.header.as_ref().map(|h| header(h, amounts));
-    let state = Json::object([
-        ("height", Json::int(state.height)),
-        ("forgingAllowed", state.forging_allowed.map(Json::Bool)),
+    let state = object([
+        ("height", int(state.height)),
+        ("forgingAllowed", flag(state.forging_allowed)),
         ("currentSlot", current_slot.map(Json::Int)),
-        ("header", header),
+        ("header", state.header.as_ref().map(|h| header(h, amounts))),
     ]);
     let network = config.network.as_ref().map(|network| {
-        let token = network.token.as_ref().map(|token| {
-            Json::object([
-                ("name", Json::text(&token.name)),
-                ("symbol", Json::text(&token.symbol)),
-            ])
-        });
-        Json::object([
-            ("name", Json::text(&network.name)),
-            ("nethash", Json::text(&network.nethash)),
-            ("explorer", Json::text(&network.explorer)),
+        let token = (network.token.as_ref())
+            .map(|token| object([("name", text(&token.name)), ("symbol", text(&token.symbol))]));
+        object([
+            ("name", text(&network.name)),
+            ("nethash", text(&network.nethash)),
+            ("explorer", text(&network.explorer)),
             ("token", token),
-            ("version", Json::int(network.version)),
+            ("version", int(network.version)),
         ])
     });
     let plugins = (empty_plugins || !config.plugins.is_empty()).then(|| {
+        let entries = config.plugins.iter();
         Json::Object(
-            config
-                .plugins
-                .iter()
-                .map(|(name, plugin)| (name.to_owned(), plugin.map_or(Json::Null, plugin_json)))
+            entries
+                .map(|(name, p)| (name.to_owned(), p.map_or(Json::Null, plugin)))
                 .collect(),
         )
     });
-    let config = Json::object([
-        ("version", Json::text(&config.version)),
+    let config = object([
+        ("version", text(&config.version)),
         ("network", network),
         ("plugins", plugins),
     ]);
     let mut out = String::new();
     write(
-        &Json::object([("state", Some(state)), ("config", Some(config))]),
+        &object([("state", Some(state)), ("config", Some(config))]),
         &mut out,
     );
     out.into_bytes()
@@ -154,36 +135,27 @@ pub(super) fn preimage(
 
 fn header(header: &StatusHeader, [total_amount, total_fee, reward]: [Amount; 3]) -> Json {
     let amount = |value: Amount| Some(Json::Str(value.to_string()));
-    Json::object([
-        ("id", Json::text(&header.id)),
-        ("version", Json::int(header.version)),
-        ("timestamp", Json::int(header.timestamp)),
-        ("previousBlock", Json::text(&header.previous_block)),
-        ("height", Json::int(header.height)),
-        (
-            "numberOfTransactions",
-            Json::int(header.number_of_transactions),
-        ),
+    object([
+        ("id", text(&header.id)),
+        ("version", int(header.version)),
+        ("timestamp", int(header.timestamp)),
+        ("previousBlock", text(&header.previous_block)),
+        ("height", int(header.height)),
+        ("numberOfTransactions", int(header.number_of_transactions)),
         ("totalAmount", amount(total_amount)),
         ("totalFee", amount(total_fee)),
         ("reward", amount(reward)),
-        ("payloadLength", Json::int(header.payload_length)),
-        ("payloadHash", Json::text(&header.payload_hash)),
-        (
-            "generatorPublicKey",
-            Json::text(&header.generator_public_key),
-        ),
-        ("blockSignature", Json::text(&header.block_signature)),
+        ("payloadLength", int(header.payload_length)),
+        ("payloadHash", text(&header.payload_hash)),
+        ("generatorPublicKey", text(&header.generator_public_key)),
+        ("blockSignature", text(&header.block_signature)),
     ])
 }
 
-fn plugin_json(plugin: &Plugin) -> Json {
-    Json::object([
-        ("port", Json::int(plugin.port)),
-        ("enabled", plugin.enabled.map(Json::Bool)),
-        (
-            "estimateTotalCount",
-            plugin.estimate_total_count.map(Json::Bool),
-        ),
+fn plugin(plugin: &Plugin) -> Json {
+    object([
+        ("port", int(plugin.port)),
+        ("enabled", flag(plugin.enabled)),
+        ("estimateTotalCount", flag(plugin.estimate_total_count)),
     ])
 }
