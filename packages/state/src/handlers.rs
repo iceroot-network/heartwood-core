@@ -8,6 +8,7 @@
 use heartwood_crypto::{Params, Transaction};
 use thiserror::Error;
 
+use crate::errors::WalletError;
 use crate::undo::TxUndo;
 use crate::wallets::WalletRepository;
 
@@ -34,6 +35,21 @@ pub struct TransactionRejected {
     pub class: &'static str,
     /// What was refused.
     pub detail: String,
+}
+
+/// A wallet value that left its range, as a refusal: the reference's failed `assert` on a negative
+/// balance is an `AssertionError`, and its other throws in the same places are plain `Error`s.
+impl From<WalletError> for TransactionRejected {
+    fn from(error: WalletError) -> TransactionRejected {
+        let class = match error {
+            WalletError::NegativeBalance { .. } => "AssertionError",
+            _ => "Error",
+        };
+        TransactionRejected {
+            class,
+            detail: error.to_string(),
+        }
+    }
 }
 
 /// The transaction rules, as the state calls them.
