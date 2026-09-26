@@ -5,10 +5,10 @@
 //!
 //! - [`format`](mod@format): the line format of the reference's pretty printer, with its level colours and
 //!   emoji codes. Console lines are coloured; file lines are not.
-//! - [`rotation`]: the log files: `<stem>-current.log`, rotated daily and when full into
+//! - [`rotation`]: the log files: `<stem>-current.log`, rotated daily into
 //!   `<stem>-<YYYY-MM-DD>[.<n>].log.gz`, keeping at most 10 rotated files and 100 MiB.
-//! - [`driver`]: [`init`], which installs the console and file outputs for the levels of
-//!   [`LoggerOptions`].
+//! - [`driver`]: [`LineLayer`], the `tracing` layer that writes the lines, and [`init`], which
+//!   installs it with the console and file outputs for the levels of [`LoggerOptions`].
 //! - [`errors`]: the crate's error type.
 //!
 //! The levels are the kernel's, [`Level`].
@@ -32,5 +32,5 @@ pub mod rotation;
 
 pub use heartwood_kernel::log::Level;
 
-pub use crate::driver::{LoggerGuard, LoggerOptions, init};
+pub use crate::driver::{LineLayer, LoggerGuard, LoggerOptions, init};
 pub use crate::errors::LoggerError;
