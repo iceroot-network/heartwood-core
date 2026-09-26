@@ -5,7 +5,7 @@
 //! the reference registers are refused at decode.
 //!
 //! - [`types`]: [`Transaction`] and its fields; the per-type assets in `types::core` and
-//!   `types::solar`.
+//!   `types::group2`.
 //! - [`codec`]: the common part of the wire format (header, memo, signatures).
 //! - [`serialiser`] and [`deserialiser`]: whole transactions to and from bytes.
 //! - [`factory`]: [`Transaction::decode`], [`Transaction::decode_trusted`] and

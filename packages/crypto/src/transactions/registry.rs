@@ -2,10 +2,11 @@
 
 use crate::errors::DecodeError;
 
-/// Type group 1, the types inherited from the reference's core.
+/// Type group 1, the core types: transfer, second-signature registration, delegate registration
+/// and delegate resignation.
 pub const TYPE_GROUP_CORE: u32 = 1;
-/// Type group 2, the reference's own types.
-pub const TYPE_GROUP_SOLAR: u32 = 2;
+/// Type group 2: burn and vote.
+pub const TYPE_GROUP_2: u32 = 2;
 
 /// A transaction type that this implementation carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -34,8 +35,8 @@ impl TransactionType {
             (TYPE_GROUP_CORE, 2) => Ok(TransactionType::DelegateRegistration),
             (TYPE_GROUP_CORE, 6) => Ok(TransactionType::Transfer),
             (TYPE_GROUP_CORE, 7) => Ok(TransactionType::DelegateResignation),
-            (TYPE_GROUP_SOLAR, 0) => Ok(TransactionType::Burn),
-            (TYPE_GROUP_SOLAR, 2) => Ok(TransactionType::Vote),
+            (TYPE_GROUP_2, 0) => Ok(TransactionType::Burn),
+            (TYPE_GROUP_2, 2) => Ok(TransactionType::Vote),
             (TYPE_GROUP_CORE, 0 | 3 | 4 | 5 | 8 | 9 | 10) => Err(DecodeError::RemovedType {
                 type_group,
                 type_id,
@@ -64,7 +65,7 @@ impl TransactionType {
             | TransactionType::SecondSignature
             | TransactionType::DelegateRegistration
             | TransactionType::DelegateResignation => TYPE_GROUP_CORE,
-            TransactionType::Burn | TransactionType::Vote => TYPE_GROUP_SOLAR,
+            TransactionType::Burn | TransactionType::Vote => TYPE_GROUP_2,
         }
     }
 

@@ -15,7 +15,7 @@ use crate::utils::amounts::format_amount;
 use crate::utils::hex;
 
 pub mod core;
-pub mod solar;
+pub mod group2;
 
 /// A transaction id: the SHA-256 of the transaction's serialised bytes, signatures included.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

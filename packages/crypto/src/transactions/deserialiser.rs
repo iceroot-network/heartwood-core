@@ -3,7 +3,7 @@
 use crate::errors::{DecodeError, SchemaError};
 use crate::transactions::TransactionType;
 use crate::transactions::codec::{self, VERSION};
-use crate::transactions::types::{TransactionData, core, solar};
+use crate::transactions::types::{TransactionData, core, group2};
 use crate::utils::bytes::Reader;
 
 /// The fields in `bytes`: header, memo, asset and signatures, with every byte consumed. Removed
@@ -45,8 +45,8 @@ pub(crate) fn deserialise_raw(
             pending = refusal;
             asset
         }
-        TransactionType::Burn => solar::read_burn(&mut reader)?,
-        TransactionType::Vote => solar::read_vote(&mut reader)?,
+        TransactionType::Burn => group2::read_burn(&mut reader)?,
+        TransactionType::Vote => group2::read_vote(&mut reader)?,
     };
     let (signature, second_signature) = codec::read_signatures(&mut reader)?;
     if check_version && header.version != 0 && header.version != VERSION {

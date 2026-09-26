@@ -4,7 +4,7 @@ use crate::crypto::hash::sha256;
 use crate::errors::{AddressError, EncodeError};
 use crate::managers::Params;
 use crate::transactions::codec;
-use crate::transactions::types::{Asset, TransactionData, TransactionId, core, solar};
+use crate::transactions::types::{Asset, TransactionData, TransactionId, core, group2};
 use crate::utils::bytes::Writer;
 
 /// Which signatures a serialisation leaves out.
@@ -116,8 +116,8 @@ fn serialise_parts(
         Asset::DelegateResignation { resignation_type } => {
             core::write_delegate_resignation(*resignation_type, &mut out);
         }
-        Asset::Burn { amount } => solar::write_burn(*amount, &mut out),
-        Asset::Vote { votes } => solar::write_vote(votes, &mut out)?,
+        Asset::Burn { amount } => group2::write_burn(*amount, &mut out),
+        Asset::Vote { votes } => group2::write_vote(votes, &mut out)?,
     }
     codec::write_signatures(data, options, &mut out);
     check(out.len())?;
