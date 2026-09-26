@@ -436,7 +436,7 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
                 .get(..end)
                 .is_some_and(|prefix| deserialiser::deserialise(prefix).is_ok())
         }),
-        Documented::VotesWithIndices => false,
+        Documented::VotesWithIndices | Documented::FeeKeyValueType => false,
     }
 }
 
