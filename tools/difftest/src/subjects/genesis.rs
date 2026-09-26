@@ -10,7 +10,7 @@ use heartwood_crypto::validation::Mode;
 use heartwood_crypto::{Milestones, Network, Transaction};
 use serde_json::{Map, Value, json};
 
-use super::{Env, Outcome, failed, rejected, text};
+use super::{Env, Outcome, failed, text, unclassified};
 use crate::genesis::{Built, CRYPTO_FILES, Profile};
 use crate::subject::{Case, Verdict};
 
@@ -45,7 +45,7 @@ pub(super) fn generate(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         text(case.input, "epoch")?,
     ) {
         Ok(built) => built,
-        Err(error) => return Ok(rejected(format!("{error:?}"))),
+        Err(error) => return Ok(unclassified(error)),
     };
     let definition = &built.definition;
     let input = &built.input;

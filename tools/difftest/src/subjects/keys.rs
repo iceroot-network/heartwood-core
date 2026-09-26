@@ -4,7 +4,7 @@ use heartwood_crypto::utils::{base58, hex};
 use heartwood_crypto::{Address, KeyPair, PublicKey};
 use serde_json::{Value, json};
 
-use super::{Env, Outcome, hex_bytes, rejected, text};
+use super::{Env, Outcome, hex_bytes, rejected, text, unclassified};
 use crate::subject::{Case, Verdict};
 
 /// The network byte of a case: `input.networkByte`, or the devnet's.
@@ -26,7 +26,7 @@ pub(super) fn from_passphrase(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdic
                 "privateKey": keys.secret_key().to_hex().as_str(),
                 "publicKey": keys.public_key().to_hex(),
             })),
-            Err(error) => rejected(format!("{error:?}")),
+            Err(error) => unclassified(error),
         },
     )
 }

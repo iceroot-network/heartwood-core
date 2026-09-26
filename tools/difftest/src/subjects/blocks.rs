@@ -4,6 +4,7 @@ use heartwood_crypto::blocks::factory::{self, BlockDraft};
 use heartwood_crypto::blocks::{VerifyFailure, serialiser};
 use heartwood_crypto::crypto::hash::{sha256, sha256_concat};
 use heartwood_crypto::crypto::sig;
+use heartwood_crypto::errors::BlockError;
 use heartwood_crypto::managers::Milestones;
 use heartwood_crypto::transactions::serialiser::{SerialiseOptions, serialise};
 use heartwood_crypto::utils::burn::burned_fee;
@@ -15,13 +16,11 @@ use heartwood_crypto::{
 };
 use serde_json::{Map, Value, json};
 
-use super::{Env, Outcome, amount, bytes32, failed, hex_bytes, integer, params, rejected, text};
+use super::{
+    Env, Outcome, amount, block_refused, bytes32, failed, hex_bytes, integer, params, rejected,
+    text, unclassified,
+};
 use crate::subject::{Case, SubjectError, Verdict};
-
-/// A refusal: blocks and milestone files have no observable error classes beyond the verdict.
-fn refused(error: impl std::fmt::Debug) -> Verdict {
-    rejected(format!("{error:?}"))
-}
 
 /// `block.make`: a block shaped as the forger makes it, from transactions read without checks at
 /// the block's height, signed with BIP340 by the factory or with the legacy scheme over the same
@@ -44,7 +43,7 @@ pub(super) fn make(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
             .ok_or_else(|| failed("a transaction is not hex"))?;
         match Transaction::decode_trusted(&bytes, params) {
             Ok(tx) => transactions.push(tx),
-            Err(error) => return Ok(refused(error)),
+            Err(error) => return Ok(unclassified(error)),
         }
     }
     let overrides = input.get("overrides").cloned().unwrap_or_else(|| json!({}));
@@ -56,14 +55,14 @@ pub(super) fn make(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
             .try_fold(0_u64, |sum, tx| sum.checked_add(tx.amount()))
         {
             Some(sum) => sum,
-            None => return Ok(rejected("RangeError")),
+            None => return Ok(unclassified("the total amount does not fit 64 bits")),
         },
     };
     let Some(total_fee) = transactions
         .iter()
         .try_fold(0_u64, |sum, tx| sum.checked_add(tx.fee()))
     else {
-        return Ok(rejected("RangeError"));
+        return Ok(unclassified("the total fee does not fit 64 bits"));
     };
     let draft = BlockDraft {
         version: match overrides.get("version") {
@@ -123,7 +122,8 @@ pub(super) fn make(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let summary = input["summary"].as_bool().unwrap_or(false);
     Ok(match block {
         Ok(block) => Verdict::Output(block_output(&block, &milestones, summary, env)?),
-        Err(error) => refused(error),
+        // Blocks have no observable error classes beyond the verdict.
+        Err(error) => unclassified(error),
     })
 }
 
@@ -136,7 +136,22 @@ pub(super) fn from_bytes(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let summary = case.input["summary"].as_bool().unwrap_or(false);
     Ok(match Block::decode(&bytes, &milestones) {
         Ok(block) => Verdict::Output(block_output(&block, &milestones, summary, env)?),
-        Err(error) => refused(error),
+        Err(error) => block_refused(&error, &bytes),
+    })
+}
+
+/// `block.receive`: a block as a node accepts it from another node, built again from its decoded
+/// fields ([`Block::receive`]).
+pub(super) fn receive(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
+    let milestones = env.milestones(case)?;
+    let Some(bytes) = hex_bytes(case.input, "hex")? else {
+        return Ok(rejected("TypeError"));
+    };
+    let summary = case.input["summary"].as_bool().unwrap_or(false);
+    Ok(match Block::receive(&bytes, &milestones) {
+        Ok(block) => Verdict::Output(block_output(&block, &milestones, summary, env)?),
+        Err(BlockError::Decode(error)) => block_refused(&error, &bytes),
+        Err(error) => unclassified(error),
     })
 }
 
@@ -274,7 +289,7 @@ pub(super) fn reward_calculate(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdic
     let rank: u32 = integer(case.input, "rank")?;
     Ok(match calculate_reward(params, rank) {
         Ok(reward) => Verdict::Output(json!({ "reward": reward.to_string() })),
-        Err(error) => refused(error),
+        Err(error) => unclassified(error),
     })
 }
 
@@ -302,7 +317,7 @@ pub(super) fn config_load(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let devnet = env.devnet()?;
     let milestones = match Milestones::load(text(case.input, "milestones")?, &devnet.network) {
         Ok(milestones) => milestones,
-        Err(error) => return Ok(refused(error)),
+        Err(error) => return Ok(unclassified(error)),
     };
     let merged: Vec<Value> = milestones
         .all()

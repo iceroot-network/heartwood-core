@@ -28,13 +28,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use heartwood_crypto::crypto::hash::sha256;
 use heartwood_crypto::crypto::slots;
-use heartwood_crypto::errors::{BuildError, DecodeError, EncodeError, MemoError};
+use heartwood_crypto::errors::{BlockDecodeError, BuildError, DecodeError, EncodeError, MemoError};
 use heartwood_crypto::managers::{Milestones, Network, Params};
+use heartwood_crypto::transactions::deserialiser;
 use heartwood_crypto::utils::hex;
 use serde_json::Value;
 
 use crate::errors::{Error, Result};
-use crate::subject::{Case, Registry, Subject, SubjectError, Verdict};
+use crate::subject::{Case, Documented, Registry, Subject, SubjectError, Verdict};
 use crate::vectors::VectorSet;
 
 /// The vector class whose chain definition holds the devnet's network and milestone files.
@@ -224,8 +225,10 @@ const OPS: &[(&str, Run)] = &[
     ("vote.validate", transactions::vote_validate),
     ("vote.sort", transactions::vote_sort),
     ("vote.splits", transactions::vote_splits),
+    ("vote.shares", transactions::vote_shares),
     ("block.make", blocks::make),
     ("block.fromBytes", blocks::from_bytes),
+    ("block.receive", blocks::receive),
     ("fee.burned", blocks::fee_burned),
     ("fee.minimum", blocks::fee_minimum),
     ("reward.calculate", blocks::reward_calculate),
@@ -290,9 +293,19 @@ fn params<'m>(milestones: &'m Milestones, case: &Case<'_>) -> Outcome<&'m Params
     Ok(milestones.at(height(case)?))
 }
 
-fn rejected(class: impl Into<String>) -> Verdict {
+/// A rejection with the reference's error class `class`, which L0 compares.
+fn rejected(class: &'static str) -> Verdict {
     Verdict::Rejected {
-        class: class.into(),
+        class: Some(class),
+        detail: class.to_owned(),
+    }
+}
+
+/// A rejection whose error class is not observable: only the verdict is compared.
+fn unclassified(error: impl std::fmt::Debug) -> Verdict {
+    Verdict::Rejected {
+        class: None,
+        detail: format!("{error:?}"),
     }
 }
 
@@ -307,42 +320,130 @@ fn decode_class(error: &DecodeError) -> &'static str {
     }
 }
 
-/// The error class the reference raises when it refuses to build a transaction or read its JSON.
-fn build_class(error: &BuildError) -> String {
+/// The error class the reference raises when it refuses to build a transaction or read its JSON,
+/// where it is observable.
+fn build_class(error: &BuildError) -> Option<&'static str> {
     match error {
-        BuildError::Schema(_) => "TransactionSchemaError".into(),
-        BuildError::Decode(error) => decode_class(error).into(),
-        BuildError::Memo(MemoError::TooLong { .. }) => "MemoLengthExceededError".into(),
-        BuildError::TooManyTransfers { .. } => "MaximumTransferCountExceededError".into(),
-        BuildError::Encode(EncodeError::VoteAssetTooLarge { .. }) => {
-            "VoteAssetTooLargeError".into()
-        }
-        other => format!("{other:?}"),
+        BuildError::Schema(_) => Some("TransactionSchemaError"),
+        BuildError::Decode(error) => Some(decode_class(error)),
+        BuildError::Memo(MemoError::TooLong { .. }) => Some("MemoLengthExceededError"),
+        BuildError::TooManyTransfers { .. } => Some("MaximumTransferCountExceededError"),
+        BuildError::Encode(EncodeError::VoteAssetTooLarge { .. }) => Some("VoteAssetTooLargeError"),
+        _ => None,
     }
 }
 
-/// The decode refusals that are documented differences from the reference, with the reference's
-/// behaviour: it decodes these forms and refuses them only when the transaction is applied, so a
-/// block that holds one is refused either way.
-fn refused_by_design(error: &DecodeError) -> Option<&'static str> {
+/// A refused build or JSON read: its class when it is observable, else the verdict only.
+fn build_refused(error: &BuildError) -> Verdict {
+    match build_class(error) {
+        Some(class) => rejected(class),
+        None => unclassified(error),
+    }
+}
+
+/// The documented difference of a decode refusal, if it is one. The reference decodes these
+/// forms, and all but the memo it refuses only when the transaction is applied.
+fn documented(error: &DecodeError) -> Option<Documented> {
     match error {
-        DecodeError::RemovedType { .. } => Some(
-            "a removed type: the reference decodes it and refuses it when it is applied (its \
-             handler is inactive)",
-        ),
-        DecodeError::UnsupportedHeaderType(_) => {
-            Some("the extended header: the reference decodes it and refuses it when it is applied")
-        }
-        DecodeError::InvalidMemo => Some(
-            "a memo that is not valid UTF-8: the reference replaces the bad bytes, which changes \
-             the bytes it hashes, and accepts it",
-        ),
-        DecodeError::MultiSignature => Some(
-            "multi-signature entries after the signatures: the reference reads them and refuses \
-             the transaction when it is applied (no wallet can register a multi-signature)",
-        ),
+        DecodeError::RemovedType { .. } => Some(Documented::RemovedType),
+        DecodeError::UnsupportedHeaderType(1) => Some(Documented::ExtendedHeader),
+        DecodeError::InvalidMemo => Some(Documented::NonUtf8Memo),
+        DecodeError::MultiSignature => Some(Documented::MultiSignature),
         _ => None,
     }
+}
+
+/// A refused transaction decode of `bytes`: a documented difference, with its form checked on
+/// `bytes`, or the reference's error class.
+fn decode_refused(error: &DecodeError, bytes: &[u8]) -> Verdict {
+    match documented(error) {
+        Some(difference) => Verdict::RefusedByDesign {
+            difference,
+            holds: has_form(difference, bytes),
+        },
+        None => rejected(decode_class(error)),
+    }
+}
+
+// The documented forms, checked on the transaction bytes with the fixed offsets of the wire
+// format rather than with the decoder whose refusal they explain.
+
+/// The header type byte of the standard header and of the extended header.
+const STANDARD_HEADER: u8 = 0xff;
+const EXTENDED_HEADER: u8 = 0xfe;
+/// Where the type group, the type and the memo length are in a transaction with the standard
+/// header.
+const TYPE_GROUP_AT: usize = 3;
+const TYPE_AT: usize = 7;
+const MEMO_AT: usize = 58;
+/// Bytes of a multi-signature entry.
+const MULTI_SIGNATURE_ENTRY: usize = 65;
+
+/// Whether the transaction `bytes` have the form of `difference`.
+fn has_form(difference: Documented, bytes: &[u8]) -> bool {
+    let standard = bytes.first() == Some(&STANDARD_HEADER);
+    match difference {
+        Documented::ExtendedHeader => bytes.first() == Some(&EXTENDED_HEADER),
+        Documented::RemovedType => {
+            let group = bytes
+                .get(TYPE_GROUP_AT..TYPE_GROUP_AT + 4)
+                .and_then(|b| <[u8; 4]>::try_from(b).ok())
+                .map(u32::from_le_bytes);
+            let kind = bytes
+                .get(TYPE_AT..TYPE_AT + 2)
+                .and_then(|b| <[u8; 2]>::try_from(b).ok())
+                .map(u16::from_le_bytes);
+            standard && group == Some(1) && matches!(kind, Some(0 | 3 | 4 | 5 | 8 | 9 | 10))
+        }
+        Documented::NonUtf8Memo => {
+            let length = bytes.get(MEMO_AT).map(|&n| usize::from(n));
+            let memo = length.and_then(|n| bytes.get(MEMO_AT + 1..MEMO_AT + 1 + n));
+            standard && memo.is_some_and(|memo| std::str::from_utf8(memo).is_err())
+        }
+        Documented::MultiSignature => (1..=bytes.len() / MULTI_SIGNATURE_ENTRY).any(|entries| {
+            let end = bytes.len() - entries * MULTI_SIGNATURE_ENTRY;
+            bytes
+                .get(..end)
+                .is_some_and(|prefix| deserialiser::deserialise(prefix).is_ok())
+        }),
+        Documented::VotesWithIndices => false,
+    }
+}
+
+/// The bytes of transaction `index` in the block `bytes`, read with the fixed offsets of the
+/// block format: the header and signature, one `u32` length per transaction, then the
+/// transactions.
+fn block_transaction(bytes: &[u8], index: usize) -> Option<&[u8]> {
+    const COUNT_AT: usize = 44;
+    const TRANSACTIONS_AT: usize = 141 + 64;
+    let count = usize::try_from(u32::from_le_bytes(
+        bytes.get(COUNT_AT..COUNT_AT + 4)?.try_into().ok()?,
+    ))
+    .ok()?;
+    let length_at = |i: usize| -> Option<usize> {
+        let at = TRANSACTIONS_AT + 4 * i;
+        usize::try_from(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?)).ok()
+    };
+    let mut start = TRANSACTIONS_AT.checked_add(count.checked_mul(4)?)?;
+    for i in 0..index {
+        start = start.checked_add(length_at(i)?)?;
+    }
+    bytes.get(start..start.checked_add(length_at(index)?)?)
+}
+
+/// A refused block decode of `bytes`: a transaction's documented difference, with its form
+/// checked on that transaction's bytes, or a refusal whose class is not observable.
+fn block_refused(error: &BlockDecodeError, bytes: &[u8]) -> Verdict {
+    if let BlockDecodeError::Transaction { index, source } = error
+        && let Some(difference) = documented(source)
+    {
+        return Verdict::RefusedByDesign {
+            difference,
+            holds: block_transaction(bytes, *index)
+                .is_some_and(|transaction| has_form(difference, transaction)),
+        };
+    }
+    unclassified(error)
 }
 
 #[cfg(test)]

@@ -2,22 +2,22 @@
 //! rules.
 
 use heartwood_crypto::crypto::hash::sha256;
-use heartwood_crypto::errors::{BuildError, DecodeError};
+use heartwood_crypto::errors::{BuildError, DecodeError, JsonError};
 use heartwood_crypto::transactions::codec::HEADER_SIZE;
 use heartwood_crypto::transactions::serialiser::{SerialiseOptions, serialise};
 use heartwood_crypto::transactions::types::{Asset, Memo, ResignationType, TransferItem, Votes};
 use heartwood_crypto::transactions::{TransactionBuilder, TransactionType};
-use heartwood_crypto::utils::hex;
 use heartwood_crypto::utils::sort_votes::sort_votes;
+use heartwood_crypto::utils::{hex, js};
 use heartwood_crypto::validation::{Mode, votes_from_json};
 use heartwood_crypto::{Address, Aux, KeyPair, Params, Transaction, TransactionData};
 use serde_json::{Map, Value, json};
 
 use super::{
-    Env, Outcome, build_class, decode_class, failed, hex_bytes, integer, params, refused_by_design,
-    rejected, text,
+    Env, Outcome, build_refused, decode_class, decode_refused, documented, failed, hex_bytes,
+    integer, params, rejected, text, unclassified,
 };
-use crate::subject::{Case, SubjectError, Verdict};
+use crate::subject::{Case, Documented, SubjectError, Verdict};
 
 /// The builders of the kept types, by the reference's builder name.
 const BUILDERS: [&str; 6] = [
@@ -39,17 +39,6 @@ fn output(tx: &Transaction, params: &Params) -> Value {
     })
 }
 
-/// A refused decode: a documented difference, or the reference's error class.
-fn refused(error: &DecodeError) -> Verdict {
-    match refused_by_design(error) {
-        Some(reason) => Verdict::RefusedByDesign {
-            class: format!("{error:?}"),
-            reason: reason.into(),
-        },
-        None => rejected(decode_class(error)),
-    }
-}
-
 /// `tx.fromBytes`: the strict decode (or the non-strict one when `input.strict` is false) under
 /// the rules at the case's height.
 pub(super) fn from_bytes(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
@@ -65,7 +54,7 @@ pub(super) fn from_bytes(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     };
     Ok(match Transaction::decode_with(&bytes, params, mode) {
         Ok(tx) => Verdict::Output(output(&tx, params)),
-        Err(error) => refused(&error),
+        Err(error) => decode_refused(&error, &bytes),
     })
 }
 
@@ -73,11 +62,53 @@ pub(super) fn from_bytes(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
 pub(super) fn from_json(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let milestones = env.milestones(case)?;
     let params = params(&milestones, case)?;
-    Ok(match Transaction::from_json(&case.input["json"], params) {
+    let json = &case.input["json"];
+    Ok(match Transaction::from_json(json, params) {
         Ok(tx) => Verdict::Output(output(&tx, params)),
-        Err(BuildError::Decode(error)) => refused(&error),
-        Err(error) => rejected(build_class(&error)),
+        Err(error) => json_refused(&error, json),
     })
+}
+
+/// A refused JSON read of `json`: a documented difference, with its form checked on the JSON, or
+/// the reference's error class where it is observable.
+fn json_refused(error: &BuildError, json: &Value) -> Verdict {
+    let votes = &json["asset"]["votes"];
+    let difference = match error {
+        BuildError::Decode(error) => documented(error),
+        BuildError::Json(JsonError::Invalid {
+            field: "asset.votes",
+            ..
+        }) if js::is_truthy(votes) => Some(Documented::VotesWithIndices),
+        _ => None,
+    };
+    match difference {
+        Some(difference) => Verdict::RefusedByDesign {
+            difference,
+            holds: has_json_form(difference, json),
+        },
+        None => build_refused(error),
+    }
+}
+
+/// Whether the transaction `json` has the form of `difference`.
+fn has_json_form(difference: Documented, json: &Value) -> bool {
+    let number = |key: &str| json.get(key).and_then(Value::as_f64);
+    match difference {
+        Documented::ExtendedHeader => number("headerType") == Some(1.0),
+        Documented::MultiSignature => json.get("signatures").is_some(),
+        Documented::RemovedType => {
+            let group = json.get("typeGroup").map_or(Some(1.0), Value::as_f64);
+            group == Some(1.0)
+                && number("type")
+                    .is_some_and(|kind| [0.0, 3.0, 4.0, 5.0, 8.0, 9.0, 10.0].contains(&kind))
+        }
+        Documented::VotesWithIndices => match &json["asset"]["votes"] {
+            Value::Array(items) => !items.is_empty(),
+            Value::String(text) => !text.is_empty(),
+            _ => false,
+        },
+        Documented::NonUtf8Memo => false,
+    }
 }
 
 /// `tx.build`: the reference's builder calls, translated to [`TransactionBuilder`], signed with the
@@ -129,7 +160,7 @@ pub(super) fn build(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
             "memo" if argument_text()?.is_empty() => {}
             "memo" => match Memo::new(argument_text()?) {
                 Ok(value) => memo = Some(value),
-                Err(error) => return Ok(rejected(build_class(&BuildError::Memo(error)))),
+                Err(error) => return Ok(build_refused(&BuildError::Memo(error))),
             },
             // `recipientId` and `amount` set the one item of a single transfer.
             "recipientId" => {
@@ -250,7 +281,7 @@ pub(super) fn build(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
             };
             Verdict::Output(out)
         }
-        Err(error) => rejected(build_class(&error)),
+        Err(error) => build_refused(&error),
     })
 }
 
@@ -321,7 +352,8 @@ pub(super) fn handler_activation(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Ver
     Ok(match TransactionType::from_wire(group, kind) {
         Ok(kind) => Verdict::Output(json!({ "handler": handler_name(kind) })),
         Err(DecodeError::RemovedType { .. }) => rejected("DeactivatedTransactionHandlerError"),
-        Err(error) => rejected(format!("{error:?}")),
+        Err(DecodeError::UnknownType { .. }) => rejected("InvalidTransactionTypeError"),
+        Err(error) => unclassified(error),
     })
 }
 
@@ -337,14 +369,22 @@ fn handler_name(kind: TransactionType) -> &'static str {
     }
 }
 
-/// `vote.validate`: the vote rules on a JSON vote object; names that are not delegate names are
-/// removed, as the reference's schema removes them.
+/// `vote.validate`: the vote rules on a JSON vote object. An accepted object is returned as the
+/// reference's schema leaves it: the names that are not delegate names removed, and the other
+/// entries with their values as given, in the object's order.
 pub(super) fn vote_validate(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let votes = case.input["votes"]
         .as_object()
         .ok_or_else(|| failed("input.votes is not an object"))?;
     Ok(match votes_from_json(votes) {
-        Ok(votes) => Verdict::Output(json!({ "votes": vote_entries(&votes) })),
+        Ok(kept) => {
+            let entries: Vec<Value> = js::property_order(votes)
+                .into_iter()
+                .filter(|(name, _)| kept.contains_key(name.as_str()))
+                .map(|(name, value)| json!([name, value]))
+                .collect();
+            Verdict::Output(json!({ "votes": entries }))
+        }
         Err(_) => rejected("TransactionSchemaError"),
     })
 }
@@ -426,6 +466,57 @@ pub(super) fn vote_splits(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         "refused": refused,
         "verdictsSha256": hex::encode(&sha256(&verdicts)),
         "assetsSha256": hex::encode(&sha256(&assets)),
+    })))
+}
+
+/// `vote.shares`: the vote rules on shares within `ulps` units in the last place of every cent from
+/// `from` to `to`, each validated beside an exact cent that completes the sum (see the oracle's
+/// operation); the accepted count, the accepted shares that are not exact cents, and SHA-256 over
+/// the verdicts.
+pub(super) fn vote_shares(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
+    let from: u32 = integer(case.input, "from")?;
+    let to: u32 = integer(case.input, "to")?;
+    let ulps: i64 = integer(case.input, "ulps")?;
+    if from < 1 || to > 10_000 || from > to || ulps > 1_000 {
+        return Ok(rejected("RangeError"));
+    }
+    let (mut verdicts, mut accepted, mut off_cent) = (Vec::new(), 0_u64, Vec::new());
+    for cent in from..=to {
+        let exact = f64::from(cent) / 100.0;
+        for step in -ulps..=ulps {
+            // A positive double's neighbours are its bit pattern plus or minus one.
+            let share = exact
+                .to_bits()
+                .checked_add_signed(step)
+                .map(f64::from_bits)
+                .ok_or_else(|| failed("a share out of range"))?;
+            let basis_points = (share * 100.0).round();
+            let mut votes = Map::new();
+            votes.insert("a".into(), json!(share));
+            if basis_points < 10_000.0 {
+                votes.insert("b".into(), json!((10_000.0 - basis_points) / 100.0));
+            }
+            let ok = votes_from_json(&votes).is_ok();
+            verdicts.push(if ok { b'1' } else { b'0' });
+            if ok {
+                accepted += 1;
+                if step != 0 {
+                    off_cent.push(js::number_to_string(share));
+                }
+            }
+        }
+    }
+    let lines: String = off_cent.iter().map(|share| format!("{share}\n")).collect();
+    let shares = u64::from(to - from + 1) * u64::try_from(2 * ulps + 1).unwrap_or(0);
+    Ok(Verdict::Output(json!({
+        "shares": shares,
+        "accepted": accepted,
+        "offCent": {
+            "count": off_cent.len(),
+            "first": off_cent.iter().take(20).collect::<Vec<_>>(),
+            "sha256": hex::encode(&sha256(lines.as_bytes())),
+        },
+        "verdictsSha256": hex::encode(&sha256(&verdicts)),
     })))
 }
 

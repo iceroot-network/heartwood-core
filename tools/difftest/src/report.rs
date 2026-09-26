@@ -17,7 +17,22 @@ pub enum Outcome {
     /// Both produced an output, and the outputs differ.
     Mismatch(Vec<Difference>),
     /// One side accepted and the other rejected.
-    VerdictMismatch { oracle: String, heartwood: String },
+    VerdictMismatch {
+        /// The oracle's verdict.
+        oracle: String,
+        /// Heartwood's verdict.
+        heartwood: String,
+    },
+    /// Both rejected, with different error classes where the class is observable.
+    ClassMismatch {
+        /// The oracle's error class.
+        oracle: String,
+        /// The class Heartwood's subject names.
+        heartwood: String,
+    },
+    /// Heartwood refused the case as a documented difference, but the input does not have the
+    /// documented form: an undocumented refusal. The text is the difference's reason.
+    Mislabelled(String),
     /// Heartwood rejects the case on purpose where the reference accepts it: a documented
     /// difference, with its reason. Not a failure, and not counted as compared.
     Documented(String),
@@ -33,7 +48,11 @@ impl Outcome {
     pub fn is_failure(&self) -> bool {
         matches!(
             self,
-            Outcome::Mismatch(_) | Outcome::VerdictMismatch { .. } | Outcome::HarnessError(_)
+            Outcome::Mismatch(_)
+                | Outcome::VerdictMismatch { .. }
+                | Outcome::ClassMismatch { .. }
+                | Outcome::Mislabelled(_)
+                | Outcome::HarnessError(_)
         )
     }
 
@@ -41,7 +60,11 @@ impl Outcome {
     pub fn is_compared(&self) -> bool {
         matches!(
             self,
-            Outcome::Pass | Outcome::Mismatch(_) | Outcome::VerdictMismatch { .. }
+            Outcome::Pass
+                | Outcome::Mismatch(_)
+                | Outcome::VerdictMismatch { .. }
+                | Outcome::ClassMismatch { .. }
+                | Outcome::Mislabelled(_)
         )
     }
 }
@@ -225,6 +248,17 @@ impl fmt::Display for Report {
                 Outcome::VerdictMismatch { oracle, heartwood } => {
                     writeln!(f, "      oracle {oracle}, Heartwood {heartwood}")?;
                 }
+                Outcome::ClassMismatch { oracle, heartwood } => {
+                    writeln!(
+                        f,
+                        "      oracle rejected ({oracle}), Heartwood rejected ({heartwood})"
+                    )?;
+                }
+                Outcome::Mislabelled(reason) => writeln!(
+                    f,
+                    "      refused as a documented difference, but the input does not have its \
+                     form: {reason}"
+                )?,
                 Outcome::HarnessError(message) => writeln!(f, "      harness error: {message}")?,
                 _ => {}
             }

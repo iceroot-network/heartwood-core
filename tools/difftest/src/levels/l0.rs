@@ -50,8 +50,9 @@ fn judge(record: &Record, registry: &Registry) -> Outcome {
 }
 
 /// Run `case` with the subject registered for its operation and judge the result against the
-/// oracle's `expected` answer. Error messages are never compared, and only the verdict of a
-/// rejection is.
+/// oracle's `expected` answer. Error messages are never compared. When both sides reject, the
+/// error classes are compared where Heartwood's subject names the reference's class; a refusal
+/// by design must come with an input of the documented form.
 pub fn judge_case(case: &Case<'_>, expected: &Expected, registry: &Registry) -> Outcome {
     let Some(subject) = registry.get(case.op) else {
         return Outcome::NoSubject;
@@ -68,16 +69,24 @@ pub fn judge_case(case: &Case<'_>, expected: &Expected, registry: &Registry) -> 
                 Outcome::Mismatch(differences)
             }
         }
-        (Ok(Verdict::Rejected { .. } | Verdict::RefusedByDesign { .. }), Expected::Error(_)) => {
-            Outcome::Pass
-        }
-        (Ok(Verdict::RefusedByDesign { reason, .. }), Expected::Output(_)) => {
-            Outcome::Documented(reason)
-        }
-        (Ok(Verdict::Rejected { class }), Expected::Output(_)) => Outcome::VerdictMismatch {
-            oracle: "accepted".into(),
-            heartwood: format!("rejected ({class})"),
+        (Ok(Verdict::Rejected { class, .. }), Expected::Error(error)) => match class {
+            Some(class) if class != error.class => Outcome::ClassMismatch {
+                oracle: error.class.clone(),
+                heartwood: class.to_owned(),
+            },
+            _ => Outcome::Pass,
         },
+        (Ok(Verdict::RefusedByDesign { difference, holds }), expected) => match (holds, expected) {
+            (false, _) => Outcome::Mislabelled(difference.reason().to_owned()),
+            (true, Expected::Error(_)) => Outcome::Pass,
+            (true, Expected::Output(_)) => Outcome::Documented(difference.reason().to_owned()),
+        },
+        (Ok(Verdict::Rejected { class, detail }), Expected::Output(_)) => {
+            Outcome::VerdictMismatch {
+                oracle: "accepted".into(),
+                heartwood: format!("rejected ({})", class.map_or(detail, str::to_owned)),
+            }
+        }
         (Ok(Verdict::Output(_)), Expected::Error(error)) => Outcome::VerdictMismatch {
             oracle: format!("rejected ({})", error.class),
             heartwood: "accepted".into(),
@@ -192,7 +201,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::subject::Subject;
+    use crate::subject::{Documented, Subject};
     use crate::vectors::testutil::{TestDir, keys_record, write_file};
 
     /// Answers keys.fromPassphrase with a fixed public key, or rejects "reject me".
@@ -205,7 +214,24 @@ mod tests {
         fn run(&self, case: &Case<'_>) -> Result<Verdict, SubjectError> {
             match case.input["passphrase"].as_str() {
                 Some("reject me") => Ok(Verdict::Rejected {
-                    class: "KeyError".into(),
+                    class: Some("KeyError"),
+                    detail: "KeyError".into(),
+                }),
+                Some("wrong class") => Ok(Verdict::Rejected {
+                    class: Some("OtherError"),
+                    detail: "OtherError".into(),
+                }),
+                Some("any class") => Ok(Verdict::Rejected {
+                    class: None,
+                    detail: "Internal".into(),
+                }),
+                Some("by design") => Ok(Verdict::RefusedByDesign {
+                    difference: Documented::ExtendedHeader,
+                    holds: true,
+                }),
+                Some("mislabelled") => Ok(Verdict::RefusedByDesign {
+                    difference: Documented::ExtendedHeader,
+                    holds: false,
                 }),
                 Some("later") => Err(SubjectError::Unsupported("later".into())),
                 _ => Ok(Verdict::Output(
@@ -247,7 +273,7 @@ mod tests {
     fn subjects_pass_fail_and_skip() {
         let rejected = json!({"op": "keys.fromPassphrase", "network": "devnet", "height": 2,
                               "input": {"passphrase": "reject me"},
-                              "error": {"class": "Error", "message": "no"}});
+                              "error": {"class": "KeyError", "message": "no"}});
         let accepted_by_ts = keys_record("reject me", "02cc");
         let later = keys_record("later", "02dd");
         let (_dir, set) = set(
@@ -281,6 +307,57 @@ mod tests {
         );
         assert!(
             text.contains("oracle accepted, Heartwood rejected (KeyError)"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn rejections_compare_their_classes_and_documented_forms() {
+        let error = |passphrase: &str, class: &str| {
+            json!({"op": "keys.fromPassphrase", "network": "devnet", "height": 2,
+                   "input": {"passphrase": passphrase},
+                   "error": {"class": class, "message": "no"}})
+        };
+        let (_dir, set) = set(
+            "classes",
+            &[
+                error("reject me", "KeyError"),
+                error("wrong class", "KeyError"),
+                error("any class", "KeyError"),
+                error("by design", "KeyError"),
+                keys_record("by design", "02aa"),
+                keys_record("mislabelled", "02aa"),
+                error("mislabelled", "KeyError"),
+            ],
+            "native",
+        );
+        let mut registry = Registry::new();
+        registry.register(Box::new(FakeKeys("02aa"))).unwrap();
+        let report = run(&set, &registry);
+        let outcomes: Vec<&Outcome> = report.results.iter().map(|r| &r.outcome).collect();
+        assert_eq!(outcomes[0], &Outcome::Pass);
+        assert_eq!(
+            outcomes[1],
+            &Outcome::ClassMismatch {
+                oracle: "KeyError".into(),
+                heartwood: "OtherError".into()
+            }
+        );
+        assert_eq!(outcomes[2], &Outcome::Pass);
+        assert_eq!(outcomes[3], &Outcome::Pass);
+        assert!(matches!(outcomes[4], Outcome::Documented(_)));
+        assert!(matches!(outcomes[5], Outcome::Mislabelled(_)));
+        assert!(matches!(outcomes[6], Outcome::Mislabelled(_)));
+        assert_eq!(report.failed(), 3);
+        let text = report.to_string();
+        assert!(
+            text.contains("oracle rejected (KeyError), Heartwood rejected (OtherError)"),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "refused as a documented difference, but the input does not have its form"
+            ),
             "{text}"
         );
     }

@@ -10,7 +10,7 @@ use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Aux, SchemeId, SecretKey, Signature, SigningDomain};
 use serde_json::{Value, json};
 
-use super::{Env, Outcome, bytes32, decode_class, hex_bytes, params, rejected, text};
+use super::{Env, Outcome, bytes32, hex_bytes, params, rejected, text, unclassified};
 use crate::subject::{Case, SubjectError, Verdict};
 
 /// The published vector files of the external class, as committed beside the vectors.
@@ -39,11 +39,11 @@ fn sign(case: &Case<'_>, scheme: SchemeId, domain: SigningDomain, aux: Aux) -> O
         hex_bytes(case.input, "message")?,
         SecretKey::from_hex(text(case.input, "privateKey")?),
     ) else {
-        return Ok(rejected("Error"));
+        return Ok(unclassified("a message or key the reference cannot read"));
     };
     Ok(match sig::sign(scheme, domain, &message, &secret, aux) {
         Ok(signature) => Verdict::Output(json!({ "signature": signature.to_hex() })),
-        Err(error) => rejected(format!("{error:?}")),
+        Err(error) => unclassified(error),
     })
 }
 
@@ -55,7 +55,7 @@ fn verify(case: &Case<'_>, scheme: SchemeId, domain: SigningDomain) -> Outcome<V
         hex_bytes(case.input, "signature")?,
         hex_bytes(case.input, "publicKey")?,
     ) else {
-        return Ok(rejected("Error"));
+        return Ok(unclassified("a message, signature or key that is not hex"));
     };
     let valid = Signature::from_bytes(&signature)
         .is_ok_and(|signature| sig::verify(scheme, domain, &message, &signature, &key));
@@ -101,19 +101,22 @@ pub(super) fn transaction_preimages(env: &Env<'_>, case: &Case<'_>) -> Outcome<V
     let milestones = env.milestones(case)?;
     let params = params(&milestones, case)?;
     let Some(bytes) = hex_bytes(case.input, "hex")? else {
-        return Ok(rejected("Error"));
+        return Ok(rejected("TypeError"));
     };
+    // The reference's deserialiser raises its errors unwrapped, so their classes are not the
+    // factory's: only the verdict is compared.
     let data = match deserialiser::deserialise(&bytes) {
         Ok(data) => data,
-        Err(error) => return Ok(rejected(decode_class(&error))),
+        Err(error) => return Ok(unclassified(error)),
     };
     let entry = |options: SerialiseOptions| -> Outcome<Value> {
         let bytes = serialiser::serialise(&data, options, params)
             .map_err(|e| super::failed(format!("a decoded transaction does not serialise: {e}")))?;
         Ok(json!({ "bytes": hex::encode(&bytes), "hash": hex::encode(&sha256(&bytes)) }))
     };
-    let Ok(id) = serialiser::transaction_id(&data, params) else {
-        return Ok(rejected("Error"));
+    let id = match serialiser::transaction_id(&data, params) {
+        Ok(id) => id,
+        Err(error) => return Ok(unclassified(error)),
     };
     Ok(Verdict::Output(json!({
         "id": id.to_hex(),
@@ -153,6 +156,6 @@ pub(super) fn entropy_to_mnemonic(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Ve
     };
     Ok(match bip39::entropy_to_mnemonic(&entropy) {
         Ok(mnemonic) => Verdict::Output(json!({ "mnemonic": mnemonic.as_str() })),
-        Err(error) => rejected(format!("{error:?}")),
+        Err(error) => unclassified(error),
     })
 }

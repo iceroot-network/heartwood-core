@@ -19,13 +19,72 @@ use crate::subjects::{self, Devnet};
 pub enum Verdict {
     /// Accepted, with the output in the oracle's JSON shape.
     Output(Value),
-    /// Rejected. `class` is Heartwood's error class; classes are compared only where they are
-    /// observable, and messages never are.
-    Rejected { class: String },
-    /// Rejected on purpose where the reference accepts: a documented difference. `reason` says
-    /// what the reference does instead. When the reference rejects the case too, the verdicts
-    /// agree.
-    RefusedByDesign { class: String, reason: String },
+    /// Rejected. `class` is the reference's error class for this refusal where the subject models
+    /// it, and L0 then compares it with the oracle's; `None` where the class is not observable (the
+    /// reference raises a generic error, or refuses at another stage), and only the verdict is
+    /// compared. `detail` names Heartwood's error, for reports.
+    Rejected {
+        /// The reference's error class, when it is observable.
+        class: Option<&'static str>,
+        /// Heartwood's error.
+        detail: String,
+    },
+    /// Rejected on purpose where the reference accepts: a documented difference. `holds` says
+    /// whether the input really has the documented form, checked on the input itself; L0 fails the
+    /// case when it does not. When the reference rejects the case too, the verdicts agree.
+    RefusedByDesign {
+        /// The documented difference.
+        difference: Documented,
+        /// Whether the input has the documented form.
+        holds: bool,
+    },
+}
+
+/// A form of input that Heartwood refuses on purpose where the reference accepts it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Documented {
+    /// A transaction of a removed type (type group 1, types 0, 3, 4, 5, 8, 9 and 10).
+    RemovedType,
+    /// A transaction with the extended header (header type 1), which carries the sender address.
+    ExtendedHeader,
+    /// A transaction with 65-byte multi-signature entries after its signatures.
+    MultiSignature,
+    /// A transaction whose memo is not valid UTF-8.
+    NonUtf8Memo,
+    /// A transaction in JSON form whose `asset.votes` is a non-empty array or string.
+    VotesWithIndices,
+}
+
+impl Documented {
+    /// What the reference does instead, and why the difference is harmless or accepted.
+    pub fn reason(self) -> &'static str {
+        match self {
+            Documented::RemovedType => {
+                "a removed type: the reference decodes it and refuses it when it is applied (its \
+                 handler is inactive), so a block that holds one is refused either way"
+            }
+            Documented::ExtendedHeader => {
+                "the extended header: the reference decodes it and refuses it when it is applied, \
+                 so a block that holds one is refused either way"
+            }
+            Documented::MultiSignature => {
+                "multi-signature entries after the signatures: the reference reads them and \
+                 refuses the transaction when it is applied (no wallet can register a \
+                 multi-signature), so a block that holds one is refused either way"
+            }
+            Documented::NonUtf8Memo => {
+                "a memo that is not valid UTF-8: the reference reads it as replacement characters \
+                 and accepts it, with the id and signature of the replaced text, in a block too; \
+                 a known consensus difference (the copy with the replacement characters has the \
+                 same ids, and both accept it)"
+            }
+            Documented::VotesWithIndices => {
+                "asset.votes as a non-empty array or string in JSON: the reference writes its \
+                 indices as vote names and removes them after it has computed the id (the JSON \
+                 path only; the wire form is exact)"
+            }
+        }
+    }
 }
 
 /// A subject could not produce a verdict.
@@ -42,9 +101,13 @@ pub enum SubjectError {
 /// One case as both levels describe it.
 #[derive(Debug, Clone, Copy)]
 pub struct Case<'a> {
+    /// The oracle operation.
     pub op: &'a str,
+    /// The network the case runs on.
     pub network: &'a str,
+    /// The rule height.
     pub height: u64,
+    /// The operation's input, in the oracle's JSON shape.
     pub input: &'a Value,
 }
 
@@ -63,10 +126,12 @@ pub struct Registry {
 }
 
 impl Registry {
+    /// An empty registry.
     pub fn new() -> Registry {
         Registry::default()
     }
 
+    /// Add `subject`; an operation can have one subject only.
     pub fn register(&mut self, subject: Box<dyn Subject>) -> Result<(), Error> {
         let op = subject.op();
         if self.subjects.contains_key(op) {
@@ -76,14 +141,17 @@ impl Registry {
         Ok(())
     }
 
+    /// The subject of `op`, if one is registered.
     pub fn get(&self, op: &str) -> Option<&dyn Subject> {
         self.subjects.get(op).map(|s| s.as_ref())
     }
 
+    /// The registered operations, in order.
     pub fn ops(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.subjects.keys().copied()
     }
 
+    /// Whether no subject is registered.
     pub fn is_empty(&self) -> bool {
         self.subjects.is_empty()
     }
