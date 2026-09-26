@@ -162,7 +162,7 @@ fn read_back(built: &Built) -> Outcome<Value> {
         .transactions()
         .iter()
         .filter(|tx| {
-            Transaction::decode_with(tx.bytes(), params, Mode::GENESIS)
+            Transaction::decode_with(tx.bytes(), params, Mode::Genesis)
                 .is_ok_and(|decoded| decoded.is_verified())
         })
         .count();

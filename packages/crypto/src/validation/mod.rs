@@ -26,33 +26,34 @@ pub const VOTE_TOTAL_BASIS_POINTS: u32 = 10_000;
 
 /// Which variant of the reference's transaction schema applies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Mode {
-    /// The strict schema, which every received transaction passes: a signature is required.
-    /// The reference's builders use the other one.
-    pub strict: bool,
-    /// The transaction belongs to the network's genesis block: a zero fee passes the fee minimum
-    /// and no fee maximum applies, as the reference allows for the ids its genesis block lists.
-    pub genesis: bool,
+pub enum Mode {
+    /// The strict schema, which every received transaction passes: a signature is required (and,
+    /// in the JSON form, an `id` key).
+    Strict,
+    /// The schema without those requirements, as the reference's builders use it.
+    NonStrict,
+    /// The strict schema for a transaction of the configured genesis block: a zero fee passes the
+    /// fee minimum and no fee maximum applies, as the reference allows for the transaction ids its
+    /// genesis block lists.
+    Genesis,
 }
 
 impl Mode {
-    /// The strict schema.
-    pub const STRICT: Mode = Mode {
-        strict: true,
-        genesis: false,
-    };
+    /// Whether the strict schema applies: [`Mode::Strict`] and [`Mode::Genesis`].
+    pub const fn is_strict(self) -> bool {
+        match self {
+            Mode::Strict | Mode::Genesis => true,
+            Mode::NonStrict => false,
+        }
+    }
 
-    /// The schema without the signature requirement, as the reference's builders use it.
-    pub const NON_STRICT: Mode = Mode {
-        strict: false,
-        genesis: false,
-    };
-
-    /// The strict schema for a transaction of the genesis block.
-    pub const GENESIS: Mode = Mode {
-        strict: true,
-        genesis: true,
-    };
+    /// Whether the fee limits of a genesis transaction apply: [`Mode::Genesis`] only.
+    pub const fn is_genesis(self) -> bool {
+        match self {
+            Mode::Genesis => true,
+            Mode::Strict | Mode::NonStrict => false,
+        }
+    }
 }
 
 /// Apply the rules of the transaction's type to `data` under the merged milestone `params`.
@@ -89,10 +90,10 @@ fn validate_common(data: &TransactionData, params: &Params, mode: Mode) -> Resul
         return Err(SchemaError::invalid("nonce", "must be at most 2^63 - 1"));
     }
     let minimum = fee_minimum(data.kind);
-    if data.fee < minimum && !(data.fee == 0 && mode.genesis) {
+    if data.fee < minimum && !(data.fee == 0 && mode.is_genesis()) {
         return Err(SchemaError::invalid("fee", "is below the type's minimum"));
     }
-    if data.fee > MAX_AMOUNT && !mode.genesis {
+    if data.fee > MAX_AMOUNT && !mode.is_genesis() {
         return Err(SchemaError::invalid("fee", "must be at most 2^63 - 1"));
     }
     if data.sender_public_key.as_bytes().len() != codec::PUBLIC_KEY_SIZE {
@@ -104,7 +105,7 @@ fn validate_common(data: &TransactionData, params: &Params, mode: Mode) -> Resul
             "must be 34 Base58 characters",
         ));
     }
-    if mode.strict && data.signature.is_none() {
+    if mode.is_strict() && data.signature.is_none() {
         return Err(SchemaError::missing("signature"));
     }
     Ok(())

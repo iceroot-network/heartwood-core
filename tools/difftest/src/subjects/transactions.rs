@@ -59,9 +59,9 @@ pub(super) fn from_bytes(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         return Ok(rejected("TypeError"));
     };
     let mode = if case.input.get("strict") == Some(&json!(false)) {
-        Mode::NON_STRICT
+        Mode::NonStrict
     } else {
-        Mode::STRICT
+        Mode::Strict
     };
     Ok(match Transaction::decode_with(&bytes, params, mode) {
         Ok(tx) => Verdict::Output(output(&tx, params)),

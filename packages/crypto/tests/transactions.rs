@@ -343,9 +343,9 @@ enum Skip {
 fn from_bytes(record: &Record, params: &Params) -> Result<Outcome, Skip> {
     let bytes = hex::decode(record.input["hex"].as_str().expect("hex")).expect("hex");
     let mode = if record.input["strict"] == json!(false) {
-        Mode::NON_STRICT
+        Mode::NonStrict
     } else {
-        Mode::STRICT
+        Mode::Strict
     };
     match Transaction::decode_with(&bytes, params, mode) {
         Ok(tx) => Ok(Ok(tx_output(&tx, params))),

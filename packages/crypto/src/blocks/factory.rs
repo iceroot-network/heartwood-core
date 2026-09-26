@@ -121,9 +121,9 @@ pub fn from_json(json: &Value, milestones: &Milestones) -> Result<Block, BlockEr
     let height = integer(fields, "height")?;
     let params = milestones.at(height);
     let mode = if height == 1 {
-        Mode::GENESIS
+        Mode::Genesis
     } else {
-        Mode::STRICT
+        Mode::Strict
     };
     let transactions = match fields.get("transactions") {
         None => Vec::new(),

@@ -304,7 +304,7 @@ fn check_reads_back(label: &str, built: &ChainDefinition, check: &Value) {
         .transactions()
         .iter()
         .filter(|tx| {
-            Transaction::decode_with(tx.bytes(), params, Mode::GENESIS)
+            Transaction::decode_with(tx.bytes(), params, Mode::Genesis)
                 .is_ok_and(|decoded| decoded.is_verified() && decoded.id() == tx.id())
         })
         .count();

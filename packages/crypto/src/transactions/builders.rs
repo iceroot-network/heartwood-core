@@ -111,10 +111,10 @@ impl TransactionBuilder {
         aux: Aux,
         params: &Params,
     ) -> Result<Transaction, BuildError> {
-        self.build_with(keys, aux, params, Mode::NON_STRICT)
+        self.build_with(keys, aux, params, Mode::NonStrict)
     }
 
-    /// [`TransactionBuilder::build`] under the rule variant `mode`: [`Mode::GENESIS`] builds a
+    /// [`TransactionBuilder::build`] under the rule variant `mode`: [`Mode::Genesis`] builds a
     /// transaction of a genesis block, whose fee may be 0.
     pub fn build_with(
         self,
@@ -138,7 +138,7 @@ impl TransactionBuilder {
         params: &Params,
     ) -> Result<Transaction, BuildError> {
         let data = self.signed(keys, aux, Some((second_keys, second_aux)), params)?;
-        Transaction::from_data_with(data, params, Mode::NON_STRICT)
+        Transaction::from_data_with(data, params, Mode::NonStrict)
     }
 
     /// The signed fields, as the reference's builder holds them before `build`.
@@ -294,7 +294,7 @@ mod tests {
             Err(BuildError::Schema(_))
         ));
         let tx = registration()
-            .build_with(&delegate, AUX, &params, Mode::GENESIS)
+            .build_with(&delegate, AUX, &params, Mode::Genesis)
             .unwrap();
         assert!(tx.is_verified());
         assert_eq!(tx.fee(), 0);

@@ -27,7 +27,7 @@ impl Transaction {
     /// A bad signature does not refuse the transaction: it decodes with
     /// [`Transaction::is_verified`] false, and the block or pool rules decide.
     pub fn decode(bytes: &[u8], params: &Params) -> Result<Transaction, DecodeError> {
-        Transaction::decode_with(bytes, params, Mode::STRICT)
+        Transaction::decode_with(bytes, params, Mode::Strict)
     }
 
     /// [`Transaction::decode`] under the rule variant `mode`.
@@ -79,7 +79,7 @@ impl Transaction {
     /// The transaction with fields `data`, as the reference's `TransactionFactory.fromData` makes
     /// it: apply the transaction rules, serialise, then [`Transaction::decode`] the bytes.
     pub fn from_data(data: TransactionData, params: &Params) -> Result<Transaction, BuildError> {
-        Transaction::from_data_with(data, params, Mode::STRICT)
+        Transaction::from_data_with(data, params, Mode::Strict)
     }
 
     /// [`Transaction::from_data`] under the rule variant `mode`.
@@ -100,7 +100,7 @@ impl Transaction {
     /// read as JavaScript's `BigInt` reads them. Vote shares are JSON numbers. A vote asset that is
     /// not a JSON object is refused.
     pub fn from_json(json: &Value, params: &Params) -> Result<Transaction, BuildError> {
-        Transaction::from_json_with(json, params, Mode::STRICT)
+        Transaction::from_json_with(json, params, Mode::Strict)
     }
 
     /// [`Transaction::from_json`] under the rule variant `mode`.
@@ -148,7 +148,7 @@ fn data_from_json(
             .map_err(|_| SchemaError::invalid("type", "must be a 16-bit integer from 0"))?,
     )?;
 
-    if mode.strict {
+    if mode.is_strict() {
         match object.get("id") {
             None => return Err(SchemaError::missing("id").into()),
             Some(Value::Null) => {}
@@ -627,10 +627,10 @@ mod tests {
             Transaction::from_data(data.clone(), &params),
             Err(BuildError::Schema(SchemaError::Invalid { .. }))
         ));
-        let tx = Transaction::from_data_with(data, &params, Mode::GENESIS).unwrap();
+        let tx = Transaction::from_data_with(data, &params, Mode::Genesis).unwrap();
         assert!(tx.is_verified());
         assert!(Transaction::decode(tx.bytes(), &params).is_err());
-        assert!(Transaction::decode_with(tx.bytes(), &params, Mode::GENESIS).is_ok());
+        assert!(Transaction::decode_with(tx.bytes(), &params, Mode::Genesis).is_ok());
     }
 
     #[test]

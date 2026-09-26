@@ -21,7 +21,7 @@
 //! concatenated transaction ids, is also the network hash.
 //!
 //! The transactions are made as the generator makes them, signed and serialised directly, and each
-//! is then decoded under the transaction rules for a genesis block ([`validation::Mode::GENESIS`],
+//! is then decoded under the transaction rules for a genesis block ([`validation::Mode::Genesis`],
 //! which allows the zero fee, as the reference does for its genesis block's transactions), with
 //! its signature verified. The builder also refuses early, with a clearer error, what those rules
 //! and the later steps would refuse: invalid delegate names, allocations of 0, and transfers
@@ -372,7 +372,7 @@ fn genesis_transaction(
     signer::sign(&mut data, keys, aux, params)?;
     let bytes =
         serialiser::serialise(&data, SerialiseOptions::FULL, params).map_err(BuildError::from)?;
-    let tx = Transaction::decode_with(&bytes, params, validation::Mode::GENESIS)
+    let tx = Transaction::decode_with(&bytes, params, validation::Mode::Genesis)
         .map_err(BuildError::from)?;
     if !tx.is_verified() {
         return Err(GenesisError::Verification(vec![

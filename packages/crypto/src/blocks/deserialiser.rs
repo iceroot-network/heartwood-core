@@ -8,7 +8,7 @@
 //! - bytes after the last transaction are ignored;
 //! - the transactions of a block are decoded under the merged milestone at the block's height;
 //! - the transactions of the block at height 1, the genesis block, are decoded under the rules for
-//!   genesis transactions ([`Mode::GENESIS`]: a zero fee passes). The reference exempts the
+//!   genesis transactions ([`Mode::Genesis`]: a zero fee passes). The reference exempts the
 //!   transactions its network configuration lists as the genesis block's, and a node's only block
 //!   at height 1 is that genesis block.
 
@@ -49,7 +49,7 @@ impl Block {
     /// the block rules the reference applies as a schema.
     pub fn decode(bytes: &[u8], milestones: &Milestones) -> Result<Block, BlockDecodeError> {
         decode_with(bytes, milestones, |bytes, params, genesis| {
-            let mode = if genesis { Mode::GENESIS } else { Mode::STRICT };
+            let mode = if genesis { Mode::Genesis } else { Mode::Strict };
             Transaction::decode_with(bytes, params, mode)
         })
     }
