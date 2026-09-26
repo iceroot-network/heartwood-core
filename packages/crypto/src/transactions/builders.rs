@@ -111,8 +111,20 @@ impl TransactionBuilder {
         aux: Aux,
         params: &Params,
     ) -> Result<Transaction, BuildError> {
+        self.build_with(keys, aux, params, Mode::NON_STRICT)
+    }
+
+    /// [`TransactionBuilder::build`] under the rule variant `mode`: [`Mode::GENESIS`] builds a
+    /// transaction of a genesis block, whose fee may be 0.
+    pub fn build_with(
+        self,
+        keys: &KeyPair,
+        aux: Aux,
+        params: &Params,
+        mode: Mode,
+    ) -> Result<Transaction, BuildError> {
         let data = self.signed(keys, aux, None, params)?;
-        Transaction::from_data_with(data, params, Mode::NON_STRICT)
+        Transaction::from_data_with(data, params, mode)
     }
 
     /// Sign with `keys` and `aux`, add the second signature of `second_keys` with `second_aux`, and
@@ -191,5 +203,113 @@ fn static_fee(kind: TransactionType, params: &Params) -> Result<u64, BuildError>
             .ok_or_else(|| {
                 SchemaError::invalid("fee", "the milestone's static fee is not an amount").into()
             }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::identities::Address;
+    use crate::transactions::testing::{NETWORK, devnet, keys};
+
+    const AUX: Aux = Aux::Fixed([9; 32]);
+
+    fn votes(entries: &[(&str, u16)]) -> Votes {
+        entries
+            .iter()
+            .map(|&(name, basis_points)| (name.to_owned(), basis_points))
+            .collect()
+    }
+
+    #[test]
+    fn defaults_and_vote_order() {
+        let params = devnet();
+        let sender = keys("builder sender");
+        let tx = TransactionBuilder::vote(votes(&[("b", 5000), ("a", 5000)]))
+            .nonce(4)
+            .build(&sender, AUX, &params)
+            .unwrap();
+        assert!(tx.is_verified());
+        assert_eq!(tx.fee(), 9_000_000, "the milestone's static fee");
+        assert_eq!(tx.data().network, NETWORK);
+        assert_eq!(tx.data().nonce, 4);
+        let Asset::Vote { votes } = &tx.data().asset else {
+            panic!("a vote");
+        };
+        assert_eq!(votes.keys().collect::<Vec<_>>(), ["a", "b"]);
+        let burn = TransactionBuilder::burn(1)
+            .build(&sender, AUX, &params)
+            .unwrap();
+        assert_eq!(
+            burn.fee(),
+            0,
+            "the type's default without a milestone entry"
+        );
+        let resignation = TransactionBuilder::delegate_resignation(None)
+            .fee(1)
+            .build(&sender, AUX, &params)
+            .unwrap();
+        assert!(resignation.is_verified());
+    }
+
+    #[test]
+    fn refusals() {
+        let params = devnet();
+        let sender = keys("builder sender");
+        let item = TransferItem {
+            amount: 1,
+            recipient: Address::from_public_key(sender.public_key(), NETWORK),
+        };
+        assert_eq!(
+            TransactionBuilder::transfer(vec![item; 257]).build(&sender, AUX, &params),
+            Err(BuildError::TooManyTransfers {
+                count: 257,
+                maximum: 256
+            })
+        );
+        assert!(matches!(
+            TransactionBuilder::transfer(Vec::new()).build(&sender, AUX, &params),
+            Err(BuildError::Schema(_))
+        ));
+        assert!(matches!(
+            TransactionBuilder::burn(1)
+                .network(30)
+                .build(&sender, AUX, &params),
+            Err(BuildError::Schema(_))
+        ));
+        assert!(matches!(
+            TransactionBuilder::vote(votes(&[("a", 5000), ("b", 4999)]))
+                .build(&sender, AUX, &params),
+            Err(BuildError::Schema(_))
+        ));
+    }
+
+    #[test]
+    fn genesis_transactions_may_have_no_fee() {
+        let params = devnet();
+        let delegate = keys("genesis delegate");
+        let registration = || TransactionBuilder::delegate_registration("first").fee(0);
+        assert!(matches!(
+            registration().build(&delegate, AUX, &params),
+            Err(BuildError::Schema(_))
+        ));
+        let tx = registration()
+            .build_with(&delegate, AUX, &params, Mode::GENESIS)
+            .unwrap();
+        assert!(tx.is_verified());
+        assert_eq!(tx.fee(), 0);
+    }
+
+    #[test]
+    fn second_signed() {
+        let params = devnet();
+        let sender = keys("builder sender");
+        let second = keys("builder second");
+        let tx = TransactionBuilder::burn(5)
+            .build_second_signed(&sender, AUX, &second, AUX, &params)
+            .unwrap();
+        assert!(tx.is_verified());
+        assert!(tx.verify_second_signature(second.public_key().as_bytes(), &params));
+        assert!(!tx.verify_second_signature(sender.public_key().as_bytes(), &params));
     }
 }
