@@ -340,11 +340,16 @@ pub fn run(
                 }
                 let input = minimal.input.to_string();
                 let shown: String = input.chars().take(600).collect();
+                let records = explain(&mut server.borrow_mut(), registry, &minimal);
                 results.push(CaseResult {
                     file: file.clone(),
                     line: 0,
                     op: minimal.op.to_owned(),
-                    label: format!("{} minimal case {} {shown}", property.number(), minimal.op),
+                    label: format!(
+                        "{} minimal case {} {shown}{records}",
+                        property.number(),
+                        minimal.op
+                    ),
                     height: minimal.height,
                     outcome: judged,
                 });
@@ -376,6 +381,49 @@ pub fn run(
         results,
     };
     Ok(L1Run { report, classes })
+}
+
+/// The wallet records where the two sides differ on `case`, by wallet and field, as extra
+/// lines for the report; empty when the answers hold no wallet sections.
+fn explain(server: &mut OracleServer, registry: &Registry, case: &L1Case) -> String {
+    let Ok(Ok(theirs)) = server.call(case.op, "devnet", case.height, &case.input) else {
+        return String::new();
+    };
+    let request = Case {
+        op: case.op,
+        network: "devnet",
+        height: case.height,
+        input: &case.input,
+    };
+    let theirs = match super::documented_expected(&request, &Expected::Output(theirs)) {
+        Expected::Output(o) => o,
+        Expected::Error(_) => return String::new(),
+    };
+    let Some(Ok(crate::subject::Verdict::Output(ours))) =
+        registry.get(case.op).map(|s| s.run(&request))
+    else {
+        return String::new();
+    };
+    let mut out = String::new();
+    for path in ["/applied/W", "/reverted/W", "/after/W", "/sections/W"] {
+        let (Some(a), Some(b)) = (
+            theirs.pointer(path).and_then(Value::as_str),
+            ours.pointer(path).and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let only_wallets = |w: &str| {
+            crate::digests::sections_from_json(&json!({
+                "B": "", "S": "", "R": "", "M": "", "W": w,
+            }))
+        };
+        if let (Some(a), Some(b)) = (only_wallets(a), only_wallets(b)) {
+            for line in crate::digests::section_differences(&a, &b) {
+                out.push_str(&format!("\n      {path}: {line}"));
+            }
+        }
+    }
+    out
 }
 
 fn write_regression(dir: &std::path::Path, property: Property, case: &L1Case) -> Result<()> {
