@@ -1,0 +1,36 @@
+[package]
+name = "heartwood-crypto"
+description = "Byte-exact transactions, blocks, keys, signatures and milestone rules of Heartwood Core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Pre-BIP340 Schnorr signatures, used only for peer status attestations.
+legacy-schnorr = []
+# The chain-definition builder for devnets (genesis block, milestones, network and key material).
+genesis = []
+
+[dependencies]
+bs58.workspace = true
+getrandom.workspace = true
+indexmap.workspace = true
+ripemd.workspace = true
+secp256k1.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+k256.workspace = true
+num-bigint.workspace = true
+proptest.workspace = true

@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
-# "packages/*" joins when the first crate exists (heartwood-crypto): cargo refuses a glob member
-# that matches no Cargo.toml.
-members = ["tools/difftest"]
+members = ["packages/*", "tools/difftest"]
+# cargo-fuzz targets live in fuzz/ and build with their own manifest.
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,10 +17,31 @@ unsafe_code = "forbid"
 unused_must_use = "deny"
 
 [workspace.dependencies]
+heartwood-crypto = { path = "packages/crypto" }
+
+# Elliptic curves. heartwood-crypto is the only crate that may depend on secp256k1; the version is
+# pinned exactly because signatures and key parsing must not change under a lockfile refresh.
+secp256k1 = { version = "=0.33.1", default-features = false, features = ["std"] }
+
+# Hashes and encodings. sha2 and ripemd share digest 0.11.
+sha2 = "0.11"
+ripemd = "0.2"
+# Base58 without the `check` feature: the checksum is computed with sha2.
+bs58 = { version = "0.5", default-features = false, features = ["std"] }
+
+zeroize = "1.9"
+getrandom = "0.4"
+
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
-sha2 = "0.10"
+indexmap = { version = "2.14", features = ["serde"] }
 thiserror = "2"
+
+# Tests only. k256 cross-checks the secp256k1 results and is never a normal dependency.
+k256 = { version = "0.14", default-features = false, features = ["arithmetic", "schnorr", "std"] }
+num-bigint = "0.5"
+hex = "0.4"
+proptest = "1.11"
 
 [profile.release]
 overflow-checks = true

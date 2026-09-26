@@ -1,8 +1,8 @@
 # Heartwood Core
 
 Heartwood Core is the Rust node for the IceRoot network. It is at an early stage: this repository
-currently holds the differential-test harness and the reference oracle that the node's crates will
-be tested against. The node's own crates are not here yet.
+holds the differential-test harness, the reference oracle that the node's crates are tested
+against, and the node's first crate, `heartwood-crypto`.
 
 Heartwood Core is a new implementation in Rust. Its protocol design inherits from ARK Core and
 Solar Core; Solar Core serves as the reference implementation for compatibility tests.
@@ -29,6 +29,8 @@ equal byte for byte, including which inputs each side rejects.
 Cargo.toml            workspace: edition 2024, resolver 3, rust-version 1.98, workspace lints
 Makefile              `make help` lists the targets
 NOTICE                credits for ARK Core and Solar Core
+packages/crypto/      heartwood-crypto: keys, signatures, the transaction and block codecs,
+                      milestones and the devnet chain-definition builder (feature `genesis`)
 tools/difftest/       heartwood-difftest: the harness library and the `difftest` binary
 tools/oracle/         the oracle: Node scripts and the image recipe
   Dockerfile            the oracle image, built from scratch with pinned inputs
