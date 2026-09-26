@@ -131,7 +131,9 @@ impl Block {
     /// block's height. `current_time` is the time in seconds since the network epoch, which a block
     /// timestamp may not exceed by more than one block time.
     ///
-    /// Every rule is checked, and every failure is listed in the reference's order.
+    /// Every rule is checked, and every failure is listed in the reference's order. The
+    /// reference's check for expired transactions has no counterpart: none of the transaction
+    /// types this crate carries has an expiration.
     pub fn verify(&self, milestones: &Milestones, current_time: i64) -> Verification {
         let header = &self.header;
         let params = milestones.at(header.height);
