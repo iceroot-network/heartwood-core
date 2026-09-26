@@ -5,7 +5,7 @@ use thiserror::Error;
 /// The network description or the milestones were refused at load.
 ///
 /// A node refuses to start on any of these, instead of halting the chain later. Every refusal of
-/// a milestone names the height and the key, as the reference's start-up checks do.
+/// a merged milestone names the height and the key, as the reference's start-up checks do.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ConfigError {
     /// The text is not JSON.
@@ -14,11 +14,30 @@ pub enum ConfigError {
     /// The document does not have the expected shape (for example, milestones not in an array).
     #[error("invalid configuration: {0}")]
     Shape(&'static str),
-    /// A milestone's `height` is missing or not a usable height.
+    /// A key of the network description is missing or has a value that does not fit its field.
+    #[error("invalid network description: {key} {reason}")]
+    Network {
+        /// Dotted path of the key.
+        key: String,
+        /// What the key requires.
+        reason: &'static str,
+    },
+    /// A milestone's `height` is missing or not a usable height: a JSON number whose double value
+    /// is an integer from 1 to `2^32 − 1`.
     #[error("milestone {index} has no valid height")]
     Height {
         /// Position of the milestone in the file.
         index: usize,
+    },
+    /// A key is named after a property of JavaScript's `Object.prototype` (for example
+    /// `constructor` or `__proto__`). The reference's merge drops such keys or turns them into an
+    /// object's prototype, so a milestone that states one is refused.
+    #[error("milestone {index}: the key {path} is not allowed")]
+    ReservedKey {
+        /// Position of the milestone in the file.
+        index: usize,
+        /// Dotted path of the key.
+        path: String,
     },
     /// A required key is missing from the merged milestone.
     #[error("bad milestone at height: {height}. {key} is missing")]
@@ -66,4 +85,22 @@ pub enum ConfigError {
         /// The sum of the shares.
         sum: u64,
     },
+}
+
+impl ConfigError {
+    /// The height of the merged milestone that the refusal names, if it names one.
+    pub fn height(&self) -> Option<u64> {
+        match self {
+            ConfigError::Missing { height, .. }
+            | ConfigError::Invalid { height, .. }
+            | ConfigError::Changed { height, .. }
+            | ConfigError::Unsupported { height, .. }
+            | ConfigError::DonationSum { height, .. } => Some(*height),
+            ConfigError::Json(_)
+            | ConfigError::Shape(_)
+            | ConfigError::Network { .. }
+            | ConfigError::Height { .. }
+            | ConfigError::ReservedKey { .. } => None,
+        }
+    }
 }
