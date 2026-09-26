@@ -232,6 +232,8 @@ module.exports = async function genesis({ solar, shared, options }) {
     } finally {
         fs.rmSync(work, { recursive: true, force: true });
     }
+    // The chain definitions, for the classes that start a state on them (V18).
+    shared.genesisDefinitions = out.map((r) => ({ name: r.name, files: r.output.files }));
     return out;
 };
 
