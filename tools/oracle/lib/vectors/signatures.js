@@ -146,6 +146,12 @@ module.exports = async function signatures({ solar, rec, must, shared }) {
         }
     }
 
+    // A network byte 0 is written again as the configured network byte, in the id and in every
+    // preimage.
+    const zeroNetwork = Buffer.from(shared.tx["transfer-1"].hex, "hex");
+    zeroNetwork[2] = 0;
+    out.push({ ...must(await rec("tx.preimages", H, { hex: zeroNetwork.toString("hex") })), name: "transfer-1 with network byte 0" });
+
     // A block header: SHA-256 of the unsigned header (the first 141 bytes) is the signed message.
     const block = must(
         await rec("block.make", 3, { height: 3, timestamp: 16, previousBlock: "ab".repeat(32), reward: "180000000", passphrase: GENERATOR, aux, transactions: [shared.tx["transfer-1"].hex] }),

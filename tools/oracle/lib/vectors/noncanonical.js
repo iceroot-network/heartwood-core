@@ -39,6 +39,8 @@ module.exports = async function nonCanonical({ solar, rec, craft, shared }) {
         return b;
     };
     await decode("version-2-signed-as-2", craft.resign(transfer, SENDER, patched((b) => (b[1] = 2))));
+    // Network byte 0: the id is computed with the configured byte, and the rules refuse it.
+    await decode("network-0", edit(transfer, (b) => (b[2] = 0)));
 
     // Vote assets the codec reads into an object: duplicate names collapse, "__proto__" is lost,
     // and the strict schema drops names that do not match the username pattern. "wire" signs the

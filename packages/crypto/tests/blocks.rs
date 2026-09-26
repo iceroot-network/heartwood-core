@@ -6,13 +6,14 @@ mod common;
 mod blocks_common;
 
 use blocks_common::{
-    DEVNET, NOW, Tally, check_devnet, decode_record, make_record, transaction_record,
+    DEVNET, NOW, Tally, check_devnet, decode_record, make_record, receive_record,
+    transaction_record,
 };
 use heartwood_crypto::Block;
 use heartwood_crypto::blocks::VerifyFailure;
 use heartwood_crypto::blocks::factory;
 use heartwood_crypto::blocks::serialiser::{self, HEADER_SIZE, SIGNATURE_SIZE};
-use heartwood_crypto::errors::BlockDecodeError;
+use heartwood_crypto::errors::{BlockDecodeError, BlockError, DecodeError};
 use heartwood_crypto::utils::hex;
 use proptest::prelude::*;
 use serde_json::Value;
@@ -23,15 +24,49 @@ fn v05_blocks() {
     check_devnet(&file);
     let mut tally = Tally::default();
     for record in &file.records {
+        if record.name.as_deref() == Some(MALLEATED_MEMO) {
+            check_malleated_memo(record);
+            eprintln!(
+                "{}: refused on purpose: a memo that is not valid UTF-8, which the reference \
+                 reads as replacement characters; a known consensus difference",
+                record.label(&file.class)
+            );
+            tally.skip();
+            continue;
+        }
         let outcome = match record.op.as_str() {
             "block.make" => make_record(record),
             "block.fromBytes" => decode_record(record),
+            "block.receive" => receive_record(record),
             "tx.fromBytes" => transaction_record(record),
             other => Err(format!("unknown operation {other}")),
         };
         tally.check(record.label(&file.class), outcome);
     }
     tally.finish(&file);
+}
+
+/// The block whose transaction's memo holds 0xff bytes where its canonical copy holds
+/// replacement characters: the reference accepts both, with the same ids.
+const MALLEATED_MEMO: &str = "the same block with 0xff bytes in the memo";
+
+/// Heartwood refuses the block with the malleated memo, naming the transaction and the memo,
+/// where the reference accepts it.
+fn check_malleated_memo(record: &common::Record) {
+    assert!(record.expected.is_ok(), "the reference accepts the block");
+    let bytes = hex::decode(record.input["hex"].as_str().unwrap()).unwrap();
+    let invalid_memo = BlockDecodeError::Transaction {
+        index: 0,
+        source: DecodeError::InvalidMemo,
+    };
+    match record.op.as_str() {
+        "block.fromBytes" => assert_eq!(decode(&bytes), Err(invalid_memo)),
+        "block.receive" => assert_eq!(
+            Block::receive(&bytes, &DEVNET.milestones),
+            Err(BlockError::Decode(invalid_memo))
+        ),
+        other => panic!("unexpected operation {other}"),
+    }
 }
 
 /// The bytes of the V05 block named `name`, from its decode record.

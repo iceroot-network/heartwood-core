@@ -10,6 +10,7 @@ use heartwood_crypto::blocks::factory::{self, BlockDraft};
 use heartwood_crypto::blocks::serialiser;
 use heartwood_crypto::crypto::hash::{sha256, sha256_concat};
 use heartwood_crypto::managers::{Milestones, Network};
+use heartwood_crypto::transactions::serialiser::{SerialiseOptions, serialise};
 use heartwood_crypto::utils::{hex, js};
 use heartwood_crypto::{Aux, Block, BlockHeader, KeyPair, Signature, Transaction};
 use serde_json::{Map, Value, json};
@@ -232,10 +233,16 @@ pub fn decode_block(input: &Value, milestones: &Milestones) -> Result<Block, Str
     Block::decode(&bytes, milestones).map_err(|error| error.to_string())
 }
 
+/// The oracle's `block.receive`.
+pub fn receive_block(input: &Value, milestones: &Milestones) -> Result<Block, String> {
+    let bytes = hex::decode(text(input, "hex")?).map_err(|error| error.to_string())?;
+    Block::receive(&bytes, milestones).map_err(|error| error.to_string())
+}
+
 /// A block as the oracle records it: id, signed header, bytes and JSON (or, with `summary`, the
 /// SHA-256 and length of the bytes and of the canonical JSON text), and the verification.
 pub fn block_output(block: &Block, milestones: &Milestones, summary: bool) -> Value {
-    let bytes = block.encode();
+    let bytes = reencoded(block, milestones);
     let json = block.to_json(milestones);
     let mut out = Map::new();
     out.insert("id".into(), json!(block.id().to_hex()));
@@ -256,6 +263,33 @@ pub fn block_output(block: &Block, milestones: &Milestones, summary: bool) -> Va
     }
     out.insert("verification".into(), verification(block, milestones));
     Value::Object(out)
+}
+
+/// The block's bytes as the oracle writes them: the signed header, then every transaction
+/// serialised again from its fields. [`Block::encode`] keeps each transaction's bytes as received;
+/// the two differ for a transaction whose wire form is not the canonical one.
+fn reencoded(block: &Block, milestones: &Milestones) -> Vec<u8> {
+    let params = milestones.at(block.height());
+    let mut bytes = serialiser::serialise_header(block.header(), true);
+    let transactions: Vec<Vec<u8>> = block
+        .transactions()
+        .iter()
+        .map(|tx| {
+            serialise(tx.data(), SerialiseOptions::FULL, params)
+                .expect("a decoded transaction serialises")
+        })
+        .collect();
+    for tx in &transactions {
+        bytes.extend_from_slice(
+            &u32::try_from(tx.len())
+                .expect("a small transaction")
+                .to_le_bytes(),
+        );
+    }
+    for tx in transactions {
+        bytes.extend(tx);
+    }
+    bytes
 }
 
 /// The verification as the reference reports it: its error texts in check order.
@@ -437,6 +471,15 @@ pub fn decode_record(record: &Record) -> Result<(), String> {
     let milestones = milestones(record)?;
     let summary = record.input["summary"].as_bool().unwrap_or(false);
     let actual = decode_block(&record.input, &milestones)
+        .map(|block| block_output(&block, &milestones, summary));
+    compare(record, actual)
+}
+
+/// Run a `block.receive` record.
+pub fn receive_record(record: &Record) -> Result<(), String> {
+    let milestones = milestones(record)?;
+    let summary = record.input["summary"].as_bool().unwrap_or(false);
+    let actual = receive_block(&record.input, &milestones)
         .map(|block| block_output(&block, &milestones, summary));
     compare(record, actual)
 }

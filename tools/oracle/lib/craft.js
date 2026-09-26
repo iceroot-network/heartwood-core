@@ -1,10 +1,11 @@
 "use strict";
-// Inputs for refusal and non-canonical cases: transaction bytes that the reference's builders will
-// not produce. Everything is signed and serialised with the reference's own Signer, Serialiser and
-// Hash wherever the reference can express the case; only the bytes it cannot write (a vote asset
-// over 1,024 bytes, duplicate vote names, an invalid UTF-8 memo, a stray resignation byte) are
-// spliced in by hand, and then signed with the reference's BIP340 signer over the chosen preimage.
-// Nothing here decides a verdict: every crafted input goes back through an oracle operation.
+// Inputs for refusal and non-canonical cases: transaction and block bytes that the reference's
+// builders will not produce. Everything is signed and serialised with the reference's own Signer,
+// Serialiser and Hash wherever the reference can express the case; only the bytes it cannot write
+// (a vote asset over 1,024 bytes, duplicate vote names, an invalid UTF-8 memo, a stray resignation
+// byte, a block that carries such a transaction as sent) are spliced in by hand, and then signed
+// with the reference's BIP340 signer over the chosen preimage. Nothing here decides a verdict: every
+// crafted input goes back through an oracle operation.
 
 const crypto = require("crypto");
 
@@ -21,7 +22,7 @@ function sha256(data) {
 }
 
 function makeCrafter(solar) {
-    const { Crypto, Identities, Transactions, Utils } = solar.lib;
+    const { Blocks, Crypto, Identities, Transactions, Utils } = solar.lib;
 
     /** A builder's data after the calls and a signature, as the base of a crafted transaction. */
     function builderData(builder, calls, passphrase) {
@@ -103,12 +104,49 @@ function makeCrafter(solar) {
         return Buffer.concat([unsigned, signPreimage(preimage, passphrase)]).toString("hex");
     }
 
+    /**
+     * Block bytes that carry the given transaction bytes as they are, which BlockFactory cannot
+     * write: it serialises every transaction again. The header is the reference's, signed with its
+     * BIP340 signer and `aux`; its totals are the transactions' as fromBytesUnsafe reads them, and
+     * its payload hash is SHA-256 over `ids`, one per transaction.
+     */
+    function blockBytes({ height, timestamp, previousBlock, reward, passphrase, aux, transactions, ids }) {
+        const keys = Identities.Keys.fromPassphrase(passphrase);
+        const txs = transactions.map((hex) => Transactions.TransactionFactory.fromBytesUnsafe(Buffer.from(hex, "hex")).data);
+        let totalAmount = Utils.BigNumber.ZERO;
+        let totalFee = Utils.BigNumber.ZERO;
+        for (const t of txs) {
+            totalAmount = totalAmount.plus(t.amount || Utils.BigNumber.ZERO);
+            totalFee = totalFee.plus(t.fee);
+        }
+        const data = {
+            version: 0,
+            timestamp,
+            height,
+            previousBlock,
+            numberOfTransactions: transactions.length,
+            totalAmount,
+            totalFee,
+            reward: Utils.BigNumber.make(reward),
+            payloadLength: 32 * transactions.length,
+            payloadHash: sha256(Buffer.concat(ids.map((id) => Buffer.from(id, "hex")))).toString("hex"),
+            generatorPublicKey: keys.publicKey.secp256k1,
+        };
+        data.blockSignature = Crypto.Hash.signSchnorrBip340(sha256(Blocks.Serialiser.serialise(data, false)), keys, Buffer.from(aux, "hex"));
+        const lengths = transactions.map((hex) => {
+            const length = Buffer.alloc(4);
+            length.writeUInt32LE(hex.length / 2);
+            return length;
+        });
+        return Buffer.concat([Blocks.Serialiser.serialise(data, true), ...lengths, ...transactions.map((hex) => Buffer.from(hex, "hex"))]).toString("hex");
+    }
+
     /** Base58Check of a raw payload, with the reference's encoder. */
     function base58Check(payload) {
         return Utils.Base58.encodeCheck(payload);
     }
 
-    return { assetOffset, base58Check, builderData, resign, signAndSerialise, signPreimage, voteAsset, withAsset, withMemoBytes };
+    return { assetOffset, base58Check, blockBytes, builderData, resign, signAndSerialise, signPreimage, voteAsset, withAsset, withMemoBytes };
 }
 
 module.exports = { SIGNATURE, makeCrafter, sha256 };

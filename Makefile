@@ -114,7 +114,20 @@ vectors-local: build ## L0 vectors from LOCAL_SOLAR into VECTORS/local
 vectors-diff: build ## the container and local runs must agree on every record
 	$(DIFFTEST) vectors diff $(VECTORS)/container $(VECTORS)/local
 
+# A run that lacks a class the committed manifest lists is refused, and the committed files are kept:
+# the genesis class (V10) is written only with DEVNET_GENERATOR.
 vectors-install: vectors-diff ## copy the container run (vector files and manifest) into CRYPTO_VECTORS
+	@missing=; \
+	if [ -f $(CRYPTO_VECTORS)/MANIFEST.sha256 ]; then \
+	    for file in $$(awk '{ print $$2 }' $(CRYPTO_VECTORS)/MANIFEST.sha256); do \
+	        [ -f "$(VECTORS)/container/$$file" ] || missing="$$missing $$file"; \
+	    done; \
+	fi; \
+	if [ -n "$$missing" ]; then \
+	    echo "vectors-install: the run in $(VECTORS)/container lacks$$missing, which the committed" \
+	         "manifest lists (V10-genesis needs DEVNET_GENERATOR); nothing was installed" >&2; \
+	    exit 1; \
+	fi
 	mkdir -p $(CRYPTO_VECTORS)
 	rm -f $(CRYPTO_VECTORS)/*.jsonl $(CRYPTO_VECTORS)/MANIFEST.sha256
 	cp $(VECTORS)/container/*.jsonl $(VECTORS)/container/MANIFEST.sha256 $(CRYPTO_VECTORS)/

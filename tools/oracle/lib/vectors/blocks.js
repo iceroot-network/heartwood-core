@@ -1,14 +1,16 @@
 "use strict";
 // V05 blocks: BlockFactory.make with fixed aux for 0, 1 and 150 transactions and for the largest
 // block the devnet rules allow, each decoded and re-encoded; the payload-size rule at its boundary;
-// too many transactions; payloadLength 32n - 1, 32n + 1 and 0 with transactions; and the block
-// signature scheme under a milestone with bip340 false. All timestamps are in the past.
+// too many transactions; payloadLength 32n - 1, 32n + 1 and 0 with transactions; the block
+// signature scheme under a milestone with bip340 false; and blocks as a node receives them from
+// another node (block.receive), next to block.fromBytes, for blocks that carry transactions in a
+// wire form that is not the canonical one. All timestamps are in the past.
 
 const { FIXED_AUX } = require("../ops");
 const { DOUBLE_SENDER, GENERATOR, SECOND, SENDER } = require("./constants");
 const { milestonesText } = require("./milestones");
 
-module.exports = async function blocks({ rec, must, shared }) {
+module.exports = async function blocks({ solar, rec, must, craft, shared }) {
     const out = [];
     const aux = FIXED_AUX.toString("hex");
     const previousBlock = "ab".repeat(32);
@@ -98,5 +100,92 @@ module.exports = async function blocks({ rec, must, shared }) {
         await decode(`${scheme}-signed, bip340 false`, made, { milestones: legacyMilestones });
     }
     await make("legacy-signed, devnet", 9, three, { scheme: "legacy" });
+
+    // A transaction whose network byte is 0: the block factory reads it without checks and writes
+    // it again with the configured network byte.
+    const zeroNetwork = Buffer.from(shared.tx["transfer-1"].hex, "hex");
+    zeroNetwork[2] = 0;
+    await make("a transaction with network byte 0", 9, [zeroNetwork.toString("hex")]);
+
+    await receiving({ solar, rec, craft, shared, out, aux, previousBlock, madeBlocks: { empty, "the kept types": mixed } });
     return out;
 };
+
+/**
+ * Blocks as a node receives them (block.receive), each next to block.fromBytes on the same bytes.
+ * The receiving node serialises every transaction again from its decoded data, so the ids, the
+ * payload hash and the size it checks are those of the canonical form: a vote name that the rules
+ * remove changes the id, and a stray resignation byte or a repeated vote name counts in the size of
+ * the wire form only. A memo that is not UTF-8 reads as replacement characters, which is the
+ * canonical form of a memo that holds them.
+ */
+async function receiving({ solar, rec, craft, shared, out, aux, previousBlock, madeBlocks }) {
+    const { Transactions } = solar.lib;
+    const SIGNATURE = 64;
+    const unsigned = (hex) => hex.slice(0, hex.length - 2 * SIGNATURE);
+    // The id the strict decoder computes (over the decoded fields, before the rules remove names),
+    // and the id of the canonical form (after the rules).
+    const decodeId = (hex) => Transactions.TransactionFactory.fromBytes(Buffer.from(hex, "hex")).id;
+    const canonicalId = (hex) => Transactions.Utils.getId(Transactions.TransactionFactory.fromBytes(Buffer.from(hex, "hex")).data);
+    const both = async (name, height, hex, extra = {}) => {
+        out.push({ ...(await rec("block.fromBytes", height, { hex, ...extra })), name });
+        out.push({ ...(await rec("block.receive", height, { hex, ...extra })), name });
+    };
+    const block = (height, transactions, ids) =>
+        craft.blockBytes({ height, timestamp: 8 * (height - 1), previousBlock, reward: "180000000", passphrase: GENERATOR, aux, transactions, ids });
+
+    // Blocks the factory made: both paths agree.
+    for (const [name, made] of Object.entries(madeBlocks)) {
+        if (made.output) out.push({ ...(await rec("block.receive", made.input.height, { hex: made.output.hex })), name });
+    }
+
+    // Votes signed over their canonical form whose wire form carries a name that the rules remove.
+    const vote = shared.tx["vote-1"].hex; // {genesis_1: 100}
+    const canonicalVote = unsigned(vote);
+    const extraName = [
+        ["an uppercase name", "A"],
+        ["an empty name", ""],
+        ["a name that is not UTF-8", Buffer.from([0xff])],
+        ["a name of digits only", "1"],
+    ];
+    for (const [label, name] of extraName) {
+        const hex = craft.withAsset(vote, craft.voteAsset([["genesis_1", 10000], [name, 5000]]), SENDER, canonicalVote);
+        await both(`vote with ${label}, payload hash over the decoded id`, 10, block(10, [hex], [decodeId(hex)]));
+        await both(`vote with ${label}, payload hash over the canonical id`, 10, block(10, [hex], [canonicalId(hex)]));
+    }
+
+    // Forms that decode to the canonical id: a repeated vote name, a stray resignation byte, the
+    // version byte 0.
+    const repeated = craft.withAsset(vote, craft.voteAsset([["genesis_1", 10000], ["genesis_1", 10000]]), SENDER, canonicalVote);
+    const resignation0 = shared.tx["resignation-0"].hex;
+    const strayByte = craft.withAsset(resignation0, Buffer.from([0xff]), SENDER, unsigned(resignation0));
+    const versionZero = Buffer.from(shared.tx["transfer-1"].hex, "hex");
+    versionZero[1] = 0;
+    const forms = [repeated, strayByte, versionZero.toString("hex")];
+    await both("a repeated vote name, a stray resignation byte and version 0", 10, block(10, forms, forms.map(decodeId)));
+
+    // A memo of replacement characters, and a copy of the same block whose memo holds 0xff bytes in
+    // their place: the same transaction id and block id.
+    const replacement = shared.tx["transfer-memo-replacement"].hex;
+    const malleated = craft.withMemoBytes(replacement, Buffer.from([0xff, 0xff]), SENDER, unsigned(replacement));
+    await both("a memo of replacement characters", 10, block(10, [replacement], [decodeId(replacement)]));
+    await both("the same block with 0xff bytes in the memo", 10, block(10, [malleated], [decodeId(malleated)]));
+
+    // The payload-size rule counts the canonical bytes of a received block: under maxPayload equal
+    // to the canonical size, the block with the wire forms is received but not decoded; one byte
+    // less refuses it both ways.
+    const transfer = shared.tx["transfer-1"].hex;
+    const pair = [repeated, strayByte, transfer];
+    const canonicalSize = 141 + 64 + pair.reduce((n, hex) => n + 4 + Transactions.Utils.toBytes(Transactions.TransactionFactory.fromBytes(Buffer.from(hex, "hex")).data).length, 0);
+    const pairBlock = block(4, pair, pair.map(decodeId));
+    for (const [name, maxPayload] of [
+        ["maxPayload equal to the canonical size", canonicalSize],
+        ["maxPayload one byte under the canonical size", canonicalSize - 1],
+    ]) {
+        await both(name, 4, pairBlock, { milestones: milestonesText({ block: `{"version":0,"maxTransactions":3,"maxPayload":${maxPayload}}` }) });
+    }
+
+    // A header that counts transactions, with the bytes ending after the signature.
+    const counted = block(10, [transfer], [decodeId(transfer)]);
+    await both("transactions counted, none sent", 10, counted.slice(0, 2 * (141 + 64)));
+}

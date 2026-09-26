@@ -390,6 +390,48 @@ function makeOps(solar, devnet) {
             };
         },
 
+        // The vote schema on shares near every cent: for c = from..to and each k in -ulps..ulps, the
+        // double k units in the last place from c / 100 (JavaScript numbers). Each share x is
+        // validated as {a: x, b: (10000 - round(x * 100)) / 100}, a vote whose other share is an
+        // exact cent, so the verdict is x's: its multipleOf, minimum and maximum (and the sum);
+        // when round(x * 100) is 10000 or more, as {a: x}. Output: the accepted count; the accepted
+        // shares that are not exact cents, as JavaScript prints them (their count, the first 20,
+        // and SHA-256 over all of them, one per line); and SHA-256 over the verdicts (one
+        // character per share, "1" accepted, "0" refused).
+        "vote.shares": ({ from, to, ulps }) => {
+            safeInteger(from, "from");
+            safeInteger(to, "to");
+            safeInteger(ulps, "ulps");
+            if (from < 1 || to > 10000 || from > to || ulps < 0 || ulps > 1000) throw new RangeError("1 <= from <= to <= 10000, 0 <= ulps <= 1000");
+            const view = new DataView(new ArrayBuffer(8));
+            const step = (x, k) => {
+                view.setFloat64(0, x);
+                view.setBigUint64(0, view.getBigUint64(0) + BigInt(k));
+                return view.getFloat64(0);
+            };
+            const verdicts = crypto.createHash("sha256");
+            let accepted = 0;
+            const offCent = [];
+            for (let c = from; c <= to; c++) {
+                for (let k = -ulps; k <= ulps; k++) {
+                    const x = step(c / 100, k);
+                    const bp = Math.round(x * 100);
+                    const { error } = validateVotes(bp >= 10000 ? { a: x } : { a: x, b: (10000 - bp) / 100 });
+                    verdicts.update(error ? "0" : "1");
+                    if (!error) {
+                        accepted++;
+                        if (k !== 0) offCent.push(String(x));
+                    }
+                }
+            }
+            return {
+                shares: (to - from + 1) * (2 * ulps + 1),
+                accepted,
+                offCent: { count: offCent.length, first: offCent.slice(0, 20), sha256: sha256Hex(offCent.map((x) => `${x}\n`).join("")) },
+                verdictsSha256: verdicts.digest("hex"),
+            };
+        },
+
         // The configuration manager's start-up checks and merge (setConfig) on a milestone file,
         // given as JSON text and read with JSON.parse. Accepted: the merged milestones, and the
         // reward (rank table or reward) and donations at the listed heights.
@@ -457,6 +499,20 @@ function makeOps(solar, devnet) {
 
         "block.fromBytes": ({ hex, milestones, summary = false }) =>
             withConfig(milestones, () => blockOutput(Blocks.BlockFactory.fromBytes(hexBuffer(hex, "hex")), summary)),
+
+        // A block as a node accepts it from another node, pushed or downloaded: the P2P layer
+        // decodes the bytes with Blocks.Deserialiser (each transaction with the strict
+        // TransactionFactory.fromBytes) and passes on the header with the transactions' data, and
+        // the blockchain builds the block again with BlockFactory.fromData, which serialises every
+        // transaction again from its data and decodes the result. The output is fromData's block.
+        "block.receive": ({ hex, milestones, summary = false }) =>
+            withConfig(milestones, () => {
+                const deserialised = Blocks.Deserialiser.deserialise(hexBuffer(hex, "hex"));
+                const data = { ...deserialised.data, transactions: deserialised.transactions.map((t) => t.data) };
+                const block = Blocks.BlockFactory.fromData(data);
+                if (!block) throw new Error("BlockFactory returned no block");
+                return blockOutput(block, summary);
+            }),
 
         // The bytes a relay signs for its P2P status (packages/p2p peer.ts getStatus): the kernel's
         // key-sorted stringify of {state, config}, with the block's header as getHeader(false) gives

@@ -111,7 +111,7 @@ pub fn check_verify(case: Case<'_>, scheme: SchemeId) {
 #[test]
 fn every_record_is_checked() {
     let file = file();
-    assert_eq!(file.records.len(), 704);
+    assert_eq!(file.records.len(), 705);
     let legacy = file
         .records
         .iter()
@@ -193,7 +193,12 @@ fn transaction_preimages() {
     let mut checked = 0;
     for case in cases(&file, "tx.preimages") {
         let label = case.label();
-        let transaction = case.bytes("hex");
+        let mut transaction = case.bytes("hex");
+        // The reference writes a network byte 0 as the configured network byte, 90, in the id
+        // and in every preimage.
+        if transaction.get(2) == Some(&0) {
+            transaction[2] = 90;
+        }
         let output = case.output();
         assert_eq!(
             hex::encode(&sha256(&transaction)),
@@ -227,7 +232,12 @@ fn transaction_preimages() {
             ),
             "{label}"
         );
-        let signer = sign_record(&file, &format!("{}: first signature", case.name()))
+        // A copy with network byte 0 has the preimages and signatures of the transaction it copies.
+        let signed = case
+            .name()
+            .strip_suffix(" with network byte 0")
+            .unwrap_or(case.name());
+        let signer = sign_record(&file, &format!("{signed}: first signature"))
             .unwrap_or_else(|| panic!("{label}: no first signature record"));
         assert_eq!(signer.bytes("message"), first_hash, "{label}");
         assert_eq!(signer.output_text("signature"), first.to_hex(), "{label}");
@@ -244,7 +254,7 @@ fn transaction_preimages() {
             assert_eq!(second_preimage.len(), first_preimage.len() + 64, "{label}");
             assert_eq!(transaction.len(), second_preimage.len() + 64, "{label}");
             let second = Signature::from_bytes(&transaction[second_preimage.len()..]).unwrap();
-            let signer = sign_record(&file, &format!("{}: second signature", case.name()))
+            let signer = sign_record(&file, &format!("{signed}: second signature"))
                 .unwrap_or_else(|| panic!("{label}: no second signature record"));
             assert_eq!(signer.bytes("message"), second_hash, "{label}");
             assert_eq!(signer.output_text("signature"), second.to_hex(), "{label}");
@@ -264,7 +274,7 @@ fn transaction_preimages() {
         }
         checked += 1;
     }
-    assert_eq!(checked, 8);
+    assert_eq!(checked, 9);
 }
 
 /// `status.preimage`: the peer status messages that the legacy scheme signs. Building the message

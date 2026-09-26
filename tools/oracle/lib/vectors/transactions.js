@@ -62,6 +62,8 @@ module.exports = async function transactions({ solar, rec, must, craft, shared }
         const names = Array.from({ length: n }, (_, i) => `genesis_${i + 1}`);
         cases.push(tx(`vote-${n}`, "vote", [["votesAsset", votesOf(names, evenSplit(n))], next()]));
     }
+    // Two replacement characters, U+FFFD: what a memo of bytes that are not UTF-8 decodes to.
+    cases.push(tx("transfer-memo-replacement", "transfer", [["recipientId", recipients[4]], ["amount", "1"], next(), ["memo", "\ufffd\ufffd"]]));
     // Doubly signed variants, one per type that can carry a second signature.
     const double = (name, builder, calls) => ({ name, input: { builder, calls, sign: DOUBLE_SENDER, secondSign: SECOND } });
     let doubleNonce = 0;
@@ -86,6 +88,36 @@ module.exports = async function transactions({ solar, rec, must, craft, shared }
         out.push({ ...(await rec("tx.fromJson", H, { json: r.output.json })), name: c.name });
     }
     shared.tx = built;
+
+    // The JSON form: keys the strict schema checks although they are not part of the bytes, and
+    // values of a shape the builders never write. Each JSON is a built case's JSON with one change.
+    const fromJson = async (name, base, change) => {
+        const json = JSON.parse(JSON.stringify(built[base].json));
+        change(json);
+        out.push({ ...(await rec("tx.fromJson", H, { json })), name });
+    };
+    for (const burnedFee of ["abc", "-5", "0", "", null, 0, 5, "9223372036854775807", "9223372036854775808", true, false]) {
+        await fromJson(`transfer-1, burnedFee ${JSON.stringify(burnedFee)}`, "transfer-1", (j) => (j.burnedFee = burnedFee));
+    }
+    // asset.payments, the old name of asset.transfers, is read when the JSON states type group 1
+    // and asset.transfers is falsy.
+    for (const transfers of [undefined, null, 0, "", false, []]) {
+        const label = transfers === undefined ? "absent" : JSON.stringify(transfers);
+        await fromJson(`transfer-1, typeGroup 1, payments with transfers ${label}`, "transfer-1", (j) => {
+            j.asset = { ...(transfers === undefined ? {} : { transfers }), payments: j.asset.transfers };
+            j.typeGroup = 1;
+        });
+    }
+    await fromJson("transfer-1, payments without typeGroup", "transfer-1", (j) => {
+        j.asset = { payments: j.asset.transfers };
+        delete j.typeGroup;
+    });
+    // asset.votes need not be an object: a truthy value without own keys is no votes.
+    for (const votes of [[], 5, 0.5, -1, true, "", "ab", [50, 50], null, false, 0]) {
+        await fromJson(`unvote, votes ${JSON.stringify(votes)}`, "unvote", (j) => (j.asset.votes = votes));
+    }
+    // A share a few units in the last place from a cent, as float arithmetic in a wallet makes it.
+    await fromJson("vote-2-uneven, 39.49999999999999 for 39.5", "vote-2-uneven", (j) => (j.asset.votes.gym = 39.49999999999999));
 
     // Refusals the builders do not produce as bytes: a JSON memo of 256 bytes, and 0 or 257
     // recipients signed and serialised with the reference's Signer and Serialiser.

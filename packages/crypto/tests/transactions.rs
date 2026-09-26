@@ -13,14 +13,14 @@ mod common;
 
 use common::Record;
 use heartwood_crypto::crypto::hash::sha256;
-use heartwood_crypto::errors::{BuildError, DecodeError, EncodeError, MemoError};
+use heartwood_crypto::errors::{BuildError, DecodeError, EncodeError, JsonError, MemoError};
 use heartwood_crypto::identities::{Address, KeyPair, PublicKeyBytes};
 use heartwood_crypto::transactions::codec::HEADER_SIZE;
 use heartwood_crypto::transactions::serialiser::{SerialiseOptions, serialise};
 use heartwood_crypto::transactions::types::{Asset, Memo, ResignationType, TransferItem, Votes};
 use heartwood_crypto::transactions::{TransactionBuilder, TransactionType};
-use heartwood_crypto::utils::hex;
 use heartwood_crypto::utils::sort_votes::sort_votes;
+use heartwood_crypto::utils::{hex, js};
 use heartwood_crypto::validation::{Mode, vote_basis_points, votes_from_json};
 use heartwood_crypto::{Aux, Milestones, Network, Params, Transaction, TransactionData};
 use serde_json::{Map, Value, json};
@@ -199,6 +199,12 @@ enum Divergence {
     /// The reference accepts or refuses these bytes differently; Heartwood refuses them at decode
     /// with an error that the function recognises.
     Refused(&'static str, fn(&DecodeError) -> bool),
+    /// The reference accepts this JSON; Heartwood refuses it with an error that the function
+    /// recognises.
+    RefusedJson(&'static str, fn(&BuildError) -> bool),
+    /// Both refuse this JSON, the reference with an error class that Heartwood does not model;
+    /// Heartwood refuses it with an error that the function recognises.
+    BothRefuseJson(&'static str, fn(&BuildError) -> bool),
     /// The operation has no counterpart in Heartwood.
     Skipped(&'static str),
 }
@@ -214,6 +220,20 @@ fn divergence(op: &str, name: &str) -> Option<Divergence> {
     const MULTI: &str = "multi-signature entries after the signatures: no sender can hold a \
         multi-signature wallet (its registration type is removed), so the reference refuses such \
         a transaction when it is applied; Heartwood refuses it at decode";
+    const VOTE_INDICES: &str = "asset.votes as a non-empty array or string: the reference writes \
+        its indices as vote names and removes them after it has computed the id; Heartwood \
+        refuses the JSON";
+    const VOTE_FALSY: &str = "a falsy asset.votes: the reference writes no vote asset and then \
+        refuses the bytes it wrote; Heartwood refuses the JSON";
+    let votes_json = |error: &BuildError| {
+        matches!(
+            error,
+            BuildError::Json(JsonError::Invalid {
+                field: "asset.votes",
+                ..
+            })
+        )
+    };
     let removed = |error: &DecodeError| matches!(error, DecodeError::RemovedType { .. });
     let extended = |error: &DecodeError| matches!(error, DecodeError::UnsupportedHeaderType(1));
     let memo = |error: &DecodeError| matches!(error, DecodeError::InvalidMemo);
@@ -251,6 +271,16 @@ fn divergence(op: &str, name: &str) -> Option<Divergence> {
             | "memo-truncated-wire-signed"
             | "memo-invalid-utf8-canonical-signed",
         ) => Some(Divergence::Refused(MEMO, memo)),
+        ("tx.fromJson", r#"unvote, votes "ab""# | "unvote, votes [50,50]") => {
+            Some(Divergence::RefusedJson(VOTE_INDICES, votes_json))
+        }
+        (
+            "tx.fromJson",
+            r#"unvote, votes """#
+            | "unvote, votes null"
+            | "unvote, votes false"
+            | "unvote, votes 0",
+        ) => Some(Divergence::BothRefuseJson(VOTE_FALSY, votes_json)),
         // trailing-130 is refused by the reference too, as a duplicate participant.
         (
             "tx.fromBytes",
@@ -306,6 +336,24 @@ fn check_class(
                     ));
                 }
             }
+            (Some(Divergence::RefusedJson(reason, recognise)), Err(Skip::Build(error)))
+                if recognise(&error) && record.expected.is_ok() =>
+            {
+                eprintln!(
+                    "{}: refused as {error:?}: {reason}",
+                    record.label(&file.class)
+                );
+                tally.divergent += 1;
+            }
+            (Some(Divergence::BothRefuseJson(reason, recognise)), Err(Skip::Build(error)))
+                if recognise(&error) && record.expected.is_err() =>
+            {
+                eprintln!(
+                    "{}: both refuse; Heartwood as {error:?}: {reason}",
+                    record.label(&file.class)
+                );
+                tally.divergent += 1;
+            }
             (Some(_), other) => {
                 failures.push(format!(
                     "{}: documented difference, but got {other:?}",
@@ -337,6 +385,8 @@ enum Skip {
     Unsupported(&'static str),
     /// A decode refusal to check against a documented difference.
     Decode(DecodeError),
+    /// A JSON refusal to check against a documented difference.
+    Build(BuildError),
 }
 
 /// `tx.fromBytes`: strict decode unless the record says `strict: false`.
@@ -362,6 +412,11 @@ fn from_bytes(record: &Record, params: &Params) -> Result<Outcome, Skip> {
 fn from_json(record: &Record, params: &Params) -> Result<Outcome, Skip> {
     match Transaction::from_json(&record.input["json"], params) {
         Ok(tx) => Ok(Ok(tx_output(&tx, params))),
+        Err(error)
+            if divergence(&record.op, record.name.as_deref().unwrap_or_default()).is_some() =>
+        {
+            Err(Skip::Build(error))
+        }
         Err(error) => Ok(Err(build_class(&error))),
     }
 }
@@ -630,6 +685,53 @@ fn vote_splits(record: &Record, params: &Params) -> Outcome {
     }))
 }
 
+/// `vote.shares`: the vote rules on the doubles within `ulps` units in the last place of every
+/// cent, each beside an exact cent that completes the sum.
+fn vote_shares(record: &Record) -> Outcome {
+    let input = &record.input;
+    let (from, to) = (
+        u32::try_from(input["from"].as_u64().expect("from")).expect("u32"),
+        u32::try_from(input["to"].as_u64().expect("to")).expect("u32"),
+    );
+    let ulps = i64::try_from(input["ulps"].as_u64().expect("ulps")).expect("i64");
+    let (mut verdicts, mut accepted, mut off_cent) = (Vec::new(), 0_u64, Vec::new());
+    for cent in from..=to {
+        for step in -ulps..=ulps {
+            let share = f64::from_bits(
+                (f64::from(cent) / 100.0)
+                    .to_bits()
+                    .checked_add_signed(step)
+                    .expect("a positive double"),
+            );
+            let basis_points = (share * 100.0).round();
+            let mut votes = Map::new();
+            votes.insert("a".into(), json!(share));
+            if basis_points < 10_000.0 {
+                votes.insert("b".into(), json!((10_000.0 - basis_points) / 100.0));
+            }
+            let ok = votes_from_json(&votes).is_ok();
+            verdicts.push(if ok { b'1' } else { b'0' });
+            if ok {
+                accepted += 1;
+                if step != 0 {
+                    off_cent.push(js::number_to_string(share));
+                }
+            }
+        }
+    }
+    let lines: String = off_cent.iter().map(|share| format!("{share}\n")).collect();
+    Ok(json!({
+        "shares": u64::from(to - from + 1) * u64::try_from(2 * ulps + 1).expect("u64"),
+        "accepted": accepted,
+        "offCent": {
+            "count": off_cent.len(),
+            "first": off_cent.iter().take(20).collect::<Vec<_>>(),
+            "sha256": hex::encode(&sha256(lines.as_bytes())),
+        },
+        "verdictsSha256": hex::encode(&sha256(&verdicts)),
+    }))
+}
+
 #[test]
 fn v02_transactions() {
     let file = vector_file!("V02-transactions");
@@ -645,8 +747,8 @@ fn v02_transactions() {
     assert_eq!(
         tally,
         Tally {
-            matched: 248,
-            divergent: 0,
+            matched: 275,
+            divergent: 6,
             skipped: 0
         }
     );
@@ -682,7 +784,7 @@ fn v03_noncanonical_and_removed() {
     assert_eq!(
         tally,
         Tally {
-            matched: 50,
+            matched: 51,
             divergent: 20,
             skipped: 6
         }
@@ -708,12 +810,21 @@ fn v07_vote_rules() {
     let tally = check_class(&file, &milestones, |record, params| {
         match record.op.as_str() {
             "vote.splits" => Ok(vote_splits(record, params)),
-            "vote.validate" => Ok(
-                match votes_from_json(record.input["votes"].as_object().expect("votes")) {
-                    Ok(votes) => Ok(json!({ "votes": vote_entries(&votes) })),
+            "vote.validate" => {
+                let object = record.input["votes"].as_object().expect("votes");
+                Ok(match votes_from_json(object) {
+                    // The schema leaves the kept entries as given, in the object's order.
+                    Ok(kept) => Ok(json!({
+                        "votes": js::property_order(object)
+                            .into_iter()
+                            .filter(|(name, _)| kept.contains_key(name.as_str()))
+                            .map(|(name, value)| json!([name, value]))
+                            .collect::<Vec<_>>(),
+                    })),
                     Err(_) => Err("TransactionSchemaError".into()),
-                },
-            ),
+                })
+            }
+            "vote.shares" => Ok(vote_shares(record)),
             "vote.sort" => {
                 let votes = builder_votes(&record.input["votes"]);
                 Ok(Ok(json!({ "votes": vote_entries(&sort_votes(&votes)) })))
@@ -726,7 +837,7 @@ fn v07_vote_rules() {
     assert_eq!(
         tally,
         Tally {
-            matched: 34,
+            matched: 41,
             divergent: 0,
             skipped: 0
         }

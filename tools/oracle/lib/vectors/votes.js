@@ -1,6 +1,7 @@
 "use strict";
 // V07 vote rules: all 9,999 two-way splits of 100 in cents (compact: one record per name pair),
-// the vote schema on single cases, sortVotes orders, and the 1,024-byte limit of the vote asset.
+// the vote schema on shares within 40 units in the last place of every cent (compact), the vote
+// schema on single cases, sortVotes orders, and the 1,024-byte limit of the vote asset.
 
 const { SENDER } = require("./constants");
 
@@ -22,7 +23,16 @@ module.exports = async function votes({ rec, must, craft, shared }) {
         out.push({ ...must(await rec("vote.splits", H, { names, from: 1, to: 9999 })), name: names.join(" / ") });
     }
 
+    out.push({ ...must(await rec("vote.shares", H, { from: 1, to: 10000, ulps: 40 })), name: "every cent, 40 units in the last place either way" });
+
     for (const [name, votes] of [
+        // Shares a few units in the last place from a cent: the multipleOf rule accepts some.
+        ["0.19999999999999998 + 99.8", { a: 0.19999999999999998, b: 99.8 }],
+        ["0.9400000000000001 + 99.06", { a: 0.9400000000000001, b: 99.06 }],
+        ["10.040000000000001 + 89.96", { a: 10.040000000000001, b: 89.96 }],
+        ["39.49999999999999 + 60.5", { a: 39.49999999999999, b: 60.5 }],
+        ["0.30000000000000004 + 99.7", { a: 0.30000000000000004, b: 99.7 }],
+        ["50.00000000000001 + 49.99999999999999", { a: 50.00000000000001, b: 49.99999999999999 }],
         ["50 + 49.99", { a: 50, b: 49.99 }],
         ["50 + 50.01", { a: 50, b: 50.01 }],
         ["100", { a: 100 }],

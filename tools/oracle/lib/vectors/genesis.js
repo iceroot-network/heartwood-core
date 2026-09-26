@@ -32,7 +32,9 @@ const { DEFAULT_EPOCH, DEFAULT_SEED } = require("../network");
 
 // The generator's default seed, a second text seed and a fixed 32-byte hex seed (arbitrary and
 // public; every seed here is a test value).
-const SEEDS = [DEFAULT_SEED, "difftest-S-00", "f43d5aeaedcedf2d73b9033bb2eb110263d208ebcb119764a24a79bf9ddde80d"];
+const SEEDS = [DEFAULT_SEED, "difftest-seed-2", "f43d5aeaedcedf2d73b9033bb2eb110263d208ebcb119764a24a79bf9ddde80d"];
+// The name of the genesis profile, which the driver writes into its summary.
+const PROFILE_NAME = "iceroot-devnet";
 const CRYPTO_FILES = ["network.json", "milestones.json", "genesisBlock.json", "exceptions.json"];
 
 // The generator's fixed conventions (gen-network.js defaults), restated for the profile and checked
@@ -85,7 +87,7 @@ function genesisProfile(solarDir, generator) {
     const testnet = JSON.parse(fs.readFileSync(path.join(solarDir, "packages", "crypto", "dist", "networks", "testnet", "network.json"), "utf8"));
     const name = profile.network.name;
     return {
-        name: profile.name,
+        name: PROFILE_NAME,
         derivationTag: DERIVATION_TAG,
         network: {
             name,
@@ -161,7 +163,7 @@ module.exports = async function genesis({ solar, shared, options }) {
     const dir = path.dirname(path.resolve(generator));
     const { DEFAULT_PROFILE } = require(path.join(dir, "lib", "profiles.js"));
     const profile = genesisProfile(solar.solarDir, generator);
-    shared.devnetGenerator = { files: generatorFiles(path.resolve(generator)), profile: DEFAULT_PROFILE };
+    shared.devnetGenerator = { files: generatorFiles(path.resolve(generator)) };
 
     const out = [];
     const work = fs.mkdtempSync(path.join(os.tmpdir(), "heartwood-genesis-"));
