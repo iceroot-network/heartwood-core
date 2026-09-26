@@ -17,9 +17,9 @@ const CLASS: &str = "V13-p2p-wire";
 /// it. They change only on purpose: a new subject, a new documented difference, or new vectors.
 /// `None` while the class is not installed.
 const PINNED: Option<(usize, [(Documented, usize); 3])> = Some((
-    1178,
+    1179,
     [
-        (Documented::PluginsPrototype, 2),
+        (Documented::PluginsPrototype, 1),
         (Documented::DeepGroups, 2),
         (Documented::WideAmount, 11),
     ],

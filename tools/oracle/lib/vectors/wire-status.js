@@ -35,7 +35,7 @@ const delimited = (field, bytes) => Buffer.concat([varint((field << 3) | 2), var
 const text = (field, value) => delimited(field, Buffer.from(value, "utf8"));
 
 module.exports = async function wireStatusVectors({ solar, rec, must, shared }) {
-    const { Identities } = solar.lib;
+    const { Crypto, Identities } = solar.lib;
     const H = shared.height;
     const out = [];
     const proto = require(path.join(solar.solarDir, "packages", "p2p", "dist", "socket-server", "codecs", "proto", "protos")).peer;
@@ -238,8 +238,8 @@ module.exports = async function wireStatusVectors({ solar, rec, must, shared }) 
     const stateBytes = Buffer.from(State.encode(base.state).finish());
     const configBytes = Buffer.from(Config.encode(base.config).finish());
     const lists = Buffer.concat([...base.publicKeys.map((k) => text(3, k)), ...base.signatures.map((s) => text(4, s))]);
-    const raw = (config, { state = stateBytes, before = Buffer.alloc(0) } = {}) =>
-        Buffer.concat([before, delimited(1, state), delimited(2, Buffer.concat([configBytes, config])), lists]);
+    const raw = (config, { state = stateBytes, before = Buffer.alloc(0), configStart = configBytes, keys = lists } = {}) =>
+        Buffer.concat([before, delimited(1, state), delimited(2, Buffer.concat([configStart, config])), keys]);
     const entry = (...fields) => delimited(3, Buffer.concat(fields));
     const pluginBytes = (p) => Buffer.from(Config.Plugin.encode(p).finish());
     await verify("plugins: an entry without a value", raw(entry(text(1, "abcd"))));
@@ -248,6 +248,30 @@ module.exports = async function wireStatusVectors({ solar, rec, must, shared }) 
     await verify("plugins: a name set twice", raw(Buffer.concat([entry(text(1, "abcd"), delimited(2, pluginBytes(plugin(1)))), entry(text(1, "abcd"), delimited(2, pluginBytes(plugin(2))))])));
     await verify("plugins: __proto__ with a value", raw(entry(text(1, "__proto__"), delimited(2, pluginBytes(plugin())))));
     await verify("plugins: __proto__ without a value", raw(entry(text(1, "__proto__"))));
+    // After an entry without a value has made the prototype null, a second __proto__ is an own key.
+    // Config.toObject copies the own keys onto a new object, where that assignment sets the new
+    // object's prototype, and stringify then writes each field of that prototype whose name its key
+    // list holds (the name of a key of some own object) and no own key shadows. Each reply is signed
+    // over the reference's preimage, so its attestation verifies.
+    const signedOverPreimage = async (name, entries, options = {}) => {
+        const unsigned = raw(entries, options).toString("hex");
+        const { output } = must(await rec("status.verify", H, { hex: unsigned, maxDelegates: MAX_DELEGATES }));
+        const keyPair = Identities.Keys.fromPrivateKey(generator);
+        const signature = Crypto.Hash.signSchnorr(Buffer.from(output.preimage, "hex"), keyPair);
+        const keys = Buffer.concat([text(3, keyPair.publicKey.secp256k1), text(4, signature)]);
+        await verify(`plugins: ${name}, signed over the reference's preimage`, raw(entries, { ...options, keys }));
+    };
+    const nullPrototype = entry(text(1, "__proto__"));
+    await signedOverPreimage("__proto__ without a value, then with a value", Buffer.concat([
+        nullPrototype,
+        entry(text(1, "__proto__"), delimited(2, pluginBytes({ enabled: true, port: 1, estimateTotalCount: false }))),
+        entry(text(1, "abcd"), delimited(2, pluginBytes(plugin(2)))),
+    ]));
+    await signedOverPreimage("__proto__ twice, and a plugin named port", Buffer.concat([
+        nullPrototype,
+        entry(text(1, "__proto__"), delimited(2, pluginBytes({ enabled: true, port: 1, estimateTotalCount: true }))),
+        entry(text(1, "port"), delimited(2, pluginBytes({ enabled: false, port: 2 }))),
+    ]), { configStart: Buffer.from(Config.encode({ ...base.config, plugins: {} }).finish()) });
     await verify("config before state on the wire", Buffer.concat([delimited(2, configBytes), delimited(1, stateBytes), lists]));
     await verify("a second state replaces the first", Buffer.concat([delimited(1, Buffer.from(State.encode({ height: 9 }).finish())), raw(Buffer.alloc(0))]));
     await verify("an unknown field", raw(Buffer.alloc(0), { before: Buffer.concat([varint((9 << 3) | 0), varint(300)]) }));

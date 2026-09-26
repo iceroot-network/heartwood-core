@@ -17,7 +17,7 @@ equal byte for byte, including which inputs each side rejects.
 
 | Level | What is compared | Status |
 |---|---|---|
-| L0 | golden vectors written by the reference, against Heartwood | runs against `heartwood-crypto` (1,473 of 1,518 records compared) and `heartwood-p2p-wire` (1,178 of 1,193 compared, the other 15 documented), all equal (see below) |
+| L0 | golden vectors written by the reference, against Heartwood | runs against `heartwood-crypto` (1,473 of 1,518 records compared) and `heartwood-p2p-wire` (1,179 of 1,193 compared, the other 14 documented), all equal (see below) |
 | L1 | random and mutated cases, one oracle call each | planned |
 | L2 | block sequences replayed on both sides, a state digest per block | planned |
 | L3 | the same scenario on a reference devnet and on a Heartwood devnet | planned |
@@ -185,8 +185,8 @@ reference accepts:
   truthy value without keys of its own (a number, `true`, an empty array) is no votes, as in the
   reference.
 
-On the wire class of `heartwood-p2p-wire` it compares 1,178 records, all equal, skips none, and
-counts 15 documented differences, each shown by the oracle's answer: 2 status plugins named
+On the wire class of `heartwood-p2p-wire` it compares 1,179 records, all equal, skips none, and
+counts 14 documented differences, each shown by the oracle's answer: 1 status plugin named
 `__proto__`, 2 payloads with groups nested 50,000 deep and 11 amounts beyond 128 bits (see
 heartwood-p2p-wire below). `tools/difftest/tests/l0.rs` and `tools/difftest/tests/l0_wire.rs` pin
 these counts.
@@ -254,13 +254,19 @@ equal. Three inputs, which only a crafted message contains, are read differently
 each, the oracle reports what the reference did, and the harness counts a case as a documented
 difference only when that report shows it:
 
-- a status plugin named `__proto__`: the reference's decoder replaces the prototype of the plugins
-  object with the entry, and its reply check then sees the prototype's properties, which can
-  refuse the reply. Heartwood drops the entry and checks the plugins the object holds itself;
+- a status plugin named `__proto__` with a value: the reference's decoder makes the plugin the
+  prototype of the plugins object, and its reply check then sees the plugin's properties among the
+  plugins and refuses the reply. Heartwood drops the entry and checks the plugins the object holds
+  itself. Where the reference's check does not refuse the plugins, such a reply is compared as
+  usual. Where an entry without a value has made the prototype `null`, a later `__proto__` is an
+  ordinary plugin; the reference then checks the signatures against a text that lists that
+  plugin's fields among the plugins, and Heartwood builds the same text;
 - protobuf groups nested deeper than the reference's stack: the reference fails with a stack
   overflow (between 5,000 and 20,000 levels on Node 18), and Heartwood skips groups at any depth;
-- an amount beyond 128 bits: the reference reads integers of any size and refuses such a value at
-  a later step. Heartwood refuses it when it decodes, since reading it is unbounded work.
+- an amount beyond 128 bits: the reference reads integers of any size. It refuses such a getBlocks
+  response at a later step, but accepts the total amount and total fee of a getStatus reply whose
+  header is at height 1 and verifies the reply's signatures over the whole integer. Heartwood
+  refuses the payload when it decodes, since reading such an integer is unbounded work.
 
 ```sh
 make test-wire                  # clippy on heartwood-p2p-wire alone, then its tests

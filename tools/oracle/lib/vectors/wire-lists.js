@@ -167,9 +167,10 @@ module.exports = async function wireListsVectors({ rec, must, shared, solar }) {
     ];
     for (const [name, payload] of blockEdges) await decode(name, "getBlocks", "response", hex(payload));
 
-    // The exclude list: whole 32-byte ids or none, at most one more than its cap.
+    // The exclude list: whole 32-byte ids or none, at most one more than its cap. One list two ids
+    // past the cap shows where the reference stops (each such record is about 2 MB).
     const excludeRequest = (excludeBytes) => hex(bytes(2, excludeBytes), bytes(3, headersBytes(peerHeaders)));
-    for (const n of [0, 1, 2, MAX_EXCLUSIONS, MAX_EXCLUSIONS + 1, MAX_EXCLUSIONS + 2]) {
+    for (const n of [0, 1, 2, MAX_EXCLUSIONS + 2]) {
         await decode(`${n} excluded ids`, "getUnconfirmedTransactions", "request", excludeRequest(Buffer.concat(Array.from({ length: n }, (_, i) => excludeId(i)))));
     }
     for (const length of [1, 31, 33, 63, 65, 80]) {
