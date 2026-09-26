@@ -99,6 +99,8 @@ pub struct PeerConfig {
     pub network: NetworkConfig,
     /// The public plugins by package name, in the configuration's order. The wire and the
     /// preimage see them as a JavaScript object: array-index names first, a repeated name once.
+    /// A name `__proto__`, which no package can have, is left out; the reference would replace
+    /// its object's prototype and sign the prototype's fields as entries.
     pub plugins: Vec<(String, PluginConfig)>,
 }
 
