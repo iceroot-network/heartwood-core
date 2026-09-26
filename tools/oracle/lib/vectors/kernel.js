@@ -296,6 +296,15 @@ async function kernel({ rec, must, shared }) {
     ];
     for (const ip of oddAddresses) await pushOk("kernel.ip", { list: ["*", "::*"], ip }, `address ${JSON.stringify(ip)}`);
 
+    // Bracket forms of the glob matcher: squares, [!] and [^], a [ that no ] closes (the last
+    // character left to the regular expression), [] and stray ] and ^, and a class that breaks
+    // the regular expression.
+    const bracketAddresses = ["[12", "[1.2", "[x.y", "[xy", "1]2", "a^b", "!", "[", "]", "[]", "a!b", "[[e%4", "x"];
+    const bracketEntries = ["[]]", "[[]", "[!]", "[^]", "[!12", "[12", "[1.2", "[x.", "[x^", "[x[", "[!x", "[^xy?", "[x?*", "[*", "[]", "[]x", "1]2", "a^b", "a!b", "![[[e]%4", "!!c[%c", "[[e]%4"];
+    for (const entry of bracketEntries) {
+        for (const ip of bracketAddresses) await pushOk("kernel.ip", { list: [entry], ip }, `${JSON.stringify(entry)} ${JSON.stringify(ip)}`);
+    }
+
     // Node directories on Linux.
     const paths = [
         ["defaults", { token: "solar", network: "devnet", home: "/srv/node" }],

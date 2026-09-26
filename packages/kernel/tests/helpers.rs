@@ -101,13 +101,30 @@ fn glob_entries_outside_the_subset_match_nothing() {
         "10.0.0.(1|2)",
         "10.0.0.{1,2}",
         "10.0.0.1+",
-        "10.0.[0",
-        "10.0.0]*",
-        "10.0.0.[1!]",
         "a/*",
-        "1!*",
+        "10.0.0.[1\\]",
+        "\"10.0.0.1\"",
     ] {
         assert!(!ip::is_blacklisted(&one(entry), "10.0.0.1"), "{entry}");
+    }
+    // Brackets the reference reads as literal text, or as its regular expression reads them.
+    for (entry, address, matched) in [
+        ("10.0.0.[1!]", "10.0.0.!", true),
+        ("10.0.[0", "10.0.[0", true),
+        ("[!12", "[12", true),
+        ("[x.", "[xy", true),
+        ("[x^", "[x^", false),
+        ("[^]", "7", true),
+        ("[!]", "!", true),
+        ("[]x", "[]x", true),
+        ("1]2", "1]2", true),
+        ("!10.0.0.$", "10.0.0.1", true),
+    ] {
+        assert_eq!(
+            ip::is_blacklisted(&one(entry), address),
+            matched,
+            "{entry} {address}"
+        );
     }
     // Backward ranges are refused by the reference's regular expressions too.
     assert!(!ip::is_blacklisted(&one("10.0.0.[9-0]"), "10.0.0.5"));
