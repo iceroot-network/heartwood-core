@@ -18,6 +18,9 @@ pub enum Outcome {
     Mismatch(Vec<Difference>),
     /// One side accepted and the other rejected.
     VerdictMismatch { oracle: String, heartwood: String },
+    /// Heartwood rejects the case on purpose where the reference accepts it: a documented
+    /// difference, with its reason. Not a failure, and not counted as compared.
+    Documented(String),
     /// The subject does not model this input yet.
     Skipped(String),
     /// The subject failed (a harness problem, counted as a failure).
@@ -85,6 +88,32 @@ impl Report {
         self.count(|o| matches!(o, Outcome::Skipped(_)))
     }
 
+    pub fn documented(&self) -> usize {
+        self.count(|o| matches!(o, Outcome::Documented(_)))
+    }
+
+    /// Cases per reason that Heartwood rejects on purpose where the reference accepts them.
+    pub fn documented_by_reason(&self) -> BTreeMap<&str, usize> {
+        let mut out = BTreeMap::new();
+        for r in &self.results {
+            if let Outcome::Documented(reason) = &r.outcome {
+                *out.entry(reason.as_str()).or_insert(0) += 1;
+            }
+        }
+        out
+    }
+
+    /// Cases per reason that a subject skipped.
+    pub fn skipped_by_reason(&self) -> BTreeMap<(&str, &str), usize> {
+        let mut out = BTreeMap::new();
+        for r in &self.results {
+            if let Outcome::Skipped(reason) = &r.outcome {
+                *out.entry((r.op.as_str(), reason.as_str())).or_insert(0) += 1;
+            }
+        }
+        out
+    }
+
     /// Cases per operation that have no Rust implementation yet.
     pub fn without_subject(&self) -> BTreeMap<&str, usize> {
         let mut out = BTreeMap::new();
@@ -146,8 +175,25 @@ impl fmt::Display for Report {
             self.passed(),
             self.failed()
         )?;
+        if self.documented() > 0 {
+            writeln!(
+                f,
+                "  {} documented differences (Heartwood rejects them on purpose):",
+                self.documented()
+            )?;
+            for (reason, n) in self.documented_by_reason() {
+                writeln!(f, "    {n:>5}  {reason}")?;
+            }
+        }
         if self.skipped() > 0 {
-            writeln!(f, "  {} skipped (input not supported yet)", self.skipped())?;
+            writeln!(
+                f,
+                "  {} skipped (not modelled by the subject):",
+                self.skipped()
+            )?;
+            for ((op, reason), n) in self.skipped_by_reason() {
+                writeln!(f, "    {n:>5}  {op}: {reason}")?;
+            }
         }
         let missing = self.without_subject();
         if !missing.is_empty() {
@@ -223,6 +269,7 @@ mod tests {
                 case("c", Outcome::NoSubject),
                 case("c", Outcome::NoSubject),
                 case("d", Outcome::Skipped("later".into())),
+                case("e", Outcome::Documented("on purpose".into())),
             ],
         };
         assert_eq!(
@@ -230,7 +277,16 @@ mod tests {
             (2, 1, 1)
         );
         assert!(!report.is_success());
+        assert_eq!((report.skipped(), report.documented()), (1, 1));
         let text = report.to_string();
+        assert!(
+            text.contains("1 documented differences (Heartwood rejects them on purpose):\n        1  on purpose"),
+            "{text}"
+        );
+        assert!(
+            text.contains("1 skipped (not modelled by the subject):\n        1  d: later"),
+            "{text}"
+        );
         assert!(text.contains("2 compared: 1 passed, 1 failed"), "{text}");
         assert!(
             text.contains("2 records have no Rust implementation yet:\n        2  c"),

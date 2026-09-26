@@ -2,13 +2,13 @@
 //!
 //! | Level | What it compares | Where it plugs in | Arrives with |
 //! |---|---|---|---|
-//! | L0 | golden vectors against Heartwood, byte-exact and accept/reject | [`l0`]: records to [`crate::subject`] | the harness now, subjects with the first crates |
+//! | L0 | golden vectors against Heartwood, byte-exact and accept/reject | [`l0`]: records to [`crate::subject`] | `heartwood-crypto` (runs) |
 //! | L1 | random and mutated cases, one oracle call each | [`crate::oracle::OracleServer`] and the same subjects, driven by `proptest` | the first oracle operations, then property tests |
 //! | L2 | block sequences replayed on both sides, a state digest per block | a replay driver over `heartwood-blockchain` and a TypeScript harness plugin | block processing |
 //! | L3 | the same scenario on a TS devnet and a Heartwood devnet | a scenario runner over both devnets | the first Heartwood devnet |
 //! | L4 | a mixed TS and Heartwood network | the scenario runner with mixed nodes | mixed networks |
 //!
-//! Only L0 runs today. It reports "0 compared" until the first subjects are registered.
+//! Only L0 runs today, with the subjects of `heartwood-crypto` ([`crate::subjects`]).
 
 pub mod l0;
 
@@ -43,7 +43,7 @@ impl Level {
     /// What the level first runs Heartwood code with.
     pub fn arrives_with(self) -> &'static str {
         match self {
-            Level::L0 => "the harness now, subjects with the first crates",
+            Level::L0 => "heartwood-crypto",
             Level::L1 => "the first oracle operations, then property tests",
             Level::L2 => "block processing",
             Level::L3 => "the first Heartwood devnet",

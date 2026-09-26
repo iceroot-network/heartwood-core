@@ -8,6 +8,7 @@ use heartwood_difftest::genesis::{self, Built};
 use heartwood_difftest::levels::{Level, l0};
 use heartwood_difftest::oracle::GenOptions;
 use heartwood_difftest::report::describe_meta;
+use heartwood_difftest::subjects::Devnet;
 use heartwood_difftest::vectors::VectorSet;
 use heartwood_difftest::{Error, Result, subject};
 
@@ -143,7 +144,15 @@ fn execute(command: Command) -> Result<bool> {
             dir: Some(dir),
         } => {
             let set = VectorSet::load(&dir)?;
-            let report = l0::run(&set, &subject::heartwood());
+            let devnet = Devnet::from_vectors(&set)?;
+            if devnet.is_none() {
+                eprintln!(
+                    "difftest: {} has no genesis class, so the devnet rules are unknown and the \
+                     cases that need them are skipped",
+                    dir.display()
+                );
+            }
+            let report = l0::run(&set, &subject::heartwood(devnet));
             print!("{report}");
             Ok(report.is_success())
         }

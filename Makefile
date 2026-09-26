@@ -96,7 +96,7 @@ vectors-install: vectors-diff ## copy the container run (vector files and manife
 	cp $(VECTORS)/container/*.jsonl $(VECTORS)/container/MANIFEST.sha256 $(CRYPTO_VECTORS)/
 	$(DIFFTEST) vectors verify $(CRYPTO_VECTORS)
 
-l0: build ## compare VECTORS/container with Heartwood (0 compared until the first subjects exist)
+l0: build ## compare VECTORS/container with Heartwood's subjects
 	$(DIFFTEST) run l0 $(VECTORS)/container
 
 ping: build ## oracle-server.js answers, in the image and locally

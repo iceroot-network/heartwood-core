@@ -40,25 +40,40 @@ pub fn run(set: &VectorSet, registry: &Registry) -> Report {
 }
 
 fn judge(record: &Record, registry: &Registry) -> Outcome {
-    let Some(subject) = registry.get(&record.op) else {
-        return Outcome::NoSubject;
-    };
     let case = Case {
         op: &record.op,
         network: &record.network,
         height: record.height,
         input: &record.input,
     };
-    match (subject.run(&case), &record.expected) {
+    judge_case(&case, &record.expected, registry)
+}
+
+/// Run `case` with the subject registered for its operation and judge the result against the
+/// oracle's `expected` answer. Error messages are never compared, and only the verdict of a
+/// rejection is.
+pub fn judge_case(case: &Case<'_>, expected: &Expected, registry: &Registry) -> Outcome {
+    let Some(subject) = registry.get(case.op) else {
+        return Outcome::NoSubject;
+    };
+    match (subject.run(case), expected) {
         (Ok(Verdict::Output(actual)), Expected::Output(expected)) => {
-            let differences = compare::diff(expected, &actual);
+            let differences = compare::diff(
+                &without_error_messages(expected),
+                &without_error_messages(&actual),
+            );
             if differences.is_empty() {
                 Outcome::Pass
             } else {
                 Outcome::Mismatch(differences)
             }
         }
-        (Ok(Verdict::Rejected { .. }), Expected::Error(_)) => Outcome::Pass,
+        (Ok(Verdict::Rejected { .. } | Verdict::RefusedByDesign { .. }), Expected::Error(_)) => {
+            Outcome::Pass
+        }
+        (Ok(Verdict::RefusedByDesign { reason, .. }), Expected::Output(_)) => {
+            Outcome::Documented(reason)
+        }
         (Ok(Verdict::Rejected { class }), Expected::Output(_)) => Outcome::VerdictMismatch {
             oracle: "accepted".into(),
             heartwood: format!("rejected ({class})"),
@@ -69,6 +84,26 @@ fn judge(record: &Record, registry: &Registry) -> Outcome {
         },
         (Err(SubjectError::Unsupported(why)), _) => Outcome::Skipped(why),
         (Err(SubjectError::Failed(why)), _) => Outcome::HarnessError(why),
+    }
+}
+
+/// `value` without the `message` of the errors nested in an output (an object with `class` and
+/// `message`): only an error's class is observable, and messages are never compared.
+fn without_error_messages(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .filter(|(key, value)| {
+                    !(key.as_str() == "message"
+                        && value.is_string()
+                        && object.contains_key("class"))
+                })
+                .map(|(key, value)| (key.clone(), without_error_messages(value)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(without_error_messages).collect()),
+        other => other.clone(),
     }
 }
 
@@ -194,7 +229,7 @@ mod tests {
             &[keys_record("a", "02aa"), keys_record("b", "02bb")],
             "native",
         );
-        let report = run(&set, &crate::subject::heartwood());
+        let report = run(&set, &Registry::new());
         assert_eq!(report.compared(), 0);
         assert!(report.is_success());
         assert_eq!(

@@ -3,7 +3,8 @@
 //! A subject answers one oracle operation (`keys.fromPassphrase`, `tx.build`, ...) with
 //! Heartwood's code. The same subject serves L0 (a golden-vector record) and L1 (a random case
 //! sent to `oracle-server.js`), because both describe a case as operation, network, height and
-//! input. None is registered yet; the first ones, from `heartwood-crypto`, go in [`heartwood`].
+//! input. [`heartwood`] registers the subjects of [`crate::subjects`], which answer with
+//! `heartwood-crypto`.
 
 use std::collections::BTreeMap;
 
@@ -11,6 +12,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::errors::Error;
+use crate::subjects::{self, Devnet};
 
 /// Heartwood's answer to one case.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,6 +22,10 @@ pub enum Verdict {
     /// Rejected. `class` is Heartwood's error class; classes are compared only where they are
     /// observable, and messages never are.
     Rejected { class: String },
+    /// Rejected on purpose where the reference accepts: a documented difference. `reason` says
+    /// what the reference does instead. When the reference rejects the case too, the verdicts
+    /// agree.
+    RefusedByDesign { class: String, reason: String },
 }
 
 /// A subject could not produce a verdict.
@@ -83,10 +89,14 @@ impl Registry {
     }
 }
 
-/// Heartwood's subjects. Empty for now: the first ones (keys, addresses, signatures, transaction
-/// and block codecs) arrive with `heartwood-crypto`.
-pub fn heartwood() -> Registry {
-    Registry::new()
+/// Heartwood's subjects, one per oracle operation that `heartwood-crypto` implements.
+///
+/// `devnet` is the configuration the cases were generated under (see [`Devnet::from_vectors`]).
+/// Without it, the subjects that need the devnet's rules skip their cases.
+pub fn heartwood(devnet: Option<Devnet>) -> Registry {
+    let mut registry = Registry::new();
+    subjects::register(&mut registry, devnet);
+    registry
 }
 
 #[cfg(test)]
@@ -118,7 +128,20 @@ mod tests {
     }
 
     #[test]
-    fn no_heartwood_subjects_yet() {
-        assert!(heartwood().is_empty());
+    fn heartwood_registers_the_crate_operations() {
+        let registry = heartwood(None);
+        let ops: Vec<&str> = registry.ops().collect();
+        for op in [
+            "keys.fromPassphrase",
+            "sig.bip340.sign",
+            "sig.legacy.verify",
+            "tx.build",
+            "tx.fromBytes",
+            "block.make",
+            "config.load",
+            "genesis.generate",
+        ] {
+            assert!(ops.contains(&op), "{op} is not registered");
+        }
     }
 }
