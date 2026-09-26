@@ -40,6 +40,14 @@ pub enum Error {
 
     #[error("two subjects registered for operation {0}")]
     DuplicateSubject(String),
+
+    /// A genesis profile that cannot be read or does not describe a chain definition.
+    #[error("{path}: {message}")]
+    Profile { path: PathBuf, message: String },
+
+    /// The chain definition could not be built.
+    #[error("genesis: {0}")]
+    Genesis(#[from] heartwood_crypto::errors::GenesisError),
 }
 
 impl Error {
