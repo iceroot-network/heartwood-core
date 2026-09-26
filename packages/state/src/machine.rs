@@ -74,6 +74,20 @@ impl State {
         crate::genesis::build(genesis, milestones, handlers)
     }
 
+    /// The state made of these parts, as the genesis block builds it.
+    pub(crate) fn from_parts(
+        wallets: WalletRepository,
+        round: RoundState,
+        store: StateStore,
+    ) -> State {
+        State {
+            wallets,
+            round,
+            store,
+            journal: Vec::new(),
+        }
+    }
+
     /// Apply `block`, the block after the last one: detect the slots missed before it, apply its
     /// transactions and pay its forger, make it the last block, and record it in the round,
     /// starting the next round when it ends one. On an error the state is unchanged.
