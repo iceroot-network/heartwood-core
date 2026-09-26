@@ -13,6 +13,14 @@ Heartwood Core credits both projects:
   Copyright (c) Solar Network
   https://github.com/Solar-network/core
 
+It also contains the emoji table of node-emoji 1.11.0, in packages/logger/src/emoji.tsv, with the
+MIT License notice of node-emoji at the top of that file:
+
+  node-emoji
+  Copyright (c) 2014 Daniel Bugl
+  MIT License
+  https://github.com/omnidan/node-emoji
+
 Where code in this repository is adapted from ARK Core, the MIT License notice of ARK Core applies
 to that code. The notice reads:
 
