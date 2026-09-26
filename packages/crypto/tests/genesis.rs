@@ -5,23 +5,23 @@
 //! A `V10-genesis` record gives the generator's inputs: the seed, the epoch and the genesis profile
 //! (every other value the chain definition is built from). The builder must write the four crypto
 //! files byte for byte as the generator did, derive the same key material, and report the same
-//! nethash, genesis id and issued amount. The block it writes must then read back, verify, and
-//! decode transaction by transaction as the reference's check of the same files did.
+//! nethash, genesis id and issued amount. The block it writes must then read back and verify as the
+//! reference's check of the same files did (see [`check_reads_back`] for what is compared).
 
 #![cfg(feature = "genesis")]
 
 #[macro_use]
 mod common;
 
-use heartwood_crypto::blocks::factory;
 use heartwood_crypto::crypto::hash::sha256;
 use heartwood_crypto::errors::GenesisError;
 use heartwood_crypto::genesis::{
     self, Allocation, ChainDefinition, DerivedKey, DonationShare, GenesisDelegate, GenesisInput,
     RuleOverride, bip39,
 };
+use heartwood_crypto::transactions::verifier;
 use heartwood_crypto::utils::hex;
-use heartwood_crypto::{Milestones, Network, Transaction};
+use heartwood_crypto::{Block, Milestones, Network};
 use serde_json::{Map, Value, json};
 
 use common::Record;
@@ -258,13 +258,21 @@ fn check_record(label: &str, record: &Record, built: &ChainDefinition) {
     check_reads_back(label, built, &output["check"]);
 }
 
-/// Read the written files back as a node would, and compare with the reference's check.
+/// Read the written files back, and compare with the reference's check of the same files.
+///
+/// The reference's check reads `genesisBlock.json` with `BlockFactory.fromJson` and decodes every
+/// transaction with its strict rules, with the genesis block loaded, which lets the genesis
+/// transactions have a zero fee. This crate's readers do not take a genesis block yet, so the
+/// block is read back from its bytes without the transaction rules, and each transaction's
+/// signature and id are checked: the parts of the strict decode that do not depend on the genesis
+/// block. `genesisBlock.json` itself is compared byte for byte above.
 fn check_reads_back(label: &str, built: &ChainDefinition, check: &Value) {
     let network = Network::load(&built.network_json).expect("network.json loads");
     let milestones =
         Milestones::load(&built.milestones_json, &network).expect("milestones.json loads");
-    let json: Value = serde_json::from_str(&built.genesis_block_json).unwrap();
-    let block = factory::from_json(&json, &milestones).expect("the genesis block reads back");
+    let block = Block::decode_trusted(&built.block.encode(), &milestones)
+        .expect("the genesis block decodes");
+    assert_eq!(block.id(), built.block.id(), "{label}");
     assert_eq!(block.id().to_hex(), check["id"], "{label}");
     let verification = block.verify(&milestones, 0);
     assert_eq!(
@@ -281,16 +289,35 @@ fn check_reads_back(label: &str, built: &ChainDefinition, check: &Value) {
         u64::from(block.header().payload_length),
         number(check, "payloadLength")
     );
+
+    let json: Value = serde_json::from_str(&built.genesis_block_json).unwrap();
+    assert_eq!(json["id"], block.id().to_hex());
+    assert_eq!(
+        json["payloadHash"],
+        hex::encode(&block.header().payload_hash)
+    );
+    assert_eq!(
+        json["blockSignature"],
+        block.header().block_signature.to_hex()
+    );
+    let ids: Vec<String> = block.transaction_ids().map(|id| id.to_hex()).collect();
+    let json_ids: Vec<&str> = json["transactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tx| tx["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(json_ids, ids, "{label}");
+
     let params = milestones.at(1);
-    let strict = block
+    let signed = block
         .transactions()
         .iter()
         .filter(|tx| {
-            Transaction::decode(tx.bytes(), params)
-                .is_ok_and(|decoded| decoded.is_verified() && decoded.id() == tx.id())
+            verifier::verify(tx.data(), params) && sha256(tx.bytes()) == *tx.id().as_bytes()
         })
         .count();
-    assert_eq!(strict as u64, number(check, "strictlyVerified"), "{label}");
+    assert_eq!(signed as u64, number(check, "strictlyVerified"), "{label}");
 }
 
 #[test]
@@ -464,6 +491,7 @@ fn inconsistent_inputs_are_refused() {
     assert!(is_input(refused(&|i| {
         i.allocations[0].amount = u64::MAX;
     })));
+    assert!(is_input(refused(&|i| i.allocations[1].amount = 0)));
     assert_eq!(
         refused(&|i| i.epoch = "2026-01-01T00:00:00Z".into()),
         GenesisError::Epoch("2026-01-01T00:00:00Z".into())

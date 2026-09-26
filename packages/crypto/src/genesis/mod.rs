@@ -5,7 +5,7 @@
 //! devnet generator writes them, plus the derived key material and a summary. It does no I/O and
 //! reads no clock: the seed, the epoch, the rules, the roles and the allocations are all inputs.
 //!
-//! Every key is derived from the seed and a role name ([`derive`]). The genesis block holds, in
+//! Every key is derived from the seed and a role name ([`mod@derive`]). The genesis block holds, in
 //! order:
 //!
 //! 1. the issuance record: transfers (1/6) from the generator key, fee 0, with one item per
@@ -19,6 +19,13 @@
 //! block's is `block`. The block is version `block.version` of the first milestone, height 1,
 //! timestamp 0, with 32 bytes of payload per transaction; its payload hash, the SHA-256 of the
 //! concatenated transaction ids, is also the network hash.
+//!
+//! The transactions are made as the generator makes them: signed and serialised directly, without
+//! the transaction rules of [`crate::validation`], which refuse a zero fee except for the
+//! transactions of a network's own genesis block. The rules that do apply to the genesis block
+//! are checked here instead: delegate names are valid, allocations are at least 1, and transfers
+//! stay within the milestone's `transfer.minimum` and `transfer.maximum`. Every transaction
+//! signature is verified.
 //!
 //! `milestones.json` holds the first milestone, built from the input rules, and, when there are
 //! donations, a second milestone that sets them. Before the block is built the milestones pass the
@@ -36,16 +43,18 @@ use std::fmt;
 use serde_json::{Map, Value, json};
 use zeroize::Zeroizing;
 
-use crate::blocks::factory::{self, BlockDraft};
-use crate::blocks::{Block, BlockId};
+use crate::blocks::serialiser as serialiser_block;
+use crate::blocks::{Block, BlockHeader, BlockId, VerifyFailure};
 use crate::crypto::hash::sha256_concat;
-use crate::crypto::sig::Aux;
-use crate::errors::GenesisError;
+use crate::crypto::sig::{self, Aux, SchemeId, Signature, SigningDomain};
+use crate::errors::{BlockError, BuildError, GenesisError};
 use crate::identities::{Address, KeyPair};
-use crate::managers::{Milestones, Network};
+use crate::managers::{Milestones, Network, Params};
+use crate::transactions::serialiser::{self, SerialiseOptions};
 use crate::transactions::types::{TransferItem, Votes};
-use crate::transactions::{Asset, Transaction, TransactionBuilder, TransactionType};
+use crate::transactions::{Asset, Transaction, TransactionData, TransactionType, signer, verifier};
 use crate::utils::{hex, js};
+use crate::validation;
 
 pub mod bip39;
 pub mod derive;
@@ -198,10 +207,15 @@ pub struct ChainDefinition {
     pub wallets: Vec<DerivedKey>,
     /// The summary.
     pub summary: GenesisSummary,
+    /// The genesis block that `genesis_block_json` describes.
+    pub block: Block,
 }
 
 /// A vote for one delegate with all of the voter's weight: 10,000 basis points, 100 %.
 const WHOLE_VOTE: u16 = 10_000;
+
+/// The version of every genesis transaction.
+const TRANSACTION_VERSION: u8 = 3;
 
 /// Build the chain definition of `input`.
 pub fn build(input: &GenesisInput) -> Result<ChainDefinition, GenesisError> {
@@ -226,10 +240,12 @@ pub fn build(input: &GenesisInput) -> Result<ChainDefinition, GenesisError> {
 
     // The transactions in block order, each with its asset as the genesis file writes it.
     let mut transactions: Vec<(Transaction, Value)> = Vec::new();
-    let per_transfer = usize::try_from(params.transfer_maximum())
-        .ok()
-        .filter(|&n| n > 0)
-        .ok_or_else(|| GenesisError::Input("transfer.maximum is 0".into()))?;
+    let mut add = |keys: &KeyPair, nonce: u64, asset: Asset, json: Value| {
+        let label = transactions.len().to_string();
+        let tx = genesis_transaction(keys, nonce, asset, aux(&label), params)?;
+        transactions.push((tx, json));
+        Ok::<(), GenesisError>(())
+    };
     let items: Vec<TransferItem> = input
         .allocations
         .iter()
@@ -239,8 +255,8 @@ pub fn build(input: &GenesisInput) -> Result<ChainDefinition, GenesisError> {
             recipient: recipient.address,
         })
         .collect();
-    for (nonce, chunk) in (1..).zip(items.chunks(per_transfer)) {
-        let asset = json!({
+    for (nonce, chunk) in (1..).zip(transfer_chunks(&items, params)?) {
+        let json = json!({
             "transfers": chunk
                 .iter()
                 .map(|item| json!({
@@ -249,65 +265,29 @@ pub fn build(input: &GenesisInput) -> Result<ChainDefinition, GenesisError> {
                 }))
                 .collect::<Vec<_>>(),
         });
-        let tx = TransactionBuilder::transfer(chunk.to_vec())
-            .network(network_byte)
-            .nonce(nonce)
-            .fee(0)
-            .build(
-                &generator.keys,
-                aux(&transactions.len().to_string()),
-                params,
-            )?;
-        transactions.push((tx, asset));
+        let asset = Asset::Transfer {
+            transfers: chunk.to_vec(),
+        };
+        add(&generator.keys, nonce, asset, json)?;
     }
     for (delegate, keys) in input.delegates.iter().zip(&delegates) {
-        let asset = json!({ "delegate": { "username": delegate.username } });
-        let tx = TransactionBuilder::delegate_registration(&delegate.username)
-            .network(network_byte)
-            .nonce(1)
-            .fee(0)
-            .build(&keys.keys, aux(&transactions.len().to_string()), params)?;
-        transactions.push((tx, asset));
+        validation::validate_username(&delegate.username).map_err(BuildError::from)?;
+        let json = json!({ "delegate": { "username": delegate.username } });
+        let asset = Asset::DelegateRegistration {
+            username: delegate.username.clone(),
+        };
+        add(&keys.keys, 1, asset, json)?;
     }
     for (delegate, keys) in input.delegates.iter().zip(&delegates) {
-        let asset = json!({ "votes": { delegate.username.as_str(): WHOLE_VOTE / 100 } });
+        let json = json!({ "votes": { delegate.username.as_str(): WHOLE_VOTE / 100 } });
         let votes: Votes = [(delegate.username.clone(), WHOLE_VOTE)]
             .into_iter()
             .collect();
-        let tx = TransactionBuilder::vote(votes)
-            .network(network_byte)
-            .nonce(2)
-            .fee(0)
-            .build(&keys.keys, aux(&transactions.len().to_string()), params)?;
-        transactions.push((tx, asset));
+        add(&keys.keys, 2, Asset::Vote { votes }, json)?;
     }
 
     let (transactions, assets): (Vec<Transaction>, Vec<Value>) = transactions.into_iter().unzip();
-    let count = u32::try_from(transactions.len())
-        .map_err(|_| GenesisError::Input("too many genesis transactions".into()))?;
-    let payload_length = count
-        .checked_mul(32)
-        .ok_or_else(|| GenesisError::Input("too many genesis transactions".into()))?;
-    let payload_hash = sha256_concat(transactions.iter().map(|tx| tx.id().as_bytes().as_slice()));
-    let draft = BlockDraft {
-        version: params.block_version(),
-        timestamp: 0,
-        height: 1,
-        previous_block: [0; 32],
-        number_of_transactions: count,
-        total_amount: checked_sum(transactions.iter().map(Transaction::amount))?,
-        total_fee: checked_sum(transactions.iter().map(Transaction::fee))?,
-        reward: 0,
-        payload_length,
-        payload_hash,
-    };
-    let block = factory::make(
-        draft,
-        transactions,
-        &generator.keys,
-        aux("block"),
-        &milestones,
-    )?;
+    let block = genesis_block(transactions, &generator.keys, aux("block"), params)?;
     let verification = block.verify(&milestones, 0);
     if !verification.is_verified() {
         return Err(GenesisError::Verification(verification.failures));
@@ -317,7 +297,8 @@ pub fn build(input: &GenesisInput) -> Result<ChainDefinition, GenesisError> {
         return Err(GenesisError::Issuance { issued, allocated });
     }
 
-    network.nethash = hex::encode(&payload_hash);
+    let header = block.header();
+    network.nethash = hex::encode(&header.payload_hash);
     Ok(ChainDefinition {
         network_json: write_json(&network.to_json()),
         milestones_json,
@@ -325,15 +306,119 @@ pub fn build(input: &GenesisInput) -> Result<ChainDefinition, GenesisError> {
         exceptions_json: write_json(&Value::Object(Map::new())),
         summary: GenesisSummary {
             issued,
-            nethash: payload_hash,
+            nethash: header.payload_hash,
             genesis_id: *block.id(),
-            transactions: count,
+            transactions: header.number_of_transactions,
         },
         generator,
         allocations,
         delegates,
         donations,
         wallets,
+        block,
+    })
+}
+
+/// The allocations split into transfers of at most `transfer.maximum` items. Every transfer must
+/// have at least `transfer.minimum` items.
+fn transfer_chunks<'a>(
+    items: &'a [TransferItem],
+    params: &Params,
+) -> Result<std::slice::Chunks<'a, TransferItem>, GenesisError> {
+    let maximum = usize::try_from(params.transfer_maximum())
+        .ok()
+        .filter(|&n| n > 0)
+        .ok_or_else(|| GenesisError::Input("transfer.maximum is 0".into()))?;
+    let minimum = usize::try_from(params.transfer_minimum()).unwrap_or(usize::MAX);
+    let chunks = items.chunks(maximum);
+    if chunks.clone().any(|chunk| chunk.len() < minimum) {
+        return Err(GenesisError::Input(format!(
+            "the allocations do not split into transfers of {minimum} to {maximum} items"
+        )));
+    }
+    Ok(chunks)
+}
+
+/// A genesis transaction, made as the reference's devnet generator makes it: version 3, fee 0,
+/// signed over its unsigned bytes, with no transaction rules applied. (Outside a loaded genesis
+/// block the rules refuse a zero fee; the asset rules that apply are checked by the caller.) The
+/// signature is checked before the transaction is used.
+fn genesis_transaction(
+    keys: &KeyPair,
+    nonce: u64,
+    asset: Asset,
+    aux: Aux,
+    params: &Params,
+) -> Result<Transaction, GenesisError> {
+    let kind = match &asset {
+        Asset::Transfer { .. } => TransactionType::Transfer,
+        Asset::SecondSignature { .. } => TransactionType::SecondSignature,
+        Asset::DelegateRegistration { .. } => TransactionType::DelegateRegistration,
+        Asset::DelegateResignation { .. } => TransactionType::DelegateResignation,
+        Asset::Burn { .. } => TransactionType::Burn,
+        Asset::Vote { .. } => TransactionType::Vote,
+    };
+    let mut data = TransactionData {
+        version: TRANSACTION_VERSION,
+        network: params.network(),
+        kind,
+        nonce,
+        sender_public_key: keys.public_key().clone(),
+        fee: 0,
+        memo: None,
+        asset,
+        signature: None,
+        second_signature: None,
+    };
+    signer::sign(&mut data, keys, aux, params)?;
+    let bytes =
+        serialiser::serialise(&data, SerialiseOptions::FULL, params).map_err(BuildError::from)?;
+    let tx = Transaction::decode_trusted(&bytes, params).map_err(BuildError::from)?;
+    if !verifier::verify(tx.data(), params) {
+        return Err(GenesisError::Verification(vec![
+            VerifyFailure::UnverifiedTransactions(vec![*tx.id()]),
+        ]));
+    }
+    Ok(tx)
+}
+
+/// The genesis block of `transactions`: version `block.version`, height 1, timestamp 0, no
+/// previous block, no reward, 32 bytes of payload per transaction, the header signed with BIP340
+/// by `keys`, as the reference's devnet generator makes it.
+fn genesis_block(
+    transactions: Vec<Transaction>,
+    keys: &KeyPair,
+    aux: Aux,
+    params: &Params,
+) -> Result<Block, GenesisError> {
+    let too_many = || GenesisError::Input("too many genesis transactions".into());
+    let count = u32::try_from(transactions.len()).map_err(|_| too_many())?;
+    let mut header = BlockHeader {
+        version: params.block_version(),
+        timestamp: 0,
+        height: 1,
+        previous_block: [0; 32],
+        number_of_transactions: count,
+        total_amount: checked_sum(transactions.iter().map(Transaction::amount))?,
+        total_fee: checked_sum(transactions.iter().map(Transaction::fee))?,
+        reward: 0,
+        payload_length: count.checked_mul(32).ok_or_else(too_many)?,
+        payload_hash: sha256_concat(transactions.iter().map(|tx| tx.id().as_bytes().as_slice())),
+        generator_public_key: keys.public_key().to_compressed(),
+        block_signature: Signature::from_array([0; 64]),
+    };
+    header.block_signature = sig::sign(
+        SchemeId::Secp256k1Bip340,
+        SigningDomain::Block,
+        &serialiser_block::signing_hash(&header),
+        keys.secret_key(),
+        aux,
+    )
+    .map_err(BlockError::from)?;
+    Ok(Block {
+        id: serialiser_block::block_id(&header),
+        header,
+        transactions,
     })
 }
 
@@ -354,6 +439,10 @@ fn check_input(input: &GenesisInput) -> Result<u64, GenesisError> {
     }
     if input.delegates.is_empty() {
         return refuse("there are no delegates");
+    }
+    // A transfer item of the reference is at least 1 base unit, in the genesis block too.
+    if input.allocations.iter().any(|a| a.amount == 0) {
+        return refuse("an allocation is 0");
     }
     // Every signing key must be a different key: each sender's nonces start at 1.
     let mut signers = HashSet::from([input.generator_role.as_str()]);
