@@ -534,9 +534,7 @@ mod tests {
             let params = devnet();
             let _ = Transaction::decode_trusted(&bytes, &params);
             if let Ok(tx) = Transaction::decode(&bytes, &params) {
-                let canonical = serialise(tx.data(), SerialiseOptions::FULL, &params).unwrap();
-                let again = Transaction::decode(&canonical, &params).unwrap();
-                prop_assert_eq!(again.data(), tx.data());
+                check_canonical_form(&tx, &params)?;
             }
         }
 
@@ -561,12 +559,28 @@ mod tests {
             bytes.extend(extra);
             let _ = Transaction::decode_trusted(&bytes, &params);
             if let Ok(tx) = Transaction::decode(&bytes, &params) {
-                let canonical = serialise(tx.data(), SerialiseOptions::FULL, &params).unwrap();
-                let again = Transaction::decode(&canonical, &params).unwrap();
-                prop_assert_eq!(again.data(), tx.data());
-                prop_assert_eq!(again.id().as_bytes(), &sha256(&canonical));
+                check_canonical_form(&tx, &params)?;
             }
         }
+    }
+
+    /// The fields of a decoded transaction serialise to a canonical form that decodes to the same
+    /// verdict and serialises to itself, and whose id is its SHA-256; the JSON form reads back to
+    /// the same canonical bytes. The fields themselves may differ: a version byte 0 reads back as
+    /// 3, and a resignation byte `0xff` as no byte.
+    fn check_canonical_form(tx: &Transaction, params: &Params) -> Result<(), TestCaseError> {
+        let canonical = serialise(tx.data(), SerialiseOptions::FULL, params).unwrap();
+        let again = Transaction::decode(&canonical, params).unwrap();
+        prop_assert_eq!(again.bytes(), canonical.as_slice());
+        prop_assert_eq!(
+            &serialise(again.data(), SerialiseOptions::FULL, params).unwrap(),
+            &canonical
+        );
+        prop_assert_eq!(again.id().as_bytes(), &sha256(&canonical));
+        prop_assert_eq!(again.is_verified(), tx.is_verified());
+        let json = Transaction::from_json(&tx.to_json(params), params).unwrap();
+        prop_assert_eq!(json.bytes(), canonical.as_slice());
+        Ok(())
     }
 
     #[test]
