@@ -15,7 +15,7 @@ use heartwood_p2p_wire::{Codec, DecodeError};
 use serde_json::{Value, json};
 
 use super::{accepted, bytes_value, object, refused};
-use crate::subject::Verdict;
+use crate::subject::{Documented, Verdict};
 use crate::subjects::{Outcome, failed};
 
 /// The payload of `value` for `codec`.
@@ -153,15 +153,21 @@ fn listed_block_value(block: &ListedBlock) -> Outcome<Value> {
 
 // Shared with `transactions`.
 
-/// The verdict on a decoder's result: the value in the oracle's JSON, or the refusal.
+/// The verdict on a decoder's result: the value in the oracle's JSON, or the refusal. Where the
+/// oracle's answer is the overflow of the reference's stack on deeply nested groups, the case is
+/// the documented difference whatever Heartwood's verdict: Heartwood reads past the groups, and a
+/// list can then fail later, on another item.
 pub(super) fn verdict<T>(
     result: Result<T, DecodeError>,
     value: impl FnOnce(&T) -> Outcome<Value>,
 ) -> Outcome<Verdict> {
-    match result {
-        Ok(decoded) => Ok(accepted(value(&decoded)?)),
-        Err(error) => Ok(refused(error)),
-    }
+    Ok(match result {
+        Ok(decoded) => accepted(value(&decoded)?),
+        Err(error) => Verdict::DiffersWhereShown {
+            difference: Documented::DeepGroups,
+            verdict: Box::new(refused(error)),
+        },
+    })
 }
 
 /// A decoded object has a key that its message does not declare: a harness bug.
