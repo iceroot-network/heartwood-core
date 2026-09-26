@@ -30,6 +30,9 @@ thiserror.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+# The crate itself with every feature, so that `cargo test -p heartwood-crypto` also runs the
+# legacy Schnorr and genesis tests and vectors.
+heartwood-crypto = { path = ".", features = ["legacy-schnorr", "genesis"] }
 hex.workspace = true
 k256.workspace = true
 num-bigint.workspace = true
