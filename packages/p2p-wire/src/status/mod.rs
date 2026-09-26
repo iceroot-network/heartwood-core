@@ -21,6 +21,9 @@ mod json;
 mod reply;
 mod tree;
 
+#[cfg(test)]
+mod tests;
+
 pub use self::attest::{Attestation, attest, response, verify_attestation};
 pub use self::reply::{
     ReceivedStatus, check_reply, decode_response, encode_response, verifying_preimage,

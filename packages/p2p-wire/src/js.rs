@@ -140,19 +140,11 @@ pub(crate) fn utf8_lossy(bytes: &[u8]) -> String {
 }
 
 /// The length of `text` in UTF-16 code units, JavaScript's `text.length`.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the frame writer and the reply check call it")
-)]
 pub(crate) fn utf16_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
 /// The order of JavaScript's default `sort()` on strings: by UTF-16 code units.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the canonical JSON writer calls it")
-)]
 pub(crate) fn utf16_cmp(a: &str, b: &str) -> Ordering {
     a.encode_utf16().cmp(b.encode_utf16())
 }
@@ -185,10 +177,6 @@ pub(crate) fn utf16_split(text: &str, at: usize) -> (String, String) {
 /// Append `JSON.stringify(text)` to `out`: the text in double quotes, with `"` and `\` escaped,
 /// U+0008, U+0009, U+000A, U+000C and U+000D as `\b`, `\t`, `\n`, `\f` and `\r`, and the other
 /// code points below U+0020 as `\u00xx` in lowercase hex. Everything else is written as it is.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the canonical JSON writer calls it")
-)]
 pub(crate) fn json_string(out: &mut String, text: &str) {
     out.push('"');
     for c in text.chars() {
