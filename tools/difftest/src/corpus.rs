@@ -865,7 +865,7 @@ pub fn import(archives: &[PathBuf], out: &Path, seed: &str) -> Result<()> {
         .cloned()
         .unwrap_or(Value::Null);
     let mut reference_fields = Map::new();
-    for key in ["name", "tag", "commit", "keyFormat", "seriesSha256"] {
+    for key in ["commit", "keyFormat", "seriesSha256"] {
         if let Some(v) = reference.get(key) {
             reference_fields.insert(key.to_owned(), v.clone());
         }
