@@ -7,6 +7,7 @@
 //! One more rule comes from how `stringify` collects the keys: it skips every key that is `in` an
 //! empty object, so a key named like a property of `Object.prototype` (`constructor`, `toString`,
 //! ...) never reaches the replacer list and is left out wherever it appears, a plugin name included.
+//! The replacer list still reaches inherited properties: see [`inherited`].
 //!
 //! The signer and the verifier write the same tree from the same messages ([`preimage`]); they
 //! differ only in the slot they pass and in whether an empty `plugins` is written.
@@ -15,7 +16,7 @@ use std::fmt::Write as _;
 
 use crate::codecs::Amount;
 use crate::js;
-use crate::messages::peer::{Config, Plugin, State, StatusHeader};
+use crate::messages::peer::{Config, Plugin, Plugins, State, StatusHeader};
 
 /// The names of the properties of `Object.prototype` in Node 18, which `stringify` leaves out.
 const PROTOTYPE_NAMES: &str = "constructor __defineGetter__ __defineSetter__ hasOwnProperty \
@@ -114,11 +115,8 @@ pub(super) fn preimage(
     });
     let plugins = (empty_plugins || !config.plugins.is_empty()).then(|| {
         let entries = config.plugins.iter();
-        Json::Object(
-            entries
-                .map(|(name, p)| (name.to_owned(), p.map_or(Json::Null, plugin)))
-                .collect(),
-        )
+        let own = entries.map(|(name, p)| (name.to_owned(), p.map_or(Json::Null, plugin)));
+        Json::Object(own.chain(inherited(&config.plugins)).collect())
     });
     let config = object([
         ("version", text(&config.version)),
@@ -150,6 +148,32 @@ fn header(header: &StatusHeader, [total_amount, total_fee, reward]: [Amount; 3])
         ("generatorPublicKey", text(&header.generator_public_key)),
         ("blockSignature", text(&header.block_signature)),
     ])
+}
+
+/// The fields that the reference's plugins object inherits. `Config.toObject` copies the own
+/// entries onto a new object, so an own entry named `__proto__` (which only a `null` prototype
+/// allows) becomes the new object's prototype. The replacer list then reaches each field of that
+/// plugin that some other entry has, unless an entry of that name shadows it.
+fn inherited(plugins: &Plugins) -> Vec<(String, Json)> {
+    type Read = fn(&Plugin) -> Option<Json>;
+    let prototype = plugins
+        .has_own_proto_key()
+        .then(|| plugins.get(js::PROTO_KEY));
+    let Some(Some(Some(prototype))) = prototype else {
+        return Vec::new();
+    };
+    let fields: [(&str, Read); 3] = [
+        ("port", |p| int(p.port)),
+        ("enabled", |p| flag(p.enabled)),
+        ("estimateTotalCount", |p| flag(p.estimate_total_count)),
+    ];
+    let listed = |read: Read| {
+        (plugins.iter()).any(|(name, p)| name != js::PROTO_KEY && p.and_then(read).is_some())
+    };
+    (fields.into_iter())
+        .filter(|&(field, read)| plugins.get(field).is_none() && listed(read))
+        .filter_map(|(field, read)| Some((field.to_owned(), read(prototype)?)))
+        .collect()
 }
 
 fn plugin(plugin: &Plugin) -> Json {

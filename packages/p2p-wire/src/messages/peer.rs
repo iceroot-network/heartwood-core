@@ -187,9 +187,10 @@ message! {
 /// JavaScript's rules: array-index names come first in numeric order, and other names in the order
 /// they were first set; a repeated name keeps its first position and takes the last value; an entry
 /// without a value is `None` (the reference's `null`). An entry named `__proto__` replaces the
-/// object's prototype instead of adding an entry, and [`Plugins::replaced_prototype`] records it
-/// (a documented difference: the reference's reply check then sees the prototype's properties).
-/// Once an entry without a value has made the prototype `null`, `__proto__` is an ordinary name.
+/// object's prototype instead of adding an entry, and [`Plugins::replaced_prototype`] records it.
+/// When its value is a plugin ([`Plugins::inherits_plugin`]), the reference's reply check sees
+/// that plugin's properties, a documented difference. Once an entry without a value has made the
+/// prototype `null`, `__proto__` is an ordinary name.
 ///
 /// Setting and finding a name take logarithmic or constant time, so a payload of many entries
 /// decodes in time proportional to its size, as the reference's object does.
@@ -312,6 +313,12 @@ impl Plugins {
     /// Whether an entry named `__proto__` replaced the prototype of the reference's object.
     pub fn replaced_prototype(&self) -> bool {
         self.prototype != Prototype::Object
+    }
+
+    /// Whether an entry named `__proto__` with a value made a plugin the prototype of the
+    /// reference's object, whose reply check then refuses the reply for the plugin's properties.
+    pub fn inherits_plugin(&self) -> bool {
+        self.prototype == Prototype::Plugin
     }
 
     /// Whether the reference's object has a `null` prototype and an own key `__proto__`, which

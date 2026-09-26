@@ -397,6 +397,7 @@ fn map_entries_are_assigned_as_to_a_plain_object() {
         ]
     );
     assert!(decoded.plugins.replaced_prototype());
+    assert!(decoded.plugins.inherits_plugin());
     assert_eq!(decoded.own_keys(), ["plugins"]);
 
     let one = |hex| {
@@ -418,6 +419,7 @@ fn map_entries_are_assigned_as_to_a_plain_object() {
     let names: Vec<&str> = config.plugins.iter().map(|(name, _)| name).collect();
     assert_eq!(names, ["__proto__", "x"]);
     assert!(config.plugins.replaced_prototype());
+    assert!(!config.plugins.inherits_plugin());
     assert_eq!(Config::decode(&config.encode()), Ok(config.clone()));
     assert!(hex::encode(config.encode()).starts_with(&format!("1a0b0a09{proto}1a0f")));
 

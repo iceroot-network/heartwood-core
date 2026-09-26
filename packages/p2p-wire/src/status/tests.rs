@@ -241,6 +241,64 @@ fn a_prototype_name_is_on_the_wire_but_not_in_the_preimage() {
     );
 }
 
+/// A `__proto__` entry without a value makes the prototype `null`; a second one is an own entry,
+/// which the reference's `Config.toObject` turns into the prototype of a new object. Its fields
+/// that another entry has, and that no entry shadows, are in the reference's preimage.
+#[test]
+fn an_own_proto_entry_lends_its_fields_to_the_preimage() {
+    let plugin = |port, enabled, estimate| Plugin {
+        port: Some(port),
+        enabled: Some(enabled),
+        estimate_total_count: estimate,
+        ..Plugin::default()
+    };
+    let with = |entries: Vec<(&str, Option<Plugin>)>| {
+        let (status, result) = check(|status| {
+            let plugins = plugins(status);
+            *plugins = crate::messages::peer::Plugins::new();
+            for (name, value) in entries {
+                plugins.insert(name.to_owned(), value);
+            }
+        });
+        assert_eq!(result, Ok(()));
+        let preimage = text(verifying_preimage(&status, false));
+        let at = preimage.find("\"plugins\":").unwrap();
+        let end = at + preimage[at..].find("},\"version\"").unwrap();
+        preimage[at..=end].to_owned()
+    };
+    let proto = "__proto__";
+    // The reference's preimages, from its getStatus codec and its kernel `stringify`.
+    assert_eq!(
+        with(vec![
+            ("@solar-network/api", Some(plugin(6003, true, Some(true)))),
+            (proto, None),
+            (proto, Some(plugin(1, true, Some(false)))),
+            ("abcd", Some(plugin(2, true, None))),
+        ]),
+        concat!(
+            r#""plugins":{"@solar-network/api":{"enabled":true,"estimateTotalCount":true,"#,
+            r#""port":6003},"abcd":{"enabled":true,"port":2},"enabled":true,"#,
+            r#""estimateTotalCount":false,"port":1}"#
+        )
+    );
+    assert_eq!(
+        with(vec![
+            (proto, None),
+            (proto, Some(plugin(1, true, Some(true)))),
+            ("port", Some(plugin(2, false, None))),
+        ]),
+        r#""plugins":{"enabled":true,"port":{"enabled":false,"port":2}}"#
+    );
+    // A prototype that is a plugin from the start is not an own entry, and lends nothing.
+    assert_eq!(
+        with(vec![
+            (proto, Some(plugin(1, true, Some(true)))),
+            ("abcd", Some(plugin(2, true, None))),
+        ]),
+        r#""plugins":{"abcd":{"enabled":true,"port":2}}"#
+    );
+}
+
 /// A reply signed by one key, changed by `change`, and checked.
 fn check(change: impl FnOnce(&mut ReceivedStatus)) -> (ReceivedStatus, Result<(), ReplyRefused>) {
     let mut status = received(&state(5), &config(vec![api()]), &[&key("delegate one")]);
