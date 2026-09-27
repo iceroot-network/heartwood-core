@@ -17,7 +17,7 @@ use heartwood_kernel::clock::{Clock, SystemClock};
 use heartwood_kernel::log::Level;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
-use tracing_appender::non_blocking::WorkerGuard;
+use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 
@@ -71,7 +71,7 @@ pub fn init(
     let mut layer = LineLayer::new(options.emojify, Arc::clone(&clock));
     let mut guards = Vec::new();
     if let Some(level) = options.console {
-        let (writer, guard) = tracing_appender::non_blocking(io::stdout());
+        let (writer, guard) = lossless(io::stdout());
         guards.push(guard);
         layer = layer.output(level, true, Box::new(writer));
     }
@@ -83,13 +83,19 @@ pub fn init(
             options.max_bytes,
             clock,
         )?;
-        let (writer, guard) = tracing_appender::non_blocking(file);
+        let (writer, guard) = lossless(file);
         guards.push(guard);
         layer = layer.output(level, false, Box::new(writer));
     }
     tracing::subscriber::set_global_default(Registry::default().with(layer))
         .map_err(|_| LoggerError::AlreadyInstalled)?;
     Ok(LoggerGuard { _guards: guards })
+}
+
+/// A writer thread for `writer` that never drops a line: when its queue is full, the logging
+/// thread waits. The guard flushes and ends the thread when dropped.
+fn lossless<W: Write + Send + 'static>(writer: W) -> (NonBlocking, WorkerGuard) {
+    NonBlockingBuilder::default().lossy(false).finish(writer)
 }
 
 /// The layer that writes the reference's lines.
@@ -103,6 +109,17 @@ struct Output {
     level: Level,
     colour: bool,
     writer: Mutex<Box<dyn Write + Send>>,
+}
+
+impl fmt::Debug for LineLayer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let outputs: Vec<(Level, bool)> =
+            self.outputs.iter().map(|o| (o.level, o.colour)).collect();
+        f.debug_struct("LineLayer")
+            .field("emojify", &self.emojify)
+            .field("outputs", &outputs)
+            .finish_non_exhaustive()
+    }
 }
 
 impl LineLayer {

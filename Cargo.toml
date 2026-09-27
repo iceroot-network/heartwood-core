@@ -41,9 +41,13 @@ serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 indexmap = "2.14"
 thiserror = "2"
 
-# Logging. The facade is tracing without its attribute macros; the subscriber, the file appender
-# and gzip serve heartwood-logger only. The logger writes the reference's line format itself, so
-# the subscriber needs neither its ANSI colours nor its own formats.
+# Logging. The facade is tracing without its attribute macros; the subscriber, the appender and
+# gzip serve heartwood-logger only. The logger writes the reference's line format itself on the
+# subscriber's registry, without ANSI colours from the subscriber; the `fmt` feature is on only
+# because tracing-appender's writer needs it. tracing-appender gives each output a writer thread
+# that never drops a line and flushes when its guard drops; it brings about nine small crates
+# (crossbeam-channel, symlink, time and their dependencies), which a hand-written writer thread
+# would save at the cost of code the logger's line budget has no room for.
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
 tracing-appender = "0.2.5"

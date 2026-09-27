@@ -12,6 +12,7 @@
 //! ordered by their status change time, and the oldest are removed until at most `max_files`
 //! remain and they take at most `max_bytes` together (a limit of 0 is no limit).
 
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -171,11 +172,25 @@ impl RotatingFile {
     }
 }
 
+impl fmt::Debug for RotatingFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RotatingFile")
+            .field("path", &self.path())
+            .field("next_rotation_ms", &self.next_rotation_ms)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Write for RotatingFile {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.clock.now_ms() >= self.next_rotation_ms {
-            self.rotate().map_err(io::Error::other)?;
-        } else if !self.path().exists() {
+        let now = self.clock.now_ms();
+        if now >= self.next_rotation_ms {
+            // One attempt per midnight: a failed rotation is not tried again at every write, and
+            // the lines go on to the live file. The logger has nowhere to report its own failure.
+            self.next_rotation_ms = next_midnight(now);
+            let _ = self.rotate();
+        }
+        if !self.path().exists() {
             // The live file was removed under us: start it again, as the reference does.
             self.file = append(&self.path()).map_err(io::Error::other)?;
         }

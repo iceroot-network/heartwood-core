@@ -137,6 +137,36 @@ fn the_first_write_after_midnight_rotates_into_a_gzip_file() {
 }
 
 #[test]
+fn a_failed_rotation_keeps_the_lines_and_waits_for_the_next_midnight() {
+    let dir = Scratch::new("failed");
+    let clock = Arc::new(ManualClock::new(LAST_SECOND));
+    let mut file = RotatingFile::open(&dir, STEM, 10, 104_857_600, clock.clone()).unwrap();
+    file.write_all(b"the first day\n").unwrap();
+    // Every rotated name of 2026-01-02 is taken, so the rotation at midnight fails.
+    for index in 1..=999 {
+        fs::write(dir.join(rotated_name(STEM, "2026-01-02", index)), "").unwrap();
+    }
+    clock.advance(1_000);
+    file.write_all(b"after midnight\n").unwrap();
+    // A free name does not bring the rotation back before the next midnight.
+    fs::remove_file(dir.join(rotated_name(STEM, "2026-01-02", 1))).unwrap();
+    file.write_all(b"later\n").unwrap();
+    assert!(!dir.join(rotated_name(STEM, "2026-01-02", 1)).exists());
+    assert_eq!(
+        fs::read_to_string(file.path()).unwrap(),
+        "the first day\nafter midnight\nlater\n"
+    );
+    clock.advance(86_400_000);
+    file.write_all(b"the third day\n").unwrap();
+    assert_eq!(
+        gunzip(&dir.join(rotated_name(STEM, "2026-01-03", 1))),
+        "the first day\nafter midnight\nlater\n"
+    );
+    assert_eq!(fs::read_to_string(file.path()).unwrap(), "the third day\n");
+    assert!(format!("{file:?}").starts_with("RotatingFile {"));
+}
+
+#[test]
 fn a_start_appends_and_does_not_rotate() {
     let dir = Scratch::new("restart");
     fs::write(dir.join(current_name(STEM)), "old\n").unwrap();
