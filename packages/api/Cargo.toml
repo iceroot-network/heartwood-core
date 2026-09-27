@@ -29,7 +29,6 @@ indexmap.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
-tower-http.workspace = true
 
 # The tests serve the routes over snapshots of the committed devnet chain, with tokio's paused
 # clock for the rate limit and the semaphore; the peer-to-peer codec gives their peers plugins, and

@@ -34,7 +34,6 @@ declare -A ONLY_UNDER=(
     [axum]="heartwood-api"
     [hyper]="heartwood-api"
     [hyper-util]="heartwood-api"
-    [tower-http]="heartwood-api"
     [clap]="heartwood-core"
 )
 # The consensus crates, and the crates none of them may pull in.
