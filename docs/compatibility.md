@@ -11,7 +11,7 @@ equal byte for byte, including which inputs each side rejects.
 | Level | What is compared | Status |
 |---|---|---|
 | L0 | golden vectors written by the reference, against Heartwood | runs against the seven crates with vector classes: 6,220 of 6,387 records compared, all equal (see below) |
-| L1 | random and mutated cases, one oracle call each | runs: twelve properties, from the fee floor to the pool and the crypto files (see below) |
+| L1 | random and mutated cases, one oracle call each | runs: fifteen properties, from the fee floor to the pool, the crypto files and the peer-to-peer client's network monitor (see below) |
 | L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets through Heartwood's store, with seeded reverts, restarts at every height, synthetic blocks and pool sessions (see below) |
 | L3 | the same scenario on a reference devnet and on a Heartwood devnet | planned |
 | L4 | a mixed network of reference and Heartwood nodes | planned |
@@ -42,6 +42,9 @@ packages/pool/        heartwood-pool: the transaction pool, with its storage, th
                       queries, the collator and the node-local online record
 packages/blockchain/  heartwood-blockchain: so far, a block's commit to the store and a node's
                       start (first start, restart from the state tables, replay from genesis)
+packages/p2p/         heartwood-p2p: the client side of the peer-to-peer protocol (nes sessions,
+                      requests and reply checks, peer acceptance and verification, the network
+                      monitor), not yet wired into a node; the mock peer behind `difftest`
 packages/*/tests/vectors/  each crate's golden vectors, with its own MANIFEST.sha256
 tools/difftest/       heartwood-difftest: the harness library and the `difftest` binary
   corpus/               a committed L2 corpus (a reference devnet chain and its digest lines)
@@ -64,6 +67,7 @@ tools/oracle/         the oracle: Node scripts and the image recipe
                         digest), corpus.js, vectors/ (one file per class)
   check-native.js       checks that the reference's native modules build and load
 tools/wire-fuzz-seeds.js  seeds the wire fuzz corpora from the wire vectors
+tools/p2p-fuzz-seeds.js   seeds the p2p fuzz corpora from a vector run's V24 and V26 records
 packages/crypto/tests/vectors/external/  published vector files, with their source URLs and SHA-256
 fuzz/                 cargo-fuzz targets for the transaction and block decoders, the
                       transaction handlers, whole blocks on the state, the state's records, the
@@ -122,17 +126,18 @@ oracle answers, in the image and locally), `make oracle-save` (`docker save` of 
 | `DIFFTEST_DOCKER` | `tools/oracle/docker.sh` | the docker command |
 | `DEVNET_GENERATOR` | empty | the devnet generator, `gen-network.js`, for the genesis class; a separate tool that is not published |
 | `VECTOR_CRATES` | every crate and its classes | which classes `make vectors-install` puts into which crate's `tests/vectors` |
-| `L1_CASES`, `L1_SEED`, `L1_PROPERTY` | `256`, `1`, all | cases per property, the generator's seed, the properties (`P1` to `P12` or their names, comma separated) |
+| `L1_CASES`, `L1_SEED`, `L1_PROPERTY` | `256`, `1`, all | cases per property, the generator's seed, the properties (`P1` to `P12`, `P14` to `P16`, or their names, comma separated) |
 | `CORPUS`, `NAME` | `target/corpus`, empty | the L2 corpus `CORPUS/NAME` |
 | `ARCHIVE`, `CORPUS_SEED`, `DUMP` | empty | the devnet archives `make corpus-import` joins (in chain order); the chain's public key-derivation seed; heights whose records the judge writes |
 | `TO` | empty | cut the corpus at this height, in `corpus-judge`, `l2`, `l2-synthetic` and `l2-restart` (the judge and the replays must use the same cut) |
 | `RESTARTS` | empty | the restart plan `corpus-judge` writes into the corpus before it judges: `every` (a restart at every height) or `rounds` (the round ends, the first blocks of rounds, 20 seeded heights and the node's live restarts) |
 | `KILLS`, `KILL_SEED` | `200`, empty | the kill test's number of kills, and the seed of its delays |
 | `ORACLE_ARGS` | `--image $(IMAGE)` | where the oracle of `l1`, `corpus-judge`, `l2-synthetic` and `replay-wire` runs; `--solar-dir DIR` for a local reference |
-| `RELEASE_PACKAGES` | the nine library crates | the packages `make release-check` builds without test seams |
-| `FUZZ_SECONDS`, `FUZZ_FORK` | `600`, `8` | how long each wire fuzz target runs, and its libFuzzer jobs |
+| `RELEASE_PACKAGES` | the ten library crates | the packages `make release-check` builds without test seams |
+| `FUZZ_SECONDS`, `FUZZ_FORK` | `600`, `8` | how long each wire or p2p fuzz target runs, and its libFuzzer jobs |
 | `WIRE_SEEDS`, `WIRE_SEED_MAX` | the installed wire class, `65536` | the vector file that seeds the wire fuzz corpora, and the longest seed in bytes |
 | `WIRE_LOGS` | `target/wire-fuzz` | the logs of `make fuzz-wire` and `make replay-wire` |
+| `P2P_SEEDS`, `P2P_LOGS` | `$(VECTORS)/local`, `target/p2p-fuzz` | the vector run that seeds the p2p fuzz corpora, and the logs of `make fuzz-p2p` and `make replay-p2p` |
 
 Settings for one machine go in `local.mk` beside the Makefile. It is git-ignored and read before
 the defaults, for example:
@@ -546,6 +551,104 @@ seconds and an out-of-memory stop each end the run and fail it; the logs, with e
 coverage and corpus size, go to `target/wire-fuzz`. `make replay-wire` fails on a difference, on
 an input that was not compared, and on a missing or empty corpus.
 
+## heartwood-p2p
+
+`packages/p2p` is the client side of the peer-to-peer protocol: how a relay follows the network.
+It connects to peers, verifies their chains, downloads and broadcasts blocks and transactions, and
+keeps its peer list, with the reference's requests, timeouts, limits, cadences and decisions. It
+opens no listening socket, and it is not yet wired into a node: it reads the node's chain and
+tells the node about peers only through the traits of its `view` module, so it depends on no
+crate of the chain, the store or the pool. Its edges are `heartwood-crypto`, `heartwood-kernel`
+and `heartwood-p2p-wire`, with tokio and tokio-tungstenite, which no other crate may use
+(`make layers`).
+
+- **nes sessions**: the reference's nes client on a WebSocket, one session per peer IP: the hello,
+  the heartbeat (the server's interval plus its timeout), the one-second ping limit, the
+  connection-wide request timeout and receive limit with the points where each is reset, the
+  closes for an oversized message (1009), for broken frames (1002) and for bad text (1007), the
+  single reconnect after one second, and the connector's pause of ten seconds between sessions to
+  one IP. The frames it writes are the reference client's, byte for byte (the client records of the
+  wire class).
+- **requests and replies**: every request of the reference's client, with each route's receive
+  limit and timeout, the outgoing rate limiter (it waits instead of sending too fast), the reply
+  check of each route, the error-class rule that decides whether a failed request only counts
+  against the peer or disconnects it, the disconnect after three failures in a row, the per-peer
+  queue of postTransactions batches, and the ping with its status attestations. The client never
+  writes a request that a reference server refuses for its shape.
+- **peers**: the acceptance of candidate peers (the address rules, the whitelist and blacklist,
+  the same-subnet cap, the version gate, a ping and a port probe), and the verification of a
+  peer's claimed chain: an n-ary search for the highest common block, then the peer's blocks after
+  it up to the end of the round.
+- **the network monitor**: seeds and peer sources, discovery every 600 seconds, the cleanse of
+  slow peers, the network height, fork health, block downloads in chunks of 400 with a chunk cache
+  and backup peers, transaction downloads, and the broadcast of blocks (after 500 ms) and of
+  transactions (in batches of 40).
+
+Where the reference is lenient with a peer that breaks the protocol, Heartwood is stricter on
+purpose. None of these differences shows with an honest peer or a generated devnet's
+configuration:
+
+- a fork segment fetched during verification must chain: each header to the one before it, and
+  the first to the node's block at the common height. The reference checks each header's
+  signature, height and round delegate only. The harness reports these records as documented
+  differences, with the unlinked header checked on the input;
+- protocol violations are recorded against a peer for 600 seconds: a reply the codec or the reply
+  check refuses, a broken nes session other than a heartbeat timeout, and a downloaded
+  transaction the reader refuses. They count toward the same ignore rule as the cleanse's slow
+  pings, and a peer with a violation is not asked for peers, blocks or transactions and is not
+  accepted again until it expires. An honest slow peer stays a source;
+- the random samples (the discovery sources, the transaction sources, the peers a cleanse pings,
+  a chunk's backup peers and the peers whose ports are probed) are drawn across subnets (/24 and
+  /48) after the reference's shuffle;
+- a peer source over HTTPS is refused when the monitor starts; plain HTTP sources are read up to
+  4 MiB, and local files as JSON at each seeding;
+- a version range outside the npm semver forms the client reads (hyphen ranges, operators or stars
+  inside a word) satisfies no version, so a version gate made only of such ranges refuses every
+  peer;
+- a downloaded block that holds a removed transaction type or a memo that is not valid UTF-8 fails
+  that peer's whole getBlocks reply, and the monitor asks the next peer, since the reader refuses
+  both (see L0 below).
+
+```sh
+make test-p2p                   # clippy and tests of heartwood-p2p alone, without and with difftest
+cargo test -p heartwood-p2p --all-features -- --include-ignored   # also the integration tests
+make fuzz-p2p                   # the three p2p fuzz targets at once, FUZZ_SECONDS each
+make replay-p2p                 # the reply_check and listed_block corpora through the oracle and Heartwood
+```
+
+The crate's tests run on tokio's paused clock, against fakes of the parts each test does not
+cover and against the mock peer (the `testing` module, behind the `difftest` feature): a nes
+server over in-memory connections or TCP that answers from a script or serves a corpus chain. The
+tests marked `integration` join the real parts (the communicator over the connector and the mock
+peer, the verifier through the communicator, the monitor's cleanse and download against three
+mock peers); they use real time and loopback addresses `127.0.0.x`. The mock peer also runs alone,
+`cargo run -p heartwood-p2p --features difftest --bin mock-peer -- --listen <ip:port> --chain <dir>
+[--empty-first-getblocks]`, serving a corpus chain (such as `tools/difftest/corpus/txgen-one-node`)
+until it is killed. The test `devnet_smoke` of `tests/session.rs` runs against a reference node:
+with `HEARTWOOD_SMOKE_PEER=<ip:p2p port>`, `cargo test -p heartwood-p2p --all-features --test
+session devnet_smoke -- --ignored --nocapture` sends getStatus, getPeers and a getBlocks of 400
+blocks from height 1, checks each reply, answers the node's pings for a minute and closes the
+session; without the variable it does nothing.
+
+Three vector classes cover the crate (see Vector files). They are not installed beside the crates
+yet: the tests read `V24-p2p-exchange` from the directory in `WIRE_VECTORS` (`heartwood-p2p-wire`),
+`V25-peer-rules` from `P2P_VECTORS` (`heartwood-p2p`) and `V26-network` from `P2P_VECTORS`
+(difftest's `network_vectors` test), each relative to the workspace root, and report a class that
+is neither installed nor named there and pass. With a local run
+(`P2P_VECTORS=target/vectors/local`), `network_vectors` sends each V26 record to the subject of
+its area and allows no documented difference other than the unlinked fork segment and the two
+reader refusals above. The L1 properties P14 to P16 cover the verifier, the exchange and the
+monitor (see L1).
+
+The fuzz targets, seeded by `tools/p2p-fuzz-seeds.js` from a vector run's V24 and V26 records
+(`P2P_SEEDS`):
+
+| Target | Input | Checks | Replayed with |
+|---|---|---|---|
+| `nes_session` | a script of server frames, pauses, client requests and terminates | no panic; the pending requests stay bounded, every failure is a typed error, and every request is answered once the clock has run on | none |
+| `reply_check` | a selector byte (modulo 6: the routes other than getStatus), then a reply | no panic; an accepted reply encodes to bytes that decode and check to the same value | `wire.checkReply` |
+| `listed_block` | a getBlocks reply | no panic in the download path (the codec, the reply check, the transaction reader and the block rebuilt from the listed fields); a rebuilt block decodes to the same block | `block.fromListed` |
+
 ## L0: golden vectors
 
 `difftest run l0` compares the records of a vector run with Heartwood, with one subject per
@@ -557,6 +660,10 @@ models the reference's class. On a run of every class (reference tag `s1-ref-v2`
 | compared, equal to the reference | 6,220 |
 | documented differences, each with its form checked on the input or shown by the oracle's answer | 161 |
 | skipped: builders of types or headers that Heartwood does not build | 6 |
+
+A local run that adds the three classes of the peer-to-peer client (V24 to V26, 1,955 records)
+compares 1,952 more records, all equal, and documents 6 more: 3 fork segments whose headers do not
+chain, and 1 each of a removed type, a memo that is not valid UTF-8 and an amount beyond 128 bits.
 
 `cargo test` checks the classes of each crate in that crate; the difftest test `l0` runs the
 comparison over the committed vectors of `heartwood-crypto` (2,212 compared, 58 documented, 6
@@ -640,6 +747,9 @@ minimal case, which is written to `--regressions`.
 | P10 pool | fixtures of 3 to 12 wallets, some of them online delegates, with random options (small limits in a quarter of the cases, milestone fees on or off, the static mode), and 1 to 8 steps: batches of 1 to 6 entries built from the fixture's keys and mutated (nonces, fees around the floor and the lowest, amounts around the balance, duplicates, removed types, another network, bad signatures, pending conflicts, bytes or JSON with a correct, wrong or missing id), the clock moving on, removals, re-adds, a restart of the storage, changes of the online record, and a collation at the end | `pool.run`: every step's result and the pool's contents after it |
 | P11 text | amounts over the whole `i64` and `u64` range, weighted to `2^53` and to rounding ties; fraction digits; symbols; counts; transactions | `text.formatSatoshi`, `text.toLocaleFixed`, `text.toLocaleString`, `text.pluralise`, `text.transaction` |
 | P12 crypto files | the devnet's milestone and network files with keys added at random paths, `null`s, heights repeated, value types changed, removed features turned on, and files removed | `config.load`: a file the reference refuses must be refused by Heartwood; one only Heartwood refuses must match one strict-schema predicate; accepted files must merge to the same milestones |
+| P14 verifier | a chain of 70 headers signed by the delegates of their rounds, our height, a peer on our chain or forked from a random height with a branch of its own, bogus and short common-block replies, a failing or unlinked header, a deadline | `verifier.checkState`: the result and every request |
+| P15 exchange | the client's requests with random versions, ports and fields; replies of the six routes other than getStatus around the schemas' edges, a quarter of them with a byte changed, cut or added | `p2p.validateRequest`, `wire.checkReply` |
+| P16 monitor | peer sets with attested keys, ranks, heights and verification results around the fork threshold, with common heights of different digit counts; lists of heights | `monitor.forkDecision`, `monitor.networkHeight` |
 
 With the date as the seed and 10,000 cases per property (50,000 for P7), every property agrees
 with the reference. The only documented difference that appears is the one of a refused
@@ -659,6 +769,10 @@ or more per 10,000 cases, apart from two that it cannot give: `ERR_WRONG_NETWORK
 another network byte first) and `ERR_RETRY` (a failed revert empties the sender's mempool). The
 report also counts the reference's refusals with its `ColdWalletError` text; there are none, since
 the reference binds a sender's key before its checks run, so the pool cannot reach that error.
+
+P14 to P16 agree with the reference at 10,000 cases each with the date as the seed. The only
+documented difference among them is P14's fork segment whose headers do not chain (about one case
+in twenty-four), which Heartwood refuses (see heartwood-p2p).
 
 ## L2: chains, corpora and the state digest
 
@@ -799,6 +913,9 @@ run without `DEVNET_GENERATOR`, and then installs nothing.
 | `V16-kernel.jsonl` (kernel) | the status canonical JSON; `.env` text (separators, comments, quotes, digits, booleans, empty values); epoch timestamps; address lists with globs, brackets and IPv6; node directories with their environment overrides; `pluralise` over words and counts 0, 1, 2, 999, 1,000 and 2,000,000 |
 | `V17-handlers.jsonl` (transactions) | the transaction handlers on wallet sets: at least one case of each error class and of each apply effect, the revoke delay at 105, 106 and 107 blocks, the fee floor and one below it, the burn minimum and one below it, votes identical, empty, too many and unknown, second signatures missing, wrong and unexpected, and a refused first transaction of a wallet without a key; each refusal with its message |
 | `V18-genesis-state.jsonl` (state) | the state digest after the genesis block of the three V10 chain definitions and of six variants of the first (fees and burns, a second key, resignations and a revoke, split votes, a transfer before the issuance record, more issuance records, a generator that registers and votes, a vote and a resignation before their registration; two that the reference refuses to start on: a negative balance, too few delegates for round 1), and of five wallet sets, one per record shape |
+| `V24-p2p-exchange.jsonl` (not installed) | the client's requests as a reference server reads them (accepted with the reference client's bytes, or refused by the version gate or the payload limit), and the reply checks of the six routes other than getStatus, with their verdicts and changed values |
+| `V25-peer-rules.jsonl` (not installed) | the address rules of candidate peers, the version gate over the devnet's, the default and 400 seeded ranges, the same-subnet test and the outgoing rate limiter's waits |
+| `V26-network.jsonl` (not installed) | the status attestations of a ping, the n-ary search for the common block and the peer verification over forks of a devnet chain, the monitor's network height, fork decisions and download plans, and blocks rebuilt from getBlocks replies |
 | `V20-logger.jsonl` (logger) | the log line of every level, coloured and plain, with and without emoji codes (the whole table, in slices), over times at the edges of a JavaScript date and messages with line breaks and colour codes |
 | `V21-pool.jsonl` (pool) | 50 scripted pool sessions over wallet fixtures, each step with the reference's answer and the pool's contents after it: every error code with its message (duplicates, the cooldown from 0 to 30 seconds and per channel, the size limit, another network byte, the fee floor and one below it, the static fee exact, lower and higher, a full pool with fee ties and evictions, the per-sender limit with `excess` and allowed senders, every handler refusal, the pending and offline texts, bad signatures and bytes that do not decode, the seven removed types as bytes and as JSON); JSON entries with a correct, wrong or missing id; accepted but not broadcast; a pending incoming transfer; nonce chains and gaps; re-adds after a flush and a restart of the storage; age expiry; removal cascades; forged removal; the online record's expiry; collation (fee and nonce order, ties, `exclude`, the most transactions, the byte budget, a failed sender) |
 | `V23-config.jsonl` (kernel) | `config.load` of the four crypto files: the devnet's files, accepted by both, and each refusal kind of the strict schema at each level, the keys of removed features on and off, `exceptions.json` other than `{}`, and missing files (the reference then falls back to its built-in preset) |
