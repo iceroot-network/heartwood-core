@@ -348,7 +348,9 @@ fn run(case: Case) {
                     .into_iter()
                     .collect();
                 let collated = collate(&mut pool, &ctx, validate, &exclude).expect("storage");
-                // A subsequence of the highest-priority order, each sender's nonces in order.
+                // A subsequence of the highest-priority order, each sender's nonces in order:
+                // consecutive, unless an excluded transaction left a gap that nothing validated.
+                let gaps = !validate && !exclude.is_empty();
                 let mut rest = highest.iter();
                 for tx in &collated.candidates {
                     assert!(rest.any(|id| id == tx.id()), "out of priority order");
@@ -358,7 +360,11 @@ fn run(case: Case) {
                 for tx in &collated.candidates {
                     let sender = tx.data().sender_address(ctx.params());
                     if let Some((_, nonce)) = last.iter_mut().find(|(a, _)| *a == sender) {
-                        assert_eq!(tx.data().nonce, *nonce + 1, "nonces out of order");
+                        if gaps {
+                            assert!(tx.data().nonce > *nonce, "nonces out of order");
+                        } else {
+                            assert_eq!(tx.data().nonce, *nonce + 1, "nonces out of order");
+                        }
                         *nonce = tx.data().nonce;
                     } else {
                         last.push((sender, tx.data().nonce));
