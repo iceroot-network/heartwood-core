@@ -12,7 +12,8 @@
 // --out        the digest lines, one JSON object per step (ts-digests.jsonl)
 // --anchors    the anchor results [anchors.json next to --out]
 // --revert-plan  a revert plan instead of the corpus's revert-plan.json
-// --restart-plan  a restart plan (restart-plan.json, written by difftest): the judge also replays
+// --restart-plan  a restart plan instead of the corpus's restart-plan.json (written by difftest's
+//              corpus judge; without either, no restart runs): the judge also replays
 //              the chain once per restart mode of the reference ("rebuild", "saved"), restarting the
 //              node at every planned height (lib/state.js) and continuing on the restarted node;
 //              after a restart at a round end it also reverts the plan's reverts and applies the
@@ -474,6 +475,8 @@ async function restartRun(context, mode) {
 
 /** The restart plan in `plan`, checked against the chain's tip. */
 function checkRestartPlan(plan, tip) {
+    if (plan.format !== "heartwood-restart-plan/1") throw new UsageError("not a heartwood-restart-plan/1 file");
+    if (plan.tip !== tip) throw new UsageError(`the restart plan was made for the tip ${plan.tip}, the chain ends at ${tip}: make it again`);
     const heights = plan && plan.heights;
     if (!Array.isArray(heights) || heights.some((h, i) => !Number.isSafeInteger(h) || h < 1 || h > tip || (i > 0 && h <= heights[i - 1]))) {
         throw new UsageError(`the restart plan's heights must rise from 1 to the tip ${tip}`);
@@ -496,7 +499,8 @@ async function main() {
     const isRoundEnd = (h) => h % roundLength === 0;
     if (opts.to !== undefined) corpus = cutCorpus(corpus, opts.to, Math.floor(opts.to / roundLength) + 1);
     const plan = opts.revertPlan ? readJson(opts.revertPlan) : corpus.revertPlan;
-    const restartPlan = opts.restartPlan ? checkRestartPlan(readJson(opts.restartPlan), corpus.blocks.length + 1) : undefined;
+    const givenRestartPlan = opts.restartPlan ? readJson(opts.restartPlan) : corpus.restartPlan;
+    const restartPlan = givenRestartPlan ? checkRestartPlan(givenRestartPlan, corpus.blocks.length + 1) : undefined;
     const out = path.resolve(opts.out);
     const outDir = path.dirname(out);
     const anchorsFile = path.resolve(opts.anchors || path.join(outDir, "anchors.json"));

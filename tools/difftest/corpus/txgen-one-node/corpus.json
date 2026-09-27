@@ -38,16 +38,32 @@
     "ok": true,
     "reference": {
       "version": "4.3.1",
-      "commit": "23a7d941e5e906305b3e2a0beea1bb9f38ab9a7c",
+      "commit": "ddbd58100d0b39a234cbbce6b9213c9f99dbc0f9",
       "tree": "a4df428c8612290af2e7c8139a23d31eb057ce8f",
       "seriesSha256": "ff7a3841c59986b13c553762840c5c342c9360e9ea2008208ed449b61c90464d"
     },
     "oracle": {
-      "mode": "container",
-      "image": "sha256:d85b76bf10d3153898f97c3d7f3f1d4d2f1bbc85dcd0c4d85cf45f6993eac597",
+      "mode": "local",
+      "image": null,
       "node": "v18.20.8"
     },
     "lines": 2073,
-    "finalChainDigest": "6e307b41e355f622bdecaed0adf582287b320331f73eb71e2a757574b0a955a2"
+    "finalChainDigest": "6e307b41e355f622bdecaed0adf582287b320331f73eb71e2a757574b0a955a2",
+    "restarts": {
+      "ok": true,
+      "plan": {
+        "kind": "every",
+        "seed": "244056527601691632",
+        "heights": 265,
+        "reverts": [
+          1,
+          54
+        ]
+      },
+      "finalChainDigests": {
+        "rebuild": "337f5709c44d849cd2505de6a2f5f0f1efeea408f3a8963cf9322863860fcb6e",
+        "saved": "337f5709c44d849cd2505de6a2f5f0f1efeea408f3a8963cf9322863860fcb6e"
+      }
+    }
   }
 }
