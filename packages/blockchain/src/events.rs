@@ -8,10 +8,16 @@
 //!
 //! A [`CommitObserver`] sees every applied and reverted block on the node thread, right after the
 //! state changed and before the next block: the harness's digest writer.
+//!
+//! The events of a commit, in the reference's order: for each applied block, a milestone change
+//! when the block's height starts a milestone (the reference's `setLastBlock`, which fires it for
+//! any milestone height, height 1 included), then the block with the round it started; for each
+//! reverted block, the block, then a milestone change when the new tip's height starts one.
 
 use heartwood_crypto::Block;
 use heartwood_kernel::Event;
 use heartwood_state::State;
+use heartwood_state::machine::Applied;
 
 /// What a commit did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +71,14 @@ impl NodeListener for NoListener {
 pub trait CommitObserver: Send {
     /// `block` was applied; `state` is the state after it.
     fn applied(&mut self, state: &State, block: &Block);
+
+    /// `block` was applied, and `applied` is what the apply found: the slots missed before the
+    /// block, and the round it started; `state` is the state after it. The node calls this one;
+    /// by default it calls [`CommitObserver::applied`].
+    fn applied_with(&mut self, state: &State, block: &Block, applied: &Applied) {
+        let _ = applied;
+        self.applied(state, block);
+    }
 
     /// The last block was reverted; `state` is the state after the revert.
     fn reverted(&mut self, state: &State);
