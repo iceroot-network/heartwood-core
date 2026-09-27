@@ -30,25 +30,45 @@ Usage:
   difftest run l0 DIR             compare golden vectors with Heartwood's implementations
   difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR]
                   [--regressions DIR] [ORACLE]
-                                  random and mutated cases of the properties (P1 to P9, or
+                                  random and mutated cases of the properties (P1 to P12, or
                                   their names; all by default), one oracle call each; 256
                                   cases and seed 1 by default; DIR is a vector set with the
                                   genesis class [packages/crypto/tests/vectors]; the minimal
                                   case of a failed property is written to --regressions
-  difftest run l2 DIR [--synthetic] [ORACLE]
-                                  replay the corpus DIR in Heartwood and compare every step
-                                  with the oracle's digest lines; with an oracle, the first
+  difftest run l2 DIR [--synthetic] [--restart] [--memory] [--to H] [ORACLE]
+                                  replay the corpus DIR in Heartwood through a new store and
+                                  compare every step with the oracle's digest lines, then the
+                                  stored rows with the node's; with an oracle, the first
                                   differing step is dumped on both sides; --synthetic also
-                                  runs the synthetic blocks on top of the chain (needs one)
+                                  runs the synthetic cases on top of the chain (needs one);
+                                  --restart also replays it with the restarts of its restart
+                                  plan; --memory replays without a store; --to H replays the
+                                  chain cut at H, as the judge cut it
   difftest run l3|l4              later levels (see `difftest levels`)
   difftest corpus import ARCHIVE... --out DIR [--seed TEXT]
                                   join the devnet tooling's archives of one chain (in order)
                                   into a corpus; TEXT is the chain's public key-derivation
                                   seed, checked against the genesis block [the devnet
                                   tooling's default seed]
-  difftest corpus judge DIR [--dump H,...] [ORACLE]
+  difftest corpus judge DIR [--restarts every|rounds] [--restart-plan FILE] [--to H]
+                            [--dump H,...] [ORACLE]
                                   run the oracle's judge on the corpus: its digest lines and
-                                  anchor results are added to the corpus
+                                  anchor results are added to the corpus; --restarts writes a
+                                  restart plan of that kind into the corpus first (every
+                                  height, or the round ends, the first blocks of rounds and 20
+                                  seeded heights), --restart-plan copies one in; with a restart
+                                  plan the judge also writes the reference's restart lines;
+                                  --to H judges the chain cut at H
+  difftest store replay DIR --db PATH [--to H]
+                                  continue replaying the corpus DIR through the store under
+                                  PATH, one block per chunk, printing each committed height
+  difftest store check DIR --db PATH
+                                  restore the store under PATH by the table and the replay
+                                  path and print each mode's tip and restart line
+  difftest store crash DIR [--kills N] [--seed S] [--max-delay MS]
+                                  the kill test: replay DIR through a store in a child process
+                                  killed with SIGKILL N times (200) after up to MS ms (1500),
+                                  and check each restore
   difftest corpus verify DIR      check a corpus against its manifest
   difftest levels                 the five levels and what each one arrives with
   difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--compare DIR]
@@ -184,13 +204,33 @@ pub enum Command {
         seed: String,
     },
     /// `difftest corpus judge`: the oracle's replay of a corpus.
-    CorpusJudge {
-        /// Where the oracle runs.
-        oracle: OracleArgs,
+    CorpusJudge(JudgeArgs),
+    /// `difftest store replay`: a corpus through the store, one block per chunk.
+    StoreReplay {
         /// The corpus.
         dir: PathBuf,
-        /// Heights whose records the judge writes out.
-        dump: Vec<u32>,
+        /// The node's data directory.
+        db: PathBuf,
+        /// The last height to replay.
+        to: Option<u32>,
+    },
+    /// `difftest store check`: the store restored by both modes.
+    StoreCheck {
+        /// The corpus.
+        dir: PathBuf,
+        /// The node's data directory.
+        db: PathBuf,
+    },
+    /// `difftest store crash`: the kill test.
+    StoreCrash {
+        /// The corpus.
+        dir: PathBuf,
+        /// The number of kills.
+        kills: u32,
+        /// The seed of the delays.
+        seed: u64,
+        /// The longest delay before a kill, in milliseconds.
+        max_delay_ms: u64,
     },
     /// `difftest corpus verify`: check a corpus's manifest.
     CorpusVerify {
@@ -225,6 +265,29 @@ pub struct L2Args {
     pub dir: PathBuf,
     /// Also run the synthetic cases.
     pub synthetic: bool,
+    /// Also run the restarts of the corpus's restart plan.
+    pub restart: bool,
+    /// Replay without a store.
+    pub memory: bool,
+    /// Replay the chain cut at this height.
+    pub to: Option<u32>,
+}
+
+/// The arguments of `difftest corpus judge`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JudgeArgs {
+    /// Where the oracle runs.
+    pub oracle: OracleArgs,
+    /// The corpus.
+    pub dir: PathBuf,
+    /// Heights whose records the judge writes out.
+    pub dump: Vec<u32>,
+    /// The kind of restart plan to write into the corpus first.
+    pub restarts: Option<crate::restart::PlanKind>,
+    /// A restart plan to copy into the corpus first.
+    pub restart_plan: Option<PathBuf>,
+    /// Judge the chain cut at this height.
+    pub to: Option<u32>,
 }
 
 /// The arguments of `difftest oracle replay`.
@@ -317,20 +380,78 @@ pub fn parse(args: &[String]) -> Result<Command> {
         }
         ["corpus", "verify", dir] => Ok(Command::CorpusVerify { dir: dir.into() }),
         ["corpus", "judge", dir, rest @ ..] => {
-            let mut oracle = OracleArgs::default();
-            let mut dump = Vec::new();
+            let mut judge = JudgeArgs {
+                oracle: OracleArgs::default(),
+                dir: dir.into(),
+                dump: Vec::new(),
+                restarts: None,
+                restart_plan: None,
+                to: None,
+            };
             let mut it = rest.iter();
             while let Some(&flag) = it.next() {
-                if flag == "--dump" {
-                    dump = heights(value(flag, it.next())?)?;
-                } else {
-                    oracle_flag(&mut oracle, flag, it.next())?;
+                match flag {
+                    "--dump" => judge.dump = heights(value(flag, it.next())?)?,
+                    "--restarts" => judge.restarts = Some(value(flag, it.next())?.parse()?),
+                    "--restart-plan" => {
+                        judge.restart_plan = Some(PathBuf::from(value(flag, it.next())?));
+                    }
+                    "--to" => judge.to = Some(height(flag, it.next())?),
+                    _ => oracle_flag(&mut judge.oracle, flag, it.next())?,
                 }
             }
-            Ok(Command::CorpusJudge {
-                oracle,
+            if judge.restarts.is_some() && judge.restart_plan.is_some() {
+                return Err(usage("give --restarts or --restart-plan, not both"));
+            }
+            Ok(Command::CorpusJudge(judge))
+        }
+        ["store", "replay", dir, rest @ ..] => {
+            let (mut db, mut to) = (None, None);
+            let mut it = rest.iter();
+            while let Some(&flag) = it.next() {
+                match flag {
+                    "--db" => db = Some(PathBuf::from(value(flag, it.next())?)),
+                    "--to" => to = Some(height(flag, it.next())?),
+                    _ => return Err(usage(format!("unknown option {flag}"))),
+                }
+            }
+            Ok(Command::StoreReplay {
                 dir: dir.into(),
-                dump,
+                db: db.ok_or_else(|| usage("store replay needs --db PATH"))?,
+                to,
+            })
+        }
+        ["store", "check", dir, "--db", db] => Ok(Command::StoreCheck {
+            dir: dir.into(),
+            db: db.into(),
+        }),
+        ["store", "crash", dir, rest @ ..] => {
+            let (mut kills, mut seed, mut max_delay_ms) = (200, 1, 1_500);
+            let mut it = rest.iter();
+            while let Some(&flag) = it.next() {
+                let number = |v: &str| {
+                    v.parse::<u64>()
+                        .map_err(|_| usage(format!("{flag} needs an unsigned integer")))
+                };
+                match flag {
+                    "--kills" => {
+                        kills = u32::try_from(number(value(flag, it.next())?)?)
+                            .ok()
+                            .filter(|k| *k >= 1)
+                            .ok_or_else(|| usage("--kills needs a positive integer"))?;
+                    }
+                    "--seed" => seed = number(value(flag, it.next())?)?,
+                    "--max-delay" => {
+                        max_delay_ms = number(value(flag, it.next())?)?.max(1);
+                    }
+                    _ => return Err(usage(format!("unknown option {flag}"))),
+                }
+            }
+            Ok(Command::StoreCrash {
+                dir: dir.into(),
+                kills,
+                seed,
+                max_delay_ms,
             })
         }
         ["oracle", "gen", rest @ ..] => {
@@ -398,6 +519,14 @@ pub fn parse(args: &[String]) -> Result<Command> {
     }
 }
 
+fn height(flag: &str, next: Option<&&str>) -> Result<u32> {
+    value(flag, next)?
+        .parse::<u32>()
+        .ok()
+        .filter(|h| *h >= 1)
+        .ok_or_else(|| usage(format!("{flag} needs a height")))
+}
+
 fn heights(list: &str) -> Result<Vec<u32>> {
     list.split(',')
         .filter(|h| !h.is_empty())
@@ -449,23 +578,35 @@ fn parse_l1(args: &[&str]) -> Result<Command> {
 
 fn parse_l2(args: &[&str]) -> Result<Command> {
     let Some((dir, rest)) = args.split_first() else {
-        return Err(usage("usage: difftest run l2 DIR [--synthetic] [ORACLE]"));
+        return Err(usage(
+            "usage: difftest run l2 DIR [--synthetic] [--restart] [--memory] [--to H] [ORACLE]",
+        ));
     };
     let mut oracle = OracleArgs::default();
-    let mut synthetic = false;
+    let (mut synthetic, mut restart, mut memory, mut to) = (false, false, false, None);
     let mut it = rest.iter();
     while let Some(&flag) = it.next() {
-        if flag == "--synthetic" {
-            synthetic = true;
-        } else {
-            oracle_flag(&mut oracle, flag, it.next())?;
+        match flag {
+            "--synthetic" => synthetic = true,
+            "--restart" => restart = true,
+            "--memory" => memory = true,
+            "--to" => to = Some(height(flag, it.next())?),
+            _ => oracle_flag(&mut oracle, flag, it.next())?,
         }
+    }
+    if memory && restart {
+        return Err(usage(
+            "the restarts need the store: --restart without --memory",
+        ));
     }
     let given = oracle != OracleArgs::default();
     Ok(Command::RunL2(L2Args {
         oracle: (given || synthetic).then_some(oracle),
         dir: (*dir).into(),
         synthetic,
+        restart,
+        memory,
+        to,
     }))
 }
 
@@ -582,18 +723,24 @@ mod tests {
             Command::RunL2(L2Args {
                 oracle: None,
                 dir: "corpus/c1".into(),
-                synthetic: false
+                synthetic: false,
+                restart: false,
+                memory: false,
+                to: None,
             })
         );
         assert_eq!(
-            p("run l2 c --synthetic --image i").unwrap(),
+            p("run l2 c --synthetic --image i --restart --to 265").unwrap(),
             Command::RunL2(L2Args {
                 oracle: Some(OracleArgs {
                     image: Some("i".into()),
                     ..OracleArgs::default()
                 }),
                 dir: "c".into(),
-                synthetic: true
+                synthetic: true,
+                restart: true,
+                memory: false,
+                to: Some(265),
             })
         );
         assert_eq!(
@@ -605,14 +752,41 @@ mod tests {
             }
         );
         assert_eq!(
-            p("corpus judge c --dump 5,7 --image i").unwrap(),
-            Command::CorpusJudge {
+            p("corpus judge c --dump 5,7 --image i --restarts rounds --to 265").unwrap(),
+            Command::CorpusJudge(JudgeArgs {
                 oracle: OracleArgs {
                     image: Some("i".into()),
                     ..OracleArgs::default()
                 },
                 dir: "c".into(),
-                dump: vec![5, 7]
+                dump: vec![5, 7],
+                restarts: Some(crate::restart::PlanKind::Rounds),
+                restart_plan: None,
+                to: Some(265),
+            })
+        );
+        assert_eq!(
+            p("store replay c --db d --to 9").unwrap(),
+            Command::StoreReplay {
+                dir: "c".into(),
+                db: "d".into(),
+                to: Some(9)
+            }
+        );
+        assert_eq!(
+            p("store check c --db d").unwrap(),
+            Command::StoreCheck {
+                dir: "c".into(),
+                db: "d".into()
+            }
+        );
+        assert_eq!(
+            p("store crash c --kills 3 --seed 9 --max-delay 50").unwrap(),
+            Command::StoreCrash {
+                dir: "c".into(),
+                kills: 3,
+                seed: 9,
+                max_delay_ms: 50
             }
         );
         assert_eq!(
@@ -681,10 +855,17 @@ mod tests {
             "run l0",
             "run l2",
             "run l1 --cases 0",
-            "run l1 --property P10",
+            "run l1 --property P13",
             "corpus import --out o",
             "corpus import a",
             "corpus judge c --dump x",
+            "corpus judge c --restarts some",
+            "corpus judge c --restarts every --restart-plan p",
+            "corpus judge c --to 0",
+            "run l2 c --memory --restart",
+            "store replay c",
+            "store crash c --kills 0",
+            "store check c",
             "run l9",
             "oracle gen --image x",
             "oracle gen --out v --devnet-generator",

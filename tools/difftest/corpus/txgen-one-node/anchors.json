@@ -9,7 +9,7 @@
  },
  "oracle": {
   "mode": "container",
-  "image": "sha256:d85b76bf10d3153898f97c3d7f3f1d4d2f1bbc85dcd0c4d85cf45f6993eac597",
+  "image": "sha256:26629b4b14ab434609286683781e956c8aca28ee594d7c21cae8aeb4974e7bdf",
   "node": "v18.20.8"
  },
  "blocks": 264,
@@ -61,6 +61,55 @@
      "verified": true
     }
    ]
+  },
+  "A6": {
+   "ok": true,
+   "restarts": [
+    {
+     "height": 177,
+     "path": "rebuild",
+     "file": "reference/restarts/h000000177.json",
+     "differences": []
+    },
+    {
+     "height": 177,
+     "path": "saved",
+     "file": "reference/restarts/h000000177.json",
+     "differences": []
+    }
+   ]
+  }
+ },
+ "restarts": {
+  "ok": true,
+  "plan": {
+   "kind": "every",
+   "seed": "244056527601691632",
+   "heights": 265,
+   "reverts": [
+    1,
+    54
+   ]
+  },
+  "modes": {
+   "rebuild": {
+    "restarts": 265,
+    "refused": 0,
+    "lines": 2780,
+    "differences": [],
+    "failures": [],
+    "finalChainDigest": "337f5709c44d849cd2505de6a2f5f0f1efeea408f3a8963cf9322863860fcb6e",
+    "ok": true
+   },
+   "saved": {
+    "restarts": 265,
+    "refused": 0,
+    "lines": 2780,
+    "differences": [],
+    "failures": [],
+    "finalChainDigest": "337f5709c44d849cd2505de6a2f5f0f1efeea408f3a8963cf9322863860fcb6e",
+    "ok": true
+   }
   }
  }
 }

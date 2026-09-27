@@ -18,11 +18,13 @@
 //          refuses it, {error: {class, message}, after: {W}}, the #W section after the refused
 //          attempt (the reference binds the sender's key before its checks)
 //
-//   chain.open {crypto: {network, milestones, genesisBlock, exceptions}, milestones?}
-//              or {corpus: DIR, height?, milestones?}
+//   chain.open {crypto: {network, milestones, genesisBlock, exceptions}, milestones?, pool?}
+//              or {corpus: DIR, height?, milestones?, pool?}
 //       the reference's first start on the chain's genesis block; with a corpus directory, its
 //       blocks are applied up to `height` (the tip by default). `milestones` (JSON text) replaces
-//       the chain's milestone file.
+//       the chain's milestone file. `pool: {options}` binds the reference's pool in the chain's
+//       node (lib/pool.js): the pool operations then take the session, and a restart starts a
+//       new pool over the same storage.
 //       -> {session, lines: [...]}, the digest lines of the start and of each block applied
 //   chain.apply {session, hex, step?}   step "apply" (default) or "reapply"
 //       -> {accepted, height, id, reward, missed: [{timestamp, height, username}], line} or,
@@ -30,6 +32,16 @@
 //          bytes do not decode), verify (the block's own checks, the wall-clock rule on its
 //          timestamp aside) or apply
 //   chain.revert {session, count}      -> {lines}, one revert line per block
+//   chain.restart {session, mode}      the node stopped at its tip and started again (lib/state.js):
+//       mode "rebuild" (no saved state: StateBuilder) or "saved" (StateSaver, then StateLoader)
+//       -> {line}, the restart's digest line (step "restart"), or {refused: {reason}}, the text
+//          the reference's start ended with; the session goes on with the restarted node.
+//          notes.savedStateUsername is true for a saved-state restart with a delegate name or a
+//          voted name that reads as an integer
+//   chain.replaceStored {session, height, index, hex}
+//       replace the stored bytes of transaction `index` of the stored block at `height`, as a
+//       database changed on disk would hold them (the state is unchanged; a later restart reads
+//       them) -> {replaced: true}
 //   chain.dump {session}               -> {sections: {B, S, R, M, W}, line}: the records of the
 //                                          last step
 //   chain.close {session}              -> {closed: true}
@@ -42,24 +54,24 @@ const path = require("path");
 const { loadCorpus } = require("../corpus");
 const { ReplaySession } = require("../corpus");
 const digest = require("../digest");
-const { FixtureState } = require("../state");
+const { HeadlessPool, sessions: registry } = require("../pool");
+const { FixtureState, newDataDir } = require("../state");
 
 module.exports = function chainOps(context) {
     const { solar, devnet, hexBuffer, safeInteger, describe, withConfig } = context;
     const { BigNumber } = solar.lib.Utils;
     let fixtureState;
-    const sessions = new Map();
-    let nextSession = 1;
 
     const fixtures = () => {
         if (!fixtureState) fixtureState = new FixtureState(solar);
         return fixtureState;
     };
 
+    // Chain sessions live in the registry the pool operations share (lib/pool.js).
     const session = (id) => {
-        const s = sessions.get(id);
-        if (!s) throw new Error(`no chain session ${id}`);
-        return s;
+        const s = registry.get(id);
+        if (s.kind !== "chain") throw new Error(`session ${id} is not a chain session`);
+        return s.replay;
     };
 
     // Run fn under the session's configuration, then restore the devnet configuration.
@@ -102,7 +114,7 @@ module.exports = function chainOps(context) {
             });
         },
 
-        "chain.open": async ({ crypto, corpus, height, milestones }) => {
+        "chain.open": async ({ crypto, corpus, height, milestones, pool }) => {
             let config = crypto;
             let blocks = [];
             if (corpus !== undefined) {
@@ -120,8 +132,12 @@ module.exports = function chainOps(context) {
                 if (typeof milestones !== "string") throw new TypeError("milestones must be JSON text");
                 config.milestones = JSON.parse(milestones);
             }
-            const s = new ReplaySession(solar, config);
-            const id = nextSession++;
+            const options = {};
+            if (pool !== undefined) {
+                if (pool === null || typeof pool !== "object") throw new TypeError("pool must be {options}");
+                options.bindPool = HeadlessPool.binding(solar, pool.options, path.join(newDataDir("pool"), "pool.sqlite"));
+            }
+            const s = new ReplaySession(solar, config, options);
             const lines = [];
             await inSession(s, async () => {
                 lines.push(await s.start());
@@ -131,7 +147,7 @@ module.exports = function chainOps(context) {
                     lines.push(r.line);
                 }
             });
-            sessions.set(id, s);
+            const id = registry.add({ kind: "chain", replay: s });
             return { session: id, lines };
         },
 
@@ -159,14 +175,35 @@ module.exports = function chainOps(context) {
             return inSession(s, async () => ({ lines: await s.revert(count) }));
         },
 
+        "chain.restart": async ({ session: id, mode }) => {
+            if (mode !== "rebuild" && mode !== "saved") throw new TypeError("mode must be rebuild or saved");
+            const s = session(id);
+            return inSession(s, async () => {
+                const r = await s.restart(mode);
+                if (r.refused) return { ...(r.notes ? { notes: r.notes } : {}), refused: { reason: r.refused.reason.split(solar.solarDir).join("<reference>") } };
+                return r.notes ? { notes: r.notes, line: r.line } : { line: r.line };
+            });
+        },
+
+        "chain.replaceStored": async ({ session: id, height, index, hex }) => {
+            safeInteger(height, "height");
+            safeInteger(index, "index");
+            const s = session(id);
+            const entry = s.chain.store.blocks[height - 1];
+            if (!entry || !entry.transactions[index]) throw new RangeError(`no stored transaction ${index} at height ${height}`);
+            entry.transactions[index].serialised = hexBuffer(hex, "hex");
+            return { replaced: true };
+        },
+
         "chain.dump": async ({ session: id }) => {
             const s = session(id);
             return inSession(s, async () => ({ sections: s.sections(), line: s.lines[s.lines.length - 1] }));
         },
 
         "chain.close": async ({ session: id }) => {
-            session(id);
-            sessions.delete(id);
+            const s = session(id);
+            if (s.chain.pool) s.chain.pool.dispose();
+            registry.delete(id);
             return { closed: true };
         },
     };

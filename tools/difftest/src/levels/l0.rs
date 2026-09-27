@@ -58,8 +58,18 @@ pub fn judge_case(case: &Case<'_>, expected: &Expected, registry: &Registry) -> 
     let Some(subject) = registry.get(case.op) else {
         return Outcome::NoSubject;
     };
-    judge_result(subject.run(case), expected)
+    let result = subject.run(case);
+    // A pool session is judged step by step, with the pool's message rules.
+    if case.op == POOL_RUN
+        && let (Ok(Verdict::Output(actual)), Expected::Output(expected)) = (&result, expected)
+    {
+        return super::pool::judge(case.input, expected, actual);
+    }
+    judge_result(result, expected)
 }
+
+/// The operation of a whole pool session, which [`super::pool`] judges.
+pub const POOL_RUN: &str = "pool.run";
 
 fn judge_result(result: Result<Verdict, SubjectError>, expected: &Expected) -> Outcome {
     match (result, expected) {
