@@ -130,11 +130,12 @@ module.exports = { FORMAT, CRYPTO_FILES, cutCorpus, loadCorpus, readJson, readJs
  * wraps them in chain.withConfig when other configurations share the process).
  */
 class ReplaySession {
-    constructor(solar, crypto) {
+    /** `options` are the chain's (HeadlessChain): a pool binding for one. */
+    constructor(solar, crypto, options = {}) {
         const { HeadlessChain } = require("./state");
         const { DigestChain } = require("./digest");
         this.solar = solar;
-        this.chain = new HeadlessChain(solar, crypto);
+        this.chain = new HeadlessChain(solar, crypto, options);
         this.digests = new DigestChain();
         this.lines = [];
         this.lastMissed = [];

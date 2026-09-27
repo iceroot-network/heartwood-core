@@ -594,6 +594,10 @@ function recordingBlockchain() {
         dispatch(event) {
             dispatched.push(event);
         },
+        // Set by build(): the pool's collator reads the last block here.
+        getLastBlock() {
+            throw new Error("the chain is not built");
+        },
     };
 }
 
@@ -680,6 +684,7 @@ class HeadlessChain {
         this.stateStore = app.get(Id.StateStore);
         // The state saver and loader reach the state store through the state machine.
         app.bind(Id.StateMachine).toConstantValue({ stateStore: this.stateStore });
+        this.blockchain.getLastBlock = () => this.stateStore.getLastBlock();
         if (this.bindPool) {
             await this.bindPool(app, this);
         } else {
@@ -739,6 +744,8 @@ class HeadlessChain {
         if (!this.started) throw new Error("the chain has not started");
         if (mode === "saved") await this.saveState();
         else emptyDir(this.savedStatesPath);
+        // The stopped node's pool closes its storage; the new node's pool opens the same file.
+        if (this.pool) this.pool.dispose();
         const next = new HeadlessChain(this.solar, this.crypto, { store: this.store.copy(), savedStatesPath: this.savedStatesPath, bindPool: this.bindPool });
         next.configure();
         await next.build();
@@ -881,8 +888,9 @@ class HeadlessChain {
  * under the configuration the caller set; one container serves every fixture.
  */
 class FixtureState {
-    constructor(solar) {
-        this.chain = new HeadlessChain(solar, undefined);
+    /** `options` are the chain's (HeadlessChain), a pool binding for one. */
+    constructor(solar, options = {}) {
+        this.chain = new HeadlessChain(solar, undefined, options);
         this.built = false;
     }
 
@@ -993,4 +1001,4 @@ class FixtureState {
     }
 }
 
-module.exports = { FixtureState, HeadlessChain, StartRefused, forgetGenesisTransactions, referencePackages };
+module.exports = { FixtureState, HeadlessChain, StartRefused, forgetGenesisTransactions, newDataDir, referencePackages, settle };
