@@ -19,19 +19,31 @@
 //   revert     n blocks as the blockchain's removeBlocks does: DatabaseInteraction.revertBlock
 //              of the last block, the new last block rebuilt from the stored data, one block at a
 //              time; the reverted blocks leave the store after the last revert.
+//   restart    the node stopped at its tip and started again: a new application over a copy of
+//              the chain's store runs DatabaseInteraction.initialise(), then the blockchain's own
+//              Initialise action (StateLoader, the integrity check, the round rows of the next
+//              round deleted, StateBuilder when nothing loaded, the missed-block backfill when the
+//              store has no missed row, RoundState.restore, the pool's re-add). Mode "rebuild"
+//              starts with no saved state; mode "saved" first runs StateSaver on the running node,
+//              as a node does on every queue drain, and the new node loads that file.
 //
-// Everything a node keeps outside the state (the pool, P2P, events, the API) is absent. The
-// forger directory (CORE_PATH_TEMP) is an empty directory, so no delegate carries a version.
+// Everything a node keeps outside the state (P2P, events, the API) is absent; the pool is bound
+// only by the pool sessions (lib/pool.js). The forger directory (CORE_PATH_TEMP) is an empty
+// directory, so no delegate carries a version.
 
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-/** An error the reference raised while starting: the start is refused. */
+/**
+ * An error the reference raised while starting: the start is refused. `reason` is the text the
+ * reference gave app.terminate (patch 45's "State Generation failed: ..." for one).
+ */
 class StartRefused extends Error {
     constructor(reason, cause) {
         super(cause && cause.message ? `${reason}: ${cause.message}` : reason);
         this.name = "StartRefused";
+        this.reason = reason;
         this.cause = cause;
     }
 }
@@ -54,17 +66,29 @@ function referencePackages(solar) {
     return packages;
 }
 
-const silentLogger = {
-    emergency() {},
-    alert() {},
-    critical() {},
-    error() {},
-    warning() {},
-    notice() {},
-    info() {},
-    debug() {},
-    suppressConsoleOutput() {},
-};
+/**
+ * A logger that prints nothing and keeps the last error, critical and emergency lines, which a
+ * refused start reports.
+ */
+function quietLogger() {
+    const errors = [];
+    const keep = (message) => {
+        errors.push(String(message));
+        if (errors.length > 20) errors.shift();
+    };
+    return {
+        errors,
+        emergency: keep,
+        alert: keep,
+        critical: keep,
+        error: keep,
+        warning() {},
+        notice() {},
+        info() {},
+        debug() {},
+        suppressConsoleOutput() {},
+    };
+}
 
 /** An event dispatcher that drops wallet events and counts the others by name. */
 function countingDispatcher() {
@@ -125,6 +149,25 @@ class ChainStore {
         this.blocks.length = Math.min(this.blocks.length, height - 1);
     }
 
+    /**
+     * A copy of the store, as the database of a node that stops and starts again: the blocks,
+     * the round rows and the missed rows; the fixture history is not copied.
+     */
+    copy() {
+        const out = new ChainStore(this.lib);
+        out.blocks = this.blocks.map((e) => ({ data: { ...e.data }, transactions: e.transactions.map((t) => ({ ...t, serialised: Buffer.from(t.serialised) })) }));
+        out.rounds = new Map([...this.rounds].map(([round, rows]) => [round, rows.map((r) => ({ ...r }))]));
+        out.missed = this.missed.map((r) => ({ ...r }));
+        return out;
+    }
+
+    /** Delete what the reference's deleteTopBlocks deletes above `height`. */
+    deleteAbove(height, round) {
+        this.deleteFrom(height + 1);
+        this.missed = this.missed.filter((r) => r.height <= height);
+        for (const r of [...this.rounds.keys()]) if (r > round) this.rounds.delete(r);
+    }
+
     /** The block data a block query returns (username absent when null, as the model converter). */
     blockData(entry, withTransactions) {
         const data = { ...entry.data };
@@ -180,9 +223,14 @@ function sortRows(rows, sorting) {
     });
 }
 
-/** The storage services of the database package, over a ChainStore. */
-function storageStubs(store, lib) {
+/**
+ * The storage services of the database package, over a ChainStore. `roundOf(height)` is the
+ * kernel's round calculator. Sums and counts are strings, as PostgreSQL returns bigint and numeric
+ * aggregates.
+ */
+function storageStubs(store, lib, roundOf) {
     const { BigNumber } = lib.Utils;
+    const sum = (values) => values.reduce((a, v) => a.plus(v ?? 0), BigNumber.ZERO).toFixed();
     const txRows = (criteria) => {
         const list = Array.isArray(criteria) ? criteria : [criteria];
         const rows = [];
@@ -247,8 +295,27 @@ function storageStubs(store, lib) {
         async deleteRound(round) {
             for (const r of [...store.rounds.keys()]) if (r >= round) store.rounds.delete(r);
         },
-        async verifyBlockchain() {
-            return true;
+        async findBlockByID(ids) {
+            return store.blocks.filter((e) => ids.includes(e.data.id)).map((e) => store.blockData(e, false));
+        },
+        // The reference's checks: the last block's height is the number of stored blocks, and the
+        // transactions' count, fee sum and amount sum equal the blocks' columns.
+        async verifyBlockchain(lastBlock) {
+            const errors = [];
+            const block = lastBlock || (await databaseService.getLastBlock());
+            if (!block) {
+                errors.push("Last block is not available");
+            } else {
+                const numberOfBlocks = await blockRepository.count();
+                if (block.data.height !== +numberOfBlocks) errors.push(`Last block height: ${block.data.height}, number of stored blocks: ${numberOfBlocks}`);
+            }
+            const blockStats = await blockRepository.getStatistics();
+            const transactionStats = await transactionRepository.getStatistics();
+            if (blockStats.numberOfTransactions !== transactionStats.count) errors.push("Number of transactions differs");
+            if (blockStats.totalFee !== transactionStats.totalFee) errors.push("Total transaction fees differ");
+            if (blockStats.totalAmount !== transactionStats.totalAmount) errors.push("Total transaction amounts differ");
+            store.integrityErrors = errors;
+            return errors.length === 0;
         },
         async reset() {},
     };
@@ -305,9 +372,44 @@ function storageStubs(store, lib) {
         async deleteBlocks(blocks) {
             return databaseService.deleteBlocks(blocks);
         },
+        async count() {
+            return String(store.blocks.length);
+        },
+        async getStatistics() {
+            const data = store.blocks.map((e) => e.data);
+            return {
+                numberOfTransactions: String(data.reduce((n, d) => n + d.numberOfTransactions, 0)),
+                burnedFee: sum(data.map((d) => d.burnedFee)),
+                totalFee: sum(data.map((d) => d.totalFee)),
+                totalAmount: sum(data.map((d) => d.totalAmount)),
+                count: String(new Set(data.map((d) => d.height)).size),
+            };
+        },
+        async findByHeight(height) {
+            const entry = store.blocks[height - 1];
+            return entry ? store.blockData(entry, false) : undefined;
+        },
+        async findByHeightRange(start, end) {
+            return store.blocks.filter((e) => e.data.height >= start && e.data.height <= end).map((e) => store.blockData(e, false));
+        },
+        async deleteTopBlocks(_app, count) {
+            const target = store.blocks.length - count;
+            if (count < 1 || target < 1) throw new Error("Corrupt database");
+            store.deleteAbove(target, roundOf(target));
+        },
     };
 
     const transactionRepository = {
+        async getStatistics() {
+            const rows = [];
+            for (const { entry, t } of store.allTransactions()) rows.push(store.transactionData(entry, t));
+            return {
+                count: String(new Set(rows.map((d) => d.id)).size),
+                totalFee: sum(rows.map((d) => d.fee)),
+                burnedFee: sum(rows.map((d) => d.burnedFee)),
+                totalAmount: sum(rows.map((d) => d.amount)),
+            };
+        },
         async getSentTransactions() {
             const bySender = new Map();
             for (const { entry, t } of store.allTransactions()) {
@@ -353,6 +455,11 @@ function storageStubs(store, lib) {
         async addMissedBlocks(rows) {
             for (const row of rows) store.missed.push({ ...row, step: store.recording });
         },
+        // Whether the table has a row: the rows at or below the tip (a revert deletes those
+        // above it).
+        async hasMissedBlocks() {
+            return store.missed.some((r) => r.height <= store.height);
+        },
     };
 
     const blockHistoryService = {
@@ -397,17 +504,24 @@ function storageStubs(store, lib) {
     return { databaseService, blockRepository, transactionRepository, missedBlockRepository, blockHistoryService, transactionHistoryService, poolQuery };
 }
 
-/** Run fn with process.exit and app.terminate turned into a thrown StartRefused. */
-async function failClosed(app, fn) {
+/**
+ * Run fn with process.exit and app.terminate turned into a thrown StartRefused. `outcome.refused`
+ * is set to the first StartRefused, also when the reference catches the throw itself (its
+ * Initialise action logs an error and dispatches FAILURE).
+ */
+async function failClosed(app, fn, outcome = {}) {
     const exit = process.exit;
     const terminate = app.terminate;
     let reason;
     app.terminate = async (why, error) => {
         reason = new StartRefused(why, error);
+        if (!outcome.refused) outcome.refused = reason;
         throw reason;
     };
     process.exit = () => {
-        throw reason || new StartRefused("the reference exited");
+        if (!reason) reason = new StartRefused("the reference exited");
+        if (!outcome.refused) outcome.refused = reason;
+        throw reason;
     };
     try {
         return await fn();
@@ -448,18 +562,59 @@ function emptyTempDir() {
     return tempDir;
 }
 
+let dataRoot;
+/** A new empty directory for one chain's data (its saved states), removed when the process exits. */
+function newDataDir(prefix) {
+    if (!dataRoot) {
+        dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "heartwood-oracle-data-"));
+        process.on("exit", () => fs.rmSync(dataRoot, { recursive: true, force: true }));
+    }
+    return fs.mkdtempSync(path.join(dataRoot, `${prefix}-`));
+}
+
+/** Remove every file of `dir`. */
+function emptyDir(dir) {
+    for (const file of fs.readdirSync(dir)) fs.rmSync(path.join(dir, file), { recursive: true, force: true });
+}
+
+let initialiseAction;
+/** The blockchain's Initialise action (the start of the state machine). */
+function initialiseClass(solar) {
+    if (!initialiseAction) {
+        initialiseAction = require(path.join(solar.solarDir, "packages", "blockchain", "dist", "state-machine", "actions", "initialise")).Initialise;
+    }
+    return initialiseAction;
+}
+
+/** The blockchain service as the Initialise action sees it: the events it dispatches, recorded. */
+function recordingBlockchain() {
+    const dispatched = [];
+    return {
+        dispatched,
+        dispatch(event) {
+            dispatched.push(event);
+        },
+    };
+}
+
 /**
  * The reference's state machine for one chain definition (`crypto`: network, milestones,
  * genesisBlock, exceptions, as the crypto files hold them). The configuration manager must hold
  * this chain's configuration while any method runs (see HeadlessChain.withConfig).
+ *
+ * Options: `store`, the chain store to start from (a restart's copy); `savedStatesPath`, the
+ * directory of the saved states (a new one by default); `bindPool(app)`, which binds the pool
+ * services in the application (lib/pool.js), else the pool is a stub.
  */
 class HeadlessChain {
-    constructor(solar, crypto) {
+    constructor(solar, crypto, options = {}) {
         this.solar = solar;
         this.lib = solar.lib;
         this.crypto = crypto === undefined ? undefined : JSON.parse(JSON.stringify(crypto));
         this.pkgs = referencePackages(solar);
-        this.store = new ChainStore(this.lib);
+        this.store = options.store || new ChainStore(this.lib);
+        this.savedStatesPath = options.savedStatesPath;
+        this.bindPool = options.bindPool;
         this.started = false;
     }
 
@@ -489,15 +644,18 @@ class HeadlessChain {
         const { Application, Container, Services, Providers } = kernel;
         const Id = Container.Identifiers;
         process.env.CORE_PATH_TEMP = emptyTempDir();
+        if (!this.savedStatesPath) this.savedStatesPath = newDataDir("saved-states");
 
         const app = new Application(new Container.Container());
         this.app = app;
-        const stubs = storageStubs(this.store, this.lib);
+        const stubs = storageStubs(this.store, this.lib, (height) => kernel.Utils.roundCalculator.calculateRound(height).round);
         this.stubs = stubs;
         this.events = countingDispatcher();
+        this.logger = quietLogger();
+        this.blockchain = recordingBlockchain();
 
         app.bind(Id.ApplicationVersion).toConstantValue("4.3.1");
-        app.bind(Id.LogService).toConstantValue(silentLogger);
+        app.bind(Id.LogService).toConstantValue(this.logger);
         app.bind(Id.EventDispatcherService).toConstantValue(this.events);
         app.bind(Id.TriggerService).to(Services.Triggers.Triggers).inSingletonScope();
         app.bind(Id.DatabaseService).toConstantValue(stubs.databaseService);
@@ -506,9 +664,11 @@ class HeadlessChain {
         app.bind(Id.DatabaseMissedBlockRepository).toConstantValue(stubs.missedBlockRepository);
         app.bind(Id.BlockHistoryService).toConstantValue(stubs.blockHistoryService);
         app.bind(Id.TransactionHistoryService).toConstantValue(stubs.transactionHistoryService);
-        app.bind(Id.PoolQuery).toConstantValue(stubs.poolQuery);
+        app.bind(Id.BlockchainService).toConstantValue(this.blockchain);
+        app.bind(Id.PeerNetworkMonitor).toConstantValue({ boot: async () => {} });
         const stateDefaults = require(path.join(this.solar.solarDir, "packages", "state", "dist", "defaults")).defaults;
-        const pluginConfiguration = app.resolve(Providers.PluginConfiguration).from("@solar-network/state", JSON.parse(JSON.stringify(stateDefaults)));
+        const stateOptions = { ...JSON.parse(JSON.stringify(stateDefaults)), savedStatesPath: this.savedStatesPath };
+        const pluginConfiguration = app.resolve(Providers.PluginConfiguration).from("@solar-network/state", stateOptions);
         app.bind(Id.PluginConfiguration).toConstantValue(pluginConfiguration).whenTargetTagged("plugin", "@solar-network/state");
         if (this.crypto) app.get(Id.ConfigRepository).set("crypto", JSON.parse(JSON.stringify(this.crypto)));
 
@@ -518,6 +678,14 @@ class HeadlessChain {
         await stProvider.register();
 
         this.stateStore = app.get(Id.StateStore);
+        // The state saver and loader reach the state store through the state machine.
+        app.bind(Id.StateMachine).toConstantValue({ stateStore: this.stateStore });
+        if (this.bindPool) {
+            await this.bindPool(app, this);
+        } else {
+            app.bind(Id.PoolQuery).toConstantValue(stubs.poolQuery);
+            app.bind(Id.PoolService).toConstantValue({ readdTransactions: async () => {} });
+        }
         this.walletRepository = app.getTagged(Id.WalletRepository, "state", "blockchain");
         this.databaseInteraction = app.get(Id.DatabaseInteraction);
         this.roundState = app.get(Id.RoundState);
@@ -543,6 +711,67 @@ class HeadlessChain {
         await settle();
         this.started = true;
         this.store.recording = null;
+    }
+
+    /**
+     * Save the state as a node does on every queue drain (StateSaver), into an emptied saved-states
+     * directory, so that the saved state of the tip is the only one. Throws when no file was
+     * written (the saver logs its errors instead of throwing).
+     */
+    async saveState() {
+        const Id = this.pkgs.kernel.Container.Identifiers;
+        emptyDir(this.savedStatesPath);
+        await this.app.get(Id.StateSaver).run();
+        const file = path.join(this.savedStatesPath, this.lastBlock().data.id);
+        if (!fs.existsSync(file)) throw new Error(`the state was not saved: ${this.logger.errors.join("; ") || "no file"}`);
+    }
+
+    /**
+     * Stop this node at its tip and start a new one over a copy of its store, as the reference's
+     * start does it: DatabaseInteraction.initialise(), then the blockchain's Initialise action.
+     * Mode "rebuild" starts with no saved state; mode "saved" saves this node's state first.
+     * Returns {chain} (the new node, started), or {refused: {reason}} when the start fails: the
+     * reason is the text the reference gave app.terminate (patch 45's for a negative balance), the
+     * integrity check's refusal, or the logged error.
+     */
+    async restart(mode) {
+        if (mode !== "rebuild" && mode !== "saved") throw new TypeError("mode must be rebuild or saved");
+        if (!this.started) throw new Error("the chain has not started");
+        if (mode === "saved") await this.saveState();
+        else emptyDir(this.savedStatesPath);
+        const next = new HeadlessChain(this.solar, this.crypto, { store: this.store.copy(), savedStatesPath: this.savedStatesPath, bindPool: this.bindPool });
+        next.configure();
+        await next.build();
+        const Initialise = initialiseClass(this.solar);
+        const action = next.app.resolve(Initialise);
+        const outcome = {};
+        next.store.recording = "restart";
+        let thrown;
+        try {
+            await failClosed(
+                next.app,
+                async () => {
+                    await next.databaseInteraction.initialise();
+                    await action.handle();
+                },
+                outcome,
+            );
+        } catch (error) {
+            thrown = error;
+        }
+        await settle();
+        next.store.recording = null;
+        const dispatched = next.blockchain.dispatched;
+        if (!outcome.refused && !thrown && dispatched.length === 1 && dispatched[0] === "STARTED") {
+            next.started = true;
+            return { chain: next };
+        }
+        let reason;
+        if (outcome.refused) reason = outcome.refused.reason;
+        else if (dispatched.includes("ROLLBACK")) reason = `the database failed its integrity check: ${(next.store.integrityErrors || []).join("; ")}`;
+        else if (thrown) reason = thrown.message;
+        else reason = next.logger.errors.join("; ") || `the start dispatched ${dispatched.join(", ") || "nothing"}`;
+        return { refused: { reason, dispatched: [...dispatched] } };
     }
 
     lastBlock() {

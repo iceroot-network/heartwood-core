@@ -30,6 +30,16 @@
 //          bytes do not decode), verify (the block's own checks, the wall-clock rule on its
 //          timestamp aside) or apply
 //   chain.revert {session, count}      -> {lines}, one revert line per block
+//   chain.restart {session, mode}      the node stopped at its tip and started again (lib/state.js):
+//       mode "rebuild" (no saved state: StateBuilder) or "saved" (StateSaver, then StateLoader)
+//       -> {line}, the restart's digest line (step "restart"), or {refused: {reason}}, the text
+//          the reference's start ended with; the session goes on with the restarted node.
+//          notes.savedStateUsername is true for a saved-state restart with a delegate name or a
+//          voted name that reads as an integer
+//   chain.replaceStored {session, height, index, hex}
+//       replace the stored bytes of transaction `index` of the stored block at `height`, as a
+//       database changed on disk would hold them (the state is unchanged; a later restart reads
+//       them) -> {replaced: true}
 //   chain.dump {session}               -> {sections: {B, S, R, M, W}, line}: the records of the
 //                                          last step
 //   chain.close {session}              -> {closed: true}
@@ -157,6 +167,26 @@ module.exports = function chainOps(context) {
             safeInteger(count, "count");
             const s = session(id);
             return inSession(s, async () => ({ lines: await s.revert(count) }));
+        },
+
+        "chain.restart": async ({ session: id, mode }) => {
+            if (mode !== "rebuild" && mode !== "saved") throw new TypeError("mode must be rebuild or saved");
+            const s = session(id);
+            return inSession(s, async () => {
+                const r = await s.restart(mode);
+                if (r.refused) return { ...(r.notes ? { notes: r.notes } : {}), refused: { reason: r.refused.reason.split(solar.solarDir).join("<reference>") } };
+                return r.notes ? { notes: r.notes, line: r.line } : { line: r.line };
+            });
+        },
+
+        "chain.replaceStored": async ({ session: id, height, index, hex }) => {
+            safeInteger(height, "height");
+            safeInteger(index, "index");
+            const s = session(id);
+            const entry = s.chain.store.blocks[height - 1];
+            if (!entry || !entry.transactions[index]) throw new RangeError(`no stored transaction ${index} at height ${height}`);
+            entry.transactions[index].serialised = hexBuffer(hex, "hex");
+            return { replaced: true };
         },
 
         "chain.dump": async ({ session: id }) => {
