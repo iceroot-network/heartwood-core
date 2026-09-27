@@ -12,21 +12,7 @@
 use heartwood_crypto::utils::js;
 use serde_json::{Map, Value};
 
-/// The own properties of `Object.prototype`.
-const PROTOTYPE_NAMES: [&str; 12] = [
-    "__defineGetter__",
-    "__defineSetter__",
-    "__lookupGetter__",
-    "__lookupSetter__",
-    "__proto__",
-    "constructor",
-    "hasOwnProperty",
-    "isPrototypeOf",
-    "propertyIsEnumerable",
-    "toLocaleString",
-    "toString",
-    "valueOf",
-];
+use crate::js_object::PROTOTYPE_NAMES;
 
 /// `source` merged onto `target`, as the reference merges component options.
 pub fn deep_merge(target: &Value, source: &Value) -> Value {

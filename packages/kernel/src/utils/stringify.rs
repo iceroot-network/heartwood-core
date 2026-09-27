@@ -12,21 +12,7 @@
 use heartwood_crypto::utils::js;
 use serde_json::Value;
 
-/// The own properties of `Object.prototype`, which the reference's key list never holds.
-const PROTOTYPE_NAMES: [&str; 12] = [
-    "__defineGetter__",
-    "__defineSetter__",
-    "__lookupGetter__",
-    "__lookupSetter__",
-    "__proto__",
-    "constructor",
-    "hasOwnProperty",
-    "isPrototypeOf",
-    "propertyIsEnumerable",
-    "toLocaleString",
-    "toString",
-    "valueOf",
-];
+use crate::js_object::PROTOTYPE_NAMES;
 
 /// The canonical JSON text of `value`.
 pub fn stringify(value: &Value) -> String {

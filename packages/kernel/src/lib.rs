@@ -39,6 +39,7 @@ pub mod config;
 pub mod errors;
 pub mod events;
 pub mod ip;
+mod js_object;
 pub mod lifecycle;
 pub mod log;
 pub mod paths;
