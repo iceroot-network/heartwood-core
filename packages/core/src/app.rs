@@ -105,11 +105,8 @@ pub fn run_relay(run: &RelayRun) -> Result<(), RelayError> {
     let vars = std::env::vars_os()
         .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)));
     let process: Vec<(String, String)> = vars.collect();
-    let home = process
-        .iter()
-        .find(|(key, _)| key == "HOME")
-        .map(|(_, home)| home.into());
-    let home: std::path::PathBuf = home.ok_or_else(|| config("HOME is not set"))?;
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let home = home.ok_or_else(|| config("HOME is not set"))?;
     let cwd = std::env::current_dir().map_err(config)?;
     start(RelayConfig::load(run, &process, &home, &cwd)?, run)
 }

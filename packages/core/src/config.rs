@@ -62,15 +62,11 @@ impl Package {
         Package::Snapshots,
     ];
 
-    /// The components a relay cannot run without.
-    pub const REQUIRED: [Package; 6] = [
-        Package::Database,
-        Package::State,
-        Package::Transactions,
-        Package::Pool,
-        Package::P2p,
-        Package::Blockchain,
-    ];
+    /// Whether a relay cannot run without the component: the database, the state, the
+    /// transactions, the pool, the peer-to-peer network and the blockchain.
+    pub fn required(self) -> bool {
+        self <= Package::Blockchain
+    }
 
     /// The package's name and the option keys its defaults and schema know.
     #[rustfmt::skip]
@@ -216,10 +212,8 @@ impl RelayConfig {
             }
         }
         components.sort();
-        if let Some(missing) = Package::REQUIRED
-            .into_iter()
-            .find(|package| !components.contains(package))
-        {
+        let mut missing = Package::ALL.into_iter().filter(|p| p.required());
+        if let Some(missing) = missing.find(|package| !components.contains(package)) {
             return Err(config(format!(
                 "the relay profile of app.json has no {}",
                 missing.name()
