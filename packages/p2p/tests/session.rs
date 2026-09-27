@@ -840,3 +840,210 @@ async fn terminate_fails_the_pending_requests_and_ends_the_session() {
         Err(SessionError::Disconnect)
     );
 }
+
+/// The standalone mock peer serves a corpus chain over TCP: its status, its blocks (none at the
+/// first request with `--empty-first-getblocks`) and its common blocks.
+#[tokio::test]
+async fn the_standalone_mock_peer_serves_a_corpus_chain() {
+    use heartwood_p2p_wire::codecs::{blocks, peer};
+    use heartwood_p2p_wire::messages::Proto;
+    use heartwood_p2p_wire::messages::blocks::GetBlocksRequest;
+    use heartwood_p2p_wire::messages::peer::GetCommonBlocksRequest;
+    use heartwood_p2p_wire::status;
+    use std::io::BufRead;
+
+    let corpus =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/difftest/corpus/txgen-one-node");
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut child = Kill(
+        std::process::Command::new(env!("CARGO_BIN_EXE_mock-peer"))
+            .args([
+                "--listen",
+                "127.0.0.1:0",
+                "--empty-first-getblocks",
+                "--chain",
+            ])
+            .arg(&corpus)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut line = String::new();
+    std::io::BufReader::new(child.0.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let listening: SocketAddr = line.trim().rsplit(' ').next().unwrap().parse().unwrap();
+
+    let (hook, errors) = recorder();
+    let (session, connected) = Session::connect(
+        listening,
+        ConnectOptions::default(),
+        hook,
+        heartwood_p2p::transport::tcp(),
+    );
+    connected.await.unwrap();
+    let request = |route, payload| session.request(route, payload, LONG, 20 * KIB * KIB);
+
+    let reply = request(RouteId::GetStatus, Vec::new()).await.unwrap();
+    let checked = status::check_reply(status::decode_response(&reply).unwrap(), 53).unwrap();
+    let state = checked.message.state.as_ref().unwrap();
+    assert_eq!(state.height, Some(265));
+
+    let get_blocks = GetBlocksRequest {
+        last_block_height: Some(1),
+        block_limit: Some(400),
+        serialised: Some(true),
+        ..GetBlocksRequest::default()
+    }
+    .encode();
+    let first = request(RouteId::GetBlocks, get_blocks.clone())
+        .await
+        .unwrap();
+    assert!(
+        blocks::get_blocks_decode_response(&first)
+            .unwrap()
+            .is_empty()
+    );
+    let listed =
+        blocks::get_blocks_decode_response(&request(RouteId::GetBlocks, get_blocks).await.unwrap())
+            .unwrap();
+    let heights: Vec<u32> = listed
+        .iter()
+        .map(|block| block.header.height.unwrap())
+        .collect();
+    assert_eq!(heights, (2..=265).collect::<Vec<u32>>());
+    assert!(listed.iter().any(|block| !block.transactions.is_empty()));
+
+    let genesis = serde_json::from_str::<Value>(
+        &std::fs::read_to_string(corpus.join("crypto/genesisBlock.json")).unwrap(),
+    )
+    .unwrap();
+    let ids = vec!["00".repeat(32), genesis["id"].as_str().unwrap().to_owned()];
+    let common = GetCommonBlocksRequest {
+        ids,
+        ..GetCommonBlocksRequest::default()
+    }
+    .encode();
+    let reply = peer::get_common_blocks_decode_response(
+        &request(RouteId::GetCommonBlocks, common).await.unwrap(),
+    )
+    .unwrap();
+    assert_eq!(reply.common.unwrap().height, Some(1));
+    assert!(seen(&errors).is_empty());
+}
+
+/// A smoke run against a reference node, named by `HEARTWOOD_SMOKE_PEER=<ip:port>` (without it
+/// the test does nothing): getStatus, getPeers and getBlocks of 400 blocks from height 1, each
+/// decoded and checked; an idle minute in which the node's pings are answered; getStatus again
+/// on the same connection; then the connection is terminated, as the reference's connector ends
+/// its sessions. The requests carry this implementation's version and the node's own port.
+#[tokio::test]
+#[ignore = "devnet"]
+async fn devnet_smoke() {
+    use heartwood_p2p_wire::codecs::{blocks, peer};
+    use heartwood_p2p_wire::messages::Proto;
+    use heartwood_p2p_wire::messages::blocks::GetBlocksRequest;
+    use heartwood_p2p_wire::messages::peer::{GetPeersRequest, GetStatusRequest};
+    use heartwood_p2p_wire::messages::shared::Headers;
+    use heartwood_p2p_wire::status;
+
+    let Ok(node) = std::env::var("HEARTWOOD_SMOKE_PEER") else {
+        println!("devnet_smoke: HEARTWOOD_SMOKE_PEER is not set, so nothing was run");
+        return;
+    };
+    let node: SocketAddr = node.parse().expect("HEARTWOOD_SMOKE_PEER is <ip:port>");
+    let headers = Some(Headers {
+        version: Some(format!("4.3.1-heartwood.{}", env!("CARGO_PKG_VERSION"))),
+        port: Some(u32::from(node.port())),
+        ..Headers::default()
+    });
+    let (hook, errors) = recorder();
+    let tcp = heartwood_p2p::transport::tcp();
+    let (session, connected) = Session::connect(node, ConnectOptions::default(), hook, tcp);
+    connected.await.expect("the node accepts the session");
+    let status = || {
+        let request = GetStatusRequest {
+            headers: headers.clone(),
+            ..GetStatusRequest::default()
+        };
+        session.request(RouteId::GetStatus, request.encode(), secs(5), 100 * KIB)
+    };
+
+    let reply = status().await.expect("getStatus is answered");
+    let checked = status::check_reply(status::decode_response(&reply).unwrap(), 53).unwrap();
+    let height = checked
+        .message
+        .state
+        .as_ref()
+        .and_then(|state| state.height);
+    let nethash = (checked.message.config.as_ref())
+        .and_then(|config| config.network.as_ref())
+        .and_then(|network| network.nethash.clone());
+    println!("devnet_smoke: getStatus: height {height:?}, nethash {nethash:?}");
+
+    let request = GetPeersRequest {
+        headers: headers.clone(),
+        ..GetPeersRequest::default()
+    };
+    let reply = session
+        .request(RouteId::GetPeers, request.encode(), secs(5), 100 * KIB)
+        .await
+        .expect("getPeers is answered");
+    let peers = peer::get_peers_decode_response(&reply).unwrap();
+    assert!(peers.len() <= 2_000);
+    println!("devnet_smoke: getPeers: {} peers", peers.len());
+
+    let request = GetBlocksRequest {
+        last_block_height: Some(1),
+        block_limit: Some(400),
+        serialised: Some(true),
+        headers: headers.clone(),
+        ..GetBlocksRequest::default()
+    };
+    let reply = session
+        .request(
+            RouteId::GetBlocks,
+            request.encode(),
+            secs(30),
+            20 * KIB * KIB,
+        )
+        .await
+        .expect("getBlocks is answered");
+    let listed = blocks::get_blocks_decode_response(&reply).unwrap();
+    assert!(
+        !listed.is_empty() && listed.len() <= 400,
+        "{} blocks",
+        listed.len()
+    );
+    for (index, pair) in listed.windows(2).enumerate() {
+        let (block, next) = (&pair[0].header, &pair[1].header);
+        assert_eq!(block.height, Some(index as u32 + 2));
+        assert_eq!(next.height, block.height.map(|height| height + 1));
+        assert_eq!(
+            next.previous_block, block.id,
+            "block {:?} chains",
+            next.height
+        );
+    }
+    println!(
+        "devnet_smoke: getBlocks: {} blocks from height 2",
+        listed.len()
+    );
+
+    sleep(secs(60)).await;
+    assert!(seen(&errors).is_empty(), "{:?}", seen(&errors));
+    let reply = status().await.expect("getStatus after the idle minute");
+    let later = status::decode_response(&reply).unwrap();
+    let later = later.message.state.as_ref().and_then(|state| state.height);
+    println!("devnet_smoke: idle minute: pings answered; getStatus: height {later:?}");
+    session.terminate();
+    sleep(ms(100)).await;
+    assert!(seen(&errors).is_empty(), "{:?}", seen(&errors));
+    println!("devnet_smoke: closed");
+}

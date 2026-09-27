@@ -30,11 +30,12 @@ use heartwood_p2p_wire::status::{self, PeerConfig, SignedState, StatusHeaderData
 use heartwood_p2p_wire::{Amount, RouteId};
 use indexmap::IndexMap;
 use thiserror::Error;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task::{AbortHandle, JoinSet};
 use tokio_tungstenite::tungstenite::Message as Frame;
+use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 
 use crate::transport::{Dial, Stream};
 
@@ -319,6 +320,25 @@ async fn pings(behaviour: Arc<Behaviour>, outbox: Outbox) {
         tokio::time::sleep(delay).await;
         send(&outbox, &Message::ping(0));
     }
+}
+
+/// The server side of the WebSocket upgrade on `stream`, for a peer that then writes and reads
+/// raw frames: read the request and accept it. The bytes after the request are not read.
+pub async fn upgrade<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S) -> io::Result<()> {
+    let mut request = Vec::new();
+    while !request.ends_with(b"\r\n\r\n") {
+        request.push(stream.read_u8().await?);
+    }
+    let request = String::from_utf8_lossy(&request);
+    let key = (request.lines())
+        .find_map(|line| line.strip_prefix("Sec-WebSocket-Key: "))
+        .ok_or(io::ErrorKind::InvalidData)?;
+    let accept = derive_accept_key(key.as_bytes());
+    let response = format!(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+         Sec-WebSocket-Accept: {accept}\r\n\r\n"
+    );
+    stream.write_all(response.as_bytes()).await
 }
 
 fn send(outbox: &Outbox, message: &Message) {
