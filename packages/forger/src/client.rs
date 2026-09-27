@@ -323,15 +323,15 @@ impl RelayLink for Client {
 
     async fn sync_with_network(&self) {
         // The reference's selection error leaves the slot check, whose error log shows it.
-        if let Err(failure) = self.select_host().await {
-            return warning!("{failure}");
-        }
-        debug!(
-            "Sending wake-up check to relay node {}",
-            self.selected().hostname
-        );
-        if let Err(failure) = self.ignored(RouteId::SyncBlockchain, b"{}".to_vec()).await {
-            error!("Could not sync check: {failure} :bangbang:");
+        match self.select_host().await {
+            Err(failure) => warning!("{failure}"),
+            Ok(host) => {
+                debug!("Sending wake-up check to relay node {}", host.hostname);
+                let synced = self.ignored(RouteId::SyncBlockchain, b"{}".to_vec()).await;
+                if let Err(failure) = synced {
+                    error!("Could not sync check: {failure} :bangbang:");
+                }
+            }
         }
     }
 

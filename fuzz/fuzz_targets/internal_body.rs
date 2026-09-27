@@ -22,7 +22,11 @@ fn round_trip<T: InternalBody>(bytes: &[u8]) {
     };
     let written = internal::encode(&body);
     let again: T = internal::decode(&written).expect("written bytes read back");
-    assert_eq!(internal::encode(&again), written, "a second writing changed the bytes");
+    assert_eq!(
+        internal::encode(&again),
+        written,
+        "a second writing changed the bytes"
+    );
 }
 
 fuzz_target!(|bytes: &[u8]| {
