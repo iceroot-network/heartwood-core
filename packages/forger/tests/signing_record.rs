@@ -299,8 +299,8 @@ mod far_relay {
     use heartwood_kernel::Clock;
     use heartwood_p2p_wire::Amount;
     use heartwood_p2p_wire::internal::{
-        CurrentRound, DelegateAttribute, DelegateWallet, LastBlockData, NetworkState,
-        NetworkStateStatus, QuorumDetails,
+        CurrentRound, DelegateWallet, LastBlockData, NetworkState, NetworkStateStatus,
+        QuorumDetails,
     };
     use heartwood_p2p_wire::status::{
         self, NetworkConfig, PeerConfig, ReceivedStatus, SignedState, StatusHeaderData, TokenConfig,
@@ -342,46 +342,51 @@ mod far_relay {
         }
 
         fn wallet(&self) -> DelegateWallet {
-            DelegateWallet {
-                address: String::new(),
-                public_key: self.key.clone(),
-                balance: "0".into(),
-                nonce: "0".into(),
-                delegate: DelegateAttribute {
-                    username: "genesis_1".into(),
-                    fields: Default::default(),
-                },
-            }
+            let fields = serde_json::json!({
+                "address": "",
+                "publicKey": self.key,
+                "balance": "0",
+                "nonce": "0",
+                "delegate": { "username": "genesis_1" },
+            });
+            let Value::Object(fields) = fields else {
+                unreachable!("an object")
+            };
+            DelegateWallet::new(fields).unwrap()
+        }
+
+        fn last_block(&self) -> LastBlockData {
+            let fields = serde_json::json!({
+                "id": "ab".repeat(32),
+                "version": 0,
+                "timestamp": 0,
+                "height": self.height(),
+                "previousBlock": "cd".repeat(32),
+                "numberOfTransactions": 0,
+                "totalAmount": "0",
+                "totalFee": "0",
+                "reward": "0",
+                "payloadLength": 0,
+                "payloadHash": "",
+                "generatorPublicKey": self.key,
+                "blockSignature": "",
+            });
+            let Value::Object(fields) = fields else {
+                unreachable!("an object")
+            };
+            LastBlockData::new(fields).unwrap()
         }
     }
 
     impl RelayLink for FarRelay {
         async fn get_round(&self) -> Result<CurrentRound, RelayError> {
-            let last = self.height();
             Ok(CurrentRound {
                 all_delegates: vec![self.wallet()],
                 can_forge: true,
                 current: 1,
                 current_forger: Some(self.wallet()),
                 delegates: vec![self.wallet()],
-                last_block: LastBlockData {
-                    id: "ab".repeat(32),
-                    version: 0,
-                    timestamp: 0,
-                    height: last,
-                    previous_block: "cd".repeat(32),
-                    number_of_transactions: 0,
-                    total_amount: "0".into(),
-                    total_fee: "0".into(),
-                    burned_fee: None,
-                    reward: "0".into(),
-                    donations: None,
-                    username: None,
-                    payload_length: 0,
-                    payload_hash: String::new(),
-                    generator_public_key: self.key.clone(),
-                    block_signature: String::new(),
-                },
+                last_block: self.last_block(),
                 next_forger: None,
                 reward: "0".into(),
                 timestamp: self.slot() * BLOCK_TIME,
