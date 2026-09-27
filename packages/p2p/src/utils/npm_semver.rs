@@ -55,6 +55,12 @@ pub fn satisfies(version: &str, range: &str, include_prerelease: bool) -> bool {
     })
 }
 
+/// `semver.validRange(range) !== null` for a range of the subset: whether `range` is one. A range
+/// outside the subset is not valid here.
+pub fn valid_range(range: &str) -> bool {
+    parse_range(range, false).is_some()
+}
+
 /// The order of two valid versions, as `semver.gt` and `semver.lt` compare them; `None` when
 /// either is not valid.
 pub fn compare(a: &str, b: &str) -> Option<Ordering> {

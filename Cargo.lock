@@ -561,6 +561,7 @@ dependencies = [
  "heartwood-database",
  "heartwood-kernel",
  "heartwood-p2p",
+ "heartwood-p2p-wire",
  "heartwood-pool",
  "heartwood-state",
  "heartwood-transactions",
