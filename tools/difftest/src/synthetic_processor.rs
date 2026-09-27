@@ -15,10 +15,10 @@
 //! enqueueing's cuts are compared where a case downloads several blocks at once.
 //!
 //! Blocks are built as the scheduled delegate of their slot builds them, with keys derived at run
-//! time from the corpus's public devnet seed, on a mirror of the oracle's chain: Heartwood's state machine
-//! applying the blocks the oracle accepted. So the oracle's side of every case runs even where
-//! Heartwood's processor or job is still a stub; Heartwood's side of each step is then reported as
-//! not built yet.
+//! time from the corpus's public devnet seed, on a mirror of the oracle's chain: Heartwood's state
+//! machine applying the blocks the oracle accepted. So the oracle's side of every case runs even
+//! where Heartwood's processor or job is still a stub; Heartwood's side of each step is then
+//! reported as not built yet.
 
 use heartwood_blockchain::Channel;
 use heartwood_crypto::blocks::{BlockHeader, serialiser};
@@ -137,6 +137,197 @@ impl ProcessorCase {
             _ => Vec::new(),
         }
     }
+
+    /// What each of the case's oracle steps needs the reference to do, in order, so that the case
+    /// tests what it names.
+    pub fn intents(self) -> Vec<Intent> {
+        let job = Intent::job;
+        match self {
+            ProcessorCase::Unchained => vec![
+                job(
+                    "broadcast",
+                    &["Accepted", "DiscardedButCanBeBroadcasted/EqualToLastBlock"],
+                ),
+                job(
+                    "broadcast",
+                    &[
+                        "Accepted",
+                        "DiscardedButCanBeBroadcasted/AlreadyInBlockchain",
+                    ],
+                ),
+                job("clear", &["Accepted", "Rejected/NotReadyToAcceptNewHeight"]),
+                job("clear", &["Accepted", "Rejected/InvalidTimestamp"]).missed(1),
+                job("clear", &["Accepted", "Rejected/GeneratorMismatch"]),
+                job("fork", &["Accepted", "Rollback/DoubleForging"]),
+            ],
+            ProcessorCase::DoubleForging(depth) => vec![
+                job("fork", &["Accepted", "Rollback/DoubleForging"]),
+                Intent::Reverted(depth as usize),
+                Intent::accepted("broadcast", depth as usize),
+            ],
+            ProcessorCase::RefusedAfterGap => vec![job("clear", &["Rejected"]).missed(3)],
+            ProcessorCase::UnchainedFirst => vec![job("forkCheck", &[])],
+            ProcessorCase::MilestoneCut => vec![
+                Intent::Cuts(vec![3, 3]),
+                Intent::accepted("broadcast", 3),
+                Intent::accepted("broadcast", 3),
+            ],
+            ProcessorCase::ConflictingAndForged => vec![
+                job("clear", &["Rejected"]),
+                job("clear", &["Accepted", "Rejected"]),
+            ],
+            ProcessorCase::RemovalAcrossRoundEnd => vec![
+                Intent::accepted("broadcast", 1),
+                Intent::accepted("broadcast", 1),
+                Intent::Reverted(3),
+            ],
+            ProcessorCase::FutureSlot => vec![job("broadcast", &["Accepted"]).future_slot()],
+            ProcessorCase::RemovedTypeAndRebuild => vec![
+                job("clear", &["Rejected"]),
+                job("clear", &["Accepted", "Rejected"]),
+                job("clear", &[]).failed(),
+                job("broadcast", &["Accepted"]).failed(),
+            ],
+            ProcessorCase::VoteAtRoundEndFork => vec![
+                Intent::Reverted(1),
+                Intent::accepted("broadcast", 1),
+                Intent::Reverted(2),
+                Intent::accepted("broadcast", 2).missed(1),
+            ],
+            ProcessorCase::MilestoneAtLastDownloaded => {
+                vec![Intent::Cuts(vec![6]), Intent::accepted("broadcast", 6)]
+            }
+        }
+    }
+}
+
+/// What an oracle step of a case needs the reference to do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Intent {
+    /// A job: how it ends, each block's result (with its unchained status after a slash),
+    /// whether it failed a rebuild, whether a block took a future slot, and how many missed rows
+    /// it recorded.
+    Job {
+        /// The job's end.
+        end: &'static str,
+        /// Each block's result.
+        results: Vec<String>,
+        /// Whether the job failed a rebuild.
+        failed: bool,
+        /// Whether a block took a future slot.
+        future_slot: bool,
+        /// The missed rows the job recorded.
+        missed: usize,
+    },
+    /// The enqueueing's cuts, as the jobs' sizes.
+    Cuts(Vec<usize>),
+    /// A revert of this many blocks.
+    Reverted(usize),
+}
+
+impl Intent {
+    /// A job with `end` and `results`, no failure, no future slot and no missed row.
+    pub fn job(end: &'static str, results: &[&str]) -> Intent {
+        Intent::Job {
+            end,
+            results: results.iter().map(|r| (*r).to_owned()).collect(),
+            failed: false,
+            future_slot: false,
+            missed: 0,
+        }
+    }
+
+    /// A job of `n` accepted blocks that ends `end`.
+    pub fn accepted(end: &'static str, n: usize) -> Intent {
+        Intent::job(end, &vec!["Accepted"; n])
+    }
+
+    /// The job with `n` missed rows.
+    pub fn missed(mut self, n: usize) -> Intent {
+        if let Intent::Job { missed, .. } = &mut self {
+            *missed = n;
+        }
+        self
+    }
+
+    /// The job with a failed rebuild.
+    pub fn failed(mut self) -> Intent {
+        if let Intent::Job { failed, .. } = &mut self {
+            *failed = true;
+        }
+        self
+    }
+
+    /// The job with a block in a future slot.
+    pub fn future_slot(mut self) -> Intent {
+        if let Intent::Job { future_slot, .. } = &mut self {
+            *future_slot = true;
+        }
+        self
+    }
+
+    /// The intent in the shape of [`summary`].
+    pub fn summary(&self) -> Value {
+        match self {
+            Intent::Job {
+                end,
+                results,
+                failed,
+                future_slot,
+                missed,
+            } => {
+                let mut out =
+                    json!({"end": end, "results": results, "failed": failed, "missed": missed});
+                if *future_slot {
+                    out["futureSlot"] = json!(true);
+                }
+                out
+            }
+            Intent::Cuts(sizes) => json!({ "cuts": sizes }),
+            Intent::Reverted(n) => json!({ "reverted": n }),
+        }
+    }
+}
+
+/// An oracle answer of a case's step, summarised as an [`Intent`] states it: a job's end, each
+/// block's result with its unchained status, whether it failed a rebuild or met a future slot,
+/// and its missed rows' count; the enqueueing's job sizes; a revert's line count.
+pub fn summary(answer: &Value) -> Value {
+    if let Some(jobs) = answer.get("jobs").and_then(Value::as_array) {
+        let sizes: Vec<usize> = jobs
+            .iter()
+            .map(|j| j.as_array().map_or(0, Vec::len))
+            .collect();
+        return json!({ "cuts": sizes });
+    }
+    if let Some(lines) = answer.get("lines").and_then(Value::as_array) {
+        return json!({ "reverted": lines.len() });
+    }
+    let results: Vec<String> = answer["results"]
+        .as_array()
+        .map(|results| {
+            results
+                .iter()
+                .map(|r| {
+                    let result = r["result"].as_str().unwrap_or("?");
+                    match r["unchained"].as_str() {
+                        Some(status) => format!("{result}/{status}"),
+                        None => result.to_owned(),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut out = json!({
+        "end": answer["end"],
+        "results": results,
+        "failed": answer["failed"],
+        "missed": answer["missed"].as_array().map_or(0, Vec::len),
+    });
+    if answer.get("futureSlot").is_some() {
+        out["futureSlot"] = json!(true);
+    }
+    out
 }
 
 /// The corpus's milestone file with an entry of the first milestone's block rules at each of
@@ -271,6 +462,8 @@ struct Pair<'a> {
     step: usize,
     /// The oracle's answer of each step, for [`RECORD_DIR`].
     answers: Vec<Value>,
+    /// What the oracle's next steps need the reference to do.
+    intents: std::collections::VecDeque<Intent>,
 }
 
 impl<'a> Pair<'a> {
@@ -341,6 +534,7 @@ impl<'a> Pair<'a> {
             results: Vec::new(),
             step: 0,
             answers: Vec::new(),
+            intents: std::collections::VecDeque::new(),
         })
     }
 
@@ -362,6 +556,29 @@ impl<'a> Pair<'a> {
         let mut rig = JobRig::start(&files)?;
         rig.extend(blocks)?;
         Ok(rig)
+    }
+
+    /// Keep the oracle's `answer` to the step `what` and check it against the step's intent: a
+    /// reference that does not do what the case needs is a harness error, since the case would
+    /// then not test what it names.
+    fn answered(&mut self, what: &str, op: &str, answer: &Value) {
+        self.answers
+            .push(json!({"what": what, "op": op, "answer": answer}));
+        let got = summary(answer);
+        match self.intents.pop_front() {
+            Some(intent) if intent.summary() == got => {}
+            Some(intent) => self.record(
+                &format!("{what}: the reference's answer"),
+                Outcome::HarnessError(format!(
+                    "the case needs {}, the reference answered {got}",
+                    intent.summary()
+                )),
+            ),
+            None => self.record(
+                &format!("{what}: the reference's answer"),
+                Outcome::HarnessError(format!("the case has no intent for {got}")),
+            ),
+        }
     }
 
     fn record(&mut self, what: &str, outcome: Outcome) {
@@ -511,8 +728,7 @@ impl<'a> Pair<'a> {
         args["session"] = self.session.clone();
         args["hexes"] = Value::Array(hexes);
         let oracle = call(server, "chain.job", 1, &args)?;
-        self.answers
-            .push(json!({"what": what, "op": "chain.job", "answer": oracle}));
+        self.answered(what, "chain.job", &oracle);
         self.follow(&blocks, &oracle)?;
         let ran = match &mut self.rig {
             Ok(rig) => rig.run(&blocks, &inputs, &[]),
@@ -619,8 +835,7 @@ impl<'a> Pair<'a> {
             args["milestones"] = json!(text);
         }
         let oracle = call(server, "chain.job", 1, &args)?;
-        self.answers
-            .push(json!({"what": what, "op": "chain.job", "answer": oracle}));
+        self.answered(what, "chain.job", &oracle);
         let theirs: Vec<Vec<usize>> = oracle["jobs"]
             .as_array()
             .cloned()
@@ -671,8 +886,7 @@ impl<'a> Pair<'a> {
             1,
             &json!({"session": self.session, "count": count}),
         )?;
-        self.answers
-            .push(json!({"what": what, "op": op, "answer": answer}));
+        self.answered(what, op, &answer);
         for _ in 0..count {
             self.mirror
                 .revert_block(&self.milestones, &Handlers)
@@ -981,24 +1195,29 @@ fn removed_type(p: &Pair<'_>, server: &mut OracleServer, key: &DerivedKey) -> Re
 
 /// Block bytes with a transaction's raw bytes as given (a type the decoder refuses), signed by
 /// the scheduled delegate of the next slot on the mirror.
-fn block_with_raw(p: &Pair<'_>, state: &State, raw: &[u8]) -> Result<Vec<u8>> {
+fn block_with_raw(
+    keys: &Keys,
+    milestones: &Milestones,
+    state: &State,
+    raw: &[u8],
+) -> Result<Vec<u8>> {
     // The header is built for an empty block and then given the transaction: the payload hash
     // is over the transaction's id, the SHA-256 of its bytes.
     let id = sha256(raw);
     let last = state.last_block().header().clone();
     let height = last.height + 1;
-    let params = p.milestones.at(height);
+    let params = milestones.at(height);
     let block_time = u32::try_from(params.block_time()).unwrap_or(8);
     let timestamp = last.timestamp + block_time;
-    let info = calculate_forging_info(i64::from(timestamp), height, &p.milestones);
+    let info = calculate_forging_info(i64::from(timestamp), height, milestones);
     let scheduled = usize::try_from(info.current_forger)
         .ok()
         .and_then(|i| state.forging_delegates().get(i))
         .ok_or_else(|| Error::Oracle("no delegate for the slot".into()))?;
-    let signer = delegate_key(p.keys, &scheduled.public_key)
+    let signer = delegate_key(keys, &scheduled.public_key)
         .ok_or_else(|| Error::Oracle("the slot's delegate is not the seed's".into()))?;
     let reward = state
-        .reward_for_block_in_round(height, &scheduled.public_key, &p.milestones)
+        .reward_for_block_in_round(height, &scheduled.public_key, milestones)
         .map(|r| r.reward)
         .unwrap_or(0);
     let mut header = BlockHeader {
@@ -1035,7 +1254,7 @@ fn block_with_raw(p: &Pair<'_>, state: &State, raw: &[u8]) -> Result<Vec<u8>> {
 fn removed_type_and_rebuild(p: &mut Pair<'_>, server: &mut OracleServer) -> Result<()> {
     let sender = p.funded(1_000_000_000, 0)?;
     let raw = removed_type(p, server, sender)?;
-    let first = block_with_raw(p, &p.mirror.clone(), &raw)?;
+    let first = block_with_raw(p.keys, &p.milestones, &p.mirror, &raw)?;
     p.job_at_latest(
         server,
         "a removed type in the job's first block",
@@ -1048,7 +1267,7 @@ fn removed_type_and_rebuild(p: &mut Pair<'_>, server: &mut OracleServer) -> Resu
     state
         .apply_block(&decoded, &p.milestones, &Handlers)
         .map_err(|e| Error::Oracle(format!("a built block was refused: {e}")))?;
-    let second = block_with_raw(p, &state, &raw)?;
+    let second = block_with_raw(p.keys, &p.milestones, &state, &raw)?;
     p.job_at_latest(
         server,
         "a removed type after an accepted block",
@@ -1248,6 +1467,7 @@ fn run_case(
     let milestones = milestones_with(corpus, &case.milestones(corpus.tip()))?;
     let pool = matches!(case, ProcessorCase::RemovalAcrossRoundEnd);
     let mut p = Pair::open(corpus, keys, server, case.name(), milestones, pool)?;
+    p.intents = case.intents().into();
     if let Err(problem) = &p.rig {
         let outcome = problem.outcome();
         p.record("Heartwood's node at the corpus's tip", outcome);
@@ -1283,6 +1503,13 @@ fn run_case(
         ProcessorCase::RemovedTypeAndRebuild => removed_type_and_rebuild(&mut p, server)?,
         ProcessorCase::VoteAtRoundEndFork => vote_at_round_end_fork(&mut p, server)?,
     }
+    if !p.intents.is_empty() {
+        let left = p.intents.len();
+        p.record(
+            "the case's steps",
+            Outcome::HarnessError(format!("{left} steps of the case's intents did not run")),
+        );
+    }
     call(server, "chain.close", 1, &json!({"session": p.session}))?;
     if let Some(dir) = std::env::var_os(RECORD_DIR) {
         let path = std::path::Path::new(&dir).join(format!("{}.json", p.name));
@@ -1300,4 +1527,320 @@ pub fn run(corpus: &Corpus, oracle: &mut OracleServer) -> Result<Vec<CaseResult>
         out.extend(run_case(case, corpus, &keys, oracle)?);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::levels::l2_processor::{download, is_removed_type};
+    use std::path::Path;
+
+    /// The oracle's answers of every case's steps, recorded from the reference (`s1-ref-v2`) on
+    /// the committed chain with [`RECORD_DIR`] and summarised by [`summary`]; `"Accepted xN"`
+    /// stands for N accepted blocks.
+    const RECORDED: &str = r#"
+{
+    "conflicting-and-forged": [
+        {"end": "clear", "results": ["Rejected"], "failed": false, "missed": 0},
+        {"end": "clear", "results": ["Accepted", "Rejected"], "failed": false, "missed": 0}
+    ],
+    "double-forging-recovery-1": [
+        {"end": "fork", "results": ["Accepted", "Rollback/DoubleForging"], "failed": false, "missed": 0},
+        {"reverted": 1},
+        {"end": "broadcast", "results": ["Accepted"], "failed": false, "missed": 0}
+    ],
+    "double-forging-recovery-3": [
+        {"end": "fork", "results": ["Accepted", "Rollback/DoubleForging"], "failed": false, "missed": 0},
+        {"reverted": 3},
+        {"end": "broadcast", "results": ["Accepted", "Accepted", "Accepted"], "failed": false, "missed": 0}
+    ],
+    "double-forging-recovery-54": [
+        {"end": "fork", "results": ["Accepted", "Rollback/DoubleForging"], "failed": false, "missed": 0},
+        {"reverted": 54},
+        {"end": "broadcast", "results": ["Accepted x54"], "failed": false, "missed": 0}
+    ],
+    "future-slot": [
+        {"end": "broadcast", "results": ["Accepted"], "failed": false, "missed": 0, "futureSlot": true}
+    ],
+    "milestone-at-last-downloaded": [
+        {"cuts": [6]},
+        {"end": "broadcast", "results": ["Accepted x6"], "failed": false, "missed": 0}
+    ],
+    "milestone-cut": [
+        {"cuts": [3, 3]},
+        {"end": "broadcast", "results": ["Accepted", "Accepted", "Accepted"], "failed": false, "missed": 0},
+        {"end": "broadcast", "results": ["Accepted", "Accepted", "Accepted"], "failed": false, "missed": 0}
+    ],
+    "refused-after-gap": [
+        {"end": "clear", "results": ["Rejected"], "failed": false, "missed": 3}
+    ],
+    "removal-across-round-end": [
+        {"end": "broadcast", "results": ["Accepted"], "failed": false, "missed": 0},
+        {"end": "broadcast", "results": ["Accepted"], "failed": false, "missed": 0},
+        {"reverted": 3}
+    ],
+    "removed-type-and-rebuild": [
+        {"end": "clear", "results": ["Rejected"], "failed": false, "missed": 0},
+        {"end": "clear", "results": ["Accepted", "Rejected"], "failed": false, "missed": 0},
+        {"end": "clear", "results": [], "failed": true, "missed": 0},
+        {"end": "broadcast", "results": ["Accepted"], "failed": true, "missed": 0}
+    ],
+    "unchained-first-block": [
+        {"end": "forkCheck", "results": [], "failed": false, "missed": 0}
+    ],
+    "unchained-statuses": [
+        {"end": "broadcast", "results": ["Accepted", "DiscardedButCanBeBroadcasted/EqualToLastBlock"], "failed": false, "missed": 0},
+        {"end": "broadcast", "results": ["Accepted", "DiscardedButCanBeBroadcasted/AlreadyInBlockchain"], "failed": false, "missed": 0},
+        {"end": "clear", "results": ["Accepted", "Rejected/NotReadyToAcceptNewHeight"], "failed": false, "missed": 0},
+        {"end": "clear", "results": ["Accepted", "Rejected/InvalidTimestamp"], "failed": false, "missed": 1},
+        {"end": "clear", "results": ["Accepted", "Rejected/GeneratorMismatch"], "failed": false, "missed": 0},
+        {"end": "fork", "results": ["Accepted", "Rollback/DoubleForging"], "failed": false, "missed": 0}
+    ],
+    "vote-at-round-end-fork": [
+        {"reverted": 1},
+        {"end": "broadcast", "results": ["Accepted"], "failed": false, "missed": 0},
+        {"reverted": 2},
+        {"end": "broadcast", "results": ["Accepted", "Accepted"], "failed": false, "missed": 1}
+    ]
+}
+"#;
+
+    fn expanded(step: &Value) -> Value {
+        let mut step = step.clone();
+        if let Some(results) = step.get("results").and_then(Value::as_array) {
+            let mut out = Vec::new();
+            for result in results {
+                let text = result.as_str().unwrap_or_default();
+                match text.split_once(" x") {
+                    Some((name, n)) => {
+                        out.extend(std::iter::repeat_n(json!(name), n.parse().unwrap()));
+                    }
+                    None => out.push(result.clone()),
+                }
+            }
+            step["results"] = Value::Array(out);
+        }
+        step
+    }
+
+    #[test]
+    fn the_reference_did_what_every_case_needs() {
+        let recorded: Value = serde_json::from_str(RECORDED).unwrap();
+        for case in ProcessorCase::ALL {
+            let steps = recorded[case.name()].as_array().unwrap_or_else(|| {
+                panic!("no recorded answers of {}", case.name());
+            });
+            let intents = case.intents();
+            assert_eq!(steps.len(), intents.len(), "{}", case.name());
+            for (i, (step, intent)) in steps.iter().zip(&intents).enumerate() {
+                assert_eq!(
+                    expanded(step),
+                    intent.summary(),
+                    "{} step {}",
+                    case.name(),
+                    i + 1
+                );
+            }
+        }
+        assert_eq!(
+            recorded.as_object().unwrap().len(),
+            ProcessorCase::ALL.len()
+        );
+    }
+
+    #[test]
+    fn a_summary_reads_a_job_an_enqueueing_and_a_revert() {
+        let job = json!({
+            "results": [
+                {"height": 3, "id": "a", "result": "Accepted", "line": {}},
+                {"height": 3, "id": "b", "result": "Rejected", "unchained": "InvalidTimestamp"},
+            ],
+            "committed": 1, "end": "clear", "broadcast": false, "clearQueue": true,
+            "failed": false, "futureSlot": 4, "missed": [{"timestamp": 8, "height": 3, "username": "x"}],
+        });
+        assert_eq!(
+            summary(&job),
+            Intent::job("clear", &["Accepted", "Rejected/InvalidTimestamp"])
+                .missed(1)
+                .future_slot()
+                .summary()
+        );
+        assert_eq!(
+            summary(&json!({"jobs": [[1, 2], []]})),
+            Intent::Cuts(vec![2, 0]).summary()
+        );
+        assert_eq!(
+            summary(&json!({"lines": [{}, {}]})),
+            Intent::Reverted(2).summary()
+        );
+        assert_ne!(
+            summary(&job),
+            Intent::job("clear", &["Accepted", "Rejected"])
+                .missed(1)
+                .future_slot()
+                .summary()
+        );
+    }
+
+    fn corpus() -> Corpus {
+        Corpus::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus/txgen-one-node")).unwrap()
+    }
+
+    fn tip_state(corpus: &Corpus) -> State {
+        let mut state =
+            State::from_genesis(&corpus.genesis, &corpus.milestones, &Handlers).unwrap();
+        for block in &corpus.blocks {
+            let decoded = Block::receive(&block.bytes, &corpus.milestones).unwrap();
+            state
+                .apply_block(&decoded, &corpus.milestones, &Handlers)
+                .unwrap();
+        }
+        state
+    }
+
+    #[test]
+    fn the_added_milestones_load_and_keep_the_rules() {
+        let corpus = corpus();
+        let tip = corpus.tip();
+        let text = milestones_with(&corpus, &[tip, tip + 3]).unwrap().unwrap();
+        let loaded = Milestones::load(&text, &corpus.network).unwrap();
+        let heights = milestone_heights(&loaded);
+        assert!(
+            heights.contains(&tip) && heights.contains(&(tip + 3)),
+            "{heights:?}"
+        );
+        for height in [tip, tip + 1, tip + 3, tip + 4] {
+            assert_eq!(
+                loaded.at(height).block_time(),
+                corpus.milestones.at(height).block_time()
+            );
+            assert_eq!(
+                loaded.at(height).max_transactions(),
+                corpus.milestones.at(height).max_transactions()
+            );
+        }
+        assert_eq!(milestones_with(&corpus, &[]).unwrap(), None);
+    }
+
+    #[test]
+    fn built_blocks_are_the_scheduled_delegates_and_apply() {
+        let corpus = corpus();
+        let keys = corpus_keys(&corpus).unwrap();
+        let state = tip_state(&corpus);
+        let milestones = &corpus.milestones;
+        let built = block_on(&state, milestones, &keys, &[], 0, None).unwrap();
+        let block = Block::receive(&built.bytes, milestones).unwrap();
+        assert_eq!(block.height(), corpus.tip() + 1);
+        assert_eq!(block.header().generator_public_key, built.scheduled);
+        let verified = block.verify(milestones, i64::from(u32::MAX));
+        assert!(verified.failures.is_empty(), "{:?}", verified.failures);
+        state
+            .clone()
+            .apply_block(&block, milestones, &Handlers)
+            .unwrap();
+        // A later slot, signed by a delegate that is not the one scheduled there: the block
+        // verifies (its own signature), and the slot's schedule names another delegate.
+        let probe = block_on(&state, milestones, &keys, &[], 3, None).unwrap();
+        let other = keys
+            .delegates()
+            .find(|k| k.keys.public_key().to_compressed() != probe.scheduled)
+            .unwrap();
+        let mismatch = block_on(&state, milestones, &keys, &[], 3, Some(other)).unwrap();
+        let mismatch = Block::receive(&mismatch.bytes, milestones).unwrap();
+        assert_eq!(mismatch.height(), block.height());
+        assert!(mismatch.header().timestamp > block.header().timestamp);
+        assert_ne!(mismatch.header().generator_public_key, probe.scheduled);
+        assert!(
+            mismatch
+                .verify(milestones, i64::from(u32::MAX))
+                .failures
+                .is_empty()
+        );
+        let info = calculate_forging_info(
+            i64::from(mismatch.header().timestamp),
+            mismatch.height(),
+            milestones,
+        );
+        let scheduled = &state.forging_delegates()[usize::try_from(info.current_forger).unwrap()];
+        assert_eq!(scheduled.public_key, probe.scheduled);
+    }
+
+    #[test]
+    fn a_double_forged_block_shares_the_slot_and_the_delegate() {
+        let corpus = corpus();
+        let keys = corpus_keys(&corpus).unwrap();
+        let state = tip_state(&corpus);
+        let milestones = &corpus.milestones;
+        let from = keys
+            .wallets()
+            .find(|k| {
+                state
+                    .wallets()
+                    .find_by_address(&k.address)
+                    .is_some_and(|w| w.balance() > 1_000_000_000 && w.public_key().is_some())
+            })
+            .unwrap();
+        let to = keys.wallets().find(|k| k.address != from.address).unwrap();
+        let nonce = state
+            .wallets()
+            .find_by_address(&from.address)
+            .unwrap()
+            .nonce()
+            + 1;
+        let params = milestones.at(state.height() + 1);
+        let t = transfer(&[(to.address, 100)])
+            .nonce(nonce)
+            .fee(FEE)
+            .network(params.network())
+            .build(&from.keys, Aux::fixed(AUX), params)
+            .unwrap();
+        let plain = block_on(&state, milestones, &keys, &[], 0, None).unwrap();
+        let twin = block_on(&state, milestones, &keys, &[t], 0, None).unwrap();
+        let (plain, twin) = (
+            Block::receive(&plain.bytes, milestones).unwrap(),
+            Block::receive(&twin.bytes, milestones).unwrap(),
+        );
+        assert_ne!(plain.id(), twin.id());
+        assert_eq!(plain.height(), twin.height());
+        assert_eq!(plain.header().timestamp, twin.header().timestamp);
+        assert_eq!(
+            plain.header().generator_public_key,
+            twin.header().generator_public_key
+        );
+    }
+
+    #[test]
+    fn a_block_with_a_removed_type_is_refused_by_the_download() {
+        let corpus = corpus();
+        let keys = corpus_keys(&corpus).unwrap();
+        let state = tip_state(&corpus);
+        let milestones = &corpus.milestones;
+        let from = keys.wallets().next().unwrap();
+        let to = keys.wallets().nth(1).unwrap();
+        let params = milestones.at(state.height() + 1);
+        let t = transfer(&[(to.address, 100)])
+            .nonce(1)
+            .fee(FEE)
+            .network(params.network())
+            .build(&from.keys, Aux::fixed(AUX), params)
+            .unwrap();
+        // The transfer's type (bytes 7 and 8) turned into 5, an IPFS transaction.
+        let mut raw = t.bytes().to_vec();
+        raw[7..9].copy_from_slice(&5u16.to_le_bytes());
+        assert!(is_removed_type(&raw));
+        assert!(!is_removed_type(t.bytes()));
+        let bytes = block_with_raw(&keys, milestones, &state, &raw).unwrap();
+        let block = JobBlock::of(bytes);
+        let (header, transactions) = block.parts().unwrap();
+        assert_eq!(header.height, state.height() + 1);
+        assert_eq!(transactions, vec![raw]);
+        assert!(download(&[block], params).is_err());
+    }
+
+    #[test]
+    fn every_case_has_a_name_of_its_own() {
+        let names: std::collections::BTreeSet<String> =
+            ProcessorCase::ALL.iter().map(|c| c.name()).collect();
+        assert_eq!(names.len(), ProcessorCase::ALL.len());
+    }
 }

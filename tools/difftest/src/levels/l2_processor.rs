@@ -721,7 +721,6 @@ impl JobRig {
         {
             self.chain.last_downloaded = Some(last.link().map_err(RigProblem::Failed)?);
         }
-        let tip = self.state.height();
         self.chain.started = inputs.started;
         self.clock.set(inputs.now_ms);
         let recorder = Recorder {
@@ -764,85 +763,105 @@ impl JobRig {
             JobEnd::Clear | JobEnd::ForkCheck(_) => self.chain.reset_last_downloaded(),
             JobEnd::Broadcast(_) | JobEnd::Dropped => {}
         }
-        let value = self.job_value(blocks, inputs, &outcome, &seen, tip);
+        let value = job_value(&JobParts {
+            blocks,
+            inputs,
+            outcome: &outcome,
+            seen: &seen,
+            chain: &self.chain,
+            tip: (self.state.height(), *self.state.last_block().id()),
+            milestones: &self.milestones,
+        });
         Ok(RigJob::Ran {
             outcome,
             seen,
             value,
         })
     }
+}
 
-    /// The job's answer in the shape of the oracle's `chain.job` job.
-    fn job_value(
-        &self,
-        blocks: &[JobBlock],
-        inputs: &JobInputs,
-        outcome: &JobOutcome,
-        seen: &[Seen],
-        tip: u32,
-    ) -> Value {
-        let link = |height: u32, id: &BlockId| json!({"height": height, "id": id.to_hex()});
-        let results: Vec<Value> = seen.iter().map(seen_value).collect();
-        let mut out = Map::new();
-        out.insert("results".into(), Value::Array(results));
-        out.insert("committed".into(), json!(outcome.committed));
-        let (end, block) = match &outcome.end {
-            JobEnd::Broadcast(b) => ("broadcast", Some(link(b.height(), b.id()))),
-            JobEnd::Fork(b) => ("fork", Some(link(b.height(), b.id()))),
-            JobEnd::Clear => ("clear", None),
-            JobEnd::ForkCheck(_) => ("forkCheck", None),
-            JobEnd::Dropped if blocks.is_empty() => ("empty", None),
-            JobEnd::Dropped => ("dropped", None),
-        };
-        out.insert("end".into(), json!(end));
-        if let Some(block) = block {
-            out.insert("block".into(), block);
-        }
-        let broadcast = matches!(outcome.end, JobEnd::Broadcast(_))
-            && inputs.started
-            && inputs.machine_state == "newBlock";
-        out.insert("broadcast".into(), json!(broadcast));
-        out.insert("clearQueue".into(), json!(outcome.clear_queue));
-        let stop = stop_of(
-            blocks,
-            seen,
-            &outcome.end,
-            inputs.now_ms,
-            &self.milestones,
-            tip,
-        );
-        out.insert("failed".into(), json!(stop == Some(Stop::Failed)));
-        if let Some(Stop::FutureSlot(height)) = stop {
-            out.insert("futureSlot".into(), json!(height));
-        }
-        let chain_link = |l: &ChainLink| link(l.height, &l.id);
-        out.insert(
-            "lastDownloaded".into(),
-            self.chain
-                .last_downloaded
-                .as_ref()
-                .map_or(Value::Null, chain_link),
-        );
-        out.insert(
-            "forked".into(),
-            self.chain
-                .forked_block
-                .as_ref()
-                .map_or(Value::Null, |b| link(b.height(), b.id())),
-        );
-        out.insert("rollback".into(), json!(self.chain.blocks_to_rollback));
-        let missed: Vec<Value> = seen
-            .iter()
-            .filter_map(|s| s.processed.applied.as_ref())
-            .flat_map(|a| a.missed.iter().map(missed_value))
-            .collect();
-        out.insert("missed".into(), Value::Array(missed));
-        out.insert(
-            "tip".into(),
-            link(self.state.height(), self.state.last_block().id()),
-        );
-        Value::Object(out)
+/// What a job's answer is made of: the job's blocks and inputs, what it answered, each processed
+/// block, and the chain state and tip after it.
+#[derive(Debug, Clone, Copy)]
+pub struct JobParts<'a> {
+    /// The job's blocks.
+    pub blocks: &'a [JobBlock],
+    /// The job's inputs.
+    pub inputs: &'a JobInputs,
+    /// What the job answered.
+    pub outcome: &'a JobOutcome,
+    /// Each block the processor answered.
+    pub seen: &'a [Seen],
+    /// The chain state after the job and the blockchain service's answer to its end.
+    pub chain: &'a ChainState,
+    /// The tip after the job: its height and id.
+    pub tip: (u32, BlockId),
+    /// The milestones.
+    pub milestones: &'a Milestones,
+}
+
+/// A job's answer in the shape of the oracle's `chain.job` job.
+pub fn job_value(parts: &JobParts<'_>) -> Value {
+    let JobParts {
+        blocks,
+        inputs,
+        outcome,
+        seen,
+        chain,
+        tip,
+        milestones,
+    } = *parts;
+    let link = |height: u32, id: &BlockId| json!({"height": height, "id": id.to_hex()});
+    let results: Vec<Value> = seen.iter().map(seen_value).collect();
+    let mut out = Map::new();
+    out.insert("results".into(), Value::Array(results));
+    out.insert("committed".into(), json!(outcome.committed));
+    let (end, block) = match &outcome.end {
+        JobEnd::Broadcast(b) => ("broadcast", Some(link(b.height(), b.id()))),
+        JobEnd::Fork(b) => ("fork", Some(link(b.height(), b.id()))),
+        JobEnd::Clear => ("clear", None),
+        JobEnd::ForkCheck(_) => ("forkCheck", None),
+        JobEnd::Dropped if blocks.is_empty() => ("empty", None),
+        JobEnd::Dropped => ("dropped", None),
+    };
+    out.insert("end".into(), json!(end));
+    if let Some(block) = block {
+        out.insert("block".into(), block);
     }
+    let broadcast = matches!(outcome.end, JobEnd::Broadcast(_))
+        && inputs.started
+        && inputs.machine_state == "newBlock";
+    out.insert("broadcast".into(), json!(broadcast));
+    out.insert("clearQueue".into(), json!(outcome.clear_queue));
+    let stop = stop_of(blocks, seen, &outcome.end, inputs.now_ms, milestones);
+    out.insert("failed".into(), json!(stop == Some(Stop::Failed)));
+    if let Some(Stop::FutureSlot(height)) = stop {
+        out.insert("futureSlot".into(), json!(height));
+    }
+    let chain_link = |l: &ChainLink| link(l.height, &l.id);
+    out.insert(
+        "lastDownloaded".into(),
+        chain
+            .last_downloaded
+            .as_ref()
+            .map_or(Value::Null, chain_link),
+    );
+    out.insert(
+        "forked".into(),
+        chain
+            .forked_block
+            .as_ref()
+            .map_or(Value::Null, |b| link(b.height(), b.id())),
+    );
+    out.insert("rollback".into(), json!(chain.blocks_to_rollback));
+    let missed: Vec<Value> = seen
+        .iter()
+        .filter_map(|s| s.processed.applied.as_ref())
+        .flat_map(|a| a.missed.iter().map(missed_value))
+        .collect();
+    out.insert("missed".into(), Value::Array(missed));
+    out.insert("tip".into(), link(tip.0, &tip.1));
+    Value::Object(out)
 }
 
 /// A missed-slot row as the oracle writes it.
@@ -911,14 +930,13 @@ pub enum Stop {
 /// loop reached (none answered yet, or the last answer was an acceptance), either a future slot
 /// against the clock at `now_ms` or a failure. `None` when the loop answered every block, broke
 /// on a result, or the job never reached its loop (dropped, or a first block that does not
-/// chain to `tip`).
+/// chain to the tip).
 pub fn stop_of(
     blocks: &[JobBlock],
     seen: &[Seen],
     end: &JobEnd,
     now_ms: i64,
     milestones: &Milestones,
-    tip: u32,
 ) -> Option<Stop> {
     if matches!(end, JobEnd::Dropped | JobEnd::ForkCheck(_)) {
         return None;
@@ -931,7 +949,6 @@ pub fn stop_of(
         return None;
     }
     let (header, _) = next.parts().ok()?;
-    let _ = tip;
     let params = milestones.at(header.height);
     let epoch = slots::epoch_unix_ms(params.epoch())?;
     let block_time = i64::try_from(params.block_time()).ok()?.max(1);
@@ -1766,4 +1783,445 @@ pub fn job_case(devnet: &Devnet, case: &Case<'_>) -> std::result::Result<Verdict
     Err(SubjectError::Unsupported(
         "a job on an oracle session: the golden vectors run whole sessions".into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::corpus::RevertPlan;
+    use heartwood_p2p::to_block;
+    use std::path::Path;
+
+    fn corpus() -> Corpus {
+        Corpus::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus/txgen-one-node")).unwrap()
+    }
+
+    /// One of V27's enqueueing records as the reference answered it: the first block's height,
+    /// each block's transaction count (or `empty` blocks without any), the last downloaded
+    /// height, `maxLastBlocks`, the milestone heights and the sizes of the jobs pushed.
+    struct Cut {
+        first: u32,
+        transactions: &'static [u32],
+        empty: usize,
+        last_downloaded: u32,
+        max_last_blocks: usize,
+        milestones: &'static [u32],
+        jobs: &'static [usize],
+    }
+
+    /// The devnet's milestone heights.
+    const DEVNET: &[u32] = &[1, 2];
+
+    const fn cut(
+        first: u32,
+        transactions: &'static [u32],
+        empty: usize,
+        milestones: &'static [u32],
+        jobs: &'static [usize],
+    ) -> Cut {
+        Cut {
+            first,
+            transactions,
+            empty,
+            last_downloaded: first - 1,
+            max_last_blocks: 100,
+            milestones,
+            jobs,
+        }
+    }
+
+    #[test]
+    fn the_enqueueing_cuts_as_the_reference_did() {
+        let cases = [
+            cut(11, &[100, 49, 1, 5], 0, DEVNET, &[3, 1]),
+            cut(11, &[100, 49], 0, DEVNET, &[2]),
+            cut(11, &[0, 150, 0], 0, DEVNET, &[2, 1]),
+            cut(11, &[], 100, DEVNET, &[100, 0]),
+            cut(2, &[], 250, DEVNET, &[100, 100, 50]),
+            Cut {
+                max_last_blocks: 150,
+                ..cut(11, &[], 120, DEVNET, &[100, 20])
+            },
+            cut(11, &[], 5, &[1, 2, 12], &[2, 3]),
+            cut(11, &[], 3, &[1, 2, 11], &[1, 2]),
+            cut(11, &[], 6, &[1, 2, 12, 14], &[2, 2, 2]),
+            cut(11, &[], 6, &[1, 2, 10, 13], &[6]),
+            cut(11, &[], 4, &[1, 2, 8, 12], &[2, 2]),
+            cut(11, &[150, 0, 0, 0], 0, &[1, 2, 13], &[1, 2, 1]),
+            cut(11, &[], 2, &[1, 2, 12], &[2, 0]),
+            cut(2, &[], 3, DEVNET, &[3]),
+            cut(11, &[], 0, DEVNET, &[]),
+        ];
+        for (i, c) in cases.iter().enumerate() {
+            let counts: Vec<u32> = if c.transactions.is_empty() {
+                vec![0; c.empty]
+            } else {
+                c.transactions.to_vec()
+            };
+            let blocks: Vec<Queued> = (c.first..)
+                .zip(counts)
+                .map(|(height, transactions)| Queued {
+                    height,
+                    transactions,
+                })
+                .collect();
+            let jobs = cut_jobs(&blocks, c.last_downloaded, c.milestones, c.max_last_blocks);
+            let sizes: Vec<usize> = jobs.iter().map(Vec::len).collect();
+            assert_eq!(sizes, c.jobs, "case {}", i + 1);
+            let flat: Vec<usize> = jobs.concat();
+            assert_eq!(
+                flat,
+                (0..blocks.len()).collect::<Vec<_>>(),
+                "case {}",
+                i + 1
+            );
+        }
+    }
+
+    #[test]
+    fn a_replay_downloads_again_after_each_revert() {
+        use Action::*;
+        let got = downloads(&[
+            Apply(2),
+            Apply(3),
+            Revert,
+            Revert,
+            Reapply(2),
+            Reapply(3),
+            Apply(4),
+            Revert,
+        ]);
+        let planned = |height, step| Planned { height, step };
+        assert_eq!(
+            got,
+            vec![
+                Download::Blocks(vec![planned(2, Step::Apply), planned(3, Step::Apply)]),
+                Download::Revert,
+                Download::Revert,
+                Download::Blocks(vec![
+                    planned(2, Step::Reapply),
+                    planned(3, Step::Reapply),
+                    planned(4, Step::Apply)
+                ]),
+                Download::Revert,
+            ]
+        );
+        let corpus = corpus();
+        let all = downloads(&l2::actions(&corpus));
+        let blocks: usize = all
+            .iter()
+            .map(|d| match d {
+                Download::Blocks(b) => b.len(),
+                Download::Revert => 0,
+            })
+            .sum();
+        let reverts = all.iter().filter(|d| **d == Download::Revert).count();
+        let plan: &RevertPlan = &corpus.revert_plan;
+        let reverted: u32 = plan.steps.iter().map(|s| s.blocks).sum();
+        assert_eq!(reverts, reverted as usize);
+        assert_eq!(blocks, corpus.blocks.len() + reverted as usize);
+    }
+
+    #[test]
+    fn the_download_path_rebuilds_every_block_of_the_committed_chain() {
+        let corpus = corpus();
+        let blocks: Vec<JobBlock> = corpus
+            .blocks
+            .iter()
+            .map(|b| JobBlock::of(b.bytes.clone()))
+            .collect();
+        for chunk in blocks.chunks(100) {
+            let first = chunk[0].parts().unwrap().0.height;
+            let params = corpus.milestones.at(first);
+            let incoming = download(chunk, params).unwrap();
+            assert_eq!(incoming.len(), chunk.len());
+            for (listed, block) in incoming.iter().zip(chunk) {
+                let rebuilt = to_block(&listed.block, &corpus.milestones).unwrap();
+                let (header, _) = block.parts().unwrap();
+                assert_eq!(rebuilt.id(), &serialiser::block_id(&header));
+                assert_eq!(serialiser::serialise(&rebuilt), block.bytes);
+                assert!(!listed.from_forger);
+            }
+        }
+    }
+
+    #[test]
+    fn a_listing_that_misstates_its_count_downloads_and_does_not_rebuild() {
+        let corpus = corpus();
+        let with_transactions = corpus
+            .blocks
+            .iter()
+            .find(|b| JobBlock::of(b.bytes.clone()).parts().unwrap().1.len() == 1)
+            .unwrap();
+        for count in [0, 2] {
+            let block = JobBlock {
+                bytes: with_transactions.bytes.clone(),
+                count: Some(count),
+            };
+            let params = corpus.milestones.at(with_transactions.height);
+            let incoming = download(&[block], params).unwrap();
+            assert!(to_block(&incoming[0].block, &corpus.milestones).is_err());
+        }
+    }
+
+    fn seen(block: &Block, result: BlockProcessorResult) -> Seen {
+        Seen {
+            height: block.height(),
+            id: *block.id(),
+            processed: Processed {
+                result,
+                applied: None,
+                unchained: None,
+            },
+            line: None,
+        }
+    }
+
+    #[test]
+    fn a_stop_is_a_future_slot_or_a_failure() {
+        let corpus = corpus();
+        let milestones = &corpus.milestones;
+        let decoded: Vec<Block> = corpus.blocks[..2]
+            .iter()
+            .map(|b| Block::receive(&b.bytes, milestones).unwrap())
+            .collect();
+        let blocks: Vec<JobBlock> = corpus.blocks[..2]
+            .iter()
+            .map(|b| JobBlock::of(b.bytes.clone()))
+            .collect();
+        let accepted = [seen(&decoded[0], BlockProcessorResult::Accepted)];
+        let broadcast = JobEnd::Broadcast(Arc::new(decoded[0].clone()));
+        let at = |block: &JobBlock| slot_time_ms(&block.parts().unwrap().0, milestones);
+        assert_eq!(
+            stop_of(&blocks, &accepted, &broadcast, at(&blocks[0]), milestones),
+            Some(Stop::FutureSlot(decoded[1].height()))
+        );
+        assert_eq!(
+            stop_of(&blocks, &accepted, &broadcast, at(&blocks[1]), milestones),
+            Some(Stop::Failed)
+        );
+        assert_eq!(
+            stop_of(&blocks, &[], &JobEnd::Clear, at(&blocks[1]), milestones),
+            Some(Stop::Failed)
+        );
+        let rejected = [seen(&decoded[0], BlockProcessorResult::Rejected)];
+        assert_eq!(
+            stop_of(
+                &blocks,
+                &rejected,
+                &JobEnd::Clear,
+                at(&blocks[1]),
+                milestones
+            ),
+            None
+        );
+        assert_eq!(
+            stop_of(&blocks, &[], &JobEnd::Dropped, at(&blocks[1]), milestones),
+            None
+        );
+        let both = [
+            accepted[0].clone(),
+            seen(&decoded[1], BlockProcessorResult::Accepted),
+        ];
+        assert_eq!(
+            stop_of(&blocks, &both, &broadcast, at(&blocks[1]), milestones),
+            None
+        );
+    }
+
+    /// The oracle's answer to a job of one block with two votes of one sender (the synthetic
+    /// case conflicting-and-forged on the committed chain), as the reference gave it.
+    const TWO_VOTES: &str = r#"{"results": [{"height": 266, "id": "aa1843039747a117107c3fa4f691ff3afdfe866ffd3cdd4769340becec8d24e2", "result": "Rejected"}], "committed": 0, "end": "clear", "broadcast": false, "clearQueue": false, "failed": false, "lastDownloaded": {"height": 265, "id": "f41d004098f2f8d90363101e68d06bf088ea3d6c454c90840c2370c41cfe5284"}, "forked": null, "rollback": 0, "missed": [], "tip": {"height": 265, "id": "f41d004098f2f8d90363101e68d06bf088ea3d6c454c90840c2370c41cfe5284"}}"#;
+
+    /// The oracle's answer to a job of one block refused in its apply after three missed slots
+    /// (the synthetic case refused-after-gap on the committed chain).
+    const REFUSED_AFTER_GAP: &str = r#"{"results": [{"height": 266, "id": "da4cd6da56c4e1c1c8c4a3cdd8ca5350703b392349d944f258f4439b420717a0", "result": "Rejected", "missed": [{"timestamp": 2184, "height": 266, "username": "genesis_19"}, {"timestamp": 2192, "height": 266, "username": "genesis_42"}, {"timestamp": 2200, "height": 266, "username": "genesis_8"}]}], "committed": 0, "end": "clear", "broadcast": false, "clearQueue": false, "failed": false, "lastDownloaded": {"height": 265, "id": "f41d004098f2f8d90363101e68d06bf088ea3d6c454c90840c2370c41cfe5284"}, "forked": null, "rollback": 0, "missed": [{"timestamp": 2184, "height": 266, "username": "genesis_19"}, {"timestamp": 2192, "height": 266, "username": "genesis_42"}, {"timestamp": 2200, "height": 266, "username": "genesis_8"}], "tip": {"height": 265, "id": "f41d004098f2f8d90363101e68d06bf088ea3d6c454c90840c2370c41cfe5284"}}"#;
+
+    /// Heartwood's answer to a job of one block at 266 that the processor refused, with the tip
+    /// at 265 and the last downloaded block reset there.
+    fn refused_value(oracle: &Value) -> (Value, Seen) {
+        let corpus = corpus();
+        let id = |v: &Value| BlockId::from_hex(v.as_str().unwrap()).unwrap();
+        let block_id = id(&oracle["results"][0]["id"]);
+        let tip = id(&oracle["tip"]["id"]);
+        let seen = Seen {
+            height: 266,
+            id: block_id,
+            processed: Processed {
+                result: BlockProcessorResult::Rejected,
+                applied: None,
+                unchained: None,
+            },
+            line: None,
+        };
+        let outcome = JobOutcome {
+            results: vec![(block_id, BlockProcessorResult::Rejected)],
+            committed: 0,
+            clear_queue: false,
+            end: JobEnd::Clear,
+        };
+        let chain = ChainState {
+            last_downloaded: Some(ChainLink {
+                id: tip,
+                previous_block: tip,
+                height: 265,
+                timestamp: 0,
+            }),
+            ..ChainState::default()
+        };
+        let blocks = [JobBlock::of(corpus.blocks[0].bytes.clone())];
+        let value = job_value(&JobParts {
+            blocks: &blocks,
+            inputs: &JobInputs::at(0),
+            outcome: &outcome,
+            seen: std::slice::from_ref(&seen),
+            chain: &chain,
+            tip: (265, tip),
+            milestones: &corpus.milestones,
+        });
+        (value, seen)
+    }
+
+    #[test]
+    fn a_job_answer_has_the_shape_of_the_oracles() {
+        let oracle: Value = serde_json::from_str(TWO_VOTES).unwrap();
+        let (value, _) = refused_value(&oracle);
+        assert_eq!(compare::diff(&oracle, &value), Vec::new());
+        let blocks = [JobBlock::of(corpus().blocks[0].bytes.clone())];
+        let ran = |value: Value, seen: Seen| RigJob::Ran {
+            outcome: JobOutcome {
+                results: Vec::new(),
+                committed: 0,
+                clear_queue: false,
+                end: JobEnd::Clear,
+            },
+            seen: vec![seen],
+            value,
+        };
+        let (value, seen) = refused_value(&oracle);
+        assert_eq!(
+            judge_job(&blocks, &oracle, &ran(value.clone(), seen.clone())),
+            Outcome::Pass
+        );
+        let mut other = value;
+        other["end"] = json!("broadcast");
+        assert!(judge_job(&blocks, &oracle, &ran(other, seen)).is_failure());
+    }
+
+    #[test]
+    fn the_rows_of_a_block_refused_in_its_apply_are_the_documented_difference() {
+        let oracle: Value = serde_json::from_str(REFUSED_AFTER_GAP).unwrap();
+        let (value, seen) = refused_value(&oracle);
+        let blocks = [JobBlock::of(corpus().blocks[0].bytes.clone())];
+        let ran = |value: Value| RigJob::Ran {
+            outcome: JobOutcome {
+                results: Vec::new(),
+                committed: 0,
+                clear_queue: false,
+                end: JobEnd::Clear,
+            },
+            seen: vec![seen.clone()],
+            value,
+        };
+        assert!(refused_rows_only(
+            &oracle,
+            &value,
+            std::slice::from_ref(&seen)
+        ));
+        assert_eq!(
+            judge_job(&blocks, &oracle, &ran(value.clone())),
+            Outcome::Documented(Documented::MissedRowsOfRefusedBlock.reason().to_owned())
+        );
+        // Another difference beside the rows is a mismatch.
+        let mut other = value.clone();
+        other["committed"] = json!(1);
+        assert!(judge_job(&blocks, &oracle, &ran(other)).is_failure());
+        // Rows Heartwood keeps for the refused block are a mismatch too.
+        let mut kept = value;
+        kept["missed"] = oracle["missed"].clone();
+        assert!(judge_job(&blocks, &oracle, &ran(kept)).is_failure());
+        // A block the processor accepted is not the documented form.
+        let mut accepted = seen.clone();
+        accepted.processed.result = BlockProcessorResult::Accepted;
+        assert!(!refused_rows_only(
+            &oracle,
+            &refused_value(&oracle).0,
+            &[accepted]
+        ));
+    }
+
+    #[test]
+    fn a_download_refused_for_a_removed_type_is_the_documented_difference() {
+        let corpus = corpus();
+        let oracle: Value = serde_json::from_str(TWO_VOTES).unwrap();
+        let (header, transactions) = JobBlock::of(
+            corpus
+                .blocks
+                .iter()
+                .find(|b| JobBlock::of(b.bytes.clone()).parts().unwrap().1.len() == 1)
+                .unwrap()
+                .bytes
+                .clone(),
+        )
+        .parts()
+        .unwrap();
+        let mut raw = transactions[0].clone();
+        raw[7..9].copy_from_slice(&5u16.to_le_bytes());
+        let mut bytes = serialiser::serialise_header(&header, true);
+        bytes.extend_from_slice(&u32::try_from(raw.len()).unwrap().to_le_bytes());
+        bytes.extend_from_slice(&raw);
+        let removed = [JobBlock::of(bytes)];
+        let refused = RigJob::Refused("the download: a removed type".into());
+        assert_eq!(
+            judge_job(&removed, &oracle, &refused),
+            Outcome::Documented(Documented::RemovedType.reason().to_owned())
+        );
+        let plain = [JobBlock::of(corpus.blocks[0].bytes.clone())];
+        assert!(judge_job(&plain, &oracle, &refused).is_failure());
+    }
+
+    #[test]
+    fn job_blocks_and_inputs_read_the_oracles_form() {
+        let blocks =
+            job_blocks(&json!(["0a0b", {"hex": "0c", "set": {"numberOfTransactions": 3}}]))
+                .unwrap();
+        assert_eq!(
+            blocks,
+            vec![
+                JobBlock {
+                    bytes: vec![0x0a, 0x0b],
+                    count: None
+                },
+                JobBlock {
+                    bytes: vec![0x0c],
+                    count: Some(3)
+                }
+            ]
+        );
+        assert!(job_blocks(&json!([{"hex": "0c", "set": {"version": 1}}])).is_err());
+        assert!(job_blocks(&json!("0c")).is_err());
+        let inputs = JobInputs::from_json(&json!({"now": 5})).unwrap();
+        assert_eq!(inputs, JobInputs::at(5));
+        let mut given = JobInputs::at(7);
+        given.machine_state = "syncing".into();
+        given.started = false;
+        given.downloaded = false;
+        given.last_downloaded = Some(vec![1, 2]);
+        assert_eq!(JobInputs::from_json(&given.to_json()).unwrap(), given);
+        assert!(JobInputs::from_json(&json!({})).is_err());
+    }
+
+    #[test]
+    fn the_names_are_the_references() {
+        assert_eq!(
+            result_name(BlockProcessorResult::DiscardedButCanBeBroadcasted),
+            "DiscardedButCanBeBroadcasted"
+        );
+        assert_eq!(
+            unchained_name(UnchainedStatus::NotReadyToAcceptNewHeight),
+            "NotReadyToAcceptNewHeight"
+        );
+        assert_eq!(Chunks::Reference.name(), "reference");
+        assert_eq!(Chunks::One.name(), "1");
+    }
 }
