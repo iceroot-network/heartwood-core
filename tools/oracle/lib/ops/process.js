@@ -19,7 +19,10 @@
 //       block is stored as a job of one block stores it (the session moves on to it); in the
 //       chain form the defaults apply, and every case starts from the chain's tip: the chain is
 //       replayed once and kept, and after each case its store and state are put back (an accepted
-//       block is stored and reverted), which the state digest checks.
+//       block is stored and reverted, and the store's missed and round rows restored), which the
+//       state digest checks; after a block refused in its
+//       apply, which may leave its sender's key bound (the reference binds it before its checks),
+//       the chain is replayed again.
 //       -> {result, handler, unchained?, line?, missed, lastDownloaded, forked, clearQueue,
 //           wakeUp, removed}: the result's name; the class of the handler that decided; the
 //          unchained handler's status; the digest line after an accepted block (in the chain
@@ -65,14 +68,15 @@ module.exports = function processOps(context) {
             return entry;
         }
         const replay = new ReplaySession(solar, files);
-        await inSession(replay, async () => {
+        const sd = await inSession(replay, async () => {
             await replay.start();
             for (const [i, hex] of blocks.entries()) {
                 const r = await replay.apply(hexBuffer(hex, `chain.blocks[${i}]`), "apply");
                 if (!r.accepted) throw new Error(`chain.blocks[${i}] was refused: ${r.error.class}: ${r.error.message}`);
             }
+            return hashes(chainSections(replay.chain, [])).sd.toString("hex");
         });
-        entry = { replay, sd: hashes(chainSections(replay.chain, [])).sd.toString("hex") };
+        entry = { replay, sd };
         kept.set(key, entry);
         while (kept.size > KEPT_CHAINS) kept.delete(kept.keys().next().value);
         return entry;
@@ -148,6 +152,9 @@ module.exports = function processOps(context) {
                 const made = makeProcessor(solar, s);
                 const store = s.chain.store;
                 const lengths = { missed: store.missed.length, recorded: store.recorded.length };
+                // The revert of an accepted block that starts a round deletes the round rows the
+                // chain saved with its tip (the reference's deleteBlocks): the store is put back.
+                const rounds = new Map([...store.rounds].map(([round, rows]) => [round, rows.map((row) => ({ ...row }))]));
                 setState(s, made, state, true);
                 let out;
                 try {
@@ -160,10 +167,17 @@ module.exports = function processOps(context) {
                 } finally {
                     store.missed.length = lengths.missed;
                     store.recorded.length = lengths.recorded;
+                    store.rounds = rounds;
                 }
-                const sd = hashes(chainSections(s.chain, [])).sd.toString("hex");
-                if (sd !== entry.sd) {
+                const forget = () => {
                     for (const [key, value] of kept) if (value === entry) kept.delete(key);
+                };
+                // A block refused in its apply may leave its sender's key bound (the reference binds
+                // it before its checks): the chain is replayed again for the next case.
+                if (out.handler === "AcceptBlockHandler" && out.result !== "Accepted") {
+                    forget();
+                } else if (hashes(chainSections(s.chain, [])).sd.toString("hex") !== entry.sd) {
+                    forget();
                     throw new Error("the chain did not return to its tip after the case");
                 }
                 if (out.line) {
