@@ -20,7 +20,7 @@ use super::{
     Env, Outcome, amount, block_refused, bytes32, failed, hex_bytes, integer, params, rejected,
     text, unclassified,
 };
-use crate::subject::{Case, SubjectError, Verdict};
+use crate::subject::{Case, Verdict};
 
 /// `block.make`: a block shaped as the forger makes it, from transactions read without checks at
 /// the block's height, signed with BIP340 by the factory or with the legacy scheme over the same
@@ -271,14 +271,6 @@ pub(super) fn fee_burned(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let fee = amount(case.input, "fee")?;
     Ok(Verdict::Output(
         json!({ "burnedFee": burned_fee(fee, params).to_string() }),
-    ))
-}
-
-/// `fee.minimum`: the dynamic fee floor is a rule of the transaction handlers, which are not part
-/// of `heartwood-crypto`. The crate's tests check the type key and size it is computed from.
-pub(super) fn fee_minimum(_env: &Env<'_>, _case: &Case<'_>) -> Outcome<Verdict> {
-    Err(SubjectError::Unsupported(
-        "the dynamic fee floor belongs to the transaction handlers".into(),
     ))
 }
 

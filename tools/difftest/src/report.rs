@@ -33,8 +33,9 @@ pub enum Outcome {
     /// Heartwood refused the case as a documented difference, but the input does not have the
     /// documented form: an undocumented refusal. The text is the difference's reason.
     Mislabelled(String),
-    /// Heartwood rejects the case on purpose where the reference accepts it: a documented
-    /// difference, with its reason. Not a failure, and not counted as compared.
+    /// Heartwood differs from the reference on purpose, as an entry of the documented
+    /// differences describes (most often: it rejects what the reference accepts); the text is the
+    /// entry's reason. Not a failure, and not counted as compared.
     Documented(String),
     /// The subject does not model this input yet.
     Skipped(String),
@@ -217,7 +218,7 @@ impl fmt::Display for Report {
         if self.documented() > 0 {
             writeln!(
                 f,
-                "  {} documented differences (Heartwood rejects them on purpose):",
+                "  {} documented differences (Heartwood differs on purpose):",
                 self.documented()
             )?;
             for (reason, n) in self.documented_by_reason() {
@@ -330,7 +331,9 @@ mod tests {
         assert_eq!((report.skipped(), report.documented()), (1, 1));
         let text = report.to_string();
         assert!(
-            text.contains("1 documented differences (Heartwood rejects them on purpose):\n        1  on purpose"),
+            text.contains(
+                "1 documented differences (Heartwood differs on purpose):\n        1  on purpose"
+            ),
             "{text}"
         );
         assert!(

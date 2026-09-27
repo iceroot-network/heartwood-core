@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use crate::errors::{Error, Result};
 use crate::levels::Level;
+use crate::levels::l1::Property;
 use crate::oracle::{Mode, Oracle};
 
 /// The usage text of the `difftest` binary.
@@ -27,7 +28,28 @@ Usage:
   difftest vectors verify DIR     check a vector directory: manifest, meta records, record shape
   difftest vectors diff DIR DIR   compare two oracle runs record by record (meta excluded)
   difftest run l0 DIR             compare golden vectors with Heartwood's implementations
-  difftest run l1|l2|l3|l4        later levels (see `difftest levels`)
+  difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR]
+                  [--regressions DIR] [ORACLE]
+                                  random and mutated cases of the properties (P1 to P9, or
+                                  their names; all by default), one oracle call each; 256
+                                  cases and seed 1 by default; DIR is a vector set with the
+                                  genesis class [packages/crypto/tests/vectors]; the minimal
+                                  case of a failed property is written to --regressions
+  difftest run l2 DIR [--synthetic] [ORACLE]
+                                  replay the corpus DIR in Heartwood and compare every step
+                                  with the oracle's digest lines; with an oracle, the first
+                                  differing step is dumped on both sides; --synthetic also
+                                  runs the synthetic blocks on top of the chain (needs one)
+  difftest run l3|l4              later levels (see `difftest levels`)
+  difftest corpus import ARCHIVE... --out DIR [--seed TEXT]
+                                  join the devnet tooling's archives of one chain (in order)
+                                  into a corpus; TEXT is the chain's public key-derivation
+                                  seed, checked against the genesis block [the devnet
+                                  tooling's default seed]
+  difftest corpus judge DIR [--dump H,...] [ORACLE]
+                                  run the oracle's judge on the corpus: its digest lines and
+                                  anchor results are added to the corpus
+  difftest corpus verify DIR      check a corpus against its manifest
   difftest levels                 the five levels and what each one arrives with
   difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--compare DIR]
                                   write the devnet chain definition of a genesis profile for a
@@ -148,6 +170,61 @@ pub enum Command {
     Help,
     /// `difftest genesis`: write a devnet chain definition.
     Genesis(GenesisArgs),
+    /// `difftest run l1`: the properties.
+    RunL1(L1Args),
+    /// `difftest run l2`: a corpus replay.
+    RunL2(L2Args),
+    /// `difftest corpus import`: archives to a corpus.
+    CorpusImport {
+        /// The archives, in chain order.
+        archives: Vec<PathBuf>,
+        /// The corpus directory to write.
+        out: PathBuf,
+        /// The chain's public key-derivation seed.
+        seed: String,
+    },
+    /// `difftest corpus judge`: the oracle's replay of a corpus.
+    CorpusJudge {
+        /// Where the oracle runs.
+        oracle: OracleArgs,
+        /// The corpus.
+        dir: PathBuf,
+        /// Heights whose records the judge writes out.
+        dump: Vec<u32>,
+    },
+    /// `difftest corpus verify`: check a corpus's manifest.
+    CorpusVerify {
+        /// The corpus.
+        dir: PathBuf,
+    },
+}
+
+/// The arguments of `difftest run l1`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct L1Args {
+    /// Where the oracle runs.
+    pub oracle: OracleArgs,
+    /// The properties, all when empty.
+    pub properties: Vec<Property>,
+    /// Cases per property.
+    pub cases: u32,
+    /// The seed of the case generator.
+    pub seed: u64,
+    /// A vector set with the genesis class, for the devnet configuration.
+    pub vectors: Option<PathBuf>,
+    /// Where minimal failing cases are written.
+    pub regressions: Option<PathBuf>,
+}
+
+/// The arguments of `difftest run l2`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct L2Args {
+    /// Where the oracle runs, when one is given on the command line.
+    pub oracle: Option<OracleArgs>,
+    /// The corpus.
+    pub dir: PathBuf,
+    /// Also run the synthetic cases.
+    pub synthetic: bool,
 }
 
 /// The arguments of `difftest oracle replay`.
@@ -207,11 +284,54 @@ pub fn parse(args: &[String]) -> Result<Command> {
                     dir: Some(dir.into()),
                 }),
                 (Level::L0, _) => Err(usage("usage: difftest run l0 DIR")),
+                (Level::L1, rest) => parse_l1(rest),
+                (Level::L2, rest) => parse_l2(rest),
                 (_, []) => Ok(Command::Run { level, dir: None }),
                 (_, _) => Err(usage(format!(
                     "difftest run {level} takes no arguments yet"
                 ))),
             }
+        }
+        ["corpus", "import", rest @ ..] => {
+            let (mut archives, mut out, mut seed) =
+                (Vec::new(), None, crate::synthetic::DEVNET_SEED.to_string());
+            let mut it = rest.iter();
+            while let Some(&arg) = it.next() {
+                match arg {
+                    "--out" => out = Some(PathBuf::from(value(arg, it.next())?)),
+                    "--seed" => seed = value(arg, it.next())?.to_string(),
+                    flag if flag.starts_with("--") => {
+                        return Err(usage(format!("unknown option {flag}")));
+                    }
+                    archive => archives.push(PathBuf::from(archive)),
+                }
+            }
+            if archives.is_empty() {
+                return Err(usage("corpus import needs at least one archive"));
+            }
+            Ok(Command::CorpusImport {
+                archives,
+                out: out.ok_or_else(|| usage("corpus import needs --out DIR"))?,
+                seed,
+            })
+        }
+        ["corpus", "verify", dir] => Ok(Command::CorpusVerify { dir: dir.into() }),
+        ["corpus", "judge", dir, rest @ ..] => {
+            let mut oracle = OracleArgs::default();
+            let mut dump = Vec::new();
+            let mut it = rest.iter();
+            while let Some(&flag) = it.next() {
+                if flag == "--dump" {
+                    dump = heights(value(flag, it.next())?)?;
+                } else {
+                    oracle_flag(&mut oracle, flag, it.next())?;
+                }
+            }
+            Ok(Command::CorpusJudge {
+                oracle,
+                dir: dir.into(),
+                dump,
+            })
         }
         ["oracle", "gen", rest @ ..] => {
             let mut oracle = OracleArgs::default();
@@ -276,6 +396,77 @@ pub fn parse(args: &[String]) -> Result<Command> {
         }
         _ => Err(usage(format!("unknown command: {}", words.join(" ")))),
     }
+}
+
+fn heights(list: &str) -> Result<Vec<u32>> {
+    list.split(',')
+        .filter(|h| !h.is_empty())
+        .map(|h| {
+            h.parse::<u32>()
+                .ok()
+                .filter(|h| *h >= 1)
+                .ok_or_else(|| usage(format!("{h} is not a height")))
+        })
+        .collect()
+}
+
+fn parse_l1(args: &[&str]) -> Result<Command> {
+    let mut l1 = L1Args {
+        oracle: OracleArgs::default(),
+        properties: Vec::new(),
+        cases: 256,
+        seed: 1,
+        vectors: None,
+        regressions: None,
+    };
+    let mut it = args.iter();
+    while let Some(&flag) = it.next() {
+        match flag {
+            "--property" => {
+                for p in value(flag, it.next())?.split(',') {
+                    l1.properties.push(p.parse()?);
+                }
+            }
+            "--cases" => {
+                l1.cases = value(flag, it.next())?
+                    .parse()
+                    .ok()
+                    .filter(|n| *n >= 1)
+                    .ok_or_else(|| usage("--cases needs a positive integer"))?;
+            }
+            "--seed" => {
+                l1.seed = value(flag, it.next())?
+                    .parse()
+                    .map_err(|_| usage("--seed needs an unsigned integer"))?;
+            }
+            "--vectors" => l1.vectors = Some(PathBuf::from(value(flag, it.next())?)),
+            "--regressions" => l1.regressions = Some(PathBuf::from(value(flag, it.next())?)),
+            _ => oracle_flag(&mut l1.oracle, flag, it.next())?,
+        }
+    }
+    Ok(Command::RunL1(l1))
+}
+
+fn parse_l2(args: &[&str]) -> Result<Command> {
+    let Some((dir, rest)) = args.split_first() else {
+        return Err(usage("usage: difftest run l2 DIR [--synthetic] [ORACLE]"));
+    };
+    let mut oracle = OracleArgs::default();
+    let mut synthetic = false;
+    let mut it = rest.iter();
+    while let Some(&flag) = it.next() {
+        if flag == "--synthetic" {
+            synthetic = true;
+        } else {
+            oracle_flag(&mut oracle, flag, it.next())?;
+        }
+    }
+    let given = oracle != OracleArgs::default();
+    Ok(Command::RunL2(L2Args {
+        oracle: (given || synthetic).then_some(oracle),
+        dir: (*dir).into(),
+        synthetic,
+    }))
 }
 
 fn parse_genesis(args: &[&str]) -> Result<Command> {
@@ -365,11 +556,68 @@ mod tests {
             }
         );
         assert_eq!(
-            p("run L2").unwrap(),
+            p("run L3").unwrap(),
             Command::Run {
-                level: Level::L2,
+                level: Level::L3,
                 dir: None
             }
+        );
+        assert_eq!(
+            p("run l1 --property P7 --property digest --cases 9 --seed 20260926 --solar-dir /s")
+                .unwrap(),
+            Command::RunL1(L1Args {
+                oracle: OracleArgs {
+                    solar_dir: Some("/s".into()),
+                    ..OracleArgs::default()
+                },
+                properties: vec![Property::Handlers, Property::Digest],
+                cases: 9,
+                seed: 20_260_926,
+                vectors: None,
+                regressions: None,
+            })
+        );
+        assert_eq!(
+            p("run l2 corpus/c1").unwrap(),
+            Command::RunL2(L2Args {
+                oracle: None,
+                dir: "corpus/c1".into(),
+                synthetic: false
+            })
+        );
+        assert_eq!(
+            p("run l2 c --synthetic --image i").unwrap(),
+            Command::RunL2(L2Args {
+                oracle: Some(OracleArgs {
+                    image: Some("i".into()),
+                    ..OracleArgs::default()
+                }),
+                dir: "c".into(),
+                synthetic: true
+            })
+        );
+        assert_eq!(
+            p("corpus import a b --out c").unwrap(),
+            Command::CorpusImport {
+                archives: vec!["a".into(), "b".into()],
+                out: "c".into(),
+                seed: crate::synthetic::DEVNET_SEED.into()
+            }
+        );
+        assert_eq!(
+            p("corpus judge c --dump 5,7 --image i").unwrap(),
+            Command::CorpusJudge {
+                oracle: OracleArgs {
+                    image: Some("i".into()),
+                    ..OracleArgs::default()
+                },
+                dir: "c".into(),
+                dump: vec![5, 7]
+            }
+        );
+        assert_eq!(
+            p("corpus verify c").unwrap(),
+            Command::CorpusVerify { dir: "c".into() }
         );
         assert_eq!(
             p("oracle gen --image heartwood-oracle:x --out v --no-backend-check").unwrap(),
@@ -431,7 +679,12 @@ mod tests {
     fn refuses_bad_command_lines() {
         for line in [
             "run l0",
-            "run l2 x",
+            "run l2",
+            "run l1 --cases 0",
+            "run l1 --property P10",
+            "corpus import --out o",
+            "corpus import a",
+            "corpus judge c --dump x",
             "run l9",
             "oracle gen --image x",
             "oracle gen --out v --devnet-generator",

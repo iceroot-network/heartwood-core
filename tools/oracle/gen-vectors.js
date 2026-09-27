@@ -35,12 +35,15 @@ const { buildDevnet } = require("./lib/network");
 const { FIXED_AUX, makeOps } = require("./lib/ops");
 const { makeCrafter } = require("./lib/craft");
 const genesis = require("./lib/vectors/genesis");
+const kernel = require("./lib/vectors/kernel");
+const state = require("./lib/vectors/state");
 
 const FORMAT = "heartwood-vectors/1";
 const HEIGHT = 2; // rule height for records that are not blocks (heights 1 and 2 differ only in donations)
 const MANIFEST = "MANIFEST.sha256";
 
-// The classes, in generation order (later classes use values of earlier ones).
+// The classes, in generation order (later classes use values of earlier ones). A class whose
+// builder returns null is not written.
 const CLASSES = [
     ["V01-keys-addresses", require("./lib/vectors/keys")],
     ["V02-transactions", require("./lib/vectors/transactions")],
@@ -49,9 +52,18 @@ const CLASSES = [
     ["V05-blocks", require("./lib/vectors/blocks")],
     ["V06-arithmetic", require("./lib/vectors/arithmetic")],
     ["V07-vote-rules", require("./lib/vectors/votes")],
+    ["V08-ranking", state.ranking],
+    ["V09-rounds", kernel.rounds],
+    ["V09-shuffle", state.shuffle],
     ["V10-genesis", genesis],
     ["V11-external", require("./lib/vectors/external")],
     ["V12-milestone-config", require("./lib/vectors/config")],
+    ["V15-vote-amounts", state.voteAmounts],
+    ["V16-kernel", kernel.kernel],
+    ["V17-handlers", require("./lib/vectors/handlers-state")],
+    ["V18-genesis-state", require("./lib/vectors/genesis-state")],
+    ["V19-fee-floor", require("./lib/vectors/fees")],
+    ["V20-logger", kernel.logger],
 ];
 
 function parseArgs(argv) {

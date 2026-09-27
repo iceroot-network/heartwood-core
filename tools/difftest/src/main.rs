@@ -1,13 +1,18 @@
 //! The `difftest` binary. `difftest help` lists the commands.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 
-use heartwood_difftest::cli::{self, Command, GenesisArgs, USAGE};
+use heartwood_difftest::cli::{self, Command, GenesisArgs, L1Args, L2Args, USAGE};
+use heartwood_difftest::corpus::{self, Corpus};
 use heartwood_difftest::genesis::{self, Built};
+use heartwood_difftest::levels::l1::{self, L1Options, Property};
+use heartwood_difftest::levels::l2::{self, L2Options};
 use heartwood_difftest::levels::{Level, l0};
 use heartwood_difftest::oracle::GenOptions;
 use heartwood_difftest::report::describe_meta;
+use heartwood_difftest::strategies::transactions::TxContext;
 use heartwood_difftest::subjects::Devnet;
 use heartwood_difftest::vectors::VectorSet;
 use heartwood_difftest::{Error, Result, replay, subject};
@@ -194,12 +199,140 @@ fn execute(command: Command) -> Result<bool> {
             );
             Ok(replayed.report.is_success())
         }
+        Command::RunL1(args) => run_l1(&args, env),
+        Command::RunL2(args) => run_l2(&args, env),
+        Command::CorpusImport {
+            archives,
+            out,
+            seed,
+        } => {
+            corpus::import(&archives, &out, &seed)?;
+            let loaded = Corpus::load(&out)?;
+            println!(
+                "difftest: corpus {} written: blocks 2 to {}, {} revert steps, manifest verified",
+                out.display(),
+                loaded.tip(),
+                loaded.revert_plan.steps.len()
+            );
+            Ok(true)
+        }
+        Command::CorpusVerify { dir } => {
+            let loaded = Corpus::load(&dir)?;
+            println!(
+                "difftest: {}: manifest verified, blocks 2 to {}, {} revert steps",
+                dir.display(),
+                loaded.tip(),
+                loaded.revert_plan.steps.len()
+            );
+            Ok(true)
+        }
+        Command::CorpusJudge { oracle, dir, dump } => {
+            corpus::verify(&dir)?;
+            let oracle = oracle.resolve(env)?;
+            let work = std::env::temp_dir().join(format!("heartwood-judge-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&work);
+            let extra = if dump.is_empty() {
+                Vec::new()
+            } else {
+                let list: Vec<String> = dump.iter().map(u32::to_string).collect();
+                vec!["--dump".to_string(), list.join(",")]
+            };
+            let ok = oracle.judge(&dir, &work, &extra)?;
+            let recorded = corpus::record_judge(&dir, &work)?;
+            println!(
+                "difftest: the judge's lines and anchors are in {} (anchors {})",
+                dir.display(),
+                if recorded && ok {
+                    "hold"
+                } else {
+                    "FAILED: see anchors.json"
+                }
+            );
+            if dump.is_empty() {
+                let _ = std::fs::remove_dir_all(&work);
+            } else {
+                println!("  dumps: {}", work.display());
+            }
+            Ok(ok && recorded)
+        }
         Command::Run { level, .. } => Err(Error::NotYet(format!(
             "{} is not built yet; it arrives with {}",
             level.title(),
             level.arrives_with()
         ))),
     }
+}
+
+/// The committed golden vectors, which hold the devnet configuration.
+fn default_vectors() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/crypto/tests/vectors")
+}
+
+fn run_l1(args: &L1Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
+    let vectors = args.vectors.clone().unwrap_or_else(default_vectors);
+    let set = VectorSet::load(&vectors)?;
+    let devnet = Devnet::from_vectors(&set)?.ok_or_else(|| {
+        Error::Usage(format!(
+            "{} has no genesis class, so the devnet rules are unknown",
+            vectors.display()
+        ))
+    })?;
+    let context = TxContext::new(devnet.network.clone(), l1::devnet_milestones(&set)?)?;
+    let registry = subject::heartwood(Some(devnet));
+    let oracle = args.oracle.resolve(env)?;
+    let mut server = oracle.server()?;
+    let properties = if args.properties.is_empty() {
+        Property::ALL.to_vec()
+    } else {
+        args.properties.clone()
+    };
+    let run = l1::run(
+        &mut server,
+        &registry,
+        &Arc::new(context),
+        &L1Options {
+            properties,
+            cases: args.cases,
+            seed: args.seed,
+            regressions: args.regressions.clone(),
+        },
+    )?;
+    print!("{}", run.report);
+    if !run.classes.is_empty() {
+        println!("  handler outcomes (the reference's):");
+        for (class, n) in &run.classes {
+            println!("    {n:>7}  {class}");
+        }
+    }
+    Ok(run.report.is_success())
+}
+
+fn run_l2(args: &L2Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
+    let corpus = Corpus::load(&args.dir)?;
+    let mut server = match &args.oracle {
+        Some(oracle) => Some(oracle.resolve(env)?.server()?),
+        None => None,
+    };
+    let report = l2::run(
+        &corpus,
+        &L2Options {
+            synthetic: args.synthetic,
+        },
+        server.as_mut(),
+    )?;
+    print!("{report}");
+    if args.synthetic {
+        println!("  synthetic steps:");
+        for r in report
+            .results
+            .iter()
+            .filter(|r| r.file.ends_with("/synthetic"))
+        {
+            let verdict = if r.outcome.is_failure() { "FAIL" } else { "ok" };
+            println!("    {verdict:<4} {}", r.label);
+        }
+    }
+    Ok(report.is_success())
 }
 
 /// Write a chain definition, and compare it with the devnet generator's output when asked.

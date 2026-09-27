@@ -1,0 +1,12 @@
+# Lints of heartwood-state, a consensus crate: the same result on every machine. No hash-ordered
+# collections, no clock, and no float rounding outside heartwood_crypto::utils::js.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order differs between runs; use IndexMap or BTreeMap" },
+    { path = "std::collections::HashSet", reason = "iteration order differs between runs; use IndexSet or BTreeSet" },
+    { path = "std::time::SystemTime", reason = "consensus code takes the time as an argument" },
+    { path = "std::time::Instant", reason = "consensus code takes the time as an argument" },
+]
+disallowed-methods = [
+    { path = "f64::round", reason = "JavaScript's Math.round rounds halves differently; use heartwood_crypto::utils::js" },
+    { path = "f64::mul_add", reason = "a fused multiply-add rounds differently from JavaScript" },
+]

@@ -19,6 +19,11 @@ workspace = true
 
 [dependencies]
 heartwood-crypto = { workspace = true, features = ["genesis", "legacy-schnorr", "fixed-aux"] }
+heartwood-kernel = { workspace = true, features = ["difftest"] }
+heartwood-logger.workspace = true
+heartwood-state.workspace = true
+heartwood-transactions.workspace = true
+proptest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

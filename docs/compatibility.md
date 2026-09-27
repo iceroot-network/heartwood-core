@@ -10,9 +10,9 @@ equal byte for byte, including which inputs each side rejects.
 
 | Level | What is compared | Status |
 |---|---|---|
-| L0 | golden vectors written by the reference, against Heartwood | runs against `heartwood-crypto`: 1,468 of 1,518 records compared, all equal (see below) |
-| L1 | random and mutated cases, one oracle call each | planned |
-| L2 | block sequences replayed on both sides, a state digest per block | planned |
+| L0 | golden vectors written by the reference, against Heartwood | runs against all five crates: 4,370 of 4,441 records compared, all equal (see below) |
+| L1 | random and mutated cases, one oracle call each | runs: nine properties, from the fee floor to the state digest (see below) |
+| L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets, with seeded reverts and synthetic blocks (see below) |
 | L3 | the same scenario on a reference devnet and on a Heartwood devnet | planned |
 | L4 | a mixed network of reference and Heartwood nodes | planned |
 
@@ -21,10 +21,24 @@ equal byte for byte, including which inputs each side rejects.
 ```text
 Cargo.toml            workspace: edition 2024, resolver 3, rust-version 1.98, workspace lints
 Makefile              `make help` lists the targets
-NOTICE                credits for ARK Core and Solar Core
+NOTICE                credits for ARK Core, Solar Core and node-emoji
 packages/crypto/      heartwood-crypto: keys, signatures, the transaction and block codecs,
                       milestones and the devnet chain-definition builder (feature `genesis`)
+packages/kernel/      heartwood-kernel: round and slot arithmetic, block chaining and the other
+                      shared utilities, the clock seam, event names, the component lifecycle,
+                      log levels, node directories and `.env` files
+packages/logger/      heartwood-logger: the reference's log lines, console and file output,
+                      daily rotation
+packages/state/       heartwood-state: wallets, delegates, rounds, block application and
+                      reversal, genesis, the supply check and the canonical state digest
+packages/transactions/  heartwood-transactions: the six transaction handlers, the fee floor and
+                      the pool-entry checks
+packages/*/tests/vectors/  each crate's golden vectors, with its own MANIFEST.sha256
 tools/difftest/       heartwood-difftest: the harness library and the `difftest` binary
+  corpus/               a committed L2 corpus (a reference devnet chain and its digest lines)
+tools/check-layers.sh the dependency edges between the crates, and no async, storage or HTTP crate
+                      in the consensus crates
+tools/check-lines.sh  code lines per crate against the review ceilings
 tools/oracle/         the oracle: Node scripts and the image recipe
   Dockerfile            the oracle image, built from scratch with pinned inputs
   make-context.sh       the build context: the reference at a commit, as a git archive
@@ -32,12 +46,16 @@ tools/oracle/         the oracle: Node scripts and the image recipe
   docker.sh             the docker command: docker, or sudo -n docker when the daemon needs it
   gen-vectors.js        L0: writes the golden vectors
   oracle-server.js      L1: JSON lines over stdio, one request per line
-  lib/                  solar.js (load a built reference), network.js (the devnet), ops.js,
-                        craft.js (inputs the builders do not make), vectors/ (one file per class)
+  replay-chain.js       L2: the judge, which replays a corpus in the reference's own state
+                        classes and checks the replay against the node that made the chain
+  lib/                  solar.js (load a built reference), network.js (the devnet), ops.js and
+                        ops/ (the operations), craft.js (inputs the builders do not make),
+                        state.js (the reference's state machine without a database), digest.js
+                        (the state digest), corpus.js, vectors/ (one file per class)
   check-native.js       checks that the reference's native modules build and load
-packages/crypto/tests/vectors/  the golden vectors of heartwood-crypto, with MANIFEST.sha256
-  external/             published vector files, with their source URLs and SHA-256
-fuzz/                 cargo-fuzz targets for the transaction and block decoders (own workspace)
+packages/crypto/tests/vectors/external/  published vector files, with their source URLs and SHA-256
+fuzz/                 cargo-fuzz targets for the transaction and block decoders, the
+                      transaction handlers and whole blocks on the state (own workspace)
 ```
 
 ## Requirements
@@ -56,17 +74,23 @@ fuzz/                 cargo-fuzz targets for the transaction and block decoders 
 
 ```sh
 make check          # cargo build, clippy (warnings are errors), fmt --check, test, release check
+make layers lines   # crate edges and code lines per crate
 make oracle-image   # build heartwood-oracle:<commit> from scratch (a few minutes)
 make e2e            # vectors in the image and locally, diff the two runs, run L0
-make vectors-install  # copy the image's vectors into packages/crypto/tests/vectors
+make vectors-install  # copy the image's vectors into each crate's tests/vectors
+make test-oracle    # the oracle answers, and 256 L1 cases per property, in the image and locally
+make l1             # the L1 properties against the oracle
+make l2 NAME=txgen-one-node CORPUS=tools/difftest/corpus   # replay a corpus against its digest lines
 ```
 
-`make check` needs only Rust; it includes the L0 comparison of the committed vectors, and it
-checks and formats the fuzz targets too (their own package, `fuzz/`). `make e2e`
-passes when the image run and the local run agree on every record and L0 finds no difference in
-the image run. `make help` lists the other targets: `make ping` and
-`make test-oracle` (the oracle answers, in the image and locally) and `make oracle-save`
-(`docker save` of the image into `IMAGE_DIR`).
+`make check` needs only Rust. It lints and tests every crate on its own, with no features and
+with all of them, so that Cargo does not unify the crates' features with those difftest turns on.
+Its tests include each crate's own vector classes, the L0 comparison of the committed vectors of
+`heartwood-crypto` and the L2 replay of the committed corpus; it also checks and formats the fuzz
+targets (their own package, `fuzz/`). `make e2e` passes when the image run and the local run agree on
+every record and L0 finds no difference in the image run. `make help` lists the other targets,
+among them `make ping` (the oracle answers, in the image and locally), `make oracle-save`
+(`docker save` of the image into `IMAGE_DIR`) and the corpus targets of L2 (below).
 
 ### Settings
 
@@ -81,7 +105,12 @@ the image run. `make help` lists the other targets: `make ping` and
 | `IMAGE_DIR` | `target/oracle-images` | where `make oracle-save` writes |
 | `DIFFTEST_DOCKER` | `tools/oracle/docker.sh` | the docker command |
 | `DEVNET_GENERATOR` | empty | the devnet generator, `gen-network.js`, for the genesis class; a separate tool that is not published |
-| `CRYPTO_VECTORS` | `packages/crypto/tests/vectors` | where `make vectors-install` puts the container run |
+| `VECTOR_CRATES` | every crate and its classes | which classes `make vectors-install` puts into which crate's `tests/vectors` |
+| `L1_CASES`, `L1_SEED`, `L1_PROPERTY` | `256`, `1`, all | cases per property, the generator's seed, the properties (`P1` to `P9` or their names, comma separated) |
+| `CORPUS`, `NAME` | `target/corpus`, empty | the L2 corpus `CORPUS/NAME` |
+| `ARCHIVE`, `CORPUS_SEED`, `DUMP` | empty | the devnet archives `make corpus-import` joins (in chain order); the chain's public key-derivation seed; heights whose records the judge writes |
+| `ORACLE_ARGS` | `--image $(IMAGE)` | where the oracle of `l1`, `corpus-judge` and `l2-synthetic` runs; `--solar-dir DIR` for a local reference |
+| `RELEASE_PACKAGES` | the five library crates | the packages `make release-check` builds without test seams |
 
 Settings for one machine go in `local.mk` beside the Makefile. It is git-ignored and read before
 the defaults, for example:
@@ -135,23 +164,119 @@ tests, and it applies the fee rules of genesis transactions to every transaction
 
 Release artefacts are built one package at a time (`cargo build --release -p PACKAGE`), never with
 `--workspace`: Cargo turns on, for every package of one build, the features that any of them asks
-for, and difftest asks for `fixed-aux`, `genesis` and `legacy-schnorr`. `make release-check`, part
-of `make check`, fails when a package of `RELEASE_PACKAGES` builds `heartwood-crypto` with a test
-seam.
+for, and difftest asks for `fixed-aux`, `genesis` and `legacy-schnorr` of `heartwood-crypto` and
+for `difftest` of `heartwood-kernel`. `make release-check`, part of `make check`, fails when a
+package of `RELEASE_PACKAGES` builds with one of these test seams (`fixed-aux`, `difftest`).
 
-### L0 results
+### Fuzz targets and the chain-definition driver
 
-`difftest run l0` compares the same records through the harness, with one subject per oracle
-operation. Where both sides refuse, it also compares the error class wherever Heartwood models the
-reference's class. On the committed vectors (reference tag `s1-ref-v2`) it reports:
+The fuzz targets run with cargo-fuzz on a nightly toolchain, and a corpus of the decoders can then
+be replayed against the oracle. `state_apply` gives the transaction handlers an arbitrary wallet
+set and transaction: nothing may panic, a refusal changes nothing, and an accepted transaction's
+revert restores every wallet. `state_blocks` gives the state machine a sequence of blocks (with
+transactions of every kept type, in near slots, by the scheduled delegate or another key) and
+reverts: nothing may panic, a refused block changes nothing, the supply check holds, and a revert
+gives back the state from before its block.
+
+```sh
+(cd fuzz && cargo +nightly fuzz run transaction_decode -- -max_total_time=600)
+(cd fuzz && cargo +nightly fuzz run state_apply -- -fork=12 -max_total_time=600 -rss_limit_mb=4096)
+(cd fuzz && cargo +nightly fuzz run state_blocks -- -fork=12 -max_total_time=600 -rss_limit_mb=4096)
+difftest oracle replay tx.fromBytes fuzz/corpus/transaction_decode \
+    --vectors packages/crypto/tests/vectors --milestones fuzz/milestones/transaction_decode.json \
+    --image heartwood-oracle:<commit>
+```
+
+With the `genesis` feature, `difftest genesis` writes a devnet chain definition (the four
+`crypto/*.json` files, the delegate and wallet keys and a summary) from a genesis profile file, a
+seed and an epoch. Every genesis vector record carries its profile as input, and the tests check
+that the driver writes, byte for byte, the files those records hold. `--compare DIR` checks a
+chain definition against a directory that the devnet generator wrote for the same inputs; the
+generator is a separate tool of the maintainers and is not published (see the genesis class
+below).
+
+## heartwood-kernel
+
+`packages/kernel` holds what the other crates share: the round of a height, the forger index of a
+slot and its `canForge` window, the chaining rule between two blocks, and the canonical JSON that
+relays sign in their status (the consensus utilities, in `utils`, read the round length and block
+time from the milestone at height 1, which may not change later); epoch timestamps as the API and
+log lines show them; IP addresses and the address lists of the API, peers and remote access; the
+`Clock` seam; the reference's event names; the component lifecycle; the eight log levels as macros
+over `tracing`; a node's config, data, cache, log and temp directories; the `.env` parser; and the
+option merge (arrays are replaced). The feature `difftest` adds `ManualClock`, a test seam.
+
+```sh
+cargo test -p heartwood-kernel --locked --all-features   # unit tests and the V09-rounds and V16 classes
+```
+
+## heartwood-logger
+
+`packages/logger` writes log lines as the reference's pretty printer does: the time, the level
+name with its colour and the message, with emoji codes such as `:white_check_mark:` replaced
+(the table is node-emoji's, with its MIT notice in `src/emoji.tsv`). Console lines are coloured,
+file lines are not; the file rotates daily into gzip files and keeps at most 10 of them and
+100 MiB. Nothing calls `init` yet: the processes arrive with the node.
+
+```sh
+cargo test -p heartwood-logger --locked   # the V20 class, rotation, retention and gzip
+```
+
+## heartwood-state
+
+`packages/state` is the consensus state without storage: wallets and their delegate records, the
+public-key and username indexes, vote balances (a voter's balance split over its delegates in basis
+points, the remainder to the first entries), the delegate ranking, rounds with their forging order
+(an unbiased shuffle over a SHA-256 stream seeded by the round), missed slots, the reward of a
+block in its round, and `State`, which applies and reverts whole blocks in the reference's order:
+missed slots, then the transactions and the forger's payout, then the round. A refused block
+leaves the state as it was; every applied block keeps an undo record, so blocks revert in any
+number. `State::from_genesis` builds the state after the genesis block with its explicit issuance,
+and `check_supply` checks that the balances add up to what was issued plus rewards, minus burned
+fees and amounts.
+
+`digest` writes the canonical state digest of a height: five text sections (the last block, the
+supply, the round, the missed slots and every wallet that holds something), their SHA-256 hashes
+with domain tags, a height digest over the five, and a chain digest over a whole replay. The
+oracle computes the same digest over the reference's own state, so a replay is compared at every
+height and every revert.
+
+```sh
+cargo test -p heartwood-state --locked --all-features   # V08, V09-shuffle, V15, V18 and the machine tests
+```
+
+## heartwood-transactions
+
+`packages/transactions` holds the six transaction handlers (1/6 transfer, 1/1 second-signature
+registration, 1/2 delegate registration, 1/7 delegate resignation, 2/0 burn, 2/2 vote), each with
+its checks in the reference's order, its apply and revert, and its genesis path; the dynamic fee
+floor, `(addon bytes + half the size, rounded) × max(minFee, 1)` per type; the checks that decide
+whether a transaction may enter the pool; and error types whose `class()` is the reference's error
+class. The registry is closed: it dispatches on the transaction type, and no plugin can replace a
+rule. A handler runs every check before it changes a wallet.
+
+```sh
+cargo test -p heartwood-transactions --locked --all-features   # handlers, pool checks, V17 and V19
+```
+
+## L0: golden vectors
+
+`difftest run l0` compares the records of a vector run with Heartwood, with one subject per
+oracle operation. Where both sides refuse, it also compares the error class wherever Heartwood
+models the reference's class. On a run of every class (reference tag `s1-ref-v2`) it reports:
 
 | Outcome | Records |
 |---|---|
-| compared, equal to the reference | 1,468 |
-| documented differences, each with its form checked on the input | 23 |
-| skipped: the dynamic fee floor (transaction handlers) and the peer status message (P2P codec) | 27 |
+| compared, equal to the reference | 4,370 |
+| documented differences, each with its form checked on the input | 60 |
+| skipped: the peer status message (P2P codec), and builders of types or headers that Heartwood does not build | 11 |
 
-The documented differences are inputs that Heartwood refuses and the reference accepts:
+`cargo test` checks the classes of each crate in that crate; the difftest test `l0` runs the
+comparison over the committed vectors of `heartwood-crypto` (1,484 compared, 23 documented, 11
+skipped).
+
+All but the last of the documented differences are inputs that Heartwood refuses and the
+reference accepts:
 
 - three wire forms that the reference decodes and only refuses when the transaction is applied, so
   a block that holds one is refused either way: the removed transaction types, the extended header,
@@ -166,27 +291,73 @@ The documented differences are inputs that Heartwood refuses and the reference a
 - in the JSON form only, `asset.votes` given as a non-empty array or string, whose indices the
   reference writes as vote names and removes after it has computed the id. A vote asset that is a
   truthy value without keys of its own (a number, `true`, an empty array) is no votes, as in the
-  reference.
+  reference;
+- milestone files whose fee table (`dynamicFees`) or revoke delay
+  (`blocksToRevokeDelegateResignation`) has a value of a type the reference would coerce, or fail
+  on only when it checks a fee, such as a string or a fraction where a whole number belongs.
+  Heartwood refuses such a file at load. Generated devnets never contain one;
+- a transaction from a sender whose wallet has no public key yet, which both sides refuse with the
+  same error class. The reference binds the sender's key to the wallet before its checks run and
+  keeps it after the refusal; Heartwood leaves the wallet as it was. The comparison leaves that key
+  out and compares everything else.
 
-### Fuzz targets and the chain-definition driver
+## L1: properties
 
-The fuzz targets run with cargo-fuzz on a nightly toolchain, and a corpus can then be replayed
-against the oracle:
+`difftest run l1` (`make l1`) generates random and mutated cases with proptest and sends each one
+to the oracle once, then compares the answer with Heartwood's. A failed property is shrunk to a
+minimal case, which is written to `--regressions`.
+
+| Property | Cases | Operation |
+|---|---|---|
+| P1 fee floor | transactions of the six types with random memos, recipients, votes and fee tables | `fee.minimum` |
+| P2 rounds | heights up to 2^32 - 1, 1 to 53 delegates | `round.calculate`, `round.isNew` |
+| P3 slots | timestamps and heights; pairs of headers | `forging.info`, `block.isChained` |
+| P4 shuffle | rounds up to 2^53 - 1, 1 to 53 delegates | `state.shuffle` |
+| P5 ranking | 1 to 80 delegates with many equal vote balances and resignations | `state.rank` |
+| P6 vote amounts | balances up to 2^63 - 1, 1 to 53 votes | `wallet.voteAmounts` |
+| P7 handlers | wallet sets of 3 to 12 wallets and a mutated transaction from one of them, under the devnet's milestones or variants of them (fewer active delegates, fees off, and the fee floor, burn minimum and revoke delay changing at the rule height or the height after it) | `state.applyTransaction`: the verdict, the error class, and the wallets after apply and after revert; the revert must also give back the wallet set on each side |
+| P8 kernel text | JSON values, `.env` text, address lists | `kernel.stringify`, `kernel.dotenv`, `kernel.ip` |
+| P9 digest | wallet sets | `state.digest` |
+
+With the date as the seed and 10,000 cases per property (50,000 for P7), every property agrees
+with the reference. The only documented difference that appears is the one of a refused
+transaction from a sender without a public key (P7): the reference binds the key before its
+checks run and keeps it after the refusal, Heartwood leaves the wallet as it was. The report
+lists such cases apart, and the comparison leaves that key out and compares everything else. P7
+also counts the reference's error classes it reached; each class of the handlers' checks that a
+transaction can reach from a consistent wallet set appears.
+
+## L2: chains, corpora and the state digest
+
+A corpus is a chain that a reference devnet produced, imported with `difftest corpus import` from
+the archives of the maintainers' devnet tooling (a separate tool that is not published): the chain
+definition, every block as a relay receives it, and what the node itself recorded (round rows,
+missed slots, block columns, API checkpoints). The oracle's
+judge, `replay-chain.js` (`difftest corpus judge`), replays the corpus in the reference's own state
+classes with storage replaced by memory, checks that replay against the node's records, follows a
+seeded plan of reverts and re-applies, and writes one digest line per step. `difftest run l2`
+replays the same steps in Heartwood and compares every line; it also checks, before each block,
+that the scheduled forger is the block's generator and that the reward in its round is the header's,
+and runs the supply check after every step, with a check of the one value the digest leaves out:
+each delegate's resignation height must be that of its latest resignation in the chain. `--synthetic` adds blocks that the harness signs with
+the devnet's derived keys on top of the chain (refused blocks, a decoding rule and the handlers'
+fee floor, burn minimum and revoke delay changing at a height, a vote at a round's end, burns and
+fees at their limits, a block by a key that is no delegate, and a competing chain after a revert
+across a round end) and sends them to both sides.
 
 ```sh
-(cd fuzz && cargo +nightly fuzz run transaction_decode -- -max_total_time=600)
-difftest oracle replay tx.fromBytes fuzz/corpus/transaction_decode \
-    --vectors packages/crypto/tests/vectors --milestones fuzz/milestones/transaction_decode.json \
-    --image heartwood-oracle:<commit>
+make corpus-import ARCHIVE='archive/...' NAME=my-chain   # into target/corpus/my-chain
+make corpus-judge NAME=my-chain                           # the judge's digest lines and checks
+make l2 NAME=my-chain                                     # Heartwood against those lines
+make l2-synthetic NAME=my-chain                           # with the synthetic blocks (needs the oracle)
+cargo test -p heartwood-difftest --locked --test l2       # the committed corpus, no oracle
 ```
 
-With the `genesis` feature, `difftest genesis` writes a devnet chain definition (the four
-`crypto/*.json` files, the delegate and wallet keys and a summary) from a genesis profile file, a
-seed and an epoch. Every genesis vector record carries its profile as input, and the tests check
-that the driver writes, byte for byte, the files those records hold. `--compare DIR` checks a
-chain definition against a directory that the devnet generator wrote for the same inputs; the
-generator is a separate tool of the maintainers and is not published (see the genesis class
-below).
+The committed corpus, `tools/difftest/corpus/txgen-one-node`, is a one-node devnet chain of five
+rounds with every kept transaction type; its README describes it. The maintainers also replay
+longer chains made with the same unpublished tooling (three nodes with partitions, kills and
+restarts, and a soak of at least 50 rounds); they are imported under `target/corpus` and are not
+committed.
 
 ## The oracle image
 
@@ -213,11 +384,12 @@ The oracle always runs with `--network none`: Node 18 is past its end of life, a
 ## Vector files
 
 `gen-vectors.js --out DIR` writes one JSONL file per vector class and `MANIFEST.sha256`
-(`sha256sum` format; `difftest vectors verify` checks it). The committed set of `heartwood-crypto`
-is in [packages/crypto/tests/vectors](../packages/crypto/tests/vectors); `make e2e` followed by
-`make vectors-install` regenerates it, and a regeneration must be bit-identical unless the oracle
-changed. `make vectors-install` refuses a run that lacks a class the committed manifest lists, such
-as the genesis class of a run without `DEVNET_GENERATOR`, and then installs nothing.
+(`sha256sum` format; `difftest vectors verify` checks it). Each crate keeps its classes, with a
+manifest of its own, in `packages/<crate>/tests/vectors` (`VECTOR_CRATES` lists which);
+`make e2e` followed by `make vectors-install` regenerates them from one image run, and a
+regeneration must be bit-identical unless the oracle changed. `make vectors-install` refuses a run
+that lacks a class a committed manifest lists, such as the genesis and genesis-state classes of a
+run without `DEVNET_GENERATOR`, and then installs nothing.
 
 | File | Content |
 |---|---|
@@ -231,6 +403,15 @@ as the genesis class of a run without `DEVNET_GENERATOR`, and then installs noth
 | `V10-genesis.jsonl` | the devnet chain definition that the devnet generator (`gen-network.js`, see below) writes for three seeds and a fixed epoch: the exact text of the four `crypto/*.json` files, the delegate and wallet keys, the nethash, the genesis id and the issued amount, and the reference's `BlockFactory.fromJson` on the result |
 | `V11-external.jsonl` | the published vector files in `external/` (BIP340, the bip-schnorr draft at `d194620`, BIP39 English), each with its source URL and SHA-256 in `external/SOURCES.json`, and the reference's answers on their inputs |
 | `V12-milestone-config.jsonl` | milestone files as JSON text, accepted (with the merged milestones, rewards and donations) or refused by the configuration manager's start-up checks; transaction rules at the block's height |
+| `V08-ranking.jsonl` (state) | the delegate ranking over generated sets: equal vote balances broken by public key, resignations, 53 to 80 delegates, rounds larger than the ranking, identical keys refused; the key order over random key pairs, every first byte and keys that first differ at each byte |
+| `V09-rounds.jsonl` (kernel) | the round of a height and whether it starts one, for heights 1 to 10,000, ranges hashed, 1 to 53 delegates and heights near 2^32; the forger index, next forger, block timestamp and `canForge` over slot edges, half slots, gaps and times before the epoch; block chaining (previous id, height plus one, a later slot) |
+| `V09-shuffle.jsonl` (state) | the forging order: for every count 1 to 53 the SHA-256 of the orders of rounds 1 to 10,000; full orders of rounds 1 to 100 for counts 1, 2, 3, 52 and 53; rounds where a draw is rejected; round 2^53 - 1 |
+| `V15-vote-amounts.jsonl` (state) | a voter's balance split over 1 to 53 delegates, for balances 0, 1, 101, near 2^63 and random, the remainder in map order |
+| `V16-kernel.jsonl` (kernel) | the status canonical JSON; `.env` text (separators, comments, quotes, digits, booleans, empty values); epoch timestamps; address lists with globs, brackets and IPv6; node directories with their environment overrides |
+| `V17-handlers.jsonl` (transactions) | the transaction handlers on wallet sets: at least one case of each error class and of each apply effect, the revoke delay at 105, 106 and 107 blocks, the fee floor and one below it, the burn minimum and one below it, votes identical, empty, too many and unknown, second signatures missing, wrong and unexpected, and a refused first transaction of a wallet without a key |
+| `V18-genesis-state.jsonl` (state) | the state digest after the genesis block of the three V10 chain definitions and of six variants of the first (fees and burns, a second key, resignations and a revoke, split votes, a transfer before the issuance record, more issuance records, a generator that registers and votes, a vote and a resignation before their registration; two that the reference refuses to start on: a negative balance, too few delegates for round 1), and of five wallet sets, one per record shape |
+| `V19-fee-floor.jsonl` (transactions) | the dynamic fee floor of the six types over memo lengths, recipients, votes of 1 to 53 entries and resignation types; fee tables switched off, with `minFee` 0 and negative, and without a type's key; tables and revoke delays of the wrong type |
+| `V20-logger.jsonl` (logger) | the log line of every level, coloured and plain, with and without emoji codes (the whole table, in slices), over times at the edges of a JavaScript date and messages with line breaks and colour codes |
 
 The first line of each file is a meta record: format `heartwood-vectors/1`; the reference's version,
 commit and tree, and the SHA-256 of the reference's patch register (null when the commit has none);
@@ -268,21 +449,30 @@ difftest oracle ping [--image TAG | --solar-dir DIR]
 difftest vectors verify DIR
 difftest vectors diff DIR DIR
 difftest run l0 DIR
-difftest run l1|l2|l3|l4        says that the level is not built yet
+difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR] [--regressions DIR] [ORACLE]
+difftest run l2 DIR [--synthetic] [ORACLE]
+difftest run l3|l4              says that the level is not built yet
+difftest corpus import ARCHIVE... --out DIR [--seed TEXT]
+difftest corpus judge DIR [--dump H,...] [ORACLE]
+difftest corpus verify DIR
 difftest levels
-difftest oracle replay OP CORPUS --vectors DIR [--height N] [--milestones FILE] [--image TAG | --solar-dir DIR]
+difftest oracle replay OP CORPUS --vectors DIR [--height N] [--milestones FILE] [ORACLE]
 difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--compare DIR]
 ```
+
+`ORACLE` is `--image TAG` or `--solar-dir DIR`; `difftest --help` lists every option.
 
 Library modules: `oracle` (run the scripts in the image or locally; `OracleServer` for L1),
 `vectors` (files, meta records, manifest), `subject` (a Rust implementation of one oracle
 operation, shared by L0 and L1, its verdict, and the registry), `subjects` (the operations answered
-with `heartwood-crypto`, with the reference's error class of a refusal where it is observable, and
-each documented difference checked on the input's bytes), `compare` (a JSON diff that names the
+with the node's crates, with the reference's error class of a refusal where it is observable, and
+each documented difference checked on the input), `compare` (a JSON diff that names the
 path and, for hex values, the first differing byte with the bytes around it; numbers compare by
-their double value and object keys by their JavaScript order), `report`, `replay` (a corpus through
-the oracle and Heartwood), `genesis` (the chain-definition driver) and `levels` (L0 runs; L1 to L4
-are described with what each one arrives with).
+their double value and object keys by their JavaScript order), `report`, `replay` (a corpus of
+inputs through the oracle and Heartwood), `genesis` (the chain-definition driver), `fixture`
+(wallet sets as both sides read them), `strategies` (the L1 generators), `corpus` and `digests`
+(L2 corpora and digest files), `synthetic` (the L2 synthetic blocks) and `levels` (L0, L1 and L2
+run; L3 and L4 are described with what each one arrives with).
 
 A difference names the JSON path and, for bytes, the first differing offset. This is
 `difftest vectors diff` against a copy of the vectors with one byte and one fee changed; an L0
@@ -302,9 +492,10 @@ files of the genesis class's chain definition that the other classes' meta recor
 aux of the meta records. Later crates plug in by adding subjects to `subjects`; `difftest run l0`
 then compares them, with no other change.
 
-`make test-oracle` runs the cargo test that pings `oracle-server.js` in the image and locally
-(`DIFFTEST_TEST_IMAGE`, `DIFFTEST_TEST_SOLAR_DIR`); `make test` skips it.
+`make test-oracle` runs the cargo tests that ping `oracle-server.js` and run 256 L1 cases per
+property, in the image and locally (`DIFFTEST_TEST_IMAGE`, `DIFFTEST_TEST_SOLAR_DIR`,
+`DIFFTEST_TEST_L1_CASES`); `make test` skips them.
 
 ## Licence
 
-Not yet decided. [NOTICE](../NOTICE) lists the projects Heartwood Core credits.
+Heartwood Core is licensed under the [Apache License, Version 2.0](../LICENSE). [NOTICE](../NOTICE) lists the projects Heartwood Core credits; code adapted from ARK Core keeps its MIT notice.

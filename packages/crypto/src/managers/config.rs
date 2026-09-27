@@ -42,6 +42,12 @@
 //! - `reward` defaults to 0 when missing or `null` and must otherwise be a reward amount, like the
 //!   rank table's entries;
 //! - every entry of an enabled rank table must be a reward amount, not only the active ranks;
+//! - `dynamicFees`, when present and not `null`, must be an object: `enabled` a boolean, and
+//!   `minFee` and every `addonBytes` value a JSON number whose double value is a safe integer; an
+//!   enabled table must state `minFee` and `addonBytes`, which the reference reads at every fee
+//!   check (any key is accepted inside `addonBytes`);
+//! - `blocksToRevokeDelegateResignation`, when present, must be a JSON number whose double value
+//!   is a safe integer;
 //! - the text must be JSON that `serde_json` reads: `JSON.parse` also accepts numbers too large
 //!   for a double (as infinity), unpaired surrogate escapes, and nesting deeper than 128 levels.
 //!
@@ -132,6 +138,36 @@ impl DynamicReward {
     }
 }
 
+/// The dynamic fee table, `dynamicFees`: the fee floor of a transaction is
+/// `(addonBytes[key] + round(size / 2)) × max(minFee, 1)` while it is enabled.
+///
+/// The loader refuses values the reference would coerce or trip over later: `enabled` must be a
+/// boolean, and `minFee` and every `addonBytes` value a JSON number whose double value is a safe
+/// integer. Any key is accepted inside `addonBytes`, so files that still list removed types load.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DynamicFees {
+    pub(crate) enabled: bool,
+    pub(crate) min_fee: i64,
+    pub(crate) addon_bytes: IndexMap<String, i64>,
+}
+
+impl DynamicFees {
+    /// Whether the fee floor is in force.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// `minFee`, the price of a byte (the floor uses 1 when it is below 1).
+    pub fn min_fee(&self) -> i64 {
+        self.min_fee
+    }
+
+    /// `addonBytes[key]` for a transaction type key; 0 when the table has none.
+    pub fn addon(&self, key: &str) -> i64 {
+        self.addon_bytes.get(key).copied().unwrap_or(0)
+    }
+}
+
 /// The merged milestone in force from one height: every parameter a rule reads.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Params {
@@ -150,6 +186,8 @@ pub struct Params {
     pub(crate) fee_basis_points: u16,
     pub(crate) burn_tx_amount: u64,
     pub(crate) donations: Vec<Donation>,
+    pub(crate) dynamic_fees: Option<DynamicFees>,
+    pub(crate) blocks_to_revoke_delegate_resignation: Option<u64>,
     pub(crate) json: Map<String, Value>,
 }
 
@@ -228,6 +266,20 @@ impl Params {
     /// The donation recipients, in file order.
     pub fn donations(&self) -> &[Donation] {
         &self.donations
+    }
+
+    /// The dynamic fee table; `None` when the merged milestone has no `dynamicFees`, which means
+    /// no fee floor.
+    pub fn dynamic_fees(&self) -> Option<&DynamicFees> {
+        self.dynamic_fees.as_ref()
+    }
+
+    /// `blocksToRevokeDelegateResignation`: the blocks a temporarily resigned delegate waits
+    /// before it may revoke its resignation; `None` when the merged milestone has none, which
+    /// means no wait (the reference compares with `undefined`). A negative value is 0: the wait is
+    /// compared with the blocks since the resignation, which are never negative.
+    pub fn blocks_to_revoke_delegate_resignation(&self) -> Option<u64> {
+        self.blocks_to_revoke_delegate_resignation
     }
 
     /// The merged milestone as JSON, keys in the order the reference enumerates them.
@@ -453,6 +505,8 @@ fn check(
         let (block_version, max_transactions, max_payload) = block(&milestone, at)?;
         let (transfer_minimum, transfer_maximum) = transfer(&milestone, at)?;
         let reward = reward(&milestone, at)?;
+        let dynamic_fees = dynamic_fees(&milestone, at)?;
+        let blocks_to_revoke_delegate_resignation = revoke_delay(&milestone, at)?;
         all.push(Params {
             height,
             network: network.pub_key_hash,
@@ -469,6 +523,8 @@ fn check(
             fee_basis_points,
             burn_tx_amount,
             donations,
+            dynamic_fees,
+            blocks_to_revoke_delegate_resignation,
             json: milestone,
         });
     }
@@ -797,6 +853,88 @@ fn reward(milestone: &Map<String, Value>, height: u64) -> Result<u64, ConfigErro
         None | Some(Value::Null) => Ok(0),
         Some(value) => reward_amount(value).ok_or_else(|| invalid(height, "reward", REWARD_AMOUNT)),
     }
+}
+
+/// What a fee or revoke-delay value must be: the reference computes with it as a JavaScript number.
+const SAFE_INTEGER: &str = "must be a number that is an integer from -(2^53 - 1) to 2^53 - 1";
+
+/// `dynamicFees`: `None` when it is missing or `null`, which means no fee floor.
+fn dynamic_fees(
+    milestone: &Map<String, Value>,
+    height: u64,
+) -> Result<Option<DynamicFees>, ConfigError> {
+    let table = match milestone.get("dynamicFees") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Object(table)) => table,
+        Some(_) => {
+            return Err(invalid(
+                height,
+                "dynamicFees",
+                "must be an object with enabled, minFee and addonBytes",
+            ));
+        }
+    };
+    let enabled = match table.get("enabled") {
+        None => false,
+        Some(Value::Bool(enabled)) => *enabled,
+        Some(_) => {
+            return Err(invalid(
+                height,
+                "dynamicFees.enabled",
+                "must be true or false",
+            ));
+        }
+    };
+    // An enabled table without these keys makes the reference throw at every fee check.
+    let required = |key: &str| missing(height, format!("dynamicFees.{key}"));
+    let min_fee = match table.get("minFee") {
+        Some(value) => js::safe_integer(value)
+            .ok_or_else(|| invalid(height, "dynamicFees.minFee", SAFE_INTEGER))?,
+        None if enabled => return Err(required("minFee")),
+        None => 0,
+    };
+    let mut addon_bytes = IndexMap::new();
+    match table.get("addonBytes") {
+        Some(Value::Object(addons)) => {
+            for (key, value) in js::property_order(addons) {
+                let addon = js::safe_integer(value).ok_or_else(|| {
+                    invalid(
+                        height,
+                        format!("dynamicFees.addonBytes.{key}"),
+                        SAFE_INTEGER,
+                    )
+                })?;
+                addon_bytes.insert(key.clone(), addon);
+            }
+        }
+        Some(_) => {
+            return Err(invalid(
+                height,
+                "dynamicFees.addonBytes",
+                "must be an object that maps transaction types to extra bytes",
+            ));
+        }
+        None if enabled => return Err(required("addonBytes")),
+        None => {}
+    }
+    Ok(Some(DynamicFees {
+        enabled,
+        min_fee,
+        addon_bytes,
+    }))
+}
+
+/// `blocksToRevokeDelegateResignation`: `None` when it is missing.
+fn revoke_delay(milestone: &Map<String, Value>, height: u64) -> Result<Option<u64>, ConfigError> {
+    let key = "blocksToRevokeDelegateResignation";
+    milestone
+        .get(key)
+        .map(|value| {
+            js::safe_integer(value)
+                .map(|blocks| u64::try_from(blocks).unwrap_or(0))
+                .ok_or_else(|| invalid(height, key, SAFE_INTEGER))
+        })
+        .transpose()
 }
 
 #[cfg(test)]
