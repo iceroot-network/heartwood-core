@@ -20,7 +20,7 @@ use super::legacy_schnorr;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SchemeId {
-    /// BIP340 Schnorr over secp256k1: transactions and blocks.
+    /// BIP340 Schnorr over secp256k1: transactions, blocks and off-chain messages.
     Secp256k1Bip340,
     /// The reference's pre-BIP340 Schnorr over secp256k1: peer status attestations only.
     #[cfg(feature = "legacy-schnorr")]
