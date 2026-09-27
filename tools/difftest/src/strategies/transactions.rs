@@ -18,7 +18,7 @@ use crate::fixture::Fixture;
 
 /// The aux of every signature the strategies make.
 pub const AUX: [u8; 32] = [0x42; 32];
-/// The revoke delay of the devnet, in blocks.
+/// The revoke delay of the devnet, in blocks, where a milestone file has none.
 pub const REVOKE_DELAY: u32 = 106;
 
 /// What the transaction strategies build with: the devnet's network and milestone file.
@@ -143,19 +143,23 @@ impl TxSpec {
     }
 }
 
-/// The dynamic fee floor of the first milestone of `milestones_text` for a transaction of
-/// `key` with `length` bytes, as the reference computes it (a JavaScript sum, rounded half up);
-/// 0 when dynamic fees are off. Used only to aim fees at the floor.
-pub fn aim_floor(milestones_text: &str, key: &str, length: usize) -> u64 {
-    let list: Value = serde_json::from_str(milestones_text).unwrap_or(Value::Null);
-    let fees = &list[0]["dynamicFees"];
-    if fees["enabled"] != Value::Bool(true) || matches!(key, "burn" | "delegateResignation") {
+/// The dynamic fee floor under `params` for a transaction of `key` with `length` bytes, as the
+/// reference computes it (a JavaScript sum, rounded half up); 0 when dynamic fees are off. Used
+/// only to aim fees at the floor.
+pub fn aim_floor(params: &Params, key: &str, length: usize) -> u64 {
+    let Some(fees) = params.dynamic_fees().filter(|fees| fees.enabled()) else {
+        return 0;
+    };
+    if matches!(key, "burn" | "delegateResignation") {
         return 0;
     }
-    let min_fee = fees["minFee"].as_i64().unwrap_or(0).max(1);
-    let addon = fees["addonBytes"][key].as_i64().unwrap_or(0);
     let half = i64::try_from(length.div_ceil(2)).unwrap_or(0);
-    u64::try_from((addon + half).saturating_mul(min_fee)).unwrap_or(0)
+    u64::try_from(
+        fees.addon(key)
+            .saturating_add(half)
+            .saturating_mul(fees.min_fee().max(1)),
+    )
+    .unwrap_or(0)
 }
 
 fn username() -> impl Strategy<Value = String> {
@@ -298,6 +302,27 @@ pub enum Variant {
     FewActive(u64),
     /// The devnet's with dynamic fees off.
     FeesOff,
+    /// The devnet's with one more milestone at the rule height plus this offset (0 or 1): a
+    /// higher fee floor and burn minimum and a shorter revoke delay, which apply to the case with
+    /// offset 0 and not with offset 1.
+    RulesFrom(u32),
+}
+
+/// The milestone the [`Variant::RulesFrom`] variant appends at `height`, from the devnet's first
+/// milestone `first`.
+fn changed_rules(first: &Value, height: u32) -> Value {
+    let mut fees = first["dynamicFees"].clone();
+    let min_fee = fees["minFee"].as_i64().unwrap_or(1).max(1);
+    fees["minFee"] = json!(min_fee.saturating_mul(3));
+    let mut burn = first["burn"].clone();
+    let minimum = burn["txAmount"].as_u64().unwrap_or(0);
+    burn["txAmount"] = json!(minimum.saturating_add(1_000_000));
+    json!({
+        "height": height,
+        "dynamicFees": fees,
+        "burn": burn,
+        "blocksToRevokeDelegateResignation": 5,
+    })
 }
 
 /// A case of P7.
@@ -353,7 +378,12 @@ struct Plan {
 
 fn plan() -> impl Strategy<Value = Plan> {
     (
-        prop_oneof![5 => Just(Variant::Devnet), 3 => (1u64..=3).prop_map(Variant::FewActive), 1 => Just(Variant::FeesOff)],
+        prop_oneof![
+            5 => Just(Variant::Devnet),
+            3 => (1u64..=3).prop_map(Variant::FewActive),
+            1 => Just(Variant::FeesOff),
+            2 => (0u32..=1).prop_map(Variant::RulesFrom),
+        ],
         0usize..14,
         0u8..6,
         prop_oneof![6 => Just(Nonce::Next), 1 => Just(Nonce::Skip), 1 => Just(Nonce::Same)],
@@ -409,6 +439,18 @@ fn build_handler_case(
             let mut fees = list[0]["dynamicFees"].clone();
             fees["enabled"] = json!(false);
             ctx.milestones_with("dynamicFees", fees)
+        }
+        Variant::RulesFrom(offset) => {
+            let mut list: Vec<Value> = serde_json::from_str(&ctx.milestones_text).ok()?;
+            let at = last.checked_add(1)?.checked_add(offset)?;
+            // The new milestone must come after the devnet's last one.
+            let latest = list.iter().filter_map(|m| m["height"].as_u64()).max()?;
+            if u64::from(at) <= latest {
+                return None;
+            }
+            let first = list.first()?.clone();
+            list.push(changed_rules(&first, at));
+            serde_json::to_string(&list).ok()?
         }
     };
     let milestones = ctx.load(&text)?;
@@ -520,7 +562,11 @@ fn build_handler_case(
                     .get_mut(index)
                     .and_then(|w| w.delegate.as_mut())
             {
-                let back = i64::from(REVOKE_DELAY) + plan.revoke_offset;
+                let delay = params
+                    .blocks_to_revoke_delegate_resignation()
+                    .and_then(|delay| i64::try_from(delay).ok())
+                    .unwrap_or(i64::from(REVOKE_DELAY));
+                let back = delay + plan.revoke_offset;
                 let at = i64::from(last) - back;
                 if at >= 1 {
                     d.resigned_at = u32::try_from(at).ok();
@@ -629,7 +675,7 @@ fn build_handler_case(
         (false, _) => None,
     };
     let probe = spec.build(&sender_keys, second.as_ref(), nonce, 1, params)?;
-    let floor = aim_floor(&text, spec.key(), probe.bytes().len());
+    let floor = aim_floor(params, spec.key(), probe.bytes().len());
     let mut fee = match plan.fee {
         Fee::Big => floor.max(1).saturating_add(10_000_000),
         Fee::Floor(d) => {
