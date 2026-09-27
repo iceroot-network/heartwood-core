@@ -380,8 +380,8 @@ block (the tip plus one); the collator's byte budget is the tip's.
 - A removed transaction type is refused at decode, but answered as the reference answers it:
   `ERR_OTHER` "Transaction type Core/N is deactivated".
 - Votes, and revokes of a resignation, enter the pool only for delegates that operate a node. That
-  online record is node-local: the store keeps it across restarts, and an entry expires five rounds
-  after its round.
+  online record is node-local: `heartwood-blockchain` saves it in the node's store and every start
+  loads it back with each entry's round, and an entry expires five rounds after its round.
 
 Three things differ on purpose. The first two show only after a crash or with an invalid
 transaction; the third depends on when the online record changes. A transaction is stored only
@@ -406,7 +406,10 @@ senders at 10,000 wallets takes about 340 ms and 680 MiB, and memory grows with 
 wallets. A cheaper view is needed before a network with more than a few thousand wallets. The same
 target measures the store's commit: between about 8 and 17 ms per block on the maintainers'
 machines, nearly all of it the file system's sync under `synchronous = FULL`, and about 1,800 bytes
-of database per block on the committed chain (undo records about 560 bytes on average).
+of database per block on the committed chain (undo records about 560 bytes on average). The
+commit's own wallet work grows with the number of wallets, not with the number a block changes:
+it copies the wallets and scans them for the changed ones, about 2.3 ms per block at 100,000
+wallets and 75 ms at 1,000,000, which the committed chain's few dozen wallets do not show.
 
 ## heartwood-blockchain
 
@@ -416,7 +419,12 @@ later. A chunk writer commits each applied or reverted block in the chunk's one 
 block and transaction rows with the columns the reference derives (the generator's username, the
 burned fee, the donations), the wallets that changed since the last commit, the block's undo
 record, the state row, the round rows at a round start and the block's missed slots. A revert
-deletes what lies above the new tip, as the reference's does.
+deletes what lies above the new tip, as the reference's does: after a revert to the last block of a
+round, that includes the next round's rows, which the round's last block saved and nothing saves
+again before the round after it starts. The start never reads round rows, so a restart in such a
+round restores the round from the state; the reference's start reads no delegate for it and keeps
+an empty forging list, or, when its store holds no missed-slot row, rolls the chain back. This is
+the one place where a Heartwood restart and the reference's differ.
 
 `restore` is a node's start:
 
@@ -435,6 +443,8 @@ deletes what lies above the new tip, as the reference's does.
   or below the tip, and names the height to roll back to. `p2p` and `fees.staticFees` are left out
   of the fingerprint: they decide which peers a node talks to and what its pool takes, never whether
   a block is valid.
+- Every start also returns the pool's online record from the store (`Restored::online`);
+  `ChainStore::save_online` replaces the stored record, outside any chunk.
 
 ```sh
 cargo test -p heartwood-blockchain --locked   # commit and restart at every height of the committed chain, the start's refusals, the milestone check
@@ -593,7 +603,7 @@ checked on the entries or shown by the oracle's answer:
   its own decoder's reason, where the reference names its decoder's or its schema validator's; the
   code, the entry id, the place in the lists and the verdict must be equal;
 - an entry of a removed type, or a JSON vote given as an array or a string: left out on both sides,
-  under any id either side gave it, and the rest of the step must be equal;
+  under any id either side gave it, and the rest of the step must be equal, messages included;
 - a full pool that the reference emptied by one eviction for a transaction it then refused (the
   oracle notes each such eviction): Heartwood must refuse the same transaction and agree on every
   entry before it; its pool keeps the transaction the reference evicted, so the rest of the session
@@ -644,8 +654,8 @@ the reference on every case. In P12 about half the files are ones that only Hear
 matching exactly one strict-schema predicate, and every file the reference refuses Heartwood
 refuses too. In P10 about a third of the sessions compare in full; the others show one of the pool's
 documented differences (see L0), most often an entry that does not decode, which the generator puts
-in most batches. P10 reaches every error code the reference's pool can give, each more than 250
-times in 10,000 cases, apart from two that it cannot give: `ERR_WRONG_NETWORK` (its schema refuses
+in most batches. P10 reaches every error code the reference's pool can give, each about 200 times
+or more per 10,000 cases, apart from two that it cannot give: `ERR_WRONG_NETWORK` (its schema refuses
 another network byte first) and `ERR_RETRY` (a failed revert empties the sender's mempool). The
 report also counts the reference's refusals with its `ColdWalletError` text; there are none, since
 the reference binds a sender's key before its checks run, so the pool cannot reach that error.
@@ -694,9 +704,15 @@ registration in one round with a restart in it; restarts at a round end and at t
 first block with equal vote balances; delegates named `0x10`, `0b101` and `1e5` (the reference's
 saved state reads such names as numbers, which is a documented difference of that path only); a
 stored transfer raised above its sender's balance, on which both refuse to start without a saved
-state, with "State Generation failed: Wallet with negative balance"; and a restart followed by a
-revert across a round end and a competing chain. Each Heartwood restart must also give back each
-delegate's resignation height and each wallet's vote shares, which the digest leaves out. The pool
+state, with "State Generation failed: Wallet with negative balance"; a restart followed by a
+revert across a round end and a competing chain; and, twice, a revert to the last block of a round,
+the next round's first blocks applied again and a restart in that round: at the chain's tip, where
+the store holds missed slots, and at the last round end below the first missed slot, where it holds
+none. In those two the reference's starts read no delegate for the round (see heartwood-blockchain)
+and show it as the oracle notes it: an empty forging list at the tip, and the chain rolled back
+below it; Heartwood's starts give the state before the restart. Both of the reference's start
+paths begin from the same store. Each Heartwood restart must also give back each delegate's
+resignation height and each wallet's vote shares, which the digest leaves out. The pool
 sessions: transfers from three senders collated, forged by the scheduled delegate and applied, then
 the synced node's steps (remove the forged transactions, clean up, add the rest back); a competing
 transaction for a pending nonce forged in a block; a revert of a block with pool transactions and

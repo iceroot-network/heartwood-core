@@ -38,7 +38,7 @@ Release builds must select one package at a time, for example `cargo build --rel
 | `packages/p2p-wire/` | The peer-to-peer wire codec: nes frames, the protobuf messages of the public routes, list framing and the signed peer status |
 | `packages/database/` | The store: one SQLite file per node with the chain tables, the state tables and the checks run at every start |
 | `packages/pool/` | The transaction pool: admission with the reference's checks, codes and messages, storage, queries, collation and the online record |
-| `packages/blockchain/` | A block's commit to the store, and a node's start: first start, restart from the state tables, or replay from the genesis block |
+| `packages/blockchain/` | A block's commit to the store, a node's start (first start, restart from the state tables, or replay from the genesis block) and the pool's online record in the store |
 | `tools/difftest/` | Compatibility harness and command-line tools |
 | `tools/oracle/` | Reference execution, container builds and vector generation |
 | `packages/*/tests/vectors/` | Committed vectors of each crate, with checksums and source metadata |
