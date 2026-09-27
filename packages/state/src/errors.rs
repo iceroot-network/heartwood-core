@@ -5,6 +5,8 @@
 //! with the same verdict: the block is refused, or the node refuses to start. None of them can
 //! happen on a chain of blocks the reference accepts.
 
+use std::fmt::Display;
+
 use heartwood_crypto::blocks::VerifyFailure;
 use heartwood_crypto::identities::{Address, PublicKeyBytes};
 use heartwood_crypto::transactions::TransactionId;
@@ -132,7 +134,51 @@ pub enum RewardError {
     },
 }
 
-/// A block could not be applied. The state is unchanged. `E` is the handlers' refusal
+/// Taking back part of a change after an error failed, so the state is no longer what it was
+/// before the call that reports it. Such a step undoes what was just done, so no chain the
+/// reference accepts leads here: a node that meets it has to stop and build its state again.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("taking back the {step} failed ({detail}); the state is no longer consistent")]
+pub struct RollbackFailed {
+    /// What was being taken back.
+    pub step: &'static str,
+    /// Why it failed.
+    pub detail: String,
+}
+
+/// Check `result`, the result of a step that takes back part of a change after an error. It
+/// cannot fail on a consistent state; when it does, debug builds stop here (so tests and fuzzing
+/// catch it), and release builds log it as critical and return [`RollbackFailed`].
+pub(crate) fn rolled_back<T, D: Display>(
+    step: &'static str,
+    result: Result<T, D>,
+) -> Result<(), RollbackFailed> {
+    debug_assert!(result.is_ok(), "taking back the {step} failed");
+    result.map(drop).map_err(|error| {
+        heartwood_kernel::critical!(
+            "Taking back the {step} failed ({error}); the state is no longer consistent"
+        );
+        RollbackFailed {
+            step,
+            detail: error.to_string(),
+        }
+    })
+}
+
+/// A transaction could not be applied or reverted with the vote balances it changes.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum TransactionFailure<E> {
+    /// The transaction was refused, or a wallet value left its range; the wallets are as they
+    /// were.
+    #[error(transparent)]
+    Refused(E),
+    /// Taking the transaction back after that failed.
+    #[error(transparent)]
+    RollbackFailed(#[from] RollbackFailed),
+}
+
+/// A block could not be applied. The state is unchanged, except after
+/// [`ApplyError::RollbackFailed`]. `E` is the handlers' refusal
 /// ([`crate::TransactionHandlers::Error`]).
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ApplyError<E> {
@@ -169,9 +215,13 @@ pub enum ApplyError<E> {
     /// The round that the block ends could not be started.
     #[error(transparent)]
     Round(#[from] RoundError),
+    /// Taking back the steps already taken failed.
+    #[error(transparent)]
+    RollbackFailed(#[from] RollbackFailed),
 }
 
-/// The last block could not be reverted. The state is unchanged. `E` is the handlers' refusal
+/// The last block could not be reverted. The state is unchanged, except after
+/// [`RevertError::RollbackFailed`]. `E` is the handlers' refusal
 /// ([`crate::TransactionHandlers::Error`]).
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RevertError<E> {
@@ -197,6 +247,9 @@ pub enum RevertError<E> {
     /// The round state could not be restored.
     #[error(transparent)]
     Round(#[from] RoundError),
+    /// Taking back the steps already taken failed.
+    #[error(transparent)]
+    RollbackFailed(#[from] RollbackFailed),
 }
 
 /// The genesis block was refused; the node does not start. `E` is the handlers' refusal
@@ -261,4 +314,43 @@ pub struct SupplyError {
     pub balances: u128,
     /// Issued plus rewards, less burned fees and burned amounts.
     pub expected: i128,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_rollback_that_succeeds_is_no_error() {
+        assert_eq!(rolled_back("step", Ok::<u8, String>(1)), Ok(()));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "taking back the step failed")]
+    fn a_failed_rollback_stops_a_debug_build() {
+        let _ = rolled_back("step", Err::<(), _>("no such wallet"));
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn a_failed_rollback_is_reported() {
+        assert_eq!(
+            rolled_back("step", Err::<(), _>("no such wallet")),
+            Err(RollbackFailed {
+                step: "step",
+                detail: "no such wallet".into()
+            })
+        );
+    }
+
+    #[test]
+    fn wallet_errors_name_the_reference_classes() {
+        let address = Address::from_bytes([90; 21]);
+        assert_eq!(
+            WalletError::NegativeBalance { address }.class(),
+            "AssertionError"
+        );
+        assert_eq!(WalletError::BalanceOverflow { address }.class(), "Error");
+    }
 }

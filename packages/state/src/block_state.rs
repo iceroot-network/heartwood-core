@@ -11,15 +11,20 @@
 //! Reverting a block takes the payout back first, then reverts the transactions in reverse order.
 //!
 //! The only errors the reference can reach are the handlers' refusals, which change nothing. The
-//! others (a balance, a delegate value or a total leaving the `u64` range, a vote for a name that
-//! is not registered) cannot happen on a state built from accepted blocks; when one does, the
-//! steps already taken are undone in reverse order before the error is returned.
+//! others (a balance or a delegate value leaving the `u64` range, a vote for a name that is not
+//! registered) cannot happen on a state built from accepted blocks; when one does, the steps
+//! already taken are undone in reverse order before the error is returned. Undoing a step cannot
+//! fail on a consistent state either; if it does, the error is
+//! [`RollbackFailed`](crate::errors::RollbackFailed), after which the state is no longer
+//! consistent (see [`crate::errors`]).
 
 use heartwood_crypto::identities::Address;
 use heartwood_crypto::transactions::Asset;
 use heartwood_crypto::{Block, BlockId, Milestones, Transaction, TransactionType};
 
-use crate::errors::{ApplyError, RevertError, WalletError};
+use crate::errors::{
+    ApplyError, RevertError, RollbackFailed, TransactionFailure, WalletError, rolled_back,
+};
 use crate::handlers::{ApplyContext, TransactionHandlers};
 use crate::stores::state::Totals;
 use crate::undo::{BlockUndo, ForgerUndo, TxUndo};
@@ -27,37 +32,48 @@ use crate::wallets::vote_balances::update_wallet_vote_balance;
 use crate::wallets::{Delegate, WalletRepository};
 
 /// Apply `transaction` with `handlers`, then update the vote balances of the wallets it changed.
+/// On an error the wallets are as they were, unless it is
+/// [`TransactionFailure::RollbackFailed`].
 pub fn apply_transaction<H: TransactionHandlers>(
     ctx: &ApplyContext<'_>,
     wallets: &mut WalletRepository,
     transaction: &Transaction,
     handlers: &H,
-) -> Result<TxUndo, H::Error> {
-    let undo = handlers.apply(ctx, wallets, transaction)?;
+) -> Result<TxUndo, TransactionFailure<H::Error>> {
+    let undo = handlers
+        .apply(ctx, wallets, transaction)
+        .map_err(TransactionFailure::Refused)?;
     if let Err(error) = refresh_vote_balances(wallets, transaction) {
-        // Take the transaction back; its revert cannot fail right after its apply.
-        let _ = handlers.revert(ctx, wallets, transaction, &undo);
-        let _ = refresh_vote_balances(wallets, transaction);
-        return Err(error.into());
+        rolled_back(
+            "transaction",
+            handlers.revert(ctx, wallets, transaction, &undo),
+        )?;
+        rolled_back("vote balances", refresh_vote_balances(wallets, transaction))?;
+        return Err(TransactionFailure::Refused(error.into()));
     }
     Ok(undo)
 }
 
 /// Revert `transaction` with `handlers` and its undo record, then update the vote balances of
-/// the wallets it changed.
+/// the wallets it changed. On an error the wallets are as they were, unless it is
+/// [`TransactionFailure::RollbackFailed`].
 pub fn revert_transaction<H: TransactionHandlers>(
     ctx: &ApplyContext<'_>,
     wallets: &mut WalletRepository,
     transaction: &Transaction,
     undo: &TxUndo,
     handlers: &H,
-) -> Result<(), H::Error> {
-    handlers.revert(ctx, wallets, transaction, undo)?;
+) -> Result<(), TransactionFailure<H::Error>> {
+    handlers
+        .revert(ctx, wallets, transaction, undo)
+        .map_err(TransactionFailure::Refused)?;
     if let Err(error) = refresh_vote_balances(wallets, transaction) {
-        // Apply the transaction again; its apply cannot fail right after its revert.
-        let _ = handlers.apply(ctx, wallets, transaction);
-        let _ = refresh_vote_balances(wallets, transaction);
-        return Err(error.into());
+        rolled_back(
+            "reverted transaction",
+            handlers.apply(ctx, wallets, transaction),
+        )?;
+        rolled_back("vote balances", refresh_vote_balances(wallets, transaction))?;
+        return Err(TransactionFailure::Refused(error.into()));
     }
     Ok(())
 }
@@ -87,12 +103,17 @@ pub fn apply_block<H: TransactionHandlers>(
     for (index, transaction) in block.transactions().iter().enumerate() {
         match apply_transaction(&ctx, wallets, transaction, handlers) {
             Ok(undo) => undos.push(undo),
-            Err(rejected) => {
-                revert_applied(&ctx, wallets, block.transactions(), &undos, handlers);
-                return Err(ApplyError::Transaction {
-                    index,
-                    id: *transaction.id(),
-                    rejected,
+            Err(failure) => {
+                let undone = revert_applied(&ctx, wallets, block.transactions(), &undos, handlers);
+                return Err(match (failure, undone) {
+                    (TransactionFailure::RollbackFailed(error), _) | (_, Err(error)) => {
+                        ApplyError::RollbackFailed(error)
+                    }
+                    (TransactionFailure::Refused(rejected), Ok(())) => ApplyError::Transaction {
+                        index,
+                        id: *transaction.id(),
+                        rejected,
+                    },
                 });
             }
         }
@@ -100,7 +121,7 @@ pub fn apply_block<H: TransactionHandlers>(
     let last_block = match pay_forger(wallets, &forger, &payout, block.id()) {
         Ok(last_block) => last_block,
         Err(error) => {
-            revert_applied(&ctx, wallets, block.transactions(), &undos, handlers);
+            revert_applied(&ctx, wallets, block.transactions(), &undos, handlers)?;
             return Err(error.into());
         }
     };
@@ -137,16 +158,25 @@ pub fn revert_block<H: TransactionHandlers>(
     let none = TxUndo::None;
     for (index, transaction) in transactions.iter().enumerate().rev() {
         let record = undo.transactions.get(index).unwrap_or(&none);
-        if let Err(rejected) = revert_transaction(&ctx, wallets, transaction, record, handlers) {
+        if let Err(failure) = revert_transaction(&ctx, wallets, transaction, record, handlers) {
             // Apply again what this revert took back, in block order, and pay the forger again.
             for later in transactions.iter().skip(index.saturating_add(1)) {
-                let _ = apply_transaction(&ctx, wallets, later, handlers);
+                rolled_back(
+                    "reverted transaction",
+                    apply_transaction(&ctx, wallets, later, handlers),
+                )?;
             }
-            let _ = pay_forger(wallets, &undo.forger.address, &payout, block.id());
-            return Err(RevertError::Transaction {
-                index,
-                id: *transaction.id(),
-                rejected,
+            rolled_back(
+                "reverted payout",
+                pay_forger(wallets, &undo.forger.address, &payout, block.id()),
+            )?;
+            return Err(match failure {
+                TransactionFailure::Refused(rejected) => RevertError::Transaction {
+                    index,
+                    id: *transaction.id(),
+                    rejected,
+                },
+                TransactionFailure::RollbackFailed(error) => RevertError::RollbackFailed(error),
             });
         }
     }
@@ -182,10 +212,14 @@ fn revert_applied<H: TransactionHandlers>(
     transactions: &[Transaction],
     undos: &[TxUndo],
     handlers: &H,
-) {
+) -> Result<(), RollbackFailed> {
     for (transaction, undo) in transactions.iter().zip(undos).rev() {
-        let _ = revert_transaction(ctx, wallets, transaction, undo, handlers);
+        rolled_back(
+            "transaction",
+            revert_transaction(ctx, wallets, transaction, undo, handlers),
+        )?;
     }
+    Ok(())
 }
 
 /// Bring the delegates of every wallet whose balance `transaction` changed up to date: the
@@ -287,32 +321,79 @@ impl Payout {
     }
 }
 
+/// Why a step of a payout failed: a wallet value out of range, after which the wallets are as
+/// they were, or taking back part of the step.
+#[derive(Debug)]
+enum StepError {
+    Wallet(WalletError),
+    RollbackFailed(RollbackFailed),
+}
+
+impl From<WalletError> for StepError {
+    fn from(error: WalletError) -> StepError {
+        StepError::Wallet(error)
+    }
+}
+
+impl From<RollbackFailed> for StepError {
+    fn from(error: RollbackFailed) -> StepError {
+        StepError::RollbackFailed(error)
+    }
+}
+
+impl std::fmt::Display for StepError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StepError::Wallet(error) => error.fmt(f),
+            StepError::RollbackFailed(error) => error.fmt(f),
+        }
+    }
+}
+
+impl<E> From<StepError> for ApplyError<E> {
+    fn from(error: StepError) -> ApplyError<E> {
+        match error {
+            StepError::Wallet(error) => ApplyError::Wallet(error),
+            StepError::RollbackFailed(error) => ApplyError::RollbackFailed(error),
+        }
+    }
+}
+
+impl<E> From<StepError> for RevertError<E> {
+    fn from(error: StepError) -> RevertError<E> {
+        match error {
+            StepError::Wallet(error) => RevertError::Wallet(error),
+            StepError::RollbackFailed(error) => RevertError::RollbackFailed(error),
+        }
+    }
+}
+
 /// Pay the forger at `forger` for block `id`: its delegate counters, its balance and the
 /// donations, each balance followed by its vote-balance update. Returns the forger's previous
-/// last block. On an error the wallets are unchanged.
+/// last block. On a [`StepError::Wallet`] the wallets are unchanged.
 fn pay_forger(
     wallets: &mut WalletRepository,
     forger: &Address,
     payout: &Payout,
     id: &BlockId,
-) -> Result<Option<BlockId>, WalletError> {
+) -> Result<Option<BlockId>, StepError> {
     let before = delegate_of(wallets, forger)?.clone();
     let paid = payout.paid(&before, id).ok_or_else(|| range(&before))?;
     set_counters(wallets, forger, &paid)?;
     if let Err(error) = change_balances(wallets, &payout.balance_changes(forger)) {
-        let _ = set_counters(wallets, forger, &before);
+        rolled_back("forger's counters", set_counters(wallets, forger, &before))?;
         return Err(error);
     }
     Ok(before.last_block)
 }
 
 /// Take back the payout that `undo`'s forger received, restoring its last block from `undo`.
-/// On an error the wallets are unchanged.
+/// On a [`StepError::Wallet`] the wallets are unchanged.
 fn unpay_forger(
     wallets: &mut WalletRepository,
     undo: &ForgerUndo,
     payout: &Payout,
-) -> Result<(), WalletError> {
+) -> Result<(), StepError> {
     let before = delegate_of(wallets, &undo.address)?.clone();
     let unpaid = payout
         .unpaid(&before, undo.last_block)
@@ -324,7 +405,10 @@ fn unpay_forger(
         .collect();
     set_counters(wallets, &undo.address, &unpaid)?;
     if let Err(error) = change_balances(wallets, &changes) {
-        let _ = set_counters(wallets, &undo.address, &before);
+        rolled_back(
+            "forger's counters",
+            set_counters(wallets, &undo.address, &before),
+        )?;
         return Err(error);
     }
     Ok(())
@@ -375,11 +459,14 @@ fn set_counters(
 fn change_balances(
     wallets: &mut WalletRepository,
     changes: &[(Address, i128)],
-) -> Result<(), WalletError> {
+) -> Result<(), StepError> {
     for (done, (address, change)) in changes.iter().enumerate() {
         if let Err(error) = change_balance(wallets, address, *change) {
             for (address, change) in changes.iter().take(done).rev() {
-                let _ = change_balance(wallets, address, change.saturating_neg());
+                rolled_back(
+                    "balance change",
+                    change_balance(wallets, address, change.saturating_neg()),
+                )?;
             }
             return Err(error);
         }
@@ -388,29 +475,39 @@ fn change_balances(
 }
 
 /// Add `change` (which may be negative) to the balance of the wallet at `address`, created if
-/// needed, then update its delegates' vote balances. On an error the balance is unchanged.
+/// needed, then update its delegates' vote balances. On a [`StepError::Wallet`] the balance is
+/// unchanged.
 fn change_balance(
     wallets: &mut WalletRepository,
     address: &Address,
     change: i128,
-) -> Result<(), WalletError> {
+) -> Result<(), StepError> {
     let wallet = wallets.get_or_create(address);
-    let amount = u64::try_from(change.unsigned_abs());
-    match (change >= 0, amount) {
-        (true, Ok(amount)) => wallet.credit(amount)?,
-        (false, Ok(amount)) => wallet.debit(amount)?,
-        (true, Err(_)) => return Err(WalletError::BalanceOverflow { address: *address }),
-        (false, Err(_)) => return Err(WalletError::NegativeBalance { address: *address }),
+    let amount = u64::try_from(change.unsigned_abs()).map_err(|_| {
+        if change >= 0 {
+            WalletError::BalanceOverflow { address: *address }
+        } else {
+            WalletError::NegativeBalance { address: *address }
+        }
+    })?;
+    if change >= 0 {
+        wallet.credit(amount)?;
+    } else {
+        wallet.debit(amount)?;
     }
     if let Err(error) = update_wallet_vote_balance(wallets, address) {
         let wallet = wallets.get_or_create(address);
-        let _ = match amount {
-            Ok(amount) if change >= 0 => wallet.debit(amount),
-            Ok(amount) => wallet.credit(amount),
-            Err(_) => Ok(()),
+        let undone = if change >= 0 {
+            wallet.debit(amount)
+        } else {
+            wallet.credit(amount)
         };
-        let _ = update_wallet_vote_balance(wallets, address);
-        return Err(error);
+        rolled_back("balance change", undone)?;
+        rolled_back(
+            "vote balances",
+            update_wallet_vote_balance(wallets, address),
+        )?;
+        return Err(error.into());
     }
     Ok(())
 }

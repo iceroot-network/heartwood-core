@@ -8,6 +8,7 @@ use heartwood_crypto::errors::ConfigError;
 use heartwood_crypto::managers::Milestones;
 use heartwood_crypto::utils::js;
 use heartwood_state::digest::wallet_section;
+use heartwood_state::errors::TransactionFailure;
 use heartwood_state::{ApplyContext, block_state};
 use heartwood_transactions::{Handlers, TransactionError, minimum_fee};
 use serde_json::{Map, Value, json};
@@ -68,7 +69,14 @@ pub(super) fn apply_transaction(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdi
         params,
         last_block_height,
     };
-    let error = |rejected: TransactionError| json!({ "class": rejected.class(), "message": rejected.to_string() });
+    // A refusal gives its class; a failed rollback leaves no state to compare, so it fails the
+    // case.
+    let error = |failure: TransactionFailure<TransactionError>| match failure {
+        TransactionFailure::Refused(rejected) => {
+            Ok(json!({ "class": rejected.class(), "message": rejected.to_string() }))
+        }
+        TransactionFailure::RollbackFailed(error) => Err(failed(error.to_string())),
+    };
     let output = match block_state::apply_transaction(&ctx, &mut wallets, &transaction, &Handlers) {
         Ok(undo) => {
             let applied = wallet_section(&wallets);
@@ -81,12 +89,12 @@ pub(super) fn apply_transaction(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdi
             ) {
                 Ok(()) => json!({ "W": wallet_section(&wallets) }),
                 // Only the verdict of a failed revert is compared.
-                Err(rejected) => json!({ "error": error(rejected) }),
+                Err(failure) => json!({ "error": error(failure)? }),
             };
             json!({ "applied": { "W": applied }, "reverted": reverted })
         }
-        Err(rejected) => {
-            json!({ "error": error(rejected), "after": { "W": wallet_section(&wallets) } })
+        Err(failure) => {
+            json!({ "error": error(failure)?, "after": { "W": wallet_section(&wallets) } })
         }
     };
     Ok(Verdict::Output(output))

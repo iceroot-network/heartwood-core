@@ -7,14 +7,16 @@
 //! backwards: the round first, then the payout, then the transactions in reverse order.
 //!
 //! Every applied block keeps its undo record in memory, so any number of blocks can be reverted.
-//! A refused block leaves the state exactly as it was.
+//! A refused block leaves the state exactly as it was. The one exception is a failure to take back
+//! the steps already taken, which no consistent state reaches
+//! ([`RollbackFailed`](crate::errors::RollbackFailed)).
 
 use heartwood_crypto::identities::{Address, PublicKeyBytes};
 use heartwood_crypto::{Block, BlockHeader, Milestones};
 use heartwood_kernel::is_new_round;
 
 use crate::block_state;
-use crate::errors::{ApplyError, GenesisError, RevertError, RewardError};
+use crate::errors::{ApplyError, GenesisError, RevertError, RewardError, rolled_back};
 use crate::handlers::TransactionHandlers;
 use crate::round_state::{MissedBlock, RoundDelegate, RoundReward, RoundState};
 use crate::stores::state::{StateStore, Totals};
@@ -135,7 +137,7 @@ impl State {
             Ok(round) => undo.round = round,
             Err(error) => {
                 self.restore_round(saved);
-                let _ = block_state::revert_block(
+                let undone = block_state::revert_block(
                     &mut self.wallets,
                     self.store.totals_mut(),
                     &undo,
@@ -143,6 +145,7 @@ impl State {
                     handlers,
                 );
                 self.store.set_last_block(previous_block);
+                rolled_back("block", undone)?;
                 return Err(error.into());
             }
         }
