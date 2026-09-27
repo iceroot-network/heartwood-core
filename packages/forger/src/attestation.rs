@@ -10,25 +10,32 @@
 //!   twice signs twice, as the reference signs its duplicates), naming the offer by the SHA-256 of
 //!   its bytes.
 
+use std::future::Future;
+use std::pin::pin;
 use std::sync::Arc;
+use std::task::Poll;
+use std::time::Duration;
 
 use heartwood_crypto::Milestones;
-use heartwood_kernel::Clock;
-use heartwood_p2p_wire::internal::StatusSignatures;
+use heartwood_crypto::crypto::hash::sha256;
+use heartwood_crypto::crypto::slots;
+use heartwood_crypto::utils::hex;
+use heartwood_kernel::{Clock, debug, warning};
+use heartwood_p2p_wire::internal::{StatusSignatures, StatusToSignResponse};
+use heartwood_p2p_wire::status::{attest, parse_preimage};
 
 use crate::errors::AttestError;
 use crate::keys::DelegateKeys;
 use crate::seams::{AttestLink, ShutdownSignal};
 
+/// The wait before polling again after a failed poll.
+pub const RETRY: Duration = Duration::from_secs(1);
+
 /// The forger's attester.
 pub struct Attester {
-    #[expect(dead_code, reason = "the attester reads it")]
     keys: Arc<DelegateKeys>,
-    #[expect(dead_code, reason = "the attester reads it")]
     nethash: String,
-    #[expect(dead_code, reason = "the attester reads it")]
     milestones: Milestones,
-    #[expect(dead_code, reason = "the attester reads it")]
     clock: Arc<dyn Clock>,
 }
 
@@ -55,19 +62,105 @@ impl Attester {
         status: &str,
         public_keys: &[String],
     ) -> Result<StatusSignatures, AttestError> {
-        let _ = (status, public_keys);
-        todo!("the attester's checks and signatures")
+        let (state, config) = parse_preimage(status.as_bytes())?;
+        if state.height != state.header.height {
+            return Err(AttestError::Height {
+                state: state.height,
+                header: state.header.height,
+            });
+        }
+        let own = self.own_slot();
+        if state.current_slot.abs_diff(own) > 1 {
+            return Err(AttestError::Slot {
+                offered: state.current_slot,
+                own,
+            });
+        }
+        if config.network.nethash != self.nethash {
+            return Err(AttestError::Network {
+                offered: config.network.nethash,
+                own: self.nethash.clone(),
+            });
+        }
+        let declared = self.keys.declared();
+        let signatures = (public_keys.iter())
+            .map(|offered| {
+                let key = (declared.iter())
+                    .find(|key| key.to_hex() == *offered)
+                    .and_then(|key| self.keys.key(key))
+                    .ok_or_else(|| AttestError::ForeignKey {
+                        public_key: offered.clone(),
+                    })?;
+                Ok(attest(status.as_bytes(), key)?.signature.to_hex())
+            })
+            .collect::<Result<_, AttestError>>()?;
+        Ok(StatusSignatures {
+            offer: offer_hash(status),
+            signatures,
+        })
     }
 
     /// Poll `link` for offers and answer them until `shutdown` is asked for.
-    pub async fn run<L: AttestLink>(&self, link: &L, shutdown: ShutdownSignal) {
-        let _ = (link, shutdown);
-        todo!("the attester's long poll")
+    pub async fn run<L: AttestLink>(&self, link: &L, mut shutdown: ShutdownSignal) {
+        let declared: Vec<String> = (self.keys.declared().iter())
+            .map(|key| key.to_hex())
+            .collect();
+        loop {
+            let Some(answer) = until(&mut shutdown, link.status_to_sign(&declared)).await else {
+                return;
+            };
+            let offer = match answer {
+                Ok(StatusToSignResponse::Offer {
+                    status,
+                    public_keys,
+                }) => self.sign_offer(&status, &public_keys),
+                Ok(StatusToSignResponse::Unchanged) => continue,
+                Err(error) => {
+                    debug!("The relay gave no status to attest: {error}");
+                    if until(&mut shutdown, tokio::time::sleep(RETRY))
+                        .await
+                        .is_none()
+                    {
+                        return;
+                    }
+                    continue;
+                }
+            };
+            match offer {
+                Ok(signatures) => {
+                    if let Err(error) = link.post_signatures(signatures).await {
+                        debug!("The status attestations were not delivered: {error}");
+                    }
+                }
+                Err(error) => warning!("Not attesting the status the relay offered: {error}"),
+            }
+        }
+    }
+
+    /// The slot of the forger's clock.
+    fn own_slot(&self) -> i64 {
+        let first = self.milestones.at(1);
+        let epoch = slots::epoch_unix_ms(first.epoch()).unwrap_or_default();
+        let now = slots::epoch_time(self.clock.now_ms(), epoch);
+        slots::slot_number(now, first.block_time())
     }
 }
 
 /// The name of an offer: the SHA-256 of its text's bytes, in hex.
 pub fn offer_hash(status: &str) -> String {
-    let _ = status;
-    todo!("an offer's name")
+    hex::encode(&sha256(status.as_bytes()))
+}
+
+/// `future`'s output, or `None` once a shutdown is asked for.
+async fn until<F: Future>(shutdown: &mut ShutdownSignal, future: F) -> Option<F::Output> {
+    if shutdown.is_requested() {
+        return None;
+    }
+    let mut future = pin!(future);
+    let mut stop = pin!(shutdown.requested());
+    std::future::poll_fn(|cx| match future.as_mut().poll(cx) {
+        Poll::Ready(output) => Poll::Ready(Some(output)),
+        Poll::Pending => stop.as_mut().poll(cx).map(|()| None),
+    })
+    .await
 }
