@@ -985,7 +985,11 @@ mod through_the_communicator {
         });
         let clock = Arc::new(ManualClock::new(NOW_MS));
         let verifier = Arc::new(PeerVerifier::new(ours.clone(), ours.clone(), clock.clone()));
-        let options = Arc::new(P2pOptions::default());
+        // The node's version goes into every request's headers; without one nothing is sent.
+        let options = Arc::new(P2pOptions {
+            version: "4.3.1-heartwood.0".into(),
+            ..P2pOptions::default()
+        });
         let communicator = Communicator::new(CommunicatorParts {
             transport: Arc::new(Connector::new()),
             verifier: verifier.clone(),

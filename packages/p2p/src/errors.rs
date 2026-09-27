@@ -96,7 +96,9 @@ pub enum PingError {
     Deadline(PastDeadline),
 }
 
-/// The deadline of a peer verification passed before a request could be sent.
+/// A peer verification stopped where the reference's throws: its deadline passed before a request
+/// could be sent, a fork-segment header could not be read, or the node could not read its chain.
+/// The ping then fails and keeps the peer's last verification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[error("timeout elapsed before successful completion of the verification")]
 pub struct PastDeadline;

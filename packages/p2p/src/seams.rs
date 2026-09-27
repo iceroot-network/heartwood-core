@@ -179,7 +179,9 @@ pub trait VerifierLink: Send + Sync {
 pub trait StateCheck: Send + Sync {
     /// The full verification (`checkState`): the claimed header, then the highest common block
     /// and the peer's blocks after it up to the round's end, fetched through `link`. `None` when
-    /// the state does not verify; [`PastDeadline`] when the deadline passed before a request.
+    /// the state does not verify; [`PastDeadline`] wherever the reference's `checkState` throws:
+    /// the deadline passed before a common-block probe, a fork-segment header cannot be rebuilt
+    /// as a block or names no registered delegate, or the node could not read its own chain.
     fn check_state<L: VerifierLink>(
         &self,
         link: &L,
