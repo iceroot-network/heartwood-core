@@ -79,37 +79,19 @@ fn run() -> Result<(), String> {
         let Some(round) = relay.call(json!({"call": "round"}))? else {
             return Ok(());
         };
-        let number = |name: &str| {
-            round
-                .get(name)
-                .and_then(Value::as_u64)
-                .ok_or(format!("no {name}"))
-        };
-        let previous_height =
-            u32::try_from(number("previousHeight")?).map_err(|e| e.to_string())?;
-        let params = milestones.at(previous_height);
-        let transactions = (round
-            .get("transactions")
-            .and_then(Value::as_array)
-            .into_iter())
-        .flatten()
-        .map(|t| hex::decode(t.as_str().unwrap_or_default()).map_err(|e| e.to_string()))
-        .map(|bytes| Transaction::decode_trusted(&bytes?, params).map_err(|e| e.to_string()))
-        .collect::<Result<Vec<_>, _>>()?;
-        let previous = round
-            .get("previousId")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let round = Round::read(&round).ok_or_else(|| format!("not a round: {round}"))?;
+        let params = milestones.at(round.previous_height);
+        let transactions = (round.transactions.iter())
+            .map(|bytes| Transaction::decode_trusted(bytes, params).map_err(|e| e.to_string()))
+            .collect::<Result<Vec<_>, _>>()?;
         let inputs = ForgeInputs {
             transactions: &transactions,
-            previous_id: BlockId::from_hex(previous).map_err(|e| e.to_string())?,
-            previous_height,
-            timestamp: u32::try_from(number("timestamp")?).map_err(|e| e.to_string())?,
-            reward: (round.get("reward").and_then(Value::as_str))
-                .and_then(|r| r.parse().ok())
-                .ok_or("no reward")?,
+            previous_id: round.previous_id,
+            previous_height: round.previous_height,
+            timestamp: round.timestamp,
+            reward: round.reward,
         };
-        let asked = round.get("slot").and_then(Value::as_i64).ok_or("no slot")?;
+        let asked = round.slot;
         let started = SystemClock.now_ms();
         let outcome = signer.sign_or_resend(&key, &inputs, slot, asked);
         let took = SystemClock.now_ms().saturating_sub(started);
@@ -142,6 +124,34 @@ fn run() -> Result<(), String> {
             .saturating_add(next)
             .saturating_sub(SystemClock.now_ms());
         std::thread::sleep(Duration::from_millis(u64::try_from(wait).unwrap_or(0)));
+    }
+}
+
+/// The relay's round, as the mock relay writes it.
+struct Round {
+    slot: i64,
+    previous_id: BlockId,
+    previous_height: u32,
+    timestamp: u32,
+    reward: u64,
+    transactions: Vec<Vec<u8>>,
+}
+
+impl Round {
+    fn read(value: &Value) -> Option<Round> {
+        let number = |name: &str| value.get(name).and_then(Value::as_u64);
+        let text = |name: &str| value.get(name).and_then(Value::as_str);
+        let transactions = value.get("transactions")?.as_array()?.iter();
+        Some(Round {
+            slot: value.get("slot")?.as_i64()?,
+            previous_id: BlockId::from_hex(text("previousId")?).ok()?,
+            previous_height: u32::try_from(number("previousHeight")?).ok()?,
+            timestamp: u32::try_from(number("timestamp")?).ok()?,
+            reward: text("reward")?.parse().ok()?,
+            transactions: transactions
+                .map(|t| hex::decode(t.as_str()?).ok())
+                .collect::<Option<_>>()?,
+        })
     }
 }
 
