@@ -396,7 +396,6 @@ dependencies = [
  "indexmap",
  "serde_json",
  "thiserror",
- "tracing",
 ]
 
 [[package]]
@@ -404,13 +403,10 @@ name = "heartwood-transactions"
 version = "0.1.0"
 dependencies = [
  "heartwood-crypto",
- "heartwood-kernel",
  "heartwood-state",
  "hex",
- "indexmap",
  "serde_json",
  "thiserror",
- "tracing",
 ]
 
 [[package]]

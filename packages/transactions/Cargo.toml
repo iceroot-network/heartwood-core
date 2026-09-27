@@ -12,11 +12,8 @@ workspace = true
 
 [dependencies]
 heartwood-crypto.workspace = true
-heartwood-kernel.workspace = true
 heartwood-state.workspace = true
-indexmap.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 heartwood-crypto = { workspace = true, features = ["fixed-aux", "genesis"] }

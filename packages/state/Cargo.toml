@@ -15,7 +15,6 @@ heartwood-crypto.workspace = true
 heartwood-kernel.workspace = true
 indexmap.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 
 # The integration tests apply real transactions through the closed handler registry, and read the
 # golden vectors and genesis files. Integration tests link the library once, so the handlers
