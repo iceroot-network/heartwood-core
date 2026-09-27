@@ -1,0 +1,25 @@
+[package]
+name = "heartwood-blockchain"
+description = "The blockchain component of Heartwood Core: the commit of applied and reverted blocks to the store, and the start that restores the state from it"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+heartwood-crypto.workspace = true
+heartwood-database.workspace = true
+heartwood-kernel.workspace = true
+heartwood-state.workspace = true
+heartwood-transactions.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+# The tests build chains with the oracle's fixed aux and the devnet chain-definition builder.
+[dev-dependencies]
+heartwood-crypto = { workspace = true, features = ["fixed-aux", "genesis"] }
+hex.workspace = true

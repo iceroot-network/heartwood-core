@@ -28,9 +28,18 @@ use crate::errors::TransactionError;
 /// `(addonBytes[key] + round(size / 2)) × max(minFee, 1)`, where `size` is the byte length of
 /// the transaction as it was decoded and the sum is a JavaScript number addition.
 pub fn minimum_fee(transaction: &Transaction, params: &Params) -> i128 {
-    let Some(fees) = params.dynamic_fees().filter(|fees| fees.enabled()) else {
-        return 0;
-    };
+    match params.dynamic_fees().filter(|fees| fees.enabled()) {
+        Some(fees) => minimum_fee_with(transaction, fees.min_fee(), fees.addon(transaction.key())),
+        None => 0,
+    }
+}
+
+/// The dynamic fee floor of `transaction` with the fee table `min_fee` and `addon_bytes` (the
+/// entry for the transaction's type), as the reference's `getMinimumFee` computes it from any
+/// table: the milestone's, or the pool's own when the milestone's dynamic fees are off. 0 for
+/// burns and delegate resignations; otherwise `(addon_bytes + round(size / 2)) × max(min_fee, 1)`
+/// (see [`minimum_fee`]).
+pub fn minimum_fee_with(transaction: &Transaction, min_fee: i64, addon_bytes: i64) -> i128 {
     if matches!(
         transaction.kind(),
         TransactionType::Burn | TransactionType::DelegateResignation
@@ -40,10 +49,9 @@ pub fn minimum_fee(transaction: &Transaction, params: &Params) -> i128 {
     // Math.round(size / 2) of an integer size rounds the half up.
     let size = u64::try_from(transaction.bytes().len()).unwrap_or(u64::MAX);
     let half = size.div_ceil(2);
-    let bytes =
-        as_javascript_number(i128::from(fees.addon(transaction.key())).saturating_add(half.into()));
+    let bytes = as_javascript_number(i128::from(addon_bytes).saturating_add(half.into()));
     // Both factors are below 2^54 in magnitude, so the product fits.
-    bytes.saturating_mul(fees.min_fee().max(1).into())
+    bytes.saturating_mul(min_fee.max(1).into())
 }
 
 /// The integer `value` as a JavaScript number holds it, when it is the exact result of adding two

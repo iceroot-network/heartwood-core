@@ -1,0 +1,17 @@
+[package]
+name = "heartwood-database"
+description = "The store of Heartwood Core: one SQLite file with the chain tables, the state tables, the applied milestone entries and the node-local delegate versions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+heartwood-crypto.workspace = true
+heartwood-kernel.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true

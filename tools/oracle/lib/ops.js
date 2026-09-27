@@ -8,8 +8,9 @@
 // Operations that take `milestones` (JSON text) run under those milestones on the devnet network
 // and restore the devnet configuration afterwards.
 //
-// The operations of the node's other packages (kernel, logger, state, handlers, chains) are in
-// lib/ops/*.js, one file per area; makeOps loads every file there (see loadOpsFiles).
+// The operations of the node's other packages (kernel, logger, state, handlers, chains, the pool
+// and the message formats) are in lib/ops/*.js, one file per area; makeOps loads every file there
+// (see loadOpsFiles).
 
 const crypto = require("crypto");
 const fs = require("fs");

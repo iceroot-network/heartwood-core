@@ -20,6 +20,10 @@
 //!   and revert plans.
 //! - [`digests`]: the state digest files of L2 replays, and their comparison.
 //! - [`synthetic`]: blocks built on top of a corpus chain for the synthetic L2 cases.
+//! - [`synthetic_pool`]: the synthetic pool cases on a corpus chain's tip.
+//! - [`restart`]: restart plans, and restarts of the reference and of Heartwood during a replay.
+//! - [`store`]: a corpus replayed through Heartwood's store, its store anchors, and the kill
+//!   test.
 //! - [`levels`]: L0 to L4; L0, L1 and L2 run, L3 and L4 plug in with the node's processes.
 //! - [`genesis`]: the devnet chain-definition driver (`difftest genesis`).
 
@@ -36,10 +40,13 @@ pub mod levels;
 pub mod oracle;
 pub mod replay;
 pub mod report;
+pub mod restart;
+pub mod store;
 pub mod strategies;
 pub mod subject;
 pub mod subjects;
 pub mod synthetic;
+pub mod synthetic_pool;
 pub mod vectors;
 
 pub use errors::{Error, Result};

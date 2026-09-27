@@ -65,7 +65,9 @@ impl Transaction {
     /// `TransactionFactory.fromBytesUnsafe` does: no transaction rules, no version check and no
     /// signature check, and the transaction counts as verified.
     ///
-    /// Callers, each of which must only pass bytes verified before: [`crate::Block::decode_trusted`].
+    /// Callers, each of which must only pass bytes verified before:
+    /// [`crate::Block::decode_trusted`]; the replay of the stored chain (`heartwood-blockchain`);
+    /// the pool's re-add of stored and previously forged transactions (`heartwood-pool`).
     pub fn decode_trusted(bytes: &[u8], params: &Params) -> Result<Transaction, DecodeError> {
         let Deserialised { data, pending } = deserialise_raw(bytes, false)?;
         let id = transaction_id(&data, params).map_err(DecodeError::Id)?;

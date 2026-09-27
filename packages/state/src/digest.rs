@@ -56,6 +56,9 @@ pub enum Step {
     Revert,
     /// The state after applying again a block that a revert took back.
     Reapply,
+    /// The state after a restart: read back from the store, or replayed from the genesis block
+    /// (the line's height is the stored tip's).
+    Restart,
 }
 
 impl Step {
@@ -66,6 +69,7 @@ impl Step {
             Step::Apply => "apply",
             Step::Revert => "revert",
             Step::Reapply => "reapply",
+            Step::Restart => "restart",
         }
     }
 }

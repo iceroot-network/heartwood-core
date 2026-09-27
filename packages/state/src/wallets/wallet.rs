@@ -7,6 +7,7 @@ use heartwood_crypto::utils::sort_votes::sort_votes;
 use indexmap::IndexMap;
 
 use crate::errors::WalletError;
+use crate::persist::{RestoreError, WalletRecord};
 
 /// How a delegate has resigned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -222,5 +223,21 @@ impl Wallet {
     /// delegates' vote balances by the same amounts.
     pub(crate) fn set_vote_shares(&mut self, shares: IndexMap<String, u64>) {
         self.vote_shares = shares;
+    }
+}
+
+/// The wallet's record in the store (see [`crate::persist`]).
+impl Wallet {
+    /// The wallet's record.
+    pub fn to_record(&self) -> WalletRecord {
+        todo!("the wallet's record")
+    }
+
+    /// The wallet of `record`, on the network with address byte `network`. It is the one
+    /// constructor that sets the public key, the delegate record and the vote shares; the
+    /// repository indexes them in [`crate::WalletRepository::from_wallets`].
+    pub fn from_record(record: WalletRecord, network: u8) -> Result<Wallet, RestoreError> {
+        let _ = (record, network);
+        todo!("the record's wallet")
     }
 }

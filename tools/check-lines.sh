@@ -24,6 +24,10 @@ CHECKS=(
     "heartwood-state wallets, ranking and rounds:packages/state/src/wallets packages/state/src/dpos packages/state/src/round_state.rs:"
     "heartwood-transactions:packages/transactions/src:2500"
     "heartwood-p2p-wire:packages/p2p-wire/src:2500"
+    "heartwood-database:packages/database/src:3000"
+    "heartwood-pool:packages/pool/src:2000"
+    "heartwood-blockchain:packages/blockchain/src:3500"
+    "heartwood-blockchain storage and restart:packages/blockchain/src/commit.rs packages/blockchain/src/rows.rs packages/blockchain/src/restore.rs packages/blockchain/src/milestones.rs:"
 )
 
 work=$(mktemp -d)

@@ -8,7 +8,8 @@
 //! - [`pool_query`]: the checks a transaction must pass to enter the pool, and the two views of
 //!   the pool and the network they read.
 //! - [`errors`]: [`TransactionError`], whose [`TransactionError::class`] is the reference's error
-//!   class, and [`PoolError`], whose [`PoolError::code`] is the pool's error code.
+//!   class and [`TransactionError::message`] its message, and [`PoolError`], whose
+//!   [`PoolError::code`] is the pool's error code.
 //!
 //! The registry dispatches on the closed `TransactionType`; there is no registration and no trait
 //! object, so no plugin can replace a rule. A handler runs every check before it changes a
@@ -37,5 +38,5 @@ pub mod pool_query;
 
 pub use crate::errors::{PoolError, TransactionError};
 pub use crate::handlers::registry::Handlers;
-pub use crate::handlers::transaction::{is_activated, minimum_fee};
+pub use crate::handlers::transaction::{is_activated, minimum_fee, minimum_fee_with};
 pub use crate::pool_query::{OnlineDelegates, PoolQuery, check_pool_entry};

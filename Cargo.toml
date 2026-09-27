@@ -16,10 +16,13 @@ unsafe_code = "forbid"
 unused_must_use = "deny"
 
 [workspace.dependencies]
+heartwood-blockchain = { path = "packages/blockchain" }
 heartwood-crypto = { path = "packages/crypto" }
+heartwood-database = { path = "packages/database" }
 heartwood-kernel = { path = "packages/kernel" }
 heartwood-logger = { path = "packages/logger" }
 heartwood-p2p-wire = { path = "packages/p2p-wire" }
+heartwood-pool = { path = "packages/pool" }
 heartwood-state = { path = "packages/state" }
 heartwood-transactions = { path = "packages/transactions" }
 
@@ -40,6 +43,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 indexmap = "2.14"
 thiserror = "2"
+
+# Storage. SQLite, compiled from the bundled source; heartwood-database and heartwood-pool are the
+# only crates that may depend on it. `cache` gives `prepare_cached`; `load_extension` must never be
+# enabled, and `backup` is left off until a command needs it. The default features are off because
+# they add a WebAssembly build of SQLite that no target here uses.
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache"] }
 
 # Logging. The facade is tracing without its attribute macros; the subscriber, the appender and
 # gzip serve heartwood-logger only. The logger writes the reference's line format itself on the

@@ -8,10 +8,16 @@
 //! - [`transactions`]: signed transactions of the six kept types, for the fee floor and the
 //!   handlers, and their mutations;
 //! - [`kernel`]: rounds, slots, block chaining, JSON values, `.env` text and IP lists;
-//! - [`state`]: shuffles, rankings and vote maps.
+//! - [`state`]: shuffles, rankings and vote maps;
+//! - [`pool`]: pool sessions: fixtures, options and steps;
+//! - [`text`]: amounts, counts, symbols and transactions for the message formats;
+//! - [`config`]: mutations of the devnet's crypto files.
 
+pub mod config;
 pub mod kernel;
+pub mod pool;
 pub mod state;
+pub mod text;
 pub mod transactions;
 
 use heartwood_crypto::BlockId;

@@ -14,9 +14,12 @@
 //! - [`stores`]: the last block, the genesis block and the supply totals.
 //! - [`supply`]: the supply check.
 //! - [`digest`]: the canonical state digest, per height and over a replay.
+//! - [`persist`]: the records a store keeps of the state, and the checks of a state read back
+//!   from them.
 //! - [`errors`]: the crate's error types.
 //!
-//! Rules: no I/O, no clock and no async. Amounts are `u64` with checked arithmetic; a result the
+//! Rules: no I/O, no clock and no async; the store's records are values, written and read by
+//! `heartwood-blockchain`. Amounts are `u64` with checked arithmetic; a result the
 //! reference would reach only by throwing is a typed error with the same verdict. Every map whose
 //! order can be observed is an `IndexMap` or a `BTreeMap`. The state of block `H` is changed by
 //! the rules of the milestone at `H`.
@@ -45,6 +48,7 @@ pub mod errors;
 pub mod genesis;
 pub mod handlers;
 pub mod machine;
+pub mod persist;
 pub mod round_state;
 pub mod stores;
 pub mod supply;

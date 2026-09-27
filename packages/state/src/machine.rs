@@ -18,6 +18,7 @@ use crate::block_state;
 use crate::dpos::dpos::set_rank;
 use crate::errors::{ApplyError, GenesisError, RevertError, RewardError, rolled_back};
 use crate::handlers::TransactionHandlers;
+use crate::persist::{RestoreError, StateRecord};
 use crate::round_state::{MissedBlock, RoundDelegate, RoundReward, RoundState};
 use crate::stores::state::{StateStore, Totals};
 use crate::undo::BlockUndo;
@@ -293,5 +294,29 @@ impl State {
     /// The undo records of the applied blocks, oldest first.
     pub fn journal(&self) -> &[BlockUndo] {
         &self.journal
+    }
+}
+
+/// The state read back from the store (see [`crate::persist`]).
+impl State {
+    /// The record of the tip's state besides the wallets.
+    pub fn state_record(&self) -> StateRecord {
+        todo!("the state's record")
+    }
+
+    /// The state made of what the store holds: the genesis block, the last block, the wallets
+    /// read back from their records, the state record, and the undo record of every block from
+    /// height 2 to the tip, in order. Refused when the parts do not make a consistent state (see
+    /// [`crate::persist`]); the state is then to be replayed from the genesis block.
+    pub fn restore(
+        genesis: Block,
+        last: Block,
+        wallets: WalletRepository,
+        record: StateRecord,
+        journal: Vec<BlockUndo>,
+        milestones: &Milestones,
+    ) -> Result<State, RestoreError> {
+        let _ = (genesis, last, wallets, record, journal, milestones);
+        todo!("restore and check the state")
     }
 }

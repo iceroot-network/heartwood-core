@@ -1,0 +1,28 @@
+[package]
+name = "heartwood-pool"
+description = "The transaction pool of Heartwood Core: admission with the reference's checks and messages, per-sender wallet views, pool.sqlite storage, re-adds, clean-up, collation and the node-local record of online delegates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+heartwood-crypto.workspace = true
+heartwood-kernel.workspace = true
+heartwood-state.workspace = true
+heartwood-transactions.workspace = true
+indexmap.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+# The tests build signed transactions with the oracle's fixed aux and drive the cooldown with the
+# kernel's manual clock.
+[dev-dependencies]
+heartwood-crypto = { workspace = true, features = ["fixed-aux", "genesis"] }
+heartwood-kernel = { workspace = true, features = ["difftest"] }
+hex.workspace = true

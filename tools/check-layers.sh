@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# check-layers.sh: the dependency edges between the workspace's crates follow the layer map, and
-# no async runtime, storage or HTTP crate is in the dependency tree of the consensus crates.
+# check-layers.sh: the dependency edges between the workspace's crates follow the layer map, no
+# async runtime, storage or HTTP crate is in the dependency tree of the consensus crates, and only
+# the store and the pool use SQLite directly.
 #
 #   tools/check-layers.sh
 #
@@ -18,11 +19,16 @@ declare -A ALLOWED=(
     [heartwood-state]="heartwood-crypto heartwood-kernel"
     [heartwood-transactions]="heartwood-crypto heartwood-kernel heartwood-state"
     [heartwood-p2p-wire]="heartwood-crypto heartwood-kernel"
-    [heartwood-difftest]="heartwood-crypto heartwood-kernel heartwood-logger heartwood-p2p-wire heartwood-state heartwood-transactions"
+    [heartwood-database]="heartwood-crypto heartwood-kernel"
+    [heartwood-pool]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions"
+    [heartwood-blockchain]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions heartwood-database"
+    [heartwood-difftest]="heartwood-crypto heartwood-kernel heartwood-logger heartwood-p2p-wire heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-blockchain"
 )
 # The consensus crates, and the crates none of them may pull in.
 CONSENSUS="heartwood-kernel heartwood-state heartwood-transactions"
 FORBIDDEN="tokio rusqlite axum hyper"
+# The only workspace crates that may depend on SQLite directly (normal dependencies).
+SQLITE_USERS="heartwood-database heartwood-pool"
 
 fail=0
 metadata=$(mktemp)
@@ -61,5 +67,19 @@ for crate in $CONSENSUS; do
         fi
     done
 done
+# The crates that depend on rusqlite directly: the lines of depth 1 of its inverted tree.
+direct=$({ cargo tree --locked --offline --workspace -i rusqlite -e normal --depth 1 \
+    --prefix depth --format '{p}' 2>/dev/null || true; } |
+    awk '/^1/ { sub(/^1/, ""); print $1 }' | sort -u)
+for crate in $direct; do
+    case " $SQLITE_USERS " in
+        *" $crate "*) ;;
+        *) echo "check-layers: $crate depends on rusqlite directly; only $SQLITE_USERS may" >&2; fail=1 ;;
+    esac
+done
+# shellcheck disable=SC2086,SC2116  # the list on one line
+users=$(echo $direct)
+echo "check-layers: rusqlite is used directly by ${users:-no crate}"
+
 [ "$fail" = 0 ] && echo "check-layers: every edge follows the layers; no $FORBIDDEN in $CONSENSUS"
 exit "$fail"

@@ -7,6 +7,8 @@
 #   make vectors-install  copy the container run into each crate's tests/vectors
 #   make l1             the L1 properties against the oracle
 #   make corpus-import corpus-judge l2 l2-synthetic   the L2 chains: import, judge, replay
+#   make l2-restart crash-test   the L2 chains restarted at planned heights, and killed mid-commit
+#   make pool-bench     the cost of the pool's per-sender views and of the store's commit
 #
 # Settings for this machine (SOLAR_REPO, LOCAL_SOLAR, TOOLCHAIN_ENV, ...) go in local.mk, which is
 # git-ignored, or on the command line: make e2e SOLAR_REPO=/path/to/solar-core-ref
@@ -38,8 +40,8 @@ DEVNET_GENERATOR ?=
 GENERATOR_ARG := $(if $(DEVNET_GENERATOR),--devnet-generator '$(DEVNET_GENERATOR)',)
 # The vector classes of each crate: crate=class prefixes. vectors-install writes each crate's
 # classes, with their own MANIFEST.sha256, into packages/<crate>/tests/vectors.
-VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12 kernel=V09-rounds,V16 logger=V20 \
-                 state=V08,V09-shuffle,V15,V18 transactions=V17,V19 p2p-wire=V13
+VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12,V22 kernel=V09-rounds,V16,V23 \
+                 logger=V20 pool=V21 state=V08,V09-shuffle,V15,V18 transactions=V17,V19 p2p-wire=V13
 # L1: cases per property, the generator's seed, the properties (P1 to P9 or their names, comma
 # separated; all when empty).
 L1_CASES      ?= 256
@@ -53,16 +55,25 @@ NAME          ?=
 ARCHIVE       ?=
 CORPUS_SEED   ?=
 DUMP          ?=
+# L2 restarts and the store: TO cuts the corpus at a height; RESTARTS is `every` (a restart at
+# every height) or `rounds` (the round ends, the first blocks of rounds and 20 seeded heights),
+# which the judge writes into the corpus's restart-plan.json; KILLS is the crash test's number of
+# kills.
+TO            ?=
+RESTARTS      ?=
+KILLS         ?= 200
 # Where the oracle of l1, corpus-judge and l2-synthetic runs: the image by default, or
 # ORACLE_ARGS='--solar-dir $(LOCAL_SOLAR)' for a local reference.
 ORACLE_ARGS   ?= --image $(IMAGE)
 DIFFTEST      := target/debug/difftest
 # The packages whose builds are release artefacts, each built on its own (cargo build -p). None of
 # them may enable a test seam (SEAMS, crate:feature); `make release-check` checks it.
-RELEASE_PACKAGES ?= heartwood-crypto heartwood-kernel heartwood-logger heartwood-state heartwood-transactions
+RELEASE_PACKAGES ?= heartwood-crypto heartwood-kernel heartwood-logger heartwood-state heartwood-transactions \
+                    heartwood-database heartwood-pool heartwood-blockchain
 SEAMS         := heartwood-crypto:fixed-aux heartwood-kernel:difftest
 # The node's crates besides heartwood-crypto, tested and linted each on its own.
-NODE_CRATES   := heartwood-kernel heartwood-logger heartwood-state heartwood-transactions
+NODE_CRATES   := heartwood-kernel heartwood-logger heartwood-state heartwood-transactions \
+                 heartwood-database heartwood-pool heartwood-blockchain
 empty         :=
 space         := $(empty) $(empty)
 # The cargo-fuzz targets, a package of their own outside the workspace.
@@ -77,7 +88,8 @@ need-name = $(if $(NAME),,$(error set NAME, the corpus under CORPUS=$(CORPUS)))
 
 .PHONY: help check build clippy fmt fmt-check test release-check oracle-context oracle-image \
         oracle-save vectors vectors-local vectors-diff vectors-install l0 ping test-oracle e2e \
-        l1 corpus-import corpus-judge corpus-verify l2 l2-synthetic layers lines lines-if-tokei
+        l1 corpus-import corpus-judge corpus-verify l2 l2-synthetic l2-restart crash-test pool-bench \
+        layers lines lines-if-tokei
 
 help: ## this list
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | awk -F'\t' '{ printf "  make %-15s %s\n", $$1, $$2 }'
@@ -228,6 +240,18 @@ l2-synthetic: build ## L2 of CORPUS/NAME with the synthetic blocks on top (needs
 	$(need-name)
 	$(need-image)
 	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --synthetic $(ORACLE_ARGS)
+
+l2-restart: build ## L2 of CORPUS/NAME with restarts at the planned heights, both ways (TO=H)
+	$(need-name)
+	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --restart $(if $(TO),--to $(TO))
+
+crash-test: build ## CORPUS/NAME replayed through the store in a child process killed KILLS times
+	$(need-name)
+	$(DIFFTEST) store crash $(CORPUS)/$(NAME) --kills $(KILLS)
+
+pool-bench: ## the cost of the pool's per-sender views and of the store's commit (release build)
+	$(TOOLCHAIN) && cargo test --release --locked -p heartwood-pool --test view_cost -- --ignored --nocapture
+	$(TOOLCHAIN) && cargo test --release --locked -p heartwood-blockchain --test commit_cost -- --ignored --nocapture
 
 layers: ## crate edges follow the layers; no async, storage or HTTP crate in the consensus crates
 	$(TOOLCHAIN) && tools/check-layers.sh

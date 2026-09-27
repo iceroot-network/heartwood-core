@@ -4,7 +4,8 @@
 //! writes JSON with `JSON.stringify`, which prints numbers with `Number.prototype.toString`. This
 //! module is the only place in the crate that models either, together with the two other parts of
 //! JavaScript that decide how a parsed JSON value behaves: truthiness and the order in which an
-//! object's keys are enumerated.
+//! object's keys are enumerated. It also writes numbers as `toLocaleString` does in English,
+//! which the reference's messages use for amounts and counts.
 
 use serde_json::{Map, Number, Value};
 
@@ -319,6 +320,22 @@ fn write_string(out: &mut String, text: &str) {
         }
     }
     out.push('"');
+}
+
+/// `value.toLocaleString("en", {minimumFractionDigits: 0, maximumFractionDigits})`: the
+/// double's exact value rounded to `max_fraction_digits` fraction digits, a tie away from zero,
+/// trailing zeros removed, the integer part grouped by three with commas, and a leading `-` for
+/// a negative value.
+pub fn to_locale_fixed(value: f64, max_fraction_digits: u8) -> String {
+    let _ = (value, max_fraction_digits);
+    todo!("toLocaleString with fraction digits")
+}
+
+/// An integer's `toLocaleString()` in English: its digits grouped by three with commas, and a
+/// leading `-` for a negative value.
+pub fn to_locale_integer(value: i128) -> String {
+    let _ = value;
+    todo!("toLocaleString of an integer")
 }
 
 #[cfg(test)]

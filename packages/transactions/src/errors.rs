@@ -1,9 +1,10 @@
 //! Error types of the crate.
 //!
-//! [`TransactionError`] has one variant per refusal of the handlers, and
-//! [`TransactionError::class`] names the reference's error class for it, which the differential
-//! tests compare (never the message). [`PoolError`] is a refusal at pool entry, with the pool's
-//! error code.
+//! [`TransactionError`] has one variant per refusal of the handlers:
+//! [`TransactionError::class`] names the reference's error class for it, and
+//! [`TransactionError::message`] writes the reference's message, with amounts in the network's
+//! symbol. [`PoolError`] is a refusal at pool entry, with the pool's error code; its `Display` is
+//! the reference's message.
 
 use heartwood_crypto::TransactionType;
 use heartwood_crypto::identities::Address;
@@ -192,6 +193,17 @@ impl TransactionError {
             TransactionError::UndoMismatch => "Error",
             TransactionError::State(error) => error.class(),
         }
+    }
+}
+
+impl TransactionError {
+    /// The reference's message for this refusal, as the pool reports it after
+    /// "`<transaction>` cannot be applied: ". Amounts are written as the reference's
+    /// `formatSatoshi` writes them, with the network's token `symbol`; counts as its
+    /// `toLocaleString`. `Display` stays a log text with plain numbers.
+    pub fn message(&self, symbol: &str) -> String {
+        let _ = symbol;
+        todo!("the reference's message")
     }
 }
 

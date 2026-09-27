@@ -24,6 +24,7 @@ use heartwood_kernel::{RoundInfo, calculate_round, is_new_round};
 use crate::dpos::dpos::set_rank;
 use crate::dpos::{build_delegate_ranking, set_delegates_round};
 use crate::errors::{RewardError, RoundError};
+use crate::persist::{RestoreError, RoundRecord};
 use crate::undo::RoundUndo;
 use crate::wallets::{Delegate, Wallet, WalletRepository};
 
@@ -248,6 +249,21 @@ impl RoundState {
             already_forged,
             reward,
         })
+    }
+}
+
+/// The round state's record in the store (see [`crate::persist`]).
+impl RoundState {
+    /// The round state's record.
+    pub fn to_record(&self) -> RoundRecord {
+        todo!("the round's record")
+    }
+
+    /// The round state of `record`. The forging list is taken as recorded; the caller checks it
+    /// against the shuffle of the round's delegates.
+    pub fn from_record(record: RoundRecord) -> Result<RoundState, RestoreError> {
+        let _ = record;
+        todo!("the record's round")
     }
 }
 

@@ -1,0 +1,8 @@
+# Lints of heartwood-database. Rows are read back in an order the callers observe, and the store
+# reads no clock: no hash-ordered collections and no wall-clock time.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order differs between runs; use IndexMap or BTreeMap" },
+    { path = "std::collections::HashSet", reason = "iteration order differs between runs; use IndexSet or BTreeSet" },
+    { path = "std::time::SystemTime", reason = "the store takes every time as an argument" },
+    { path = "std::time::Instant", reason = "the store takes every time as an argument" },
+]
