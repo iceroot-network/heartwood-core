@@ -139,8 +139,11 @@ impl Database {
     }
 }
 
+/// The columns of `blocks`, in the order [`read_block`] reads them.
+pub(crate) const COLUMNS: &str = columns!();
+
 /// A row of `blocks`, selected with its columns in their order.
-fn read_block(row: &Row<'_>) -> Result<BlockRow, DatabaseError> {
+pub(crate) fn read_block(row: &Row<'_>) -> Result<BlockRow, DatabaseError> {
     let columns = Columns::new("blocks", row);
     Ok(BlockRow {
         height: columns.uint(0)?,
