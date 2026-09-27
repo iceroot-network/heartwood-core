@@ -1,0 +1,96 @@
+[
+ {
+  "name": "facts/blocks-last",
+  "path": "/api/blocks/last",
+  "bind": {
+   "tipHeight": "data.height",
+   "tipId": "data.id"
+  }
+ },
+ {
+  "name": "facts/transactions",
+  "path": "/api/transactions",
+  "query": "limit=100",
+  "bind": {
+   "tx": "data.0.id",
+   "txSender": "data.0.sender",
+   "txSenderKey": "data.0.senderPublicKey",
+   "txFee": "data.0.fee",
+   "txTimestamp": "data.0.timestamp.epoch",
+   "txHeight": "data.0.blockHeight"
+  }
+ },
+ {
+  "name": "facts/transfer-with-memo",
+  "path": "/api/transactions",
+  "query": "typeGroup=1&type=6&memo=%25&limit=1&orderBy=timestamp:asc",
+  "bind": {
+   "memo": "data.0.memo",
+   "memoTx": "data.0.id",
+   "recipient": "data.0.asset.transfers.0.recipientId",
+   "transferHeight": "data.0.blockHeight",
+   "transferBlock": "data.0.blockId"
+  }
+ },
+ {
+  "name": "facts/vote",
+  "path": "/api/transactions",
+  "query": "typeGroup=2&type=2&limit=1&orderBy=timestamp:asc",
+  "bind": {
+   "voter": "data.0.sender",
+   "voteTx": "data.0.id"
+  }
+ },
+ {
+  "name": "facts/burn",
+  "path": "/api/transactions",
+  "query": "typeGroup=2&type=0&limit=1&orderBy=timestamp:asc",
+  "bind": {
+   "burnAmount": "data.0.amount",
+   "burner": "data.0.sender"
+  }
+ },
+ {
+  "name": "facts/registration",
+  "path": "/api/transactions",
+  "query": "typeGroup=1&type=2&limit=1&orderBy=timestamp:desc",
+  "bind": {
+   "delegateName": "data.0.asset.delegate.username",
+   "delegateAddress": "data.0.sender",
+   "delegateKey": "data.0.senderPublicKey"
+  }
+ },
+ {
+  "name": "facts/genesis-transactions",
+  "path": "/api/blocks/1/transactions",
+  "query": "limit=1&orderBy=sequence:asc",
+  "bind": {
+   "gTx": "data.0.id",
+   "gSender": "data.0.sender",
+   "gKey": "data.0.senderPublicKey",
+   "gBlock": "data.0.blockId"
+  }
+ },
+ {
+  "name": "facts/genesis-registration",
+  "path": "/api/blocks/1/transactions",
+  "query": "typeGroup=1&type=2&limit=1&orderBy=sequence:asc",
+  "bind": {
+   "gName": "data.0.asset.delegate.username"
+  }
+ },
+ {
+  "name": "facts/peers",
+  "path": "/api/peers",
+  "bind": {
+   "peerIp": "data.*.ip"
+  }
+ },
+ {
+  "name": "facts/pool",
+  "path": "/api/transactions/unconfirmed",
+  "bind": {
+   "poolTx": "data.0.id"
+  }
+ }
+]

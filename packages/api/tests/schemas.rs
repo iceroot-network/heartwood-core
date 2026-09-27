@@ -1,0 +1,274 @@
+//! The query grammar, the routes' validation and the list envelope, against facts of the reference
+//! implementation's server (its answers on the committed devnet chain, and its query plugins and
+//! pagination run on their own). The class V28 of the harness compares the grammar and the
+//! pagination with the reference record by record.
+
+use std::net::{IpAddr, Ipv4Addr};
+
+use heartwood_api::pagination::{Pagination, envelope};
+use heartwood_api::schemas::{
+    PARSED, parse_query, validate_params, validate_payload, validate_query,
+};
+use heartwood_api::{ApiRequest, RouteId};
+use serde_json::{Map, Value, json};
+
+fn params(name: &str, value: &str) -> Map<String, Value> {
+    let mut params = Map::new();
+    params.insert(name.to_owned(), Value::from(value));
+    params
+}
+
+fn status(result: Result<Value, heartwood_api::ApiError>) -> u16 {
+    result.map_or_else(|error| error.status, |_| 200)
+}
+
+fn query(route: RouteId, raw: &str) -> Result<Value, heartwood_api::ApiError> {
+    validate_query(route, &parse_query(raw))
+}
+
+#[test]
+fn queries_parse_as_the_reference_server_reads_them() {
+    let cases = [
+        ("", json!({})),
+        ("a=1,2&b.c=3", json!({"a": ["1", "2"], "b": {"c": "3"}})),
+        ("b=1&2=x&1=y", json!({"1": "y", "2": "x", "b": "1"})),
+        ("a=1&a=2,3", json!({"a": ["1", "2,3"]})),
+        ("a.b=2&a=1", json!({"a": "1"})),
+        ("a=1&a.b=2", json!({"a": {"b": "2"}})),
+        ("a=1,2&a.0=x", json!({"a": ["x", "2"]})),
+        (
+            "x=%FF&y=%E2%82%AC&z=%zz+1",
+            json!({"x": "\u{fffd}", "y": "€", "z": "%zz 1"}),
+        ),
+        ("a%2Eb=1&c=%2C", json!({"a": {"b": "1"}, "c": ["", ""]})),
+        ("__proto__=1&constructor.x=2&k", json!({"k": ""})),
+        ("&&=x&", json!({"": "x"})),
+    ];
+    for (raw, expected) in cases {
+        assert_eq!(parse_query(raw), expected, "{raw}");
+        let keys = |v: &Value| v.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>());
+        assert_eq!(
+            keys(&parse_query(raw)),
+            keys(&expected),
+            "key order of {raw}"
+        );
+    }
+}
+
+#[test]
+fn queries_on_which_the_reference_plugins_throw_are_500_everywhere() {
+    for raw in ["a=1&a=,", "limit=1,2&limit.length=1"] {
+        assert_eq!(parse_query(raw), Value::Null, "{raw}");
+        for route in [RouteId::TransactionsIndex, RouteId::NodeStatus] {
+            assert_eq!(status(validate_query(route, &parse_query(raw))), 500);
+        }
+    }
+}
+
+#[test]
+fn only_a_thousand_pairs_are_read() {
+    let raw: Vec<String> = (0..1001).map(|i| format!("k{i}=1")).collect();
+    let parsed = parse_query(&raw.join("&"));
+    assert_eq!(parsed.as_object().map(Map::len), Some(1000));
+    assert!(parsed.get("k1000").is_none());
+}
+
+#[test]
+fn transaction_lists_get_defaults_after_the_given_keys() {
+    let validated = query(RouteId::TransactionsIndex, "limit=05&amount.to=7").unwrap();
+    let keys: Vec<&String> = validated.as_object().unwrap().keys().collect();
+    assert_eq!(
+        keys,
+        ["limit", "amount", "orderBy", "transform", "page", PARSED]
+    );
+    assert_eq!(validated["limit"], json!(5));
+    assert_eq!(validated["amount"], json!({"to": 7}));
+    assert_eq!(
+        validated["orderBy"],
+        json!(["timestamp:desc", "sequence:desc"])
+    );
+    assert_eq!(validated["transform"], json!(true));
+    assert_eq!(
+        validated[PARSED],
+        json!({"limit": "05", "amount": {"to": "7"}})
+    );
+}
+
+#[test]
+fn the_reference_accepts_and_refuses_these_queries() {
+    use RouteId::*;
+    let cases = [
+        (BlocksLast, "transform=TRUE", 200),
+        (BlocksLast, "transform=1", 422),
+        (BlocksLast, "transform=", 422),
+        (BlocksLast, "page=1", 422),
+        (
+            TransactionsIndex,
+            "orderBy=timestamp:asc&orderBy=sequence:asc",
+            200,
+        ),
+        (TransactionsIndex, "orderBy=Timestamp:desc", 422),
+        (TransactionsIndex, "orderBy=timestamp:DESC", 422),
+        (TransactionsIndex, "orderBy=timestamp", 422),
+        (TransactionsIndex, "sequence=0", 422),
+        (TransactionsIndex, "amount=9007199254740993", 422),
+        (TransactionsIndex, "amount.from=1&amount.to=", 422),
+        (TransactionsIndex, "amount.foo=1", 422),
+        (TransactionsIndex, "limit=1e1", 200),
+        (TransactionsIndex, "limit= 5 ", 200),
+        (TransactionsIndex, "memo=a,b", 200),
+        (TransactionsIndex, "asset=x", 422),
+        (TransactionsIndex, "__proto__=1&limit=1", 200),
+        (PeersIndex, "orderBy=Amount:ASC", 200),
+        (PeersIndex, "transform=false", 422),
+        (PeersIndex, "ip=198.51.100.0/24", 200),
+        (PeersIndex, "ip=notanip", 422),
+        (PeersIndex, "version=4.3.1,4.3.0", 422),
+        (TransactionsUnconfirmed, "transform=0", 422),
+        (NodeStatus, "foo=bar&limit=0", 200),
+        (WalletsShow, "foo=bar", 200),
+    ];
+    for (route, raw, expected) in cases {
+        assert_eq!(status(query(route, raw)), expected, "{route:?} {raw}");
+    }
+}
+
+#[test]
+fn path_parameters_follow_each_route() {
+    use RouteId::*;
+    let cases = [
+        (BlocksShow, "id", "1e2", true),
+        (BlocksShow, "id", "007", true),
+        (BlocksShow, "id", " 7", true),
+        (BlocksShow, "id", "0", false),
+        (BlocksShow, "id", "1.5", false),
+        (BlocksShow, "id", "abc", false),
+        (BlocksShow, "id", &"A".repeat(64), true),
+        (BlocksTransactions, "id", "a", true),
+        (TransactionsShow, "id", "xyz", false),
+        (TransactionsShowUnconfirmed, "id", &"0".repeat(64), true),
+        (PeersShow, "ip", "::1", true),
+        (PeersShow, "ip", "notanip", false),
+        (WalletsShow, "id", "UPPER", false),
+        (WalletsShow, "id", "a.b", true),
+        (WalletsShow, "id", &"a".repeat(35), false),
+        (WalletsTransactions, "id", "genesis_1", true),
+    ];
+    for (route, name, value, accepted) in cases {
+        let result = validate_params(route, &params(name, value));
+        assert_eq!(result.is_ok(), accepted, "{route:?} {value:?}");
+        if let Err(error) = result {
+            assert_eq!(error.status, 422);
+        }
+    }
+}
+
+#[test]
+fn submissions_are_one_to_forty_objects() {
+    let route = RouteId::TransactionsStore;
+    let refused = [
+        json!({}),
+        json!({"transactions": []}),
+        json!({"transactions": [1]}),
+        json!({"transactions": [{}], "x": 1}),
+        json!({"transactions": vec![json!({}); 41]}),
+        json!("hello"),
+        Value::Null,
+    ];
+    for payload in refused {
+        assert_eq!(status(validate_payload(route, &payload)), 422, "{payload}");
+    }
+    let accepted = json!({"transactions": vec![json!({}); 40]});
+    assert_eq!(validate_payload(route, &accepted).unwrap(), accepted);
+}
+
+fn meta(route: RouteId, path: &str, raw: &str, total: u64) -> Value {
+    let validated = query(route, raw).unwrap();
+    let pagination = Pagination::of(&validated);
+    let count = pagination
+        .limit
+        .min(total.saturating_sub(pagination.offset));
+    let request = ApiRequest {
+        route,
+        params: Map::new(),
+        path: path.to_owned(),
+        query: validated,
+        payload: None,
+        client: IpAddr::V4(Ipv4Addr::LOCALHOST),
+    };
+    let data = vec![Value::Null; usize::try_from(count).unwrap()];
+    envelope(&request, pagination, total, false, data)["meta"].clone()
+}
+
+#[test]
+fn links_keep_the_given_spelling_and_order_last() {
+    let meta = meta(
+        RouteId::TransactionsIndex,
+        "/api/transactions",
+        "limit=1",
+        149,
+    );
+    assert_eq!(
+        meta,
+        json!({
+            "totalCountIsEstimate": false, "count": 1, "pageCount": 149, "totalCount": 149,
+            "next": "/transactions?limit=1&transform=true&page=2", "previous": null,
+            "self": "/transactions?limit=1&transform=true&page=1",
+            "first": "/transactions?limit=1&transform=true&page=1",
+            "last": "/transactions?limit=1&transform=true&page=149",
+        })
+    );
+    let meta = self::meta(
+        RouteId::TransactionsIndex,
+        "/api/transactions/",
+        "limit=05&page=02&transform=FALSE&orderBy=amount:asc",
+        149,
+    );
+    assert_eq!(
+        meta["next"],
+        "/transactions?limit=05&page=3&transform=FALSE&orderBy=amount:asc"
+    );
+    let meta = self::meta(RouteId::TransactionsIndex, "/api/transactions", "", 0);
+    assert_eq!(
+        (&meta["pageCount"], &meta["next"], &meta["last"]),
+        (
+            &json!(1),
+            &Value::Null,
+            &json!("/transactions?transform=true&page=1&limit=100")
+        )
+    );
+}
+
+#[test]
+fn offset_zero_is_ignored_and_another_offset_replaces_the_page() {
+    let page = |raw: &str| Pagination::of(&query(RouteId::TransactionsIndex, raw).unwrap());
+    assert_eq!(
+        page("offset=0&page=3&limit=10"),
+        Pagination {
+            offset: 20,
+            limit: 10
+        }
+    );
+    assert_eq!(
+        page("offset=5&page=3&limit=10"),
+        Pagination {
+            offset: 5,
+            limit: 10
+        }
+    );
+    assert_eq!(
+        page(""),
+        Pagination {
+            offset: 0,
+            limit: 100
+        }
+    );
+    let meta = meta(
+        RouteId::PeersIndex,
+        "/api/peers",
+        "offset=0&page=2&limit=1",
+        3,
+    );
+    assert_eq!(meta["self"], "/peers?offset=0&page=2&limit=1");
+    assert_eq!(meta["previous"], "/peers?offset=0&page=1&limit=1");
+}

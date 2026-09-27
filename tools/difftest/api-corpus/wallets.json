@@ -1,0 +1,1259 @@
+[
+ {
+  "name": "wallets/show/by-address",
+  "path": "/api/wallets/${txSender}"
+ },
+ {
+  "name": "wallets/show/by-public-key",
+  "path": "/api/wallets/${txSenderKey}"
+ },
+ {
+  "name": "wallets/show/by-username",
+  "path": "/api/wallets/genesis_1"
+ },
+ {
+  "name": "wallets/show/registered-name",
+  "path": "/api/wallets/${delegateName}"
+ },
+ {
+  "name": "wallets/show/registered-address",
+  "path": "/api/wallets/${delegateAddress}"
+ },
+ {
+  "name": "wallets/show/registered-key",
+  "path": "/api/wallets/${delegateKey}"
+ },
+ {
+  "name": "wallets/show/recipient",
+  "path": "/api/wallets/${recipient}"
+ },
+ {
+  "name": "wallets/show/burner",
+  "path": "/api/wallets/${burner}"
+ },
+ {
+  "name": "wallets/show/voter",
+  "path": "/api/wallets/${voter}"
+ },
+ {
+  "name": "wallets/show/genesis-sender",
+  "path": "/api/wallets/${gSender}"
+ },
+ {
+  "name": "wallets/show/unknown-valid-address",
+  "path": "/api/wallets/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2"
+ },
+ {
+  "name": "wallets/show/invalid-address",
+  "path": "/api/wallets/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxkia"
+ },
+ {
+  "name": "wallets/show/upper-address",
+  "path": "/api/wallets/${txSender|upper}"
+ },
+ {
+  "name": "wallets/show/unknown-username",
+  "path": "/api/wallets/nosuchdelegate1"
+ },
+ {
+  "name": "wallets/show/unknown-public-key",
+  "path": "/api/wallets/0368d294e20ada56bd4f14084f7aa3552534b1a0852aff6aafdcf5dfce303b4956"
+ },
+ {
+  "name": "wallets/show/upper-text",
+  "path": "/api/wallets/UPPER"
+ },
+ {
+  "name": "wallets/show/too-long",
+  "path": "/api/wallets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "wallets/show/dots",
+  "path": "/api/wallets/a.b"
+ },
+ {
+  "name": "wallets/show/ignored-query",
+  "path": "/api/wallets/${txSender}",
+  "query": "foo=bar"
+ },
+ {
+  "name": "wallets/transactions/username",
+  "path": "/api/wallets/genesis_1/transactions"
+ },
+ {
+  "name": "wallets/transactions/registered",
+  "path": "/api/wallets/${delegateName}/transactions"
+ },
+ {
+  "name": "wallets/transactions/unknown-valid-address",
+  "path": "/api/wallets/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2/transactions"
+ },
+ {
+  "name": "wallets/transactions/invalid-address",
+  "path": "/api/wallets/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxkia/transactions"
+ },
+ {
+  "name": "wallets/transactions/unknown-username",
+  "path": "/api/wallets/nosuchdelegate1/transactions"
+ },
+ {
+  "name": "wallets/transactions/upper-text",
+  "path": "/api/wallets/UPPER/transactions"
+ },
+ {
+  "name": "wallets/transactions/address-overridden",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${recipient}"
+ },
+ {
+  "name": "wallets/transactions/sender/default",
+  "path": "/api/wallets/${txSender}/transactions"
+ },
+ {
+  "name": "wallets/transactions/sender/transform-false",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "transform=false"
+ },
+ {
+  "name": "wallets/transactions/sender/limit-10",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "limit=10"
+ },
+ {
+  "name": "wallets/transactions/sender/page-2",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "wallets/transactions/sender/page-3-raw",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "page=3&limit=10&transform=false"
+ },
+ {
+  "name": "wallets/transactions/sender/offset-5",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "wallets/transactions/sender/offset-0-ignored",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "offset=0&page=2&limit=10"
+ },
+ {
+  "name": "wallets/transactions/sender/offset-over-page",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "offset=5&page=3&limit=10"
+ },
+ {
+  "name": "wallets/transactions/sender/page-beyond",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "page=999"
+ },
+ {
+  "name": "wallets/transactions/sender/limit-100",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "limit=100"
+ },
+ {
+  "name": "wallets/transactions/sender/spelling-kept",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "limit=05&page=02&transform=FALSE"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/limit-0",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "limit=0"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/limit-101",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "limit=101"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/limit-negative",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "limit=-1"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/limit-text",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "limit=abc"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/limit-fraction",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "limit=1.5"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/page-0",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "page=0"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/page-negative",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "page=-1"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/offset-negative",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "offset=-1"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/offset-text",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "offset=abc"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/limit-twice",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "limit=5&limit=6"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/unknown-key",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "foo=bar"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/unknown-nested",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "a.b=1"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/empty-key",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "limit=5&=x"
+ },
+ {
+  "name": "wallets/transactions/sender/refused/limit-trailing-comma",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "limit=1,"
+ },
+ {
+  "name": "wallets/transactions/sender/order/timestamp:desc,sequence:desc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=timestamp:desc,sequence:desc"
+ },
+ {
+  "name": "wallets/transactions/sender/order/timestamp:asc,sequence:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=timestamp:asc,sequence:asc"
+ },
+ {
+  "name": "wallets/transactions/sender/order/blockHeight:desc,sequence:desc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=blockHeight:desc,sequence:desc"
+ },
+ {
+  "name": "wallets/transactions/sender/order/id:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=id:asc"
+ },
+ {
+  "name": "wallets/transactions/sender/order/id:desc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=id:desc"
+ },
+ {
+  "name": "wallets/transactions/sender/order/fee:desc,id:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=fee:desc,id:asc"
+ },
+ {
+  "name": "wallets/transactions/sender/order/two-keys",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=timestamp:asc&orderBy=sequence:asc"
+ },
+ {
+  "name": "wallets/transactions/sender/order/page-2",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=timestamp:asc,sequence:asc&page=2&limit=5"
+ },
+ {
+  "name": "wallets/transactions/sender/order/timestamp:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=timestamp:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/amount:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=amount:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/amount:desc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=amount:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/fee:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=fee:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/nonce:desc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=nonce:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/type:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=type:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/typeGroup:desc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=typeGroup:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/blockHeight:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=blockHeight:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/sequence:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=sequence:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/version:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=version:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/memo:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=memo:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/memo:desc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=memo:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/senderPublicKey:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=senderPublicKey:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/burnedFee:desc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=burnedFee:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/recipientId:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=recipientId:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets/transactions/sender/order/senderId:asc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=senderId:asc",
+  "documented": "storeFailure"
+ },
+ {
+  "name": "wallets/transactions/sender/order/address:desc",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=address:desc",
+  "documented": "storeFailure"
+ },
+ {
+  "name": "wallets/transactions/sender/order/refused/capital-property",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=Timestamp:desc"
+ },
+ {
+  "name": "wallets/transactions/sender/order/refused/capital-direction",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=timestamp:DESC"
+ },
+ {
+  "name": "wallets/transactions/sender/order/refused/no-direction",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=timestamp"
+ },
+ {
+  "name": "wallets/transactions/sender/order/refused/empty",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy="
+ },
+ {
+  "name": "wallets/transactions/sender/order/refused/unknown",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=foo:asc"
+ },
+ {
+  "name": "wallets/transactions/sender/order/refused/bad-direction",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "orderBy=timestamp:up"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockHeight",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockHeight=${transferHeight}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockId",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockId=${transferBlock}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/sequence",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "sequence=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/timestamp",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "timestamp=${txTimestamp}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/nonce",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "nonce=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderPublicKey",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/type",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "type=6"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/typeGroup",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "typeGroup=2"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+senderId",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&senderId=${txSender}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+recipientId",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&recipientId=${recipient}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+id",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&id=${tx}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+version",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&version=3"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+blockHeight",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&blockHeight=${transferHeight}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+blockId",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&blockId=${transferBlock}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+sequence",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&sequence=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+timestamp",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&timestamp=${txTimestamp}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+nonce",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&nonce=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+senderPublicKey",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+type",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&type=6"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+typeGroup",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&typeGroup=2"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/address+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "address=${txSender}&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+recipientId",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&recipientId=${recipient}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+id",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&id=${tx}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+version",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&version=3"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+blockHeight",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&blockHeight=${transferHeight}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+blockId",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&blockId=${transferBlock}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+sequence",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&sequence=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+timestamp",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&timestamp=${txTimestamp}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+nonce",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&nonce=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+senderPublicKey",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+type",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&type=6"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+typeGroup",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&typeGroup=2"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderId+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderId=${txSender}&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+id",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&id=${tx}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+version",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&version=3"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+blockHeight",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&blockHeight=${transferHeight}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+blockId",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&blockId=${transferBlock}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+sequence",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&sequence=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+timestamp",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&timestamp=${txTimestamp}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+nonce",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&nonce=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+senderPublicKey",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+type",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&type=6"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+typeGroup",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&typeGroup=2"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/recipientId+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "recipientId=${recipient}&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+version",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&version=3"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+blockHeight",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&blockHeight=${transferHeight}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+blockId",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&blockId=${transferBlock}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+sequence",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&sequence=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+timestamp",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&timestamp=${txTimestamp}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+nonce",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&nonce=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+senderPublicKey",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+type",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&type=6"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+typeGroup",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&typeGroup=2"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/id+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "id=${tx}&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version+blockHeight",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3&blockHeight=${transferHeight}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version+blockId",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3&blockId=${transferBlock}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version+sequence",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3&sequence=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version+timestamp",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3&timestamp=${txTimestamp}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version+nonce",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3&nonce=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version+senderPublicKey",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3&senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version+type",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3&type=6"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version+typeGroup",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3&typeGroup=2"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version+memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3&memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/version+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "version=3&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockHeight+blockId",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockHeight=${transferHeight}&blockId=${transferBlock}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockHeight+sequence",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockHeight=${transferHeight}&sequence=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockHeight+timestamp",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockHeight=${transferHeight}&timestamp=${txTimestamp}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockHeight+nonce",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockHeight=${transferHeight}&nonce=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockHeight+senderPublicKey",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockHeight=${transferHeight}&senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockHeight+type",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockHeight=${transferHeight}&type=6"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockHeight+typeGroup",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockHeight=${transferHeight}&typeGroup=2"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockHeight+memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockHeight=${transferHeight}&memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockHeight+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockHeight=${transferHeight}&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockHeight+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockHeight=${transferHeight}&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockHeight+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockHeight=${transferHeight}&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockHeight+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockHeight=${transferHeight}&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockId+sequence",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockId=${transferBlock}&sequence=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockId+timestamp",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockId=${transferBlock}&timestamp=${txTimestamp}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockId+nonce",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockId=${transferBlock}&nonce=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockId+senderPublicKey",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockId=${transferBlock}&senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockId+type",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockId=${transferBlock}&type=6"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockId+typeGroup",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockId=${transferBlock}&typeGroup=2"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockId+memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockId=${transferBlock}&memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockId+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockId=${transferBlock}&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockId+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockId=${transferBlock}&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockId+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockId=${transferBlock}&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/blockId+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "blockId=${transferBlock}&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/sequence+timestamp",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "sequence=1&timestamp=${txTimestamp}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/sequence+nonce",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "sequence=1&nonce=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/sequence+senderPublicKey",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "sequence=1&senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/sequence+type",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "sequence=1&type=6"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/sequence+typeGroup",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "sequence=1&typeGroup=2"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/sequence+memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "sequence=1&memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/sequence+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "sequence=1&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/sequence+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "sequence=1&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/sequence+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "sequence=1&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/sequence+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "sequence=1&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/timestamp+nonce",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "timestamp=${txTimestamp}&nonce=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/timestamp+senderPublicKey",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "timestamp=${txTimestamp}&senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/timestamp+type",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "timestamp=${txTimestamp}&type=6"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/timestamp+typeGroup",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "timestamp=${txTimestamp}&typeGroup=2"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/timestamp+memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "timestamp=${txTimestamp}&memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/timestamp+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "timestamp=${txTimestamp}&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/timestamp+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "timestamp=${txTimestamp}&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/timestamp+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "timestamp=${txTimestamp}&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/timestamp+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "timestamp=${txTimestamp}&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/nonce+senderPublicKey",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "nonce=1&senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/nonce+type",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "nonce=1&type=6"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/nonce+typeGroup",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "nonce=1&typeGroup=2"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/nonce+memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "nonce=1&memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/nonce+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "nonce=1&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/nonce+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "nonce=1&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/nonce+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "nonce=1&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/nonce+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "nonce=1&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderPublicKey+type",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderPublicKey=${txSenderKey}&type=6"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderPublicKey+typeGroup",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderPublicKey=${txSenderKey}&typeGroup=2"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderPublicKey+memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderPublicKey=${txSenderKey}&memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderPublicKey+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderPublicKey=${txSenderKey}&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderPublicKey+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderPublicKey=${txSenderKey}&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderPublicKey+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderPublicKey=${txSenderKey}&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/senderPublicKey+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "senderPublicKey=${txSenderKey}&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/type+typeGroup",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "type=6&typeGroup=2"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/type+memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "type=6&memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/type+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "type=6&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/type+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "type=6&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/type+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "type=6&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/type+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "type=6&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/typeGroup+memo",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "typeGroup=2&memo=${memo|uri}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/typeGroup+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "typeGroup=2&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/typeGroup+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "typeGroup=2&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/typeGroup+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "typeGroup=2&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/typeGroup+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "typeGroup=2&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/memo+amount",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "memo=${memo|uri}&amount=${burnAmount}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/memo+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "memo=${memo|uri}&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/memo+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "memo=${memo|uri}&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/memo+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "memo=${memo|uri}&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/amount+fee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "amount=${burnAmount}&fee=${txFee}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/amount+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "amount=${burnAmount}&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/amount+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "amount=${burnAmount}&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/fee+burnedFee",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "fee=${txFee}&burnedFee.from=1"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/fee+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "fee=${txFee}&asset.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/transactions/sender/criteria/burnedFee+asset",
+  "path": "/api/wallets/${txSender}/transactions",
+  "query": "burnedFee.from=1&asset.delegate.username=${delegateName}"
+ }
+]
