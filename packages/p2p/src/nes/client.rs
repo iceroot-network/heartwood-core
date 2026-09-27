@@ -27,7 +27,7 @@ use tokio::time::{Instant, sleep_until};
 use crate::errors::{ProtocolError, SessionError};
 use crate::transport::{self, Dial, Reader, Received, Writer};
 
-/// The client's receive limit when no request raises it: 100 KiB.
+/// The receive limit of the connector's sessions when no request raises it: 100 KiB.
 pub const DEFAULT_MAX_PAYLOAD: usize = 100 * 1024;
 /// The request timeout until a request sets one: the connector creates its clients with 10 s.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -49,14 +49,18 @@ pub struct ConnectOptions {
     pub timeout: Duration,
     /// How many automatic reconnects follow a close, in the session's whole life.
     pub retries: u32,
+    /// The receive limit of a new connection, which every received message other than a ping
+    /// restores: the reference's `ws.maxPayload` client option.
+    pub max_payload: usize,
 }
 
 impl Default for ConnectOptions {
-    /// The connector's options: 5 s and one reconnect.
+    /// The connector's options: 5 s, one reconnect and the default receive limit.
     fn default() -> ConnectOptions {
         ConnectOptions {
             timeout: Duration::from_secs(5),
             retries: 1,
+            max_payload: DEFAULT_MAX_PAYLOAD,
         }
     }
 }
@@ -96,6 +100,7 @@ impl Session {
         let ready = Arc::new(AtomicBool::new(false));
         let mut actor = Actor {
             ready: Readiness(ready.clone()),
+            max_payload: options.max_payload,
             address,
             dial,
             on_error,
@@ -242,6 +247,8 @@ impl Drop for Readiness {
 
 struct Actor {
     ready: Readiness,
+    /// The receive limit a received message restores.
+    max_payload: usize,
     address: SocketAddr,
     dial: Dial,
     on_error: ErrorHook,
@@ -354,7 +361,7 @@ impl Actor {
     fn opened(&mut self, opened: io::Result<(Reader, Writer)>) {
         match opened {
             Ok((reader, writer)) => {
-                self.link = Link::Open(reader, writer, DEFAULT_MAX_PAYLOAD);
+                self.link = Link::Open(reader, writer, self.max_payload);
                 let id = self.track(None);
                 self.write(&Message::client_hello(id));
             }
@@ -420,7 +427,7 @@ impl Actor {
             return self.write(&Message::ping(id));
         }
         if let Link::Open(_, _, limit) = &mut self.link {
-            *limit = DEFAULT_MAX_PAYLOAD;
+            *limit = self.max_payload;
         }
         let error = (update.status_code >= 400).then(|| {
             let text = update

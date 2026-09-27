@@ -8,7 +8,8 @@
 //! - Requests: type post with the route id as the path and the next id; responses are matched by
 //!   id in any order. The request timeout and the receive limit are connection-wide settings
 //!   that each request sets before it is sent; a pending request keeps the timeout it was sent
-//!   with, and every received message other than a ping resets the limit to 100 KiB.
+//!   with, and every received message other than a ping resets the limit to the session's own
+//!   (100 KiB for the connector's sessions, 20 MiB for a forger's).
 //! - A response with status 400 or more fails its request with the first 512 bytes of its
 //!   payload as text. A response to an unknown id, a text frame, a frame that does not parse, a
 //!   type other than hello, request or ping, and two server pings less than 1 s apart are
