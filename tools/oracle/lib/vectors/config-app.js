@@ -79,6 +79,7 @@ module.exports = async function configAppVectors({ rec, shared }) {
         ignoreMinimumNetworkReach: "True",
     });
     await options("p2p arrays replaced, unknown keys kept", P2P, { whitelist: ["192.0.2.*"], blacklist: ["198.51.100.1"], minimumVersions: [">=4.3.0"], gossip: { any: 1 } });
+    await options("p2p -0 reads as 0", P2P, { minimumNetworkReach: "-0", maxPeerSequentialErrors: "-0.0" });
     await options("p2p empty lists", P2P, { whitelist: [], minimumVersions: [] });
     await options("p2p address forms", P2P, { server: { hostname: "::" }, remoteAccess: ["10.0.0.0/8", "2001:db8::/32"], dns: ["192.0.2.53"] });
     for (const [name, opts, env] of [
@@ -89,7 +90,6 @@ module.exports = async function configAppVectors({ rec, shared }) {
         ["reach -1 from a variable", {}, { CORE_P2P_MIN_NETWORK_REACH: "-1" }],
         ["reach 1.5", { minimumNetworkReach: 1.5 }],
         ["reach as a fraction", { minimumNetworkReach: "1.50" }],
-        ["reach -0", { minimumNetworkReach: "-0" }],
         ["rate limit 0", { rateLimit: 0 }],
         ["whitelist not a list", { whitelist: "*" }],
         ["blacklist with an empty entry", { blacklist: [""] }],
