@@ -212,7 +212,8 @@ where
             .emit(peer.address(), route, payload, timeout, limit);
         let failure: Failure = match reply.await.map(|bytes| decode(&bytes)) {
             Err(error) => (error.js_class(), Violation::of_session(&error), None),
-            // An amount beyond 128 bits, which the reference reads and its schema then refuses.
+            // A codec refusal has its class; an amount beyond 128 bits has none (the reference
+            // reads it, and its reply schema then refuses it).
             Ok(Err(error)) => (
                 error.js_class().unwrap_or(VALIDATION),
                 Some(Violation::of_decode(error)),
