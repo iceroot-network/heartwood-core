@@ -264,6 +264,22 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
 /// The outcomes of the reference in a pool session's answer, counted: each error code, an
 /// `ERR_APPLY` of the cold-wallet refusal apart (listed even when it never occurs, since whether
 /// the pool can reach it is a question the report answers), and every accepted entry.
+/// The reference's action in a decision case (`decide forged`, `decide stop`, ...), a refusal
+/// with its reason (`decide refused: quorum`), and an error answer by its class.
+fn decision_outcomes(expected: &Expected, seen: &mut BTreeMap<String, usize>) {
+    let key = match expected {
+        Expected::Output(output) => {
+            let action = output["action"].as_str().unwrap_or("?");
+            match output["reason"].as_str() {
+                Some(reason) => format!("decide {action}: {reason}"),
+                None => format!("decide {action}"),
+            }
+        }
+        Expected::Error(error) => format!("decide error: {}", error.class),
+    };
+    *seen.entry(key).or_insert(0) += 1;
+}
+
 fn pool_outcomes(expected: &Expected, seen: &mut BTreeMap<String, usize>) {
     seen.entry(COLD_WALLET_OUTCOME.to_owned()).or_insert(0);
     let Expected::Output(output) = expected else {
@@ -413,7 +429,9 @@ pub struct L1Run {
     /// For the handler property: how often each outcome occurred (`applied` or an error class);
     /// for the pool property, each error code of the reference's answers (`pool ERR_...`), the
     /// accepted entries and the full-pool evictions; for the processor property, each result,
-    /// unchained status and handler of the reference's answers (`P13 result ...`).
+    /// unchained status and handler of the reference's answers (`P13 result ...`); for the
+    /// decisions property, each action of the reference's attempt (`decide forged`, ...), a
+    /// refusal with its reason.
     pub classes: BTreeMap<String, usize>,
 }
 
@@ -494,6 +512,9 @@ pub fn run(
             if *property == Property::Processor {
                 processor_outcomes(&answer, &mut seen.borrow_mut());
             }
+            if *property == Property::Decisions {
+                decision_outcomes(&answer, &mut seen.borrow_mut());
+            }
             let judged = super::judge_documented(&request, &answer, registry);
             let failed = judged.is_failure();
             let message = format!("{judged:?}");
@@ -514,7 +535,7 @@ pub fn run(
         }
         if matches!(
             *property,
-            Property::Handlers | Property::Pool | Property::Processor
+            Property::Handlers | Property::Pool | Property::Processor | Property::Decisions
         ) {
             for (class, n) in seen {
                 *classes.entry(class).or_insert(0) += n;
