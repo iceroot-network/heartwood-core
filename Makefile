@@ -526,7 +526,8 @@ api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the
 # The forger's vector class (V29) is installed beside the forger and the wire crate once an oracle
 # image writes it (VECTOR_CRATES); until then the crate tests read it from a local vector run, as
 # the p2p classes are read. The forger's crash test runs the forger-child binary (feature
-# difftest) against a mock relay. DIRECTION=oracle makes forge-replay rebuild a chain Heartwood
+# difftest: the forger's loop, relay client and signer) against a mock relay on a loopback
+# address. DIRECTION=oracle makes forge-replay rebuild a chain Heartwood
 # forged with the reference; otherwise Heartwood rebuilds a chain the reference forged.
 FORGER_FUZZ   := internal_body status_to_sign
 FORGER_LOGS   ?= target/forger-fuzz
