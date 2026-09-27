@@ -286,15 +286,24 @@ pub fn compare_wallets(ours: &Value, theirs: &Value) -> Vec<String> {
     out
 }
 
-/// The rate limit's answers (`api/rate-limit/answers.jsonl`) of the node under test (`left`)
-/// against the control (`right`): the same statuses in the same order, the same 429 bodies, the
-/// same header names. `Ok` holds a summary.
+/// The rate limit's answers (`rate-limit.jsonl`, sent from an address no node whitelists) of the
+/// node under test (`left`) against the control (`right`): for each case and repetition the same
+/// status, the same 429 body and the same header names. `Ok` holds a summary.
 pub fn rate_limit(path: &Path) -> Result<std::result::Result<String, Vec<String>>> {
     let answers = read_lines(path)?;
-    let side = |name: &str| -> Vec<&Value> {
+    type Key = (String, u64);
+    let side = |name: &str| -> BTreeMap<Key, &Value> {
         answers
             .iter()
             .filter(|a| a.get("node").and_then(Value::as_str) == Some(name))
+            .map(|a| {
+                let case = a
+                    .get("case")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                ((case, a.get("i").and_then(Value::as_u64).unwrap_or(0)), a)
+            })
             .collect()
     };
     let (left, right) = (side("left"), side("right"));
@@ -315,28 +324,31 @@ pub fn rate_limit(path: &Path) -> Result<std::result::Result<String, Vec<String>
             .map(|h| h.keys().cloned().collect())
             .unwrap_or_default()
     };
-    for (l, r) in left.iter().zip(&right) {
-        let i = l.get("i").and_then(Value::as_u64).unwrap_or(0);
+    for ((case, i), l) in &left {
+        let Some(r) = right.get(&(case.clone(), *i)) else {
+            problems.push(format!("{case} request {i}: no answer of the control"));
+            continue;
+        };
         if l.get("status") != r.get("status") {
             problems.push(format!(
-                "request {i}: status {} against {}",
+                "{case} request {i}: status {} against {}",
                 l["status"], r["status"]
             ));
         } else if l.get("body") != r.get("body") {
             problems.push(format!(
-                "request {i}: body {} against {}",
+                "{case} request {i}: body {} against {}",
                 l["body"], r["body"]
             ));
         } else if names(l) != names(r) {
             problems.push(format!(
-                "request {i}: headers {:?} against {:?}",
+                "{case} request {i}: headers {:?} against {:?}",
                 names(l),
                 names(r)
             ));
         }
     }
     let limited = left
-        .iter()
+        .values()
         .filter(|a| a.get("status").and_then(Value::as_u64) == Some(429))
         .count();
     Ok(if problems.is_empty() {

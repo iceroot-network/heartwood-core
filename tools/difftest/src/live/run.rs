@@ -18,7 +18,8 @@
 //!   undone blocks;
 //! - `txgen/<name>/`: the scenario generator's records; `wallets.json`: the scenario wallets at the
 //!   pause; `check-chain.json`: the tooling's check of node 1's chain (schedule and supply);
-//! - `api/`: the route corpus's answers, and `api/rate-limit/answers.jsonl`.
+//! - `api/`: the route corpus's answers (its `answers.jsonl` files); `rate-limit.jsonl`: the
+//!   rate limit's answers, sent from an address that no node whitelists.
 //!
 //! Times are UTC, `YYYY-MM-DDTHH:MM:SS[.fff]Z`.
 

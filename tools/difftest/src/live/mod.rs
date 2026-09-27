@@ -47,6 +47,7 @@ use crate::errors::{Error, Result};
 use crate::oracle::Oracle;
 use crate::report::{CaseResult, Outcome, Report};
 use crate::store;
+use crate::subject::Documented;
 use run::{Implementation, Manifest};
 
 /// Where the run's corpora go, relative to the current directory: the Makefile's `CORPUS`.
@@ -390,6 +391,28 @@ fn check_judge(
                         ),
                     );
                 }
+                // The node's missed rows at heights it refused or undid a block, which the judge
+                // leaves out of its round-row comparison: the reference writes them before it
+                // validates a block (Heartwood writes none for such a block).
+                for row in judged
+                    .anchors
+                    .pointer("/anchors/A2/excluded")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let h = row.get("height").and_then(Value::as_u64).unwrap_or(0);
+                    cases.push(
+                        "judge",
+                        format!(
+                            "{name}: missed row of {} at {} (height {h}) left out: its node refused or undid a block there",
+                            row.get("username").and_then(Value::as_str).unwrap_or("?"),
+                            row.get("timestamp").map(Value::to_string).unwrap_or_default()
+                        ),
+                        u32::try_from(h).unwrap_or(0),
+                        Outcome::Documented(Documented::MissedRowsOfRefusedBlock.reason().to_owned()),
+                    );
+                }
                 out.insert(name.clone(), judged);
             }
         }
@@ -526,7 +549,7 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
             }
         }
     }
-    match steps::rate_limit(&run_dir.join("api/rate-limit/answers.jsonl")) {
+    match steps::rate_limit(&run_dir.join("rate-limit.jsonl")) {
         Err(e) => cases.fail("api", "the rate limit", e.to_string()),
         Ok(Ok(text)) => cases.pass(
             "api",
