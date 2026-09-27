@@ -348,9 +348,22 @@ pub struct TransactionDisplay<'a> {
 }
 
 impl fmt::Display for TransactionDisplay<'_> {
+    /// The version is the one the reference reads: a wire byte 0 is `v3`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let _ = (f, self.transaction, self.network);
-        todo!("the reference's toString")
+        let data = &self.transaction.data;
+        let sender = Address::from_public_key(&data.sender_public_key, self.network);
+        let id = self.transaction.id.to_hex();
+        let key = data.kind.key();
+        let (first, rest) = key.split_at(key.len().min(1));
+        write!(
+            f,
+            "{}#{} {} {}{rest} v{}",
+            sender.to_base58(),
+            data.nonce,
+            id.get(id.len().saturating_sub(8)..).unwrap_or_default(),
+            first.to_ascii_uppercase(),
+            data.effective_version()
+        )
     }
 }
 

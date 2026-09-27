@@ -229,6 +229,24 @@ function makeOps(solar, devnet) {
         return votes;
     }
 
+    /** The crypto files of `config.load`, loaded as the configuration driver loads them. */
+    function loadCryptoFiles(files) {
+        if (files === null || typeof files !== "object" || Array.isArray(files)) throw new TypeError("files must be an object");
+        const names = ["genesisBlock", "exceptions", "milestones", "network"];
+        for (const [file, text] of Object.entries(files)) {
+            if (!names.some((name) => file === `${name}.json`)) throw new TypeError(`files.${file} is not a crypto file`);
+            if (typeof text !== "string") throw new TypeError(`files.${file} must be text`);
+        }
+        if (names.some((name) => files[`${name}.json`] === undefined)) return { fallback: true };
+        const parsed = Object.fromEntries(names.map((name) => [name, JSON.parse(files[`${name}.json`])]));
+        try {
+            cm.setConfig({ network: parsed.network, exceptions: parsed.exceptions, milestones: parsed.milestones, genesisBlock: parsed.genesisBlock });
+            return { accepted: true, milestones: plain(cm.getMilestones()) };
+        } finally {
+            devnet.restore();
+        }
+    }
+
     const ops = {
         ping: () => ({
             pong: true,
@@ -446,8 +464,16 @@ function makeOps(solar, devnet) {
         // The configuration manager's start-up checks and merge (setConfig) on a milestone file,
         // given as JSON text and read with JSON.parse. Accepted: the merged milestones, and the
         // reward (rank table or reward) and donations at the listed heights.
-        "config.load": ({ milestones, rewards = [], donations = [] }) =>
-            devnet.withMilestones(milestones, () => ({
+        //
+        // With `files` instead, the crypto files of a network as the kernel's configuration
+        // driver loads them: `files` maps each of network.json, milestones.json, genesisBlock.json
+        // and exceptions.json to its text, and a file left out is missing. When one is missing,
+        // the driver loads none of them and the node falls back to its built-in preset:
+        // {fallback: true}. Otherwise each text is read with JSON.parse, in the driver's order,
+        // and the four go to setConfig as LoadCryptography passes them; accepted: {accepted: true,
+        // milestones} with the merged milestones.
+        "config.load": ({ files, milestones, rewards = [], donations = [] }) =>
+            files !== undefined ? loadCryptoFiles(files) : devnet.withMilestones(milestones, () => ({
                 milestones: plain(cm.getMilestones()),
                 rewards: rewards.map(([height, rank]) => {
                     try {

@@ -7,6 +7,8 @@
 //! read them; `exceptions.json` must be exactly `{}`; the genesis block's JSON is checked by the
 //! genesis path that builds the first state.
 
+use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 
 use heartwood_crypto::errors::ConfigError;
@@ -14,15 +16,12 @@ use heartwood_crypto::{Milestones, Network};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::config::schema::SchemaError;
+use crate::config::schema::{self, SchemaError};
 
 /// The file names, in the order the reference's loader reads them.
-pub const FILES: [&str; 4] = [
-    "network.json",
-    "milestones.json",
-    "genesisBlock.json",
-    "exceptions.json",
-];
+#[rustfmt::skip]
+pub const FILES: [&str; 4] =
+    ["network.json", "milestones.json", "genesisBlock.json", "exceptions.json"];
 
 /// The texts of the four files, each `None` when its file is missing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -88,15 +87,69 @@ pub enum CryptoFilesError {
     },
 }
 
-/// Read and check the four files in `dir`.
+/// Read and check the four files in `dir` (see [`parse`]).
 pub fn load(dir: &Path) -> Result<CryptoFiles, CryptoFilesError> {
-    let _ = dir;
-    todo!("read the four files")
+    let read = |file: &'static str| match fs::read_to_string(dir.join(file)) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(CryptoFilesError::Read {
+            file,
+            detail: error.to_string(),
+        }),
+    };
+    let [network, milestones, genesis, exceptions] = FILES.map(read);
+    parse(&CryptoTexts {
+        network: network?,
+        milestones: milestones?,
+        genesis: genesis?,
+        exceptions: exceptions?,
+    })
 }
 
-/// Check the four files' `texts` and load them: every file present, the strict schema,
-/// `exceptions.json` exactly `{}`, then the crypto crate's loaders.
+/// The JSON of `file`, whose text is `text`.
+fn json(file: &'static str, text: &str) -> Result<Value, CryptoFilesError> {
+    serde_json::from_str(text).map_err(|error| CryptoFilesError::Json {
+        file,
+        detail: error.to_string(),
+    })
+}
+
+/// Check the four files' `texts` and load them: every file present, each one JSON, the strict
+/// schema of the network, milestone and exceptions files, then the crypto crate's loaders of the
+/// network and milestone files. The first refusal, in [`FILES`] order within each step, is
+/// returned.
 pub fn parse(texts: &CryptoTexts) -> Result<CryptoFiles, CryptoFilesError> {
-    let _ = texts;
-    todo!("check and load the four files")
+    let all = [
+        &texts.network,
+        &texts.milestones,
+        &texts.genesis,
+        &texts.exceptions,
+    ];
+    let missing: Vec<&'static str> = (FILES.into_iter().zip(all))
+        .filter_map(|(file, text)| text.is_none().then_some(file))
+        .collect();
+    let [
+        Some(network),
+        Some(milestones),
+        Some(genesis),
+        Some(exceptions),
+    ] = all
+    else {
+        return Err(CryptoFilesError::Missing { files: missing });
+    };
+    let [network_file, milestones_file, genesis_file, exceptions_file] = FILES;
+    let network_json = json(network_file, network)?;
+    let milestones_json = json(milestones_file, milestones)?;
+    let genesis = json(genesis_file, genesis)?;
+    schema::check_network(&network_json)?;
+    schema::check_milestones(&milestones_json)?;
+    schema::check_exceptions(&json(exceptions_file, exceptions)?)?;
+    let config = |file: &'static str| move |source| CryptoFilesError::Config { file, source };
+    let network = Network::load(network).map_err(config(network_file))?;
+    Ok(CryptoFiles {
+        milestones: Milestones::load(milestones, &network).map_err(config(milestones_file))?,
+        milestones_text: milestones.clone(),
+        network,
+        genesis,
+    })
 }

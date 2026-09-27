@@ -8,6 +8,8 @@
 
 use heartwood_crypto::TransactionType;
 use heartwood_crypto::identities::Address;
+use heartwood_crypto::utils::format_satoshi;
+use heartwood_crypto::utils::js::to_locale_integer;
 use heartwood_state::Rejection;
 use heartwood_state::errors::WalletError;
 use thiserror::Error;
@@ -201,9 +203,59 @@ impl TransactionError {
     /// "`<transaction>` cannot be applied: ". Amounts are written as the reference's
     /// `formatSatoshi` writes them, with the network's token `symbol`; counts as its
     /// `toLocaleString`. `Display` stays a log text with plain numbers.
+    ///
+    /// A revoke whose resignation is not found has the text of the `TypeError` the reference's
+    /// lookup raises. [`TransactionError::State`] and [`TransactionError::UndoMismatch`] keep
+    /// their `Display` text: where the reference fails there, it throws an untyped error whose
+    /// text is its runtime's.
     pub fn message(&self, symbol: &str) -> String {
-        let _ = symbol;
-        todo!("the reference's message")
+        let amount = |value: i128| format_satoshi(value, symbol);
+        match self {
+            TransactionError::FeeTooLow { fee, minimum } => format!(
+                "Transaction fee is too low (fee {} < {})",
+                amount(i128::from(*fee)),
+                amount(*minimum)
+            ),
+            TransactionError::InsufficientBalance { needed, balance } => {
+                // `needed` is an amount plus a fee, both below 2^64, so it fits.
+                let needed = i128::try_from(*needed).unwrap_or(i128::MAX);
+                let balance = i128::from(*balance);
+                format!(
+                    "Insufficient balance in the wallet: tried to spend {} but the wallet only has {} available ({})",
+                    amount(needed),
+                    amount(balance),
+                    amount(balance.saturating_sub(needed))
+                )
+            }
+            TransactionError::NotEnoughTimeSinceResignation { blocks } => {
+                // The reference's `pluralise("more block", blocks, true)`.
+                let plural = if *blocks == 1 { "" } else { "s" };
+                format!(
+                    "Failed to apply transaction, because {} more block{plural} must be produced before the resignation can be revoked",
+                    to_locale_integer(i128::from(*blocks))
+                )
+            }
+            TransactionError::InsufficientBurnAmount {
+                amount: burned,
+                minimum,
+            } => format!(
+                "Failed to apply transaction, because burn amount ({}) is below the minimum ({}).",
+                amount(i128::from(*burned)),
+                amount(i128::from(*minimum))
+            ),
+            TransactionError::VotedForTooManyDelegates { maximum } => format!(
+                "Failed to apply transaction, because there are more than {} votes",
+                to_locale_integer(i128::from(*maximum))
+            ),
+            TransactionError::VotedForNonDelegate { vote } if vote.is_empty() => {
+                "Failed to apply transaction, because only delegates can be voted".to_owned()
+            }
+            TransactionError::ResignationNotFound => {
+                "Cannot destructure property 'blockHeight' of '(intermediate value)' as it is undefined."
+                    .to_owned()
+            }
+            other => other.to_string(),
+        }
     }
 }
 
@@ -213,16 +265,24 @@ impl Rejection for TransactionError {
     }
 }
 
-/// A transaction may not enter the pool.
+/// A transaction may not enter the pool. `Display` is the reference's message, which the pool
+/// reports after "`<transaction>` cannot be applied: ".
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum PoolError {
-    /// The sender already has a transaction of this type in the pool.
-    #[error("{sender} already has a transaction of type {} in the pool", kind.key())]
+    /// The sender already has a second-signature registration, delegate registration or vote in
+    /// the pool.
+    #[error("{sender} already has a {} transaction in the pool", pending_kind(*kind))]
     SenderPending {
-        /// The sender.
+        /// The sender, by the node's address byte.
         sender: Address,
         /// The type.
         kind: TransactionType,
+    },
+    /// The sender, a delegate, already has a resignation in the pool.
+    #[error("Delegate resignation for '{username}' already in the pool")]
+    ResignationPending {
+        /// The sender's delegate name.
+        username: String,
     },
     /// A delegate registration for this name is already in the pool.
     #[error("Delegate registration for '{username}' already in the pool")]
@@ -238,11 +298,24 @@ pub enum PoolError {
     },
 }
 
+/// The words for a pending transaction of `kind` in the reference's messages.
+fn pending_kind(kind: TransactionType) -> &'static str {
+    match kind {
+        TransactionType::SecondSignature => "second signature registration",
+        TransactionType::DelegateRegistration => "delegate registration",
+        TransactionType::Vote => "vote",
+        // No other type has a pending check of this form.
+        other => other.key(),
+    }
+}
+
 impl PoolError {
     /// The pool's error code.
     pub fn code(&self) -> &'static str {
         match self {
-            PoolError::SenderPending { .. } | PoolError::UsernamePending { .. } => "ERR_PENDING",
+            PoolError::SenderPending { .. }
+            | PoolError::ResignationPending { .. }
+            | PoolError::UsernamePending { .. } => "ERR_PENDING",
             PoolError::Offline { .. } => "ERR_OFFLINE",
         }
     }
@@ -267,6 +340,59 @@ mod tests {
             TransactionError::FeeTooLow { fee: 1, minimum: 2 }.class(),
             "TransactionFeeTooLowError"
         );
+    }
+
+    /// The texts the reference writes for these refusals (V17 compares the others).
+    #[test]
+    fn messages() {
+        let cases = [
+            (
+                TransactionError::FeeTooLow {
+                    fee: 1_000_025,
+                    minimum: 1_000_026,
+                },
+                "Transaction fee is too low (fee 0.01000025 dRT < 0.01000026 dRT)",
+            ),
+            (
+                TransactionError::InsufficientBalance {
+                    needed: 100_000_000_050_000_000,
+                    balance: 100_000_000_000_000,
+                },
+                "Insufficient balance in the wallet: tried to spend 1,000,000,000.5 dRT but the \
+                 wallet only has 1,000,000 dRT available (-999,000,000.5 dRT)",
+            ),
+            (
+                TransactionError::NotEnoughTimeSinceResignation { blocks: 2_000 },
+                "Failed to apply transaction, because 2,000 more blocks must be produced before \
+                 the resignation can be revoked",
+            ),
+            (
+                TransactionError::VotedForTooManyDelegates { maximum: 1_000 },
+                "Failed to apply transaction, because there are more than 1,000 votes",
+            ),
+            (
+                TransactionError::VotedForNonDelegate {
+                    vote: String::new(),
+                },
+                "Failed to apply transaction, because only delegates can be voted",
+            ),
+            (
+                TransactionError::ColdWallet,
+                "Wallet is not allowed to spend before funding is confirmed",
+            ),
+            (
+                TransactionError::SenderWalletMismatch,
+                "Failed to apply transaction, because the public key does not match the wallet",
+            ),
+            (
+                TransactionError::ResignationNotFound,
+                "Cannot destructure property 'blockHeight' of '(intermediate value)' as it is \
+                 undefined.",
+            ),
+        ];
+        for (error, text) in cases {
+            assert_eq!(error.message("dRT"), text);
+        }
     }
 
     #[test]

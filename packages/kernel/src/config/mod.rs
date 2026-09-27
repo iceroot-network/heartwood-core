@@ -10,4 +10,4 @@ pub mod merge;
 pub mod schema;
 
 pub use self::crypto::{CryptoFiles, CryptoFilesError, CryptoTexts};
-pub use self::schema::SchemaError;
+pub use self::schema::{KeyProblem, SchemaError};
