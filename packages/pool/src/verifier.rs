@@ -86,21 +86,24 @@ pub fn check_entries(
             .chunks(size)
             .enumerate()
             .map(|(n, part)| {
-                (
-                    part,
-                    scope.spawn(move || check(n.saturating_mul(size), part)),
-                )
+                let start = n.saturating_mul(size);
+                let worker = thread::Builder::new()
+                    .spawn_scoped(scope, move || check(start, part))
+                    .ok();
+                (start, part, worker)
             })
             .collect();
         parts
             .into_iter()
-            .flat_map(|(part, handle)| {
+            .flat_map(|(start, part, worker)| match worker {
                 // A worker cannot panic on any input; should one, its entries are refused.
-                handle.join().unwrap_or_else(|_| {
+                Some(worker) => worker.join().unwrap_or_else(|_| {
                     part.iter()
                         .map(|_| Err(invalid_data("the worker failed")))
                         .collect()
-                })
+                }),
+                // No thread could be started: this thread does the part.
+                None => check(start, part),
             })
             .collect()
     })

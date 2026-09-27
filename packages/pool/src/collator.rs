@@ -65,7 +65,7 @@ pub fn collate(
             continue;
         }
         let size = i64::try_from(transaction.bytes().len()).unwrap_or(i64::MAX);
-        if bytes_left.is_some_and(|left| left - 4 - size < 0) {
+        if bytes_left.is_some_and(|left| left.saturating_sub(4).saturating_sub(size) < 0) {
             break;
         }
         let candidate = match &mut wallets {
@@ -85,7 +85,7 @@ pub fn collate(
         match candidate {
             Ok(candidate) => {
                 let size = i64::try_from(candidate.bytes().len()).unwrap_or(i64::MAX);
-                bytes_left = bytes_left.map(|left| left - 4 - size);
+                bytes_left = bytes_left.map(|left| left.saturating_sub(4).saturating_sub(size));
                 candidates.push(candidate);
             }
             Err(()) => failed.push((sender, *transaction.id())),
