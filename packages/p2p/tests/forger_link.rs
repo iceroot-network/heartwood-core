@@ -28,6 +28,7 @@ fn options() -> ConnectOptions {
     ConnectOptions {
         timeout: Duration::from_secs(5),
         retries: 1,
+        ..ConnectOptions::default()
     }
 }
 
