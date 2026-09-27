@@ -304,6 +304,8 @@ impl Pipeline {
     fn respond(&self, answer: Answer, origin: Option<HeaderValue>) -> Response<Body> {
         let body = answer.body.as_ref().map(|body| js::stringify(body, 0));
         let json = body.as_ref().map(|_| "application/json; charset=utf-8");
+        // hapi varies an answer it could compress (1 KiB or more) by `accept-encoding` too.
+        let large = body.as_ref().is_some_and(|body| body.len() >= 1024);
         let mut response = Response::new(body.map_or_else(Body::empty, Body::from));
         *response.status_mut() =
             StatusCode::from_u16(answer.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
@@ -316,7 +318,14 @@ impl Pipeline {
         }
         add(header::CACHE_CONTROL, "no-cache");
         if answer.cors {
-            add(header::VARY, "origin");
+            add(
+                header::VARY,
+                if large {
+                    "origin,accept-encoding"
+                } else {
+                    "origin"
+                },
+            );
             if let Some(origin) = origin {
                 add(header::ACCESS_CONTROL_EXPOSE_HEADERS, EXPOSED);
                 fixed.push((header::ACCESS_CONTROL_ALLOW_ORIGIN, origin));

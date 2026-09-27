@@ -77,7 +77,7 @@ pub fn find(state: &StateView, id: &str) -> Result<Wallet, ApiError> {
         return Ok(wallet.clone());
     }
     match address {
-        Some(address) if Address::validate(id, network) => Ok(Wallet::new(address)),
+        Some(address) => Ok(Wallet::new(address)),
         _ if id.encode_utf16().count() == 34 => Err(ApiError::unprocessable("Wallet not valid")),
         _ => Err(ApiError::not_found("Wallet not found")),
     }

@@ -124,6 +124,12 @@ async fn an_answer_has_the_reference_headers() {
     }
     assert_eq!(header(&headers, "access-control-allow-origin"), None);
     assert_eq!(header(&headers, "retry-after"), None);
+    // An answer hapi could compress also varies by the accepted encoding.
+    let large = pipeline_with(config(), |_, _| {
+        Box::pin(async { Ok(ApiReply::data(json!("x".repeat(1024)))) })
+    });
+    let (_, headers, _) = call(&large, get("/api/node/status")).await;
+    assert_eq!(header(&headers, "vary"), Some("origin,accept-encoding"));
 }
 
 #[tokio::test]
