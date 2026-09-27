@@ -530,6 +530,8 @@ api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the
 # address. DIRECTION=oracle makes forge-replay rebuild a chain Heartwood
 # forged with the reference; otherwise Heartwood rebuilds a chain the reference forged.
 FORGER_FUZZ   := internal_body status_to_sign
+# The vector run whose V29 records seed the corpus of internal_body.
+FORGER_SEEDS  ?= $(VECTORS)/local
 FORGER_LOGS   ?= target/forger-fuzz
 FORGER_CHILD  := target/debug/forger-child
 FORGER_AUX    := heartwood-forger
@@ -576,8 +578,14 @@ forger-crash: build ## the forger's crash test: forger-child against a mock rela
 	$(TOOLCHAIN) && $(DIFFTEST) forger crash --kills $(KILLS) --child $(FORGER_CHILD) $(if $(KILL_SEED),--seed $(KILL_SEED))
 
 # The two targets run at the same time, FUZZ_FORK jobs each, with the wire targets' libFuzzer
-# options, on corpora of their own (git-ignored).
+# options, on corpora of their own (git-ignored); internal_body is seeded from the V29 records of
+# FORGER_SEEDS when it exists.
 fuzz-forger: ## the forger's fuzz targets at once, FUZZ_SECONDS each (nightly and cargo-fuzz); logs in FORGER_LOGS
+	@$(TOOLCHAIN) && if [ -d '$(FORGER_SEEDS)' ]; then \
+	    node tools/forger-fuzz-seeds.js '$(FORGER_SEEDS)' $(FUZZ_CORPUS) $(WIRE_SEED_MAX); \
+	else \
+	    echo "fuzz-forger: no seeds: $(FORGER_SEEDS) does not exist"; \
+	fi
 	$(TOOLCHAIN) && for target in $(FORGER_FUZZ); do cargo +nightly fuzz build $$target || exit 1; done
 	@$(TOOLCHAIN) && mkdir -p $(FORGER_LOGS) && pids=; \
 	for target in $(FORGER_FUZZ); do \
