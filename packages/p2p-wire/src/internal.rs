@@ -1,32 +1,38 @@
 //! The JSON bodies of the internal routes: what a forger and its relay exchange.
 //!
 //! The reference's internal codecs are `JSON.stringify` of the object a controller returns and
-//! `JSON.parse` of the bytes. Each body here is typed with the reference's field names, JSON types
-//! and key order for every field its forger reads; the other fields are written as the reference
-//! writes them. [`encode`] writes a body's bytes and [`decode`] reads them, refusing a body whose
-//! used fields are missing or of another type.
+//! `JSON.parse` of the bytes, read as UTF-8 text. Each body here is typed with the reference's
+//! field names, JSON types and key order for every field its forger reads; the other fields are
+//! written as the reference writes them where that is cheap. [`encode`] writes a body's bytes and
+//! [`decode`] reads them, refusing a body whose used fields are missing or of another type, where
+//! the reference's forger fails later with a `TypeError` or computes with the odd value. A field
+//! the forger does not use is read when it has its type and left empty otherwise.
 //!
 //! | Route | Request | Response |
 //! |---|---|---|
 //! | `getCurrentRound` | `{}` | [`CurrentRound`] |
 //! | `getSlotNumber` | [`SlotNumberRequest`] | [`SlotNumber`] |
 //! | `getNetworkState` | [`NetworkStateRequest`] | [`NetworkState`] |
-//! | `syncBlockchain` | `{}` | `{}` |
-//! | `emitEvent` | [`EmitEvent`] | `{}` |
+//! | `syncBlockchain` | `{}` | `true` |
+//! | `emitEvent` | [`EmitEvent`] | `true` |
 //! | `getStatusToSign` (Heartwood only) | [`StatusToSignRequest`] | [`StatusToSignResponse`] |
-//! | `postStatusSignatures` (Heartwood only) | [`StatusSignatures`] | `{}` |
+//! | `postStatusSignatures` (Heartwood only) | [`StatusSignatures`] | `true` |
 //!
 //! [`QuorumDetails`] carries the counts of the reference's forging quorum and its arithmetic:
-//! [`QuorumDetails::quorum`] and [`QuorumDetails::can_forge`].
+//! [`QuorumDetails::quorum`] and [`QuorumDetails::can_forge`]; [`NetworkState`] adds the
+//! reference's test status, which always forges.
 //!
 //! Every body is untrusted input on the side that reads it: decoding never panics, and a number
 //! out of its type's range is refused.
 
-use indexmap::IndexMap;
-use serde_json::Value;
+use heartwood_crypto::utils::js;
+use serde_json::{Map, Value, json};
 
 use crate::errors::InternalBodyError;
 use crate::routes::RouteId;
+
+#[cfg(test)]
+mod tests;
 
 /// A body of an internal route, written and read as the reference's `JSON.stringify` and
 /// `JSON.parse` of its object.
@@ -43,14 +49,19 @@ pub trait InternalBody: Sized {
 
 /// The bytes of `body`: `JSON.stringify` of the reference's object.
 pub fn encode<T: InternalBody>(body: &T) -> Vec<u8> {
-    let _ = body;
-    todo!("the internal bodies' writer")
+    js::stringify(&body.to_json(), 0).into_bytes()
 }
 
 /// The body in `bytes`: `JSON.parse`, then [`InternalBody::from_json`].
 pub fn decode<T: InternalBody>(bytes: &[u8]) -> Result<T, InternalBodyError> {
-    let _ = bytes;
-    todo!("the internal bodies' reader")
+    T::from_json(&parse(bytes)?)
+}
+
+/// `JSON.parse` of the bytes read as UTF-8 text, a malformed sequence read as U+FFFD as Node's
+/// `toString` reads it: the value of a body the reader then ignores, such as `true`.
+pub fn parse(bytes: &[u8]) -> Result<Value, InternalBodyError> {
+    serde_json::from_str(&String::from_utf8_lossy(bytes))
+        .map_err(|error| InternalBodyError::NotJson(error.to_string()))
 }
 
 /// The answer to `getCurrentRound`, fields in the reference's order.
@@ -77,66 +88,48 @@ pub struct CurrentRound {
     pub timestamp: i64,
 }
 
-/// A delegate's wallet as the round lists it: `{...wallet.getData(), delegate}`.
+/// A delegate's wallet as the round lists it, `{...wallet.getData(), delegate}`: its fields as the
+/// relay writes them, and the two the forger reads.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DelegateWallet {
-    /// The wallet's address.
-    pub address: String,
-    /// The wallet's public key, in hex.
+    /// The wallet's public key, in hex (`publicKey`).
     pub public_key: String,
-    /// The balance, as decimal text.
-    pub balance: String,
-    /// The nonce, as decimal text.
-    pub nonce: String,
-    /// The delegate attribute.
-    pub delegate: DelegateAttribute,
-}
-
-/// A wallet's `delegate` attribute: the username the forger reads, and every key of the
-/// attribute in the reference's order, as the relay writes them.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DelegateAttribute {
-    /// The delegate's username.
+    /// The delegate's username (`delegate.username`).
     pub username: String,
-    /// The attribute's keys and values, `username` included, in the reference's order.
-    pub fields: IndexMap<String, Value>,
+    /// Every field in the relay's order, `publicKey` and `delegate` included: what is written.
+    pub fields: Map<String, Value>,
 }
 
-/// The tip's block data, as `lastBlock.data` writes it: amounts as decimal text.
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl DelegateWallet {
+    /// The wallet of `fields`, which must hold `publicKey` and `delegate.username` as texts.
+    pub fn new(fields: Map<String, Value>) -> Result<DelegateWallet, InternalBodyError> {
+        let username = fields
+            .get("delegate")
+            .and_then(|delegate| delegate.get("username"));
+        Ok(DelegateWallet {
+            public_key: string(fields.get("publicKey"), "publicKey")?,
+            username: string(username, "delegate.username")?,
+            fields,
+        })
+    }
+}
+
+/// The tip's block data, as `lastBlock.data` writes it: its fields as the relay writes them
+/// (amounts as decimal text), and the height, which the forger reads.
+#[derive(Debug, Clone, PartialEq)]
 pub struct LastBlockData {
-    /// The block id, in hex.
-    pub id: String,
-    /// The block version.
-    pub version: u32,
-    /// Seconds since the network epoch.
-    pub timestamp: u32,
     /// The height.
     pub height: u32,
-    /// The previous block's id, in hex.
-    pub previous_block: String,
-    /// The number of transactions.
-    pub number_of_transactions: u32,
-    /// The sum of the transactions' amounts.
-    pub total_amount: String,
-    /// The sum of the transactions' fees.
-    pub total_fee: String,
-    /// The burned part of the fees, when the block data has it.
-    pub burned_fee: Option<String>,
-    /// The block reward.
-    pub reward: String,
-    /// The donations by address, when the block data has them.
-    pub donations: Option<IndexMap<String, String>>,
-    /// The generator's username, when the block data has it.
-    pub username: Option<String>,
-    /// The payload length.
-    pub payload_length: u32,
-    /// The payload hash, in hex.
-    pub payload_hash: String,
-    /// The generator's public key, in hex.
-    pub generator_public_key: String,
-    /// The block signature, in hex.
-    pub block_signature: String,
+    /// Every field in the relay's order, `height` included: what is written.
+    pub fields: Map<String, Value>,
+}
+
+impl LastBlockData {
+    /// The block data of `fields`, which must hold the height.
+    pub fn new(fields: Map<String, Value>) -> Result<LastBlockData, InternalBodyError> {
+        let height = integer(fields.get("height"), "lastBlock.height")?;
+        Ok(LastBlockData { height, fields })
+    }
 }
 
 /// The `getSlotNumber` request: the slot of `timestamp`, or of the relay's now when absent.
@@ -157,23 +150,25 @@ pub struct NetworkStateRequest {
     pub log: bool,
 }
 
-/// The status of a network state, the reference's numeric enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// The status of a network state, the reference's numeric enum; unknown by default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum NetworkStateStatus {
     /// 0: the state was computed from the peers.
-    Default,
+    Default = 0,
     /// 1: fewer active delegates across the peers than the minimum delegate reach.
-    BelowMinimumDelegates,
-    /// 2: the reference's test environment (never produced by Heartwood).
-    Test,
+    BelowMinimumDelegates = 1,
+    /// 2: the reference's test environment (never produced by Heartwood); it always forges.
+    Test = 2,
     /// 3: the relay started with `--networkStart` and has not ended its cold start.
-    ColdStart,
+    ColdStart = 3,
     /// 4: no state: the forger's reading of an answer without a status.
-    Unknown,
+    #[default]
+    Unknown = 4,
 }
 
 /// The answer to `getNetworkState`, as `NetworkState.parse` reads it on the forger's side.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct NetworkState {
     /// The status.
     pub status: NetworkStateStatus,
@@ -189,6 +184,27 @@ pub struct NetworkState {
     pub quorum_details: QuorumDetails,
 }
 
+impl NetworkState {
+    /// The forger's reading of an answer without a status: status unknown, nothing else.
+    pub fn unknown() -> NetworkState {
+        NetworkState::default()
+    }
+
+    /// The reference's `getQuorum`: 1 with the test status, else [`QuorumDetails::quorum`].
+    pub fn quorum(&self) -> f64 {
+        match self.status {
+            NetworkStateStatus::Test => 1.0,
+            _ => self.quorum_details.quorum(),
+        }
+    }
+
+    /// The reference's `canForge`: always with the test status, else
+    /// [`QuorumDetails::can_forge`].
+    pub fn can_forge(&self, active_delegates: u32) -> bool {
+        self.status == NetworkStateStatus::Test || self.quorum_details.can_forge(active_delegates)
+    }
+}
+
 /// The counts of the forging quorum, each peer counted once per active delegate it carries.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct QuorumDetails {
@@ -199,7 +215,7 @@ pub struct QuorumDetails {
     /// Delegates on peers above the relay's height.
     pub over_height: u32,
     /// The headers of the peers above the relay's height, by peer IP, as the reference keys them.
-    pub over_height_block_headers: IndexMap<String, Value>,
+    pub over_height_block_headers: Map<String, Value>,
     /// Delegates on forked peers.
     pub forked: u32,
     /// Delegates on peers in another slot (statistics only).
@@ -224,15 +240,23 @@ pub struct QuorumDelegates {
 impl QuorumDetails {
     /// `hasQuorum / (hasQuorum + noQuorum)`, and 0 when that is not finite.
     pub fn quorum(&self) -> f64 {
-        todo!("the quorum")
+        let has = f64::from(self.has_quorum);
+        let quorum = has / (has + f64::from(self.no_quorum));
+        if quorum.is_finite() { quorum } else { 0.0 }
     }
 
     /// Whether the quorum reaches `min(1, (floor(active_delegates / 2) + 1) / (hasQuorum +
     /// noQuorum))`, the reference's `canForge`, computed in integers so that it gives the
     /// reference's answer for every count.
+    ///
+    /// With no delegate counted the quorum is 0 and the threshold 1. Otherwise both sides are
+    /// fractions of the same total, and two different counts below 2^33 never round to the same
+    /// double, so the comparison of the doubles is the comparison of the counts: all of them
+    /// when the half plus one is not below the total, else at least the half plus one.
     pub fn can_forge(&self, active_delegates: u32) -> bool {
-        let _ = active_delegates;
-        todo!("the forging quorum")
+        let total = u64::from(self.has_quorum).saturating_add(u64::from(self.no_quorum));
+        let needed = u64::from(active_delegates / 2).saturating_add(1);
+        total > 0 && u64::from(self.has_quorum) >= needed.min(total)
     }
 }
 
@@ -252,7 +276,8 @@ pub struct StatusToSignRequest {
     pub public_keys: Vec<String>,
 }
 
-/// The `getStatusToSign` answer: a status to attest, or nothing new within the long poll.
+/// The `getStatusToSign` answer: a status to attest, `{status, publicKeys}`, or nothing new
+/// within the long poll, `{unchanged: true}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatusToSignResponse {
     /// The canonical status text to sign, and the keys to sign it with: the declared keys that are
@@ -280,12 +305,35 @@ impl InternalBody for CurrentRound {
     const ROUTE: RouteId = RouteId::GetCurrentRound;
 
     fn to_json(&self) -> Value {
-        todo!("getCurrentRound's answer")
+        let wallet = |wallet: &DelegateWallet| Value::Object(wallet.fields.clone());
+        let wallets = |list: &[DelegateWallet]| list.iter().map(wallet).collect::<Vec<_>>();
+        defined(json!({
+            "allDelegates": wallets(&self.all_delegates), "canForge": self.can_forge,
+            "current": self.current, "currentForger": self.current_forger.as_ref().map(wallet),
+            "delegates": wallets(&self.delegates), "lastBlock": self.last_block.fields,
+            "nextForger": self.next_forger.as_ref().map(wallet), "reward": self.reward,
+            "timestamp": self.timestamp,
+        }))
     }
 
     fn from_json(value: &Value) -> Result<CurrentRound, InternalBodyError> {
-        let _ = value;
-        todo!("getCurrentRound's answer")
+        let round = object(Some(value), "round")?;
+        let wallet = |value: &Value| DelegateWallet::new(object(Some(value), "wallet")?.clone());
+        let wallets = |key: &str| match get(round, key) {
+            Some(Value::Array(items)) => items.iter().map(wallet).collect(),
+            _ => Err(field(key)),
+        };
+        Ok(CurrentRound {
+            all_delegates: wallets("allDelegates")?,
+            can_forge: get(round, "canForge").is_some_and(js::is_truthy),
+            current: integer(get(round, "current"), "current").unwrap_or_default(),
+            current_forger: get(round, "currentForger").map(wallet).transpose()?,
+            delegates: wallets("delegates")?,
+            last_block: LastBlockData::new(object(get(round, "lastBlock"), "lastBlock")?.clone())?,
+            next_forger: get(round, "nextForger").map(wallet).transpose()?,
+            reward: string(get(round, "reward"), "reward")?,
+            timestamp: integer(get(round, "timestamp"), "timestamp")?,
+        })
     }
 }
 
@@ -293,12 +341,12 @@ impl InternalBody for SlotNumberRequest {
     const ROUTE: RouteId = RouteId::GetSlotNumber;
 
     fn to_json(&self) -> Value {
-        todo!("getSlotNumber's request")
+        defined(json!({ "timestamp": self.timestamp }))
     }
 
     fn from_json(value: &Value) -> Result<SlotNumberRequest, InternalBodyError> {
-        let _ = value;
-        todo!("getSlotNumber's request")
+        let timestamp = optional(object(Some(value), "timestamp")?, "timestamp", integer)?;
+        Ok(SlotNumberRequest { timestamp })
     }
 }
 
@@ -306,12 +354,11 @@ impl InternalBody for SlotNumber {
     const ROUTE: RouteId = RouteId::GetSlotNumber;
 
     fn to_json(&self) -> Value {
-        todo!("getSlotNumber's answer")
+        self.0.into()
     }
 
     fn from_json(value: &Value) -> Result<SlotNumber, InternalBodyError> {
-        let _ = value;
-        todo!("getSlotNumber's answer")
+        integer(Some(value), "slot").map(SlotNumber)
     }
 }
 
@@ -319,25 +366,92 @@ impl InternalBody for NetworkStateRequest {
     const ROUTE: RouteId = RouteId::GetNetworkState;
 
     fn to_json(&self) -> Value {
-        todo!("getNetworkState's request")
+        json!({ "log": self.log })
     }
 
     fn from_json(value: &Value) -> Result<NetworkStateRequest, InternalBodyError> {
-        let _ = value;
-        todo!("getNetworkState's request")
+        let log = get(object(Some(value), "log")?, "log").is_some_and(js::is_truthy);
+        Ok(NetworkStateRequest { log })
     }
 }
 
 impl InternalBody for NetworkState {
     const ROUTE: RouteId = RouteId::GetNetworkState;
 
+    /// The relay's `NetworkState` object: its status, its quorum's counts, then the tip's fields
+    /// in the order the reference sets them, each only when it is set.
     fn to_json(&self) -> Value {
-        todo!("getNetworkState's answer")
+        let (details, lists) = (&self.quorum_details, &self.quorum_details.delegates);
+        defined(json!({
+            "status": self.status as u8,
+            "quorumDetails": {
+                "hasQuorum": details.has_quorum, "noQuorum": details.no_quorum,
+                "overHeight": details.over_height,
+                "overHeightBlockHeaders": details.over_height_block_headers,
+                "forked": details.forked, "differentSlot": details.different_slot,
+                "forgingNotAllowed": details.forging_not_allowed,
+                "delegates": {
+                    "hasQuorum": lists.has_quorum, "noQuorum": lists.no_quorum,
+                    "noResponse": lists.no_response,
+                },
+            },
+            "nodeHeight": self.node_height, "lastBlockId": self.last_block_id,
+            "lastGenerator": self.last_generator, "lastSlotNumber": self.last_slot_number,
+        }))
     }
 
+    /// `NetworkState.parse`: an answer that is not an object or has no status is the unknown
+    /// state; the counts the answer leaves out are 0.
     fn from_json(value: &Value) -> Result<NetworkState, InternalBodyError> {
-        let _ = value;
-        todo!("getNetworkState's answer")
+        let (Some(status), Value::Object(state)) = (value.get("status"), value) else {
+            return Ok(NetworkState::unknown());
+        };
+        let status = match js::safe_integer(status) {
+            Some(0) => NetworkStateStatus::Default,
+            Some(1) => NetworkStateStatus::BelowMinimumDelegates,
+            Some(2) => NetworkStateStatus::Test,
+            Some(3) => NetworkStateStatus::ColdStart,
+            Some(4) => NetworkStateStatus::Unknown,
+            _ => return Err(field("status")),
+        };
+        let empty = Map::new();
+        let details = part(state, "quorumDetails", &empty)?;
+        let lists = part(details, "delegates", &empty)?;
+        let counts = [
+            "hasQuorum",
+            "noQuorum",
+            "overHeight",
+            "forked",
+            "differentSlot",
+            "forgingNotAllowed",
+        ];
+        let [has, no, over, forked, different, refused] =
+            counts.map(|key| optional(details, key, integer).map(Option::unwrap_or_default));
+        let names =
+            ["hasQuorum", "noQuorum", "noResponse"].map(|key| strings(get(lists, key), key));
+        let [has_quorum, no_quorum, no_response] = names;
+        let headers = part(details, "overHeightBlockHeaders", &empty)?;
+        Ok(NetworkState {
+            status,
+            node_height: optional(state, "nodeHeight", integer)?,
+            last_block_id: optional(state, "lastBlockId", string)?,
+            last_generator: optional(state, "lastGenerator", string)?,
+            last_slot_number: optional(state, "lastSlotNumber", integer)?,
+            quorum_details: QuorumDetails {
+                has_quorum: has?,
+                no_quorum: no?,
+                over_height: over?,
+                over_height_block_headers: headers.clone(),
+                forked: forked?,
+                different_slot: different?,
+                forging_not_allowed: refused?,
+                delegates: QuorumDelegates {
+                    has_quorum: has_quorum?,
+                    no_quorum: no_quorum?,
+                    no_response: no_response?,
+                },
+            },
+        })
     }
 }
 
@@ -345,12 +459,15 @@ impl InternalBody for EmitEvent {
     const ROUTE: RouteId = RouteId::EmitEvent;
 
     fn to_json(&self) -> Value {
-        todo!("emitEvent's request")
+        json!({ "event": self.event, "body": self.body })
     }
 
     fn from_json(value: &Value) -> Result<EmitEvent, InternalBodyError> {
-        let _ = value;
-        todo!("emitEvent's request")
+        let event = object(Some(value), "event")?;
+        Ok(EmitEvent {
+            event: string(get(event, "event"), "event")?,
+            body: get(event, "body").cloned().unwrap_or(Value::Null),
+        })
     }
 }
 
@@ -358,12 +475,12 @@ impl InternalBody for StatusToSignRequest {
     const ROUTE: RouteId = RouteId::GetStatusToSign;
 
     fn to_json(&self) -> Value {
-        todo!("getStatusToSign's request")
+        json!({ "publicKeys": self.public_keys })
     }
 
     fn from_json(value: &Value) -> Result<StatusToSignRequest, InternalBodyError> {
-        let _ = value;
-        todo!("getStatusToSign's request")
+        let public_keys = listed(object(Some(value), "publicKeys")?, "publicKeys")?;
+        Ok(StatusToSignRequest { public_keys })
     }
 }
 
@@ -371,12 +488,27 @@ impl InternalBody for StatusToSignResponse {
     const ROUTE: RouteId = RouteId::GetStatusToSign;
 
     fn to_json(&self) -> Value {
-        todo!("getStatusToSign's answer")
+        match self {
+            StatusToSignResponse::Offer {
+                status,
+                public_keys,
+            } => json!({ "status": status, "publicKeys": public_keys }),
+            StatusToSignResponse::Unchanged => json!({ "unchanged": true }),
+        }
     }
 
     fn from_json(value: &Value) -> Result<StatusToSignResponse, InternalBodyError> {
-        let _ = value;
-        todo!("getStatusToSign's answer")
+        let answer = object(Some(value), "status")?;
+        match get(answer, "status") {
+            Some(status) => Ok(StatusToSignResponse::Offer {
+                status: string(Some(status), "status")?,
+                public_keys: listed(answer, "publicKeys")?,
+            }),
+            None if answer.get("unchanged") == Some(&Value::Bool(true)) => {
+                Ok(StatusToSignResponse::Unchanged)
+            }
+            None => Err(field("status")),
+        }
     }
 }
 
@@ -384,11 +516,91 @@ impl InternalBody for StatusSignatures {
     const ROUTE: RouteId = RouteId::PostStatusSignatures;
 
     fn to_json(&self) -> Value {
-        todo!("postStatusSignatures' request")
+        json!({ "offer": self.offer, "signatures": self.signatures })
     }
 
     fn from_json(value: &Value) -> Result<StatusSignatures, InternalBodyError> {
-        let _ = value;
-        todo!("postStatusSignatures' request")
+        let signatures = object(Some(value), "offer")?;
+        Ok(StatusSignatures {
+            offer: string(get(signatures, "offer"), "offer")?,
+            signatures: listed(signatures, "signatures")?,
+        })
     }
+}
+
+/// `value` without its top-level `null` values: `JSON.stringify` leaves out a key whose value is
+/// `undefined`, and no body here writes a `null` at its top level.
+fn defined(mut value: Value) -> Value {
+    if let Value::Object(map) = &mut value {
+        map.retain(|_, found| !found.is_null());
+    }
+    value
+}
+
+fn field(path: &str) -> InternalBodyError {
+    InternalBodyError::Field {
+        field: path.to_owned(),
+    }
+}
+
+/// `map[key]`, or `None` where it is absent or `null`, which the reference's readers treat as
+/// not set.
+fn get<'a>(map: &'a Map<String, Value>, key: &str) -> Option<&'a Value> {
+    map.get(key).filter(|found| !found.is_null())
+}
+
+fn object<'a>(
+    value: Option<&'a Value>,
+    path: &str,
+) -> Result<&'a Map<String, Value>, InternalBodyError> {
+    value.and_then(Value::as_object).ok_or_else(|| field(path))
+}
+
+/// The object `map[key]`, or `empty` where it is not set.
+fn part<'a>(
+    map: &'a Map<String, Value>,
+    key: &str,
+    empty: &'a Map<String, Value>,
+) -> Result<&'a Map<String, Value>, InternalBodyError> {
+    get(map, key).map_or(Ok(empty), |found| object(Some(found), key))
+}
+
+/// `map[key]` read with `read`, or `None` where it is not set.
+fn optional<T>(
+    map: &Map<String, Value>,
+    key: &str,
+    read: impl Fn(Option<&Value>, &str) -> Result<T, InternalBodyError>,
+) -> Result<Option<T>, InternalBodyError> {
+    get(map, key)
+        .map(|found| read(Some(found), key))
+        .transpose()
+}
+
+/// A JSON number that `JSON.parse` reads as a safe integer, in the range of `T`.
+fn integer<T: TryFrom<i64>>(value: Option<&Value>, path: &str) -> Result<T, InternalBodyError> {
+    (value.and_then(js::safe_integer))
+        .and_then(|number| T::try_from(number).ok())
+        .ok_or_else(|| field(path))
+}
+
+fn string(value: Option<&Value>, path: &str) -> Result<String, InternalBodyError> {
+    (value.and_then(Value::as_str))
+        .map(str::to_owned)
+        .ok_or_else(|| field(path))
+}
+
+/// A list of texts; none when absent.
+fn strings(value: Option<&Value>, path: &str) -> Result<Vec<String>, InternalBodyError> {
+    match value {
+        None => Ok(Vec::new()),
+        Some(Value::Array(items)) => (items.iter())
+            .map(|item| string(Some(item), path))
+            .collect(),
+        Some(_) => Err(field(path)),
+    }
+}
+
+/// The list of texts `map[key]`, which must be set.
+fn listed(map: &Map<String, Value>, key: &str) -> Result<Vec<String>, InternalBodyError> {
+    strings(Some(get(map, key).ok_or_else(|| field(key))?), key)
 }
