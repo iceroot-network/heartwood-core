@@ -10,7 +10,9 @@
 // timer and the peer transport are stubbed, and the logger records what it is given.
 //
 //   chain.job {session, hexes, now, machineState?, started?, downloaded?}
-//       the blocks of `hexes` (full block bytes, hex) as one job on the session's chain at the
+//       the blocks of `hexes` (full block bytes in hex, or {hex, set}: the block with header
+//       fields its listing states otherwise, of numberOfTransactions) as one job on the session's
+//       chain at the
 //       time `now` (milliseconds since the Unix epoch). Each block reaches the job as the peer
 //       communicator hands a downloaded block on (its header, its transactions read by
 //       fromBytesUnsafe with their block id, the peer's address) with its username set as the
@@ -22,7 +24,8 @@
 //              downloaded?}, ...]}
 //       a whole session in one call, for the golden vectors: the reference's first start on the
 //       chain definition `crypto` ({network, milestones, genesisBlock, exceptions}), the blocks of
-//       `blocks` (hex) applied, then each job in turn -> {jobs: [job, ...]}
+//       `blocks` (hex) applied with the last downloaded block then at the tip, as a node that
+//       downloaded them has it, then each job in turn -> {jobs: [job, ...]}
 //   chain.job {enqueue: {blocks: [{height, numberOfTransactions}], lastDownloadedHeight,
 //              maxLastBlocks?}, milestones?}
 //       Blockchain.enqueueBlocks of the blocks with that last downloaded height, under the
@@ -127,16 +130,34 @@ function recordingLogger() {
 
 const link = (data) => (data ? { height: data.height, id: data.id } : null);
 
+// The header fields a job's block may state apart from its bytes, as a peer's listing can.
+const SETTABLE = ["numberOfTransactions"];
+
 /**
  * A block as the peer communicator hands it on (getPeerBlocks): the header's fields, each
- * transaction read by fromBytesUnsafe with the block's id, and the peer's address.
+ * transaction read by fromBytesUnsafe with the block's id, and the peer's address. `set` gives
+ * header fields the listing states otherwise than the bytes.
  */
-function downloaded(solar, bytes) {
+function downloaded(solar, bytes, set = {}) {
     const { Blocks } = solar.lib;
     const { data } = Blocks.Deserialiser.deserialise(bytes, false, { deserialiseTransactionsUnchecked: true });
-    for (const transaction of data.transactions || []) transaction.blockId = data.id;
+    // A listed block always has its transactions' list, empty or not (the protobuf decode).
+    data.transactions = data.transactions || [];
+    for (const transaction of data.transactions) transaction.blockId = data.id;
+    for (const [key, value] of Object.entries(set)) data[key] = value;
     data.ip = "192.0.2.1";
     return data;
+}
+
+/** A job's block: block bytes in hex, or {hex, set} with header fields the listing states otherwise. */
+function jobBlock(item, i) {
+    const given = typeof item === "string" ? { hex: item, set: {} } : item;
+    if (!given || typeof given.hex !== "string" || !/^([0-9a-f]{2})+$/.test(given.hex)) throw new TypeError(`hexes[${i}] must be block bytes in lowercase hex, or {hex, set}`);
+    const set = given.set || {};
+    for (const [key, value] of Object.entries(set)) {
+        if (!SETTABLE.includes(key) || !Number.isSafeInteger(value) || value < 0) throw new TypeError(`hexes[${i}].set.${key} is not a header field a listing may state (${SETTABLE.join(", ")})`);
+    }
+    return { bytes: Buffer.from(given.hex, "hex"), set };
 }
 
 /**
@@ -374,13 +395,14 @@ async function runJob(world, blocks, { step, started = true, downloaded: isDownl
 /** Check the arguments of one job and run it on `replay`. */
 async function sessionJob(solar, replay, args, step = "apply") {
     const { hexes, now, machineState, started, downloaded: isDownload } = args;
-    if (!Array.isArray(hexes) || hexes.some((h) => typeof h !== "string" || !/^([0-9a-f]{2})+$/.test(h))) throw new TypeError("hexes must be block bytes in lowercase hex");
+    if (!Array.isArray(hexes)) throw new TypeError("hexes must be a list of blocks");
+    const given = hexes.map(jobBlock);
     if (!Number.isSafeInteger(now) || now < 0) throw new TypeError("now must be a time in milliseconds");
     if (machineState !== undefined && typeof machineState !== "string") throw new TypeError("machineState must be a state's name");
     if (started !== undefined && typeof started !== "boolean") throw new TypeError("started must be a boolean");
     if (isDownload !== undefined && typeof isDownload !== "boolean") throw new TypeError("downloaded must be a boolean");
     return atTime(now, async () => {
-        const blocks = hexes.map((hex) => downloaded(solar, Buffer.from(hex, "hex")));
+        const blocks = given.map(({ bytes, set }) => downloaded(solar, bytes, set));
         const world = jobWorld(solar, replay, { machineState });
         return runJob(world, blocks, { step, started, downloaded: isDownload });
     });
@@ -440,6 +462,8 @@ module.exports = function jobOps(context) {
                         const r = await s.apply(Buffer.from(hex, "hex"), "apply");
                         if (!r.accepted) throw new Error(`chain block ${i + 1} was refused: ${r.error.class}: ${r.error.message}`);
                     }
+                    // As a node that downloaded these blocks: the last downloaded block is the tip.
+                    s.chain.stateStore.setLastDownloadedBlock(s.chain.lastBlock().data);
                     const jobs = [];
                     for (const job of args.jobs) jobs.push(await sessionJob(solar, s, job));
                     return { jobs };
