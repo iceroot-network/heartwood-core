@@ -6,6 +6,7 @@
 //! set ([`RollbackDepth`], reproduced), clear the queue, set the last downloaded block to the
 //! stored tip, reset the count, resume the queue, refresh the peers with a forced cleanse, and
 //! dispatch `SUCCESS`. A live fork is judged by its converged result, never by the depth.
+//!
 
 /// How many blocks a recovery without a set count removes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,10 +25,43 @@ pub enum RollbackDepth {
 pub const MIN_RANDOM_DEPTH: u32 = 4;
 /// The highest random count.
 pub const MAX_RANDOM_DEPTH: u32 = 102;
+/// How many random counts there are.
+const SPAN: u64 = 99;
 
 impl RollbackDepth {
-    /// The next count.
+    /// The next count: from 4 to 102, each equally likely, for the random depths.
     pub fn draw(&mut self) -> u32 {
-        todo!()
+        let random = match self {
+            // A system without a random source leaves the lowest count.
+            RollbackDepth::Random => getrandom::u64().unwrap_or(0),
+            #[cfg(feature = "difftest")]
+            RollbackDepth::Seeded(state) => split_mix(state),
+            #[cfg(feature = "difftest")]
+            RollbackDepth::Fixed(count) => return *count,
+        };
+        // The remainder is below 99.
+        MIN_RANDOM_DEPTH.saturating_add(u32::try_from(random % SPAN).unwrap_or(0))
+    }
+}
+
+/// The next value of the SplitMix64 generator whose state is `state`.
+#[cfg(feature = "difftest")]
+fn split_mix(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_span_covers_the_counts() {
+        assert_eq!(SPAN, u64::from(MAX_RANDOM_DEPTH - MIN_RANDOM_DEPTH + 1));
+        let mut depth = RollbackDepth::Random;
+        assert!((0..200).all(|_| (MIN_RANDOM_DEPTH..=MAX_RANDOM_DEPTH).contains(&depth.draw())));
     }
 }

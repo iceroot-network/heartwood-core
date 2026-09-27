@@ -11,40 +11,34 @@
 //! - `rollbackDatabase`, `stopped`, `exitApp`: the rewind (never entered), a stop, an exit with a
 //!   non-zero status.
 
-/// An entry action of the machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Action {
-    /// `initialise`.
-    Initialise,
-    /// `checkLastDownloadedBlockSynced`.
-    CheckLastDownloadedBlockSynced,
-    /// `downloadBlocks`.
-    DownloadBlocks,
-    /// `downloadFinished`.
-    DownloadFinished,
-    /// `downloadPaused`.
-    DownloadPaused,
-    /// `checkLastBlockSynced`.
-    CheckLastBlockSynced,
-    /// `syncingComplete`.
-    SyncingComplete,
-    /// `checkLater`.
-    CheckLater,
-    /// `blockchainReady`.
-    BlockchainReady,
-    /// `startForkRecovery`.
-    StartForkRecovery,
-    /// `rollbackDatabase`.
-    RollbackDatabase,
-    /// `stopped`.
-    Stopped,
-    /// `exitApp`.
-    ExitApp,
-}
-
-impl Action {
-    /// The action's name, as the reference's machine writes it.
-    pub fn name(self) -> &'static str {
-        todo!()
+named! {
+    /// An entry action of the machine.
+    Action {
+        /// `initialise`.
+        Initialise = "initialise",
+        /// `checkLastDownloadedBlockSynced`.
+        CheckLastDownloadedBlockSynced = "checkLastDownloadedBlockSynced",
+        /// `downloadBlocks`.
+        DownloadBlocks = "downloadBlocks",
+        /// `downloadFinished`.
+        DownloadFinished = "downloadFinished",
+        /// `downloadPaused`.
+        DownloadPaused = "downloadPaused",
+        /// `checkLastBlockSynced`.
+        CheckLastBlockSynced = "checkLastBlockSynced",
+        /// `syncingComplete`.
+        SyncingComplete = "syncingComplete",
+        /// `checkLater`.
+        CheckLater = "checkLater",
+        /// `blockchainReady`.
+        BlockchainReady = "blockchainReady",
+        /// `startForkRecovery`.
+        StartForkRecovery = "startForkRecovery",
+        /// `rollbackDatabase`.
+        RollbackDatabase = "rollbackDatabase",
+        /// `stopped`.
+        Stopped = "stopped",
+        /// `exitApp`.
+        ExitApp = "exitApp",
     }
 }
