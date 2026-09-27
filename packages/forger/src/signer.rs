@@ -53,46 +53,37 @@ impl BlockSigner for Signer {
         own_slot: i64,
         slot: i64,
     ) -> Result<SignedOutcome, SignError> {
-        let delegate = (self.delegates.iter())
-            .find(|delegate| delegate.public_key() == key)
-            .ok_or_else(|| SignError::UnknownKey {
-                public_key: key.to_hex(),
-            })?;
+        let delegate = (self.delegates.iter()).find(|delegate| delegate.public_key() == key);
+        let unknown = || SignError::UnknownKey {
+            public_key: key.to_hex(),
+        };
+        let delegate = delegate.ok_or_else(unknown)?;
         let name = key.to_hex();
-        match self.record.decide(key, slot, own_slot) {
-            Decision::OutOfWindow { own_slot } => {
-                warning!(
-                    "Delegate {name} will not sign slot {slot}: this forger's clock is in slot {own_slot}"
-                );
-                Err(SignError::OutOfWindow { slot, own_slot })
-            }
-            Decision::Refuse { recorded_slot } => {
-                warning!(
-                    "Delegate {name} will not sign slot {slot}: it has signed slot {recorded_slot}"
-                );
-                Err(SignError::Refused {
-                    slot,
-                    recorded_slot,
-                })
-            }
+        let refused = match self.record.decide(key, slot, own_slot) {
+            Decision::OutOfWindow { own_slot } => SignError::OutOfWindow { slot, own_slot },
+            Decision::Refuse { recorded_slot } => SignError::Refused {
+                slot,
+                recorded_slot,
+            },
             Decision::Resend(signed) => {
-                info!(
-                    "Delegate {name} sends block {} at height {} again, as signed for slot {slot}",
-                    signed.id, signed.height
-                );
-                Ok(SignedOutcome::Resent(signed))
+                let (id, height) = (&signed.id, signed.height);
+                info!("Delegate {name} sends block {id} at height {height} of slot {slot} again");
+                return Ok(SignedOutcome::Resent(signed));
             }
             Decision::SignNew => {
                 let block = delegate.forge(inputs, self.aux, &self.milestones)?;
+                let (height, id, bytes) = (block.height(), *block.id(), block.encode());
                 let signed = Signed {
-                    height: block.height(),
+                    height,
                     slot,
-                    id: *block.id(),
-                    bytes: block.encode(),
+                    id,
+                    bytes,
                 };
                 self.record.record(key, signed.clone())?;
-                Ok(SignedOutcome::New(signed))
+                return Ok(SignedOutcome::New(signed));
             }
-        }
+        };
+        warning!("Delegate {name} will not sign: {refused}");
+        Err(refused)
     }
 }

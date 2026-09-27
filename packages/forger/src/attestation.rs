@@ -63,36 +63,30 @@ impl Attester {
         public_keys: &[String],
     ) -> Result<StatusSignatures, AttestError> {
         let (state, config) = parse_preimage(status.as_bytes())?;
-        if state.height != state.header.height {
-            return Err(AttestError::Height {
-                state: state.height,
-                header: state.header.height,
-            });
-        }
+        let (height, header, slot) = (state.height, state.header.height, state.current_slot);
         let own = self.own_slot();
-        if state.current_slot.abs_diff(own) > 1 {
-            return Err(AttestError::Slot {
-                offered: state.current_slot,
-                own,
+        if height != header {
+            return Err(AttestError::Height {
+                state: height,
+                header,
             });
-        }
-        if config.network.nethash != self.nethash {
-            return Err(AttestError::Network {
-                offered: config.network.nethash,
-                own: self.nethash.clone(),
-            });
+        } else if slot.abs_diff(own) > 1 {
+            return Err(AttestError::Slot { offered: slot, own });
+        } else if config.network.nethash != self.nethash {
+            let (offered, own) = (config.network.nethash, self.nethash.clone());
+            return Err(AttestError::Network { offered, own });
         }
         let declared = self.keys.declared();
+        let sign = |offered: &String| {
+            let key = declared.iter().find(|key| key.to_hex() == *offered);
+            let foreign = || AttestError::ForeignKey {
+                public_key: offered.clone(),
+            };
+            let key = key.and_then(|key| self.keys.key(key)).ok_or_else(foreign)?;
+            Ok(attest(status.as_bytes(), key)?.signature.to_hex())
+        };
         let signatures = (public_keys.iter())
-            .map(|offered| {
-                let key = (declared.iter())
-                    .find(|key| key.to_hex() == *offered)
-                    .and_then(|key| self.keys.key(key))
-                    .ok_or_else(|| AttestError::ForeignKey {
-                        public_key: offered.clone(),
-                    })?;
-                Ok(attest(status.as_bytes(), key)?.signature.to_hex())
-            })
+            .map(sign)
             .collect::<Result<_, AttestError>>()?;
         Ok(StatusSignatures {
             offer: offer_hash(status),
@@ -102,37 +96,32 @@ impl Attester {
 
     /// Poll `link` for offers and answer them until `shutdown` is asked for.
     pub async fn run<L: AttestLink>(&self, link: &L, mut shutdown: ShutdownSignal) {
-        let declared: Vec<String> = (self.keys.declared().iter())
-            .map(|key| key.to_hex())
-            .collect();
+        let declared: Vec<String> = self.keys.declared().iter().map(|k| k.to_hex()).collect();
         loop {
-            let Some(answer) = until(&mut shutdown, link.status_to_sign(&declared)).await else {
-                return;
-            };
-            let offer = match answer {
-                Ok(StatusToSignResponse::Offer {
-                    status,
-                    public_keys,
-                }) => self.sign_offer(&status, &public_keys),
-                Ok(StatusToSignResponse::Unchanged) => continue,
-                Err(error) => {
-                    debug!("The relay gave no status to attest: {error}");
-                    if until(&mut shutdown, tokio::time::sleep(RETRY))
-                        .await
-                        .is_none()
-                    {
-                        return;
+            // A poll, and its offer checked and signed; after a failed poll, a pause.
+            let poll = async {
+                match link.status_to_sign(&declared).await {
+                    Ok(StatusToSignResponse::Offer {
+                        status,
+                        public_keys,
+                    }) => Some(self.sign_offer(&status, &public_keys)),
+                    Ok(StatusToSignResponse::Unchanged) => None,
+                    Err(error) => {
+                        debug!("The relay gave no status to attest: {error}");
+                        tokio::time::sleep(RETRY).await;
+                        None
                     }
-                    continue;
                 }
             };
-            match offer {
-                Ok(signatures) => {
+            match until(&mut shutdown, poll).await {
+                None => return,
+                Some(None) => {}
+                Some(Some(Ok(signatures))) => {
                     if let Err(error) = link.post_signatures(signatures).await {
                         debug!("The status attestations were not delivered: {error}");
                     }
                 }
-                Err(error) => warning!("Not attesting the status the relay offered: {error}"),
+                Some(Some(Err(error))) => warning!("Not attesting the relay's status: {error}"),
             }
         }
     }

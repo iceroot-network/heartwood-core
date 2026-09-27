@@ -42,8 +42,7 @@ impl DelegateKeys {
     /// Keys given directly, in order, their duplicates declared as often as they appear.
     pub fn from_keys(keys: Vec<KeyPair>) -> DelegateKeys {
         let keys: Vec<_> = keys.into_iter().map(Arc::new).collect();
-        let declared = keys
-            .iter()
+        let declared = (keys.iter())
             .map(|k| k.public_key().to_compressed())
             .collect();
         DelegateKeys { keys, declared }
@@ -55,7 +54,7 @@ impl DelegateKeys {
         let mut delegates: Vec<Delegate> = Vec::new();
         for key in &self.keys {
             let public_key = key.public_key().to_compressed();
-            if !delegates.iter().any(|d| *d.public_key() == public_key) {
+            if !(delegates.iter()).any(|d| *d.public_key() == public_key) {
                 delegates.push(Delegate::new(key.clone(), network));
             }
         }
@@ -86,7 +85,11 @@ pub fn load_keys(config_dir: &Path) -> Result<DelegateKeys, KeysError> {
         },
     };
     let metadata = std::fs::metadata(&path).map_err(io)?;
-    let mode = permissions(&metadata);
+    #[cfg(unix)]
+    let mode = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o777;
+    // Elsewhere the file has no group or others to read it.
+    #[cfg(not(unix))]
+    let mode = 0o600;
     if mode & 0o044 != 0 {
         return Err(KeysError::Readable { path, mode });
     }
@@ -143,19 +146,14 @@ fn read(
             declared.push(pair.public_key().to_compressed());
         }
         if (pairs.iter()).any(|p: &Arc<KeyPair>| p.public_key() == pair.public_key()) {
-            heartwood_kernel::warning!(
-                "The key of delegate {} is listed more than once in {}; it forges once",
-                pair.public_key().to_hex(),
-                FILE
-            );
+            let key = pair.public_key().to_hex();
+            heartwood_kernel::warning!("{FILE} lists the key of delegate {key} twice");
         }
         texts.push(text);
         pairs.push(Arc::new(pair));
     }
-    Ok(DelegateKeys {
-        keys: pairs,
-        declared,
-    })
+    let keys = pairs;
+    Ok(DelegateKeys { keys, declared })
 }
 
 /// Overwrite every string of `value`.
@@ -166,15 +164,4 @@ fn wipe(value: &mut Value) {
         Value::Object(object) => object.values_mut().for_each(wipe),
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
-}
-
-#[cfg(unix)]
-fn permissions(metadata: &std::fs::Metadata) -> u32 {
-    use std::os::unix::fs::PermissionsExt;
-    metadata.permissions().mode() & 0o777
-}
-
-#[cfg(not(unix))]
-fn permissions(_: &std::fs::Metadata) -> u32 {
-    0o600
 }

@@ -69,40 +69,35 @@ pub struct SigningRecord {
 impl SigningRecord {
     /// Open the record at `path` for the network `nethash`, creating it when it does not exist.
     pub fn open(path: &Path, nethash: &str) -> Result<SigningRecord, RecordError> {
-        let mut record = SigningRecord {
-            path: path.to_owned(),
-            nethash: nethash.to_owned(),
-            entries: BTreeMap::new(),
-        };
         let io = |error| io_error(path, error);
         let corrupt = |reason: &str| RecordError::Corrupt {
             path: path.to_owned(),
             reason: reason.to_owned(),
         };
-        // A temporary file that was never renamed is a write that did not finish.
-        match fs::remove_file(temporary(path)) {
-            Err(error) if error.kind() != ErrorKind::NotFound => return Err(io(error)),
-            _ => {}
-        }
+        let mut record = SigningRecord {
+            path: path.to_owned(),
+            nethash: nethash.to_owned(),
+            entries: BTreeMap::new(),
+        };
+        // A temporary file that was never renamed is a write that did not finish: ignored.
+        let _ = fs::remove_file(temporary(path));
         let text = match fs::read_to_string(path) {
-            Ok(text) => text,
             Err(error) if error.kind() == ErrorKind::NotFound => {
-                let directory = path.parent().unwrap_or(Path::new("."));
-                fs::create_dir_all(directory).map_err(io)?;
-                restrict(directory, 0o700).map_err(io)?;
-                record.write().map_err(io)?;
+                let mut directory = fs::DirBuilder::new();
+                #[cfg(unix)]
+                std::os::unix::fs::DirBuilderExt::mode(&mut directory, 0o700);
+                (directory.recursive(true).create(parent(path)))
+                    .and_then(|()| record.write())
+                    .map_err(io)?;
                 return Ok(record);
             }
-            Err(error) => return Err(io(error)),
+            read => read.map_err(io)?,
         };
         let value: Value = serde_json::from_str(&text).map_err(|_| corrupt("not JSON"))?;
         if value.get("format").and_then(Value::as_str) != Some(FORMAT) {
             return Err(corrupt("not a signing record"));
         }
-        let recorded = value
-            .get("nethash")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let recorded = (value.get("nethash").and_then(Value::as_str)).unwrap_or_default();
         if recorded != nethash {
             return Err(RecordError::Network {
                 path: path.to_owned(),
@@ -180,12 +175,7 @@ impl SigningRecord {
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         fs::rename(&temporary, &self.path)?;
-        match self.path.parent() {
-            Some(directory) if !directory.as_os_str().is_empty() => {
-                File::open(directory)?.sync_all()
-            }
-            _ => Ok(()),
-        }
+        File::open(parent(&self.path))?.sync_all()
     }
 }
 
@@ -194,6 +184,12 @@ fn io_error(path: &Path, error: std::io::Error) -> RecordError {
         path: path.to_owned(),
         message: error.to_string(),
     }
+}
+
+/// The directory of the record's file.
+fn parent(path: &Path) -> &Path {
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+    parent.unwrap_or(Path::new("."))
 }
 
 /// The temporary file a write goes through.
@@ -212,15 +208,4 @@ fn entry_of(entry: &Value) -> Option<Signed> {
         id: BlockId::from_hex(text("id")?).ok()?,
         bytes: hex::decode(text("bytes")?).ok()?,
     })
-}
-
-#[cfg(unix)]
-fn restrict(directory: &Path, mode: u32) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(directory, fs::Permissions::from_mode(mode))
-}
-
-#[cfg(not(unix))]
-fn restrict(_: &Path, _: u32) -> std::io::Result<()> {
-    Ok(())
 }

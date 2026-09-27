@@ -54,17 +54,14 @@ impl Delegate {
         let count = u32::try_from(transactions.len()).map_err(|_| too_many())?;
         let sum = |field: &'static str, value: fn(&Transaction) -> u64| {
             (transactions.iter())
-                .try_fold(0u64, |total, transaction| {
-                    total.checked_add(value(transaction))
-                })
+                .try_fold(0u64, |total, t| total.checked_add(value(t)))
                 .ok_or(ForgeError::TotalOverflow { field })
         };
+        let height = inputs.previous_height;
         Ok(BlockDraft {
             version: 0,
             timestamp: inputs.timestamp,
-            height: (inputs.previous_height.checked_add(1)).ok_or(ForgeError::Height {
-                height: inputs.previous_height,
-            })?,
+            height: height.checked_add(1).ok_or(ForgeError::Height { height })?,
             previous_block: *inputs.previous_id.as_bytes(),
             number_of_transactions: count,
             total_amount: sum("totalAmount", Transaction::amount)?,
@@ -82,14 +79,8 @@ impl Delegate {
         aux: Aux,
         milestones: &Milestones,
     ) -> Result<Block, ForgeError> {
-        let draft = self.draft(inputs)?;
-        let transactions = inputs.transactions.to_vec();
-        Ok(factory::make(
-            draft,
-            transactions,
-            &self.keys,
-            aux,
-            milestones,
-        )?)
+        let (draft, transactions) = (self.draft(inputs)?, inputs.transactions.to_vec());
+        let block = factory::make(draft, transactions, &self.keys, aux, milestones)?;
+        Ok(block)
     }
 }
