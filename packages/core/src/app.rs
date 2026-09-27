@@ -21,7 +21,8 @@ use heartwood_api::{Api, ApiConfig, ApiContext, NodeInfo, NodeStatus, PeerList};
 use heartwood_blockchain::state_machine::MachineState;
 use heartwood_blockchain::{
     BlockProcessor, Blockchain, BlockchainOptions, BlockchainParts, ChainState, ChainStore, Node,
-    NodeError, NodeParts, PoolTask, RestoreMode, RestorePath, Restored, RollbackDepth, restore,
+    NodeError, NodeHandle, NodeParts, PoolTask, RestoreMode, RestorePath, Restored, RollbackDepth,
+    restore,
 };
 use heartwood_crypto::Params;
 use heartwood_database::{Readers, Settings};
@@ -273,30 +274,27 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
     let outcome = loop {
         match stop.recv().await {
             Some(Stop::Booted(Ok(()))) => {
-                let Some(api_config) = api_config.take() else {
+                let Some(config) = api_config.take() else {
                     continue;
                 };
-                let context = ApiContext {
-                    state: handle.state(),
-                    pool: handle.pool(),
-                    status: status.clone(),
-                    peers: Arc::clone(&links) as Arc<dyn PeerList>,
-                    history: Arc::new(Readers::open(&settings, 10).map_err(component)?),
-                    submit: Arc::new(Submit(handle.clone())),
-                    node: Arc::new(NodeInfo {
-                        crypto: relay.crypto.clone(),
-                        version: VERSION.to_owned(),
-                    }),
-                    config: Arc::new(api_config),
+                let node = NodeInfo {
+                    crypto: relay.crypto.clone(),
+                    version: VERSION.to_owned(),
                 };
-                let mut served = Api::new(Arc::new(context), api_runtime.clone());
                 // The API is not required: its failure is logged, and the relay goes on.
-                match served.enabled() {
-                    true => match served.boot().await {
-                        Ok(()) => api = Some(served),
-                        Err(error) => heartwood_kernel::error!("{error}"),
-                    },
-                    false => heartwood_kernel::info!("The API is disabled"),
+                match serve_api(
+                    config,
+                    node,
+                    &handle,
+                    &links,
+                    &status,
+                    &settings,
+                    api_runtime.clone(),
+                )
+                .await
+                {
+                    Ok(served) => api = served,
+                    Err(error) => heartwood_kernel::error!("{error}"),
                 }
             }
             Some(Stop::Booted(Err(error))) => break Err(component(error)),
@@ -326,6 +324,36 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
         }
     }
     outcome
+}
+
+/// The API of `config` over the node's snapshots and status, the monitor's peers and the store's
+/// read-only connections, served on `runtime` unless the configuration disables it.
+async fn serve_api(
+    config: ApiConfig,
+    node: NodeInfo,
+    handle: &NodeHandle,
+    links: &Arc<Links>,
+    status: &watch::Receiver<NodeStatus>,
+    settings: &Settings,
+    runtime: Handle,
+) -> Result<Option<Api>, RelayError> {
+    let context = ApiContext {
+        state: handle.state(),
+        pool: handle.pool(),
+        status: status.clone(),
+        peers: Arc::clone(links) as Arc<dyn PeerList>,
+        history: Arc::new(Readers::open(settings, 10).map_err(component)?),
+        submit: Arc::new(Submit(handle.clone())),
+        node: Arc::new(node),
+        config: Arc::new(config),
+    };
+    let mut api = Api::new(Arc::new(context), runtime);
+    if !api.enabled() {
+        heartwood_kernel::info!("The API is disabled");
+        return Ok(None);
+    }
+    api.boot().await.map_err(component)?;
+    Ok(Some(api))
 }
 
 /// The store of `relay` and its restored state: by a replay when the reference's
