@@ -54,8 +54,8 @@ tools/oracle/         the oracle: Node scripts and the image recipe
                         (the state digest), corpus.js, vectors/ (one file per class)
   check-native.js       checks that the reference's native modules build and load
 packages/crypto/tests/vectors/external/  published vector files, with their source URLs and SHA-256
-fuzz/                 cargo-fuzz targets for the transaction and block decoders and the
-                      transaction handlers (own workspace)
+fuzz/                 cargo-fuzz targets for the transaction and block decoders, the
+                      transaction handlers and whole blocks on the state (own workspace)
 ```
 
 ## Requirements
@@ -173,11 +173,15 @@ package of `RELEASE_PACKAGES` builds with one of these test seams (`fixed-aux`, 
 The fuzz targets run with cargo-fuzz on a nightly toolchain, and a corpus of the decoders can then
 be replayed against the oracle. `state_apply` gives the transaction handlers an arbitrary wallet
 set and transaction: nothing may panic, a refusal changes nothing, and an accepted transaction's
-revert restores every wallet.
+revert restores every wallet. `state_blocks` gives the state machine a sequence of blocks (with
+transactions of every kept type, in near slots, by the scheduled delegate or another key) and
+reverts: nothing may panic, a refused block changes nothing, the supply check holds, and a revert
+gives back the state from before its block.
 
 ```sh
 (cd fuzz && cargo +nightly fuzz run transaction_decode -- -max_total_time=600)
 (cd fuzz && cargo +nightly fuzz run state_apply -- -fork=12 -max_total_time=600 -rss_limit_mb=4096)
+(cd fuzz && cargo +nightly fuzz run state_blocks -- -fork=12 -max_total_time=600 -rss_limit_mb=4096)
 difftest oracle replay tx.fromBytes fuzz/corpus/transaction_decode \
     --vectors packages/crypto/tests/vectors --milestones fuzz/milestones/transaction_decode.json \
     --image heartwood-oracle:<commit>

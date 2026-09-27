@@ -12,7 +12,8 @@ cargo-fuzz = true
 
 [dependencies]
 arbitrary = { version = "1.4.2", features = ["derive"] }
-heartwood-crypto = { path = "../packages/crypto" }
+# The fixed aux (a test seam) makes the signatures, and so the ids, of the state targets repeatable.
+heartwood-crypto = { path = "../packages/crypto", features = ["fixed-aux"] }
 heartwood-state = { path = "../packages/state" }
 heartwood-transactions = { path = "../packages/transactions" }
 libfuzzer-sys = "0.4"
@@ -37,6 +38,13 @@ bench = false
 [[bin]]
 name = "state_apply"
 path = "fuzz_targets/state_apply.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "state_blocks"
+path = "fuzz_targets/state_blocks.rs"
 test = false
 doc = false
 bench = false
