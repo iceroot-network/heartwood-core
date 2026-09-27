@@ -1,11 +1,12 @@
 -- Schema version 1 of a node's store. The chain tables have the reference's columns, in snake
--- case: ids, keys, hashes and signatures are lowercase hex text, amounts are INTEGER.
+-- case: ids, keys, hashes and signatures are lowercase hex text, amounts are INTEGER. Every table
+-- is STRICT, so SQLite refuses a value of another type than its column's.
 
 -- The chain's identity: schema_version, nethash, genesis_id and state_format.
 CREATE TABLE meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
-);
+) STRICT;
 
 CREATE TABLE blocks (
     height                 INTEGER PRIMARY KEY,
@@ -25,7 +26,7 @@ CREATE TABLE blocks (
     generator_public_key   TEXT    NOT NULL,
     username               TEXT,
     block_signature        TEXT    NOT NULL
-);
+) STRICT;
 CREATE INDEX blocks_generator_public_key ON blocks (generator_public_key);
 CREATE INDEX blocks_username_timestamp ON blocks (username, timestamp);
 
@@ -49,7 +50,7 @@ CREATE TABLE transactions (
     serialised        BLOB    NOT NULL,
     asset             TEXT,
     UNIQUE (sender_public_key, nonce)
-);
+) STRICT;
 CREATE INDEX transactions_block_id ON transactions (block_id);
 CREATE INDEX transactions_block_height_sequence ON transactions (block_height, sequence);
 CREATE INDEX transactions_sender_id ON transactions (sender_id);
@@ -63,19 +64,21 @@ CREATE TABLE rounds (
     public_key TEXT    NOT NULL,
     balance    INTEGER NOT NULL,
     PRIMARY KEY (round, public_key)
-);
+) STRICT;
 
 CREATE TABLE missed_blocks (
     timestamp INTEGER PRIMARY KEY,
     height    INTEGER NOT NULL,
     username  TEXT    NOT NULL
-);
+) STRICT;
+CREATE INDEX missed_blocks_height ON missed_blocks (height);
 
--- One record per wallet that is not empty, as heartwood-state writes it (JSON text).
+-- One record per wallet that is not empty, as heartwood-state writes it (JSON text). The rowid
+-- keeps the order in which the addresses were first written.
 CREATE TABLE wallets (
     address TEXT PRIMARY KEY,
     record  TEXT NOT NULL
-);
+) STRICT;
 
 -- The state of the tip besides the wallets (JSON text).
 CREATE TABLE state (
@@ -83,23 +86,23 @@ CREATE TABLE state (
     height   INTEGER NOT NULL,
     block_id TEXT    NOT NULL,
     record   TEXT    NOT NULL
-);
+) STRICT;
 
 -- What reverting each block above the genesis block needs (JSON text).
 CREATE TABLE undo (
     height INTEGER PRIMARY KEY REFERENCES blocks (height),
     record TEXT    NOT NULL
-);
+) STRICT;
 
--- The digest of every milestone entry the tip has reached.
+-- The digest of every milestone entry the tip has reached, lowercase hex.
 CREATE TABLE milestone_entries (
     height INTEGER PRIMARY KEY,
     digest TEXT    NOT NULL
-);
+) STRICT;
 
 -- Node-local: the version each delegate's node last announced, and the round it did.
 CREATE TABLE delegate_versions (
     public_key TEXT    PRIMARY KEY,
     round      INTEGER NOT NULL,
     version    TEXT    NOT NULL
-);
+) STRICT;
