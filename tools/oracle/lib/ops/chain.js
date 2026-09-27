@@ -32,12 +32,16 @@
 //          bytes do not decode), verify (the block's own checks, the wall-clock rule on its
 //          timestamp aside) or apply
 //   chain.revert {session, count}      -> {lines}, one revert line per block
-//   chain.restart {session, mode}      the node stopped at its tip and started again (lib/state.js):
-//       mode "rebuild" (no saved state: StateBuilder) or "saved" (StateSaver, then StateLoader)
+//   chain.restart {session, mode, probe?}  the node stopped at its tip and started again
+//       (lib/state.js): mode "rebuild" (no saved state: StateBuilder) or "saved" (StateSaver, then
+//       StateLoader)
 //       -> {line}, the restart's digest line (step "restart"), or {refused: {reason}}, the text
-//          the reference's start ended with; the session goes on with the restarted node.
+//          the reference's start ended with; the session goes on with the restarted node, or,
+//          with probe true, with the node it had (a session with a pool cannot be probed).
 //          notes.savedStateUsername is true for a saved-state restart with a delegate name or a
-//          voted name that reads as an integer
+//          voted name that reads as an integer; notes.roundRowsMissing is true when the store
+//          holds no round row of the tip's round (a revert to a round's last block deleted them),
+//          so that the start reads an empty forging list or rolls the chain back
 //   chain.replaceStored {session, height, index, hex}
 //       replace the stored bytes of transaction `index` of the stored block at `height`, as a
 //       database changed on disk would hold them (the state is unchanged; a later restart reads
@@ -175,11 +179,12 @@ module.exports = function chainOps(context) {
             return inSession(s, async () => ({ lines: await s.revert(count) }));
         },
 
-        "chain.restart": async ({ session: id, mode }) => {
+        "chain.restart": async ({ session: id, mode, probe }) => {
             if (mode !== "rebuild" && mode !== "saved") throw new TypeError("mode must be rebuild or saved");
+            if (probe !== undefined && typeof probe !== "boolean") throw new TypeError("probe must be a boolean");
             const s = session(id);
             return inSession(s, async () => {
-                const r = await s.restart(mode);
+                const r = await s.restart(mode, { probe: probe === true });
                 if (r.refused) return { ...(r.notes ? { notes: r.notes } : {}), refused: { reason: r.refused.reason.split(solar.solarDir).join("<reference>") } };
                 return r.notes ? { notes: r.notes, line: r.line } : { line: r.line };
             });

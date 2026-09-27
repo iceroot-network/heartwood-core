@@ -18,7 +18,8 @@
 //              one leaves the last block unchanged, as the accept handler does.
 //   revert     n blocks as the blockchain's removeBlocks does: DatabaseInteraction.revertBlock
 //              of the last block, the new last block rebuilt from the stored data, one block at a
-//              time; the reverted blocks leave the store after the last revert.
+//              time; then the database's deleteBlocks: the reverted blocks, the missed rows above
+//              the new tip and the round rows above its round leave the store.
 //   restart    the node stopped at its tip and started again: a new application over a copy of
 //              the chain's store runs DatabaseInteraction.initialise(), then the blockchain's own
 //              Initialise action (StateLoader, the integrity check, the round rows of the next
@@ -117,15 +118,18 @@ function countingDispatcher() {
 
 /**
  * The in-memory chain: the blocks and transactions a node would have in PostgreSQL, the round
- * rows, and every missed-slot row recorded. Blocks are stored as the database stores them (the
- * block data with username, burned fee and donations, and each transaction's serialised bytes).
+ * rows and the missed-slot rows as its tables hold them, and every missed-slot row recorded (the
+ * judge's anchor compares those of the forward steps). Blocks are stored as the database stores
+ * them (the block data with username, burned fee and donations, and each transaction's
+ * serialised bytes).
  */
 class ChainStore {
     constructor(lib) {
         this.lib = lib;
         this.blocks = []; // [{ data, transactions: [{ id, serialised, sequence }] }], by height from 1
         this.rounds = new Map(); // round -> [{ publicKey, balance (string), round }] as saved
-        this.missed = []; // every row recorded, with the step that recorded it
+        this.missed = []; // the missed_blocks table: the rows recorded and not deleted since
+        this.recorded = []; // every missed row recorded, with the step that recorded it
         this.recording = null; // the tag of the rows recorded now
         this.history = []; // transaction data outside the stored blocks (a fixture's history)
     }
@@ -151,7 +155,8 @@ class ChainStore {
 
     /**
      * A copy of the store, as the database of a node that stops and starts again: the blocks,
-     * the round rows and the missed rows; the fixture history is not copied.
+     * the round rows and the missed rows of the tables; the fixture history and the rows recorded
+     * before are not copied.
      */
     copy() {
         const out = new ChainStore(this.lib);
@@ -161,7 +166,13 @@ class ChainStore {
         return out;
     }
 
-    /** Delete what the reference's deleteTopBlocks deletes above `height`. */
+    /**
+     * Delete what the reference's deleteBlocks and deleteTopBlocks delete above `height`: the
+     * blocks and their transactions, the missed rows above `height`, and the round rows above
+     * `round`, the round of the block at `height`. A revert to a round's last block so deletes
+     * the next round's rows, which the running node saved when it applied that block and does
+     * not save again.
+     */
     deleteAbove(height, round) {
         this.deleteFrom(height + 1);
         this.missed = this.missed.filter((r) => r.height <= height);
@@ -269,8 +280,8 @@ function storageStubs(store, lib, roundOf) {
             for (const block of blocks) store.save(block);
         },
         async deleteBlocks(blocks) {
-            const lowest = Math.min(...blocks.map((b) => b.height));
-            store.deleteFrom(lowest);
+            const target = Math.min(...blocks.map((b) => b.height)) - 1;
+            store.deleteAbove(target, roundOf(target));
         },
         async saveRound(delegates) {
             const rows = delegates.map((d) => ({
@@ -453,12 +464,13 @@ function storageStubs(store, lib, roundOf) {
 
     const missedBlockRepository = {
         async addMissedBlocks(rows) {
-            for (const row of rows) store.missed.push({ ...row, step: store.recording });
+            for (const row of rows) {
+                store.missed.push({ ...row, step: store.recording });
+                store.recorded.push({ ...row, step: store.recording });
+            }
         },
-        // Whether the table has a row: the rows at or below the tip (a revert deletes those
-        // above it).
         async hasMissedBlocks() {
-            return store.missed.some((r) => r.height <= store.height);
+            return store.missed.length > 0;
         },
     };
 
@@ -820,7 +832,7 @@ class HeadlessChain {
             const generator = this.walletRepository.findByUsername(block.data.username);
             reward = (await this.roundState.getRewardForBlockInRound(block.data.height, generator)).reward.toFixed();
         }
-        const before = this.store.missed.length;
+        const before = this.store.recorded.length;
         this.store.recording = `${step}:${block.data.height}`;
         const previous = this.stateStore.getLastBlock();
         let error;
@@ -838,7 +850,7 @@ class HeadlessChain {
         }
         this.store.recording = null;
         await settle();
-        const missed = this.store.missed.slice(before).map(({ timestamp, height, username }) => ({ timestamp, height, username }));
+        const missed = this.store.recorded.slice(before).map(({ timestamp, height, username }) => ({ timestamp, height, username }));
         return { accepted: !error, stage: error ? "apply" : undefined, block, reward, missed, error };
     }
 
@@ -909,6 +921,7 @@ class FixtureState {
         chain.store.blocks = [];
         chain.store.rounds = new Map();
         chain.store.missed = [];
+        chain.store.recorded = [];
         chain.store.history = [];
         chain.stateStore.lastBlocks = chain.stateStore.lastBlocks.clear();
         chain.stateStore.setLastBlock({ data: { height: lastBlockHeight, id: "00".repeat(32), timestamp: 0 }, transactions: [] });

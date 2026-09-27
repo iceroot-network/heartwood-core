@@ -192,13 +192,32 @@ class ReplaySession {
      * slots), or {refused: {reason}}; the session then keeps its node. `notes.savedStateUsername`
      * is true for a restart by the saved state when a delegate's name or a voted name reads as an
      * integer (the saved-state reviver turns it into a number, or cannot load the file).
+     * `notes.roundRowsMissing` is true when the store holds no round row of the tip's round, as
+     * after a revert to the last block of the round before (the reference's deleteBlocks deletes
+     * the rows above the new tip's round, and nothing saves them again before the next round):
+     * the start then reads an empty forging list, or, when the store has no missed row, its
+     * productivity backfill finds no delegate for the round and rolls the chain back.
+     * With `probe`, the started node only gives its line: the session goes on with the node it
+     * had, so that the next restart starts from the same store (a node with a pool cannot be
+     * probed, since the stop closes its pool).
      */
-    async restart(mode) {
+    async restart(mode, { probe = false } = {}) {
+        if (probe && this.chain.pool) throw new Error("a node with a pool cannot be probed");
         const notes = {};
         if (mode === "saved" && integerLikeNames(this.chain.wallets()).length) notes.savedStateUsername = true;
+        const tip = this.chain.lastBlock().data.height;
+        const round = this.chain.pkgs.kernel.Utils.roundCalculator.calculateRound(tip).round;
+        if (tip > 1 && !(this.chain.store.rounds.get(round) || []).length) notes.roundRowsMissing = true;
         const result = await this.chain.restart(mode);
         const out = Object.keys(notes).length ? { notes } : {};
         if (result.refused) return { ...out, refused: result.refused };
+        if (probe) {
+            const { DigestChain, chainSections } = require("./digest");
+            const digests = new DigestChain();
+            digests.cd = this.digests.cd;
+            const last = result.chain.lastBlock();
+            return { ...out, line: digests.line({ height: last.data.height, step: "restart", id: last.data.id }, chainSections(result.chain, [])) };
+        }
         this.chain = result.chain;
         return { ...out, line: this.emit("restart", undefined, []) };
     }

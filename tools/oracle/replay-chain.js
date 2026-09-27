@@ -131,7 +131,7 @@ function anchorRounds(corpus, store) {
 /** A2: the node's missed-slot rows against the headless forward replay's. */
 function anchorMissed(corpus, store) {
     const key = (r) => `${r.timestamp}:${r.height}:${r.username}`;
-    const forward = store.missed.filter((r) => r.step === "start" || (r.step && r.step.startsWith("apply:")));
+    const forward = store.recorded.filter((r) => r.step === "start" || (r.step && r.step.startsWith("apply:")));
     const counts = new Map();
     for (const r of forward) counts.set(key(r), (counts.get(key(r)) || 0) + 1);
     const refusedHeights = new Set();
