@@ -668,7 +668,8 @@ pub fn crash(
     let forward = forward_lines(corpus)?;
     let title = "L2 kill test: the store after a SIGKILL".to_owned();
     if let Err(problem) = crypto_files(corpus).and_then(|files| {
-        let dir = ScratchDir::new("crash-probe").map_err(|e| StartProblem::Failed(e.to_string()))?;
+        let dir =
+            ScratchDir::new("crash-probe").map_err(|e| StartProblem::Failed(e.to_string()))?;
         StoreNode::start(dir.path(), &files, RestoreMode::Auto).map(|_| ())
     }) {
         return Ok(Report {
