@@ -27,11 +27,11 @@ Release builds must select one package at a time, for example `cargo build --rel
 
 | Path | Purpose |
 | --- | --- |
-| `packages/crypto/` | Keys, signatures, addresses, codecs, transaction rules and milestones |
+| `packages/crypto/` | Keys, signatures, addresses, codecs, transaction rules, milestones and the dynamic fee floor |
 | `packages/kernel/` | Round and slot arithmetic, block chaining, the clock seam, event names, log levels, node directories and `.env` files |
 | `packages/logger/` | The reference's log lines, console and file output, daily rotation |
 | `packages/state/` | Wallets, delegates, rounds, block application and reversal, genesis, the supply check and the state digest |
-| `packages/transactions/` | The six transaction handlers, the dynamic fee floor and the pool-entry checks |
+| `packages/transactions/` | The six transaction handlers, the fee check and the pool-entry checks |
 | `packages/p2p-wire/` | The peer-to-peer wire codec: nes frames, the protobuf messages of the public routes, list framing and the signed peer status |
 | `tools/difftest/` | Compatibility harness and command-line tools |
 | `tools/oracle/` | Reference execution, container builds and vector generation |

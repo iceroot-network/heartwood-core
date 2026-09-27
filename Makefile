@@ -38,8 +38,8 @@ DEVNET_GENERATOR ?=
 GENERATOR_ARG := $(if $(DEVNET_GENERATOR),--devnet-generator '$(DEVNET_GENERATOR)',)
 # The vector classes of each crate: crate=class prefixes. vectors-install writes each crate's
 # classes, with their own MANIFEST.sha256, into packages/<crate>/tests/vectors.
-VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12 kernel=V09-rounds,V16 logger=V20 \
-                 state=V08,V09-shuffle,V15,V18 transactions=V17,V19 p2p-wire=V13
+VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12,V19 kernel=V09-rounds,V16 \
+                 logger=V20 state=V08,V09-shuffle,V15,V18 transactions=V17 p2p-wire=V13
 # L1: cases per property, the generator's seed, the properties (P1 to P9 or their names, comma
 # separated; all when empty).
 L1_CASES      ?= 256
