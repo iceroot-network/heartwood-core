@@ -46,13 +46,12 @@ pub fn satisfies(version: &str, range: &str, include_prerelease: bool) -> bool {
     if sets.len() > 1 && live.len() > 1 && live.iter().any(|set| set.is_empty()) {
         return version.pre.is_empty() || include_prerelease;
     }
+    // A prerelease passes only a set with a prerelease comparator of its own numbers.
+    let same_pre = |(_, c): &Comparator| !c.pre.is_empty() && c.main == version.main;
+    let prerelease_allowed = |set: &Vec<Comparator>| set.iter().any(same_pre);
     sets.iter().any(|set| {
         set.iter().all(|(op, c)| holds(op, order(&version, c)))
-            && (version.pre.is_empty()
-                || include_prerelease
-                || set
-                    .iter()
-                    .any(|(_, c)| !c.pre.is_empty() && c.main == version.main))
+            && (version.pre.is_empty() || include_prerelease || prerelease_allowed(set))
     })
 }
 
@@ -168,11 +167,7 @@ fn parse_range(range: &str, include_prerelease: bool) -> Option<Vec<Vec<Comparat
     let sets = normalised.split("||").map(|set| {
         // An operator standing alone joins the word after it, as `semver`'s trims do in their
         // order: `<`, `>`, `=` and their pairs when a version follows, then `~`, `~>` and `^`.
-        let words = set
-            .split(' ')
-            .filter(|w| !w.is_empty())
-            .map(str::to_owned)
-            .collect();
+        let words = set.split(' ').filter(|w| !w.is_empty()).map(str::to_owned);
         let version_next = |next: &str| {
             let next = next.trim_start_matches(['v', '=']);
             next.starts_with(|c: char| c.is_ascii_digit() || "xX*".contains(c))
@@ -190,7 +185,10 @@ fn parse_range(range: &str, include_prerelease: bool) -> Option<Vec<Vec<Comparat
 }
 
 /// `words` with each word for which `joins` holds (given the word after it) joined to that word.
-fn join(words: Vec<String>, joins: impl Fn(&str, &str) -> bool) -> Vec<String> {
+fn join(
+    words: impl IntoIterator<Item = String>,
+    joins: impl Fn(&str, &str) -> bool,
+) -> Vec<String> {
     let mut joined = Vec::new();
     let mut words = words.into_iter().peekable();
     while let Some(word) = words.next() {
@@ -230,10 +228,7 @@ fn desugar(token: &str, include_prerelease: bool) -> Option<Vec<Comparator>> {
     let below = |main| with("<", main, vec!["0".to_owned()]);
     let next = |n: u64| n.checked_add(1);
     // `>=0.0.0` (`>=0.0.0-0` with prereleases) allows any version.
-    let floor = format(&Version {
-        main: [0; 3],
-        pre: zero(),
-    });
+    let floor = format!("0.0.0{}", if include_prerelease { "-0" } else { "" });
     let keep = |comparators: Vec<Comparator>| {
         let any = |(op, c): &Comparator| *op == ">=" && format(c) == floor;
         Some(comparators.into_iter().filter(|c| !any(c)).collect())

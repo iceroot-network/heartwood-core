@@ -102,7 +102,8 @@ pub enum ClientRequest {
     GetBlocks {
         /// The height after which blocks are wanted.
         last_block_height: NonZeroU32,
-        /// The most blocks wanted.
+        /// The most blocks wanted: at most 400, the most a reference server accepts (its request
+        /// schema refuses more, and bans the caller), as the reference's client never asks more.
         block_limit: NonZeroU32,
         /// Whether only the headers are wanted; `headersOnly` is written only when true.
         headers_only: bool,
@@ -119,7 +120,8 @@ pub enum ClientRequest {
     },
     /// postTransactions: a batch of transactions.
     PostTransactions {
-        /// The serialised transactions, at most the receiver's `maxTransactionsPerRequest`.
+        /// The serialised transactions, at most the receiver's `maxTransactionsPerRequest` (40 by
+        /// default; its request schema refuses more, and bans the caller).
         transactions: Vec<Vec<u8>>,
     },
 }
