@@ -25,19 +25,38 @@ impl Default for EventBus {
 impl EventBus {
     /// A bus with no subscriber.
     pub fn new() -> EventBus {
-        let _ = CAPACITY;
-        todo!()
+        EventBus {
+            sender: broadcast::channel(CAPACITY).0,
+        }
     }
 
     /// Emit `event` to every subscriber; with none, the event is dropped.
     pub fn emit(&self, event: Event) {
-        let _ = (&self.sender, event);
-        todo!()
+        // With no subscriber the send fails, and the event is dropped as documented.
+        let _ = self.sender.send(event);
     }
 
     /// A new subscriber, which receives the events emitted from now on.
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
-        let _ = &self.sender;
-        todo!()
+        self.sender.subscribe()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_subscriber_hears_the_events_after_it_subscribed_in_order() {
+        let bus = EventBus::new();
+        bus.emit(Event::BlockApplied);
+        let (mut first, mut second) = (bus.subscribe(), bus.clone().subscribe());
+        bus.emit(Event::PeerAdded);
+        bus.emit(Event::PeerRemoved);
+        for receiver in [&mut first, &mut second] {
+            assert_eq!(receiver.try_recv(), Ok(Event::PeerAdded));
+            assert_eq!(receiver.try_recv(), Ok(Event::PeerRemoved));
+            assert!(receiver.try_recv().is_err());
+        }
     }
 }

@@ -1,9 +1,13 @@
 //! `heartwood-core`: the `heartwood` binary's library, a relay's process.
 //!
 //! - [`cli`]: the command line.
-//! - [`app`]: the relay's composition root.
+//! - [`config`]: the relay's configuration, read before anything starts; [`options`]: the
+//!   components' options the relay reads itself.
+//! - [`app`]: the relay's composition root; [`views`]: the node as the peer-to-peer client and the
+//!   API read it.
 //! - [`lock`]: the process lock.
 //! - [`signals`]: the signals and the graceful shutdown.
+//! - `harness` (feature `difftest`): the harness's digest and block files and its seed.
 //!
 //! Features: `difftest` adds the harness's flags of `relay run` (a digest line per state change,
 //! the applied blocks' bytes, and one seed that skips the address rules), test seams that only the
@@ -23,8 +27,13 @@
 
 pub mod app;
 pub mod cli;
+pub mod config;
+#[cfg(feature = "difftest")]
+pub mod harness;
 pub mod lock;
+pub mod options;
 pub mod signals;
+pub mod views;
 
 use std::process::ExitCode;
 
