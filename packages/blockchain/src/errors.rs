@@ -39,6 +39,9 @@ pub enum StoreError {
     /// The milestone file's entries cannot be read to compute their digests.
     #[error("the milestone entries cannot be read: {0}")]
     Milestones(String),
+    /// A chunk was started before the store was started ([`crate::restore()`]).
+    #[error("the store has not been started: restore the state from it first")]
+    NotStarted,
 }
 
 /// The node refuses to start. The message names the failed check or what the operator can do.
@@ -49,7 +52,7 @@ pub enum StartError<E> {
     #[error(transparent)]
     Store(#[from] StoreError),
     /// A boot check of the store failed.
-    #[error("the database failed a check at start: {0:?}")]
+    #[error("the database failed a check at start: {0}")]
     Integrity(IntegrityProblem),
     /// The store belongs to another chain than the configured files: its nethash or its genesis
     /// block differs.

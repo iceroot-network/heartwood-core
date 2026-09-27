@@ -3,7 +3,9 @@
 //! build):
 //!
 //! - the time of `WalletRepository::clone` at 10^3 to 10^6 wallets (median of 20) and the
-//!   memory four copies add;
+//!   memory four copies add, and the time of `changed_since` over such a copy with one wallet
+//!   changed (median of 20): with the copy, the part of the store's commit of a block that grows
+//!   with the number of wallets, not with the number the block changed;
 //! - the time of a re-add with 1 to 15,000 senders at 10^4 and 10^5 wallets (at least one wallet
 //!   per sender), and the memory its views hold.
 //!
@@ -104,7 +106,7 @@ fn view_cost() {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(4_096.0);
-    println!("wallets     copy (median of 20)   memory per copy");
+    println!("wallets     copy (median of 20)   memory per copy   changed_since (median of 20)");
     for count in [1_000, 10_000, 100_000, 1_000_000] {
         println!("{}", child(&format!("copy:{count}")));
     }
@@ -175,9 +177,21 @@ fn copy_case(count: usize) {
     let copies: Vec<WalletRepository> = (0..4).map(|_| wallets.clone()).collect();
     let mib = (resident_mib() - before) / 4.0;
     black_box(copies);
+    // The commit's scan: a copy with one wallet changed, against the committed wallets.
+    let mut changed = wallets.clone();
+    let first = *changed.iter().next().unwrap().address();
+    changed.get_or_create(&first).credit(1).unwrap();
+    let mut scans = Vec::new();
+    for _ in 0..20 {
+        let start = now_ms();
+        let found = black_box(changed.changed_since(&wallets).count());
+        scans.push(now_ms() - start);
+        assert_eq!(found, 1);
+    }
+    scans.sort_by(f64::total_cmp);
     println!(
-        "RESULT {count:>9}   {:>12.3} ms   {mib:>12.2} MiB",
-        samples[10]
+        "RESULT {count:>9}   {:>12.3} ms   {mib:>12.2} MiB   {:>12.3} ms",
+        samples[10], scans[10]
     );
 }
 
@@ -213,7 +227,7 @@ fn readd_case(count: usize, senders: usize) {
     };
     let before = resident_mib();
     let start = now_ms();
-    let readded = pool.readd(&ctx, &[], true).unwrap();
+    let readded = pool.readd(&ctx, &[]).unwrap();
     let ms = now_ms() - start;
     let mib = resident_mib() - before;
     assert_eq!(

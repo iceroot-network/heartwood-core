@@ -77,6 +77,44 @@ pub enum IntegrityProblem {
     },
 }
 
+impl std::fmt::Display for IntegrityProblem {
+    /// The failed check in a sentence, for the operator.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IntegrityProblem::BlockCount { tip, blocks } => write!(
+                f,
+                "the store holds {blocks} blocks, but its last block is at height {tip}"
+            ),
+            IntegrityProblem::TransactionSums {
+                column,
+                blocks,
+                transactions,
+            } => write!(
+                f,
+                "the blocks' {column} add up to {blocks}, but the transaction rows to {transactions}"
+            ),
+            IntegrityProblem::RoundAbove { round, tip_round } => write!(
+                f,
+                "the store holds round rows of round {round}, above round {tip_round}, the last \
+                 round the tip may have rows of"
+            ),
+            IntegrityProblem::Undo { height } => write!(
+                f,
+                "the undo record at height {height} is missing, or lies outside the heights from 2 \
+                 to the tip"
+            ),
+            IntegrityProblem::StateRow { height, tip } => write!(
+                f,
+                "the state row is at height {height}, but the tip is at height {tip}"
+            ),
+            IntegrityProblem::StateBlock { height } => write!(
+                f,
+                "the state row at height {height} names another block than the tip"
+            ),
+        }
+    }
+}
+
 impl Database {
     /// Run the checks, with the round of a height as `milestones` give it.
     pub fn integrity(&self, milestones: &Milestones) -> Result<IntegrityReport, DatabaseError> {

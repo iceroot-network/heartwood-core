@@ -11,24 +11,26 @@
 //! pool's steps. A block is forged from the reference's collation. Where Heartwood's pool is
 //! still a stub, its side of each pool step is skipped, and the chain's steps are still compared.
 //!
-//! - PS-a `pool-forge`: transfers from three senders with mixed fees, three blocks forged from
+//! - `pool-forge`: transfers from three senders with mixed fees, three blocks forged from
 //!   validated collations, each followed by the synced sequence;
-//! - PS-b `pool-competing-nonce`: a block holds another transaction for a pending nonce, and the
-//!   re-add drops the pending transaction;
-//! - PS-c `pool-revert-readd`: a block of pool transactions reverted, its transactions re-added;
-//! - PS-d `pool-online-expiry`: a vote for a delegate before and after it is online, and the
-//!   expiry of its entry at a round start, which the re-add then applies;
-//! - PS-e `pool-rule-next-height`: a milestone at the tip plus two raises the fee floor: a
-//!   transfer at the old floor enters, and the re-add after the next block drops it;
-//! - PS-f `pool-storage-restart`: the pool's storage opened again and its transactions re-added.
+//! - `pool-competing-nonce`: a block holds another transaction for a pending nonce, and the re-add
+//!   drops the pending transaction;
+//! - `pool-revert-readd`: a block of pool transactions reverted, its transactions re-added;
+//! - `pool-online-expiry`: a vote for a delegate before and after it is online, and the expiry of
+//!   its entry at a round start, which the re-add then applies;
+//! - `pool-rule-next-height`: a milestone at the tip plus two raises the fee floor: a transfer at
+//!   the old floor enters, and the re-add after the next block drops it;
+//! - `pool-storage-restart`: the pool's storage opened again and its transactions re-added.
 
 use std::collections::BTreeMap;
 
+use heartwood_blockchain::online;
 use heartwood_crypto::identities::{Address, PublicKeyBytes};
 use heartwood_crypto::transactions::builders::TransactionBuilder;
 use heartwood_crypto::transactions::types::Votes;
 use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Block, Transaction, TransactionId};
+use heartwood_database::{Database, Settings};
 use heartwood_kernel::clock::ManualClock;
 use heartwood_kernel::utils::round_calculator::is_new_round;
 use heartwood_pool::{DelegateVersions, Entry, Options, Pool, PoolContext, Processor, collate};
@@ -47,17 +49,17 @@ use crate::synthetic::{FEE, Keys, Sides, corpus_keys, transfer};
 /// A synthetic pool case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PoolCase {
-    /// PS-a.
+    /// `pool-forge`.
     Forge,
-    /// PS-b.
+    /// `pool-competing-nonce`.
     CompetingNonce,
-    /// PS-c.
+    /// `pool-revert-readd`.
     RevertReadd,
-    /// PS-d.
+    /// `pool-online-expiry`.
     OnlineExpiry,
-    /// PS-e.
+    /// `pool-rule-next-height`.
     RuleAtNextHeight,
-    /// PS-f.
+    /// `pool-storage-restart`.
     StorageRestart,
 }
 
@@ -331,9 +333,7 @@ impl<'a> PoolSides<'a> {
                     .map_err(|e| e.to_string())?;
             }
             side.pool.clean_up(&ctx).map_err(|e| e.to_string())?;
-            side.pool
-                .readd(&ctx, &[], true)
-                .map_err(|e| e.to_string())?;
+            side.pool.readd(&ctx, &[]).map_err(|e| e.to_string())?;
             Ok(json!({"result": {}, "contents": contents(&side.pool)?}))
         });
         self.compare(
@@ -357,7 +357,7 @@ impl<'a> PoolSides<'a> {
             &format!("{what}: the pool after the revert"),
             |side, ctx| {
                 side.pool
-                    .readd(ctx, &transactions, false)
+                    .readd(ctx, &transactions)
                     .map_err(|e| e.to_string())?;
                 Ok(json!({"result": {}, "contents": contents(&side.pool)?}))
             },
@@ -421,13 +421,23 @@ impl<'a> PoolSides<'a> {
             &json!({"session": self.s.session}),
         )?;
         let ours = self.heartwood(what, |side, ctx| {
+            // The online record goes through the node's store, as across a node's restart.
+            let text = |e: &dyn std::fmt::Display| e.to_string();
+            let data = side.scratch.path().join("node");
+            let mut database =
+                Database::open(&Settings::in_data_dir(&data)).map_err(|e| text(&e))?;
+            database
+                .put_delegate_versions(&online::rows(&side.online))
+                .map_err(|e| text(&e))?;
+            let rows = database.delegate_versions().map_err(|e| text(&e))?;
+            side.online = online::record(rows).map_err(|e| text(&e))?;
+            if side.online != *ctx.online {
+                return Err("the online record did not come back from the store".into());
+            }
             let fresh = Pool::open(side.options.clone(), None).map_err(|e| e.to_string())?;
             drop(std::mem::replace(&mut side.pool, fresh));
             side.processor = Processor::new();
-            side.pool
-                .readd(ctx, &[], false)
-                .map_err(|e| e.to_string())?;
-            let _ = side.scratch.path();
+            side.pool.readd(ctx, &[]).map_err(|e| e.to_string())?;
             Ok(json!({"result": {}, "contents": contents(&side.pool)?}))
         });
         self.compare(

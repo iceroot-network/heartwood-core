@@ -6,7 +6,7 @@ mod common;
 
 use common::{Chain, Node, files_with, read, scratch, start};
 use heartwood_blockchain::rows::transaction_rows;
-use heartwood_blockchain::{RestoreMode, RestorePath, StartError};
+use heartwood_blockchain::{ChainStore, RestoreMode, RestorePath, StartError, StoreError};
 use heartwood_crypto::Block;
 use heartwood_crypto::transactions::Asset;
 use heartwood_database::{ChainMeta, IntegrityProblem, StateRow};
@@ -67,6 +67,18 @@ fn tampered<'c>(
     chunk.put_undo(tip, &undo.record).unwrap();
     chunk.commit().unwrap();
     node
+}
+
+#[test]
+fn a_chunk_before_the_start_is_refused() {
+    let chain = Chain::load();
+    let dir = scratch("chunk-before-start");
+    let mut store = ChainStore::open(&common::settings(&dir)).unwrap();
+    assert!(matches!(store.chunk(), Err(StoreError::NotStarted)));
+    drop(store);
+    let (mut store, restored) = start(&dir, &chain.files, RestoreMode::Auto).unwrap();
+    assert_eq!(restored.path, RestorePath::FirstStart);
+    assert!(store.chunk().is_ok());
 }
 
 #[test]
@@ -186,10 +198,10 @@ fn a_store_of_another_chain_or_changed_outside_the_node_refuses_the_start() {
             tip: 12
         })
     );
-    assert!(
-        error
-            .to_string()
-            .starts_with("the database failed a check at start")
+    assert_eq!(
+        error.to_string(),
+        "the database failed a check at start: the state row is at height 11, but the tip is at \
+         height 12"
     );
 
     // A store with blocks and no identity, or an identity and no block.

@@ -173,7 +173,7 @@ fn clean_up_removes_old_then_lowest_priority() {
     };
     drop(harness.pool);
     let mut pool = Pool::open(options, None).unwrap();
-    let readded = pool.readd(&at(500), &[], false).unwrap();
+    let readded = pool.readd(&at(500), &[]).unwrap();
     assert_eq!(readded.stored.len(), 1, "the re-add made room: {readded:?}");
     assert_eq!(ids(pool.query().all()), [id(&later)]);
     assert!(pool.clean_up(&at(500)).unwrap().lowest_priority.is_empty());
@@ -192,7 +192,7 @@ fn readd_restores_the_pool_from_its_storage() {
     drop(harness.pool);
     let mut pool = Pool::open(options, None).unwrap();
     assert_eq!(pool.size(), 0);
-    let readded = pool.readd(&ctx, &[], false).unwrap();
+    let readded = pool.readd(&ctx, &[]).unwrap();
     assert_eq!(
         readded,
         Readded {
@@ -202,7 +202,7 @@ fn readd_restores_the_pool_from_its_storage() {
     );
     assert_eq!(ids(pool.query().all()), before);
     // A re-add after a flush of the mempool gives the same pool.
-    let again = pool.readd(&ctx, &[], true).unwrap();
+    let again = pool.readd(&ctx, &[]).unwrap();
     assert_eq!(again.stored.len(), 3);
     assert_eq!(ids(pool.query().all()), before);
 }
@@ -227,7 +227,7 @@ fn readd_drops_what_no_longer_applies_and_what_is_too_old() {
         .set_nonce(3);
     let mut ctx = fixture.ctx(&MILESTONES);
     ctx.tip = 505;
-    let readded = harness.pool.readd(&ctx, &[], true).unwrap();
+    let readded = harness.pool.readd(&ctx, &[]).unwrap();
     assert_eq!(readded.expired, [*other.id()]);
     assert_eq!(
         readded.stored,
@@ -259,7 +259,7 @@ fn readd_puts_back_previously_forged_transactions_first() {
         .pool
         .remove_forged_transaction(&fixture.alice.address, txs[0].id())
         .unwrap();
-    let readded = harness.pool.readd(&ctx, &[txs[0].clone()], false).unwrap();
+    let readded = harness.pool.readd(&ctx, &[txs[0].clone()]).unwrap();
     assert_eq!(readded.forged, [*txs[0].id()]);
     assert_eq!(readded.stored, [*other.id(), *txs[1].id()]);
     // The forged one's sender mempool comes first, and its row last.
@@ -267,7 +267,7 @@ fn readd_puts_back_previously_forged_transactions_first() {
     assert_eq!(harness.stored(), [id(&other), id(&txs[1]), id(&txs[0])]);
     // A previously forged transaction that is still stored counts as failed but stays in the
     // mempool; its row is re-added like the others and fails on its nonce.
-    let readded = harness.pool.readd(&ctx, &[txs[0].clone()], false).unwrap();
+    let readded = harness.pool.readd(&ctx, &[txs[0].clone()]).unwrap();
     assert!(readded.forged.is_empty());
     assert_eq!(
         readded.forged_failed,
@@ -308,7 +308,7 @@ fn the_clear_marker_empties_the_pool_at_open() {
     std::fs::write(&marker, b"").unwrap();
     let mut pool = Pool::open(options, Some(&marker)).unwrap();
     assert!(pool.stored().unwrap().is_empty());
-    assert!(pool.readd(&ctx, &[], false).unwrap().stored.is_empty());
+    assert!(pool.readd(&ctx, &[]).unwrap().stored.is_empty());
     assert!(!marker.exists());
 }
 
@@ -414,7 +414,7 @@ fn a_crash_leaves_no_row_of_an_unadmitted_transaction() {
             "an unadmitted row"
         );
         // Every row the re-add trusts is a transaction that was admitted.
-        let readded = pool.readd(&ctx, &[], false).unwrap();
+        let readded = pool.readd(&ctx, &[]).unwrap();
         assert!(readded.failed.is_empty(), "{readded:?}");
         assert_eq!(readded.stored.len(), stored.len());
     }

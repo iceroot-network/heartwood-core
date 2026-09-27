@@ -13,6 +13,8 @@
 //!   genesis block.
 //! - [`milestones`]: the digests of the applied milestone entries, and the check at start that no
 //!   applied entry changed.
+//! - [`online`]: the pool's node-local online record in the store, saved when it changes and
+//!   loaded at every start.
 //! - [`errors`]: the error types, [`StoreError`] and [`StartError`].
 //!
 //! A [`StoreError`] is fatal: the state in memory is then ahead of the store, so the node stops,
@@ -38,6 +40,7 @@
 pub mod commit;
 pub mod errors;
 pub mod milestones;
+pub mod online;
 pub mod restore;
 pub mod rows;
 

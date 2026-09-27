@@ -60,7 +60,9 @@ impl ChainStore {
         &self.entries
     }
 
-    /// Start a chunk.
+    /// Start a chunk. Refused until [`crate::restore()`] has started the store: before that the
+    /// store knows neither the chain's identity nor the milestone entries' digests, and a chunk
+    /// written without them would refuse the next start.
     pub fn chunk(&mut self) -> Result<ChunkWriter<'_>, StoreError> {
         let ChainStore {
             database,
@@ -68,6 +70,9 @@ impl ChainStore {
             entries,
             meta,
         } = self;
+        if meta.is_none() {
+            return Err(StoreError::NotStarted);
+        }
         Ok(ChunkWriter {
             chunk: database.begin()?,
             committed,
@@ -167,11 +172,7 @@ impl ChunkWriter<'_> {
     /// Write every state table again from `state`: every wallet, the state row and every undo
     /// record, as after a replay from the genesis block; and the state format in the chain's
     /// identity.
-    pub fn rewrite_state(
-        &mut self,
-        state: &State,
-        _milestones: &Milestones,
-    ) -> Result<(), StoreError> {
+    pub fn rewrite_state(&mut self, state: &State) -> Result<(), StoreError> {
         self.chunk.delete_wallets()?;
         for undo in state.journal() {
             let record = serde_json::to_string(&UndoRecord::from_undo(undo));

@@ -363,6 +363,7 @@ dependencies = [
  "heartwood-crypto",
  "heartwood-database",
  "heartwood-kernel",
+ "heartwood-pool",
  "heartwood-state",
  "heartwood-transactions",
  "hex",

@@ -14,6 +14,7 @@ workspace = true
 heartwood-crypto.workspace = true
 heartwood-database.workspace = true
 heartwood-kernel.workspace = true
+heartwood-pool.workspace = true
 heartwood-state.workspace = true
 heartwood-transactions.workspace = true
 serde_json.workspace = true

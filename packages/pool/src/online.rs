@@ -5,8 +5,9 @@
 //! `delegate.version` attribute); at each round start an entry older than five rounds expires.
 //! The pool's pool-entry checks read the record ([`OnlineView`]): a vote for a delegate that has
 //! not resigned and has no entry, or a revoke by one, is refused with `ERR_OFFLINE`. The record
-//! never enters consensus; the node stores it in its database and loads it at start, so it
-//! survives a restart.
+//! never enters consensus; `heartwood-blockchain` saves it in the node's store and every start
+//! loads it back ([`DelegateVersions::entries`] and [`DelegateVersions::from_entries`] are the
+//! rows' form), so it survives a restart with each entry's round.
 
 use std::collections::BTreeMap;
 

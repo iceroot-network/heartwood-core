@@ -297,4 +297,21 @@ fn every_problem_is_reported_in_the_order_the_checks_run() {
             },
         ]
     );
+    // Each names its check in a sentence.
+    let text: Vec<String> = problems.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        text,
+        [
+            "the store holds 11 blocks, but its last block is at height 12",
+            "the blocks' total_amount add up to 37, but the transaction rows to 36",
+            "the store holds round rows of round 9, above round 3, the last round the tip may have \
+             rows of",
+            "the undo record at height 9 is missing, or lies outside the heights from 2 to the tip",
+            "the state row is at height 10, but the tip is at height 12",
+        ]
+    );
+    assert_eq!(
+        IntegrityProblem::StateBlock { height: 4 }.to_string(),
+        "the state row at height 4 names another block than the tip"
+    );
 }

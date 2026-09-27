@@ -8,8 +8,10 @@
 //! between calls; the synthetic pool cases drive them ([`crate::synthetic_pool`]), and they have no
 //! subject here.
 
+use heartwood_blockchain::online;
 use heartwood_crypto::identities::{Address, PublicKeyBytes};
 use heartwood_crypto::{Milestones, Network, Transaction, TransactionId};
+use heartwood_database::{Database, Settings};
 use heartwood_kernel::clock::ManualClock;
 use heartwood_pool::{DelegateVersions, Entry, Options, Pool, PoolContext, Processor, collate};
 use heartwood_state::WalletRepository;
@@ -24,9 +26,11 @@ use crate::subject::{Case, NOTES, SubjectError, Verdict};
 /// The operations of this module.
 pub(super) const OPS: &[(&str, Run)] = &[("pool.run", run)];
 
-/// A pool session: the pool, its two processors, the online record and the tip.
+/// A pool session: the pool, its two processors, the online record and the tip, and the node's
+/// data directory, whose store keeps the online record across a restart.
 struct Session<'a> {
     options: Options,
+    data: std::path::PathBuf,
     pool: Pool,
     api: Processor,
     p2p: Processor,
@@ -72,12 +76,29 @@ impl Session<'_> {
         json!(keys)
     }
 
+    /// The online record saved in the node's store and loaded from it again, as a node that
+    /// stops and starts does.
+    fn reload_online(&mut self) -> Result<(), String> {
+        let text = |e: &dyn std::fmt::Display| e.to_string();
+        let mut database =
+            Database::open(&Settings::in_data_dir(&self.data)).map_err(|e| text(&e))?;
+        database
+            .put_delegate_versions(&online::rows(&self.online))
+            .map_err(|e| text(&e))?;
+        let rows = database.delegate_versions().map_err(|e| text(&e))?;
+        self.online = online::record(rows).map_err(|e| text(&e))?;
+        Ok(())
+    }
+
     /// Run one step; its result in the oracle's shape.
     fn step(&mut self, step: &Value) -> Result<Value, String> {
         let op = step
             .get("op")
             .and_then(Value::as_str)
             .ok_or("a step has no op")?;
+        if op == "restart" {
+            self.reload_online()?;
+        }
         let ctx = PoolContext {
             wallets: &self.wallets,
             tip: self.tip,
@@ -154,8 +175,8 @@ impl Session<'_> {
                     .iter()
                     .map(|t| self.decode(t.as_str().unwrap_or("")))
                     .collect::<Result<Vec<_>, String>>()?;
-                let recheck = step.get("recheck") == Some(&Value::Bool(true));
-                self.pool.readd(&ctx, &forged, recheck).map_err(storage)?;
+                // The step's `recheck` changes only what the reference logs.
+                self.pool.readd(&ctx, &forged).map_err(storage)?;
                 json!({})
             }
             "cleanUp" => {
@@ -203,13 +224,13 @@ impl Session<'_> {
                 json!({"ids": collated.candidates.iter().map(|t| t.id().to_hex()).collect::<Vec<_>>()})
             }
             "restart" => {
-                // A restarted node: a new pool over the same file, new processors, then the
-                // start's re-add.
+                // A restarted node: the online record came back from the node's store (above), a
+                // new pool over the same file, new processors, then the start's re-add.
                 let fresh = Pool::open(self.options.clone(), None).map_err(storage)?;
                 drop(std::mem::replace(&mut self.pool, fresh));
                 self.api = Processor::new();
                 self.p2p = Processor::new();
-                self.pool.readd(&ctx, &[], false).map_err(storage)?;
+                self.pool.readd(&ctx, &[]).map_err(storage)?;
                 json!({})
             }
             "tip" => {
@@ -260,6 +281,7 @@ fn run(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         let pool = Pool::open(options.clone(), None).map_err(|e| e.to_string())?;
         let mut session = Session {
             options,
+            data: dir.path().join("node"),
             pool,
             api: Processor::new(),
             p2p: Processor::new(),

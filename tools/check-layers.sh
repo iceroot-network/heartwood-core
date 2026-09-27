@@ -21,7 +21,7 @@ declare -A ALLOWED=(
     [heartwood-p2p-wire]="heartwood-crypto heartwood-kernel"
     [heartwood-database]="heartwood-crypto heartwood-kernel"
     [heartwood-pool]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions"
-    [heartwood-blockchain]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions heartwood-database"
+    [heartwood-blockchain]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions heartwood-database heartwood-pool"
     [heartwood-difftest]="heartwood-crypto heartwood-kernel heartwood-logger heartwood-p2p-wire heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-blockchain"
 )
 # The consensus crates, and the crates none of them may pull in.

@@ -322,18 +322,18 @@ fn run(case: Case) {
                     online: &fixture.online,
                 };
                 pool.clean_up(&ctx).expect("storage");
-                pool.readd(&ctx, &[], true).expect("storage");
+                pool.readd(&ctx, &[]).expect("storage");
             }
             Step::CleanUp => {
                 pool.clean_up(&ctx).expect("storage");
             }
             Step::Readd => {
-                pool.readd(&ctx, &[], true).expect("storage");
+                pool.readd(&ctx, &[]).expect("storage");
             }
             Step::Restart => {
                 drop(pool);
                 pool = Pool::open(options.clone(), None).expect("the pool opens");
-                pool.readd(&ctx, &[], false).expect("storage");
+                pool.readd(&ctx, &[]).expect("storage");
             }
             Step::Collate { validate, exclude } => {
                 let highest: Vec<TransactionId> = pool

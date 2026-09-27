@@ -13,11 +13,13 @@
 //! 5. The replay: the state after the genesis block, then every stored block applied again
 //!    through the one apply path; then the state tables are written again. A replay that would
 //!    take a balance below zero refuses the start with the reference's message.
+//! 6. Every start also loads the node-local online record ([`crate::online`]).
 
 use heartwood_crypto::blocks::factory;
 use heartwood_crypto::{Block, Milestones};
 use heartwood_database::{ChainMeta, Database, MilestoneEntryRow, SCHEMA_VERSION};
 use heartwood_kernel::config::crypto::CryptoFiles;
+use heartwood_pool::DelegateVersions;
 use heartwood_state::errors::{ApplyError, GenesisError, WalletError};
 use heartwood_state::genesis;
 use heartwood_state::persist::{RestoreError, STATE_FORMAT, StateRecord, UndoRecord, WalletRecord};
@@ -64,23 +66,41 @@ pub enum RestorePath {
     Replay(ReplayReason),
 }
 
-/// A restored state, and how it was restored.
+/// A restored state, how it was restored, and the node-local online record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Restored {
     /// The state at the stored tip.
     pub state: State,
     /// How it was restored.
     pub path: RestorePath,
+    /// The stored online record, for the pool (empty at a first start).
+    pub online: DelegateVersions,
 }
 
 /// Restore the state of `store` under the configuration `files`, with `handlers` for the genesis
-/// block and a replay (see the module documentation for the steps).
+/// block and a replay, and load the online record (see the module documentation for the steps).
 pub fn restore<H: TransactionHandlers>(
     store: &mut ChainStore,
     files: &CryptoFiles,
     handlers: &H,
     mode: RestoreMode,
 ) -> Result<Restored, StartError<H::Error>> {
+    let (state, path) = restore_state(store, files, handlers, mode)?;
+    let online = store.online()?;
+    Ok(Restored {
+        state,
+        path,
+        online,
+    })
+}
+
+/// The state of `store` at its tip, and how it was restored.
+fn restore_state<H: TransactionHandlers>(
+    store: &mut ChainStore,
+    files: &CryptoFiles,
+    handlers: &H,
+    mode: RestoreMode,
+) -> Result<(State, RestorePath), StartError<H::Error>> {
     let milestones = &files.milestones;
     let genesis = factory::from_json(&files.genesis, milestones).map_err(|error| {
         let detail = error.to_string();
@@ -111,8 +131,7 @@ pub fn restore<H: TransactionHandlers>(
         RestoreMode::Auto => match table(store, &genesis, &blocks, milestones)? {
             Ok(state) => {
                 store.committed = Some(state.wallets().clone());
-                let path = RestorePath::Table;
-                return Ok(Restored { state, path });
+                return Ok((state, RestorePath::Table));
             }
             Err(reason) => reason,
         },
@@ -123,10 +142,9 @@ pub fn restore<H: TransactionHandlers>(
         applied.map_err(|error| replay_error(block.height(), error))?;
     }
     let mut chunk = store.chunk()?;
-    chunk.rewrite_state(&state, milestones)?;
+    chunk.rewrite_state(&state)?;
     chunk.commit()?;
-    let path = RestorePath::Replay(reason);
-    Ok(Restored { state, path })
+    Ok((state, RestorePath::Replay(reason)))
 }
 
 /// The first start: the state after the genesis block, written with the chain's identity.
@@ -135,7 +153,7 @@ fn first_start<H: TransactionHandlers>(
     files: &CryptoFiles,
     genesis: &Block,
     handlers: &H,
-) -> Result<Restored, StartError<H::Error>> {
+) -> Result<(State, RestorePath), StartError<H::Error>> {
     let milestones = &files.milestones;
     let state = State::from_genesis(genesis, milestones, handlers).map_err(genesis_error)?;
     let meta = ChainMeta {
@@ -148,8 +166,7 @@ fn first_start<H: TransactionHandlers>(
     let mut chunk = store.chunk()?;
     chunk.first_start(&state, &meta, milestones)?;
     chunk.commit()?;
-    let path = RestorePath::FirstStart;
-    Ok(Restored { state, path })
+    Ok((state, RestorePath::FirstStart))
 }
 
 /// The checks of every start after the first: the store is the configured chain's, the store's

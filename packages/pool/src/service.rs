@@ -159,8 +159,8 @@ impl Pool {
     /// Empty the mempool (not the storage) and add back first `previously_forged` (the
     /// transactions of reverted blocks, which are then stored), then every stored transaction
     /// that is neither among them nor too old. Re-adds skip the duplicate and fee steps; the
-    /// handlers' own checks apply. `recheck` is the reference's flag of a re-add after a block,
-    /// which changes only what is logged.
+    /// handlers' own checks apply. (The reference's flag of a re-add after a block changes only
+    /// what it logs, so there is none here.)
     ///
     /// Both are decoded as bytes this node checked before, as the reference's
     /// `fromBytesUnsafe` does. A previously forged transaction that is still stored stays in the
@@ -170,9 +170,7 @@ impl Pool {
         &mut self,
         ctx: &PoolContext<'_>,
         previously_forged: &[Transaction],
-        recheck: bool,
     ) -> Result<Readded, StorageError> {
-        let _ = recheck;
         self.mempool.flush();
         let mut readded = Readded::default();
         let mut forged_stored = Vec::new();
