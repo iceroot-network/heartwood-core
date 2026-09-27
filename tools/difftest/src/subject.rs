@@ -83,6 +83,9 @@ pub enum Documented {
     SavedStateUsername,
     /// A count in a message, written by the reference in a default locale that is not English.
     Locale,
+    /// A pool session whose online record changed while a sender's pool view that had read the
+    /// delegate's wallet before the change lived on.
+    OnlineView,
     /// Crypto files that the strict schema refuses: an unknown key, a `null`, a height twice, a
     /// removed feature turned on, a missing file, or a non-empty `exceptions.json`.
     StrictSchema,
@@ -159,6 +162,12 @@ impl Documented {
             Documented::Locale => {
                 "a count in a message: the reference groups its digits in the process's default \
                  locale; Heartwood always writes the English grouping (node-local text only)"
+            }
+            Documented::OnlineView => {
+                "a delegate's online record in a sender's pool view: the reference's view keeps \
+                 the delegate's wallet, with its version, as it copied it the first time it read \
+                 it, until the view is rebuilt; Heartwood's pool reads the node's online record \
+                 when it checks (node-local policy, whose changes depend on the network's timing)"
             }
             Documented::StrictSchema => {
                 "crypto files that the strict schema refuses: Heartwood refuses to start and names \

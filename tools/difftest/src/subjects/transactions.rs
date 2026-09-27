@@ -115,6 +115,7 @@ fn has_json_form(difference: Documented, json: &Value) -> bool {
         | Documented::FullPoolEviction
         | Documented::SavedStateUsername
         | Documented::Locale
+        | Documented::OnlineView
         | Documented::StrictSchema => false,
     }
 }

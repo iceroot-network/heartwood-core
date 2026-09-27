@@ -22,7 +22,11 @@
 //!   transaction it rebuilt, which no other entry and no id of Heartwood's answer names; at most
 //!   one such id per documented JSON entry is left out of the reference's side too;
 //! - a count in a message that the oracle's default locale groups otherwise
-//!   ([`Documented::Locale`], shown by the oracle's `locale` note).
+//!   ([`Documented::Locale`], shown by the oracle's `locale` note);
+//! - after the session changed the online record, a step whose entries differ only where one
+//!   side refused a vote or revoke as offline ([`Documented::OnlineView`]): the reference's
+//!   sender view keeps the delegate's version it copied before the change. The later steps are
+//!   not compared, since the two pools may differ from there.
 
 use std::collections::BTreeSet;
 
@@ -301,6 +305,50 @@ fn result_ids(result: &Value) -> BTreeSet<String> {
     out
 }
 
+/// The end of the pool-entry message of a vote or revoke for a delegate that the online record
+/// does not hold.
+const OFFLINE: &str = "is not operating a node on the network";
+
+/// Whether every entry whose outcome differs between the two processor results was refused as
+/// offline on one side (and at least one differs). The reason of an entry that does not decode is
+/// left out, as the decode-reason rule does.
+fn only_offline_differs(expected: &Value, actual: &Value) -> bool {
+    let outcome = |result: &Value, id: &str| {
+        let mut error = result["errors"][id].clone();
+        let decode = error["type"] == "ERR_BAD_DATA"
+            && error["message"]
+                .as_str()
+                .is_some_and(|m| m.starts_with(DECODE_PREFIX));
+        if decode {
+            error["message"] = Value::from(DECODE_PREFIX);
+        }
+        let listed: Vec<bool> = LISTS
+            .iter()
+            .map(|list| {
+                result[*list]
+                    .as_array()
+                    .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(id)))
+            })
+            .collect();
+        json!([listed, error])
+    };
+    let offline = |result: &Value, id: &str| {
+        result["errors"][id]["message"]
+            .as_str()
+            .is_some_and(|m| m.ends_with(OFFLINE))
+    };
+    let mut ids = result_ids(expected);
+    ids.extend(result_ids(actual));
+    let differing: Vec<&String> = ids
+        .iter()
+        .filter(|id| outcome(expected, id) != outcome(actual, id))
+        .collect();
+    !differing.is_empty()
+        && differing
+            .iter()
+            .all(|id| offline(expected, id) || offline(actual, id))
+}
+
 /// The ids either side may give each entry of a `process` step, in entry order: its index, the
 /// SHA-256 of its bytes (the transaction id of canonical bytes), and for JSON the id it gives.
 fn entry_ids(step: &Value) -> Vec<BTreeSet<String>> {
@@ -467,6 +515,13 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
         ));
     }
     let locale = expected[NOTES]["locale"] == Value::Bool(true);
+    let online_view = |i: usize, a: &Value, b: &Value| {
+        steps.get(..i).is_some_and(|before| {
+            before
+                .iter()
+                .any(|s| s.get("op").and_then(Value::as_str) == Some("setOnline"))
+        }) && only_offline_differs(a, b)
+    };
     let mut documented: Option<Documented> = None;
     for (i, ((step, a), b)) in steps.iter().zip(&theirs).zip(&ours).enumerate() {
         let mut a_result = a["result"].clone();
@@ -518,7 +573,11 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
                 )
                 .is_empty();
             if !equal {
-                return Outcome::Mismatch(prefixed(i, same_shape));
+                return if online_view(i, &a_result, b_result) {
+                    Outcome::Documented(Documented::OnlineView.reason().to_owned())
+                } else {
+                    Outcome::Mismatch(prefixed(i, same_shape))
+                };
             }
             (
                 false,
@@ -543,6 +602,9 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
             }
             Messages::Different if locale => {
                 documented.get_or_insert(Documented::Locale);
+            }
+            Messages::Different if online_view(i, &a_result, b_result) => {
+                return Outcome::Documented(Documented::OnlineView.reason().to_owned());
             }
             Messages::Different => {
                 return Outcome::Mismatch(prefixed(i, compare::diff(&a_result, b_result)));
@@ -821,6 +883,47 @@ mod tests {
                 &input,
                 &run(vec![step(three, &["t"])]),
                 &run(vec![step(ours, &["t"])])
+            )
+            .is_failure()
+        );
+    }
+
+    #[test]
+    fn an_offline_refusal_after_a_change_of_the_online_record_is_documented() {
+        let set_online = json!({"op": "setOnline", "delegates": [], "expireAt": 9});
+        let batch = json!({"op": "process", "entries": [{"hex": "00"}], "now": 0});
+        let refused = |message: &str| {
+            json!({"accept": [], "broadcast": [], "invalid": ["r"], "excess": [],
+                   "errors": {"r": {"type": "ERR_APPLY", "message": message}}})
+        };
+        let theirs = refused("r cannot be applied: the wallet has not resigned");
+        let ours = refused("r cannot be applied: d0 is not operating a node on the network");
+        let session = |steps: Vec<Value>| json!({ "steps": steps });
+        let answer = |result: Value| run(vec![step(json!({"online": []}), &[]), step(result, &[])]);
+        assert_eq!(
+            judge(
+                &session(vec![set_online.clone(), batch.clone()]),
+                &answer(theirs.clone()),
+                &answer(ours.clone())
+            ),
+            Outcome::Documented(Documented::OnlineView.reason().into())
+        );
+        // Without a change of the record first, a mismatch.
+        let other = json!({"op": "flush"});
+        assert!(
+            judge(
+                &session(vec![other, batch.clone()]),
+                &answer(theirs.clone()),
+                &answer(ours)
+            )
+            .is_failure()
+        );
+        // A difference that is not an offline refusal is a mismatch.
+        assert!(
+            judge(
+                &session(vec![set_online, batch]),
+                &answer(theirs),
+                &answer(refused("r cannot be applied: another reason"))
             )
             .is_failure()
         );

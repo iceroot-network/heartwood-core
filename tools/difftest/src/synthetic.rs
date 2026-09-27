@@ -36,6 +36,7 @@ use heartwood_state::State;
 use heartwood_state::digest::{self, Step};
 use heartwood_state::errors::ApplyError;
 use heartwood_state::round_state::MissedBlock;
+use heartwood_state::wallets::{Wallet, WalletRepository};
 use heartwood_transactions::Handlers;
 use serde_json::{Value, json};
 
@@ -956,6 +957,7 @@ impl<'a> Sides<'a> {
     /// the node each side started last.
     fn restart(&mut self, what: &str, expect: Expect, server: &mut OracleServer) -> Result<bool> {
         let want = self.restart_line(&self.state);
+        let continuous = self.state.wallets().clone();
         let mut saved_documented = false;
         let keys = ["h", "step", "id", "b", "s", "r", "m", "w", "sd"];
         for mode in ["saved", "rebuild"] {
@@ -1029,10 +1031,15 @@ impl<'a> Sides<'a> {
                         )
                     } else if !store::took_its_path(mode, &path) {
                         Outcome::HarnessError(format!("the start took the path {path:?}"))
-                    } else if crate::restart::differing_keys(&line, &want, &keys).is_empty() {
-                        Outcome::Pass
-                    } else {
+                    } else if !crate::restart::differing_keys(&line, &want, &keys).is_empty() {
                         Outcome::Mismatch(compare::diff(&want, &line))
+                    } else {
+                        let hidden = undigested_differences(&continuous, state.wallets());
+                        if hidden.is_empty() {
+                            Outcome::Pass
+                        } else {
+                            Outcome::HarnessError(hidden.join("; "))
+                        }
                     };
                     self.state = state;
                     self.store = Some(StoreSide {
@@ -1150,6 +1157,38 @@ enum Expect {
     /// The starts without a saved state (the reference's rebuild, Heartwood's replay) refuse the
     /// stored chain with the reference's text; the others give the state before it.
     RefusedWithoutSavedState,
+}
+
+/// What a restart restored of the values the digest leaves out, where it differs from the
+/// continuous state: each delegate's `resigned_at` and each wallet's vote shares.
+fn undigested_differences(
+    continuous: &WalletRepository,
+    restored: &WalletRepository,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for wallet in continuous.iter() {
+        let other = restored.find_by_address(wallet.address());
+        let resigned_at =
+            |w: Option<&Wallet>| w.and_then(Wallet::delegate).and_then(|d| d.resigned_at);
+        if resigned_at(Some(wallet)) != resigned_at(other) {
+            out.push(format!(
+                "{}'s resigned_at is {:?} after the restart, {:?} before it",
+                wallet.address().to_base58(),
+                resigned_at(other),
+                resigned_at(Some(wallet))
+            ));
+        }
+        if other.map(Wallet::vote_shares) != Some(wallet.vote_shares())
+            && !(other.is_none() && wallet.vote_shares().is_empty())
+        {
+            out.push(format!(
+                "{}'s vote shares differ after the restart",
+                wallet.address().to_base58()
+            ));
+        }
+    }
+    out.truncate(5);
+    out
 }
 
 /// The reference's text when a start without a saved state meets a negative balance.

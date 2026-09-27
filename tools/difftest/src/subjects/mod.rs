@@ -465,6 +465,7 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
         | Documented::FullPoolEviction
         | Documented::SavedStateUsername
         | Documented::Locale
+        | Documented::OnlineView
         | Documented::StrictSchema => false,
     }
 }
