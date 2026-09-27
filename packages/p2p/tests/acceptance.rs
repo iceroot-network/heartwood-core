@@ -422,3 +422,52 @@ async fn a_peer_with_a_violation_is_not_accepted_again_within_its_window() {
     assert!(accept.repository.has(violator.ip()));
     assert_eq!(accept.events.all(), [Event::PeerAdded]);
 }
+
+#[tokio::test(start_paused = true)]
+#[ignore = "integration"]
+async fn the_real_address_rules_process_and_refuse_addresses() {
+    let processor = |allow_private| {
+        PeerProcessor::new(ProcessorParts {
+            client: Arc::new(Client::default()),
+            rules: Arc::new(heartwood_p2p::utils::rules::Rules::new(100, 25)),
+            repository: Arc::new(PeerRepository::new()),
+            chain: Arc::new(Chain::at(10)),
+            events: Arc::new(Events::default()),
+            options: Arc::new(P2pOptions {
+                allow_private_ip_ranges: allow_private,
+                max_same_subnet_peers: 1,
+                ..options()
+            }),
+            interfaces: vec![IpAddr::from(OWN)],
+            clock: Arc::new(ManualClock::new(START_MS)),
+        })
+    };
+    let strict = processor(false);
+    let valid = |processor: &PeerProcessor<Client, _>, address: &str| {
+        let mut peer = candidate(address);
+        (processor.validate_peer_ip(&mut peer, PLAIN), peer.ip)
+    };
+    // Unicast addresses (not the documentation ranges, which ipaddr.js calls reserved; 3fff::/20
+    // is newer than its tables).
+    assert_eq!(
+        valid(&strict, "::ffff:11.22.33.44"),
+        (true, "11.22.33.44".to_owned())
+    );
+    assert!(valid(&strict, "3fff::1").0);
+    let refused = [
+        "127.0.0.1",
+        "10.0.0.1",
+        "0.0.0.0",
+        "::1",
+        "192.0.2.1",
+        "2001:db8::1",
+        "198.51.100.200",
+        "no address",
+    ];
+    for address in refused {
+        assert!(!valid(&strict, address).0, "{address}");
+    }
+    let private = processor(true);
+    assert!(valid(&private, "10.0.0.1").0);
+    assert!(!valid(&private, "127.0.0.1").0);
+}

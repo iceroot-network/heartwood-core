@@ -945,3 +945,301 @@ async fn downloaded_transactions_are_read_as_the_reference_reads_them() {
     assert!(downloaded[0].header.transactions.is_empty());
     assert_eq!(downloaded[1].transactions, Some(vec![]));
 }
+
+// ---- integration: the real peer rules, and the connector against the mock peer ----------------
+
+/// The communicator over the scripted transport with the real peer rules.
+fn with_real_rules(chain: Chain) -> Fixture<Transport, heartwood_p2p::utils::rules::Rules> {
+    let rules = heartwood_p2p::utils::rules::Rules::new(100, 25);
+    Fixture::over(Transport::default(), rules, chain, options())
+}
+
+/// The headers every request carries: our version and port.
+fn our_headers() -> Option<heartwood_p2p_wire::messages::shared::Headers> {
+    Some(heartwood_p2p_wire::messages::shared::Headers {
+        version: Some("4.3.1".to_owned()),
+        port: Some(4002),
+        ..Default::default()
+    })
+}
+
+#[tokio::test(start_paused = true)]
+#[ignore = "integration"]
+async fn each_route_writes_the_reference_clients_request() {
+    let fixture = with_real_rules(Chain::at(10));
+    let client = &fixture.communicator;
+    let peer = peer(1);
+    fixture.repository.set(peer.clone());
+    let status = devnet_status(&block(10), 125, &[]);
+    fixture
+        .transport
+        .answer(RouteId::GetStatus, Answer::Bytes(status));
+    client
+        .ping(&peer, Duration::from_secs(5), None, true, false)
+        .await
+        .ok();
+    client.get_peers(&peer, true).await;
+    client
+        .has_common_blocks(&peer, &ids(2), Duration::from_secs(1))
+        .await;
+    client
+        .get_peer_blocks(&peer, BlocksRequest::after(5))
+        .await
+        .ok();
+    let headers = BlocksRequest {
+        block_limit: 3,
+        headers_only: true,
+        ..BlocksRequest::after(6)
+    };
+    client.get_peer_blocks(&peer, headers).await.ok();
+    client.get_unconfirmed_transactions(&peer, &[]).await;
+    client.post_block(&peer, &block(11)).await;
+    client.post_transactions(&peer, Arc::new(vec![vec![1, 2]]));
+    tokio::time::sleep(Duration::from_secs(30)).await;
+
+    let payload = |route| fixture.transport.sent_on(route)[0].payload.clone();
+    let status = peer_codecs::get_status_decode_request(&payload(RouteId::GetStatus)).unwrap();
+    assert_eq!(status.headers, our_headers());
+    let peers = peer_codecs::get_peers_decode_request(&payload(RouteId::GetPeers)).unwrap();
+    assert_eq!(peers.headers, our_headers());
+    let common =
+        peer_codecs::get_common_blocks_decode_request(&payload(RouteId::GetCommonBlocks)).unwrap();
+    let expected_ids: Vec<String> = ids(2).iter().map(BlockId::to_hex).collect();
+    assert_eq!((common.ids, common.headers), (expected_ids, our_headers()));
+    let sent = fixture.transport.sent_on(RouteId::GetBlocks);
+    let full = blocks::get_blocks_decode_request(&sent[0].payload).unwrap();
+    assert_eq!(
+        (
+            full.last_block_height,
+            full.block_limit,
+            full.headers_only,
+            full.serialised
+        ),
+        (Some(5), Some(400), None, Some(true))
+    );
+    assert_eq!(full.headers, our_headers());
+    let only = blocks::get_blocks_decode_request(&sent[1].payload).unwrap();
+    assert_eq!(
+        (only.last_block_height, only.block_limit, only.headers_only),
+        (Some(6), Some(3), Some(true))
+    );
+    let route = RouteId::GetUnconfirmedTransactions;
+    let pool = transactions::get_unconfirmed_transactions_decode_request(&payload(route)).unwrap();
+    // `exclude` is written even when empty, and `countOnly` never.
+    assert_eq!(pool.request.count_only, None);
+    assert_eq!(pool.request.exclude, Some(vec![]));
+    assert_eq!(pool.request.headers, our_headers());
+    let posted = blocks::post_block_decode_request(&payload(RouteId::PostBlock)).unwrap();
+    let bytes = heartwood_crypto::blocks::serialiser::serialise(&block(11));
+    assert_eq!(posted.block.map(|block| block.len()), Some(bytes.len()));
+    let route = RouteId::PostTransactions;
+    let batch = transactions::post_transactions_decode_request(&payload(route)).unwrap();
+    assert_eq!(batch.transactions, [vec![1, 2]]);
+    assert_eq!(batch.message.headers, our_headers());
+}
+
+#[tokio::test(start_paused = true)]
+#[ignore = "integration"]
+async fn the_real_limiter_spaces_requests_to_one_peer() {
+    let fixture = with_real_rules(Chain::at(10));
+    let client = &fixture.communicator;
+    let (first, second) = (peer(1), peer(2));
+    let started = Instant::now();
+    // getPeers: 1 a second; getBlocks: 1 in 2 s; another peer has limits of its own.
+    for _ in 0..2 {
+        fixture
+            .transport
+            .answer(RouteId::GetPeers, Answer::Bytes(peers_reply(&[])));
+    }
+    client.get_peers(&first, true).await;
+    client.get_peers(&first, true).await;
+    for _ in 0..3 {
+        fixture
+            .transport
+            .answer(RouteId::GetBlocks, Answer::Bytes(blocks_reply(&[])));
+    }
+    client
+        .get_peer_blocks(&first, BlocksRequest::after(1))
+        .await
+        .unwrap();
+    client
+        .get_peer_blocks(&first, BlocksRequest::after(1))
+        .await
+        .unwrap();
+    client
+        .get_peer_blocks(&second, BlocksRequest::after(1))
+        .await
+        .unwrap();
+    let at: Vec<Duration> = fixture
+        .transport
+        .sent()
+        .iter()
+        .map(|sent| sent.at - started)
+        .collect();
+    let seconds = Duration::from_secs;
+    assert_eq!(
+        at,
+        [seconds(0), seconds(1), seconds(1), seconds(3), seconds(3)]
+    );
+    assert!(client.would_throttle(first.ip(), RouteId::GetBlocks));
+    assert!(!client.would_throttle(first.ip(), RouteId::GetStatus));
+}
+
+#[tokio::test(start_paused = true)]
+#[ignore = "integration"]
+async fn the_real_reply_check_discards_an_oversize_unconfirmed_reply() {
+    let fixture = with_real_rules(Chain::with(
+        10,
+        milestones_with_max_transactions(1_000, 300),
+    ));
+    let client = &fixture.communicator;
+    let peer = peer(1);
+    fixture.repository.set(peer.clone());
+    let route = RouteId::GetUnconfirmedTransactions;
+    for count in [151, 150, 301] {
+        fixture
+            .transport
+            .answer(route, Answer::Bytes(unconfirmed_reply(count)));
+    }
+    assert!(
+        client
+            .get_unconfirmed_transactions(&peer, &[])
+            .await
+            .is_empty()
+    );
+    assert_eq!(peer.snapshot().sequential_errors, 0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(
+        client.get_unconfirmed_transactions(&peer, &[]).await.len(),
+        150
+    );
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(
+        client
+            .get_unconfirmed_transactions(&peer, &[])
+            .await
+            .is_empty()
+    );
+    assert_eq!(peer.snapshot().sequential_errors, 1);
+    assert_eq!(peer.snapshot().violations.len(), 1);
+}
+
+#[cfg(feature = "difftest")]
+mod over_the_mock_peer {
+    //! The communicator over the connector, against the mock peer, in real time (the sockets are
+    //! real, so tokio's clock is not paused).
+
+    use heartwood_p2p::Connector;
+    use heartwood_p2p::testing::{MockPeer, Reply, Script};
+    use heartwood_p2p::utils::rules::Rules as RealRules;
+
+    use super::*;
+
+    async fn start(last: u8, script: Script) -> (MockPeer, heartwood_p2p::SharedPeer) {
+        let mock = MockPeer::scripted(IpAddr::from([127, 0, 0, last]), script)
+            .await
+            .unwrap();
+        let address = mock.address();
+        let peer =
+            heartwood_p2p::SharedPeer::new(heartwood_p2p::Peer::new(address.ip(), address.port()));
+        (mock, peer)
+    }
+
+    fn fixture() -> Fixture<Connector, RealRules> {
+        Fixture::over(
+            Connector::new(),
+            RealRules::new(100, 25),
+            Chain::at(10),
+            options(),
+        )
+    }
+
+    #[tokio::test]
+    #[ignore = "integration"]
+    async fn requests_and_replies_travel_over_nes() {
+        let status = devnet_status(&block(10), 125, &[delegate(1)]);
+        let script = Script::new()
+            .on(RouteId::GetStatus, Reply::Payload(status))
+            .on(
+                RouteId::GetPeers,
+                Reply::Payload(peers_reply(&[("192.0.2.9", 4002)])),
+            )
+            .on(
+                RouteId::PostBlock,
+                Reply::Payload(post_block_reply(Some(42))),
+            );
+        let (mock, peer) = start(11, script).await;
+        let fixture = fixture();
+        fixture.repository.set(peer.clone());
+        let client = &fixture.communicator;
+        let state = client
+            .ping(&peer, Duration::from_secs(5), Some(slot(125)), true, false)
+            .await;
+        assert_eq!(state.unwrap().unwrap().height, 10);
+        assert_eq!(
+            peer.snapshot().public_keys,
+            [delegate(1).public_key().to_compressed()]
+        );
+        let peers = client.get_peers(&peer, true).await.unwrap();
+        assert_eq!(peers[0].ip, "192.0.2.9");
+        client.post_block(&peer, &block(11)).await;
+        assert_eq!(peer.snapshot().height(), Some(42));
+        let routes: Vec<RouteId> = mock.requests().iter().map(|(route, _)| *route).collect();
+        assert_eq!(
+            routes,
+            [RouteId::GetStatus, RouteId::GetPeers, RouteId::PostBlock]
+        );
+        // One session carried every request.
+        assert_eq!(mock.connections(), 1);
+        let (_, payload) = &mock.requests()[1];
+        let request = peer_codecs::get_peers_decode_request(payload).unwrap();
+        assert_eq!(request.headers, our_headers());
+    }
+
+    #[tokio::test]
+    #[ignore = "integration"]
+    async fn failures_over_nes_count_and_disconnect_as_the_reference_does() {
+        let error = || Reply::Error {
+            status: 500,
+            payload: b"boom".to_vec(),
+        };
+        // Three server errors in a row: class Error, counted, and the third forgets the peer.
+        let script = Script::new()
+            .on(RouteId::GetPeers, error())
+            .on(RouteId::GetPeers, error())
+            .on(RouteId::GetPeers, error());
+        let (_mock, peer) = start(12, script).await;
+        let fixture = fixture();
+        fixture.repository.set(peer.clone());
+        for _ in 0..2 {
+            assert_eq!(fixture.communicator.get_peers(&peer, true).await, None);
+            assert!(fixture.repository.has(peer.ip()));
+        }
+        assert_eq!(fixture.communicator.get_peers(&peer, true).await, None);
+        assert!(!fixture.repository.has(peer.ip()));
+        assert_eq!(fixture.events.all(), [Event::PeerDisconnect]);
+        assert!(peer.snapshot().violations.is_empty());
+        // A reply the codec refuses with a RangeError: disconnected at once, and a violation.
+        let script = Script::new().on(RouteId::GetPeers, Reply::Payload(truncated()));
+        let (_mock, other) = start(13, script).await;
+        fixture.repository.set(other.clone());
+        assert_eq!(fixture.communicator.get_peers(&other, true).await, None);
+        assert!(!fixture.repository.has(other.ip()));
+        assert_eq!(other.snapshot().violations.len(), 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "integration"]
+    async fn a_silent_peer_times_out_on_the_routes_timeout() {
+        let (_mock, peer) = start(14, Script::new().on(RouteId::GetPeers, Reply::Silence)).await;
+        let fixture = fixture();
+        let started = Instant::now();
+        assert_eq!(fixture.communicator.get_peers(&peer, true).await, None);
+        let waited = started.elapsed();
+        assert!(
+            waited >= Duration::from_secs(5) && waited < Duration::from_secs(7),
+            "{waited:?}"
+        );
+        assert_eq!(peer.snapshot().sequential_errors, 1);
+    }
+}
