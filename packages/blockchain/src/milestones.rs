@@ -26,6 +26,7 @@
 //! | `p2p.minimumVersions` | network (excluded) | which peers a node talks to |
 
 use heartwood_crypto::crypto::domain::{DomainTag, tagged_hash};
+use heartwood_crypto::utils::js;
 use heartwood_database::MilestoneEntryRow;
 use heartwood_kernel::utils::stringify::stringify;
 use serde_json::Value;
@@ -37,9 +38,10 @@ use crate::errors::StoreError;
 pub const EXCLUDED_KEYS: [&str; 2] = ["p2p", "fees.staticFees"];
 
 /// The height and digest of every entry of the milestone file `milestones_text`, in file order.
-/// An object on the path of an excluded key that is empty without it is removed too (under the
-/// strict schema `fees` holds only `staticFees`), so adding or removing an excluded key never
-/// changes a digest.
+/// A height is read as the milestone loader reads it: any JSON number whose value is an integer
+/// that fits a `u32` (`2.0` is 2). An object on the path of an excluded key that is empty without
+/// it is removed too (under the strict schema `fees` holds only `staticFees`), so adding or
+/// removing an excluded key never changes a digest.
 pub fn entry_digests(milestones_text: &str) -> Result<Vec<MilestoneEntryRow>, StoreError> {
     let refused = |detail: String| StoreError::Milestones(detail);
     let entries: Vec<Value> =
@@ -47,7 +49,7 @@ pub fn entry_digests(milestones_text: &str) -> Result<Vec<MilestoneEntryRow>, St
     entries
         .into_iter()
         .map(|mut entry| {
-            let height = entry.get("height").and_then(Value::as_u64);
+            let height = entry.get("height").and_then(js::safe_integer);
             let height = height.and_then(|height| u32::try_from(height).ok());
             let height = height.ok_or_else(|| refused("an entry has no height".into()))?;
             for path in EXCLUDED_KEYS {

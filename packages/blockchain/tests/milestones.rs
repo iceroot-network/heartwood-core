@@ -136,11 +136,33 @@ fn digests_leave_out_key_order_and_the_policy_keys() {
     assert_eq!(digest(json!({"height": 1, "fees": {}})), bare);
     assert_ne!(digest(json!({"height": 1, "burn": {}})), bare);
 
+    // A height is read as the milestone loader reads it: 2.0 is the height 2.
+    assert_eq!(
+        entry_digests("[{\"height\": 2.0, \"reward\": 5}]").unwrap(),
+        entry_digests("[{\"height\": 2, \"reward\": 5}]").unwrap()
+    );
+
     let refused = |text: &str| matches!(entry_digests(text), Err(StoreError::Milestones(_)));
     assert!(refused("{}"));
     assert!(refused("[{\"reward\": 5}]"));
     assert!(refused("[{\"height\": 4294967296}]"));
+    assert!(refused("[{\"height\": 2.5}]"));
+    assert!(refused("[{\"height\": -1}]"));
+    assert!(refused("[{\"height\": \"2\"}]"));
     assert!(refused("not json"));
+}
+
+#[test]
+fn a_height_written_as_a_whole_decimal_starts() {
+    let chain = Chain::load();
+    let mut node = Node::first_start(&chain, "milestone-height-decimal");
+    for height in 2..=3 {
+        node.step((Some(height), true));
+    }
+    // The loader and the strict schema read 2.0 as the height 2, and so does the digest.
+    let text = edited(|e| e[1]["height"] = json!(2.0));
+    assert!(text.contains("\"height\": 2.0"));
+    assert_eq!(restart_with(&mut node, &text), Ok(RestorePath::Table));
 }
 
 #[test]
