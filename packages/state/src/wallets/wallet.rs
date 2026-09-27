@@ -218,8 +218,9 @@ impl Wallet {
         &self.vote_shares
     }
 
-    /// Replace the wallet's shares.
-    pub fn set_vote_shares(&mut self, shares: IndexMap<String, u64>) {
+    /// Replace the wallet's shares. Only the vote balances' update calls it, which changes the
+    /// delegates' vote balances by the same amounts.
+    pub(crate) fn set_vote_shares(&mut self, shares: IndexMap<String, u64>) {
         self.vote_shares = shares;
     }
 }
