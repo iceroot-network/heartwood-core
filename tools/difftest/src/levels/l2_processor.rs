@@ -1683,12 +1683,16 @@ fn enqueue_case(
 }
 
 /// Whether Heartwood refused the block of `block` in its apply after missed slots, on the state
-/// `before` it: its header shows missed slots before it, and the state's apply refuses it.
+/// `before` it: the block is the next one on the tip, its header shows missed slots before it,
+/// and the state's apply refuses it.
 fn refused_in_apply_after_gap(before: &State, block: &JobBlock, milestones: &Milestones) -> bool {
     let Ok(decoded) = Block::receive(&block.bytes, milestones) else {
         return false;
     };
-    let gap = !before
+    let header = decoded.header();
+    let next = header.height == before.height().saturating_add(1)
+        && &header.previous_block == before.last_block().id().as_bytes();
+    let gap = next && !before
         .detect_missed_blocks(decoded.header(), milestones)
         .is_empty();
     gap && before
