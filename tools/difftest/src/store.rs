@@ -586,10 +586,14 @@ pub struct KillResult {
 
 /// Judge a check after a kill: each mode's tip must be `last_reported` or the next height, the
 /// two modes must agree, and each restart line must equal the continuous line of its tip in `b`,
-/// `s`, `r` and `w` (`forward` gives the continuous forward line of a height).
+/// `s`, `r` and `w` (`forward` gives the continuous forward line of a height). A child that
+/// reported nothing was killed while it restored the store, before it could commit a block: the
+/// tip must then be `previous`, the tip the store held before the child started (at most the
+/// genesis block for a new store).
 pub fn judge_kill(
     checked: &Checked,
     last_reported: Option<u32>,
+    previous: Option<u32>,
     forward: &dyn Fn(u32) -> Option<Value>,
 ) -> KillResult {
     let mut problems = Vec::new();
@@ -599,9 +603,10 @@ pub fn judge_kill(
             Err(message) => problems.push(format!("{}: {message}", mode.name())),
             Ok((tip, line)) => {
                 tips.push(*tip);
-                let allowed = match last_reported {
-                    Some(last) => *tip == last || *tip == last + 1,
-                    None => *tip <= 1,
+                let allowed = match (last_reported, previous) {
+                    (Some(last), _) => *tip == last || *tip == last + 1,
+                    (None, Some(before)) => *tip == before,
+                    (None, None) => *tip <= 1,
                 };
                 if !allowed {
                     problems.push(format!(
@@ -690,6 +695,8 @@ pub fn crash(
     let mut results = Vec::new();
     let mut scratch = ScratchDir::new("crash")?;
     let mut tips = BTreeMap::<u32, u32>::new();
+    // The tip the store held before the next child starts (none for a new store).
+    let mut previous: Option<u32> = None;
     for kill in 1..=kills {
         let data = scratch.path().to_path_buf();
         let mut child = Command::new(exe)
@@ -736,7 +743,10 @@ pub fn crash(
         let _ = reader.join();
         let last_reported = receiver.try_iter().last();
         let checked = check(corpus, &data)?;
-        let judged = judge_kill(&checked, last_reported, &|h| forward.get(&h).cloned());
+        let judged = judge_kill(&checked, last_reported, previous, &|h| {
+            forward.get(&h).cloned()
+        });
+        previous = judged.tip;
         if let Some(tip) = judged.tip {
             *tips.entry(tip).or_insert(0) += 1;
         }
@@ -760,6 +770,7 @@ pub fn crash(
         });
         if judged.tip.is_some_and(|t| t >= corpus.tip()) || finished {
             scratch = ScratchDir::new("crash")?;
+            previous = None;
         }
     }
     Ok(Report {
@@ -811,18 +822,18 @@ mod tests {
             ],
         };
         assert!(
-            judge_kill(&both(5, "b"), Some(5), &forward)
+            judge_kill(&both(5, "b"), Some(5), Some(4), &forward)
                 .problems
                 .is_empty()
         );
         assert!(
-            judge_kill(&both(6, "b"), Some(5), &forward)
+            judge_kill(&both(6, "b"), Some(5), Some(4), &forward)
                 .problems
                 .is_empty()
         );
-        let behind = judge_kill(&both(5, "b"), Some(6), &forward);
+        let behind = judge_kill(&both(5, "b"), Some(6), Some(4), &forward);
         assert_eq!(behind.problems.len(), 2, "{behind:?}");
-        let wrong = judge_kill(&both(5, "other"), Some(5), &forward);
+        let wrong = judge_kill(&both(5, "other"), Some(5), Some(4), &forward);
         assert!(
             wrong.problems.iter().all(|p| p.contains("differs")),
             "{wrong:?}"
@@ -834,7 +845,7 @@ mod tests {
             ],
         };
         assert!(
-            judge_kill(&split, Some(5), &forward)
+            judge_kill(&split, Some(5), Some(4), &forward)
                 .problems
                 .iter()
                 .any(|p| p.contains("different tips"))
@@ -842,14 +853,27 @@ mod tests {
         let failed = Checked {
             modes: vec![(HeartwoodMode::Table, Err("refused".into()))],
         };
-        assert_eq!(judge_kill(&failed, Some(5), &forward).problems.len(), 1);
+        assert_eq!(
+            judge_kill(&failed, Some(5), Some(4), &forward)
+                .problems
+                .len(),
+            1
+        );
         // Killed before the first commit: an empty store restores the genesis block.
         let genesis = |h: u32| (h == 1).then(|| line("b"));
         assert!(
-            judge_kill(&both(1, "b"), None, &genesis)
+            judge_kill(&both(1, "b"), None, None, &genesis)
                 .problems
                 .is_empty()
         );
+        // Killed while it restored a store that held 5: the tip is still 5, and nothing else.
+        assert!(
+            judge_kill(&both(5, "b"), None, Some(5), &forward)
+                .problems
+                .is_empty()
+        );
+        let moved = judge_kill(&both(6, "b"), None, Some(5), &forward);
+        assert_eq!(moved.problems.len(), 2, "{moved:?}");
     }
 
     fn write(dir: &Path, name: &str, lines: &[Value]) {

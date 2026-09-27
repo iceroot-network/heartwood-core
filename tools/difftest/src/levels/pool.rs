@@ -377,7 +377,8 @@ fn without_messages(result: &Value) -> Value {
 
 /// Whether Heartwood's step shows the fixed eviction the oracle noted: Heartwood refused every
 /// transaction the reference refused after an eviction, and the entries before the first of them
-/// have the same outcomes on both sides (the messages within the decode-reason rule).
+/// have the same outcomes on both sides (the messages within the decode-reason rule), apart from
+/// the entries of a documented form, which are left out as in any other step.
 fn eviction_holds(
     step: &Value,
     notes: &Value,
@@ -420,7 +421,17 @@ fn eviction_holds(
         .iter()
         .position(|ids| ids.contains(*first))
         .unwrap_or(0);
-    let before: BTreeSet<String> = entries.iter().take(position).flatten().cloned().collect();
+    let documented: BTreeSet<String> = documented_entries(step)
+        .into_iter()
+        .flat_map(|(_, ids, _)| ids)
+        .collect();
+    let before: BTreeSet<String> = entries
+        .iter()
+        .take(position)
+        .filter(|ids| ids.is_disjoint(&documented))
+        .flatten()
+        .cloned()
+        .collect();
     let (a, b) = (
         entries_where(expected, |id| before.contains(id)),
         entries_where(actual, |id| before.contains(id)),
@@ -693,6 +704,31 @@ mod tests {
         );
         // Entry 0 comes before the eviction: it must agree.
         assert!(judge(&input, &expected, &run(vec![step(ours(json!([])), &["e"])])).is_failure());
+    }
+
+    #[test]
+    fn a_removed_type_before_a_noted_eviction_is_left_out() {
+        let mut bytes = vec![0xff, 3, 90, 1, 0, 0, 0, 9, 0];
+        bytes.extend([0; 40]);
+        let sha = hex::encode(&sha256(&bytes));
+        let input = process(
+            json!([{"json": {"id": "a"}}, {"hex": hex::encode(&bytes)}, {"json": {"id": "n"}}]),
+        );
+        let bad = json!({"type": "ERR_BAD_DATA", "message": "Invalid transaction data: x"});
+        let theirs = json!({"accept": ["a"], "broadcast": ["a"], "invalid": ["1", "n"], "excess": [],
+            "errors": {"1": bad, "n": {"type": "ERR_APPLY", "message": "m"}},
+            "notes": {"fullPoolEviction": true, "evictions": [{"id": "n", "evicted": ["a"]}]}});
+        let ours = json!({"accept": ["a"], "broadcast": ["a"], "invalid": [sha, "n"], "excess": [],
+            "errors": {sha: {"type": "ERR_OTHER", "message": "Transaction type Core/9 is deactivated"},
+                       "n": {"type": "ERR_APPLY", "message": "m"}}});
+        assert_eq!(
+            judge(
+                &input,
+                &run(vec![step(theirs, &[])]),
+                &run(vec![step(ours, &["a"])])
+            ),
+            Outcome::Documented(Documented::FullPoolEviction.reason().into())
+        );
     }
 
     #[test]
