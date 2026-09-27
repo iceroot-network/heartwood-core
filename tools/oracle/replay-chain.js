@@ -620,7 +620,7 @@ async function main() {
             const missing = corpus.reference.restarts
                 .filter((l) => !liveResults.some((r) => r.height === l.height && r.path === l.path))
                 .map((l) => ({ height: l.height, path: l.path, file: l.checkpoint, differences: [{ note: "the restart plan does not restart this way at this height" }] }));
-            const all = [...liveResults, ...missing];
+            const all = [...liveResults, ...missing].sort((a, b) => a.height - b.height || a.path.localeCompare(b.path));
             anchors.A6 = { ok: all.every((r) => r.differences.length === 0), restarts: all };
         }
     }
