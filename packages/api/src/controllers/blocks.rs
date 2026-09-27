@@ -130,14 +130,14 @@ async fn block(
                 .sum::<u128>();
         }
     }
-    let mut data = resources::block(&row, tip, milestones);
     // The amount forged is the block's total amount and every amount its transfers carry, which
     // the block's row alone does not hold.
-    if let Some(forged) = data.get_mut("forged").and_then(Value::as_object_mut) {
-        let amount = u128::from(row.total_amount) + transferred;
-        forged.insert("amount".into(), Value::from(amount.to_string()));
-    }
-    Ok(ApiReply::data(data))
+    Ok(ApiReply::data(resources::block(
+        &row,
+        transferred,
+        tip,
+        milestones,
+    )))
 }
 
 /// A block's raw data, as the reference's block model holds it: its columns in the model's

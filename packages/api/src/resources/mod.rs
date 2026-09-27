@@ -38,7 +38,7 @@ pub(crate) fn defined(mut value: Value) -> Value {
 /// reference adds to `forged.amount`) and the tip's height for its confirmations. The generator's
 /// name is the row's: the reference finds the same one in its wallets for every stored block (the
 /// genesis block has none).
-pub fn block(row: &BlockRow, transferred: u64, tip: u32, milestones: &Milestones) -> Value {
+pub fn block(row: &BlockRow, transferred: u128, tip: u32, milestones: &Milestones) -> Value {
     let donations: Value = serde_json::from_str(&row.donations).unwrap_or_else(|_| json!({}));
     let amount = |value: &Value| {
         value
@@ -51,7 +51,7 @@ pub fn block(row: &BlockRow, transferred: u64, tip: u32, milestones: &Milestones
         .sum();
     let total = i128::from(row.reward) - donated + i128::from(row.total_fee);
     let total = total - i128::from(row.burned_fee);
-    let amount = u128::from(row.total_amount) + u128::from(transferred);
+    let amount = u128::from(row.total_amount) + transferred;
     defined(json!({
         "id": row.id.to_hex(), "version": row.version, "height": row.height,
         "previous": row.previous_block.as_ref().map(BlockId::to_hex),

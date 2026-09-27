@@ -632,12 +632,13 @@ impl JobRig {
     ) -> std::result::Result<ProcessorResult, RigProblem> {
         self.clock.set(now_ms);
         let env = PoolEnv {
+            state: &self.state,
             milestones: &self.milestones,
             network: &self.network,
             clock: &self.clock,
         };
-        let (state, pool) = (&self.state, &mut self.pool);
-        guarded(|| pool.process(channel, state, &env, entries))
+        let pool = &mut self.pool;
+        guarded(|| pool.process(channel, &env, entries))
             .map_err(|store::Unbuilt(m)| RigProblem::Unbuilt(m))?
             .map(|(result, _)| result)
             .map_err(|e| RigProblem::Failed(format!("the pool's storage: {e}")))
@@ -652,12 +653,13 @@ impl JobRig {
     ) -> std::result::Result<(), RigProblem> {
         self.clock.set(now_ms);
         let env = PoolEnv {
+            state: &self.state,
             milestones: &self.milestones,
             network: &self.network,
             clock: &self.clock,
         };
-        let (state, pool) = (&self.state, &mut self.pool);
-        guarded(|| pool.readd_removed(state, &env, removed))
+        let pool = &mut self.pool;
+        guarded(|| pool.readd(&env, removed))
             .map_err(|store::Unbuilt(m)| RigProblem::Unbuilt(m))?
             .map(|_| ())
             .map_err(|e| RigProblem::Failed(format!("the pool's storage: {e}")))
