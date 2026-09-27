@@ -574,7 +574,8 @@ depend on tokio-tungstenite directly, and no consensus crate on tokio.
   check of each route, the error-class rule that decides whether a failed request only counts
   against the peer or disconnects it, the disconnect after three failures in a row, the per-peer
   queue of postTransactions batches, and the ping with its status attestations. The client never
-  writes a request that a reference server refuses for its shape.
+  writes a request that a reference server refuses for its shape: it asks for at most 400 blocks
+  at a time and posts batches of at most `maxTransactionsPerRequest` transactions.
 - **peers**: the acceptance of candidate peers (the address rules, the whitelist and blacklist,
   the same-subnet cap, the version gate, a ping and a port probe), and the verification of a
   peer's claimed chain: an n-ary search for the highest common block, then the peer's blocks after
@@ -586,18 +587,21 @@ depend on tokio-tungstenite directly, and no consensus crate on tokio.
 
 Where the reference is lenient with a peer that breaks the protocol, Heartwood is stricter on
 purpose. None of these differences shows with an honest peer or a generated devnet's
-configuration:
+configuration, except the last, which needs a transaction that no honest wallet writes:
 
 - a fork segment fetched during verification must chain: each header to the one before it, and
   the first to the node's block at the common height. The reference checks each header's
   signature, height and round delegate only. The harness reports these records as documented
   differences, with the unlinked header checked on the input;
 - protocol violations are recorded against a peer for 600 seconds: a reply the codec or the reply
-  check refuses, a broken nes session other than a heartbeat timeout, a downloaded transaction
-  the reader refuses, and in a verification a common-block reply that names a block not asked for
-  or a fork header that fails its checks or does not chain. They count toward the same ignore rule as the cleanse's slow
-  pings, and a peer with a violation is not asked for peers, blocks or transactions and is not
-  accepted again until it expires. An honest slow peer stays a source;
+  check refuses, a broken nes session, a downloaded transaction the reader refuses, and in a
+  verification a common-block reply that names a block not asked for or a fork header that fails
+  its checks or does not chain. Nothing an honest peer can cause is a violation: a heartbeat
+  timeout, a response after its request timed out, two server pings bunched by a stall, a memo
+  that is not valid UTF-8 (the reference accepts it); the session still ends as the reference's.
+  Violations count toward the same ignore rule as the cleanse's slow pings, and a peer with a
+  violation is not asked for peers, blocks or transactions and is not accepted again until it
+  expires. An honest slow peer stays a source;
 - the random samples (the discovery sources, the transaction sources, the peers a cleanse pings,
   a chunk's backup peers and the peers whose ports are probed) are drawn across subnets (/24 and
   /48) after the reference's shuffle;
