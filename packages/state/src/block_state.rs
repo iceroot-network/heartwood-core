@@ -20,7 +20,7 @@ use heartwood_crypto::transactions::Asset;
 use heartwood_crypto::{Block, BlockId, Milestones, Transaction, TransactionType};
 
 use crate::errors::{ApplyError, RevertError, WalletError};
-use crate::handlers::{ApplyContext, TransactionHandlers, TransactionRejected};
+use crate::handlers::{ApplyContext, TransactionHandlers};
 use crate::stores::state::Totals;
 use crate::undo::{BlockUndo, ForgerUndo, TxUndo};
 use crate::wallets::vote_balances::update_wallet_vote_balance;
@@ -32,7 +32,7 @@ pub fn apply_transaction<H: TransactionHandlers>(
     wallets: &mut WalletRepository,
     transaction: &Transaction,
     handlers: &H,
-) -> Result<TxUndo, TransactionRejected> {
+) -> Result<TxUndo, H::Error> {
     let undo = handlers.apply(ctx, wallets, transaction)?;
     if let Err(error) = refresh_vote_balances(wallets, transaction) {
         // Take the transaction back; its revert cannot fail right after its apply.
@@ -51,7 +51,7 @@ pub fn revert_transaction<H: TransactionHandlers>(
     transaction: &Transaction,
     undo: &TxUndo,
     handlers: &H,
-) -> Result<(), TransactionRejected> {
+) -> Result<(), H::Error> {
     handlers.revert(ctx, wallets, transaction, undo)?;
     if let Err(error) = refresh_vote_balances(wallets, transaction) {
         // Apply the transaction again; its apply cannot fail right after its revert.
@@ -74,7 +74,7 @@ pub fn apply_block<H: TransactionHandlers>(
     block: &Block,
     milestones: &Milestones,
     handlers: &H,
-) -> Result<BlockUndo, ApplyError> {
+) -> Result<BlockUndo, ApplyError<H::Error>> {
     let forger = forger_address(wallets, block)?;
     let payout = Payout::of(block, milestones).ok_or(ApplyError::TotalsOverflow)?;
     let after = totals
@@ -125,7 +125,7 @@ pub fn revert_block<H: TransactionHandlers>(
     undo: &BlockUndo,
     milestones: &Milestones,
     handlers: &H,
-) -> Result<(), RevertError> {
+) -> Result<(), RevertError<H::Error>> {
     let block = &undo.block;
     // The payout was computed when the block was applied, so it cannot fail here; if it did, the
     // totals could not be taken back.
@@ -165,7 +165,7 @@ fn context(height: u32, milestones: &Milestones) -> ApplyContext<'_> {
 }
 
 /// The address of the delegate that forged `block`: the wallet that bound its generator key.
-fn forger_address(wallets: &WalletRepository, block: &Block) -> Result<Address, ApplyError> {
+fn forger_address<E>(wallets: &WalletRepository, block: &Block) -> Result<Address, ApplyError<E>> {
     let generator = block.header().generator_public_key;
     wallets
         .find_by_public_key(&generator)

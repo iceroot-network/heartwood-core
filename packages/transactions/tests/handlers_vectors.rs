@@ -14,8 +14,8 @@ use heartwood_crypto::{BlockId, Transaction};
 use heartwood_state::dpos::build_vote_balances;
 use heartwood_state::wallets::vote_balances::update_wallet_vote_balance;
 use heartwood_state::wallets::{Resignation, Wallet, WalletRepository};
-use heartwood_state::{ApplyContext, TransactionHandlers, TransactionRejected};
-use heartwood_transactions::Handlers;
+use heartwood_state::{ApplyContext, TransactionHandlers};
+use heartwood_transactions::{Handlers, TransactionError};
 use serde_json::Value;
 
 use golden::{Devnet, Record, VectorFile};
@@ -203,7 +203,7 @@ fn check(devnet: &Devnet, record: &Record, label: &str) -> bool {
             .to_owned()
     };
 
-    let applied: Result<_, TransactionRejected> = Handlers.apply(&ctx, &mut wallets, &transaction);
+    let applied: Result<_, TransactionError> = Handlers.apply(&ctx, &mut wallets, &transaction);
     match applied {
         Ok(undo) => {
             refresh(&mut wallets, &transaction, &sender);
@@ -225,7 +225,11 @@ fn check(devnet: &Devnet, record: &Record, label: &str) -> bool {
         }
         Err(rejected) => {
             let class = expected["error"]["class"].as_str();
-            assert_eq!(class, Some(rejected.class), "{label}: the refusal's class");
+            assert_eq!(
+                class,
+                Some(rejected.class()),
+                "{label}: the refusal's class"
+            );
             let after = section("after", "W");
             let ours = wallet_section(&wallets);
             let keyless = input["fixture"]

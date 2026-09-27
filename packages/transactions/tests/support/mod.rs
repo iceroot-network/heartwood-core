@@ -185,9 +185,12 @@ pub fn refused(wallets: &mut WalletRepository, transaction: &Transaction) -> &'s
     let rejected = Handlers
         .apply(&ctx(), wallets, transaction)
         .expect_err("the transaction is refused");
-    assert_eq!(checked.map_err(|error| error.class()), Err(rejected.class));
+    assert_eq!(
+        checked.map_err(|error| error.class()),
+        Err(rejected.class())
+    );
     assert_eq!(*wallets, before, "a refusal changed the wallets");
-    rejected.class
+    rejected.class()
 }
 
 /// Apply `transaction`, then revert it, checking that the revert restores the visible wallets.

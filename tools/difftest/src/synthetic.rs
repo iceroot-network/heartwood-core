@@ -466,7 +466,7 @@ impl<'a> Sides<'a> {
                     );
                 }
                 let class = match &e {
-                    ApplyError::Transaction { rejected, .. } => Some(rejected.class.to_owned()),
+                    ApplyError::Transaction { rejected, .. } => Some(rejected.class().to_owned()),
                     _ => None,
                 };
                 refused(class, e.to_string(), missed_json(&missed))

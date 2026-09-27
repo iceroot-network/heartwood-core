@@ -375,7 +375,7 @@ fuzz_target!(|input: Input| {
     check_indexes(&wallets);
     match (checked, applied) {
         (Err(checked), Err(applied)) => {
-            assert_eq!(checked.class(), applied.class);
+            assert_eq!(checked.class(), applied.class());
             assert_eq!(wallets, before, "a refused transaction changed the wallets");
         }
         // Only a value past the range of u64 can fail a step after the checks, and the

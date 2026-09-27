@@ -6,7 +6,6 @@
 //! registration and no trait object, so no plugin can replace a rule.
 
 use heartwood_crypto::{Params, Transaction};
-use thiserror::Error;
 
 use crate::errors::WalletError;
 use crate::undo::TxUndo;
@@ -26,30 +25,15 @@ pub struct ApplyContext<'a> {
     pub last_block_height: u32,
 }
 
-/// A transaction was refused. `class` is the reference's error class for the refusal, which the
-/// differential tests compare; `detail` is for people.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("{class}: {detail}")]
-pub struct TransactionRejected {
-    /// The reference's error class, such as `InsufficientBalanceError`.
-    pub class: &'static str,
-    /// What was refused.
-    pub detail: String,
-}
-
-/// A wallet value that left its range, as a refusal: the reference's failed `assert` on a negative
-/// balance is an `AssertionError`, and its other throws in the same places are plain `Error`s.
-impl From<WalletError> for TransactionRejected {
-    fn from(error: WalletError) -> TransactionRejected {
-        let class = match error {
-            WalletError::NegativeBalance { .. } => "AssertionError",
-            _ => "Error",
-        };
-        TransactionRejected {
-            class,
-            detail: error.to_string(),
-        }
-    }
+/// A transaction refusal as the handlers report it: a typed error that names the reference's
+/// error class, which the differential tests compare (never the message).
+///
+/// A wallet value that leaves its range while the state brings the vote balances up to date after
+/// a transaction becomes a refusal of that transaction too, with the class of
+/// [`WalletError::class`].
+pub trait Rejection: std::error::Error + Clone + PartialEq + Eq + From<WalletError> {
+    /// The reference's error class of the refusal, such as `InsufficientBalanceError`.
+    fn class(&self) -> &'static str;
 }
 
 /// The transaction rules, as the state calls them.
@@ -57,6 +41,9 @@ impl From<WalletError> for TransactionRejected {
 /// Every method leaves the wallets exactly as they were when it returns an error: a handler runs
 /// all of its checks before it changes a wallet.
 pub trait TransactionHandlers {
+    /// Why a transaction is refused.
+    type Error: Rejection;
+
     /// Build the state of a genesis transaction, as the reference's start-up does: bind the
     /// sender's key, then the type's effect (credit transfer items, set the second key, the
     /// delegate, the resignation or the votes). The sender's nonce and its debit of amount and
@@ -69,7 +56,7 @@ pub trait TransactionHandlers {
         wallets: &mut WalletRepository,
         transaction: &Transaction,
         issuance: bool,
-    ) -> Result<u64, TransactionRejected>;
+    ) -> Result<u64, Self::Error>;
 
     /// Check and apply `transaction`, returning what its revert needs.
     fn apply(
@@ -77,7 +64,7 @@ pub trait TransactionHandlers {
         ctx: &ApplyContext<'_>,
         wallets: &mut WalletRepository,
         transaction: &Transaction,
-    ) -> Result<TxUndo, TransactionRejected>;
+    ) -> Result<TxUndo, Self::Error>;
 
     /// Revert `transaction`, the last one applied, with the undo record its apply returned.
     fn revert(
@@ -86,5 +73,5 @@ pub trait TransactionHandlers {
         wallets: &mut WalletRepository,
         transaction: &Transaction,
         undo: &TxUndo,
-    ) -> Result<(), TransactionRejected>;
+    ) -> Result<(), Self::Error>;
 }

@@ -5,7 +5,7 @@ use heartwood_crypto::Transaction;
 use heartwood_crypto::transactions::types::Asset;
 use heartwood_state::undo::TxUndo;
 use heartwood_state::wallets::WalletRepository;
-use heartwood_state::{ApplyContext, TransactionHandlers, TransactionRejected};
+use heartwood_state::{ApplyContext, TransactionHandlers};
 
 use crate::errors::TransactionError;
 use crate::handlers::core::{
@@ -45,14 +45,16 @@ impl Handlers {
 }
 
 impl TransactionHandlers for Handlers {
+    type Error = TransactionError;
+
     fn bootstrap(
         &self,
         ctx: &ApplyContext<'_>,
         wallets: &mut WalletRepository,
         transaction: &Transaction,
         issuance: bool,
-    ) -> Result<u64, TransactionRejected> {
-        let owed = match &transaction.data().asset {
+    ) -> Result<u64, TransactionError> {
+        match &transaction.data().asset {
             Asset::Transfer { transfers } => {
                 transfer::bootstrap(ctx, wallets, transaction, transfers, issuance)
             }
@@ -67,8 +69,7 @@ impl TransactionHandlers for Handlers {
             }
             Asset::Burn { .. } => burn::bootstrap(ctx, wallets, transaction),
             Asset::Vote { votes } => vote::bootstrap(ctx, wallets, transaction, votes),
-        };
-        Ok(owed?)
+        }
     }
 
     fn apply(
@@ -76,8 +77,8 @@ impl TransactionHandlers for Handlers {
         ctx: &ApplyContext<'_>,
         wallets: &mut WalletRepository,
         transaction: &Transaction,
-    ) -> Result<TxUndo, TransactionRejected> {
-        let undo = match &transaction.data().asset {
+    ) -> Result<TxUndo, TransactionError> {
+        match &transaction.data().asset {
             Asset::Transfer { transfers } => transfer::apply(ctx, wallets, transaction, transfers),
             Asset::SecondSignature { public_key } => {
                 second_signature_registration::apply(ctx, wallets, transaction, public_key)
@@ -90,8 +91,7 @@ impl TransactionHandlers for Handlers {
             }
             Asset::Burn { .. } => burn::apply(ctx, wallets, transaction),
             Asset::Vote { votes } => vote::apply(ctx, wallets, transaction, votes),
-        };
-        Ok(undo?)
+        }
     }
 
     fn revert(
@@ -100,8 +100,8 @@ impl TransactionHandlers for Handlers {
         wallets: &mut WalletRepository,
         transaction: &Transaction,
         undo: &TxUndo,
-    ) -> Result<(), TransactionRejected> {
-        let reverted = match &transaction.data().asset {
+    ) -> Result<(), TransactionError> {
+        match &transaction.data().asset {
             Asset::Transfer { transfers } => {
                 transfer::revert(ctx, wallets, transaction, transfers, undo)
             }
@@ -116,7 +116,6 @@ impl TransactionHandlers for Handlers {
             }
             Asset::Burn { .. } => burn::revert(ctx, wallets, transaction, undo),
             Asset::Vote { .. } => vote::revert(ctx, wallets, transaction, undo),
-        };
-        Ok(reverted?)
+        }
     }
 }

@@ -369,7 +369,7 @@ fn a_refused_block_leaves_the_state_unchanged() {
         panic!("{error:?}")
     };
     assert_eq!(index, 1);
-    assert_eq!(rejected.class, "InsufficientBalanceError");
+    assert_eq!(rejected.class(), "InsufficientBalanceError");
     unchanged(&chain);
 
     // A first transaction from a wallet with no key and nothing to pay with leaves no key bound.

@@ -7,7 +7,7 @@
 
 use heartwood_crypto::TransactionType;
 use heartwood_crypto::identities::Address;
-use heartwood_state::TransactionRejected;
+use heartwood_state::Rejection;
 use heartwood_state::errors::WalletError;
 use thiserror::Error;
 
@@ -190,20 +190,14 @@ impl TransactionError {
             TransactionError::AlreadyVotedForSameDelegates => "AlreadyVotedForSameDelegatesError",
             TransactionError::VotedForNonDelegate { .. } => "VotedForNonDelegateError",
             TransactionError::UndoMismatch => "Error",
-            // The reference's `assert` on a negative balance throws an AssertionError; its other
-            // failures here are lookups of missing index entries, which throw a plain Error.
-            TransactionError::State(WalletError::NegativeBalance { .. }) => "AssertionError",
-            TransactionError::State(_) => "Error",
+            TransactionError::State(error) => error.class(),
         }
     }
 }
 
-impl From<TransactionError> for TransactionRejected {
-    fn from(error: TransactionError) -> TransactionRejected {
-        TransactionRejected {
-            class: error.class(),
-            detail: error.to_string(),
-        }
+impl Rejection for TransactionError {
+    fn class(&self) -> &'static str {
+        TransactionError::class(self)
     }
 }
 
@@ -251,9 +245,12 @@ mod tests {
         let error = TransactionError::VotedForNonDelegate {
             vote: "nobody".into(),
         };
-        let rejected = TransactionRejected::from(error);
-        assert_eq!(rejected.class, "VotedForNonDelegateError");
-        assert!(rejected.detail.contains("'nobody' is not a delegate"));
+        assert_eq!(Rejection::class(&error), "VotedForNonDelegateError");
+        assert!(error.to_string().contains("'nobody' is not a delegate"));
+        let negative = TransactionError::from(WalletError::NegativeBalance {
+            address: heartwood_crypto::identities::Address::from_bytes([90; 21]),
+        });
+        assert_eq!(negative.class(), "AssertionError");
         assert_eq!(
             TransactionError::FeeTooLow { fee: 1, minimum: 2 }.class(),
             "TransactionFeeTooLowError"

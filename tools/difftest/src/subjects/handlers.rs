@@ -8,8 +8,8 @@ use heartwood_crypto::errors::ConfigError;
 use heartwood_crypto::managers::Milestones;
 use heartwood_crypto::utils::js;
 use heartwood_state::digest::wallet_section;
-use heartwood_state::{ApplyContext, TransactionRejected, block_state};
-use heartwood_transactions::{Handlers, minimum_fee};
+use heartwood_state::{ApplyContext, block_state};
+use heartwood_transactions::{Handlers, TransactionError, minimum_fee};
 use serde_json::{Map, Value, json};
 
 use super::{Env, Outcome, decode_refused, failed, hex_bytes, integer, params, rejected};
@@ -68,7 +68,7 @@ pub(super) fn apply_transaction(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdi
         params,
         last_block_height,
     };
-    let error = |rejected: TransactionRejected| json!({ "class": rejected.class, "message": rejected.detail });
+    let error = |rejected: TransactionError| json!({ "class": rejected.class(), "message": rejected.to_string() });
     let output = match block_state::apply_transaction(&ctx, &mut wallets, &transaction, &Handlers) {
         Ok(undo) => {
             let applied = wallet_section(&wallets);

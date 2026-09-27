@@ -179,7 +179,6 @@ dependencies = [
  "heartwood-kernel",
  "indexmap",
  "thiserror",
- "tracing",
 ]
 
 [[package]]
@@ -187,11 +186,8 @@ name = "heartwood-transactions"
 version = "0.1.0"
 dependencies = [
  "heartwood-crypto",
- "heartwood-kernel",
  "heartwood-state",
- "indexmap",
  "thiserror",
- "tracing",
 ]
 
 [[package]]

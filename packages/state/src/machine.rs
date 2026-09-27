@@ -70,7 +70,7 @@ impl State {
         genesis: &Block,
         milestones: &Milestones,
         handlers: &H,
-    ) -> Result<State, GenesisError> {
+    ) -> Result<State, GenesisError<H::Error>> {
         crate::genesis::build(genesis, milestones, handlers)
     }
 
@@ -100,7 +100,7 @@ impl State {
         block: &Block,
         milestones: &Milestones,
         handlers: &H,
-    ) -> Result<Applied, ApplyError> {
+    ) -> Result<Applied, ApplyError<H::Error>> {
         let height = block.height();
         let expected = self
             .height()
@@ -164,7 +164,7 @@ impl State {
         &mut self,
         milestones: &Milestones,
         handlers: &H,
-    ) -> Result<Reverted, RevertError> {
+    ) -> Result<Reverted, RevertError<H::Error>> {
         let undo = self.journal.pop().ok_or(RevertError::Genesis)?;
         let height = undo.block.height();
         let saved = self.save_round(undo.round.is_some());

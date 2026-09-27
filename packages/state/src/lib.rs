@@ -51,7 +51,7 @@ pub mod supply;
 pub mod undo;
 pub mod wallets;
 
-pub use crate::handlers::{ApplyContext, TransactionHandlers, TransactionRejected};
+pub use crate::handlers::{ApplyContext, Rejection, TransactionHandlers};
 pub use crate::machine::State;
 pub use crate::round_state::RoundState;
 pub use crate::wallets::{Delegate, Resignation, Wallet, WalletRepository};

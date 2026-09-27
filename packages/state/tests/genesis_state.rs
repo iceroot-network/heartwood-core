@@ -305,11 +305,11 @@ fn genesis_refusals() {
     let most = transfer(&generator, &[MAX_ISSUANCE], 1, 0, milestones);
     assert_eq!(
         genesis::issued(&genesis_block(vec![most], &generator, milestones)),
-        Ok(MAX_ISSUANCE)
+        Some(MAX_ISSUANCE)
     );
     let over = transfer(&generator, &[MAX_ISSUANCE, 1], 1, 0, milestones);
     let block = genesis_block(vec![over], &generator, milestones);
-    assert_eq!(genesis::issued(&block), Err(GenesisError::Issuance));
+    assert_eq!(genesis::issued(&block), None);
     assert_eq!(
         State::from_genesis(&block, milestones, &Handlers).unwrap_err(),
         GenesisError::Issuance

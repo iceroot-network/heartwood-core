@@ -10,8 +10,6 @@ use heartwood_crypto::identities::{Address, PublicKeyBytes};
 use heartwood_crypto::transactions::TransactionId;
 use thiserror::Error;
 
-use crate::handlers::TransactionRejected;
-
 /// A wallet or delegate value would leave its range, or a wallet or delegate is missing.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum WalletError {
@@ -64,6 +62,18 @@ pub enum WalletError {
         /// The delegate's name.
         username: String,
     },
+}
+
+impl WalletError {
+    /// The reference's error class where it fails in the same place: its `assert` on a negative
+    /// balance throws an `AssertionError`; its other failures here (a lookup of a missing index
+    /// entry, a value out of range) throw a plain `Error`.
+    pub fn class(&self) -> &'static str {
+        match self {
+            WalletError::NegativeBalance { .. } => "AssertionError",
+            _ => "Error",
+        }
+    }
 }
 
 /// The delegate ranking or a round's schedule failed.
@@ -122,9 +132,10 @@ pub enum RewardError {
     },
 }
 
-/// A block could not be applied. The state is unchanged.
+/// A block could not be applied. The state is unchanged. `E` is the handlers' refusal
+/// ([`crate::TransactionHandlers::Error`]).
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum ApplyError {
+pub enum ApplyError<E> {
     /// The block's height is not the last block's height plus one.
     #[error("expected a block at height {expected}, got height {height}")]
     Height {
@@ -147,7 +158,7 @@ pub enum ApplyError {
         /// Its id.
         id: TransactionId,
         /// Why.
-        rejected: TransactionRejected,
+        rejected: E,
     },
     /// A total (rewards, burned fees, burned amounts) would pass `2^64 − 1`.
     #[error("the supply totals would overflow")]
@@ -160,9 +171,10 @@ pub enum ApplyError {
     Round(#[from] RoundError),
 }
 
-/// The last block could not be reverted.
+/// The last block could not be reverted. The state is unchanged. `E` is the handlers' refusal
+/// ([`crate::TransactionHandlers::Error`]).
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum RevertError {
+pub enum RevertError<E> {
     /// The last block is the genesis block.
     #[error("the genesis block cannot be reverted")]
     Genesis,
@@ -174,7 +186,7 @@ pub enum RevertError {
         /// Its id.
         id: TransactionId,
         /// Why.
-        rejected: TransactionRejected,
+        rejected: E,
     },
     /// A total would go below 0.
     #[error("the supply totals would go below 0")]
@@ -187,9 +199,10 @@ pub enum RevertError {
     Round(#[from] RoundError),
 }
 
-/// The genesis block was refused; the node does not start.
+/// The genesis block was refused; the node does not start. `E` is the handlers' refusal
+/// ([`crate::TransactionHandlers::Error`]).
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum GenesisError {
+pub enum GenesisError<E> {
     /// The block is not at height 1.
     #[error("the genesis block is at height {height}, not 1")]
     Height {
@@ -229,7 +242,7 @@ pub enum GenesisError {
         /// Its id.
         id: TransactionId,
         /// Why.
-        rejected: TransactionRejected,
+        rejected: E,
     },
     /// A wallet value left its range.
     #[error(transparent)]

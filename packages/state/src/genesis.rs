@@ -46,8 +46,9 @@ const BOOTSTRAP_ORDER: [TransactionType; 6] = [
     TransactionType::Vote,
 ];
 
-/// What `genesis` issues: the sum of the items of the transfers sent with the generator's key.
-pub fn issued(genesis: &Block) -> Result<u64, GenesisError> {
+/// What `genesis` issues: the sum of the items of the transfers sent with the generator's key;
+/// `None` when they add up to more than [`MAX_ISSUANCE`].
+pub fn issued(genesis: &Block) -> Option<u64> {
     let generator = genesis.header().generator_public_key;
     let mut issued: u64 = 0;
     for transaction in genesis.transactions() {
@@ -58,18 +59,17 @@ pub fn issued(genesis: &Block) -> Result<u64, GenesisError> {
             for item in transfers {
                 issued = issued
                     .checked_add(item.amount)
-                    .filter(|sum| *sum <= MAX_ISSUANCE)
-                    .ok_or(GenesisError::Issuance)?;
+                    .filter(|sum| *sum <= MAX_ISSUANCE)?;
             }
         }
     }
-    Ok(issued)
+    Some(issued)
 }
 
 /// Check `genesis` as the reference does at start: height 1, and every rule of block
 /// verification except the one on future timestamps. Every transaction type that decodes is
 /// active at height 1.
-pub fn validate(genesis: &Block, milestones: &Milestones) -> Result<(), GenesisError> {
+pub fn validate<E>(genesis: &Block, milestones: &Milestones) -> Result<(), GenesisError<E>> {
     let height = genesis.height();
     if height != 1 {
         return Err(GenesisError::Height { height });
@@ -92,9 +92,9 @@ pub fn build<H: TransactionHandlers>(
     genesis: &Block,
     milestones: &Milestones,
     handlers: &H,
-) -> Result<State, GenesisError> {
+) -> Result<State, GenesisError<H::Error>> {
     validate(genesis, milestones)?;
-    let issued = issued(genesis)?;
+    let issued = issued(genesis).ok_or(GenesisError::Issuance)?;
     let params = milestones.at(1);
     let ctx = ApplyContext {
         height: 1,

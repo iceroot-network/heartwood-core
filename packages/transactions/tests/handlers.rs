@@ -247,7 +247,7 @@ fn a_failed_credit_puts_every_wallet_back() {
     let tx = sender.sign(TransactionBuilder::transfer(items).nonce(1).fee(FEE));
     let before = wallets.clone();
     let rejected = Handlers.apply(&ctx(), &mut wallets, &tx).unwrap_err();
-    assert_eq!(rejected.class, "Error");
+    assert_eq!(rejected.class(), "Error");
     assert_eq!(visible(&wallets), visible(&before));
 }
 
@@ -566,7 +566,7 @@ fn a_resignation_revert_needs_its_undo_record() {
     let rejected = Handlers
         .revert(&ctx(), &mut wallets, &tx, &TxUndo::None)
         .unwrap_err();
-    assert_eq!(rejected.class, "Error");
+    assert_eq!(rejected.class(), "Error");
     assert_eq!(wallets, before);
 }
 
@@ -724,7 +724,7 @@ fn a_failed_vote_balance_update_puts_every_wallet_back() {
             &vote_tx(&sender, &[("del_b", 10_000)], 1),
         )
         .unwrap_err();
-    assert_eq!(rejected.class, "Error");
+    assert_eq!(rejected.class(), "Error");
     assert_eq!(visible(&wallets), visible(&before));
     assert!(!wallets.has_by_public_key(&sender.public_key().to_compressed()));
 }
@@ -813,7 +813,7 @@ fn genesis_registrations_resignations_votes_and_second_keys() {
     let rejected = Handlers
         .bootstrap(&genesis_ctx(), &mut wallets, &resign, false)
         .unwrap_err();
-    assert_eq!(rejected.class, "Error");
+    assert_eq!(rejected.class(), "Error");
     assert_eq!(wallets, before);
     for tx in [&register, &resign, &vote, &second_key] {
         assert_eq!(
@@ -847,7 +847,7 @@ fn genesis_registrations_resignations_votes_and_second_keys() {
     let rejected = Handlers
         .bootstrap(&genesis_ctx(), &mut wallets, &taken, false)
         .unwrap_err();
-    assert_eq!(rejected.class, "WalletUsernameAlreadyRegisteredError");
+    assert_eq!(rejected.class(), "WalletUsernameAlreadyRegisteredError");
     assert_eq!(wallets, before);
 }
 
