@@ -453,7 +453,7 @@ fn resignations_from_a_temporarily_resigned_delegate() {
             params: params(),
             last_block_height,
         };
-        let checked = Handlers.throw_if_cannot_be_applied(&ctx, &wallets, &revoke);
+        let checked = Handlers.check_can_apply(&ctx, &wallets, &revoke);
         if allowed {
             checked.unwrap();
             let before = wallets.clone();
@@ -503,13 +503,11 @@ fn a_revoke_without_a_configured_delay() {
             .nonce(2)
             .fee(FEE),
     );
-    Handlers
-        .throw_if_cannot_be_applied(&ctx, &wallets, &revoke)
-        .unwrap();
+    Handlers.check_can_apply(&ctx, &wallets, &revoke).unwrap();
     // The resignation must still be found up to the last block.
     resign(&mut wallets, &a, Resignation::Temporary, HEIGHT);
     let error = Handlers
-        .throw_if_cannot_be_applied(&ctx, &wallets, &revoke)
+        .check_can_apply(&ctx, &wallets, &revoke)
         .unwrap_err();
     assert_eq!(error.class(), "TypeError");
     let delegate = wallets
@@ -519,7 +517,7 @@ fn a_revoke_without_a_configured_delay() {
     delegate.resigned_at = None;
     assert_eq!(
         Handlers
-            .throw_if_cannot_be_applied(&ctx, &wallets, &revoke)
+            .check_can_apply(&ctx, &wallets, &revoke)
             .unwrap_err()
             .class(),
         "TypeError"

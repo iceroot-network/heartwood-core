@@ -38,4 +38,4 @@ pub mod pool_query;
 pub use crate::errors::{PoolError, TransactionError};
 pub use crate::handlers::registry::Handlers;
 pub use crate::handlers::transaction::{is_activated, minimum_fee};
-pub use crate::pool_query::{OnlineDelegates, PoolQuery, throw_if_cannot_enter_pool};
+pub use crate::pool_query::{OnlineDelegates, PoolQuery, check_pool_entry};

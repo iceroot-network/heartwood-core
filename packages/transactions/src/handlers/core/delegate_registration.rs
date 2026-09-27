@@ -52,9 +52,8 @@ pub fn revert(
     ctx: &ApplyContext<'_>,
     wallets: &mut WalletRepository,
     transaction: &Transaction,
-    undo: &TxUndo,
+    _undo: &TxUndo,
 ) -> Result<(), TransactionError> {
-    let _ = undo;
     let address = transaction::revert_for_sender(ctx, wallets, transaction)?;
     wallets.forget_delegate(&address);
     Ok(())
@@ -85,15 +84,15 @@ pub fn bootstrap(
 
 /// Refuse `transaction` at pool entry when the sender, or the name, already has a delegate
 /// registration in the pool: `ERR_PENDING`.
-pub fn throw_if_cannot_enter_pool<P: PoolQuery, O: OnlineDelegates>(
+#[doc(alias = "throwIfCannotEnterPool")]
+pub fn check_pool_entry<P: PoolQuery, O: OnlineDelegates>(
     ctx: &ApplyContext<'_>,
-    wallets: &WalletRepository,
+    _wallets: &WalletRepository,
     transaction: &Transaction,
     username: &str,
     pool: &P,
-    online: &O,
+    _online: &O,
 ) -> Result<(), PoolError> {
-    let _ = (wallets, online);
     let sender = transaction.data().sender_address(ctx.params);
     if pool.has_sender_kind(&sender, transaction.kind()) {
         return Err(PoolError::SenderPending {

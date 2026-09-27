@@ -21,7 +21,8 @@ impl Handlers {
     /// Run every check of `transaction` against `wallets` without changing them: the type's
     /// checks, then the base checks (the reference's `throwIfCannotBeApplied`, on the sender as
     /// apply sees it, with the transaction's key bound when the wallet has none).
-    pub fn throw_if_cannot_be_applied(
+    #[doc(alias = "throwIfCannotBeApplied")]
+    pub fn check_can_apply(
         &self,
         ctx: &ApplyContext<'_>,
         wallets: &WalletRepository,

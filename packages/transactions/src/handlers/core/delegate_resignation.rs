@@ -186,7 +186,8 @@ pub fn bootstrap(
 
 /// Refuse `transaction` at pool entry when the sender already has a resignation in the pool
 /// (`ERR_PENDING`), or it revokes while its node is offline (`ERR_OFFLINE`).
-pub fn throw_if_cannot_enter_pool<P: PoolQuery, O: OnlineDelegates>(
+#[doc(alias = "throwIfCannotEnterPool")]
+pub fn check_pool_entry<P: PoolQuery, O: OnlineDelegates>(
     ctx: &ApplyContext<'_>,
     wallets: &WalletRepository,
     transaction: &Transaction,

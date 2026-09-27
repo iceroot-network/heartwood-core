@@ -370,7 +370,7 @@ fuzz_target!(|input: Input| {
     };
 
     let before = wallets.clone();
-    let checked = Handlers.throw_if_cannot_be_applied(&ctx, &wallets, &transaction);
+    let checked = Handlers.check_can_apply(&ctx, &wallets, &transaction);
     let applied = Handlers.apply(&ctx, &mut wallets, &transaction);
     check_indexes(&wallets);
     match (checked, applied) {

@@ -67,9 +67,8 @@ pub fn revert(
     wallets: &mut WalletRepository,
     transaction: &Transaction,
     items: &[TransferItem],
-    undo: &TxUndo,
+    _undo: &TxUndo,
 ) -> Result<(), TransactionError> {
-    let _ = undo;
     let sender = transaction.data().sender_address(ctx.params);
     let touched = std::iter::once(&sender).chain(items.iter().map(|item| &item.recipient));
     Snapshot::take(wallets, touched).guard(wallets, |wallets| {

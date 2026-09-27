@@ -12,7 +12,7 @@
 //! transaction and, where the type has one, the part of the asset they read: `check` (the type's
 //! checks, then the base checks), `apply` (check, then change the wallets, returning the undo
 //! record), `revert` (with that record) and `bootstrap` (the genesis path); the types with
-//! pool-entry rules also have `throw_if_cannot_enter_pool`.
+//! pool-entry rules also have `check_pool_entry`.
 
 pub mod core;
 pub mod group2;

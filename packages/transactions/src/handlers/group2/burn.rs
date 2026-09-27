@@ -42,9 +42,8 @@ pub fn revert(
     ctx: &ApplyContext<'_>,
     wallets: &mut WalletRepository,
     transaction: &Transaction,
-    undo: &TxUndo,
+    _undo: &TxUndo,
 ) -> Result<(), TransactionError> {
-    let _ = undo;
     transaction::revert_for_sender(ctx, wallets, transaction)?;
     Ok(())
 }

@@ -138,7 +138,8 @@ pub fn bootstrap(
 /// Refuse `transaction` at pool entry when the sender already has a vote in the pool
 /// (`ERR_PENDING`), or it votes for a delegate that has not resigned and whose node is offline
 /// (`ERR_OFFLINE`), the first such name in the order of the vote.
-pub fn throw_if_cannot_enter_pool<P: PoolQuery, O: OnlineDelegates>(
+#[doc(alias = "throwIfCannotEnterPool")]
+pub fn check_pool_entry<P: PoolQuery, O: OnlineDelegates>(
     ctx: &ApplyContext<'_>,
     wallets: &WalletRepository,
     transaction: &Transaction,

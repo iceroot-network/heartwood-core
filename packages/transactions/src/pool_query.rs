@@ -35,7 +35,8 @@ pub trait OnlineDelegates {
 /// Refuse `transaction` at pool entry, as the reference's `throwIfCannotEnterPool` of its type
 /// does. Transfers and burns have no pool-entry rule. `ctx` is the pool's: the rules of the tip
 /// plus one.
-pub fn throw_if_cannot_enter_pool<P: PoolQuery, O: OnlineDelegates>(
+#[doc(alias = "throwIfCannotEnterPool")]
+pub fn check_pool_entry<P: PoolQuery, O: OnlineDelegates>(
     ctx: &ApplyContext<'_>,
     wallets: &WalletRepository,
     transaction: &Transaction,
@@ -44,35 +45,27 @@ pub fn throw_if_cannot_enter_pool<P: PoolQuery, O: OnlineDelegates>(
 ) -> Result<(), PoolError> {
     match &transaction.data().asset {
         Asset::Transfer { .. } | Asset::Burn { .. } => Ok(()),
-        Asset::SecondSignature { .. } => second_signature_registration::throw_if_cannot_enter_pool(
+        Asset::SecondSignature { .. } => {
+            second_signature_registration::check_pool_entry(ctx, wallets, transaction, pool, online)
+        }
+        Asset::DelegateRegistration { username } => delegate_registration::check_pool_entry(
             ctx,
             wallets,
             transaction,
+            username,
             pool,
             online,
         ),
-        Asset::DelegateRegistration { username } => {
-            delegate_registration::throw_if_cannot_enter_pool(
-                ctx,
-                wallets,
-                transaction,
-                username,
-                pool,
-                online,
-            )
-        }
-        Asset::DelegateResignation { resignation_type } => {
-            delegate_resignation::throw_if_cannot_enter_pool(
-                ctx,
-                wallets,
-                transaction,
-                *resignation_type,
-                pool,
-                online,
-            )
-        }
+        Asset::DelegateResignation { resignation_type } => delegate_resignation::check_pool_entry(
+            ctx,
+            wallets,
+            transaction,
+            *resignation_type,
+            pool,
+            online,
+        ),
         Asset::Vote { votes } => {
-            vote::throw_if_cannot_enter_pool(ctx, wallets, transaction, votes, pool, online)
+            vote::check_pool_entry(ctx, wallets, transaction, votes, pool, online)
         }
     }
 }

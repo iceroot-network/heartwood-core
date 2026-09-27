@@ -181,7 +181,7 @@ pub fn visible(wallets: &WalletRepository) -> Vec<Wallet> {
 /// The class of the refusal of `transaction`, after checking that the refusal changed nothing.
 pub fn refused(wallets: &mut WalletRepository, transaction: &Transaction) -> &'static str {
     let before = wallets.clone();
-    let checked = Handlers.throw_if_cannot_be_applied(&ctx(), wallets, transaction);
+    let checked = Handlers.check_can_apply(&ctx(), wallets, transaction);
     let rejected = Handlers
         .apply(&ctx(), wallets, transaction)
         .expect_err("the transaction is refused");
@@ -201,7 +201,7 @@ pub fn apply_and_revert(
 ) -> WalletRepository {
     let before = visible(wallets);
     Handlers
-        .throw_if_cannot_be_applied(&ctx(), wallets, transaction)
+        .check_can_apply(&ctx(), wallets, transaction)
         .expect("the checks pass");
     let undo = Handlers
         .apply(&ctx(), wallets, transaction)

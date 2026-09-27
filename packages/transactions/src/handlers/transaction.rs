@@ -80,8 +80,7 @@ fn as_javascript_number(value: i128) -> i128 {
 /// Whether transactions of `kind` may be applied under `params`. Every type this implementation
 /// carries is always active: the burn is active while `burn.txAmount` is a number, which the
 /// milestone loader requires at every height.
-pub fn is_activated(kind: TransactionType, params: &Params) -> bool {
-    let _ = params;
+pub fn is_activated(kind: TransactionType, _params: &Params) -> bool {
     matches!(
         kind,
         TransactionType::Transfer

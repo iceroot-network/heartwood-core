@@ -7,7 +7,7 @@ use heartwood_crypto::transactions::TransactionBuilder;
 use heartwood_crypto::transactions::types::ResignationType;
 use heartwood_crypto::{Transaction, TransactionType};
 use heartwood_state::wallets::{Resignation, WalletRepository};
-use heartwood_transactions::{OnlineDelegates, PoolError, PoolQuery, throw_if_cannot_enter_pool};
+use heartwood_transactions::{OnlineDelegates, PoolError, PoolQuery, check_pool_entry};
 use support::*;
 
 /// A pool that holds transactions of the listed senders and kinds, and registrations of the
@@ -68,7 +68,7 @@ fn enter(
     pool: &FakePool,
     online: &FakeOnline,
 ) -> Result<(), &'static str> {
-    throw_if_cannot_enter_pool(&ctx(), &setup.wallets, transaction, pool, online)
+    check_pool_entry(&ctx(), &setup.wallets, transaction, pool, online)
         .map_err(|error| error.code())
 }
 
@@ -143,15 +143,13 @@ fn one_delegate_registration_per_sender_and_per_name() {
     let online = FakeOnline(Vec::new());
     assert_eq!(enter(&setup, &tx, &FakePool::default(), &online), Ok(()));
     let by_sender = pending(&setup.sender, TransactionType::DelegateRegistration);
-    let result =
-        throw_if_cannot_enter_pool(&ctx(), &setup.wallets, &tx, &by_sender, &online).unwrap_err();
+    let result = check_pool_entry(&ctx(), &setup.wallets, &tx, &by_sender, &online).unwrap_err();
     assert!(matches!(result, PoolError::SenderPending { .. }));
     let by_name = FakePool {
         senders: Vec::new(),
         usernames: vec!["newcomer".into()],
     };
-    let result =
-        throw_if_cannot_enter_pool(&ctx(), &setup.wallets, &tx, &by_name, &online).unwrap_err();
+    let result = check_pool_entry(&ctx(), &setup.wallets, &tx, &by_name, &online).unwrap_err();
     assert_eq!(
         result,
         PoolError::UsernamePending {
@@ -198,7 +196,7 @@ fn resignations() {
     );
     resign_as(&mut setup.wallets, a, Resignation::Temporary);
     let revoke = resign(a, Some(ResignationType::NotResigned));
-    let offline = throw_if_cannot_enter_pool(
+    let offline = check_pool_entry(
         &ctx(),
         &setup.wallets,
         &revoke,
@@ -255,7 +253,7 @@ fn votes() {
     let only_a = FakeOnline(vec!["del_a"]);
     let two_offline = vote(&[("del_b", 5_000), ("del_c", 5_000)]);
     assert_eq!(
-        throw_if_cannot_enter_pool(
+        check_pool_entry(
             &ctx(),
             &setup.wallets,
             &two_offline,

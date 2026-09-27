@@ -23,8 +23,11 @@ pub struct ForgingInfo {
 ///
 /// The block time and the round length are those of height 1, so the height does not change the
 /// result; it is taken because the reference's signature has it.
-pub fn calculate_forging_info(timestamp: i64, height: u32, milestones: &Milestones) -> ForgingInfo {
-    let _ = height;
+pub fn calculate_forging_info(
+    timestamp: i64,
+    _height: u32,
+    milestones: &Milestones,
+) -> ForgingInfo {
     let params = milestones.at(1);
     let slot = slots::slot_info(timestamp, params.block_time());
     let n = i64::try_from(params.active_delegates())
