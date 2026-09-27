@@ -364,28 +364,6 @@ const PAGE: Key = key("page", MIN_1, Some(Fallback::One));
 const OFFSET: Key = key("offset", MIN_0, None);
 const LIMIT: Key = key("limit", Rule::Integer(1, 100), Some(Fallback::Hundred));
 
-/// The properties a transaction list sorts by (the criteria's names).
-const TRANSACTION_PROPERTIES: [&str; 18] = [
-    "address",
-    "senderId",
-    "recipientId",
-    "id",
-    "version",
-    "blockHeight",
-    "blockId",
-    "sequence",
-    "timestamp",
-    "nonce",
-    "senderPublicKey",
-    "type",
-    "typeGroup",
-    "memo",
-    "amount",
-    "fee",
-    "burnedFee",
-    "asset",
-];
-
 /// A key of a route's query, its rule and its default.
 #[derive(Debug, Clone, Copy)]
 struct Key {
@@ -676,26 +654,22 @@ fn order_by(known: bool, value: &Value) -> bool {
                 .bytes()
                 .all(|b| b.is_ascii_alphabetic() || b == b'.' || b == b'_')
             && ["asc", "desc"].contains(&direction.to_ascii_lowercase().as_str());
-        pattern
-            && (!known
-                || (TRANSACTION_PROPERTIES.contains(&property)
-                    && ["asc", "desc"].contains(&direction)))
+        pattern && (!known || (is_criterion(property) && ["asc", "desc"].contains(&direction)))
     })
 }
 
 /// JavaScript's white space and line terminators (`\s` and `String.prototype.trim`).
 fn is_js_space(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202f}'
-                | '\u{205f}'
-                | '\u{3000}'
-                | '\u{feff}'
-    )
+    "\t\n\u{b}\u{c}\r \u{a0}\u{1680}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}".contains(c)
+        || ('\u{2000}'..='\u{200a}').contains(&c)
+}
+
+/// Whether a transaction list sorts by `property`: the name of one of its criteria.
+fn is_criterion(property: &str) -> bool {
+    TRANSACTION_QUERY
+        .iter()
+        .take_while(|key| key.name != "orderBy")
+        .any(|key| key.name == property)
 }
 
 /// Joi's number from text: a decimal with an optional exponent, surrounded by white space at
