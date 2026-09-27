@@ -16,10 +16,12 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use heartwood_kernel::Clock;
+use heartwood_kernel::{Clock, Event, ip};
 use heartwood_p2p_wire::replies::PeerAddress;
 
+use crate::attestation::current_slot;
 use crate::options::P2pOptions;
+use crate::peer::{Peer, SharedPeer};
 use crate::repository::PeerRepository;
 use crate::seams::{PeerAcceptor, PeerClient, PeerRules};
 use crate::view::{ChainView, PeerEvents};
@@ -55,7 +57,6 @@ pub struct ProcessorParts<C, R> {
 
 /// The acceptance of candidate peers.
 pub struct PeerProcessor<C, R> {
-    #[expect(dead_code, reason = "the acceptance's methods read it")]
     parts: ProcessorParts<C, R>,
 }
 
@@ -68,6 +69,46 @@ where
     pub fn new(parts: ProcessorParts<C, R>) -> PeerProcessor<C, R> {
         PeerProcessor { parts }
     }
+
+    /// The ping of acceptance: a full ping with `verifyTimeout`, as a race against a timer of the
+    /// same length; whether it succeeded in time. A ping that loses the race is dropped.
+    async fn ping(&self, peer: &SharedPeer) -> bool {
+        let parts = &self.parts;
+        let timeout = parts.options.verify_timeout;
+        let slot = current_slot(parts.chain.milestones(), parts.clock.now_ms());
+        let ping = parts.client.ping(peer, timeout, slot, false, false);
+        matches!(tokio::time::timeout(timeout, ping).await, Ok(Ok(_)))
+    }
+
+    /// `acceptNewPeer`: a known peer is pinged again, and its ports probed when it was stale; a
+    /// new one is pending while it is pinged, then probed, stored and reported.
+    async fn accept(&self, ip: IpAddr, port: u16, options: AcceptOptions) {
+        let parts = &self.parts;
+        if let Some(known) = parts.repository.get(ip) {
+            let stale = known.with(|peer| peer.stale);
+            if self.ping(&known).await && stale {
+                parts.client.ping_ports(&known).await;
+            }
+            return;
+        }
+        let peer = SharedPeer::new(Peer::new(ip, port));
+        parts.repository.set_pending(peer.clone());
+        if self.ping(&peer).await {
+            parts.client.ping_ports(&peer).await;
+            parts.repository.set(peer.clone());
+            if !options.less_verbose {
+                let version = peer.with(|peer| peer.version.clone()).unwrap_or_default();
+                heartwood_kernel::debug!(
+                    "Accepted new peer {ip}:{port} (v{version}) :hugging_face:"
+                );
+            }
+            parts.events.emit(Event::PeerAdded);
+        } else {
+            parts.client.disconnect(ip);
+            parts.repository.keep_violations(&peer);
+        }
+        parts.repository.forget_pending(ip);
+    }
 }
 
 impl<C, R> PeerAcceptor for PeerProcessor<C, R>
@@ -76,12 +117,53 @@ where
     R: PeerRules + 'static,
 {
     fn validate_peer_ip(&self, peer: &mut PeerAddress, options: AcceptOptions) -> bool {
-        let _ = (peer, options);
-        todo!("the address rules")
+        let parts = &self.parts;
+        let config = &parts.options;
+        if config.disable_discovery {
+            heartwood_kernel::warning!(
+                "Rejected {} because the relay is in non-discovery mode :see_no_evil:",
+                peer.ip
+            );
+            return false;
+        }
+        if !parts.rules.is_valid_peer(
+            &mut peer.ip,
+            config.allow_private_ip_ranges,
+            &parts.interfaces,
+        ) {
+            return false;
+        }
+        // The processed text of an address ipaddr.js accepts; a zone index, which only a
+        // link-local address has, is refused here.
+        let Ok(address) = peer.ip.parse::<IpAddr>() else {
+            return false;
+        };
+        if parts.repository.has_pending(address)
+            || !ip::is_whitelisted(&config.whitelist, &peer.ip)
+            || ip::is_blacklisted(&config.blacklist, &peer.ip)
+        {
+            return false;
+        }
+        let same_subnet = parts
+            .repository
+            .peers()
+            .iter()
+            .filter(|known| parts.rules.same_subnet(known.ip(), address))
+            .count();
+        if same_subnet >= config.max_same_subnet_peers && !options.seed {
+            return false;
+        }
+        !parts
+            .repository
+            .has_violation(address, parts.clock.now_ms())
     }
 
-    async fn validate_and_accept(&self, peer: PeerAddress, options: AcceptOptions) {
-        let _ = (peer, options);
-        todo!("the acceptance")
+    async fn validate_and_accept(&self, mut peer: PeerAddress, options: AcceptOptions) {
+        if !self.validate_peer_ip(&mut peer, options) {
+            return;
+        }
+        if let Ok(ip) = peer.ip.parse::<IpAddr>() {
+            self.accept(ip, peer.port, options).await;
+        }
     }
 }
