@@ -672,3 +672,29 @@ fn pool_codes_are_the_reference_strings() {
     assert_eq!(PoolCode::ExceedsMaxCount.as_str(), "ERR_EXCEEDS_MAX_COUNT");
     assert_eq!(PoolCode::Other.to_string(), "ERR_OTHER");
 }
+
+#[test]
+fn a_later_entry_may_still_evict_what_a_refused_one_did_not() {
+    let fixture = Fixture::new();
+    let ctx = fixture.ctx(&MILESTONES);
+    let mut harness = Harness::new("later-evict", |options| {
+        options.max_transactions_in_pool = 1
+    });
+    let low = fixture.carol.transfer(&fixture.bob, 1, 4, FEE);
+    let gap = fixture.alice.transfer(&fixture.bob, 1, 7, 5 * FEE);
+    let replacement = fixture.carol.transfer(&fixture.bob, 2, 4, 3 * FEE);
+    let result = harness.submit(&ctx, &[&low, &gap, &replacement]);
+    // The reference evicts `low` for `gap` and then refuses `gap`; here `gap` is refused first.
+    // Either way `replacement` then takes the one place, so the results and the pool agree.
+    assert_eq!(result.accept, [id(&low), id(&replacement)]);
+    assert_eq!(result.invalid, [id(&gap)]);
+    assert_eq!(
+        error_of(&result, &id(&gap)).1,
+        format!(
+            "{} cannot be applied: Cannot apply a transaction with nonce 7: the sender has nonce 1",
+            text(&gap)
+        )
+    );
+    assert_eq!(harness.all(), [id(&replacement)]);
+    assert_eq!(harness.stored(), [id(&replacement)]);
+}
