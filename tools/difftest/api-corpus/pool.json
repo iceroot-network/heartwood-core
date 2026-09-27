@@ -1,0 +1,390 @@
+[
+ {
+  "name": "pool/list",
+  "path": "/api/transactions/unconfirmed"
+ },
+ {
+  "name": "pool/raw",
+  "path": "/api/transactions/unconfirmed",
+  "query": "transform=false"
+ },
+ {
+  "name": "pool/page-2",
+  "path": "/api/transactions/unconfirmed",
+  "query": "page=2&limit=1"
+ },
+ {
+  "name": "pool/offset-1",
+  "path": "/api/transactions/unconfirmed",
+  "query": "offset=1&limit=1"
+ },
+ {
+  "name": "pool/limit-1",
+  "path": "/api/transactions/unconfirmed",
+  "query": "limit=1"
+ },
+ {
+  "name": "pool/unknown-key",
+  "path": "/api/transactions/unconfirmed",
+  "query": "foo=1"
+ },
+ {
+  "name": "pool/transform-zero",
+  "path": "/api/transactions/unconfirmed",
+  "query": "transform=0"
+ },
+ {
+  "name": "pool/show",
+  "path": "/api/transactions/unconfirmed/${poolTx}"
+ },
+ {
+  "name": "pool/show/transform-true",
+  "path": "/api/transactions/unconfirmed/${poolTx}",
+  "query": "transform=true"
+ },
+ {
+  "name": "pool/show/transform-false",
+  "path": "/api/transactions/unconfirmed/${poolTx}",
+  "query": "transform=false"
+ },
+ {
+  "name": "pool/show/transform-empty",
+  "path": "/api/transactions/unconfirmed/${poolTx}",
+  "query": "transform="
+ },
+ {
+  "name": "pool/show/transform-zero",
+  "path": "/api/transactions/unconfirmed/${poolTx}",
+  "query": "transform=0"
+ },
+ {
+  "name": "pool/show/ignored-query",
+  "path": "/api/transactions/unconfirmed/${poolTx}",
+  "query": "foo=bar"
+ },
+ {
+  "name": "pool/show/upper-id",
+  "path": "/api/transactions/unconfirmed/${poolTx|upper}"
+ },
+ {
+  "name": "pool/show/unknown",
+  "path": "/api/transactions/unconfirmed/0000000000000000000000000000000000000000000000000000000000000000"
+ },
+ {
+  "name": "pool/show/invalid",
+  "path": "/api/transactions/unconfirmed/xyz"
+ },
+ {
+  "name": "transactions/types",
+  "path": "/api/transactions/types"
+ },
+ {
+  "name": "transactions/types/ignored-query",
+  "path": "/api/transactions/types",
+  "query": "foo=1"
+ },
+ {
+  "name": "transactions/fees",
+  "path": "/api/transactions/fees"
+ },
+ {
+  "name": "transactions/fees/ignored-query",
+  "path": "/api/transactions/fees",
+  "query": "foo=1"
+ },
+ {
+  "name": "submit/empty-object",
+  "method": "POST",
+  "path": "/api/transactions",
+  "body": {}
+ },
+ {
+  "name": "submit/empty-list",
+  "method": "POST",
+  "path": "/api/transactions",
+  "body": {
+   "transactions": []
+  }
+ },
+ {
+  "name": "submit/not-objects",
+  "method": "POST",
+  "path": "/api/transactions",
+  "body": {
+   "transactions": [
+    1
+   ]
+  }
+ },
+ {
+  "name": "submit/extra-key",
+  "method": "POST",
+  "path": "/api/transactions",
+  "body": {
+   "transactions": [
+    {}
+   ],
+   "x": 1
+  }
+ },
+ {
+  "name": "submit/too-many",
+  "method": "POST",
+  "path": "/api/transactions",
+  "body": {
+   "transactions": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+   ]
+  }
+ },
+ {
+  "name": "submit/invalid-json",
+  "method": "POST",
+  "path": "/api/transactions",
+  "text": "{",
+  "headers": {
+   "content-type": "application/json"
+  }
+ },
+ {
+  "name": "submit/text-plain",
+  "method": "POST",
+  "path": "/api/transactions",
+  "text": "hello",
+  "headers": {
+   "content-type": "text/plain"
+  }
+ },
+ {
+  "name": "submit/no-body",
+  "method": "POST",
+  "path": "/api/transactions"
+ },
+ {
+  "name": "submit/over-one-mebibyte",
+  "method": "POST",
+  "path": "/api/transactions",
+  "body": {
+   "transactions": [
+    {}
+   ]
+  },
+  "padTo": 1048577
+ },
+ {
+  "name": "submit/empty-transaction",
+  "method": "POST",
+  "path": "/api/transactions",
+  "body": {
+   "transactions": [
+    {}
+   ]
+  },
+  "documented": "decodeReason"
+ },
+ {
+  "name": "submit/unfunded-sender",
+  "method": "POST",
+  "path": "/api/transactions",
+  "body": {
+   "transactions": [
+    {
+     "fee": "50000000",
+     "headerType": 0,
+     "id": "854ae41d23e190a0b02abfdf8662f129a3eae39d65d905e8d183056a0951dd85",
+     "memo": "api corpus",
+     "senderId": "dXhsrBcxmJuagJbwgdX8gufxnzkEXwivxc",
+     "senderPublicKey": "02e10f29edb08b9de9b9f9266c93b0dcd078c64879ef4c2a59e3f8a108d259fbd2",
+     "signature": "fbc29b0ef889184583234861f965e05e755b9943b7dc0e47a65589364b3e118b8f6f860dab4ff3043b0f01ecbd1f39c3af2d8a6fd2c7064bc218e99fd79c061d",
+     "type": 6,
+     "version": 3,
+     "typeGroup": 1,
+     "nonce": "1",
+     "asset": {
+      "transfers": [
+       {
+        "amount": "100000000",
+        "recipientId": "dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2"
+       }
+      ]
+     }
+    }
+   ]
+  }
+ },
+ {
+  "name": "submit/unfunded-burn",
+  "method": "POST",
+  "path": "/api/transactions",
+  "body": {
+   "transactions": [
+    {
+     "fee": "10000000",
+     "headerType": 0,
+     "id": "01f9a485c6668955424975366416ad7b26ecb47441246b242c36755b87abef72",
+     "senderId": "dXhsrBcxmJuagJbwgdX8gufxnzkEXwivxc",
+     "senderPublicKey": "02e10f29edb08b9de9b9f9266c93b0dcd078c64879ef4c2a59e3f8a108d259fbd2",
+     "signature": "c54562ca71e6f50def43a4bcb4716d21348da76e29147faaf493dd78b4c99da9188c9c56249337812d47d740a103412d9426a0e7667c13dd075e546254dc1922",
+     "type": 0,
+     "version": 3,
+     "typeGroup": 2,
+     "nonce": "1",
+     "amount": "100000000"
+    }
+   ]
+  }
+ },
+ {
+  "name": "submit/wrong-network",
+  "method": "POST",
+  "path": "/api/transactions",
+  "body": {
+   "transactions": [
+    {
+     "fee": "50000000",
+     "headerType": 0,
+     "id": "854ae41d23e190a0b02abfdf8662f129a3eae39d65d905e8d183056a0951dd85",
+     "memo": "api corpus",
+     "senderId": "dXhsrBcxmJuagJbwgdX8gufxnzkEXwivxc",
+     "senderPublicKey": "02e10f29edb08b9de9b9f9266c93b0dcd078c64879ef4c2a59e3f8a108d259fbd2",
+     "signature": "fbc29b0ef889184583234861f965e05e755b9943b7dc0e47a65589364b3e118b8f6f860dab4ff3043b0f01ecbd1f39c3af2d8a6fd2c7064bc218e99fd79c061d",
+     "type": 6,
+     "version": 3,
+     "typeGroup": 1,
+     "nonce": "1",
+     "asset": {
+      "transfers": [
+       {
+        "amount": "100000000",
+        "recipientId": "dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2"
+       }
+      ]
+     },
+     "network": 30
+    }
+   ]
+  },
+  "documented": "decodeReason"
+ },
+ {
+  "name": "submit/bad-signature",
+  "method": "POST",
+  "path": "/api/transactions",
+  "body": {
+   "transactions": [
+    {
+     "fee": "50000000",
+     "headerType": 0,
+     "id": "854ae41d23e190a0b02abfdf8662f129a3eae39d65d905e8d183056a0951dd85",
+     "memo": "api corpus",
+     "senderId": "dXhsrBcxmJuagJbwgdX8gufxnzkEXwivxc",
+     "senderPublicKey": "02e10f29edb08b9de9b9f9266c93b0dcd078c64879ef4c2a59e3f8a108d259fbd2",
+     "signature": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+     "type": 6,
+     "version": 3,
+     "typeGroup": 1,
+     "nonce": "1",
+     "asset": {
+      "transfers": [
+       {
+        "amount": "100000000",
+        "recipientId": "dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2"
+       }
+      ]
+     }
+    }
+   ]
+  }
+ },
+ {
+  "name": "submit/twice-in-one-request",
+  "method": "POST",
+  "path": "/api/transactions",
+  "body": {
+   "transactions": [
+    {
+     "fee": "50000000",
+     "headerType": 0,
+     "id": "854ae41d23e190a0b02abfdf8662f129a3eae39d65d905e8d183056a0951dd85",
+     "memo": "api corpus",
+     "senderId": "dXhsrBcxmJuagJbwgdX8gufxnzkEXwivxc",
+     "senderPublicKey": "02e10f29edb08b9de9b9f9266c93b0dcd078c64879ef4c2a59e3f8a108d259fbd2",
+     "signature": "fbc29b0ef889184583234861f965e05e755b9943b7dc0e47a65589364b3e118b8f6f860dab4ff3043b0f01ecbd1f39c3af2d8a6fd2c7064bc218e99fd79c061d",
+     "type": 6,
+     "version": 3,
+     "typeGroup": 1,
+     "nonce": "1",
+     "asset": {
+      "transfers": [
+       {
+        "amount": "100000000",
+        "recipientId": "dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2"
+       }
+      ]
+     }
+    },
+    {
+     "fee": "50000000",
+     "headerType": 0,
+     "id": "854ae41d23e190a0b02abfdf8662f129a3eae39d65d905e8d183056a0951dd85",
+     "memo": "api corpus",
+     "senderId": "dXhsrBcxmJuagJbwgdX8gufxnzkEXwivxc",
+     "senderPublicKey": "02e10f29edb08b9de9b9f9266c93b0dcd078c64879ef4c2a59e3f8a108d259fbd2",
+     "signature": "fbc29b0ef889184583234861f965e05e755b9943b7dc0e47a65589364b3e118b8f6f860dab4ff3043b0f01ecbd1f39c3af2d8a6fd2c7064bc218e99fd79c061d",
+     "type": 6,
+     "version": 3,
+     "typeGroup": 1,
+     "nonce": "1",
+     "asset": {
+      "transfers": [
+       {
+        "amount": "100000000",
+        "recipientId": "dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2"
+       }
+      ]
+     }
+    }
+   ]
+  }
+ }
+]
