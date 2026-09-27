@@ -348,8 +348,7 @@ pub struct TransactionDisplay<'a> {
 }
 
 impl fmt::Display for TransactionDisplay<'_> {
-    /// The version is the wire byte, as the reference's transactions rebuilt from a verifier's
-    /// bytes carry it (so a wire byte 0 is `v0`).
+    /// The version is the one the reference reads: a wire byte 0 is `v3`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let data = &self.transaction.data;
         let sender = Address::from_public_key(&data.sender_public_key, self.network);
@@ -363,7 +362,7 @@ impl fmt::Display for TransactionDisplay<'_> {
             data.nonce,
             id.get(id.len().saturating_sub(8)..).unwrap_or_default(),
             first.to_ascii_uppercase(),
-            data.version
+            data.effective_version()
         )
     }
 }
