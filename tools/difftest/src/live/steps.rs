@@ -186,27 +186,73 @@ pub fn submissions(dir: &Path) -> Result<Vec<(String, Value)>> {
     Ok(out)
 }
 
-/// The differences between two runs' submissions (`h` against `r`): each scenario and id must get the
-/// same answer, and both runs must have the same submissions in the same order.
-pub fn compare_submissions(ours: &[(String, Value)], theirs: &[(String, Value)]) -> Vec<String> {
-    let mut out = Vec::new();
+/// A pool message with every run of digits replaced by `#`: a message that counts the blocks still
+/// to come ("105 more blocks must be produced ...") depends on the height the transaction reached
+/// the pool at, which the two runs' timing sets.
+pub fn without_numbers(message: &str) -> String {
+    let mut out = String::with_capacity(message.len());
+    let mut digits = false;
+    for c in message.chars() {
+        if c.is_ascii_digit() {
+            if !digits {
+                out.push('#');
+            }
+            digits = true;
+        } else {
+            digits = false;
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// How two runs' submissions (`h` against `r`) compare: each scenario and id must get the same
+/// answer, in the same order. `differences` fail; `timing` lists the answers whose messages differ
+/// only in their numbers, which is recorded.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Submissions {
+    /// Differences in the submissions or their answers.
+    pub differences: Vec<String>,
+    /// Answers equal but for the numbers of their messages.
+    pub timing: Vec<String>,
+}
+
+/// Compare two runs' submissions.
+pub fn compare_submissions(ours: &[(String, Value)], theirs: &[(String, Value)]) -> Submissions {
+    let mut out = Submissions::default();
     if ours.len() != theirs.len() {
-        out.push(format!(
+        out.differences.push(format!(
             "{} submissions here, {} in the pair run",
             ours.len(),
             theirs.len()
         ));
     }
+    let masked = |v: &Value| {
+        let mut v = v.clone();
+        if let Some(m) = v
+            .get("message")
+            .and_then(Value::as_str)
+            .map(without_numbers)
+        {
+            v["message"] = Value::String(m);
+        }
+        v
+    };
     for (i, (a, b)) in ours.iter().zip(theirs).enumerate() {
         if a.0 != b.0 {
-            out.push(format!(
+            out.differences.push(format!(
                 "submission {}: {} here, {} in the pair run",
                 i + 1,
                 a.0,
                 b.0
             ));
-        } else if a.1 != b.1 {
-            out.push(format!("{}: {} here, {} in the pair run", a.0, a.1, b.1));
+        } else if a.1 == b.1 {
+        } else if masked(&a.1) == masked(&b.1) {
+            out.timing
+                .push(format!("{}: {} here, {} in the pair run", a.0, a.1, b.1));
+        } else {
+            out.differences
+                .push(format!("{}: {} here, {} in the pair run", a.0, a.1, b.1));
         }
     }
     out
@@ -451,8 +497,23 @@ mod tests {
             "s1 x".to_owned(),
             json!({"outcome": "rejected", "code": "ERR_X"}),
         )];
-        assert!(compare_submissions(&a, &a).is_empty());
-        assert_eq!(compare_submissions(&a, &b).len(), 1);
+        assert_eq!(compare_submissions(&a, &a), Submissions::default());
+        assert_eq!(compare_submissions(&a, &b).differences.len(), 1);
+        let early = |n: u32| {
+            vec![(
+                "revoke-too-early x".to_owned(),
+                json!({"outcome": "rejected", "code": "ERR_APPLY", "message": format!("because {n} more blocks must be produced")}),
+            )]
+        };
+        let timing = compare_submissions(&early(105), &early(106));
+        assert!(
+            timing.differences.is_empty() && timing.timing.len() == 1,
+            "{timing:?}"
+        );
+        assert_eq!(
+            without_numbers("dA#4 c4dc8a23: 105 more"),
+            "dA## c#dc#a#: # more"
+        );
         let w = json!({"wallets": [{"address": "dA", "balance": "1"}]});
         let v = json!({"wallets": [{"address": "dA", "balance": "2"}, {"address": "dB"}]});
         assert!(compare_wallets(&w, &w).is_empty());

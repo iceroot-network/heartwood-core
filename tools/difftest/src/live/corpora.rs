@@ -4,12 +4,19 @@
 //! judged is used as it is; one of an earlier run of the same name is moved aside to
 //! `<name>.replaced` and imported again. Its manifest and `corpus.json` are copied into the run's
 //! `corpus/<name>/`.
+//!
+//! One change to an imported corpus: a random revert of its plan that would return to the last
+//! block of a round reverts one block more. The judge's headless node then deletes the next round's
+//! rows, as a reference node that reverts to a round's last block does, and does not save them
+//! again when it applies the next blocks, while the live node, which never reverted, holds them: the
+//! round rows' anchor would fail on the plan, not on the chain. The steps changed are listed in
+//! `corpus.json` (`revertPlanAdjusted`).
 
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::corpus::{self, Corpus, TS_DIGESTS};
+use crate::corpus::{self, Corpus, RevertPlan, TS_DIGESTS};
 use crate::errors::{Error, Result};
 use crate::levels::l2;
 use crate::live::digest::JudgedChain;
@@ -71,6 +78,50 @@ fn same_chain(dir: &Path, end: &(u64, String, String)) -> bool {
         && meta.pointer("/chain/epoch").and_then(Value::as_str) == Some(end.2.as_str())
 }
 
+/// Move each revert of the plan of the corpus in `dir` that returns to a round's last block one
+/// block further back, record the changed steps in `corpus.json`, and write the manifest again.
+fn adjust_plan(dir: &Path) -> Result<()> {
+    let path = dir.join("revert-plan.json");
+    let mut plan = RevertPlan::from_json(&read_json(&path)?, &path)?;
+    let length = plan.round_length.max(1);
+    let mut changed = Vec::new();
+    for step in &mut plan.steps {
+        let to = step.after_height - step.blocks;
+        if to >= length && to % length == 0 {
+            let moved = if step.blocks + 1 < step.after_height {
+                step.blocks + 1
+            } else {
+                step.blocks - 1
+            };
+            changed.push(serde_json::json!({"after": step.after_height, "blocks": step.blocks, "now": moved}));
+            step.blocks = moved;
+        }
+    }
+    if changed.is_empty() {
+        return Ok(());
+    }
+    std::fs::write(
+        &path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&plan.to_json()).unwrap_or_default()
+        ),
+    )
+    .map_err(|e| Error::io(&path, e))?;
+    let meta_path = dir.join("corpus.json");
+    let mut meta = read_json(&meta_path)?;
+    meta["revertPlanAdjusted"] = Value::Array(changed);
+    std::fs::write(
+        &meta_path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&meta).unwrap_or_default()
+        ),
+    )
+    .map_err(|e| Error::io(&meta_path, e))?;
+    corpus::write_manifest(dir)
+}
+
 /// Import (when needed) and judge (when needed) the corpus `name` of the run in `run_dir` from its
 /// archive directory `archives` (relative to the run), under `root`. `oracle` gives the oracle
 /// when a judge must run.
@@ -100,6 +151,7 @@ pub fn prepare(
     if !dir.exists() {
         std::fs::create_dir_all(root).map_err(|e| Error::io(root, e))?;
         corpus::import(&dirs, &dir, seed)?;
+        adjust_plan(&dir)?;
         imported = true;
     }
     let mut judged = false;

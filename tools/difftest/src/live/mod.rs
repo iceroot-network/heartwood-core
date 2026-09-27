@@ -275,7 +275,7 @@ fn check_run(
                 let ours = steps::submissions(&run_dir.join("txgen/once"))?;
                 let theirs = steps::submissions(&other.join("txgen/once"))?;
                 let d = steps::compare_submissions(&ours, &theirs);
-                if d.is_empty() && !ours.is_empty() {
+                if d.differences.is_empty() && !ours.is_empty() {
                     cases.pass(
                         "run",
                         format!("each of {} submissions got run {pair}'s answer", ours.len()),
@@ -287,11 +287,17 @@ fn check_run(
                         "no submission recorded",
                     );
                 }
-                for p in d.iter().take(20) {
+                for p in d.differences.iter().take(20) {
                     cases.fail(
                         "run",
                         format!("the submissions against run {pair}"),
                         p.clone(),
+                    );
+                }
+                for p in &d.timing {
+                    cases.record(
+                        "run",
+                        format!("an answer whose message differs from run {pair}'s in its numbers only: {p}"),
                     );
                 }
                 let w = (
@@ -727,11 +733,21 @@ fn check_invariants(
             .and_then(|s| s.start)
             .map_or(from, |t| t.max(from));
         let lags = steps::lags(&arrivals, &node.name, &manifest.control, windows, from);
+        // Node 4 of runs `r`, `h` and `m1` is gated: every block within one block time.
+        let gated = node.name == "node4" && manifest.run != "m2";
         if lags.is_empty() {
-            cases.record(
-                "invariants",
-                format!("{}: no block lag measured", node.name),
-            );
+            if gated {
+                cases.fail(
+                    "invariants",
+                    format!("{}: every block within {LAG_LIMIT_SECONDS} s", node.name),
+                    "no block arrival was recorded (propagation.jsonl)",
+                );
+            } else {
+                cases.record(
+                    "invariants",
+                    format!("{}: no block lag measured", node.name),
+                );
+            }
             continue;
         }
         let mut sorted: Vec<f64> = lags.iter().map(|(_, l)| *l).collect();
@@ -747,7 +763,6 @@ fn check_invariants(
                 lags.len()
             ),
         );
-        let gated = node.name == "node4" && manifest.run != "m2";
         if gated {
             let late: Vec<String> = lags
                 .iter()
