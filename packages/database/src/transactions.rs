@@ -101,8 +101,11 @@ pub(crate) fn recipients(
     Ok(recipients)
 }
 
+/// The columns of `transactions`, in the order [`read`] reads them.
+pub(crate) const COLUMNS: &str = columns!();
+
 /// A row of `transactions`, selected with its columns in their order.
-fn read(row: &Row<'_>) -> Result<TransactionRow, DatabaseError> {
+pub(crate) fn read(row: &Row<'_>) -> Result<TransactionRow, DatabaseError> {
     let columns = Columns::new("transactions", row);
     Ok(TransactionRow {
         id: columns.transaction_id(0)?,

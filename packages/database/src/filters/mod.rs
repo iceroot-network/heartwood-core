@@ -27,6 +27,7 @@ mod asset;
 mod js;
 mod jsonb;
 mod like;
+pub(crate) mod sql;
 
 pub use self::asset::{CastLimit, asset_alternatives};
 pub use self::js::js_number;
