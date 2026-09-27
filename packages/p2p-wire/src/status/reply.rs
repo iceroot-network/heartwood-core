@@ -168,8 +168,9 @@ pub fn check_reply(
 
 /// The block header schema: the required keys, the block ids (at height 1 the previous block may
 /// be empty or read as the number 0), the amounts from 0 to 2^63 − 1 (the totals of height 1
-/// unbounded), and the hex keys, hash and signature.
-fn header_passes(header: &StatusHeader, amounts: [Amount; 3]) -> bool {
+/// unbounded), and the hex keys, hash and signature. The getBlocks reply check reads its blocks'
+/// headers with it too.
+pub(crate) fn header_passes(header: &StatusHeader, amounts: [Amount; 3]) -> bool {
     let genesis = header.height == Some(1);
     let [total_amount, total_fee, reward] = amounts.map(Amount::value);
     let total = |value: i128| value >= 0 && (genesis || value <= MAX_AMOUNT);
@@ -214,7 +215,7 @@ fn code_points(text: &Option<String>) -> usize {
 }
 
 /// At least one hex digit of either case and nothing else, `length` characters when given.
-fn is_hex(text: &str, length: Option<usize>) -> bool {
+pub(crate) fn is_hex(text: &str, length: Option<usize>) -> bool {
     !text.is_empty()
         && text.bytes().all(|b| b.is_ascii_hexdigit())
         && length.is_none_or(|length| text.len() == length)

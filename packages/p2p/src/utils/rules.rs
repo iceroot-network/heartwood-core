@@ -122,3 +122,6 @@ impl PeerRules for Rules {
         npm_semver::compare(a, b)
     }
 }
+
+#[cfg(test)]
+mod tests;
