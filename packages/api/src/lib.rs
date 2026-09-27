@@ -48,7 +48,11 @@ pub use crate::context::{
 pub use crate::errors::{ApiError, ServeError};
 pub use crate::server::{ApiConfig, ServerHandle};
 
-/// The API component.
+/// The API component: the server of [`ApiContext`], on a runtime of its own.
+///
+/// A failure to serve (the address taken, HTTPS asked for) stops the relay, as the reference's
+/// server ends its application when it cannot start; the relay's profile may still leave the API
+/// out, or `CORE_API_DISABLED` turn it off ([`Component::enabled`]).
 pub struct Api {
     context: Arc<ApiContext>,
     runtime: tokio::runtime::Handle,
@@ -65,22 +69,39 @@ impl Api {
             server: None,
         }
     }
+
+    /// The reference's log line of the server's `event` (`started`, `stopped`).
+    fn log(&self, event: &str) {
+        let address = self.context.config.address;
+        heartwood_kernel::info!("Public API (HTTP) Server {event} at http://{address}");
+    }
 }
 
 impl Component for Api {
     const PACKAGE: &'static str = "@solar-network/api";
-    const REQUIRED: bool = false;
+    const REQUIRED: bool = true;
 
     fn enabled(&self) -> bool {
         self.context.config.enabled
     }
 
     async fn boot(&mut self) -> Result<(), BootError> {
-        let _ = (&self.runtime, &mut self.server);
-        todo!()
+        match server::serve(Arc::clone(&self.context), &self.runtime) {
+            Ok(server) => self.server = Some(server),
+            Err(error) => {
+                heartwood_kernel::error!("Failed to start Public API (HTTP) Server!");
+                let (package, reason) = (Self::PACKAGE, error.to_string());
+                return Err(BootError { package, reason });
+            }
+        }
+        self.log("started");
+        Ok(())
     }
 
     async fn dispose(&mut self) {
-        todo!()
+        if let Some(server) = self.server.take() {
+            server.stop().await;
+            self.log("stopped");
+        }
     }
 }
