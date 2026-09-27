@@ -1692,9 +1692,10 @@ fn refused_in_apply_after_gap(before: &State, block: &JobBlock, milestones: &Mil
     let header = decoded.header();
     let next = header.height == before.height().saturating_add(1)
         && &header.previous_block == before.last_block().id().as_bytes();
-    let gap = next && !before
-        .detect_missed_blocks(decoded.header(), milestones)
-        .is_empty();
+    let gap = next
+        && !before
+            .detect_missed_blocks(decoded.header(), milestones)
+            .is_empty();
     gap && before
         .clone()
         .apply_block(&decoded, milestones, &Handlers)

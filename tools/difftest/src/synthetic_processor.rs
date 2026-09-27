@@ -742,7 +742,7 @@ impl<'a> Pair<'a> {
                 let outcome = judge_job(&blocks, &oracle, &ours);
                 self.record(what, outcome);
                 if let RigJob::Refused(_) = ours {
-                    self.resync(server, what, &blocks, &oracle)?;
+                    self.resync(what, &blocks, &oracle);
                 }
             }
             Err(problem) => {
@@ -756,13 +756,7 @@ impl<'a> Pair<'a> {
     /// After Heartwood's download refused a listing, the blocks the oracle accepted from it
     /// arrive again without the refused one, as the next download brings them; their lines must
     /// be the oracle's.
-    fn resync(
-        &mut self,
-        _server: &mut OracleServer,
-        what: &str,
-        blocks: &[JobBlock],
-        oracle: &Value,
-    ) -> Result<()> {
+    fn resync(&mut self, what: &str, blocks: &[JobBlock], oracle: &Value) {
         let results = oracle["results"].as_array().cloned().unwrap_or_default();
         let accepted: Vec<(JobBlock, Value)> = blocks
             .iter()
@@ -771,7 +765,7 @@ impl<'a> Pair<'a> {
             .map(|(b, r)| (b.clone(), r["line"].clone()))
             .collect();
         if accepted.is_empty() {
-            return Ok(());
+            return;
         }
         let job: Vec<JobBlock> = accepted.iter().map(|(b, _)| b.clone()).collect();
         let now = job
@@ -780,7 +774,7 @@ impl<'a> Pair<'a> {
         let what = format!("{what}: the accepted blocks downloaded again");
         let Ok(rig) = &mut self.rig else {
             self.not_run(&what);
-            return Ok(());
+            return;
         };
         match rig.run(&job, &JobInputs::at(now), &[]) {
             Ok(RigJob::Ran { seen, .. }) => {
@@ -806,7 +800,6 @@ impl<'a> Pair<'a> {
                 self.not_run(&what);
             }
         }
-        Ok(())
     }
 
     /// The enqueueing's cuts of `blocks` with the last downloaded block at the tip, on both
