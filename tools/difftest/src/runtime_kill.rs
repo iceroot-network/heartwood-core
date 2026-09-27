@@ -6,8 +6,8 @@
 //!
 //! Each kill starts a mock peer (`mock-peer`) serving the corpus and a relay (`heartwood relay
 //! run`, both built next to this program with the harness's features) on the store of the current
-//! run, waits for the relay's restart line (its start restored the store), then for a random delay
-//! of the import, and kills both. The relay's digest lines must equal the corpus's continuous lines
+//! run, waits for the relay's first applied block (its start restored the store and it began to
+//! import), then for a random delay, and kills both. The relay's digest lines must equal the corpus's continuous lines
 //! (a restart line in the state sections, an apply line in every section of its step), a torn last
 //! line excepted; the store must restore by both modes to one tip, no lower than the tip before the
 //! kill and no higher than the last applied block, whose line equals the continuous line. A run
@@ -28,12 +28,12 @@ use crate::report::{CaseResult, Outcome, Report};
 use crate::restart::{SAME_STATE, SAME_STEP, differing_keys};
 use crate::store::{self, Checked, ScratchDir};
 
-/// How long a relay may take to restore its store and write its restart line.
+/// How long a relay may take to start and apply its first block.
 const START: Duration = Duration::from_secs(60);
 /// How long the last relay may take to import the rest of the corpus.
 const FINISH: Duration = Duration::from_secs(600);
-/// The relay's profile in `app.json`: the reference's relay components, without the API and the
-/// webhooks, which the import does not need.
+/// The profiles of `app.json`: the reference's relay components, without the API and the webhooks,
+/// which the import does not need.
 const PLUGINS: [&str; 7] = [
     "@solar-network/logger",
     "@solar-network/state",
@@ -68,6 +68,7 @@ pub fn crash(
     let node = Node::write(scratch.path(), corpus)?;
     let mut state = seed;
     let (mut results, mut store, mut previous) = (Vec::new(), 0_u32, None);
+    let mut tips = std::collections::BTreeMap::<u32, u32>::new();
     let max_ms = u64::try_from(max_delay.as_millis())
         .unwrap_or(u64::MAX)
         .max(1);
@@ -90,6 +91,9 @@ pub fn crash(
             judged.tip
         );
         results.push(case(kill, label, &judged));
+        if let Some(tip) = judged.tip {
+            *tips.entry(tip).or_insert(0) += 1;
+        }
         previous = judged.tip;
         if judged.tip.is_some_and(|tip| tip >= corpus.tip()) {
             (store, previous) = (store.saturating_add(1), None);
@@ -117,9 +121,10 @@ pub fn crash(
     Ok(Report {
         title: "L2 kill test: the relay's store after a SIGKILL".into(),
         source: format!(
-            "{kills} kills, seed {seed}, delays up to {} ms into the import, {} stores",
+            "{kills} kills, seed {seed}, delays up to {} ms into the import, {} stores; stored tips {}",
             max_delay.as_millis(),
-            store.saturating_add(1)
+            store.saturating_add(1),
+            json!(tips)
         ),
         files: 1,
         results,
@@ -156,7 +161,10 @@ impl Node {
         let files = [
             (
                 "app.json",
-                json!({ "relay": { "plugins": plugins } }).to_string(),
+                // The reference's schema asks for all three profiles; the relay reads its own.
+                json!({ "core": { "plugins": plugins }, "relay": { "plugins": plugins },
+                        "forger": { "plugins": plugins } })
+                .to_string(),
             ),
             ("peers.json", json!({ "list": [] }).to_string()),
             (
@@ -191,7 +199,7 @@ fn mkdir(path: &Path) -> Result<()> {
 /// When a relay is killed.
 #[derive(Debug, Clone, Copy)]
 enum Stop {
-    /// This long after its restart line, or at the corpus's tip.
+    /// This long after its first applied block, or at the corpus's tip.
     After(Duration),
     /// At the corpus's tip.
     AtTip,
@@ -238,6 +246,7 @@ impl Run<'_> {
         for dir in ["temp", "log", "cache", "home"] {
             mkdir(&data.join(dir))?;
         }
+        let errors = digest.with_extension("stderr");
         let mut relay = Guard(
             Command::new(self.relay)
                 .args([
@@ -259,7 +268,7 @@ impl Run<'_> {
                 .env("CORE_PATH_CACHE", data.join("cache"))
                 .env("HOME", data.join("home"))
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stderr(std::fs::File::create(&errors).map_err(|e| Error::io(&errors, e))?)
                 .spawn()
                 .map_err(|e| Error::io(self.relay, e))?,
         );
@@ -271,25 +280,28 @@ impl Run<'_> {
         };
         let mut problems = Vec::new();
         let started = Instant::now();
-        let mut restarted: Option<Instant> = None;
+        // When the import began: the relay's first applied block.
+        let mut importing: Option<Instant> = None;
         loop {
             std::thread::sleep(Duration::from_millis(5));
             let lines = read_lines(digest);
-            if restarted.is_none() && !lines.is_empty() {
-                restarted = Some(Instant::now());
+            if importing.is_none() && lines.iter().any(|line| line["step"] == "apply") {
+                importing = Some(Instant::now());
             }
-            let due = match (stop, restarted) {
+            let due = match (stop, importing) {
                 (_, None) => started.elapsed() > START,
                 (Stop::After(delay), Some(at)) => at.elapsed() >= delay || at_tip(&lines),
                 (Stop::AtTip, Some(at)) => at_tip(&lines) || at.elapsed() > FINISH,
             };
             if let Ok(Some(status)) = relay.0.try_wait() {
-                problems.push(format!("the relay exited on its own ({status})"));
+                let text = std::fs::read_to_string(&errors).unwrap_or_default();
+                let said = said(&text);
+                problems.push(format!("the relay exited on its own ({status}): {said}"));
                 break;
             }
             if due {
-                if restarted.is_none() {
-                    problems.push(format!("the relay wrote no line within {START:?}"));
+                if importing.is_none() {
+                    problems.push(format!("the relay applied no block within {START:?}"));
                 }
                 break;
             }
@@ -326,6 +338,27 @@ impl Run<'_> {
                 "the mock peer did not start: {line:?}"
             ))),
         }
+    }
+}
+
+/// What a relay's standard error `text` says of its end: a panic's place and message, else its
+/// last line.
+fn said(text: &str) -> String {
+    let lines: Vec<_> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    match lines.iter().position(|line| line.contains("panicked at")) {
+        Some(at) => lines
+            .iter()
+            .skip(at)
+            .take(2)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" "),
+        None => lines
+            .last()
+            .map_or("nothing on its standard error".into(), |l| (*l).to_owned()),
     }
 }
 
@@ -380,21 +413,24 @@ fn judge_lines(
     forward: &std::collections::BTreeMap<u32, Value>,
 ) -> Vec<String> {
     let mut problems = Vec::new();
-    // A new store's first start may write no restart line for the genesis block.
-    let first = lines.first();
-    let new_store = previous.is_none() && first.is_some_and(|l| l["step"] == "apply");
-    if let Some(first) = first.filter(|_| !new_store) {
+    // A new store's first start writes the genesis block's line instead of a restart line.
+    if let Some(first) = lines.first() {
         let start = previous.unwrap_or(1);
-        if first["step"] != "restart" || height(first) != Some(start) {
+        let step = if previous.is_none() {
+            "genesis"
+        } else {
+            "restart"
+        };
+        if first["step"] != step || height(first) != Some(start) {
             problems.push(format!(
-                "the first line is not the restart at {start}: {first}"
+                "the first line is not the {step} line at {start}: {first}"
             ));
         }
     }
     for (index, line) in lines.iter().enumerate() {
         let keys: &[&str] = match line["step"].as_str() {
             Some("restart") => &SAME_STATE,
-            Some("apply") => &SAME_STEP,
+            Some("apply" | "genesis") => &SAME_STEP,
             _ => {
                 problems.push(format!(
                     "line {}: not a restart or an apply line: {line}",
@@ -512,6 +548,14 @@ mod tests {
     }
 
     #[test]
+    fn a_relay_s_end_is_told_by_its_panic_or_its_last_line() {
+        let panic = "\nthread 'main' panicked at a.rs:1:2:\nboom\nnote: run with backtrace\n";
+        assert_eq!(said(panic), "thread 'main' panicked at a.rs:1:2: boom");
+        assert_eq!(said("one\ntwo\n\n"), "two");
+        assert_eq!(said(""), "nothing on its standard error");
+    }
+
+    #[test]
     fn a_relay_s_lines_must_start_at_the_stored_tip_and_follow_the_continuous_lines() {
         let forward = forward(10);
         let good = [line("restart", 4, "state4"), line("apply", 5, "state5")];
@@ -520,8 +564,15 @@ mod tests {
         assert_eq!(problems.len(), 1, "{problems:?}");
         let wrong = [line("restart", 4, "state4"), line("apply", 5, "other")];
         assert!(judge_lines(&wrong, Some(4), &forward)[0].contains("differs"));
-        let revert = [line("restart", 1, "state1"), line("revert", 1, "state1")];
+        let revert = [line("genesis", 1, "state1"), line("revert", 1, "state1")];
         assert_eq!(judge_lines(&revert, None, &forward).len(), 1);
+        let first = [line("genesis", 1, "state1"), line("apply", 2, "state2")];
+        assert!(judge_lines(&first, None, &forward).is_empty());
+        assert_eq!(
+            judge_lines(&first[1..], None, &forward).len(),
+            1,
+            "no genesis line"
+        );
     }
 
     #[test]
