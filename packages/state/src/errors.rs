@@ -206,9 +206,10 @@ pub enum ApplyError<E> {
         /// Why.
         rejected: E,
     },
-    /// A total (rewards, burned fees, burned amounts) would pass `2^64 − 1`.
-    #[error("the supply totals would overflow")]
-    TotalsOverflow,
+    /// The block's donations or burned amounts add up to more than `2^64 − 1`, or its burned fee
+    /// does not fit 64 bits; no block whose header adds up does this.
+    #[error("the block's payout does not fit 64 bits")]
+    PayoutRange,
     /// A wallet value left its range.
     #[error(transparent)]
     Wallet(#[from] WalletError),
@@ -238,9 +239,10 @@ pub enum RevertError<E> {
         /// Why.
         rejected: E,
     },
-    /// A total would go below 0.
-    #[error("the supply totals would go below 0")]
-    TotalsUnderflow,
+    /// The block's payout does not fit 64 bits (see [`ApplyError::PayoutRange`]); its apply
+    /// would have been refused.
+    #[error("the block's payout does not fit 64 bits")]
+    PayoutRange,
     /// A wallet value left its range.
     #[error(transparent)]
     Wallet(#[from] WalletError),

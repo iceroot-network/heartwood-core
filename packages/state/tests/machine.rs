@@ -14,7 +14,7 @@ use heartwood_crypto::transactions::types::{ResignationType, TransferItem, Votes
 use heartwood_crypto::{Aux, Block, KeyPair, Milestones, Network, Transaction};
 use heartwood_state::State;
 use heartwood_state::digest::{Sections, records};
-use heartwood_state::errors::{ApplyError, RevertError};
+use heartwood_state::errors::{ApplyError, RevertError, WalletError};
 use heartwood_state::machine::Applied;
 use heartwood_state::round_state::MissedBlock;
 use heartwood_state::supply::check_supply;
@@ -35,6 +35,12 @@ struct Chain {
 
 impl Chain {
     fn new() -> Chain {
+        Chain::with_milestones(|_| {})
+    }
+
+    /// A chain whose milestone file is the devnet's changed by `edit`. The genesis block stays
+    /// valid while the milestone at height 1 keeps its rules.
+    fn with_milestones(edit: impl FnOnce(&mut Vec<Value>)) -> Chain {
         let record: Value = V10
             .lines()
             .map(|line| serde_json::from_str::<Value>(line).unwrap())
@@ -43,7 +49,10 @@ impl Chain {
         let output = &record["output"];
         let file = |name: &str| output["files"][name].as_str().unwrap().to_owned();
         let network = Network::load(&file("crypto/network.json")).unwrap();
-        let milestones = Milestones::load(&file("crypto/milestones.json"), &network).unwrap();
+        let mut list: Vec<Value> = serde_json::from_str(&file("crypto/milestones.json")).unwrap();
+        edit(&mut list);
+        let milestones =
+            Milestones::load(&serde_json::to_string(&list).unwrap(), &network).unwrap();
         let json: Value = serde_json::from_str(&file("crypto/genesisBlock.json")).unwrap();
         let genesis = factory::from_json(&json, &milestones).unwrap();
         let state = State::from_genesis(&genesis, &milestones, &Handlers).unwrap();
@@ -546,7 +555,70 @@ fn missed_slots_and_the_reward_of_a_second_block_in_a_round() {
     );
     assert_eq!(
         chain.state.totals().rewards,
-        first + reward.reward,
+        u128::from(first + reward.reward),
         "every reward is counted, donations included"
     );
+}
+
+#[test]
+fn the_supply_totals_never_refuse_a_block_and_a_balance_stops_at_64_bits() {
+    // From height 2, a flat reward of 9 × 10^18 per block (a block's reward is at most 2^63 − 1):
+    // three blocks reward more than 2^64 − 1 in total, and a forger's third block takes its
+    // forged rewards (and its balance) past 2^64 − 1, which the reference's big numbers hold.
+    let reward = 9_000_000_000_000_000_000_u64;
+    let mut chain = Chain::with_milestones(|list| {
+        list.push(serde_json::json!({
+            "height": 2,
+            "reward": reward.to_string(),
+            "dynamicReward": {"enabled": false},
+        }));
+    });
+    let first = chain.block(Vec::new(), 0);
+    assert_eq!(first.header().reward, reward);
+    chain.apply(&first);
+    let forger = chain
+        .state
+        .wallets()
+        .find_by_public_key(&first.header().generator_public_key)
+        .and_then(|wallet| wallet.delegate())
+        .unwrap()
+        .username()
+        .to_owned();
+    for _ in 0..2 {
+        let block = chain.block(Vec::new(), 0);
+        chain.apply(&block);
+    }
+    assert!(chain.state.totals().rewards > u128::from(u64::MAX));
+
+    // The first forger's next blocks, until its values would pass 2^64 − 1.
+    for turn in 1.. {
+        assert!(turn <= 3, "the forger's values never reached 64 bits");
+        let skipped = (0..200)
+            .find(|skipped| chain.schedule(*skipped).1 == forger)
+            .unwrap();
+        let block = chain.block(Vec::new(), skipped);
+        let before = chain.sections(&[]);
+        let totals = *chain.state.totals();
+        match chain
+            .state
+            .apply_block(&block, &chain.milestones, &Handlers)
+        {
+            Ok(_) => check_supply(&chain.state).unwrap(),
+            Err(error) => {
+                assert!(
+                    matches!(
+                        error,
+                        ApplyError::Wallet(
+                            WalletError::BalanceOverflow { .. } | WalletError::DelegateRange { .. }
+                        )
+                    ),
+                    "{error:?}"
+                );
+                assert_eq!(chain.sections(&[]), before);
+                assert_eq!(chain.state.totals(), &totals);
+                assert!(turn >= 2);
+                break;
+            }
+        }
+    }
 }

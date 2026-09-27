@@ -151,7 +151,7 @@ pub fn build<H: TransactionHandlers>(
     // amount, add up to at most what was issued.
     let mut store = StateStore::new(genesis.clone(), issued);
     let totals = store.totals_mut();
-    totals.burned_fees = u64::try_from(fees).unwrap_or(u64::MAX);
-    totals.burned_amounts = u64::try_from(burned_amounts).unwrap_or(u64::MAX);
+    totals.burned_fees = fees;
+    totals.burned_amounts = burned_amounts;
     Ok(State::from_parts(wallets, round, store))
 }

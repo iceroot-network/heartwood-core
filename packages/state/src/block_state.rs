@@ -80,7 +80,8 @@ pub fn revert_transaction<H: TransactionHandlers>(
 
 /// Apply the transactions of `block` and pay its forger, adding the reward and the burned fees
 /// and amounts to `totals`. Returns the block's undo record without a round part, which the
-/// round state adds. On an error the wallets and `totals` are unchanged.
+/// round state adds. On an error the wallets and `totals` are unchanged (see the module
+/// documentation for the one exception).
 ///
 /// The forger is the wallet that has bound the block's generator key; it must be a registered
 /// delegate before any transaction of the block is applied.
@@ -92,10 +93,8 @@ pub fn apply_block<H: TransactionHandlers>(
     handlers: &H,
 ) -> Result<BlockUndo, ApplyError<H::Error>> {
     let forger = forger_address(wallets, block)?;
-    let payout = Payout::of(block, milestones).ok_or(ApplyError::TotalsOverflow)?;
-    let after = totals
-        .with_block(payout.reward, payout.burned_fee, payout.burned_amount)
-        .ok_or(ApplyError::TotalsOverflow)?;
+    let payout = Payout::of(block, milestones).ok_or(ApplyError::PayoutRange)?;
+    let after = totals.with_block(payout.reward, payout.burned_fee, payout.burned_amount);
     let height = block.height();
     let ctx = context(height, milestones);
 
@@ -148,9 +147,8 @@ pub fn revert_block<H: TransactionHandlers>(
     handlers: &H,
 ) -> Result<(), RevertError<H::Error>> {
     let block = &undo.block;
-    // The payout was computed when the block was applied, so it cannot fail here; if it did, the
-    // totals could not be taken back.
-    let payout = Payout::of(block, milestones).ok_or(RevertError::TotalsUnderflow)?;
+    // The payout was computed when the block was applied, so it cannot fail here.
+    let payout = Payout::of(block, milestones).ok_or(RevertError::PayoutRange)?;
     let ctx = context(block.height(), milestones);
     unpay_forger(wallets, &undo.forger, &payout)?;
 
