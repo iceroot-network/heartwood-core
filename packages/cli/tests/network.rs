@@ -397,17 +397,19 @@ fn devnet_init_reaches_the_generator_through_its_seam() {
 
 /// Writes `heartwood network generate`'s files for the seed and epoch the environment names into
 /// `HEARTWOOD_GENERATE_OUT`, so that the devnet tooling can boot a reference node from them.
+/// Without it, the files go to a scratch directory with the tests' epoch.
 #[test]
 #[ignore = "devnet"]
 fn generate_for_the_reference_devnet() {
-    let out =
-        PathBuf::from(std::env::var("HEARTWOOD_GENERATE_OUT").expect("HEARTWOOD_GENERATE_OUT"));
+    let out = std::env::var("HEARTWOOD_GENERATE_OUT")
+        .map_or_else(|_| scratch("reference-devnet"), PathBuf::from);
     let mut options = options(
         &std::env::var("HEARTWOOD_GENERATE_SEED").unwrap_or_else(|_| "solar-devnet".into()),
         &out,
     );
-    options.epoch =
-        Some(std::env::var("HEARTWOOD_GENERATE_EPOCH").expect("HEARTWOOD_GENERATE_EPOCH"));
+    if let Ok(epoch) = std::env::var("HEARTWOOD_GENERATE_EPOCH") {
+        options.epoch = Some(epoch);
+    }
     let generated = generate(&options, &clock()).unwrap();
     println!(
         "generate_for_the_reference_devnet: nethash {} genesis id {} epoch {}",
