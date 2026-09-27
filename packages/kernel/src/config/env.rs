@@ -19,6 +19,9 @@ use thiserror::Error;
 
 use crate::config::dot_env::{self, EnvValue};
 
+/// The key parts that the reference's nested assignment skips.
+const PROTOTYPE: [&str; 3] = ["__proto__", "prototype", "constructor"];
+
 /// The node's environment: every variable, after the `.env` files.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Env {
@@ -79,15 +82,12 @@ pub fn load(
         let text = std::fs::read(&path).map_err(|error| fail(error.to_string()))?;
         for (key, value) in dot_env::parse(&String::from_utf8_lossy(&text)) {
             let parts: Vec<&str> = key.split('.').collect();
-            let prototype = parts
-                .iter()
-                .any(|part| ["__proto__", "prototype", "constructor"].contains(part));
-            if prototype || (!overrides && vars.contains_key(&key)) {
+            if parts.iter().any(|part| PROTOTYPE.contains(part))
+                || (!overrides && vars.contains_key(&key))
+            {
                 continue;
             } else if parts.len() > 1 {
-                return Err(fail(format!(
-                    "the key {key} cannot be set in the environment"
-                )));
+                return Err(fail(format!("{key} cannot be set as a variable")));
             }
             let text = match value {
                 EnvValue::Number(number) => js::number_to_string(number),

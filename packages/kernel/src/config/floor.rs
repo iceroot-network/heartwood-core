@@ -5,6 +5,7 @@
 //! a warning, with its height: the node is cut off there, as the network intends.
 
 use heartwood_crypto::{Milestones, Params};
+use serde_json::Value;
 use thiserror::Error;
 
 /// A later milestone whose floor refuses the node's version.
@@ -43,32 +44,24 @@ pub fn check(
 ) -> Result<Vec<FloorWarning>, FloorError> {
     let admits = |params: &Params| gate(own_version, params, network_name);
     let ranges = |params: &Params| {
-        let listed = params
-            .as_json()
-            .get("p2p")
-            .and_then(|p2p| p2p.get("minimumVersions"));
-        serde_json::from_value(listed.cloned().unwrap_or_default()).unwrap_or_default()
+        let p2p = params.as_json().get("p2p");
+        let listed = p2p.map_or(&Value::Null, |p2p| &p2p["minimumVersions"]);
+        serde_json::from_value(listed.clone()).unwrap_or_default()
     };
-    let in_force = milestones.at(height);
-    if !admits(in_force) {
-        let (version, ranges) = (own_version.to_owned(), ranges(in_force));
-        return Err(FloorError {
+    let warning = |p: &Params| FloorWarning {
+        height: p.height(),
+        ranges: ranges(p),
+    };
+    let (in_force, all) = (milestones.at(height), milestones.all());
+    let later = all.iter().filter(|p| p.height() > height && !admits(p));
+    match admits(in_force) {
+        true => Ok(later.map(warning).collect()),
+        false => Err(FloorError {
             height,
-            version,
-            ranges,
-        });
+            version: own_version.to_owned(),
+            ranges: ranges(in_force),
+        }),
     }
-    let later = milestones
-        .all()
-        .iter()
-        .filter(|params| params.height() > height);
-    let refused = later.filter(|params| !admits(params));
-    Ok(refused
-        .map(|params| FloorWarning {
-            height: params.height(),
-            ranges: ranges(params),
-        })
-        .collect())
 }
 
 #[cfg(test)]

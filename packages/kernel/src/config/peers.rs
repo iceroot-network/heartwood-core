@@ -9,7 +9,7 @@
 use std::net::Ipv6Addr;
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::config::app::{integer, only};
@@ -72,19 +72,17 @@ pub fn parse(text: &str) -> Result<PeersFile, PeersError> {
         Some(PeerData { ip, port })
     };
     let uri = |source: &Value| source.as_str().filter(|uri| is_uri(uri)).map(str::to_owned);
-    let list = |file: &Map<String, Value>| -> Option<Vec<PeerData>> {
-        file.get("list")?.as_array()?.iter().map(peer).collect()
-    };
-    let sources = |file: &Map<String, Value>| {
-        let sources = file
-            .get("sources")
-            .map(|sources| sources.as_array().map(|s| s.iter().map(uri)));
-        sources.map_or(Some(Vec::new()), |sources| sources?.collect())
-    };
-    let file = only(&json, &["list", "sources"]);
-    let file = file.and_then(|file| Some((list(file)?, sources(file)?)));
+    let file = only(&json, &["list", "sources"]).and_then(|file| {
+        let list = file.get("list")?.as_array()?;
+        let list: Option<Vec<_>> = list.iter().map(peer).collect();
+        let sources = match file.get("sources") {
+            Some(sources) => sources.as_array()?.iter().map(uri).collect(),
+            None => Some(Vec::new()),
+        };
+        Some((list?, sources?))
+    });
     let (list, sources) =
-        file.ok_or_else(|| schema("it needs a list of peers (an ip and a port)".into()))?;
+        file.ok_or_else(|| schema("it needs a list of an ip and a port each".into()))?;
     Ok(PeersFile { list, sources })
 }
 
@@ -95,9 +93,8 @@ fn is_ip(text: &str) -> bool {
         .split_once('/')
         .map_or((text, None), |(a, p)| (a, Some(p)));
     let number = |part: &str, most: usize, max: u16| {
-        (1..=most).contains(&part.len())
-            && part.bytes().all(|b| b.is_ascii_digit())
-            && part.parse::<u16>().is_ok_and(|n| n <= max)
+        let digits = part.bytes().all(|b| b.is_ascii_digit());
+        digits && part.len() <= most && part.parse::<u16>().is_ok_and(|n| n <= max)
     };
     let octets: Vec<&str> = address.split('.').collect();
     if octets.len() == 4 && octets.iter().all(|octet| number(octet, 3, 255)) {
@@ -112,22 +109,19 @@ fn is_ip(text: &str) -> bool {
 /// Whether `text` is a URI: a scheme, `:`, then only the characters a URI may hold, each `%`
 /// followed by two hexadecimal digits.
 fn is_uri(text: &str) -> bool {
-    let Some((scheme, rest)) = text.split_once(':') else {
-        return false;
-    };
+    let (scheme, rest) = text.split_once(':').unwrap_or_default();
     let rest = rest.as_bytes();
-    let valid = |b: u8| b.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:@/?#[]".contains(&b);
-    let escape = |at: usize| {
-        (rest.get(at + 1..at + 3)).is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+    let hex = |at: usize| {
+        rest.get(at + 1..at + 3)
+            .is_some_and(|h| h.iter().all(u8::is_ascii_hexdigit))
     };
-    scheme
-        .bytes()
-        .next()
-        .is_some_and(|b| b.is_ascii_alphabetic())
-        && scheme
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"+-.".contains(&b))
-        && (rest.iter().enumerate()).all(|(at, &b)| valid(b) || b == b'%' && escape(at))
+    let valid = |(at, b): (usize, &u8)| {
+        b.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:@/?#[]".contains(b) || *b == b'%' && hex(at)
+    };
+    let scheme_valid = |b: u8| b.is_ascii_alphanumeric() || b"+-.".contains(&b);
+    scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+        && scheme.bytes().all(scheme_valid)
+        && rest.iter().enumerate().all(valid)
 }
 
 #[cfg(test)]
@@ -165,7 +159,7 @@ mod tests {
             r#"{"list":[{"ip":"192.0.2.1","port":4002,"x":1}]}"#,
             r#"{"list":[{"ip":"192.0.2.1","port":65536}]}"#,
             r#"{"list":[{"ip":"192.0.2.1","port":"4002.5"}]}"#,
-            r#"{"list":[{"ip":"192.0.2.1","port":"-0"}]}"#,
+            r#"{"list":[{"ip":"192.0.2.1","port":"-0e0"}]}"#,
             r#"{"list":[{"ip":"192.0.2.256","port":1}]}"#,
             r#"{"list":[{"ip":"0192.0.2.1","port":1}]}"#,
             r#"{"list":[{"ip":"192.0.2.1/33","port":1}]}"#,

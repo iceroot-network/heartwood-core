@@ -152,9 +152,6 @@ impl P2pOptions {
     }
 }
 
-/// The largest integer a JavaScript number holds exactly.
-const MAX_SAFE: f64 = 9_007_199_254_740_991.0;
-
 fn invalid(key: &str, reason: &str) -> OptionsError {
     OptionsError {
         key: key.to_owned(),
@@ -163,41 +160,12 @@ fn invalid(key: &str, reason: &str) -> OptionsError {
 }
 
 /// A safe integer of at least `min`, from a JSON number or numeric text, as the schema's
-/// `Joi.number().integer()` converts it: optional white space and sign, digits with an optional
-/// fraction or a fraction alone, and an optional exponent.
+/// `Joi.number().integer()` converts it (the kernel's reading of Joi's numbers).
 fn integer(value: &Value, key: &str, min: u64) -> Result<u64, OptionsError> {
-    let number = match value {
-        Value::Number(number) => number.as_f64(),
-        Value::String(text) => {
-            let trimmed = text.trim();
-            let digits = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
-            let (mantissa, exponent) = digits.split_once(['e', 'E']).unwrap_or((digits, "0"));
-            let exponent = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
-            let decimal = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
-            let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-            let form = decimal(whole)
-                && decimal(fraction)
-                && mantissa.len() > usize::from(mantissa.contains('.'));
-            let number = trimmed
-                .strip_prefix('+')
-                .unwrap_or(trimmed)
-                .parse::<f64>()
-                .ok();
-            number.filter(|_| form && !exponent.is_empty() && decimal(exponent))
-        }
-        _ => None,
-    }
-    .ok_or_else(|| invalid(key, "must be a number"))?;
-    // Joi refuses "-0", whose number does not print back as the text.
-    let negative_zero = value.as_str().is_some_and(|t| t.trim().starts_with('-')) && number == 0.0;
-    if number.fract() != 0.0 || number.abs() > MAX_SAFE || negative_zero {
-        return Err(invalid(key, "must be a safe integer"));
-    }
-    if number < min as f64 {
-        return Err(invalid(key, &format!("must be at least {min}")));
-    }
-    // A whole number from `min` to 2^53 - 1: the conversion is exact.
-    Ok(number as u64)
+    let low = i64::try_from(min).unwrap_or(i64::MAX);
+    let whole = heartwood_kernel::config::app::integer(value, low, i64::MAX);
+    let whole = whole.and_then(|whole| u64::try_from(whole).ok());
+    whole.ok_or_else(|| invalid(key, &format!("must be a safe integer of at least {min}")))
 }
 
 /// A boolean, or `true` or `false` text of any case, as `Joi.bool()` converts it.
@@ -313,7 +281,9 @@ mod tests {
         assert_eq!(read("020"), Some(20));
         assert_eq!(read("2e1"), Some(20));
         assert_eq!(read("0"), Some(0));
-        assert_eq!(read("-0"), None);
+        // Joi reads `-0` as 0, and refuses as unsafe a number that does not print back as its text.
+        assert_eq!(read("-0"), Some(0));
+        assert_eq!(read(".2e2"), None);
         assert_eq!(read("1.5"), None);
         assert_eq!(read("0x10"), None);
         assert_eq!(read("Infinity"), None);

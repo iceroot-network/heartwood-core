@@ -12,7 +12,8 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value};
+use heartwood_crypto::utils::js;
+use serde_json::{Map, Value, json};
 use thiserror::Error;
 
 use crate::config::env::Env;
@@ -115,10 +116,7 @@ pub fn load(config_dir: &Path, role: Role) -> Result<AppConfig, AppConfigError> 
     let script = config_dir.join("app.js").exists();
     let text = std::fs::read_to_string(&path).map_err(|error| AppConfigError::Read {
         path: path.clone(),
-        detail: format!(
-            "{error}{}",
-            if script { " (app.js is not read)" } else { "" }
-        ),
+        detail: error.to_string(),
     })?;
     let mut app = parse(&text, role).map_err(|error| match error {
         AppConfigError::Shape { detail, .. } => AppConfigError::Shape { path, detail },
@@ -139,56 +137,39 @@ pub fn parse(text: &str, role: Role) -> Result<AppConfig, AppConfigError> {
     for profile in [Role::Core, Role::Relay, Role::Forger].map(Role::profile) {
         let entries = json
             .get(profile)
-            .ok_or(AppConfigError::NoProfile { profile })?;
-        let plugins = profile_plugins(entries).ok_or_else(|| {
-            shape(format!(
-                "the {profile} profile is not of the reference's shape"
-            ))
-        })?;
+            .ok_or(AppConfigError::NoProfile { profile });
+        let plugins = profile_plugins(entries?);
+        let plugins = plugins.ok_or_else(|| shape(format!("its {profile} profile")))?;
         if profile == role.profile() {
             chosen = plugins;
         }
     }
-    let flags = json
-        .get(role.profile())
-        .is_some_and(|profile| profile.get("flags").is_some());
+    let flags = json.get(role.profile()).map(|profile| profile.get("flags"));
+    let ignored = flags.flatten().map(|_| format!("{}.flags", role.profile()));
     Ok(AppConfig {
         plugins: chosen,
-        ignored: flags
-            .then(|| format!("{}.flags", role.profile()))
-            .into_iter()
-            .collect(),
+        ignored: Vec::from_iter(ignored),
     })
 }
 
 /// The components of a profile, when the schema takes it.
 fn profile_plugins(profile: &Value) -> Option<Vec<PluginEntry>> {
     let profile = only(profile, &["flags", "services", "plugins"])?;
-    let text = |value: &Value| {
-        value
-            .as_str()
-            .filter(|text| !text.is_empty())
-            .map(str::to_owned)
-    };
-    let flags = profile.get("flags").map(Value::as_array);
-    let flags =
-        flags.is_none_or(|list| list.is_some_and(|list| list.iter().all(|f| text(f).is_some())));
+    let text = |value: &Value| Some(value.as_str().filter(|t| !t.is_empty())?.to_owned());
+    let texts = |list: &Vec<Value>| list.iter().all(|flag| text(flag).is_some());
+    let flags = profile
+        .get("flags")
+        .is_none_or(|f| f.as_array().is_some_and(texts));
     let services = profile.get("services").is_none_or(Value::is_object);
     let entry = |plugin: &Value| {
         let plugin = only(plugin, &["package", "options"])?;
         let package = plugin.get("package").map_or(Some(String::new()), text)?;
-        let options = plugin
-            .get("options")
-            .cloned()
-            .unwrap_or(Value::Object(Map::new()));
-        options
-            .is_object()
-            .then_some(PluginEntry { package, options })
+        let options = plugin.get("options").cloned().unwrap_or_else(|| json!({}));
+        Some(PluginEntry { package, options }).filter(|entry| entry.options.is_object())
     };
-    let plugins = profile.get("plugins")?.as_array()?.iter().map(entry);
-    plugins
-        .collect::<Option<Vec<_>>>()
-        .filter(|_| flags && services)
+    let plugins = profile.get("plugins")?.as_array()?;
+    let plugins: Option<Vec<_>> = plugins.iter().map(entry).collect();
+    plugins.filter(|_| flags && services)
 }
 
 /// The object `value`, when it has no key outside `keys`.
@@ -202,20 +183,61 @@ pub(crate) fn only<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Map<String
 const MAX_SAFE: f64 = 9_007_199_254_740_991.0;
 
 /// `value` as `Joi.number().integer()` converts it, when it is from `min` to `max`: a JSON number,
-/// or text of an optional sign, digits with an optional fraction (or a fraction alone) and an
-/// optional exponent, with white space around, which is the form Rust's reader takes too (apart
-/// from infinity and NaN, which are no whole numbers); a whole safe number, and not `-0`, which
-/// Joi refuses because it does not print back as its text.
+/// or text that [`joi_number`] reads; a whole number of at most 2^53 − 1.
 pub fn integer(value: &Value, min: i64, max: i64) -> Option<i64> {
     let number = match value {
         Value::Number(number) => number.as_f64()?,
-        Value::String(text) => (text.trim().parse::<f64>().ok())
-            .filter(|number| *number != 0.0 || !text.trim().starts_with('-'))?,
+        Value::String(text) => joi_number(text)?,
         _ => return None,
     };
     // A whole number of at most 2^53 - 1 converts exactly.
-    let whole = (number.fract() == 0.0 && number.abs() <= MAX_SAFE).then_some(number as i64)?;
-    (min..=max).contains(&whole).then_some(whole)
+    let whole = number.fract() == 0.0 && number.abs() <= MAX_SAFE;
+    Some(number as i64).filter(|n| whole && (min..=max).contains(n))
+}
+
+/// The number Joi's `number()` reads from `text`: an optional sign, digits with an optional
+/// fraction (or a fraction alone) and an optional exponent, with white space around (the forms
+/// Rust's reader takes, infinity and NaN aside), `-0` read as 0, at most 2^53 − 1 in size; refused
+/// as unsafe unless it prints back as the text ([`normalised`]), or, in an exponent form, unless
+/// the number over ten to the exponent prints back as the mantissa.
+pub fn joi_number(text: &str) -> Option<f64> {
+    let text = text.trim();
+    let form = text.bytes().all(|b| b"+-.eE0123456789".contains(&b));
+    let number = text.parse::<f64>().ok().filter(|_| form)? + 0.0;
+    let same = match text.split_once(['e', 'E']) {
+        Some((mantissa, exponent)) => {
+            let quotient = number / 10f64.powf(exponent.parse().ok()?);
+            normalised(&js::number_to_string(quotient), false) == normalised(mantissa, false)
+        }
+        None => {
+            let printed = js::number_to_string(number);
+            printed.contains('e') || printed == normalised(text, true)
+        }
+    };
+    (same && number.abs() <= MAX_SAFE).then_some(number)
+}
+
+/// A number's text as Joi normalises it: no `+`; a fraction without trailing zeros, and no point
+/// without one; leading zeros removed before a digit from 1 to 9, and in a `decimal` text all
+/// but one before a point or at the end (a fraction alone gains a `0`, and `-0` is `0`).
+fn normalised(text: &str, decimal: bool) -> String {
+    let text = text.strip_prefix('+').unwrap_or(text);
+    let (sign, rest) = text.split_at(usize::from(text.starts_with('-')));
+    let (whole, fraction) = rest.split_once('.').unwrap_or((rest, ""));
+    let fraction = fraction.trim_end_matches('0');
+    let bare = whole.trim_start_matches('0');
+    let whole = match bare.chars().next() {
+        Some('1'..='9') => bare,
+        _ if decimal && !(whole.is_empty() && fraction.is_empty()) => "0",
+        _ => whole,
+    };
+    let point = if fraction.is_empty() { "" } else { "." };
+    let sign = if decimal && whole == "0" && point.is_empty() {
+        ""
+    } else {
+        sign
+    };
+    format!("{sign}{whole}{point}{fraction}")
 }
 
 #[cfg(test)]
@@ -313,6 +335,80 @@ mod tests {
     }
 
     #[test]
+    fn numbers_are_read_as_joi_reads_them() {
+        // Joi 17's answers, recorded from the reference's own copy.
+        for (text, expected) in [
+            ("0", Some(0.0)),
+            ("-0", Some(0.0)),
+            ("+0", Some(0.0)),
+            ("00", Some(0.0)),
+            ("-00", Some(0.0)),
+            ("000", Some(0.0)),
+            ("007", Some(7.0)),
+            ("-007", Some(-7.0)),
+            ("0.0", Some(0.0)),
+            ("-0.0", Some(0.0)),
+            ("00.5", Some(0.5)),
+            ("0.50", Some(0.5)),
+            ("1.50", Some(1.5)),
+            ("20.", Some(20.0)),
+            ("20.0", Some(20.0)),
+            ("20.00", Some(20.0)),
+            ("020.0", Some(20.0)),
+            (".5", Some(0.5)),
+            (".50", Some(0.5)),
+            ("-.5", Some(-0.5)),
+            ("-.0", None),
+            ("+.5", Some(0.5)),
+            ("1e3", Some(1000.0)),
+            ("1E3", Some(1000.0)),
+            ("1e+3", Some(1000.0)),
+            ("1e03", Some(1000.0)),
+            ("1.0e3", Some(1000.0)),
+            ("1.500e3", Some(1500.0)),
+            ("10e1", Some(100.0)),
+            ("10.e1", Some(100.0)),
+            (".5e1", None),
+            ("0.5e1", Some(5.0)),
+            ("2e-1", Some(0.2)),
+            ("3e-1", None),
+            ("-0e0", None),
+            ("0e0", Some(0.0)),
+            ("1e400", None),
+            ("9007199254740991", Some(9007199254740991.0)),
+            ("9007199254740992", None),
+            ("9007199254740993", None),
+            ("1e21", None),
+            ("100000000000000000000000", None),
+            (" 12 ", Some(12.0)),
+            ("\t7\n", Some(7.0)),
+            ("1e-7", Some(1e-07)),
+            ("123456789012345678901234", None),
+            ("0.1", Some(0.1)),
+            ("0.30000000000000004", Some(0.30000000000000004)),
+            ("5e-324", None),
+            ("-5", Some(-5.0)),
+            ("+5", Some(5.0)),
+            ("12.30e1", Some(123.0)),
+            ("007e1", Some(70.0)),
+            ("00.5e1", None),
+            ("1_0", None),
+            ("0x10", None),
+            ("Infinity", None),
+            ("NaN", None),
+            ("", None),
+            (".", None),
+            (" ", None),
+            ("e5", None),
+            ("1e", None),
+            ("--1", None),
+            ("+-1", None),
+        ] {
+            assert_eq!(joi_number(text), expected, "{text:?}");
+        }
+    }
+
+    #[test]
     fn integers_are_read_as_joi_converts_them() {
         let read = |value: Value| integer(&value, 0, i64::MAX);
         for (text, expected) in [
@@ -323,15 +419,15 @@ mod tests {
             ("020", 20),
             ("2e1", 20),
             ("2E+1", 20),
-            (".2e2", 20),
+            ("-0", 0),
+            ("-0.0", 0),
             ("0", 0),
             ("9007199254740991", 9_007_199_254_740_991),
         ] {
             assert_eq!(read(json!(text)), Some(expected), "{text}");
         }
         for text in [
-            "-0",
-            "-0.0",
+            ".2e2",
             "1.5",
             "0x10",
             "Infinity",
