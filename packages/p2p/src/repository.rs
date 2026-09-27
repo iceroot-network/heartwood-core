@@ -1,21 +1,27 @@
 //! The peers and the pending peers, keyed by IP in insertion order, as the reference's maps keep
 //! them: setting a known IP keeps its place, forgetting one and setting it again moves it last.
 //!
+//! The repository also keeps the protocol violations of the peers it no longer holds, for the
+//! rest of their window, so that a violating peer is not accepted again while a violation is in
+//! its window ([`PeerRepository::has_violation`]).
+//!
 //! The repository is shared by the communicator, the acceptance and the monitor; each call locks
-//! it briefly and never across an `.await`.
+//! it briefly and never across an `.await`, and never while it holds a peer's lock.
 
 use std::net::IpAddr;
 use std::sync::{Mutex, PoisonError};
 
 use indexmap::IndexMap;
 
-use crate::peer::SharedPeer;
+use crate::peer::{FAULT_WINDOW_MS, SharedPeer};
 
-/// The two tables.
+/// The tables.
 #[derive(Debug, Default)]
 struct Tables {
     peers: IndexMap<IpAddr, SharedPeer>,
     pending: IndexMap<IpAddr, SharedPeer>,
+    /// The violation times of peers the repository no longer holds.
+    violations: IndexMap<IpAddr, Vec<i64>>,
 }
 
 /// The peers and the pending peers.
@@ -60,9 +66,47 @@ impl PeerRepository {
         self.with(|tables| tables.peers.insert(peer.ip(), peer));
     }
 
-    /// Forget the peer at `ip`, if any.
+    /// Forget the peer at `ip`, if any. Its protocol violations are kept for the rest of their
+    /// window.
     pub fn forget(&self, ip: IpAddr) {
-        self.with(|tables| tables.peers.shift_remove(&ip));
+        if let Some(peer) = self.with(|tables| tables.peers.shift_remove(&ip)) {
+            self.keep_violations(&peer);
+        }
+    }
+
+    /// Keep the protocol violations of `peer`, which the repository does not hold (a new peer
+    /// whose acceptance failed), for the rest of their window.
+    pub fn keep_violations(&self, peer: &SharedPeer) {
+        let times = peer.with(|peer| peer.violations.clone());
+        if !times.is_empty() {
+            self.with(|tables| {
+                let kept = tables.violations.entry(peer.ip()).or_default();
+                for time in times {
+                    if !kept.contains(&time) {
+                        kept.push(time);
+                    }
+                }
+            });
+        }
+    }
+
+    /// Whether the IP has a protocol violation in its window at `now_ms`: the peer held at `ip`,
+    /// or a peer at `ip` that was forgotten. The kept violations outside their window are
+    /// forgotten.
+    pub fn has_violation(&self, ip: IpAddr, now_ms: i64) -> bool {
+        if self
+            .get(ip)
+            .is_some_and(|peer| peer.with(|peer| peer.has_violation(now_ms)))
+        {
+            return true;
+        }
+        self.with(|tables| {
+            tables.violations.retain(|_, times| {
+                times.retain(|time| now_ms.saturating_sub(*time) <= FAULT_WINDOW_MS);
+                !times.is_empty()
+            });
+            tables.violations.contains_key(&ip)
+        })
     }
 
     /// Whether there is a peer at `ip`.
@@ -133,6 +177,30 @@ mod tests {
         assert_eq!(repository.len(), 3);
         assert!(repository.has(IpAddr::from([192, 0, 2, 3])));
         assert!(repository.get(IpAddr::from([192, 0, 2, 9])).is_none());
+    }
+
+    #[test]
+    fn violations_outlive_a_forgotten_peer_for_their_window() {
+        let repository = PeerRepository::new();
+        let violator = peer(4, 4002);
+        let ip = violator.ip();
+        violator.with(|peer| peer.add_violation(1_000));
+        repository.set(violator);
+        assert!(repository.has_violation(ip, 1_000));
+        repository.forget(ip);
+        assert!(!repository.has(ip));
+        assert!(repository.has_violation(ip, 601_000));
+        assert!(!repository.has_violation(ip, 601_001));
+        // A peer that was never stored, and one with infractions only.
+        let refused = peer(5, 4002);
+        refused.with(|peer| peer.add_violation(2_000));
+        repository.keep_violations(&refused);
+        assert!(repository.has_violation(refused.ip(), 2_000));
+        let slow = peer(6, 4002);
+        slow.with(|peer| peer.add_infraction(2_000));
+        repository.set(slow.clone());
+        repository.forget(slow.ip());
+        assert!(!repository.has_violation(slow.ip(), 2_000));
     }
 
     #[test]
