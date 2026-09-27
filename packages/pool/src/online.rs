@@ -75,10 +75,12 @@ impl DelegateVersions {
             .map(|(_, version)| version.as_str())
     }
 
-    /// Expire the entries at the start of `round`, as the reference's round start does.
+    /// Expire the entries at the start of `round`, as the reference's round start does: an
+    /// entry of round 0 or of a round below `round − 5` is removed.
     pub fn expire(&mut self, round: u64) {
-        let _ = round;
-        todo!("expire the entries older than five rounds")
+        self.entries.retain(|_, (announced, _)| {
+            *announced != 0 && announced.saturating_add(EXPIRY_ROUNDS) >= round
+        });
     }
 
     /// The record as the pool-entry checks read it, with delegate names looked up in `wallets`.
@@ -98,8 +100,71 @@ pub struct OnlineView<'a> {
 }
 
 impl OnlineDelegates for OnlineView<'_> {
+    /// Whether the delegate named `username` in the view's wallets has an entry.
     fn is_online(&self, username: &str) -> bool {
-        let _ = (username, self.versions, self.wallets);
-        todo!("whether the delegate has an entry")
+        self.wallets
+            .find_by_username(username)
+            .and_then(|wallet| wallet.public_key())
+            .is_some_and(|key| self.versions.version(&key.to_compressed()).is_some())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use heartwood_crypto::KeyPair;
+    use heartwood_crypto::identities::Address;
+
+    use super::*;
+
+    fn key(n: u8) -> PublicKeyBytes {
+        PublicKeyBytes::from_array([n; 33])
+    }
+
+    #[test]
+    fn entries_expire_after_five_rounds() {
+        let mut versions = DelegateVersions::new();
+        versions.set(key(1), 10, "4.3.1".into());
+        versions.set(key(2), 12, "4.3.2".into());
+        versions.set(key(3), 0, "0.0.1".into());
+        versions.expire(15);
+        assert_eq!(versions.version(&key(1)), Some("4.3.1"));
+        assert_eq!(versions.version(&key(3)), None, "round 0 always expires");
+        versions.expire(16);
+        assert_eq!(versions.version(&key(1)), None, "10 < 16 - 5");
+        assert_eq!(versions.version(&key(2)), Some("4.3.2"));
+        versions.expire(17);
+        assert_eq!(versions.version(&key(2)), Some("4.3.2"));
+        versions.expire(18);
+        assert!(versions.entries().is_empty());
+        // Rounds below 5 expire nothing but round 0.
+        versions.set(key(4), 1, "v".into());
+        versions.expire(3);
+        assert_eq!(versions.version(&key(4)), Some("v"));
+    }
+
+    #[test]
+    fn entries_round_trip() {
+        let mut versions = DelegateVersions::new();
+        versions.set(key(2), 7, "b".into());
+        versions.set(key(1), 8, "a".into());
+        versions.set(key(2), 9, "c".into());
+        let entries = versions.entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!((entries[0].public_key, entries[0].round), (key(1), 8));
+        assert_eq!(DelegateVersions::from_entries(entries), versions);
+    }
+
+    #[test]
+    fn the_view_looks_names_up_in_its_wallets() {
+        let keys = KeyPair::from_passphrase("online delegate").unwrap();
+        let address = Address::from_public_key(keys.public_key(), 90);
+        let mut wallets = WalletRepository::new(90);
+        wallets.bind_public_key(&address, keys.public_key().clone());
+        wallets.register_delegate(&address, "del_a".into()).unwrap();
+        let mut versions = DelegateVersions::new();
+        assert!(!versions.view(&wallets).is_online("del_a"));
+        versions.set(keys.public_key().to_compressed(), 3, "4.3.1".into());
+        assert!(versions.view(&wallets).is_online("del_a"));
+        assert!(!versions.view(&wallets).is_online("nobody"));
     }
 }
