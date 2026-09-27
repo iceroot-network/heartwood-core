@@ -14,9 +14,13 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # name: path (a crate's src/ or a part of it), ceiling (empty: informational)
 # heartwood-crypto was re-baselined from 5,500 to 5,750 with the state machine crates, which added
 # the milestones' fee table and revoke delay, the domain-tag registry and the transaction type key;
-# about 680 of its lines are the devnet chain-definition builder behind the `genesis` feature.
+# about 680 of its lines are the devnet chain-definition builder behind the `genesis` feature. It
+# was re-baselined again to 6,000 with the store and the pool: the dynamic fee floor moved in from
+# heartwood-transactions (a move, not new code), and the JavaScript number formatting of the
+# reference's messages (grouped integers and fractions, amounts with the network's symbol, a
+# transaction's short text) joined the one module that holds JavaScript number semantics.
 CHECKS=(
-    "heartwood-crypto:packages/crypto/src:5750"
+    "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1500"
     "heartwood-kernel utils:packages/kernel/src/utils:400"
     "heartwood-logger:packages/logger/src:500"

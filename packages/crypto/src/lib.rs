@@ -1,9 +1,9 @@
 //! `heartwood-crypto`: the byte-exact layer of Heartwood Core.
 //!
 //! This crate holds everything whose bytes or verdicts must equal the reference implementation:
-//! hashes, keys, addresses and signatures, the transaction and block codecs, the milestone rules
-//! and the arithmetic that blocks carry (rewards, donations, the fee burn). The module names follow
-//! the reference's file names.
+//! hashes, keys, addresses and signatures, the transaction and block codecs, the milestone rules,
+//! the arithmetic that blocks carry (rewards, donations, the fee burn) and the dynamic fee floor.
+//! The module names follow the reference's file names.
 //!
 //! - [`crypto`]: hashes, the signature schemes behind [`crypto::sig`], and slot arithmetic.
 //! - [`identities`]: secret keys, public keys and addresses.
@@ -11,8 +11,8 @@
 //! - [`blocks`]: the block codec, block ids, verification and the block factory.
 //! - [`managers`]: the network description and the milestones, merged and checked at load.
 //! - [`validation`]: the transaction rules that the reference expresses as JSON schemas.
-//! - [`utils`]: rewards, donations, the fee burn, vote order, amounts, Base58, hex, byte cursors
-//!   and JavaScript number formatting.
+//! - [`utils`]: rewards, donations, the fee burn, the dynamic fee floor, vote order, amounts,
+//!   Base58, hex, byte cursors and JavaScript number formatting.
 //! - `genesis` (feature `genesis`): the devnet chain-definition builder.
 //!
 //! Rules for the whole crate:

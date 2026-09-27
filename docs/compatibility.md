@@ -23,7 +23,8 @@ Cargo.toml            workspace: edition 2024, resolver 3, rust-version 1.98, wo
 Makefile              `make help` lists the targets
 NOTICE                credits for ARK Core, Solar Core and node-emoji, and the licence notice of nes
 packages/crypto/      heartwood-crypto: keys, signatures, the transaction and block codecs,
-                      milestones and the devnet chain-definition builder (feature `genesis`)
+                      milestones, the fee floor and the devnet chain-definition builder
+                      (feature `genesis`)
 packages/kernel/      heartwood-kernel: round and slot arithmetic, block chaining and the other
                       shared utilities, the clock seam, event names, the component lifecycle,
                       log levels, node directories and `.env` files
@@ -31,7 +32,7 @@ packages/logger/      heartwood-logger: the reference's log lines, console and f
                       daily rotation
 packages/state/       heartwood-state: wallets, delegates, rounds, block application and
                       reversal, genesis, the supply check and the canonical state digest
-packages/transactions/  heartwood-transactions: the six transaction handlers, the fee floor and
+packages/transactions/  heartwood-transactions: the six transaction handlers, the fee check and
                       the pool-entry checks
 packages/p2p-wire/    heartwood-p2p-wire: the peer-to-peer wire codec (nes frames, the protobuf
                       messages of the public routes, list framing, the signed peer status)
@@ -137,8 +138,16 @@ The same variables work on the command line: `make e2e SOLAR_REPO=../solar-core-
 BIP340 signatures and the legacy Schnorr scheme, the version 3 transaction codec for the six kept
 transaction types (1/1, 1/2, 1/6, 1/7, 2/0, 2/2) with the transaction rules and builders, the
 block codec with its verification rules and factory, the network description and the milestones
-(merged and checked at load, looked up by height), rewards, donations and the fee burn. The crate
-forbids unsafe code, and its decoders return typed errors instead of panicking on untrusted input.
+(merged and checked at load, looked up by height), rewards, donations, the fee burn, and the
+dynamic fee floor, `(addon bytes + half the size, rounded) × max(minFee, 1)` per type, a pure
+function of the transaction's type, its size and the milestone, so that a client can compute it
+before it signs. The crate forbids unsafe code, and its decoders return typed errors instead of
+panicking on untrusted input.
+
+Every signature names what it is for with a signing domain: a transaction, a block, a peer status
+or an off-chain message. In this signature format the domain changes no bytes; an off-chain message
+is signed as the reference signs it, BIP340 over SHA-256 of the message's UTF-8 text. From the
+post-quantum formats on, each domain carries its own tag of the signing-tag registry.
 
 Features, all off by default:
 
@@ -257,14 +266,14 @@ cargo test -p heartwood-state --locked --all-features   # V08, V09-shuffle, V15,
 
 `packages/transactions` holds the six transaction handlers (1/6 transfer, 1/1 second-signature
 registration, 1/2 delegate registration, 1/7 delegate resignation, 2/0 burn, 2/2 vote), each with
-its checks in the reference's order, its apply and revert, and its genesis path; the dynamic fee
-floor, `(addon bytes + half the size, rounded) × max(minFee, 1)` per type; the checks that decide
-whether a transaction may enter the pool; and error types whose `class()` is the reference's error
-class. The registry is closed: it dispatches on the transaction type, and no plugin can replace a
-rule. A handler runs every check before it changes a wallet.
+its checks in the reference's order, its apply and revert, and its genesis path; the fee check
+against the dynamic fee floor of `heartwood-crypto` (`minimum_fee` gives the floor of a decoded
+transaction); the checks that decide whether a transaction may enter the pool; and error types whose
+`class()` is the reference's error class. The registry is closed: it dispatches on the transaction
+type, and no plugin can replace a rule. A handler runs every check before it changes a wallet.
 
 ```sh
-cargo test -p heartwood-transactions --locked --all-features   # handlers, pool checks, V17 and V19
+cargo test -p heartwood-transactions --locked --all-features   # handlers, pool checks, V17
 ```
 
 ## heartwood-p2p-wire
@@ -376,7 +385,7 @@ models the reference's class. On a run of every class (reference tag `s1-ref-v2`
 | skipped: builders of types or headers that Heartwood does not build | 6 |
 
 `cargo test` checks the classes of each crate in that crate; the difftest test `l0` runs the
-comparison over the committed vectors of `heartwood-crypto` (1,489 compared, 23 documented, 6
+comparison over the committed vectors of `heartwood-crypto` (1,701 compared, 58 documented, 6
 skipped), and the test `l0_wire` over the wire class of `heartwood-p2p-wire` (1,179 compared, 14
 documented, none skipped).
 
@@ -512,6 +521,7 @@ run without `DEVNET_GENERATOR`, and then installs nothing.
 | `V10-genesis.jsonl` | the devnet chain definition that the devnet generator (`gen-network.js`, see below) writes for three seeds and a fixed epoch: the exact text of the four `crypto/*.json` files, the delegate and wallet keys, the nethash, the genesis id and the issued amount, and the reference's `BlockFactory.fromJson` on the result |
 | `V11-external.jsonl` | the published vector files in `external/` (BIP340, the bip-schnorr draft at `d194620`, BIP39 English), each with its source URL and SHA-256 in `external/SOURCES.json`, and the reference's answers on their inputs |
 | `V12-milestone-config.jsonl` | milestone files as JSON text, accepted (with the merged milestones, rewards and donations) or refused by the configuration manager's start-up checks; transaction rules at the block's height |
+| `V19-fee-floor.jsonl` | the dynamic fee floor of the six types over memo lengths, recipients, votes of 1 to 53 entries and resignation types; fee tables switched off, with `minFee` 0 and negative, and without a type's key; tables and revoke delays of the wrong type |
 | `V08-ranking.jsonl` (state) | the delegate ranking over generated sets: equal vote balances broken by public key, resignations, 53 to 80 delegates, rounds larger than the ranking, identical keys refused; the key order over random key pairs, every first byte and keys that first differ at each byte |
 | `V09-rounds.jsonl` (kernel) | the round of a height and whether it starts one, for heights 1 to 10,000, ranges hashed, 1 to 53 delegates and heights near 2^32; the forger index, next forger, block timestamp and `canForge` over slot edges, half slots, gaps and times before the epoch; block chaining (previous id, height plus one, a later slot) |
 | `V09-shuffle.jsonl` (state) | the forging order: for every count 1 to 53 the SHA-256 of the orders of rounds 1 to 10,000; full orders of rounds 1 to 100 for counts 1, 2, 3, 52 and 53; rounds where a draw is rejected; round 2^53 - 1 |
@@ -520,7 +530,6 @@ run without `DEVNET_GENERATOR`, and then installs nothing.
 | `V16-kernel.jsonl` (kernel) | the status canonical JSON; `.env` text (separators, comments, quotes, digits, booleans, empty values); epoch timestamps; address lists with globs, brackets and IPv6; node directories with their environment overrides |
 | `V17-handlers.jsonl` (transactions) | the transaction handlers on wallet sets: at least one case of each error class and of each apply effect, the revoke delay at 105, 106 and 107 blocks, the fee floor and one below it, the burn minimum and one below it, votes identical, empty, too many and unknown, second signatures missing, wrong and unexpected, and a refused first transaction of a wallet without a key |
 | `V18-genesis-state.jsonl` (state) | the state digest after the genesis block of the three V10 chain definitions and of six variants of the first (fees and burns, a second key, resignations and a revoke, split votes, a transfer before the issuance record, more issuance records, a generator that registers and votes, a vote and a resignation before their registration; two that the reference refuses to start on: a negative balance, too few delegates for round 1), and of five wallet sets, one per record shape |
-| `V19-fee-floor.jsonl` (transactions) | the dynamic fee floor of the six types over memo lengths, recipients, votes of 1 to 53 entries and resignation types; fee tables switched off, with `minFee` 0 and negative, and without a type's key; tables and revoke delays of the wrong type |
 | `V20-logger.jsonl` (logger) | the log line of every level, coloured and plain, with and without emoji codes (the whole table, in slices), over times at the edges of a JavaScript date and messages with line breaks and colour codes |
 
 The first line of each file is a meta record: format `heartwood-vectors/1`; the reference's version,

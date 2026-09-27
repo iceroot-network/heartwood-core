@@ -12,12 +12,8 @@ use heartwood_crypto::managers::{Milestones, Network};
 use heartwood_crypto::utils::hex;
 use serde_json::Value;
 
-/// V06 of `heartwood-crypto`, whose `fee.minimum` records this crate answers.
-pub const V06: &str = include_str!("../../../crypto/tests/vectors/V06-arithmetic.jsonl");
 /// V17 of this crate: transactions applied to wallet fixtures and reverted.
 pub const V17: &str = include_str!("../vectors/V17-handlers.jsonl");
-/// V19 of this crate: the fee floor.
-pub const V19: &str = include_str!("../vectors/V19-fee-floor.jsonl");
 /// V10 of `heartwood-crypto`: the devnet chain definitions.
 const V10: &str = include_str!("../../../crypto/tests/vectors/V10-genesis.jsonl");
 

@@ -16,6 +16,7 @@
 use std::borrow::Cow;
 
 use heartwood_crypto::identities::{Address, PublicKey};
+use heartwood_crypto::utils::fee_floor;
 use heartwood_crypto::{Params, Transaction, TransactionType};
 use heartwood_state::ApplyContext;
 use heartwood_state::errors::WalletError;
@@ -23,66 +24,26 @@ use heartwood_state::wallets::{Wallet, WalletRepository};
 
 use crate::errors::TransactionError;
 
-/// The dynamic fee floor of `transaction` under `params`: 0 for burns and delegate resignations,
-/// and 0 when the milestone's dynamic fees are absent or disabled; otherwise
-/// `(addonBytes[key] + round(size / 2)) × max(minFee, 1)`, where `size` is the byte length of
-/// the transaction as it was decoded and the sum is a JavaScript number addition.
+/// The dynamic fee floor of `transaction` under `params`, computed by
+/// [`heartwood_crypto::utils::fee_floor::minimum_fee`] from the transaction's type and its byte
+/// length as it was decoded: 0 for burns and delegate resignations, and 0 when the milestone's
+/// dynamic fees are absent or disabled; otherwise
+/// `(addonBytes[key] + round(size / 2)) × max(minFee, 1)`, the sum a JavaScript number addition.
 pub fn minimum_fee(transaction: &Transaction, params: &Params) -> i128 {
-    match params.dynamic_fees().filter(|fees| fees.enabled()) {
-        Some(fees) => minimum_fee_with(transaction, fees.min_fee(), fees.addon(transaction.key())),
-        None => 0,
-    }
+    fee_floor::minimum_fee(transaction.kind(), transaction.bytes().len(), params)
 }
 
 /// The dynamic fee floor of `transaction` with the fee table `min_fee` and `addon_bytes` (the
 /// entry for the transaction's type), as the reference's `getMinimumFee` computes it from any
-/// table: the milestone's, or the pool's own when the milestone's dynamic fees are off. 0 for
-/// burns and delegate resignations; otherwise `(addon_bytes + round(size / 2)) × max(min_fee, 1)`
-/// (see [`minimum_fee`]).
+/// table: the milestone's, or the pool's own when the milestone's dynamic fees are off. A wrapper
+/// of [`heartwood_crypto::utils::fee_floor::minimum_fee_with`] (see [`minimum_fee`]).
 pub fn minimum_fee_with(transaction: &Transaction, min_fee: i64, addon_bytes: i64) -> i128 {
-    if matches!(
+    fee_floor::minimum_fee_with(
         transaction.kind(),
-        TransactionType::Burn | TransactionType::DelegateResignation
-    ) {
-        return 0;
-    }
-    // Math.round(size / 2) of an integer size rounds the half up.
-    let size = u64::try_from(transaction.bytes().len()).unwrap_or(u64::MAX);
-    let half = size.div_ceil(2);
-    let bytes = as_javascript_number(i128::from(addon_bytes).saturating_add(half.into()));
-    // Both factors are below 2^54 in magnitude, so the product fits.
-    bytes.saturating_mul(min_fee.max(1).into())
-}
-
-/// The integer `value` as a JavaScript number holds it, when it is the exact result of adding two
-/// JavaScript numbers: unchanged up to `2^53` in magnitude, above that rounded to the nearest
-/// double, a tie going to the one with an even significand, as IEEE 754 addition rounds.
-fn as_javascript_number(value: i128) -> i128 {
-    const SIGNIFICAND_BITS: u32 = 53;
-    let magnitude = value.unsigned_abs();
-    let width = u128::BITS.saturating_sub(magnitude.leading_zeros());
-    let Some(shift) = width
-        .checked_sub(SIGNIFICAND_BITS)
-        .filter(|shift| *shift > 0)
-    else {
-        return value;
-    };
-    let spacing = 1_u128 << shift;
-    let below = magnitude & !(spacing.wrapping_sub(1));
-    let remainder = magnitude.wrapping_sub(below);
-    let half = spacing >> 1;
-    let odd = below & spacing != 0;
-    let rounded = if remainder > half || (remainder == half && odd) {
-        below.saturating_add(spacing)
-    } else {
-        below
-    };
-    let rounded = i128::try_from(rounded).unwrap_or(i128::MAX);
-    if value < 0 {
-        rounded.saturating_neg()
-    } else {
-        rounded
-    }
+        transaction.bytes().len(),
+        min_fee,
+        addon_bytes,
+    )
 }
 
 /// Whether transactions of `kind` may be applied under `params`. Every type this implementation
@@ -329,30 +290,6 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sums_above_2_pow_53_round_as_javascript_numbers() {
-        let two_53: i128 = 1 << 53;
-        for (exact, number) in [
-            (0, 0),
-            (77, 77),
-            (-23, -23),
-            (two_53 - 1, two_53 - 1),
-            (two_53, two_53),
-            // Doubles are 2 apart here: a tie goes to the even significand.
-            (two_53 + 1, two_53),
-            (two_53 + 2, two_53 + 2),
-            (two_53 + 3, two_53 + 4),
-            (two_53 + 5, two_53 + 4),
-            (-(two_53 + 3), -(two_53 + 4)),
-            // 4 apart from 2^54.
-            ((1 << 54) + 2, 1 << 54),
-            ((1 << 54) + 3, (1 << 54) + 4),
-            ((1 << 54) + 6, (1 << 54) + 8),
-        ] {
-            assert_eq!(as_javascript_number(exact), number, "{exact}");
-        }
-    }
 
     #[test]
     fn every_kept_type_is_active() {
