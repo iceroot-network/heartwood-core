@@ -2,7 +2,9 @@
 //! `V10-genesis` vectors, with the transaction handlers of `heartwood-transactions`: applying
 //! and reverting blocks of every kept transaction type restores every digest section; a refused
 //! block leaves the state as it was; a revert across a round end restores the round and the
-//! ranks of its start; missed slots and the reward of a second block in a round.
+//! ranks of its start; missed slots and the reward of a second block in a round; a block applied
+//! with the rules of its own height; a block's height and generator checked before its missed
+//! slots are counted; supply totals past 64 bits.
 
 use std::collections::BTreeMap;
 
@@ -429,6 +431,102 @@ fn a_refused_block_leaves_the_state_unchanged() {
     let block = chain.block(vec![chain.transfer("wallet/1", 0, &[("wallet/3", SXP)])], 0);
     chain.apply(&block);
     assert_eq!(chain.state.height(), 3);
+}
+
+#[test]
+fn a_block_is_applied_with_the_rules_of_its_own_height() {
+    // From height 4 the burn minimum and the fee floor rise and the revoke delay falls to 1
+    // block: the same transactions change their verdict between blocks 3 and 4.
+    let mut chain = Chain::with_milestones(|list| {
+        let first = list[0].clone();
+        let mut fees = first["dynamicFees"].clone();
+        let min_fee = fees["minFee"].as_i64().unwrap();
+        fees["minFee"] = serde_json::json!(min_fee * 2);
+        let mut burn = first["burn"].clone();
+        burn["txAmount"] = serde_json::json!(3_000_000);
+        list.push(serde_json::json!({
+            "height": 4,
+            "burn": burn,
+            "dynamicFees": fees,
+            "blocksToRevokeDelegateResignation": 1,
+        }));
+    });
+    assert_eq!(chain.milestones.at(3).burn_tx_amount(), 2_000_000);
+    assert_eq!(chain.milestones.at(4).burn_tx_amount(), 3_000_000);
+
+    // Block 2: a new delegate, so that genesis_7 may resign temporarily.
+    let block = chain.block(
+        vec![
+            chain.transfer(
+                "team-placeholder-1",
+                0,
+                &[("wallet/1", 1_000 * SXP), ("genesis_7", 100 * SXP)],
+            ),
+            chain.register("wallet/1", 0, "carol"),
+            chain.resign("genesis_7", 0, ResignationType::TemporaryResign),
+        ],
+        0,
+    );
+    chain.apply(&block);
+
+    // The burn at the old minimum, the transfer at the old fee floor, and the revoke.
+    let burn = chain.burn("team-placeholder-1", 0, 2_000_000);
+    let params = chain.milestones.at(3);
+    let probe = chain.transfer("team-placeholder-1", 0, &[("wallet/2", 1)]);
+    let floor = u64::try_from(minimum_fee(&probe, params)).unwrap();
+    let transfer = TransactionBuilder::transfer(vec![TransferItem {
+        amount: 1,
+        recipient: chain.address("wallet/2"),
+    }])
+    .nonce(chain.nonce("team-placeholder-1", 0))
+    .fee(floor)
+    .build(
+        chain.keys("team-placeholder-1"),
+        Aux::fixed([0x5a; 32]),
+        params,
+    )
+    .unwrap();
+    assert_eq!(
+        i128::from(transfer.fee()),
+        minimum_fee(&transfer, chain.milestones.at(3))
+    );
+    assert!(i128::from(transfer.fee()) < minimum_fee(&transfer, chain.milestones.at(4)));
+    let revoke = chain.resign("genesis_7", 0, ResignationType::NotResigned);
+
+    let refused = |chain: &mut Chain, transaction: &Transaction| -> &'static str {
+        let block = chain.block(vec![transaction.clone()], 0);
+        let before = chain.sections(&[]);
+        let error = chain
+            .state
+            .apply_block(&block, &chain.milestones, &Handlers)
+            .unwrap_err();
+        assert_eq!(chain.sections(&[]), before);
+        let ApplyError::Transaction { rejected, .. } = error else {
+            panic!("{error:?}")
+        };
+        rejected.class()
+    };
+    let accepted = |chain: &mut Chain, transaction: &Transaction| {
+        let block = chain.block(vec![transaction.clone()], 0);
+        chain.apply(&block);
+        chain.revert();
+    };
+
+    // Block 3, under the rules of height 3.
+    accepted(&mut chain, &burn);
+    accepted(&mut chain, &transfer);
+    assert_eq!(
+        refused(&mut chain, &revoke),
+        "NotEnoughTimeSinceResignationError"
+    );
+    let block = chain.block(Vec::new(), 0);
+    chain.apply(&block);
+
+    // Block 4, under the rules of height 4.
+    assert_eq!(chain.state.height(), 3);
+    accepted(&mut chain, &revoke);
+    assert_eq!(refused(&mut chain, &burn), "InsufficientBurnAmountError");
+    assert_eq!(refused(&mut chain, &transfer), "TransactionFeeTooLowError");
 }
 
 #[test]
