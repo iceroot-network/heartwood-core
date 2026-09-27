@@ -36,8 +36,6 @@ use heartwood_crypto::{BlockHeader, BlockId, PublicKeyBytes};
 use heartwood_kernel::{Clock, calculate_round};
 use heartwood_p2p_wire::codecs::Amount;
 use heartwood_p2p_wire::codecs::blocks::ListedBlock;
-use heartwood_p2p_wire::messages::blocks::BlockHeader as ListedHeader;
-use heartwood_p2p_wire::messages::peer::StatusHeader;
 
 use crate::errors::PastDeadline;
 use crate::nsect::NSect;
@@ -409,58 +407,37 @@ struct Fields<'a> {
     block_signature: Option<&'a str>,
 }
 
+/// The [`Fields`] of a status or listed header (both have the reply's field names) and its
+/// amounts.
+macro_rules! fields {
+    ($header:expr, $amounts:expr) => {
+        Fields {
+            version: $header.version,
+            timestamp: $header.timestamp,
+            height: $header.height,
+            previous_block: $header.previous_block.as_deref(),
+            number_of_transactions: $header.number_of_transactions,
+            amounts: $amounts,
+            payload_length: $header.payload_length,
+            payload_hash: $header.payload_hash.as_deref(),
+            generator_public_key: $header.generator_public_key.as_deref(),
+            block_signature: $header.block_signature.as_deref(),
+        }
+    };
+}
+
 fn status_fields(claimed: &PeerState) -> Fields<'_> {
-    let StatusHeader {
-        version,
-        timestamp,
-        height,
-        previous_block,
-        number_of_transactions,
-        payload_length,
-        payload_hash,
-        generator_public_key,
-        block_signature,
-        ..
-    } = &claimed.header;
-    Fields {
-        version: *version,
-        timestamp: *timestamp,
-        height: *height,
-        previous_block: previous_block.as_deref(),
-        number_of_transactions: *number_of_transactions,
-        amounts: [claimed.total_amount, claimed.total_fee, claimed.reward],
-        payload_length: *payload_length,
-        payload_hash: payload_hash.as_deref(),
-        generator_public_key: generator_public_key.as_deref(),
-        block_signature: block_signature.as_deref(),
-    }
+    fields!(
+        claimed.header,
+        [claimed.total_amount, claimed.total_fee, claimed.reward]
+    )
 }
 
 fn listed_fields(listed: &ListedBlock) -> Fields<'_> {
-    let ListedHeader {
-        version,
-        timestamp,
-        height,
-        previous_block,
-        number_of_transactions,
-        payload_length,
-        payload_hash,
-        generator_public_key,
-        block_signature,
-        ..
-    } = &listed.header;
-    Fields {
-        version: *version,
-        timestamp: *timestamp,
-        height: *height,
-        previous_block: previous_block.as_deref(),
-        number_of_transactions: *number_of_transactions,
-        amounts: [listed.total_amount, listed.total_fee, listed.reward],
-        payload_length: *payload_length,
-        payload_hash: payload_hash.as_deref(),
-        generator_public_key: generator_public_key.as_deref(),
-        block_signature: block_signature.as_deref(),
-    }
+    fields!(
+        listed.header,
+        [listed.total_amount, listed.total_fee, listed.reward]
+    )
 }
 
 /// The header `BlockFactory.fromData` makes of a header without transactions, or `None` where it
