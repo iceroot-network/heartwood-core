@@ -24,9 +24,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use heartwood_blockchain::chain_state::ChainState;
 use heartwood_blockchain::events::NoObserver;
+use heartwood_blockchain::pool_task::PoolEnv;
 use heartwood_blockchain::{
-    BlockProcess, BlockProcessor, BlockProcessorResult, ChainStore, IncomingBlock, Job, JobContext,
-    JobEnd, JobOutcome, PoolTask, ProcessContext, Processed, RestoreMode, RestorePath,
+    BlockProcess, BlockProcessor, BlockProcessorResult, ChainStore, Channel, IncomingBlock, Job,
+    JobContext, JobEnd, JobOutcome, PoolTask, ProcessContext, Processed, RestoreMode, RestorePath,
     UnchainedStatus, run_job,
 };
 use heartwood_crypto::blocks::deserialiser::deserialise_header;
@@ -34,7 +35,7 @@ use heartwood_crypto::blocks::serialiser;
 use heartwood_crypto::crypto::slots;
 use heartwood_crypto::utils::bytes::Reader;
 use heartwood_crypto::utils::hex;
-use heartwood_crypto::{Block, BlockHeader, BlockId, Milestones, Params};
+use heartwood_crypto::{Block, BlockHeader, BlockId, Milestones, Network, Params, Transaction};
 use heartwood_kernel::config::crypto::{self as crypto_files, CryptoFiles, CryptoTexts};
 use heartwood_kernel::{ChainLink, ManualClock};
 use heartwood_p2p::download::read_listed;
@@ -45,7 +46,7 @@ use heartwood_p2p_wire::codecs::blocks::{
 use heartwood_p2p_wire::messages::blocks::BlockHeader as ListedHeader;
 use heartwood_p2p_wire::replies::check_blocks;
 use heartwood_p2p_wire::status::StatusHeaderData;
-use heartwood_pool::{DelegateVersions, Options as PoolOptions, Pool};
+use heartwood_pool::{DelegateVersions, Entry, Options as PoolOptions, Pool, ProcessorResult};
 use heartwood_state::State;
 use heartwood_state::digest::{self, DigestLine, Step};
 use heartwood_state::machine::Reverted;
@@ -289,6 +290,9 @@ pub struct JobInputs {
     /// Whether the last downloaded block is set to the job's last block first, as a download
     /// sets it before it enqueues.
     pub downloaded: bool,
+    /// The block (its bytes) the last downloaded block is set to first instead: a download's
+    /// last block, before the first of its jobs.
+    pub last_downloaded: Option<Vec<u8>>,
 }
 
 impl JobInputs {
@@ -299,6 +303,7 @@ impl JobInputs {
             machine_state: "newBlock".into(),
             started: true,
             downloaded: true,
+            last_downloaded: None,
         }
     }
 
@@ -319,17 +324,28 @@ impl JobInputs {
                 .to_owned(),
             started: flag("started").ok_or("started must be a boolean")?,
             downloaded: flag("downloaded").ok_or("downloaded must be a boolean")?,
+            last_downloaded: match job.get("lastDownloaded") {
+                None => None,
+                Some(text) => Some(
+                    hex::decode(text.as_str().ok_or("lastDownloaded must be hex")?)
+                        .map_err(|e| format!("lastDownloaded: {e}"))?,
+                ),
+            },
         })
     }
 
     /// The inputs as an oracle `chain.job` job takes them, without the blocks.
     pub fn to_json(&self) -> Value {
-        json!({
+        let mut out = json!({
             "now": self.now_ms,
             "machineState": self.machine_state,
             "started": self.started,
             "downloaded": self.downloaded,
-        })
+        });
+        if let Some(bytes) = &self.last_downloaded {
+            out["lastDownloaded"] = json!(hex::encode(bytes));
+        }
+        out
     }
 }
 
@@ -443,6 +459,7 @@ pub struct JobRig {
     chain: ChainState,
     pool: PoolTask,
     milestones: Milestones,
+    network: Network,
     clock: ManualClock,
     lines: Vec<DigestLine>,
 }
@@ -482,6 +499,7 @@ impl JobRig {
     /// in a new scratch directory.
     pub fn start(files: &CryptoFiles) -> std::result::Result<JobRig, StartProblem> {
         let milestones = files.milestones.clone();
+        let network = files.network.clone();
         let scratch = ScratchDir::new("l2-processor")
             .map_err(|e| StartProblem::Failed(format!("no scratch directory: {e}")))?;
         let node = StoreNode::start(scratch.path(), files, RestoreMode::Auto)?;
@@ -504,6 +522,7 @@ impl JobRig {
             chain,
             pool,
             milestones,
+            network,
             clock: ManualClock::new(0),
             lines: vec![first],
         })
@@ -603,6 +622,54 @@ impl JobRig {
         self.chain.last_downloaded = link;
     }
 
+    /// Process `entries` with the pool's `channel` processor at `now_ms`, as the node does with a
+    /// batch: the processor's result.
+    pub fn process_entries(
+        &mut self,
+        channel: Channel,
+        entries: Vec<Entry>,
+        now_ms: i64,
+    ) -> std::result::Result<ProcessorResult, RigProblem> {
+        self.clock.set(now_ms);
+        let env = PoolEnv {
+            milestones: &self.milestones,
+            network: &self.network,
+            clock: &self.clock,
+        };
+        let (state, pool) = (&self.state, &mut self.pool);
+        guarded(|| pool.process(channel, state, &env, entries))
+            .map_err(|store::Unbuilt(m)| RigProblem::Unbuilt(m))?
+            .map(|(result, _)| result)
+            .map_err(|e| RigProblem::Failed(format!("the pool's storage: {e}")))
+    }
+
+    /// Re-add `removed`, the transactions of removed blocks in chain order, at `now_ms`, as the
+    /// node does after a removal.
+    pub fn readd_removed(
+        &mut self,
+        removed: &[Transaction],
+        now_ms: i64,
+    ) -> std::result::Result<(), RigProblem> {
+        self.clock.set(now_ms);
+        let env = PoolEnv {
+            milestones: &self.milestones,
+            network: &self.network,
+            clock: &self.clock,
+        };
+        let (state, pool) = (&self.state, &mut self.pool);
+        guarded(|| pool.readd_removed(state, &env, removed))
+            .map_err(|store::Unbuilt(m)| RigProblem::Unbuilt(m))?
+            .map(|_| ())
+            .map_err(|e| RigProblem::Failed(format!("the pool's storage: {e}")))
+    }
+
+    /// The pool's transactions from the highest priority, by id.
+    pub fn pool_ids(&self) -> std::result::Result<Vec<String>, RigProblem> {
+        let view =
+            guarded(|| self.pool.view()).map_err(|store::Unbuilt(m)| RigProblem::Unbuilt(m))?;
+        Ok(view.by_priority.iter().map(|t| t.id().to_hex()).collect())
+    }
+
     /// Revert the last block as a node's removal does, one block at a time: the state, the store
     /// (one chunk), the chain state at the new tip, the last downloaded block there, and a
     /// revert line.
@@ -646,7 +713,10 @@ impl JobRig {
             Ok(incoming) => incoming,
             Err(why) => return Ok(RigJob::Refused(why)),
         };
-        if inputs.downloaded
+        if let Some(bytes) = &inputs.last_downloaded {
+            let link = JobBlock::of(bytes.clone()).link();
+            self.chain.last_downloaded = Some(link.map_err(RigProblem::Failed)?);
+        } else if inputs.downloaded
             && let Some(last) = blocks.last()
         {
             self.chain.last_downloaded = Some(last.link().map_err(RigProblem::Failed)?);
@@ -1135,6 +1205,7 @@ fn run_download(
             machine_state: "syncing".into(),
             started: true,
             downloaded: chunks == Chunks::One,
+            last_downloaded: None,
         };
         let (outcome, seen) = match rig.run(&job_blocks, &inputs, &steps)? {
             RigJob::Refused(why) => {

@@ -19,7 +19,8 @@
 //       enqueueing sets it. `machineState` is the state machine's state ("newBlock" by default),
 //       `started` the state store's started flag (true by default), and `downloaded` (true by
 //       default) sets the last downloaded block to the job's last block first, as a download does
-//       before it enqueues. -> the job (below)
+//       before it enqueues; `lastDownloaded` (block bytes in hex) sets it to that block instead,
+//       as a download of several jobs sets it to its own last block. -> the job (below)
 //   chain.job {chain: {crypto, blocks}, jobs: [{hexes, now, machineState?, started?,
 //              downloaded?}, ...]}
 //       a whole session in one call, for the golden vectors: the reference's first start on the
@@ -286,7 +287,7 @@ function jobWorld(solar, replay, { machineState = "newBlock" } = {}) {
  * reward read before it and the missed rows it records, and the session writes a digest line
  * after each accepted one.
  */
-async function runJob(world, blocks, { step, started = true, downloaded: isDownload = true }) {
+async function runJob(world, blocks, { step, started = true, downloaded: isDownload = true, lastDownloaded }) {
     const { cls, chain, replay, logger, seen, triggers } = world;
     const stateStore = chain.stateStore;
     const results = [];
@@ -295,7 +296,8 @@ async function runJob(world, blocks, { step, started = true, downloaded: isDownl
     const tip = stateStore.getLastBlock().data.height;
 
     for (const block of blocks) world.blockchain.setBlockUsername(block);
-    if (isDownload && blocks.length) stateStore.setLastDownloadedBlock(blocks[blocks.length - 1]);
+    if (lastDownloaded) stateStore.setLastDownloadedBlock(lastDownloaded);
+    else if (isDownload && blocks.length) stateStore.setLastDownloadedBlock(blocks[blocks.length - 1]);
     // Every block the session applied is stored.
     stateStore.setLastStoredBlockHeight(chain.store.height);
     const wasStarted = stateStore.isStarted();
@@ -394,17 +396,19 @@ async function runJob(world, blocks, { step, started = true, downloaded: isDownl
 
 /** Check the arguments of one job and run it on `replay`. */
 async function sessionJob(solar, replay, args, step = "apply") {
-    const { hexes, now, machineState, started, downloaded: isDownload } = args;
+    const { hexes, now, machineState, started, downloaded: isDownload, lastDownloaded } = args;
     if (!Array.isArray(hexes)) throw new TypeError("hexes must be a list of blocks");
     const given = hexes.map(jobBlock);
     if (!Number.isSafeInteger(now) || now < 0) throw new TypeError("now must be a time in milliseconds");
     if (machineState !== undefined && typeof machineState !== "string") throw new TypeError("machineState must be a state's name");
     if (started !== undefined && typeof started !== "boolean") throw new TypeError("started must be a boolean");
     if (isDownload !== undefined && typeof isDownload !== "boolean") throw new TypeError("downloaded must be a boolean");
+    if (lastDownloaded !== undefined && (typeof lastDownloaded !== "string" || !/^([0-9a-f]{2})+$/.test(lastDownloaded))) throw new TypeError("lastDownloaded must be block bytes in lowercase hex");
     return atTime(now, async () => {
         const blocks = given.map(({ bytes, set }) => downloaded(solar, bytes, set));
         const world = jobWorld(solar, replay, { machineState });
-        return runJob(world, blocks, { step, started, downloaded: isDownload });
+        const last = lastDownloaded === undefined ? undefined : downloaded(solar, Buffer.from(lastDownloaded, "hex"));
+        return runJob(world, blocks, { step, started, downloaded: isDownload, lastDownloaded: last });
     });
 }
 
