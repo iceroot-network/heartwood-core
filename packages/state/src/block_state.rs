@@ -14,9 +14,8 @@
 //! others (a balance or a delegate value leaving the `u64` range, a vote for a name that is not
 //! registered) cannot happen on a state built from accepted blocks; when one does, the steps
 //! already taken are undone in reverse order before the error is returned. Undoing a step cannot
-//! fail on a consistent state either; if it does, the error is
-//! [`RollbackFailed`](crate::errors::RollbackFailed), after which the state is no longer
-//! consistent (see [`crate::errors`]).
+//! fail on a consistent state either; if it does, the error is [`RollbackFailed`], after which the
+//! state is no longer consistent (see [`crate::errors`]).
 
 use heartwood_crypto::identities::Address;
 use heartwood_crypto::transactions::Asset;
