@@ -5,12 +5,13 @@
 //! semaphore (bounded concurrency of the store's routes), the query grammar and the routes'
 //! validation ([`crate::schemas`]), and Boom's error bodies.
 //!
-//! A request goes through the reference's lifecycle in its order: the whitelist; the route (a
-//! preflight `OPTIONS` is answered here); the payload of a `POST` (its size, type and JSON); the
-//! rate limit; the path parameters, the query and the payload against the route's schema (422);
-//! the semaphore; the handler. Every answer, errors included, gets `X-Block-Height` (the published
-//! tip), `connection: close`, `cache-control: no-cache` and, but for a preflight, `vary: origin`
-//! and the CORS headers of a request with an `Origin`. An unmatched path, and another method on a
+//! A request goes through the reference's lifecycle in its order: the whitelist; the query
+//! grammar (a query it cannot read is a 500 on any path); the route (a preflight `OPTIONS` is
+//! answered here); the payload of a `POST` (its size, type and JSON); the rate limit; the path
+//! parameters, the query and the payload against the route's schema (422); the semaphore; the
+//! handler. Every answer, errors included, gets `X-Block-Height` (the published tip),
+//! `connection: close`, `cache-control: no-cache` and, but for a preflight, `vary: origin` and the
+//! CORS headers of a request with an `Origin`. An unmatched path, and another method on a
 //! matched path, are answered 404 before the rate limit, as the reference's router answers them.
 
 mod limits;
@@ -188,6 +189,13 @@ impl Pipeline {
         if !ip::is_whitelisted(&config.whitelist, &client) {
             return Err(ApiError::forbidden("Forbidden"));
         }
+        // The reference's query plugins run before its router and its rate limit: a query they
+        // throw on is a 500 on any path, and is not charged.
+        let grammar = &self.grammar;
+        let query = (grammar.parse)(parts.uri.query().unwrap_or(""));
+        if query.is_null() {
+            return Err(ApiError::internal());
+        }
         let path = parts.uri.path();
         let path = path.strip_suffix('/').filter(|_| path.len() > 1);
         let path = path.unwrap_or(parts.uri.path());
@@ -205,9 +213,8 @@ impl Pipeline {
         if config.rate_limit.enabled && !self.admit(&client) {
             return Err(ApiError::too_many_requests("Too Many Requests"));
         }
-        let grammar = &self.grammar;
         (grammar.params)(route, &params)?;
-        let query = (grammar.query)(route, &(grammar.parse)(parts.uri.query().unwrap_or("")))?;
+        let query = (grammar.query)(route, &query)?;
         let payload = payload.map(|payload| (grammar.payload)(route, &payload));
         let payload = payload.transpose()?;
         let _permit = self.gates.enter(route, &query).await?;
