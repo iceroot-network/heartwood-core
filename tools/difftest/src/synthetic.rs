@@ -19,7 +19,7 @@ use heartwood_crypto::genesis::DerivedKey;
 use heartwood_crypto::genesis::derive::role_key;
 use heartwood_crypto::identities::{Address, PublicKeyBytes};
 use heartwood_crypto::transactions::builders::TransactionBuilder;
-use heartwood_crypto::transactions::types::{TransferItem, Votes};
+use heartwood_crypto::transactions::types::{ResignationType, TransferItem, Votes};
 use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Aux, Block, Milestones, Transaction};
 use heartwood_kernel::utils::calculate_forging_info::calculate_forging_info;
@@ -59,11 +59,17 @@ pub enum SyntheticCase {
     MissingSecondSignature,
     /// Fees at the dynamic fee floor and one below it, in a block.
     FeeFloorInBlock,
+    /// The fee floor, the burn minimum and the revoke delay change at a height: the same
+    /// transactions are accepted at the height before and refused at it, or the other way round.
+    HandlerRuleHeight,
+    /// Two blocks after a round end, then a revert of three blocks across it and a competing
+    /// chain from there, with other slots and other transactions.
+    ForkAcrossRoundEnd,
 }
 
 impl SyntheticCase {
     /// Every case.
-    pub const ALL: [SyntheticCase; 8] = [
+    pub const ALL: [SyntheticCase; 10] = [
         SyntheticCase::OverspendAfterGap,
         SyntheticCase::RuleHeight,
         SyntheticCase::VoteAtRoundEnd,
@@ -72,6 +78,8 @@ impl SyntheticCase {
         SyntheticCase::NonDelegateGenerator,
         SyntheticCase::MissingSecondSignature,
         SyntheticCase::FeeFloorInBlock,
+        SyntheticCase::HandlerRuleHeight,
+        SyntheticCase::ForkAcrossRoundEnd,
     ];
 
     /// The case's name in reports.
@@ -85,6 +93,8 @@ impl SyntheticCase {
             SyntheticCase::NonDelegateGenerator => "non-delegate-generator",
             SyntheticCase::MissingSecondSignature => "missing-second-signature",
             SyntheticCase::FeeFloorInBlock => "fee-floor-in-block",
+            SyntheticCase::HandlerRuleHeight => "handler-rule-height",
+            SyntheticCase::ForkAcrossRoundEnd => "fork-across-round-end",
         }
     }
 }
@@ -141,6 +151,10 @@ impl Keys {
 
     fn wallets(&self) -> impl Iterator<Item = &DerivedKey> {
         self.keys.iter().filter(|k| k.role.starts_with("wallet/"))
+    }
+
+    fn delegates(&self) -> impl Iterator<Item = &DerivedKey> {
+        self.keys.iter().filter(|k| k.role.starts_with("delegate/"))
     }
 }
 
@@ -303,6 +317,19 @@ impl<'a> Sides<'a> {
             .ok_or_else(|| {
                 Error::Oracle(format!(
                     "{}: no test wallet fits the case",
+                    self.case.name()
+                ))
+            })
+    }
+
+    /// A delegate of the seed that `accept` accepts, by the seed's order.
+    fn delegate(&self, accept: impl Fn(&Sides<'_>, &DerivedKey) -> bool) -> Result<&'a DerivedKey> {
+        self.keys
+            .delegates()
+            .find(|k| accept(self, k))
+            .ok_or_else(|| {
+                Error::Oracle(format!(
+                    "{}: no delegate of the seed fits the case",
                     self.case.name()
                 ))
             })
@@ -713,25 +740,38 @@ fn run_case(
     keys: &Keys,
     server: &mut OracleServer,
 ) -> Result<Vec<CaseResult>> {
-    let milestones_text = if case == SyntheticCase::RuleHeight {
-        let path = corpus.dir.join("crypto/milestones.json");
-        let text = std::fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
-        let mut list: Value = serde_json::from_str(&text).map_err(|e| Error::Corpus {
-            path: path.clone(),
-            message: e.to_string(),
-        })?;
-        let at = corpus.tip() + 2;
-        list.as_array_mut()
-            .ok_or_else(|| Error::Corpus {
-                path,
-                message: "not a milestone list".into(),
-            })?
-            .push(json!({"height": at, "transfer": {"maximum": 2}}));
-        Some(list.to_string())
-    } else {
-        None
+    let extra = match case {
+        SyntheticCase::RuleHeight => {
+            Some(json!({"height": corpus.tip() + 2, "transfer": {"maximum": 2}}))
+        }
+        SyntheticCase::HandlerRuleHeight => Some(Value::Null),
+        _ => None,
     };
-    let mut s = Sides::open(corpus, keys, server, case, milestones_text)?;
+    let milestones_text = match extra {
+        Some(extra) => {
+            let path = corpus.dir.join("crypto/milestones.json");
+            let text = std::fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
+            let mut list: Value = serde_json::from_str(&text).map_err(|e| Error::Corpus {
+                path: path.clone(),
+                message: e.to_string(),
+            })?;
+            let not_a_list = || Error::Corpus {
+                path: path.clone(),
+                message: "not a milestone list".into(),
+            };
+            let list = list.as_array_mut().ok_or_else(not_a_list)?;
+            let extra = match extra {
+                Value::Null => {
+                    handler_rules_at(list.first().ok_or_else(not_a_list)?, corpus.tip() + 3)
+                }
+                extra => extra,
+            };
+            list.push(extra);
+            Some(Value::Array(list.clone()).to_string())
+        }
+        None => None,
+    };
+    let mut s = Sides::open(corpus, keys, server, case, milestones_text.clone())?;
     let recipients: Vec<Address> = keys.wallets().map(|k| k.address).collect();
     match case {
         SyntheticCase::OverspendAfterGap => {
@@ -949,9 +989,245 @@ fn run_case(
             let bytes = s.next_block(vec![exact], 0, None)?;
             s.apply("a transfer at the fee floor", &bytes, true, server)?;
         }
+        SyntheticCase::HandlerRuleHeight => {
+            handler_rule_height(&mut s, milestones_text.as_deref(), server)?;
+        }
+        SyntheticCase::ForkAcrossRoundEnd => {
+            fork_across_round_end(&mut s, &recipients, server)?;
+        }
     }
     call(server, "chain.close", 1, &json!({"session": s.session}))?;
     Ok(s.results)
+}
+
+/// The milestone that [`SyntheticCase::HandlerRuleHeight`] adds at `height`, from the chain's
+/// first milestone `first`: twice the fee floor's `minFee`, a burn minimum 1,000,000 higher, and
+/// a revoke delay of 1 block.
+fn handler_rules_at(first: &Value, height: u32) -> Value {
+    let mut fees = first["dynamicFees"].clone();
+    let min_fee = fees["minFee"].as_i64().unwrap_or(1).max(1);
+    fees["minFee"] = json!(min_fee.saturating_mul(2));
+    let mut burn = first["burn"].clone();
+    let minimum = burn["txAmount"].as_u64().unwrap_or(0);
+    burn["txAmount"] = json!(minimum.saturating_add(1_000_000));
+    json!({
+        "height": height,
+        "dynamicFees": fees,
+        "burn": burn,
+        "blocksToRevokeDelegateResignation": 1,
+    })
+}
+
+/// [`SyntheticCase::HandlerRuleHeight`]: with the rules of [`handler_rules_at`] from the tip plus
+/// 3, a burn at the old minimum and a transfer at the old fee floor are accepted at the tip plus 2
+/// and refused at the tip plus 3, and a revoke one block after its resignation is refused at the
+/// tip plus 2 and accepted at the tip plus 3. Each accepted block is reverted, so the next try
+/// runs at the same height.
+fn handler_rule_height(
+    s: &mut Sides<'_>,
+    milestones_text: Option<&str>,
+    server: &mut OracleServer,
+) -> Result<()> {
+    // The tip plus 1: a new delegate, so that a delegate of the seed may resign temporarily.
+    let w = s.wallet(|s, k| {
+        s.funded(k, REGISTRATION_FEE * 2)
+            && s.state
+                .wallets()
+                .find_by_address(&k.address)
+                .is_some_and(|w| !w.is_delegate())
+    })?;
+    let d = s.delegate(|s, k| {
+        s.funded(k, FEE * 4)
+            && s.state
+                .wallets()
+                .find_by_address(&k.address)
+                .and_then(|w| w.delegate())
+                .is_some_and(|d| d.resigned.is_none())
+    })?;
+    let a = s.wallet(|s, k| s.funded(k, 1_000_000_000) && k.address != w.address)?;
+    let register = s.build(
+        TransactionBuilder::delegate_registration("synthrules")
+            .nonce(s.nonce(&w.address) + 1)
+            .fee(REGISTRATION_FEE),
+        w,
+    )?;
+    let resign = s.build(
+        TransactionBuilder::delegate_resignation(None)
+            .nonce(s.nonce(&d.address) + 1)
+            .fee(FEE),
+        d,
+    )?;
+    let bytes = s.next_block(vec![register, resign], 0, None)?;
+    s.apply(
+        "a delegate registration and a temporary resignation",
+        &bytes,
+        true,
+        server,
+    )?;
+
+    // The same three transactions at both heights.
+    let revoke = s.build(
+        TransactionBuilder::delegate_resignation(Some(ResignationType::NotResigned))
+            .nonce(s.nonce(&d.address) + 1)
+            .fee(FEE),
+        d,
+    )?;
+    let minimum = s.milestones.at(s.params_height()).burn_tx_amount();
+    let burn = s.build(
+        TransactionBuilder::burn(minimum)
+            .nonce(s.nonce(&a.address) + 1)
+            .fee(FEE),
+        a,
+    )?;
+    let nonce = s.nonce(&a.address) + 1;
+    let probe = s.build(transfer(&[(w.address, 1)]).nonce(nonce).fee(1), a)?;
+    let mut args = json!({"hex": hex::encode(probe.bytes())});
+    if let Some(text) = milestones_text {
+        args["milestones"] = json!(text);
+    }
+    let floor = call(server, "fee.minimum", u64::from(s.params_height()), &args)?
+        .get("minimumFee")
+        .and_then(Value::as_str)
+        .and_then(|m| m.parse::<u64>().ok())
+        .ok_or_else(|| Error::Oracle("fee.minimum sent no floor".into()))?;
+    let at_floor = s.build(transfer(&[(w.address, 1)]).nonce(nonce).fee(floor), a)?;
+
+    let tries: [(&str, &Transaction, bool, bool); 3] = [
+        ("a burn at the old minimum", &burn, true, false),
+        ("a transfer at the old fee floor", &at_floor, true, false),
+        (
+            "a revoke one block after its resignation",
+            &revoke,
+            false,
+            true,
+        ),
+    ];
+    for (height, old_rules) in [
+        ("the height before the new rules", true),
+        ("the height of the new rules", false),
+    ] {
+        for (what, transaction, before, after) in &tries {
+            let accepted = if old_rules { *before } else { *after };
+            let bytes = s.next_block(vec![(*transaction).clone()], 0, None)?;
+            let applied = s.apply(&format!("{what}, at {height}"), &bytes, accepted, server)?;
+            if applied {
+                s.revert(&format!("{what}, taken back"), 1, server)?;
+            }
+        }
+        if old_rules {
+            let bytes = s.next_block(Vec::new(), 0, None)?;
+            s.apply("an empty block before the new rules", &bytes, true, server)?;
+        }
+    }
+    Ok(())
+}
+
+/// [`SyntheticCase::ForkAcrossRoundEnd`]: from a round's last block, two blocks of the next
+/// round, then a revert of three blocks (the round's last block included) and a competing chain
+/// of three blocks in other slots, the first with a vote that changes the next round's ranks.
+fn fork_across_round_end(
+    s: &mut Sides<'_>,
+    recipients: &[Address],
+    server: &mut OracleServer,
+) -> Result<()> {
+    s.back_to_round_end(0, server)?;
+    let end = s.state.last_block().clone();
+    // The first branch: two blocks after the round end.
+    let a = s.wallet(|s, k| s.funded(k, 1_000_000_000))?;
+    let t = s.build(
+        transfer(&[(recipients[2], 1_000)])
+            .nonce(s.nonce(&a.address) + 1)
+            .fee(FEE),
+        a,
+    )?;
+    let bytes = s.next_block(vec![t], 0, None)?;
+    s.apply(
+        "the first branch, one block into the round",
+        &bytes,
+        true,
+        server,
+    )?;
+    let bytes = s.next_block(Vec::new(), 0, None)?;
+    s.apply(
+        "the first branch, two blocks into the round",
+        &bytes,
+        true,
+        server,
+    )?;
+    let first_order: Vec<PublicKeyBytes> = s
+        .state
+        .forging_delegates()
+        .iter()
+        .map(|d| d.public_key)
+        .collect();
+
+    // Back across the round end.
+    s.revert("the revert across the round end", 3, server)?;
+
+    // The competing branch: the round's last block again, in a later slot, with a vote for the
+    // lowest ranked delegate, then two more blocks with other gaps.
+    let voter = s.wallet(|s, k| s.funded(k, 10_000_000_000) && k.address != a.address)?;
+    let target = s
+        .state
+        .wallets()
+        .delegates()
+        .filter_map(|w| w.delegate())
+        .filter(|d| d.resigned.is_none())
+        .max_by_key(|d| d.rank.unwrap_or(u32::MAX))
+        .map(|d| d.username().to_owned())
+        .ok_or_else(|| Error::Oracle("no delegate to vote for".into()))?;
+    let mut votes = Votes::new();
+    votes.insert(target, 10_000);
+    let vote = s.build(
+        TransactionBuilder::vote(votes)
+            .nonce(s.nonce(&voter.address) + 1)
+            .fee(FEE),
+        voter,
+    )?;
+    let bytes = s.next_block(vec![vote], 1, None)?;
+    s.apply(
+        "the competing round end, a slot later, with a vote",
+        &bytes,
+        true,
+        server,
+    )?;
+    s.premise(
+        s.state.last_block().id() != end.id()
+            && s.state.last_block().header().timestamp != end.header().timestamp,
+        "the competing block is another block in another slot",
+    );
+    let t = s.build(
+        transfer(&[(recipients[3], 2_000)])
+            .nonce(s.nonce(&a.address) + 1)
+            .fee(FEE),
+        a,
+    )?;
+    let bytes = s.next_block(vec![t], 2, None)?;
+    s.apply(
+        "the competing branch, one block into the round",
+        &bytes,
+        true,
+        server,
+    )?;
+    let bytes = s.next_block(Vec::new(), 0, None)?;
+    s.apply(
+        "the competing branch, two blocks into the round",
+        &bytes,
+        true,
+        server,
+    )?;
+    let order: Vec<PublicKeyBytes> = s
+        .state
+        .forging_delegates()
+        .iter()
+        .map(|d| d.public_key)
+        .collect();
+    s.premise(
+        order != first_order,
+        "the competing branch schedules the round differently",
+    );
+    s.compare_records("the state at the competing tip", server)?;
+    Ok(())
 }
 
 /// Run every synthetic case on top of `corpus` against the oracle `server`.

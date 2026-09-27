@@ -334,9 +334,10 @@ seeded plan of reverts and re-applies, and writes one digest line per step. `dif
 replays the same steps in Heartwood and compares every line; it also checks, before each block,
 that the scheduled forger is the block's generator and that the reward in its round is the header's,
 and runs the supply check after every step. `--synthetic` adds blocks that the harness signs with
-the devnet's derived keys on top of the chain (refused blocks, a rule change at a height, a vote at
-a round's end, burns and fees at their limits, a block by a key that is no delegate) and sends
-them to both sides.
+the devnet's derived keys on top of the chain (refused blocks, a decoding rule and the handlers'
+fee floor, burn minimum and revoke delay changing at a height, a vote at a round's end, burns and
+fees at their limits, a block by a key that is no delegate, and a competing chain after a revert
+across a round end) and sends them to both sides.
 
 ```sh
 make corpus-import ARCHIVE='archive/...' NAME=my-chain   # into target/corpus/my-chain
