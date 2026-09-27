@@ -41,7 +41,7 @@ The current implementation uses the retained reference cryptography and transact
 
 ## Compatibility
 
-The reference is [solar-core-ref](https://github.com/iceroot-network/solar-core-ref), based on Solar Core 4.3.1 with a documented patch series. Over the five crates, the committed L0 vectors give 4,364 equal comparisons, 60 documented differences and 11 skipped records. L1 (random cases against the reference, one call each) and L2 (reference devnet chains replayed block by block, with a state digest at every height) run as well; L3 and L4 remain planned.
+The reference is [solar-core-ref](https://github.com/iceroot-network/solar-core-ref), based on Solar Core 4.3.1 with a documented patch series. Over the five crates, the committed L0 vectors give 4,370 equal comparisons, 60 documented differences and 11 skipped records. L1 (random cases against the reference, one call each) and L2 (reference devnet chains replayed block by block, with a state digest at every height) run as well; L3 and L4 remain planned.
 
 See [compatibility and testing](docs/compatibility.md) for exact boundaries, oracle prerequisites, vector classes, release requirements and regeneration instructions. Oracle runs are isolated from the network. Standard Rust checks use committed vectors and do not require the reference checkout or Docker.
 

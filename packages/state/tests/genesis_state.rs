@@ -66,26 +66,34 @@ fn text<'a>(value: &'a Value, key: &str) -> &'a str {
     value[key].as_str().unwrap()
 }
 
-/// The `state.digest` records of `V18-genesis-state` for the state after a genesis block: every
-/// section, every section hash and the height digest are the reference's. (The records for wallet
-/// fixtures are compared by the differential harness, which reads fixtures.)
+/// The `state.digest` records of `V18-genesis-state` for the state after a genesis block (the
+/// devnet's, and variants of it with more kinds of transactions): every section, every section
+/// hash and the height digest are the reference's, and where the reference refuses to start on a
+/// variant, Heartwood refuses too. (The records for wallet fixtures are compared by the
+/// differential harness, which reads fixtures.)
 #[test]
 fn the_genesis_digests_are_the_reference_digests() {
     let hex = |bytes: &[u8; 32]| heartwood_crypto::utils::hex::encode(bytes);
-    let mut compared = 0;
+    let (mut compared, mut refused) = (0, 0);
     for line in V18.lines() {
         let record: Value = serde_json::from_str(line).unwrap();
         let Some(crypto) = record["input"].get("crypto") else {
             continue;
         };
+        let name = &record["name"];
         let network = Network::load(&crypto["network"].to_string()).unwrap();
         let milestones = Milestones::load(&crypto["milestones"].to_string(), &network).unwrap();
         let genesis = factory::from_json(&crypto["genesisBlock"], &milestones).unwrap();
-        let state = State::from_genesis(&genesis, &milestones, &Handlers).unwrap();
+        let started = State::from_genesis(&genesis, &milestones, &Handlers);
+        if record.get("error").is_some() {
+            assert!(started.is_err(), "{name}: the reference refuses to start");
+            refused += 1;
+            continue;
+        }
+        let state = started.unwrap_or_else(|error| panic!("{name}: {error}"));
         let sections = records(&state, &milestones, &[]);
         let hashes = sections.hashes();
         let output = &record["output"];
-        let name = &record["name"];
         for (key, section, hash) in [
             ("B", &sections.block, &hashes.block),
             ("S", &sections.supply, &hashes.supply),
@@ -97,9 +105,10 @@ fn the_genesis_digests_are_the_reference_digests() {
             assert_eq!(hex(hash), text(&output["hashes"], key), "{name} {key}");
         }
         assert_eq!(hex(&hashes.state_digest()), text(output, "sd"), "{name}");
+        check_supply(&state).unwrap_or_else(|error| panic!("{name}: {error}"));
         compared += 1;
     }
-    assert_eq!(compared, 3);
+    assert_eq!((compared, refused), (7, 2));
 }
 
 #[test]

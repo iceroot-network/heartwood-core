@@ -232,8 +232,18 @@ module.exports = async function genesis({ solar, shared, options }) {
     } finally {
         fs.rmSync(work, { recursive: true, force: true });
     }
-    // The chain definitions, for the classes that start a state on them (V18).
-    shared.genesisDefinitions = out.map((r) => ({ name: r.name, files: r.output.files }));
+    // The chain definitions, for the classes that start a state on them (V18), with the
+    // passphrases of the generator, the delegates and the wallets, which sign variants of them.
+    shared.genesisDefinitions = out.map((r) => ({
+        name: r.name,
+        files: r.output.files,
+        passphrases: Object.fromEntries([
+            ["generator", r.output.generator.passphrase],
+            ...r.output.delegates.map((d) => [d.username, d.passphrase]),
+            ...r.output.genesisWallets.map((w) => [w.role, w.passphrase]),
+            ...r.output.testWallets.map((w) => [w.role, w.passphrase]),
+        ]),
+    }));
     return out;
 };
 

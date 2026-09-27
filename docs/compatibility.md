@@ -10,7 +10,7 @@ equal byte for byte, including which inputs each side rejects.
 
 | Level | What is compared | Status |
 |---|---|---|
-| L0 | golden vectors written by the reference, against Heartwood | runs against all five crates: 4,364 of 4,435 records compared, all equal (see below) |
+| L0 | golden vectors written by the reference, against Heartwood | runs against all five crates: 4,370 of 4,441 records compared, all equal (see below) |
 | L1 | random and mutated cases, one oracle call each | runs: nine properties, from the fee floor to the state digest (see below) |
 | L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets, with seeded reverts and synthetic blocks (see below) |
 | L3 | the same scenario on a reference devnet and on a Heartwood devnet | planned |
@@ -267,7 +267,7 @@ models the reference's class. On a run of every class (reference tag `s1-ref-v2`
 
 | Outcome | Records |
 |---|---|
-| compared, equal to the reference | 4,364 |
+| compared, equal to the reference | 4,370 |
 | documented differences, each with its form checked on the input | 60 |
 | skipped: the peer status message (P2P codec), and builders of types or headers that Heartwood does not build | 11 |
 
@@ -407,7 +407,7 @@ run without `DEVNET_GENERATOR`, and then installs nothing.
 | `V15-vote-amounts.jsonl` (state) | a voter's balance split over 1 to 53 delegates, for balances 0, 1, 101, near 2^63 and random, the remainder in map order |
 | `V16-kernel.jsonl` (kernel) | the status canonical JSON; `.env` text (separators, comments, quotes, digits, booleans, empty values); epoch timestamps; address lists with globs, brackets and IPv6; node directories with their environment overrides |
 | `V17-handlers.jsonl` (transactions) | the transaction handlers on wallet sets: at least one case of each error class and of each apply effect, the revoke delay at 105, 106 and 107 blocks, the fee floor and one below it, the burn minimum and one below it, votes identical, empty, too many and unknown, second signatures missing, wrong and unexpected, and a refused first transaction of a wallet without a key |
-| `V18-genesis-state.jsonl` (state) | the state digest after the genesis block of the three V10 chain definitions, and of five wallet sets, one per record shape |
+| `V18-genesis-state.jsonl` (state) | the state digest after the genesis block of the three V10 chain definitions and of six variants of the first (fees and burns, a second key, resignations and a revoke, split votes, a transfer before the issuance record, more issuance records, a generator that registers and votes, a vote and a resignation before their registration; two that the reference refuses to start on: a negative balance, too few delegates for round 1), and of five wallet sets, one per record shape |
 | `V19-fee-floor.jsonl` (transactions) | the dynamic fee floor of the six types over memo lengths, recipients, votes of 1 to 53 entries and resignation types; fee tables switched off, with `minFee` 0 and negative, and without a type's key; tables and revoke delays of the wrong type |
 | `V20-logger.jsonl` (logger) | the log line of every level, coloured and plain, with and without emoji codes (the whole table, in slices), over times at the edges of a JavaScript date and messages with line breaks and colour codes |
 
