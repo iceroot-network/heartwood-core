@@ -43,3 +43,6 @@ thiserror.workspace = true
 # the verifier's runs on a paused clock (test-util). The route corpus's HTTP client binds its
 # source address (net, io-util).
 tokio = { workspace = true, features = ["io-util", "net", "rt", "test-util", "time"] }
+# The forger's decisions are compared with the lines they log, which a tracing layer collects.
+tracing.workspace = true
+tracing-subscriber.workspace = true
