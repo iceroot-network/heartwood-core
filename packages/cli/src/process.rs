@@ -123,10 +123,10 @@ pub fn stop(instance: &Instance) -> Result<(), ProcessError> {
     Ok(())
 }
 
-/// Record a stop of `instance`, then kill its supervisor and node with SIGKILL, as a crash does,
-/// and wait until they have exited. A daemon supervisor leads its own process group, which holds
-/// its node, so both are killed at once and the node is never restarted; otherwise the node is
-/// killed through its own lock.
+/// Kill `instance`'s supervisor and node with SIGKILL, as a crash does, wait until they have
+/// exited, and record the stop in the state file. A daemon supervisor leads its own process group,
+/// which holds its node, so both are killed at once and the node is never restarted; otherwise the
+/// node is killed through its own lock.
 pub fn kill(instance: &Instance) -> Result<(), ProcessError> {
     let name = instance.name();
     let (supervisor_lock, node_lock) = (instance.supervisor_lock_path(), instance.lock_path());
