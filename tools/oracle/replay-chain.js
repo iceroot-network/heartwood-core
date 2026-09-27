@@ -633,7 +633,7 @@ async function main() {
     let processor;
     if (opts.processor) {
         const { processorJudge } = require("./lib/ops/job");
-        processor = await processorJudge({ solar, corpus, out: path.join(outDir, "ts-processor.jsonl") });
+        processor = await processorJudge({ solar, corpus, out: path.join(outDir, "ts-processor.jsonl"), plain: session.lines });
     }
     const last = session.lines[session.lines.length - 1];
     const ok = failures.length === 0 && Object.values(anchors).every((a) => a.ok) && (!processor || processor.ok);
