@@ -12,12 +12,14 @@
 //! in its round, the donations and the fee burn of the milestone at its height, and a timestamp
 //! in the first slot at or after the requested gap whose delegate's key the seed derives.
 //!
-//! The restart cases (R-a to R-g) run Heartwood's side through its store: every applied or
-//! reverted block is committed, and a restart stops both nodes and starts them again, the
-//! reference's by its saved state and then without it (`chain.restart`), Heartwood's from its
-//! state tables and then by a replay of the stored chain. Each of the four restart lines must be
-//! the line of the state before the restart; the reference's saved-state line may differ only as
-//! the oracle notes it (a delegate name that reads as a number). Where the store is still a stub,
+//! The restart cases (`restart-revoke` to `restart-round-end-revert-early`) run Heartwood's side
+//! through its store: every applied or reverted block is committed, and a restart stops both
+//! nodes and starts them again, the reference's by its saved state and then without it
+//! (`chain.restart`, each from the same store), Heartwood's from its state tables and then by a
+//! replay of the stored chain. Each of the four restart lines must be the line of the state
+//! before the restart; the reference's lines may differ only as the oracle notes it: a delegate
+//! name that reads as a number (the saved-state path), or no round row of the tip's round after a
+//! revert to the last block of the round before (both paths). Where the store is still a stub,
 //! Heartwood's restarts are skipped and the reference's are compared with Heartwood's state.
 
 use heartwood_crypto::blocks::{BlockHeader, serialiser};
@@ -81,29 +83,36 @@ pub enum SyntheticCase {
     /// Two blocks after a round end, then a revert of three blocks across it and a competing
     /// chain from there, with other slots and other transactions.
     ForkAcrossRoundEnd,
-    /// R-a: a revoke in the first block after a restart.
+    /// A revoke in the first block after a restart.
     RestartRevoke,
-    /// R-b: a resignation, a restart, then revokes one block before the delay, at it and after it.
+    /// A resignation, a restart, then revokes one block before the delay, at it and after it.
     RestartRevokeDelay,
-    /// R-c: a resignation, a revoke and a registration in one round, a restart in that round,
+    /// A resignation, a revoke and a registration in one round, a restart in that round,
     /// then the round's end and the next round's start.
     RestartRoundRanks,
-    /// R-d: restarts at a round end and at the first block of the next round, among delegates
+    /// Restarts at a round end and at the first block of the next round, among delegates
     /// with equal vote balances.
     RestartEqualBalances,
-    /// R-e: delegates named `0x10`, `1e5` and `0b101`, registered and voted for, then restarts
+    /// Delegates named `0x10`, `1e5` and `0b101`, registered and voted for, then restarts
     /// (a name of digits only, such as `123`, is refused by the username rule on both sides).
     RestartNumericNames,
-    /// R-f: a stored transfer raised above its sender's balance: a start without a saved state
+    /// A stored transfer raised above its sender's balance: a start without a saved state
     /// refuses the chain.
     RestartNegativeBalance,
-    /// R-g: a restart, then a revert across a round end and a competing chain.
+    /// A restart, then a revert across a round end and a competing chain.
     RestartFork,
+    /// A block after a round end, a revert to the round end and the block again, then a restart
+    /// in the new round, whose rows the revert deleted, with missed-block rows in the store.
+    RestartRoundEndRevert,
+    /// A revert to the last round end below the first missed-block row, the next round's first
+    /// blocks again, then a restart in that round, whose rows the revert deleted, with no
+    /// missed-block row in the store.
+    RestartRoundEndRevertEarly,
 }
 
 impl SyntheticCase {
     /// Every case.
-    pub const ALL: [SyntheticCase; 17] = [
+    pub const ALL: [SyntheticCase; 19] = [
         SyntheticCase::OverspendAfterGap,
         SyntheticCase::RuleHeight,
         SyntheticCase::VoteAtRoundEnd,
@@ -121,6 +130,8 @@ impl SyntheticCase {
         SyntheticCase::RestartNumericNames,
         SyntheticCase::RestartNegativeBalance,
         SyntheticCase::RestartFork,
+        SyntheticCase::RestartRoundEndRevert,
+        SyntheticCase::RestartRoundEndRevertEarly,
     ];
 
     /// The case's name in reports.
@@ -143,6 +154,8 @@ impl SyntheticCase {
             SyntheticCase::RestartNumericNames => "restart-numeric-names",
             SyntheticCase::RestartNegativeBalance => "restart-negative-balance",
             SyntheticCase::RestartFork => "restart-fork",
+            SyntheticCase::RestartRoundEndRevert => "restart-round-end-revert",
+            SyntheticCase::RestartRoundEndRevertEarly => "restart-round-end-revert-early",
         }
     }
 
@@ -157,6 +170,8 @@ impl SyntheticCase {
                 | SyntheticCase::RestartNumericNames
                 | SyntheticCase::RestartNegativeBalance
                 | SyntheticCase::RestartFork
+                | SyntheticCase::RestartRoundEndRevert
+                | SyntheticCase::RestartRoundEndRevertEarly
         )
     }
 }
@@ -952,23 +967,32 @@ impl<'a> Sides<'a> {
     }
 
     /// Stop both nodes and start them again: the reference's from its saved state, then without
-    /// it; Heartwood's from its state tables, then by a replay. Every start must give the state
-    /// before it (`expect` names the starts that must be refused instead); the case goes on with
-    /// the node each side started last.
-    fn restart(&mut self, what: &str, expect: Expect, server: &mut OracleServer) -> Result<bool> {
+    /// it, each from the store before the restart; Heartwood's from its state tables, then by a
+    /// replay. Every start must give the state before it (`expect` names the starts that must be
+    /// refused instead), apart from the reference's documented differences, which the returned
+    /// [`Shown`] lists; the case goes on with the node each side started last.
+    fn restart(&mut self, what: &str, expect: Expect, server: &mut OracleServer) -> Result<Shown> {
         let want = self.restart_line(&self.state);
         let continuous = self.state.wallets().clone();
-        let mut saved_documented = false;
+        let mut shown = Shown::default();
         let keys = ["h", "step", "id", "b", "s", "r", "m", "w", "sd"];
         for mode in ["saved", "rebuild"] {
+            // The saved path is probed, so that both of the reference's starts begin from the
+            // same store (a start that rolls the chain back changes it); the case goes on with the
+            // node the rebuild started.
             let r = call(
                 server,
                 "chain.restart",
                 1,
-                &json!({"session": self.session, "mode": mode}),
+                &json!({"session": self.session, "mode": mode, "probe": mode == "saved"}),
             )?;
             let refusal = expect == Expect::RefusedWithoutSavedState && mode == "rebuild";
             let noted = mode == "saved" && r["notes"]["savedStateUsername"] == Value::Bool(true);
+            let no_round_rows = r["notes"]["roundRowsMissing"] == Value::Bool(true);
+            let round_rows = |shown: &mut Shown, height: Option<u64>| {
+                shown.round_rows.push(height);
+                Outcome::Documented(Documented::RoundRowsAfterRevert.reason().to_owned())
+            };
             let outcome = match (
                 r.pointer("/refused/reason").and_then(Value::as_str),
                 refusal,
@@ -976,9 +1000,10 @@ impl<'a> Sides<'a> {
                 (Some(reason), true) if reason == NEGATIVE_BALANCE => Outcome::Pass,
                 // A name that its saved state loads as a number can stop the reference's start.
                 (Some(_), false) if noted => {
-                    saved_documented = true;
+                    shown.saved_state_username = true;
                     Outcome::Documented(Documented::SavedStateUsername.reason().to_owned())
                 }
+                (Some(_), false) if no_round_rows => round_rows(&mut shown, None),
                 (Some(reason), _) => {
                     Outcome::HarnessError(format!("the reference refused to start: {reason}"))
                 }
@@ -990,8 +1015,10 @@ impl<'a> Sides<'a> {
                     if crate::restart::differing_keys(&line, &want, &keys).is_empty() {
                         Outcome::Pass
                     } else if noted {
-                        saved_documented = true;
+                        shown.saved_state_username = true;
                         Outcome::Documented(Documented::SavedStateUsername.reason().to_owned())
+                    } else if no_round_rows {
+                        round_rows(&mut shown, line["h"].as_u64())
                     } else {
                         Outcome::Mismatch(compare::diff(&want, &line))
                     }
@@ -1078,7 +1105,7 @@ impl<'a> Sides<'a> {
             }
         }
         self.last_missed.clear();
-        Ok(saved_documented)
+        Ok(shown)
     }
 
     /// Replace the stored bytes of transaction `index` of the tip block by `bytes` on both sides,
@@ -1147,6 +1174,16 @@ impl<'a> Sides<'a> {
         }
         Ok(())
     }
+}
+
+/// The reference's documented differences that a restart of both nodes showed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Shown {
+    /// A restart by the saved state loaded a delegate name as a number.
+    saved_state_username: bool,
+    /// For each restart that found no round row of the tip's round, the height its start ended
+    /// at (none when it refused to start).
+    round_rows: Vec<Option<u64>>,
 }
 
 /// What a restart of both nodes must give.
@@ -1286,7 +1323,8 @@ fn run_case(
         }
         SyntheticCase::HandlerRuleHeight => Some(Value::Null),
         // The restart cases shorten the revoke delay from the tip plus one, so that a revoke
-        // falls a few blocks after its resignation (R-b keeps 55, to restart 50 blocks after it).
+        // falls a few blocks after its resignation (restart-revoke-delay keeps 55, to restart 50
+        // blocks after it).
         c if c.restarts() => {
             let delay = if c == SyntheticCase::RestartRevokeDelay {
                 55
@@ -1562,6 +1600,10 @@ fn run_case(
             restart_negative_balance(&mut s, &recipients, server)?
         }
         SyntheticCase::RestartFork => restart_fork(&mut s, &recipients, server)?,
+        SyntheticCase::RestartRoundEndRevert => restart_round_end_revert(&mut s, server, false)?,
+        SyntheticCase::RestartRoundEndRevertEarly => {
+            restart_round_end_revert(&mut s, server, true)?;
+        }
     }
     call(server, "chain.close", 1, &json!({"session": s.session}))?;
     Ok(s.results)
@@ -1862,10 +1904,11 @@ fn empty_blocks_to(s: &mut Sides<'_>, height: u32, server: &mut OracleServer) ->
     Ok(())
 }
 
-/// R-a and R-b: a temporary resignation, a restart, then revokes. R-a: the restart right
-/// before the first block that may revoke, and the revoke in it. R-b: the restart 50 blocks after
-/// the resignation, then revokes one block before the delay, at it and after it (each accepted
-/// one taken back, so the next try runs on the same state).
+/// `restart-revoke` and `restart-revoke-delay`: a temporary resignation, a restart, then
+/// revokes. The first: the restart right before the first block that may revoke, and the revoke
+/// in it. The second (`around`): the restart 50 blocks after the resignation, then revokes one
+/// block before the delay, at it and after it (each accepted one taken back, so the next try runs
+/// on the same state).
 fn restart_revoke(s: &mut Sides<'_>, server: &mut OracleServer, around: bool) -> Result<()> {
     let d = register_and_resign(s, if around { "synthrb" } else { "synthra" }, server)?;
     let resigned_at = s.state.height();
@@ -1924,8 +1967,8 @@ fn restart_revoke(s: &mut Sides<'_>, server: &mut OracleServer, around: bool) ->
     Ok(())
 }
 
-/// R-c: in one round, a temporary resignation, its revoke and a registration, a restart in
-/// that round, then the round's end and the first block of the next round.
+/// `restart-round-ranks`: in one round, a temporary resignation, its revoke and a registration, a
+/// restart in that round, then the round's end and the first block of the next round.
 fn restart_round_ranks(s: &mut Sides<'_>, server: &mut OracleServer) -> Result<()> {
     let d = register_and_resign(s, "synthrc", server)?;
     let resigned_at = s.state.height();
@@ -1985,8 +2028,8 @@ fn restart_round_ranks(s: &mut Sides<'_>, server: &mut OracleServer) -> Result<(
     Ok(())
 }
 
-/// R-d: restarts at a round end and at the first block of the next round, whose delegates
-/// have equal vote balances.
+/// `restart-equal-balances`: restarts at a round end and at the first block of the next round,
+/// whose delegates have equal vote balances.
 fn restart_equal_balances(s: &mut Sides<'_>, server: &mut OracleServer) -> Result<()> {
     s.back_to_round_end(0, server)?;
     let balances: Vec<u64> = s
@@ -2017,10 +2060,10 @@ fn restart_equal_balances(s: &mut Sides<'_>, server: &mut OracleServer) -> Resul
     Ok(())
 }
 
-/// R-e: delegates whose names read as integers registered and voted for, then restarts. First
-/// `0x10` and `0b101`, which the reference's saved state loads as numbers (a documented
-/// difference on that path only); then `1e5`, which makes the saved state unloadable, so the
-/// reference falls back to its rebuild and every path agrees.
+/// `restart-numeric-names`: delegates whose names read as integers registered and voted for, then
+/// restarts. First `0x10` and `0b101`, which the reference's saved state loads as numbers (a
+/// documented difference on that path only); then `1e5`, which makes the saved state unloadable, so
+/// the reference falls back to its rebuild and every path agrees.
 fn restart_numeric_names(s: &mut Sides<'_>, server: &mut OracleServer) -> Result<()> {
     let mut used = Vec::new();
     for (names, shown) in [(&["0x10", "0b101"][..], true), (&["1e5"][..], false)] {
@@ -2062,11 +2105,13 @@ fn restart_numeric_names(s: &mut Sides<'_>, server: &mut OracleServer) -> Result
         )?;
         let bytes = s.next_block(vec![t], 0, None)?;
         s.apply(&format!("a vote for {list}"), &bytes, true, server)?;
-        let documented = s.restart(
-            &format!("a restart with the names {list}"),
-            Expect::Started,
-            server,
-        )?;
+        let documented = s
+            .restart(
+                &format!("a restart with the names {list}"),
+                Expect::Started,
+                server,
+            )?
+            .saved_state_username;
         s.premise(
             documented == shown,
             if shown {
@@ -2082,8 +2127,8 @@ fn restart_numeric_names(s: &mut Sides<'_>, server: &mut OracleServer) -> Result
     Ok(())
 }
 
-/// R-f: a transfer, then its stored bytes changed on both sides to an amount above the sender's
-/// balance: a start without a saved state refuses the stored chain.
+/// `restart-negative-balance`: a transfer, then its stored bytes changed on both sides to an amount
+/// above the sender's balance: a start without a saved state refuses the stored chain.
 fn restart_negative_balance(
     s: &mut Sides<'_>,
     recipients: &[Address],
@@ -2120,8 +2165,8 @@ fn restart_negative_balance(
     Ok(())
 }
 
-/// R-g: two blocks after a round end, a restart, then a revert of three blocks across the round
-/// end and a competing chain in other slots.
+/// `restart-fork`: two blocks after a round end, a restart, then a revert of three blocks across
+/// the round end and a competing chain in other slots.
 fn restart_fork(
     s: &mut Sides<'_>,
     recipients: &[Address],
@@ -2195,6 +2240,107 @@ fn restart_fork(
         server,
     )?;
     s.compare_records("the state at the competing tip", server)?;
+    Ok(())
+}
+
+/// A revert to the last block of a round, the next round's first two blocks applied again, then a
+/// restart in that round. The reference's revert deletes the round rows above the new tip's round
+/// (the rows of the next round, which the running node saved with the round's last block and does
+/// not save again), and Heartwood's store deletes the same rows; the reference's restarts then read
+/// no delegate for the round, Heartwood's restart from its state. At the corpus's tip (`early`
+/// false) the store holds missed-block rows, and the reference keeps an empty forging list;
+/// `early` reverts to the last round end below the store's first missed-block row, and the
+/// reference, finding no missed row, rolls the chain back.
+fn restart_round_end_revert(
+    s: &mut Sides<'_>,
+    server: &mut OracleServer,
+    early: bool,
+) -> Result<()> {
+    let store_rows = |s: &Sides<'_>, round: u64| {
+        s.store.as_ref().map(|side| {
+            let database = side.store.database();
+            let rows = database.round(round).map(|rows| rows.len());
+            let missed = database.missed_blocks();
+            (rows.ok(), missed.ok().unwrap_or_default())
+        })
+    };
+    if early {
+        let tip = s.state.height();
+        let (_, missed) = store_rows(s, 0).unwrap_or_default();
+        let first = missed.iter().map(|m| m.height).min().unwrap_or(tip);
+        let mut end = first.saturating_sub(1).min(tip);
+        while end > 1 && !is_new_round(end + 1, &s.milestones) {
+            end -= 1;
+        }
+        if end <= 1 || end + 2 > tip {
+            s.premise(
+                false,
+                "a round end below the first missed-block row, two blocks below the tip",
+            );
+            return Ok(());
+        }
+        s.revert(
+            "the revert to the last round end below the first missed-block row",
+            tip - end,
+            server,
+        )?;
+        for (height, what) in [
+            (end + 1, "the next round's first block again"),
+            (end + 2, "the next round's second block again"),
+        ] {
+            let bytes = s
+                .corpus
+                .blocks
+                .iter()
+                .find(|b| b.height == height)
+                .map(|b| b.bytes.clone())
+                .ok_or_else(|| Error::Oracle(format!("the corpus has no block {height}")))?;
+            s.apply(what, &bytes, true, server)?;
+        }
+    } else {
+        s.back_to_round_end(0, server)?;
+        let first = s.next_block(Vec::new(), 0, None)?;
+        s.apply("the first block of the next round", &first, true, server)?;
+        s.revert("the revert to the round's last block", 1, server)?;
+        s.apply("the first block of the round again", &first, true, server)?;
+        let second = s.next_block(Vec::new(), 0, None)?;
+        s.apply("the second block of the round", &second, true, server)?;
+    }
+    let tip = s.state.height();
+    let round = heartwood_kernel::calculate_round(tip, &s.milestones).round;
+    let (rows, missed) = store_rows(s, round).unwrap_or_default();
+    s.premise(
+        rows == Some(0),
+        "Heartwood's store holds no row of the round, as the reference's revert leaves its table",
+    );
+    s.premise(
+        missed.is_empty() == early,
+        if early {
+            "the store holds no missed-block row"
+        } else {
+            "the store holds missed-block rows"
+        },
+    );
+    let shown = s.restart(
+        "a restart in the round whose rows the revert deleted",
+        Expect::Started,
+        server,
+    )?;
+    let tip = u64::from(tip);
+    let as_documented = shown.round_rows.len() == 2
+        && shown.round_rows.iter().all(|height| match height {
+            Some(height) if early => *height < tip,
+            Some(height) => *height == tip,
+            None => false,
+        });
+    s.premise(
+        as_documented,
+        if early {
+            "both of the reference's restarts roll the chain back"
+        } else {
+            "both of the reference's restarts keep the tip with no delegate for the round"
+        },
+    );
     Ok(())
 }
 

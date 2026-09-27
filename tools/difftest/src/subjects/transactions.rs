@@ -114,6 +114,7 @@ fn has_json_form(difference: Documented, json: &Value) -> bool {
         | Documented::DecodeReason
         | Documented::FullPoolEviction
         | Documented::SavedStateUsername
+        | Documented::RoundRowsAfterRevert
         | Documented::Locale
         | Documented::OnlineView
         | Documented::StrictSchema => false,

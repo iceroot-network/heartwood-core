@@ -81,6 +81,9 @@ pub enum Documented {
     FullPoolEviction,
     /// A restart from the reference's saved state with a delegate name that reads as a number.
     SavedStateUsername,
+    /// A restart in a round whose round rows a revert to the last block of the round before
+    /// deleted.
+    RoundRowsAfterRevert,
     /// A count in a message, written by the reference in a default locale that is not English.
     Locale,
     /// A pool session whose online record changed while a sender's pool view that had read the
@@ -159,6 +162,14 @@ impl Documented {
                  unloadable; Heartwood's wallet records keep the name as text on every restart \
                  path"
             }
+            Documented::RoundRowsAfterRevert => {
+                "a restart after a revert to the last block of a round: the reference's revert \
+                 deletes the next round's rows, which its running node saved with that block and \
+                 does not save again, so its restart in that round reads no delegate for it and \
+                 keeps an empty forging list, or, when the store holds no missed-block row, rolls \
+                 the chain back; Heartwood deletes the same rows but restarts from its state, \
+                 which holds the round"
+            }
             Documented::Locale => {
                 "a count in a message: the reference groups its digits in the process's default \
                  locale; Heartwood always writes the English grouping (node-local text only)"
@@ -188,10 +199,11 @@ const STACK_OVERFLOW: &str = "Maximum call stack size exceeded";
 impl Documented {
     /// Whether the oracle's answer `expected` shows the reference's side of this difference: a
     /// `true` note in the output's `notes` (`pluginsPrototype`, `stackOverflow`, `wideAmount`,
-    /// `fullPoolEviction`, `savedStateUsername`, `locale`), or, for deep groups, a `RangeError`
-    /// for the overflow of the Node stack. A replaced prototype is shown only with the reply
-    /// check's refusal of the plugins, the one step it changes. The differences that Heartwood
-    /// checks on the input ([`Verdict::RefusedByDesign`]) are never shown.
+    /// `fullPoolEviction`, `savedStateUsername`, `roundRowsMissing`, `locale`), or, for deep
+    /// groups, a `RangeError` for the overflow of the Node stack. A replaced prototype is shown
+    /// only with the reply check's refusal of the plugins, the one step it changes. The
+    /// differences that Heartwood checks on the input ([`Verdict::RefusedByDesign`]) are never
+    /// shown.
     pub fn shown_by(self, expected: &Expected) -> bool {
         let note = |name: &str| match expected {
             Expected::Output(output) => output[NOTES][name] == Value::Bool(true),
@@ -211,6 +223,7 @@ impl Documented {
             Documented::WideAmount => note("wideAmount"),
             Documented::FullPoolEviction => note("fullPoolEviction"),
             Documented::SavedStateUsername => note("savedStateUsername"),
+            Documented::RoundRowsAfterRevert => note("roundRowsMissing"),
             Documented::Locale => note("locale"),
             _ => false,
         }

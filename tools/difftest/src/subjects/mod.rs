@@ -464,6 +464,7 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
         | Documented::DecodeReason
         | Documented::FullPoolEviction
         | Documented::SavedStateUsername
+        | Documented::RoundRowsAfterRevert
         | Documented::Locale
         | Documented::OnlineView
         | Documented::StrictSchema => false,
