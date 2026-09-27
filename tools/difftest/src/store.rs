@@ -666,6 +666,25 @@ pub fn crash(
     max_delay: Duration,
 ) -> Result<Report> {
     let forward = forward_lines(corpus)?;
+    let title = "L2 kill test: the store after a SIGKILL".to_owned();
+    if let Err(problem) = crypto_files(corpus).and_then(|files| {
+        let dir = ScratchDir::new("crash-probe").map_err(|e| StartProblem::Failed(e.to_string()))?;
+        StoreNode::start(dir.path(), &files, RestoreMode::Auto).map(|_| ())
+    }) {
+        return Ok(Report {
+            title,
+            source: format!("{kills} kills asked"),
+            files: 1,
+            results: vec![CaseResult {
+                file: format!("{}/kill", corpus.name()),
+                line: 0,
+                op: "kill".into(),
+                label: "the store's first start".into(),
+                height: 0,
+                outcome: problem.outcome(),
+            }],
+        });
+    }
     let mut state = seed;
     let mut results = Vec::new();
     let mut scratch = ScratchDir::new("crash")?;
@@ -743,7 +762,7 @@ pub fn crash(
         }
     }
     Ok(Report {
-        title: "L2 kill test: the store after a SIGKILL".into(),
+        title,
         source: format!(
             "{kills} kills, seed {seed}, delays up to {} ms; stored tips {}",
             max_delay.as_millis(),

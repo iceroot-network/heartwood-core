@@ -573,7 +573,9 @@ async function main() {
     }
     a3.ok = a3.differences.length === 0;
     a3.differences = a3.differences.slice(0, LIMIT);
-    a4.ok = a4.checkpoints.length > 0 && a4.checkpoints.every((c) => c.differences.length === 0);
+    // A chain cut below its checkpoints keeps A1 to A3 and A5 as its anchors.
+    if (corpus.cut !== undefined && a4.checkpoints.length === 0) a4.note = `no checkpoint at or below the cut ${corpus.cut}`;
+    a4.ok = (a4.checkpoints.length > 0 || corpus.cut !== undefined) && a4.checkpoints.every((c) => c.differences.length === 0);
     const archives = (corpus.meta.archives || []).map((a) => ({ from: a.from, to: a.to, verified: a.verified === true }));
     const a5 = { ok: archives.length > 0 && archives.every((a) => a.verified), archives };
     const anchors = {
