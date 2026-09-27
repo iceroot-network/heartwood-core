@@ -45,8 +45,8 @@ make l2-synthetic NAME=txgen-one-node CORPUS=tools/difftest/corpus
 ```
 
 The judge records its lines and anchor results either way; an L2 run fails when the anchors do
-not hold, since a replay that does not match the node is no judge. The longer chains that the
-maintainers make with the same tooling (three nodes with faults, a node restarted from its saved
-state and by a rebuild while it forges, and a soak of at least 50 rounds) are imported under
-`target/corpus` and are not committed. A chain with live restarts is judged the same way, and
+not hold, since a replay that does not match the node is no judge. The other chains that the
+maintainers make with the same tooling (three nodes with faults, and a node restarted from its
+saved state and by a rebuild while it forges) are imported under `target/corpus` and are not
+committed. A chain with live restarts is judged the same way, and
 anchor A6 then compares each of them.

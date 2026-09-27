@@ -220,9 +220,9 @@ fn commit_cost() {
     drop(node);
     let after = bytes(&dir);
     println!(
-        "C1, {blocks} blocks one per chunk: {:?} per block (apply, digest and commit); \
-         database {} bytes per block ({before} bytes after the first start, {after} at the tip); \
-         undo records {} bytes per block, the largest {heavy} bytes",
+        "txgen-one-node, {blocks} blocks one per chunk: {:?} per block (apply, digest and \
+         commit); database {} bytes per block ({before} bytes after the first start, {after} at \
+         the tip); undo records {} bytes per block, the largest {heavy} bytes",
         elapsed / u32::try_from(blocks).unwrap(),
         (after - before) / blocks,
         undo / blocks,
