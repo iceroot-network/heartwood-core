@@ -34,6 +34,8 @@ tokio-tungstenite.workspace = true
 
 # The tests drive time with tokio's paused clock and the kernel's manual clock.
 [dev-dependencies]
+# The verifier's tests sign blocks of the committed devnet chain with its derived delegate keys.
+heartwood-crypto = { workspace = true, features = ["genesis"] }
 heartwood-kernel = { workspace = true, features = ["difftest"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 
