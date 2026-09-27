@@ -20,9 +20,8 @@ use std::time::Duration;
 use heartwood_api::{Api, ApiConfig, ApiContext, NodeInfo, NodeStatus, PeerList};
 use heartwood_blockchain::state_machine::MachineState;
 use heartwood_blockchain::{
-    BlockProcessor, Blockchain, BlockchainOptions, BlockchainParts, ChainState, ChainStore, Node,
-    NodeError, NodeHandle, NodeParts, PoolTask, RestoreMode, RestorePath, Restored, RollbackDepth,
-    restore,
+    BlockProcessor, Blockchain, BlockchainParts, ChainState, ChainStore, Node, NodeError,
+    NodeHandle, NodeParts, PoolTask, RestoreMode, RestorePath, Restored, RollbackDepth, restore,
 };
 use heartwood_crypto::Params;
 use heartwood_database::{Readers, Settings};
@@ -50,6 +49,7 @@ use tokio::sync::{mpsc, watch};
 use crate::cli::RelayRun;
 use crate::config::{Package, RelayConfig};
 use crate::lock::ProcessLock;
+use crate::network::Monitored;
 use crate::views::{BusEvents, Links, Listener, NodeView, Submit};
 use crate::{VERSION, options, signals};
 
@@ -182,8 +182,7 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
         .collect();
     p2p.sources.clone_from(&relay.peers.sources);
     p2p.max_transactions_per_request = pool_options.max_transactions_per_request;
-    let blockchain_options =
-        BlockchainOptions::from_options(&relay.entry(Package::Blockchain), &relay.env);
+    let blockchain_options = options::blockchain(&relay.entry(Package::Blockchain));
     let blockchain_options = Arc::new(blockchain_options.map_err(config)?);
     let api_config = relay
         .components
@@ -247,7 +246,7 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
     let blockchain = Blockchain::new(BlockchainParts {
         node: handle.clone(),
         chain,
-        network: monitor,
+        network: Monitored(monitor),
         options: blockchain_options,
         milestones,
         clock,

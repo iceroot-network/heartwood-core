@@ -27,7 +27,6 @@ use std::time::Duration;
 
 use heartwood_crypto::crypto::slots;
 use heartwood_crypto::{Block, BlockId, Milestones};
-use heartwood_kernel::config::Options;
 use heartwood_kernel::errors::BootError;
 use heartwood_kernel::utils::pluralise::pluralise;
 use heartwood_kernel::{ChainLink, Clock, debug, info, is_block_chained, warning};

@@ -1,5 +1,5 @@
-//! The components' options that the relay reads itself (the pool's, the database's and the
-//! logger's) and the parts of the peer-to-peer options that the environment and the command line
+//! The components' options that the relay reads itself (the pool's, the database's, the
+//! logger's and the blockchain's) and the parts of the peer-to-peer options that the environment and the command line
 //! give, each read as the reference's option schema reads it over its defaults.
 //!
 //! The reference's defaults read some variables with `||`, so a variable that is set and not
@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
+use heartwood_blockchain::BlockchainOptions;
 use heartwood_crypto::identities::Address;
 use heartwood_kernel::config::app::integer;
 use heartwood_kernel::config::merge::deep_merge;
@@ -259,6 +260,36 @@ pub fn database(entry: &Value) -> Result<u64, OptionsError> {
         read.boolean(key)?;
     }
     Ok(timeout)
+}
+
+/// The blockchain's options over its defaults: `databaseRollback` an object whose
+/// `maxBlockRewind` and `steps` are whole numbers of at least 1, `networkStart` a boolean, any
+/// other key allowed without a check. `missedBlocksLookback` has no rule in the reference's schema
+/// and no reader before the productivity tables; a value that is not a whole number keeps the
+/// default. A rewind bound above 2^32 - 1 is refused (the reference takes one up to 2^53 - 1).
+pub fn blockchain(entry: &Value) -> Result<BlockchainOptions, OptionsError> {
+    let (read, mut options) = (
+        Reader::new(BlockchainOptions::PACKAGE, entry),
+        BlockchainOptions::default(),
+    );
+    read.object("databaseRollback")?;
+    let bounds = &mut options.database_rollback;
+    for (key, field) in [
+        (
+            "databaseRollback.maxBlockRewind",
+            &mut bounds.max_block_rewind,
+        ),
+        ("databaseRollback.steps", &mut bounds.steps),
+    ] {
+        if let Some(given) = read.integer(key, 1)? {
+            let refused = |_| read.refuse(key, "must be at most 4294967295");
+            *field = u32::try_from(given).map_err(refused)?;
+        }
+    }
+    options.network_start = read.boolean("networkStart")?.unwrap_or(false);
+    let lookback = read.get("missedBlocksLookback").and_then(Value::as_u64);
+    options.missed_blocks_lookback = lookback.unwrap_or(options.missed_blocks_lookback);
+    Ok(options)
 }
 
 /// The logger's options: its levels (`CORE_LOG_LEVEL`, `CORE_LOG_LEVEL_FILE`, `info` and `debug`

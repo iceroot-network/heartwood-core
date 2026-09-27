@@ -4,7 +4,7 @@
 //! - [`config`]: the relay's configuration, read before anything starts; [`options`]: the
 //!   components' options the relay reads itself.
 //! - [`app`]: the relay's composition root; [`views`]: the node as the peer-to-peer client and the
-//!   API read it.
+//!   API read it; [`network`]: the network monitor as the blockchain service calls it.
 //! - [`lock`]: the process lock.
 //! - [`signals`]: the signals and the graceful shutdown.
 //! - `harness` (feature `difftest`): the harness's digest and block files and its seed.
@@ -31,6 +31,7 @@ pub mod config;
 #[cfg(feature = "difftest")]
 pub mod harness;
 pub mod lock;
+pub mod network;
 pub mod options;
 pub mod signals;
 pub mod views;

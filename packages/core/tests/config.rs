@@ -7,7 +7,7 @@ mod common;
 use std::fs;
 
 use common::{Setup, relay_plugins, run};
-use heartwood_blockchain::{ReplayReason, RestorePath};
+use heartwood_blockchain::{BlockchainOptions, ReplayReason, RestorePath};
 use heartwood_core::app::{RelayError, restored, version_floor};
 use heartwood_core::config::{Package, RelayConfig};
 use heartwood_core::options;
@@ -390,6 +390,63 @@ fn the_database_logger_and_peer_options_are_read_as_the_reference_reads_them() {
         (error.package, error.key.as_str()),
         ("@solar-network/p2p", "server.port")
     );
+}
+
+#[test]
+fn the_blockchain_options_are_read_as_the_reference_schema_reads_them() {
+    let defaults = options::blockchain(&json!({})).unwrap();
+    assert_eq!(defaults, BlockchainOptions::default());
+    let read = options::blockchain(&json!({
+        "databaseRollback": {"maxBlockRewind": "20", "steps": 5.0},
+        "networkStart": "TRUE",
+        "missedBlocksLookback": 60,
+        "unknown": [1],
+    }))
+    .unwrap();
+    let bounds = read.database_rollback;
+    assert_eq!((bounds.max_block_rewind, bounds.steps), (20, 5));
+    assert!(read.network_start);
+    assert_eq!(read.missed_blocks_lookback, 60);
+    let read = options::blockchain(&json!({"networkStart": false, "missedBlocksLookback": "x"}));
+    assert_eq!(read.unwrap().missed_blocks_lookback, 2_592_000);
+    for text in [" 1e2 ", "+100", "100.", "1.00e+2"] {
+        let read = options::blockchain(&json!({"databaseRollback": {"steps": text}}));
+        assert_eq!(read.unwrap().database_rollback.steps, 100, "{text}");
+    }
+    let rewind = "databaseRollback.maxBlockRewind";
+    for (entry, key) in [
+        (json!({"databaseRollback": null}), "databaseRollback"),
+        (json!({"databaseRollback": {"maxBlockRewind": 0}}), rewind),
+        (json!({"databaseRollback": {"maxBlockRewind": 1.5}}), rewind),
+        (
+            json!({"databaseRollback": {"maxBlockRewind": "1x"}}),
+            rewind,
+        ),
+        (
+            json!({"databaseRollback": {"maxBlockRewind": "0x10"}}),
+            rewind,
+        ),
+        (
+            json!({"databaseRollback": {"maxBlockRewind": true}}),
+            rewind,
+        ),
+        (
+            json!({"databaseRollback": {"maxBlockRewind": 4_294_967_296_u64}}),
+            rewind,
+        ),
+        (
+            json!({"databaseRollback": {"steps": "0"}}),
+            "databaseRollback.steps",
+        ),
+        (json!({"networkStart": "yes"}), "networkStart"),
+    ] {
+        let error = options::blockchain(&entry).unwrap_err();
+        assert_eq!(
+            (error.package, error.key.as_str()),
+            (BlockchainOptions::PACKAGE, key),
+            "{entry}"
+        );
+    }
 }
 
 #[test]

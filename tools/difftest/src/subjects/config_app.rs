@@ -18,7 +18,6 @@ use std::path::Path;
 
 use heartwood_api::ApiConfig;
 use heartwood_api::server::SemaphoreLevel;
-use heartwood_blockchain::BlockchainOptions;
 use heartwood_core::config::Package;
 use heartwood_core::options;
 use heartwood_kernel::config::{Env as NodeEnv, Options, OptionsError, Role, app};
@@ -70,7 +69,7 @@ fn plugin_options(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
                 "allowPrivateIpRanges": o.allow_private_ip_ranges,
             })
         }),
-        "@solar-network/blockchain" => BlockchainOptions::from_options(&entry, &env).map(|o| {
+        "@solar-network/blockchain" => options::blockchain(&entry).map(|o| {
             json!({
                 "databaseRollback": {
                     "maxBlockRewind": o.database_rollback.max_block_rewind,

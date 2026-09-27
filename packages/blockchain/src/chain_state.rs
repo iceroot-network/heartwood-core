@@ -104,38 +104,10 @@ impl ChainState {
         self.p2p_update_counter = 0;
     }
 
-    /// The last blocks with heights from `start` to `end`, both included, in height order.
-    pub fn last_blocks_by_height(&self, start: u32, end: u32) -> Vec<Arc<Block>> {
-        let within = |block: &&Arc<Block>| (start..=end).contains(&block.height());
-        self.last_blocks.iter().filter(within).cloned().collect()
-    }
-
-    /// The ids of the last blocks, the tip first, as the reference's `getLastBlockIds` lists them.
-    pub fn last_block_ids(&self) -> Vec<BlockId> {
-        self.last_blocks
-            .iter()
-            .rev()
-            .map(|block| *block.id())
-            .collect()
-    }
-
     /// Set the last downloaded block to the tip, as the reference's
     /// `resetLastDownloadedBlock` does.
     pub fn reset_last_downloaded(&mut self) {
         self.last_downloaded = self.last_block().map(|block| ChainLink::of(block));
-    }
-
-    /// Record another receipt of `block` at `now_ms`, when it is the pinged block; whether it
-    /// was, as the reference's `pingBlock` answers.
-    pub fn ping_block(&mut self, id: &BlockId, height: u32, now_ms: i64) -> bool {
-        match &mut self.ping {
-            Some(ping) if ping.ping.id == *id && ping.ping.height == height => {
-                ping.count = ping.count.saturating_add(1);
-                ping.ping.last_ms = now_ms;
-                true
-            }
-            _ => false,
-        }
     }
 
     /// Start pinging `block`, received at `now_ms`, as the reference's `pushPingBlock` does; the
