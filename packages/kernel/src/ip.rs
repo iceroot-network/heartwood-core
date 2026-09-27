@@ -102,8 +102,9 @@ fn is_ipv4(text: &str) -> bool {
 
 /// One dotted IPv4 part as `ipaddr.js` reads it: decimal digits, `0` and octal digits, or `0x`
 /// and hexadecimal digits. `None` for anything else, a leading `0` included before an `8` or a
-/// `9`. Large values saturate; every limit they are compared with is far below.
-fn ipv4_part(part: &str) -> Option<u64> {
+/// `9`. Large values saturate; every limit they are compared with is far below. The peer
+/// client's address rules read the parts with it.
+pub fn ipv4_part(part: &str) -> Option<u64> {
     if let Some(hex) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
         return radix_value(hex, 16);
     }
@@ -136,8 +137,9 @@ fn is_ipv6(text: &str) -> bool {
 }
 
 /// `ipaddr.js`'s `IPv6.parser`: the deprecated `::a.b.c.d` form, the plain form, then the form
-/// with an IPv4 tail.
-fn ipv6_parts(text: &str) -> Option<Vec<u64>> {
+/// with an IPv4 tail. The groups may be other than eight or above 16 bits, which `ipaddr.js`
+/// refuses; the peer client's address rules read addresses with it.
+pub fn ipv6_parts(text: &str) -> Option<Vec<u64>> {
     // Every form may end with a zone, `%` and letters or digits, and has no `%` before it.
     let (body, zone) = match text.find('%') {
         Some(at) => {

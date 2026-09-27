@@ -7,3 +7,6 @@ pub mod is_valid_version;
 pub mod npm_semver;
 pub mod rules;
 pub mod subnet;
+
+#[cfg(test)]
+mod tests;
