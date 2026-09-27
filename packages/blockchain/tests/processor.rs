@@ -145,6 +145,23 @@ impl Node {
         self.process_at(block, now)
     }
 
+    /// Process `block` with the clock at its slot and `name` as its delegate name.
+    fn process_named(&mut self, block: &Block, name: Option<&str>) -> Traced {
+        let now = FIXTURE.epoch_ms + i64::from(block.header().timestamp) * 1_000;
+        self.clock.set(now);
+        let mut ctx = ProcessContext {
+            state: &mut self.state,
+            handlers: &Handlers,
+            milestones: milestones(),
+            chain: &mut self.chain,
+            forged: &self.forged,
+            pending: &self.pending,
+            pool: &mut self.pool,
+            clock: &self.clock,
+        };
+        processor::trace_named(&mut ctx, block, name)
+    }
+
     fn process_at(&mut self, block: &Block, now_ms: i64) -> Traced {
         self.clock.set(now_ms);
         let mut ctx = ProcessContext {
@@ -673,6 +690,31 @@ fn a_block_the_state_refuses_leaves_the_state_as_it_was() {
         assert!(node.pool.0.is_empty());
         assert_reset(&node);
     }
+}
+
+/// A block whose generator named no delegate when it was enqueued (a delegate registered in the
+/// same download) is refused as the reference refuses it, and chains as a mismatch when it
+/// does not chain.
+#[test]
+fn a_block_without_its_delegate_name_has_an_invalid_generator() {
+    let mut node = Node::at_tip();
+    let block = node.forge(Forge::default());
+    let traced = node.process_named(&block, None);
+    assert_eq!(traced.handler, refused(Refusal::InvalidGenerator));
+    let other_parent = node.forge(Forge {
+        previous: Some([7; 32]),
+        ..Forge::default()
+    });
+    let traced = node.process_named(&other_parent, None);
+    assert_eq!(
+        traced.processed.unchained,
+        Some(UnchainedStatus::GeneratorMismatch)
+    );
+    let name = processor::delegate_name(&node.state, &block).map(str::to_owned);
+    assert_eq!(
+        node.process_named(&block, name.as_deref()).handler,
+        Handler::Accept
+    );
 }
 
 #[test]

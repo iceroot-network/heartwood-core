@@ -8,13 +8,14 @@
 //
 //   makeProcessor(solar, session) -> {
 //       processor        the reference's BlockProcessor on the session's chain
-//       rebuild(bytes, now)
+//       rebuild(bytes, now, named = true)
 //                        a block as a job hands it to the processor: decoded, its delegate name
-//                        set as enqueueBlocks sets it (setBlockUsername, with the wallets of now),
-//                        and rebuilt by BlockFactory.fromData with the clock at `now` (ms since
-//                        the Unix epoch), so that its verification reads that time
-//       process(block, now) -> {result, handler, unchained?, missed, lastDownloaded, forked,
-//                               clearQueue, wakeUp, removed, reward?, line?}
+//                        set as enqueueBlocks sets it (setBlockUsername, with the wallets of now;
+//                        with `named` false, none, as for a block enqueued before its delegate
+//                        registered), and rebuilt by BlockFactory.fromData with the clock at `now`
+//                        (ms since the Unix epoch), so that its verification reads that time
+//       process(block, now, named = true) -> {result, handler, unchained?, missed,
+//                               lastDownloaded, forked, clearQueue, wakeUp, removed, reward?, line?}
 //                        BlockProcessor.process of a rebuilt block (or of block bytes, rebuilt
 //                        first): the result's name, the class of the handler the processor chose,
 //                        the unchained handler's status, the missed rows written while it ran, the
@@ -180,17 +181,17 @@ function makeProcessor(solar, session) {
         walletRepository: chain.walletRepository,
     });
 
-    function rebuild(bytes, now) {
+    function rebuild(bytes, now, named = true) {
         const deserialised = Blocks.Deserialiser.deserialise(bytes);
         const data = { ...deserialised.data, transactions: deserialised.transactions.map((t) => t.data) };
-        chain.pkgs.setBlockUsername.call({ walletRepository: chain.walletRepository }, data);
+        if (named) chain.pkgs.setBlockUsername.call({ walletRepository: chain.walletRepository }, data);
         const block = atTime(now, () => Blocks.BlockFactory.fromData(data));
         if (!block) throw new Error("BlockFactory returned no block");
         return block;
     }
 
-    async function process(input, now) {
-        const block = Buffer.isBuffer(input) ? rebuild(input, now) : input;
+    async function process(input, now, named = true) {
+        const block = Buffer.isBuffer(input) ? rebuild(input, now, named) : input;
         const store = chain.store;
         const before = store.recorded.length;
         store.recording = `process:${block.data.height}`;

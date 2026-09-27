@@ -15,6 +15,8 @@
 //         unstored        how many of the chain's last blocks are applied but not stored yet,
 //                         as blocks accepted earlier in the same job are [0]
 //         forged          transaction ids the store holds besides its blocks' [none]
+//         unnamed         whether the block has no delegate name, as a block enqueued before its
+//                         delegate registered has none [false]
 //       In the session form a key that is absent leaves the session's value, and an accepted
 //       block is stored as a job of one block stores it (the session moves on to it); in the
 //       chain form the defaults apply, and every case starts from the chain's tip: the chain is
@@ -120,6 +122,11 @@ module.exports = function processOps(context) {
         }
     }
 
+    const unnamed = (state) => {
+        if (state.unnamed !== undefined && typeof state.unnamed !== "boolean") throw new TypeError("state.unnamed must be a boolean");
+        return state.unnamed === true;
+    };
+
     const shown = (out) => {
         const { reward, ...rest } = out;
         return rest;
@@ -137,7 +144,7 @@ module.exports = function processOps(context) {
                 return inSession(s, async () => {
                     const made = makeProcessor(solar, s);
                     setState(s, made, state, false);
-                    const { out, block } = await made.process(bytes, now);
+                    const { out, block } = await made.process(bytes, now, !unnamed(state));
                     if (out.result === "Accepted") {
                         await s.chain.stubs.databaseService.saveBlocks([block]);
                         s.chain.stateStore.setLastStoredBlockHeight(block.data.height);
@@ -158,7 +165,7 @@ module.exports = function processOps(context) {
                 setState(s, made, state, true);
                 let out;
                 try {
-                    const processed = await made.process(bytes, now);
+                    const processed = await made.process(bytes, now, !unnamed(state));
                     out = processed.out;
                     if (out.result === "Accepted") {
                         await s.chain.stubs.databaseService.saveBlocks([processed.block]);

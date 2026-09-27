@@ -3,7 +3,8 @@
 //! seed) and then mutated (its timestamp, height, previous id, generator, reward, transactions,
 //! version, payload length and signature, or a block of the chain itself), with a chain state
 //! around it (the last downloaded block, the forked block, whether the blockchain has started,
-//! blocks of the job not stored yet, a stored id), for `chain.process`: the result, the handler,
+//! blocks of the job not stored yet, a stored id, no delegate name when it was enqueued), for
+//! `chain.process`: the result, the handler,
 //! the unchained status, the chain state after it and the line after an accepted block must be
 //! the reference's.
 //!
@@ -269,6 +270,7 @@ struct Recipe {
     started: bool,
     unstored: u32,
     forged: bool,
+    unnamed: bool,
     late_ms: i64,
 }
 
@@ -279,6 +281,7 @@ fn recipe(prefixes: usize) -> impl Strategy<Value = Recipe> {
         prop_oneof![4 => Just(true), 1 => Just(false)],
         prop_oneof![6 => Just(0u32), 1 => 1u32..=2],
         prop_oneof![8 => Just(false), 1 => Just(true)],
+        prop_oneof![12 => Just(false), 1 => Just(true)],
     );
     (
         0..prefixes.max(1),
@@ -294,7 +297,7 @@ fn recipe(prefixes: usize) -> impl Strategy<Value = Recipe> {
                 gap,
                 transactions,
                 mutation,
-                (downloaded, forked, started, unstored, forged),
+                (downloaded, forked, started, unstored, forged, unnamed),
                 late_ms,
             )| Recipe {
                 prefix,
@@ -306,6 +309,7 @@ fn recipe(prefixes: usize) -> impl Strategy<Value = Recipe> {
                 started,
                 unstored,
                 forged,
+                unnamed,
                 late_ms,
             },
         )
@@ -652,6 +656,9 @@ fn finish(p: &Prefix, recipe: &Recipe, bytes: Vec<u8>, now: i64) -> OpCase {
         if let Some(id) = first {
             state.insert("forged".into(), json!([id]));
         }
+    }
+    if recipe.unnamed {
+        state.insert("unnamed".into(), json!(true));
     }
     let mut input = json!({"chain": p.chain.clone(), "hex": hex::encode(&bytes), "now": now});
     if !state.is_empty() {

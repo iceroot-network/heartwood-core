@@ -19,8 +19,11 @@
 //! the queue to be cleared. The processor runs on the node thread and never reads the wall clock
 //! except through [`ProcessContext::clock`].
 //!
-//! The block's delegate name is the one its generator key has when the block is processed: the
-//! reference sets it when it enqueues the block ([`delegate_name`]).
+//! The block's delegate name is the one the reference's `setBlockUsername` gives it when it
+//! enqueues the block ([`delegate_name`]). [`process`] reads it when the block is processed;
+//! [`trace_named`] takes the name the block got when it was enqueued, which differs only for the
+//! blocks of a delegate registered in a block of the same download (no name, so the generator is
+//! refused until the block is downloaded again).
 
 pub mod handlers;
 pub mod unchained;
@@ -189,6 +192,13 @@ pub fn process(ctx: &mut ProcessContext<'_>, block: &Block) -> Processed {
 
 /// Process `block` as [`process`] does, and name the handler that decided it.
 pub fn trace(ctx: &mut ProcessContext<'_>, block: &Block) -> Traced {
+    let name = delegate_name(ctx.state, block).map(str::to_owned);
+    trace_named(ctx, block, name.as_deref())
+}
+
+/// Process `block` as [`trace`] does, with `name` as the block's delegate name: the name its
+/// generator key had when the block was enqueued, `None` when the key named no delegate then.
+pub fn trace_named(ctx: &mut ProcessContext<'_>, block: &Block, name: Option<&str>) -> Traced {
     let refused = |ctx: &mut ProcessContext<'_>, refusal| Traced {
         processed: Processed {
             result: handlers::refuse(ctx, block, refusal),
@@ -203,10 +213,10 @@ pub fn trace(ctx: &mut ProcessContext<'_>, block: &Block) -> Traced {
     if has_nonce_out_of_order(ctx.state, ctx.milestones, block) {
         return refused(ctx, Refusal::NonceOutOfOrder);
     }
-    let generator_valid = is_valid_generator(ctx.state, ctx.milestones, block);
+    let generator_valid = is_valid_generator(ctx.state, ctx.milestones, block, name);
     let tip = ChainLink::of(ctx.state.last_block());
     if is_block_chained(&tip, &ChainLink::of(block), ctx.milestones).is_err() {
-        let (result, status) = unchained::handle(ctx, block, generator_valid);
+        let (result, status) = unchained::handle(ctx, block, name, generator_valid);
         return Traced {
             processed: Processed {
                 result,
@@ -239,6 +249,18 @@ pub fn trace(ctx: &mut ProcessContext<'_>, block: &Block) -> Traced {
 pub trait BlockProcess: Send + Sync {
     /// Process `block`.
     fn process(&self, ctx: &mut ProcessContext<'_>, block: &Block) -> Processed;
+
+    /// Process `block` with the delegate name it got when it was enqueued (see [`trace_named`]).
+    /// The default ignores the name.
+    fn process_named(
+        &self,
+        ctx: &mut ProcessContext<'_>,
+        block: &Block,
+        name: Option<&str>,
+    ) -> Processed {
+        let _ = name;
+        self.process(ctx, block)
+    }
 }
 
 /// The block processor.
@@ -248,6 +270,15 @@ pub struct BlockProcessor;
 impl BlockProcess for BlockProcessor {
     fn process(&self, ctx: &mut ProcessContext<'_>, block: &Block) -> Processed {
         process(ctx, block)
+    }
+
+    fn process_named(
+        &self,
+        ctx: &mut ProcessContext<'_>,
+        block: &Block,
+        name: Option<&str>,
+    ) -> Processed {
+        trace_named(ctx, block, name).processed
     }
 }
 
@@ -354,12 +385,17 @@ fn has_nonce_out_of_order(state: &State, milestones: &Milestones, block: &Block)
     false
 }
 
-/// Whether the block's generator may forge it: a registered delegate whose key is the block's,
-/// with a rank, and the delegate of the block's slot in the forging list of its round. A slot
-/// with no delegate in the list refuses the block.
-fn is_valid_generator(state: &State, milestones: &Milestones, block: &Block) -> bool {
+/// Whether the block's generator may forge it: `name` names a registered delegate whose key is
+/// the block's, with a rank, and the delegate of the block's slot in the forging list of its
+/// round. A slot with no delegate in the list refuses the block.
+fn is_valid_generator(
+    state: &State,
+    milestones: &Milestones,
+    block: &Block,
+    name: Option<&str>,
+) -> bool {
     let header = block.header();
-    let Some(username) = delegate_name(state, block) else {
+    let Some(username) = name else {
         return false;
     };
     let Some(wallet) = state.wallets().find_by_username(username) else {

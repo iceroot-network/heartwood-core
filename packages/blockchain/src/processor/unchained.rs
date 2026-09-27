@@ -5,28 +5,28 @@
 use heartwood_crypto::Block;
 
 use crate::processor::{
-    BlockProcessorResult, ProcessContext, UnchainedStatus, delegate_name, locale,
-    reset_last_downloaded, round_forgers,
+    BlockProcessorResult, ProcessContext, UnchainedStatus, locale, reset_last_downloaded,
+    round_forgers,
 };
 
-/// The unchained status of `block` against the tip, given whether its generator is valid, and
-/// its outcome: `DoubleForging` is `Rollback` when the block's delegate is among the round's
-/// delegates and `Rejected` otherwise; `AlreadyInBlockchain` and `EqualToLastBlock` are
+/// The unchained status of `block` against the tip, given its delegate name and whether its
+/// generator is valid, and its outcome: `DoubleForging` is `Rollback` when the block's delegate is
+/// among the round's delegates and `Rejected` otherwise; `AlreadyInBlockchain` and `EqualToLastBlock` are
 /// `DiscardedButCanBeBroadcasted`; the others are `Rejected`.
 pub fn handle(
     ctx: &mut ProcessContext<'_>,
     block: &Block,
+    name: Option<&str>,
     generator_valid: bool,
 ) -> (BlockProcessorResult, UnchainedStatus) {
     reset_last_downloaded(ctx.state, ctx.chain);
-    let status = status(ctx, block, generator_valid);
+    let status = status(ctx, block, name, generator_valid);
     let result = match status {
         UnchainedStatus::DoubleForging => {
-            let username = delegate_name(ctx.state, block);
             let forgers = round_forgers(ctx.state, block.height(), ctx.milestones);
             if forgers
                 .iter()
-                .any(|forger| Some(forger.username.as_str()) == username)
+                .any(|forger| Some(forger.username.as_str()) == name)
             {
                 BlockProcessorResult::Rollback
             } else {
@@ -44,7 +44,12 @@ pub fn handle(
 }
 
 /// Why `block` does not chain to the tip, in the reference's order of checks.
-fn status(ctx: &ProcessContext<'_>, block: &Block, generator_valid: bool) -> UnchainedStatus {
+fn status(
+    ctx: &ProcessContext<'_>,
+    block: &Block,
+    name: Option<&str>,
+    generator_valid: bool,
+) -> UnchainedStatus {
     let last = ctx.state.last_block();
     let (height, last_height) = (block.height(), last.height());
     let shown = locale(height);
@@ -70,13 +75,13 @@ fn status(ctx: &ProcessContext<'_>, block: &Block, generator_valid: bool) -> Unc
     } else if generator_valid {
         heartwood_kernel::warning!(
             "Detected double forging by {} :chains:",
-            delegate_name(ctx.state, block).unwrap_or_default()
+            name.unwrap_or_default()
         );
         UnchainedStatus::DoubleForging
     } else {
         heartwood_kernel::info!(
             "Forked block disregarded because it is not allowed to be forged. Caused by delegate {} :bangbang:",
-            delegate_name(ctx.state, block).unwrap_or("undefined")
+            name.unwrap_or("undefined")
         );
         UnchainedStatus::GeneratorMismatch
     }

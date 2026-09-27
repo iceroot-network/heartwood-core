@@ -11,7 +11,8 @@
 // and its end (14). They cover the accepted block (with transactions, after missed slots, a
 // delegate's second block in a round, the forked block cleared or kept, the last downloaded block
 // moved or kept, a blockchain not started, unstored blocks); each refusal before the apply
-// (verification, nonce order, generator, reward, a unique type twice, a stored id); every unchained
+// (verification, nonce order, generator, reward, a unique type twice, a stored id), the generator
+// of a block enqueued before its delegate's name was known included; every unchained
 // status, the double forging at a round end included; a block the state refuses in its apply,
 // once after missed slots (the assertion record of the missed rows the reference keeps); and a
 // block with a transaction of a removed type (refused by both, by Heartwood when it rebuilds it).
@@ -265,6 +266,8 @@ module.exports = async function processorVectors(ctx) {
         const notScheduled = [...f.keysOf.values()].find((k) => k.name.startsWith("genesis_") && k.name !== scheduled).name;
         add({ name: "unchained: another parent, another delegate", hex: await f.block({ previous: "07".repeat(32), signer: notScheduled }), expect: unchained("GeneratorMismatch", "Rejected") });
         add({ name: "generator: another delegate", hex: await f.block({ signer: notScheduled }), expect: refused("InvalidGeneratorHandler") });
+        add({ name: "generator: no delegate name when enqueued", hex: next, state: { unnamed: true }, expect: refused("InvalidGeneratorHandler") });
+        add({ name: "unchained: another parent, no delegate name when enqueued", hex: await f.block({ previous: "07".repeat(32) }), state: { unnamed: true }, expect: unchained("GeneratorMismatch", "Rejected") });
         add({ name: "generator: no delegate", hex: await f.block({ signer: "wallet/5" }), expect: refused("InvalidGeneratorHandler") });
         add({ name: "reward: one more", hex: await f.block({ reward: "180000001" }), expect: refused("InvalidRewardHandler") });
         add({ name: "reward: none", hex: await f.block({ reward: "0" }), expect: refused("InvalidRewardHandler") });

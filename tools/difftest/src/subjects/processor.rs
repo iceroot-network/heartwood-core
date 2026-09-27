@@ -150,6 +150,8 @@ struct CaseState {
     chain: ChainState,
     unstored: usize,
     forged: BTreeSet<TransactionId>,
+    /// The block has no delegate name, as a block enqueued before its delegate registered.
+    unnamed: bool,
 }
 
 fn case_state(input: &Value, kept: &Kept) -> Outcome<CaseState> {
@@ -205,10 +207,17 @@ fn case_state(input: &Value, kept: &Kept) -> Outcome<CaseState> {
             forged.insert(id);
         }
     }
+    let unnamed = match state.get("unnamed") {
+        None => false,
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| failed("input.state.unnamed is not a boolean"))?,
+    };
     Ok(CaseState {
         chain,
         unstored,
         forged,
+        unnamed,
     })
 }
 
@@ -267,6 +276,7 @@ fn process(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         mut chain,
         unstored,
         forged,
+        unnamed,
     } = case_state(input, &kept)?;
     let pending: Vec<Block> = kept.blocks[kept.blocks.len() - unstored..].to_vec();
     let stored = Stored {
@@ -282,6 +292,11 @@ fn process(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let gap = state.detect_missed_blocks(block.header(), &kept.milestones);
     let mut pool = Removed::default();
     let clock = ManualClock::new(now);
+    let name = if unnamed {
+        None
+    } else {
+        processor::delegate_name(&state, &block).map(str::to_owned)
+    };
     let traced = {
         let mut ctx = ProcessContext {
             state: &mut state,
@@ -293,7 +308,7 @@ fn process(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
             pool: &mut pool,
             clock: &clock,
         };
-        processor::trace(&mut ctx, &block)
+        processor::trace_named(&mut ctx, &block, name.as_deref())
     };
     let processed = traced.processed;
     if traced.handler == Handler::Accept
