@@ -559,8 +559,8 @@ keeps its peer list, with the reference's requests, timeouts, limits, cadences a
 opens no listening socket, and it is not yet wired into a node: it reads the node's chain and
 tells the node about peers only through the traits of its `view` module, so it depends on no
 crate of the chain, the store or the pool. Its edges are `heartwood-crypto`, `heartwood-kernel`
-and `heartwood-p2p-wire`, with tokio and tokio-tungstenite, which no other crate may use
-(`make layers`).
+and `heartwood-p2p-wire`, with tokio and tokio-tungstenite; `make layers` lets no other crate
+depend on tokio-tungstenite directly, and no consensus crate on tokio.
 
 - **nes sessions**: the reference's nes client on a WebSocket, one session per peer IP: the hello,
   the heartbeat (the server's interval plus its timeout), the one-second ping limit, the
@@ -593,8 +593,9 @@ configuration:
   signature, height and round delegate only. The harness reports these records as documented
   differences, with the unlinked header checked on the input;
 - protocol violations are recorded against a peer for 600 seconds: a reply the codec or the reply
-  check refuses, a broken nes session other than a heartbeat timeout, and a downloaded
-  transaction the reader refuses. They count toward the same ignore rule as the cleanse's slow
+  check refuses, a broken nes session other than a heartbeat timeout, a downloaded transaction
+  the reader refuses, and in a verification a common-block reply that names a block not asked for
+  or a fork header that fails its checks or does not chain. They count toward the same ignore rule as the cleanse's slow
   pings, and a peer with a violation is not asked for peers, blocks or transactions and is not
   accepted again until it expires. An honest slow peer stays a source;
 - the random samples (the discovery sources, the transaction sources, the peers a cleanse pings,
