@@ -19,6 +19,7 @@ use heartwood_crypto::crypto::slots::SlotInfo;
 use heartwood_crypto::transactions::builders::TransactionBuilder;
 use heartwood_crypto::transactions::types::TransferItem;
 use heartwood_crypto::utils::hex;
+use heartwood_crypto::validation::Mode;
 use heartwood_crypto::{
     Address, Aux, Block, BlockId, KeyPair, Milestones, Network, Params, PublicKeyBytes,
     Transaction, TransactionId,
@@ -1576,6 +1577,29 @@ fn the_header_is_written_as_the_reference_writes_it() {
     assert_eq!(rebuild(&zero), refused("numberOfTransactions"));
     let negative = |b: &mut ListedBlock| b.total_fee = Amount::new(-1);
     assert_eq!(rebuild(&negative), refused("totalFee"));
+    // At height 1 a downloaded block is received, not read under the genesis rules: a
+    // transaction with no fee refuses it.
+    let genesis = milestones.at(1).clone();
+    let free = TransactionBuilder::transfer(vec![TransferItem {
+        amount: 1,
+        recipient: Address::from_public_key(keys(0).public_key(), 90),
+    }])
+    .nonce(1)
+    .fee(0)
+    .build_with(&keys(1), Aux::random(), &genesis, Mode::Genesis)
+    .expect("a genesis transfer");
+    let first = block(1, vec![free], &milestones);
+    let downloaded = read_listed(listed(&first), ip(1), false, &genesis).unwrap();
+    assert!(matches!(
+        to_block(&downloaded, &milestones),
+        Err(AssembleError::Block(_))
+    ));
+    let without = block(1, Vec::new(), &milestones);
+    let downloaded = read_listed(listed(&without), ip(1), false, &genesis).unwrap();
+    assert_eq!(
+        to_block(&downloaded, &milestones).map(|b| *b.id()),
+        Ok(*without.id())
+    );
     // A transaction the reader refuses fails the download.
     let mut garbage = listed(&made);
     garbage.transactions.push(vec![0xff]);

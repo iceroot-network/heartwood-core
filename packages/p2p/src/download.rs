@@ -115,6 +115,12 @@ pub fn to_block(
         block_signature: Signature::from_array(signature),
     };
     match &downloaded.transactions {
+        // The genesis rules of height 1 are for the node's own chain definition: a block from a
+        // peer at height 1 is received, as the reference exempts only its genesis block's ids.
+        Some(transactions) if header.height == 1 => {
+            let bytes = serialiser::serialise_with_transactions(&header, transactions);
+            Ok(Block::receive(&bytes, milestones)?)
+        }
         Some(transactions) => Ok(factory::from_data(header, transactions, milestones)?),
         // Without transactions the block is its header: written and read back.
         None => Block::decode(&serialiser::serialise_header(&header, true), milestones)
