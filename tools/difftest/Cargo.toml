@@ -21,6 +21,7 @@ workspace = true
 heartwood-crypto = { workspace = true, features = ["genesis", "legacy-schnorr", "fixed-aux"] }
 heartwood-kernel = { workspace = true, features = ["difftest"] }
 heartwood-logger.workspace = true
+heartwood-p2p-wire.workspace = true
 heartwood-state.workspace = true
 heartwood-transactions.workspace = true
 proptest.workspace = true

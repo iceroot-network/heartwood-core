@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::compare::{self, Difference};
 use crate::report::{CaseResult, Outcome, Report, describe_meta};
-use crate::subject::{Case, Registry, SubjectError, Verdict};
+use crate::subject::{Case, NOTES, Registry, SubjectError, Verdict};
 use crate::vectors::{Expected, Meta, Record, VectorSet};
 
 /// Compare every record with Heartwood's subjects.
@@ -50,19 +50,38 @@ fn judge(record: &Record, registry: &Registry) -> Outcome {
 }
 
 /// Run `case` with the subject registered for its operation and judge the result against the
-/// oracle's `expected` answer. Error messages are never compared. When both sides reject, the
-/// error classes are compared where Heartwood's subject names the reference's class; a refusal
-/// by design must come with an input of the documented form.
+/// oracle's `expected` answer. Error messages are never compared, nor the oracle's notes. When both
+/// sides reject, the error classes are compared where Heartwood's subject names the reference's
+/// class; a refusal by design must come with an input of the documented form, and a difference
+/// that only the oracle can observe must be shown by the oracle's answer.
 pub fn judge_case(case: &Case<'_>, expected: &Expected, registry: &Registry) -> Outcome {
     let Some(subject) = registry.get(case.op) else {
         return Outcome::NoSubject;
     };
-    match (subject.run(case), expected) {
+    judge_result(subject.run(case), expected)
+}
+
+fn judge_result(result: Result<Verdict, SubjectError>, expected: &Expected) -> Outcome {
+    match (result, expected) {
+        (
+            Ok(Verdict::DiffersWhereShown {
+                difference,
+                verdict,
+            }),
+            expected,
+        ) => {
+            if difference.shown_by(expected) {
+                Outcome::Documented(difference.reason().to_owned())
+            } else {
+                judge_result(Ok(*verdict), expected)
+            }
+        }
         (Ok(Verdict::Output(actual)), Expected::Output(expected)) => {
-            let differences = compare::diff(
-                &without_error_messages(expected),
-                &without_error_messages(&actual),
-            );
+            let mut expected = without_error_messages(expected);
+            if let Value::Object(object) = &mut expected {
+                object.shift_remove(NOTES);
+            }
+            let differences = compare::diff(&expected, &without_error_messages(&actual));
             if differences.is_empty() {
                 Outcome::Pass
             } else {

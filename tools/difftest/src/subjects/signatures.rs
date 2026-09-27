@@ -1,16 +1,21 @@
 //! BIP340 and legacy Schnorr signatures, the preimages of transaction signatures, the published
 //! vector files and BIP39 mnemonics.
 
+use heartwood_crypto::blocks::deserialiser::deserialise_header;
 use heartwood_crypto::crypto::hash::sha256;
 use heartwood_crypto::crypto::sig;
 use heartwood_crypto::genesis::bip39;
 use heartwood_crypto::transactions::deserialiser;
 use heartwood_crypto::transactions::serialiser::{self, SerialiseOptions};
+use heartwood_crypto::utils::bytes::Reader;
 use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Aux, SchemeId, SecretKey, Signature, SigningDomain};
+use heartwood_p2p_wire::status::{
+    self, NetworkConfig, PeerConfig, PluginConfig, SignedState, StatusHeaderData, TokenConfig,
+};
 use serde_json::{Value, json};
 
-use super::{Env, Outcome, bytes32, hex_bytes, params, rejected, text, unclassified};
+use super::{Env, Outcome, bytes32, hex_bytes, integer, params, rejected, text, unclassified};
 use crate::subject::{Case, SubjectError, Verdict};
 
 /// The published vector files of the external class, as committed beside the vectors.
@@ -126,12 +131,79 @@ pub(super) fn transaction_preimages(env: &Env<'_>, case: &Case<'_>) -> Outcome<V
     })))
 }
 
-/// `status.preimage`: the peer status message is written by the peer-to-peer codec, which is not
-/// part of `heartwood-crypto`. The crate's tests check each message as what the legacy scheme
-/// signs.
-pub(super) fn status_preimage(_env: &Env<'_>, _case: &Case<'_>) -> Outcome<Verdict> {
-    Err(SubjectError::Unsupported(
-        "the peer status message belongs to the peer-to-peer codec".into(),
+/// The nethash of the oracle's working devnet configuration, which every class but the genesis
+/// class is generated under. The chain definitions of the genesis class carry their own genesis
+/// payload hash instead, so the devnet network read from them differs from the oracle's in this
+/// field only.
+const ORACLE_NETHASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// `status.preimage`: the bytes a relay signs for its status, under the oracle's devnet network,
+/// with the plugins of `input.plugins` (an object, in its key order) or the reference's API on its
+/// default port.
+pub(super) fn status_preimage(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
+    let network = &env.devnet()?.network;
+    let Some(block) = hex_bytes(case.input, "block")? else {
+        return Ok(rejected("TypeError"));
+    };
+    let header = match deserialise_header(&mut Reader::new(&block)) {
+        Ok(header) => header,
+        Err(error) => return Ok(unclassified(error)),
+    };
+    let plugins = match case.input.get("plugins") {
+        None => vec![(
+            "@solar-network/api".to_owned(),
+            PluginConfig {
+                enabled: true,
+                port: 6003,
+                estimate_total_count: Some(true),
+            },
+        )],
+        Some(Value::Object(plugins)) => plugins
+            .iter()
+            .map(|(name, plugin)| {
+                Ok((
+                    name.clone(),
+                    PluginConfig {
+                        enabled: plugin["enabled"]
+                            .as_bool()
+                            .ok_or_else(|| super::failed("a plugin's enabled is not a boolean"))?,
+                        port: integer(plugin, "port")?,
+                        estimate_total_count: plugin
+                            .get("estimateTotalCount")
+                            .and_then(Value::as_bool),
+                    },
+                ))
+            })
+            .collect::<Outcome<_>>()?,
+        Some(_) => return Err(super::failed("input.plugins is not an object")),
+    };
+    let state = SignedState {
+        height: header.height,
+        forging_allowed: case.input["forgingAllowed"]
+            .as_bool()
+            .ok_or_else(|| super::failed("input.forgingAllowed is not a boolean"))?,
+        current_slot: case.input["currentSlot"]
+            .as_i64()
+            .ok_or_else(|| super::failed("input.currentSlot is not an integer"))?,
+        header: StatusHeaderData::from_header(&header),
+    };
+    let config = PeerConfig {
+        version: text(case.input, "version")?.to_owned(),
+        network: NetworkConfig {
+            version: network.pub_key_hash,
+            name: network.name.clone(),
+            nethash: ORACLE_NETHASH.to_owned(),
+            explorer: network.explorer.clone(),
+            token: TokenConfig {
+                name: network.token.clone(),
+                symbol: network.symbol.clone(),
+            },
+        },
+        plugins,
+    };
+    let preimage = status::signing_preimage(&state, &config);
+    Ok(Verdict::Output(
+        json!({ "preimage": hex::encode(&preimage) }),
     ))
 }
 

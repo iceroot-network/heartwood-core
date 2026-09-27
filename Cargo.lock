@@ -352,6 +352,7 @@ dependencies = [
  "heartwood-crypto",
  "heartwood-kernel",
  "heartwood-logger",
+ "heartwood-p2p-wire",
  "heartwood-state",
  "heartwood-transactions",
  "proptest",
@@ -383,6 +384,16 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "heartwood-p2p-wire"
+version = "0.1.0"
+dependencies = [
+ "heartwood-crypto",
+ "hex",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

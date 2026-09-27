@@ -1,0 +1,21 @@
+[package]
+name = "heartwood-p2p-wire"
+description = "The peer-to-peer wire codec of Heartwood Core: nes frames, protobuf messages with field presence, the route codecs and the signed peer status"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# The codec reads untrusted bytes only: no async runtime, no protobuf or URL library. Legacy
+# Schnorr signs and verifies the peer status, and this crate is its one production user.
+[dependencies]
+heartwood-crypto = { workspace = true, features = ["legacy-schnorr"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+serde_json.workspace = true

@@ -19,6 +19,7 @@ unused_must_use = "deny"
 heartwood-crypto = { path = "packages/crypto" }
 heartwood-kernel = { path = "packages/kernel" }
 heartwood-logger = { path = "packages/logger" }
+heartwood-p2p-wire = { path = "packages/p2p-wire" }
 heartwood-state = { path = "packages/state" }
 heartwood-transactions = { path = "packages/transactions" }
 
