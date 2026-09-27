@@ -30,7 +30,7 @@
 //! With the peer-to-peer wire codec: `wire`, the codecs, the nes frames and the peer statuses.
 //!
 //! `wire`, `config`, `text` and `pool` each list their operations in a table of their own
-//! (`OPS`), which [`register`] adds to this module's table.
+//! (`OPS`), which `register` adds to this module's table.
 //!
 //! Most operations run under the devnet configuration the oracle was set up with, which the
 //! [`Devnet`] context carries; a case that brings its own milestone file runs under that file.

@@ -209,8 +209,10 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
 }
 
 /// The outcomes of the reference in a pool session's answer, counted: each error code, an
-/// `ERR_APPLY` of the cold-wallet refusal apart, and every accepted entry.
+/// `ERR_APPLY` of the cold-wallet refusal apart (listed even when it never occurs, since whether
+/// the pool can reach it is a question the report answers), and every accepted entry.
 fn pool_outcomes(expected: &Expected, seen: &mut BTreeMap<String, usize>) {
+    seen.entry(COLD_WALLET_OUTCOME.to_owned()).or_insert(0);
     let Expected::Output(output) = expected else {
         return;
     };
@@ -231,8 +233,8 @@ fn pool_outcomes(expected: &Expected, seen: &mut BTreeMap<String, usize>) {
         {
             let code = error["type"].as_str().unwrap_or("?");
             let message = error["message"].as_str().unwrap_or("");
-            let key = if code == "ERR_APPLY" && message.contains("cold") {
-                "pool ERR_APPLY (cold wallet)".to_owned()
+            let key = if code == "ERR_APPLY" && message.ends_with(COLD_WALLET) {
+                COLD_WALLET_OUTCOME.to_owned()
             } else {
                 format!("pool {code}")
             };
@@ -243,6 +245,11 @@ fn pool_outcomes(expected: &Expected, seen: &mut BTreeMap<String, usize>) {
         }
     }
 }
+
+/// The reference's `ColdWalletError` text, which ends a pool refusal that wraps it.
+const COLD_WALLET: &str = "Wallet is not allowed to spend before funding is confirmed";
+/// The outcome under which a pool run counts the cold-wallet refusals.
+const COLD_WALLET_OUTCOME: &str = "pool ERR_APPLY (cold wallet)";
 
 /// `section` (a `#W` section) without the public key of `address`, and without its record when
 /// the key was all that listed it: what the reference's wallets would be had it not bound the
