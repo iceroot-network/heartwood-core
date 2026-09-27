@@ -14,7 +14,9 @@
 //                           collation removed from the pool (sorted ids), and Delegate.forge on the
 //                           collated transactions, each read back from its bytes with
 //                           fromBytesUnsafe as the forger reads the relay's answer, on the pool's
-//                           tip
+//                           tip; with notes.fullPoolEviction when a step's full pool evicted a
+//                           transaction and then refused the new one, where Heartwood's pool
+//                           evicts nothing (a documented difference of the pool)
 // Loaded by lib/ops.js.
 
 const path = require("path");
@@ -64,10 +66,12 @@ module.exports = function forgerForgeOps(context) {
             if (!Array.isArray(steps)) throw new TypeError("steps must be an array");
             const { session } = await pool["pool.open"]({ fixture, lastBlockHeight, milestones, options, online });
             try {
+                let evicted = false;
                 for (const { op, ...args } of steps) {
                     const run = pool[`pool.${op}`];
                     if (typeof run !== "function" || op === "run" || op === "open" || op === "close") throw new TypeError(`unknown pool step ${op}`);
-                    await run({ session, ...args });
+                    const result = await run({ session, ...args });
+                    evicted = evicted || Boolean(result && result.notes && result.notes.fullPoolEviction);
                 }
                 const { chain } = sessions.get(session);
                 const tip = chain.stateStore.getLastHeight();
@@ -83,7 +87,8 @@ module.exports = function forgerForgeOps(context) {
                         const hexes = candidates.map((t) => Buffer.from(t.serialised).toString("hex"));
                         const previousBlock = { id: forger.previousBlock && forger.previousBlock.id, height: tip };
                         const block = forge({ ...forger, previousBlock }, hexes);
-                        return { collated: candidates.map((t) => t.id), removed, ...block };
+                        const notes = evicted ? { notes: { fullPoolEviction: true } } : {};
+                        return { collated: candidates.map((t) => t.id), removed, ...block, ...notes };
                     }),
                 );
             } finally {

@@ -11,7 +11,9 @@
 //!   `tools/oracle/lib/ops/forger-forge.js`).
 //!
 //! The pool session runs through this crate's `pool.run` subject, with the forger's collation as
-//! its last step; the collated transactions are found among the steps' entries by their ids.
+//! its last step; the collated transactions are found among the steps' entries by their ids. A
+//! session in which the reference's full pool evicted a transaction before refusing the new one
+//! is the pool's documented difference, and its collation is not compared.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -22,7 +24,7 @@ use heartwood_forger::{Delegate, ForgeInputs};
 use serde_json::{Map, Value, json};
 
 use super::{Env, Outcome, Run, amount, bytes32, decode_refused, failed, integer, text};
-use crate::subject::{Case, Verdict};
+use crate::subject::{Case, Documented, Verdict};
 
 /// The operations of block assembly.
 pub(super) const OPS: &[(&str, Run)] = &[
@@ -123,11 +125,17 @@ fn collate_and_forge(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let mut forger = input.clone();
     forger["previousBlock"] = previous;
     let block = forged(env, &forger, &transactions, tip, &milestones)?;
-    Ok(match block {
+    let verdict = match block {
         Verdict::Output(block) => Verdict::Output(json!({
             "collated": collated, "removed": removed, "hex": block["hex"], "id": block["id"],
         })),
         refused => refused,
+    };
+    // A session in which the reference's full pool evicted a transaction it then refused holds
+    // other transactions in Heartwood's pool, so its collation is not compared.
+    Ok(Verdict::DiffersWhereShown {
+        difference: Documented::FullPoolEviction,
+        verdict: Box::new(verdict),
     })
 }
 
