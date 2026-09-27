@@ -15,7 +15,7 @@ use heartwood_crypto::identities::{Address, PublicKey, PublicKeyBytes};
 use indexmap::IndexMap;
 
 use crate::errors::WalletError;
-use crate::persist::RestoreError;
+use crate::persist::{RestoreError, bad};
 use crate::wallets::indexes::Indexes;
 use crate::wallets::wallet::{Delegate, Wallet};
 
@@ -189,8 +189,27 @@ impl WalletRepository {
         network: u8,
         wallets: Vec<Wallet>,
     ) -> Result<WalletRepository, RestoreError> {
-        let _ = (network, wallets);
-        todo!("rebuild the repository")
+        let mut repository = WalletRepository::new(network);
+        for wallet in wallets {
+            let address = *wallet.address();
+            if let Some(key) = wallet.public_key() {
+                if repository.has_by_public_key(&key.to_compressed()) {
+                    return Err(RestoreError::DuplicatePublicKey(key.to_hex()));
+                }
+                (repository.indexes).set_public_key(key.to_compressed(), address);
+            }
+            if let Some(delegate) = wallet.delegate() {
+                if repository.has_by_username(delegate.username()) {
+                    return Err(RestoreError::DuplicateUsername(delegate.username().into()));
+                }
+                (repository.indexes).set_username(delegate.username().into(), address);
+            }
+            let held = repository.wallets.insert(address, Arc::new(wallet));
+            if held.is_some() {
+                return Err(bad("wallet", format!("{address} is held twice")));
+            }
+        }
+        Ok(repository)
     }
 
     /// The wallets that changed since `earlier`, a clone of this repository taken before: those
