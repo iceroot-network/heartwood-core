@@ -17,8 +17,8 @@
 //!   compared as any other;
 //! - entries of a removed type and JSON votes given as an array or a string
 //!   ([`Documented::RemovedType`], [`Documented::VotesWithIndices`]), checked on the entries
-//!   themselves: the step's lists and errors must be equal once those entries are left out on both
-//!   sides, whatever ids they were given. The reference names such a JSON entry by the id of the
+//!   themselves: the step's lists and errors, with their messages under the rules here, must be
+//!   equal once those entries are left out on both sides, whatever ids they were given. The reference names such a JSON entry by the id of the
 //!   transaction it rebuilt, which no other entry and no id of Heartwood's answer names; at most
 //!   one such id per documented JSON entry is left out of the reference's side too;
 //! - a count in a message that the oracle's default locale groups otherwise
@@ -554,8 +554,10 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
         let contents = compare::diff(&a["contents"], &b["contents"]);
         let b_result = &b_result;
         let same_shape = compare::diff(&without_messages(&a_result), &without_messages(b_result));
-        let (same_shape, forms) = if same_shape.is_empty() {
-            (true, Vec::new())
+        // The two results whose messages are compared: the whole results, or, when entries of a
+        // documented form make them differ, the results without those entries.
+        let (a_left, b_left, forms) = if same_shape.is_empty() {
+            (a_result.clone(), b_result.clone(), Vec::new())
         } else {
             let entries = documented_entries(step);
             let ids: BTreeSet<String> =
@@ -566,12 +568,12 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
             if rebuilt.len() <= json {
                 theirs.extend(rebuilt);
             }
+            let (a_left, b_left) = (
+                without_entries(&a_result, &theirs),
+                without_entries(b_result, &ids),
+            );
             let equal = !entries.is_empty()
-                && compare::diff(
-                    &without_messages(&without_entries(&a_result, &theirs)),
-                    &without_messages(&without_entries(b_result, &ids)),
-                )
-                .is_empty();
+                && compare::diff(&without_messages(&a_left), &without_messages(&b_left)).is_empty();
             if !equal {
                 return if online_view(i, &a_result, b_result) {
                     Outcome::Documented(Documented::OnlineView.reason().to_owned())
@@ -579,23 +581,20 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
                     Outcome::Mismatch(prefixed(i, same_shape))
                 };
             }
-            (
-                false,
-                entries.into_iter().map(|(form, _, _)| form).collect(),
-            )
+            let forms: Vec<Form> = entries.into_iter().map(|(form, _, _)| form).collect();
+            (a_left, b_left, forms)
         };
         if !contents.is_empty() {
             return Outcome::Mismatch(prefixed(i, contents));
         }
-        if !same_shape {
+        if !forms.is_empty() {
             documented.get_or_insert(if forms.contains(&Form::RemovedType) {
                 Documented::RemovedType
             } else {
                 Documented::VotesWithIndices
             });
-            continue;
         }
-        match messages(&a_result, b_result) {
+        match messages(&a_left, &b_left) {
             Messages::Equal => {}
             Messages::DecodeReason => {
                 documented.get_or_insert(Documented::DecodeReason);
@@ -607,7 +606,7 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
                 return Outcome::Documented(Documented::OnlineView.reason().to_owned());
             }
             Messages::Different => {
-                return Outcome::Mismatch(prefixed(i, compare::diff(&a_result, b_result)));
+                return Outcome::Mismatch(prefixed(i, compare::diff(&a_left, &b_left)));
             }
         }
     }
@@ -853,6 +852,39 @@ mod tests {
                 &run(vec![step(ours, &["t"])])
             ),
             Outcome::Documented(Documented::RemovedType.reason().into())
+        );
+    }
+
+    #[test]
+    fn the_other_entries_messages_are_compared_beside_a_documented_entry() {
+        let removed = json!({"json": {"typeGroup": 1, "type": 0, "id": null}});
+        let input = process(json!([removed, {"hex": "00"}]));
+        let deactivated =
+            json!({"type": "ERR_OTHER", "message": "Transaction type Core/0 is deactivated"});
+        let applied = |message: &str| json!({"type": "ERR_APPLY", "message": message});
+        // The reference names the removed type by the id it computes, Heartwood by its index.
+        let theirs = json!({"accept": [], "broadcast": [], "invalid": ["c", "x"], "excess": [],
+            "errors": {"c": deactivated, "x": applied("x cannot be applied: one")}});
+        let ours = |message: &str| {
+            json!({"accept": [], "broadcast": [], "invalid": ["0", "x"], "excess": [],
+                   "errors": {"0": deactivated, "x": applied(message)}})
+        };
+        let expected = run(vec![step(theirs, &[])]);
+        assert_eq!(
+            judge(
+                &input,
+                &expected,
+                &run(vec![step(ours("x cannot be applied: one"), &[])])
+            ),
+            Outcome::Documented(Documented::RemovedType.reason().into())
+        );
+        assert!(
+            judge(
+                &input,
+                &expected,
+                &run(vec![step(ours("x cannot be applied: two"), &[])])
+            )
+            .is_failure()
         );
     }
 
