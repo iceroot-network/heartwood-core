@@ -36,11 +36,12 @@ pub enum Violation {
 impl Violation {
     /// The violation a failed request shows, if any: every reply the codec refuses, every nes
     /// protocol error but a heartbeat timeout (a peer that has gone quiet, which an honest peer
-    /// may), and nothing for the other session errors (timeouts, disconnects, server errors).
+    /// may), a hello in answer to a request, and nothing for the other session errors (timeouts,
+    /// disconnects, server errors).
     pub fn of_session(error: &SessionError) -> Option<Violation> {
         match error {
             SessionError::Protocol(ProtocolError::HeartbeatTimeout) => None,
-            SessionError::Protocol(_) => Some(Violation::Protocol),
+            SessionError::Protocol(_) | SessionError::NoPayload => Some(Violation::Protocol),
             _ => None,
         }
     }
@@ -85,6 +86,10 @@ mod tests {
         ] {
             assert_eq!(of(error), Some(Violation::Protocol));
         }
+        assert_eq!(
+            Violation::of_session(&SessionError::NoPayload),
+            Some(Violation::Protocol)
+        );
         for error in [
             SessionError::Timeout,
             SessionError::Disconnect,

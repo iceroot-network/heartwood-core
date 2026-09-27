@@ -413,7 +413,7 @@ impl Actor {
                 // its communicator then fails to read.
                 match pending.reply {
                     None => Ok(Vec::new()),
-                    Some(_) => Err(SessionError::Protocol(ProtocolError::UnknownType)),
+                    Some(_) => Err(SessionError::NoPayload),
                 }
             }
             Kind::Error | Kind::Ping => {

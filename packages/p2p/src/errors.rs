@@ -9,8 +9,9 @@ use std::net::IpAddr;
 use heartwood_p2p_wire::FrameError;
 use thiserror::Error;
 
-/// A request on a nes session failed. Every such error is of the JavaScript class `Error` in the
-/// reference, so the communicator only counts it against the peer ([`SessionError::js_class`]).
+/// A request on a nes session failed. Every such error but [`SessionError::NoPayload`] is of the
+/// JavaScript class `Error` in the reference, so the communicator only counts it against the peer
+/// ([`SessionError::js_class`]).
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum SessionError {
     /// The request's timeout expired: "Request timed out".
@@ -39,13 +40,20 @@ pub enum SessionError {
     /// The session was used in a way it does not allow (the reference's `user` errors).
     #[error("Error: {0}")]
     User(&'static str),
+    /// A hello answered the request: the reference resolves the request with nothing, and its
+    /// communicator then fails to read the payload, with the class `TypeError`.
+    #[error("TypeError: Cannot read properties of undefined (reading 'payload')")]
+    NoPayload,
 }
 
 impl SessionError {
-    /// The reference's JavaScript class of the error: always `Error`, the class of every error the
-    /// nes client raises.
+    /// The reference's JavaScript class of the error: `Error`, the class of every error the nes
+    /// client raises, except `TypeError` for a request answered with nothing.
     pub fn js_class(&self) -> &'static str {
-        "Error"
+        match self {
+            SessionError::NoPayload => "TypeError",
+            _ => "Error",
+        }
     }
 }
 

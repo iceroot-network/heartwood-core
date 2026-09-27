@@ -506,6 +506,24 @@ async fn a_response_after_its_timeout_is_for_an_unknown_request() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_hello_in_answer_to_a_request_fails_it_with_the_references_type_error() {
+    let (mut peer, session, errors) = wire_session().await;
+    let pending = ask(&session, LONG, 0);
+    let (request, _) = peer.message().await;
+    peer.send(&Message::server_hello(request.id, HEARTBEAT, "wire".into()))
+        .await;
+    let failed = answer(pending).await;
+    assert_eq!(failed, Err(SessionError::NoPayload));
+    assert_eq!(failed.unwrap_err().js_class(), "TypeError");
+    // Nothing is reported, and the session answers the next request.
+    let pending = ask(&session, LONG, 0);
+    let (request, _) = peer.message().await;
+    peer.send(&Message::response(request.id, vec![7])).await;
+    assert_eq!(answer(pending).await, Ok(vec![7]));
+    assert!(seen(&errors).is_empty());
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_request_raises_the_receive_limit_and_every_message_resets_it() {
     let script = Script::new()
         .on(RouteId::GetStatus, big(150 * KIB))

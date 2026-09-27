@@ -322,6 +322,32 @@ async fn requests_the_reference_never_writes_are_not_sent() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_request_answered_with_nothing_fails_as_the_references_type_error() {
+    let fixture = Fixture::new();
+    let client = &fixture.communicator;
+    let transport = &fixture.transport;
+    // A hello in answer to getPeers: the reference's TypeError, so the peer is disconnected and
+    // forgotten, and it is a violation.
+    let first = stored(&fixture, 1);
+    transport.answer(RouteId::GetPeers, Answer::Fail(SessionError::NoPayload));
+    assert_eq!(client.get_peers(&first, true).await, None);
+    assert!(!fixture.repository.has(first.ip()));
+    assert_eq!(transport.disconnected(), [first.ip()]);
+    assert_eq!(transport.errors(), [(first.ip(), "TypeError")]);
+    assert_eq!(first.snapshot().violations.len(), 1);
+    // On getBlocks it is only counted: the reference's getBlocks disconnects no peer for it.
+    let second = stored(&fixture, 2);
+    transport.answer(RouteId::GetBlocks, Answer::Fail(SessionError::NoPayload));
+    let blocks = client
+        .get_peer_blocks(&second, BlocksRequest::after(1))
+        .await;
+    assert!(blocks.unwrap().is_empty());
+    assert!(fixture.repository.has(second.ip()));
+    assert_eq!(second.snapshot().sequential_errors, 1);
+    assert_eq!(transport.disconnected(), [first.ip()]);
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_error_class_decides_whether_the_peer_is_disconnected() {
     let fixture = Fixture::new();
     let client = &fixture.communicator;
