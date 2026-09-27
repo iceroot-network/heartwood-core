@@ -10,9 +10,9 @@ equal byte for byte, including which inputs each side rejects.
 
 | Level | What is compared | Status |
 |---|---|---|
-| L0 | golden vectors written by the reference, against Heartwood | runs against all six crates: 5,554 of 5,634 records compared, all equal (see below) |
-| L1 | random and mutated cases, one oracle call each | runs: nine properties, from the fee floor to the state digest (see below) |
-| L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets, with seeded reverts and synthetic blocks (see below) |
+| L0 | golden vectors written by the reference, against Heartwood | runs against the seven crates with vector classes: 6,220 of 6,387 records compared, all equal (see below) |
+| L1 | random and mutated cases, one oracle call each | runs: twelve properties, from the fee floor to the pool and the crypto files (see below) |
+| L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets through Heartwood's store, with seeded reverts, restarts at every height, synthetic blocks and pool sessions (see below) |
 | L3 | the same scenario on a reference devnet and on a Heartwood devnet | planned |
 | L4 | a mixed network of reference and Heartwood nodes | planned |
 
@@ -36,6 +36,12 @@ packages/transactions/  heartwood-transactions: the six transaction handlers, th
                       the pool-entry checks
 packages/p2p-wire/    heartwood-p2p-wire: the peer-to-peer wire codec (nes frames, the protobuf
                       messages of the public routes, list framing, the signed peer status)
+packages/database/    heartwood-database: the store, one SQLite file per node (the reference's
+                      chain tables, the state tables, the chain's identity, the start checks)
+packages/pool/        heartwood-pool: the transaction pool, with its storage, the fee rules, the
+                      queries, the collator and the node-local online record
+packages/blockchain/  heartwood-blockchain: so far, a block's commit to the store and a node's
+                      start (first start, restart from the state tables, replay from genesis)
 packages/*/tests/vectors/  each crate's golden vectors, with its own MANIFEST.sha256
 tools/difftest/       heartwood-difftest: the harness library and the `difftest` binary
   corpus/               a committed L2 corpus (a reference devnet chain and its digest lines)
@@ -53,14 +59,15 @@ tools/oracle/         the oracle: Node scripts and the image recipe
                         classes and checks the replay against the node that made the chain
   lib/                  solar.js (load a built reference), network.js (the devnet), ops.js and
                         ops/ (the operations), craft.js (inputs the builders do not make),
-                        state.js (the reference's state machine without a database), digest.js
-                        (the state digest), corpus.js, vectors/ (one file per class)
+                        state.js (the reference's state machine without a database, and its two
+                        start paths), pool.js (the reference's pool), digest.js (the state
+                        digest), corpus.js, vectors/ (one file per class)
   check-native.js       checks that the reference's native modules build and load
 tools/wire-fuzz-seeds.js  seeds the wire fuzz corpora from the wire vectors
 packages/crypto/tests/vectors/external/  published vector files, with their source URLs and SHA-256
 fuzz/                 cargo-fuzz targets for the transaction and block decoders, the
-                      transaction handlers, whole blocks on the state and the wire decoders
-                      (own workspace)
+                      transaction handlers, whole blocks on the state, the state's records, the
+                      pool and the wire decoders (own workspace)
 ```
 
 ## Requirements
@@ -86,6 +93,9 @@ make vectors-install  # copy the image's vectors into each crate's tests/vectors
 make test-oracle    # the oracle answers, and 256 L1 cases per property, in the image and locally
 make l1             # the L1 properties against the oracle
 make l2 NAME=txgen-one-node CORPUS=tools/difftest/corpus   # replay a corpus against its digest lines
+make l2-restart NAME=txgen-one-node CORPUS=tools/difftest/corpus   # the same with restarts
+make crash-test NAME=txgen-one-node CORPUS=tools/difftest/corpus   # the store after SIGKILLs
+make pool-bench     # the cost of the pool's per-sender views and of the store's commit
 ```
 
 `make check` needs only Rust. It lints and tests every crate on its own, with no features and
@@ -112,11 +122,14 @@ oracle answers, in the image and locally), `make oracle-save` (`docker save` of 
 | `DIFFTEST_DOCKER` | `tools/oracle/docker.sh` | the docker command |
 | `DEVNET_GENERATOR` | empty | the devnet generator, `gen-network.js`, for the genesis class; a separate tool that is not published |
 | `VECTOR_CRATES` | every crate and its classes | which classes `make vectors-install` puts into which crate's `tests/vectors` |
-| `L1_CASES`, `L1_SEED`, `L1_PROPERTY` | `256`, `1`, all | cases per property, the generator's seed, the properties (`P1` to `P9` or their names, comma separated) |
+| `L1_CASES`, `L1_SEED`, `L1_PROPERTY` | `256`, `1`, all | cases per property, the generator's seed, the properties (`P1` to `P12` or their names, comma separated) |
 | `CORPUS`, `NAME` | `target/corpus`, empty | the L2 corpus `CORPUS/NAME` |
 | `ARCHIVE`, `CORPUS_SEED`, `DUMP` | empty | the devnet archives `make corpus-import` joins (in chain order); the chain's public key-derivation seed; heights whose records the judge writes |
+| `TO` | empty | cut the corpus at this height, in `corpus-judge`, `l2`, `l2-synthetic` and `l2-restart` (the judge and the replays must use the same cut) |
+| `RESTARTS` | empty | the restart plan `corpus-judge` writes into the corpus before it judges: `every` (a restart at every height) or `rounds` (the round ends, the first blocks of rounds, 20 seeded heights and the node's live restarts) |
+| `KILLS`, `KILL_SEED` | `200`, empty | the kill test's number of kills, and the seed of its delays |
 | `ORACLE_ARGS` | `--image $(IMAGE)` | where the oracle of `l1`, `corpus-judge`, `l2-synthetic` and `replay-wire` runs; `--solar-dir DIR` for a local reference |
-| `RELEASE_PACKAGES` | the six library crates | the packages `make release-check` builds without test seams |
+| `RELEASE_PACKAGES` | the nine library crates | the packages `make release-check` builds without test seams |
 | `FUZZ_SECONDS`, `FUZZ_FORK` | `600`, `8` | how long each wire fuzz target runs, and its libFuzzer jobs |
 | `WIRE_SEEDS`, `WIRE_SEED_MAX` | the installed wire class, `65536` | the vector file that seeds the wire fuzz corpora, and the longest seed in bytes |
 | `WIRE_LOGS` | `target/wire-fuzz` | the logs of `make fuzz-wire` and `make replay-wire` |
@@ -169,6 +182,14 @@ order, verdicts and error classes), the published BIP340, bip-schnorr and BIP39 
 cross-check of both signature schemes with `k256` on every signature record and on random keys and
 messages. `make test` runs both commands and the difftest tests.
 
+`utils::js` holds the crate's JavaScript number semantics, among them the number formatting of
+the reference's messages: `toLocaleString` of an integer (English grouping), and of a double with
+at most a given number of fraction digits, rounded as Node's ICU rounds it (the shortest decimal
+digits of the double, a tie away from zero). `utils::format_satoshi` writes an amount with the
+network's symbol as the reference's `formatSatoshi` does, and `Transaction::display` writes a
+transaction's short text, `<sender>#<nonce> <last 8 hex of the id> <type> v<version>`, as the
+reference's `toString`.
+
 A node accepts a block from another node with `Block::receive`, not with `Block::decode`. As the
 reference does, it decodes the block and then builds it again from the decoded fields: every
 transaction is serialised again after the transaction rules have changed it (a vote name that is
@@ -193,12 +214,20 @@ set and transaction: nothing may panic, a refusal changes nothing, and an accept
 revert restores every wallet. `state_blocks` gives the state machine a sequence of blocks (with
 transactions of every kept type, in near slots, by the scheduled delegate or another key) and
 reverts: nothing may panic, a refused block changes nothing, the supply check holds, and a revert
-gives back the state from before its block.
+gives back the state from before its block. `state_records` reads arbitrary text as each of the
+state's records and restores a state from records changed byte by byte: a refusal is a typed error,
+and a state written as records reads back equal. `pool_process` runs sequences of batches, clock
+moves, removals, re-adds, blocks and storage restarts on a small fixture: nothing may panic, the
+pool stays within its limits, each sender's transactions apply in order on a fresh view, a
+collation is in fee order with each sender's nonces in order, and the storage holds exactly the
+pool's transactions.
 
 ```sh
 (cd fuzz && cargo +nightly fuzz run transaction_decode -- -max_total_time=600)
 (cd fuzz && cargo +nightly fuzz run state_apply -- -fork=12 -max_total_time=600 -rss_limit_mb=4096)
 (cd fuzz && cargo +nightly fuzz run state_blocks -- -fork=12 -max_total_time=600 -rss_limit_mb=4096)
+(cd fuzz && cargo +nightly fuzz run state_records -- -fork=12 -max_total_time=600 -rss_limit_mb=4096)
+(cd fuzz && cargo +nightly fuzz run pool_process -- -fork=12 -max_total_time=600 -rss_limit_mb=4096)
 difftest oracle replay tx.fromBytes fuzz/corpus/transaction_decode \
     --vectors packages/crypto/tests/vectors --milestones fuzz/milestones/transaction_decode.json \
     --image heartwood-oracle:<commit>
@@ -221,10 +250,22 @@ time from the milestone at height 1, which may not change later); epoch timestam
 log lines show them; IP addresses and the address lists of the API, peers and remote access; the
 `Clock` seam; the reference's event names; the component lifecycle; the eight log levels as macros
 over `tracing`; a node's config, data, cache, log and temp directories; the `.env` parser; and the
-option merge (arrays are replaced). The feature `difftest` adds `ManualClock`, a test seam.
+option merge (arrays are replaced); and `pluralise`, the word and count of the reference's
+messages. The feature `difftest` adds `ManualClock`, a test seam.
+
+`config::crypto` loads a network's four crypto files (`network.json`, `milestones.json`,
+`genesisBlock.json`, `exceptions.json`). All four must be there: a missing file stops the start and
+is named, where the reference falls back to a built-in preset. Before the crypto crate's loaders
+read them, the network and milestone files pass a strict schema (`config::schema`): an unknown key
+at any level, a `null` anywhere, a height given twice or a value of the wrong type is refused with
+the file, the height and the key path. The keys of removed features are accepted only at their off
+values (`legacyTransfer: false`, `legacyVote: false`, `bip340: true`,
+`acceptLegacySchnorrTransactions: false`, `htlcEnabled: false`), and `exceptions.json` must be
+exactly `{}`. The reference loads every such file, so these refusals are configuration-only
+differences; generated devnets never contain one.
 
 ```sh
-cargo test -p heartwood-kernel --locked --all-features   # unit tests and the V09-rounds and V16 classes
+cargo test -p heartwood-kernel --locked --all-features   # unit tests, the loader's refusals, V09-rounds, V16 and V23
 ```
 
 ## heartwood-logger
@@ -258,8 +299,18 @@ with domain tags, a height digest over the five, and a chain digest over a whole
 oracle computes the same digest over the reference's own state, so a replay is compared at every
 height and every revert.
 
+`persist` holds the state's records, what the store keeps so that a restarted node reads its
+state back instead of replaying the chain: one record per wallet (its delegate record, votes, vote
+shares and resignation height included), one for the rest of the tip's state (the supply totals
+and the round), and one undo record per block. They are versioned `serde` types that refuse
+unknown fields, with amounts as decimal text. `State::restore` builds a state from them and checks
+it first: the last block, every key and name held once, each delegate's vote balance and voter
+count against its voters' shares, the supply, the forging order against the round's shuffle, and
+one undo record per height. `WalletRepository::changed_since` lists the wallets that changed since
+an earlier copy, which is what a block's commit writes.
+
 ```sh
-cargo test -p heartwood-state --locked --all-features   # V08, V09-shuffle, V15, V18 and the machine tests
+cargo test -p heartwood-state --locked --all-features   # V08, V09-shuffle, V15, V18, the machine tests and the records on the committed chain
 ```
 
 ## heartwood-transactions
@@ -269,11 +320,124 @@ registration, 1/2 delegate registration, 1/7 delegate resignation, 2/0 burn, 2/2
 its checks in the reference's order, its apply and revert, and its genesis path; the fee check
 against the dynamic fee floor of `heartwood-crypto` (`minimum_fee` gives the floor of a decoded
 transaction); the checks that decide whether a transaction may enter the pool; and error types whose
-`class()` is the reference's error class. The registry is closed: it dispatches on the transaction
-type, and no plugin can replace a rule. A handler runs every check before it changes a wallet.
+`class()` is the reference's error class. `TransactionError::message` writes a refusal's message
+as the reference does, with amounts in the network's symbol, and the pool-entry refusals carry the
+reference's texts. The registry is closed: it dispatches on the transaction type, and no plugin can
+replace a rule. A handler runs every check before it changes a wallet.
 
 ```sh
-cargo test -p heartwood-transactions --locked --all-features   # handlers, pool checks, V17
+cargo test -p heartwood-transactions --locked --all-features   # handlers, pool checks, V17 with every message
+```
+
+## heartwood-database
+
+`packages/database` is a node's store: one SQLite file, `<data>/database/blockchain.db`, with one
+writer connection (write-ahead log, `synchronous = FULL`, foreign keys, SQLite's defensive mode, no
+memory-mapped I/O; extensions are never loaded). Schema version 1 holds the reference's four chain
+tables with its columns (`blocks`, `transactions`, `rounds`, `missed_blocks`), the state tables
+(`wallets`, `state`, `undo`), `meta` (the schema version, the network's nethash, the genesis
+block's id and the state format), the fingerprints of the applied milestone entries and the
+node-local delegate versions. Ids, keys and hashes are lowercase hex text. Amounts are integers
+written through a checked conversion: a value beyond `2^63 - 1` is a storage error, where the
+reference's `bigint` columns stop too. The amount column of a transaction holds 0 where the
+reference stores `NULL`. A file of another schema version, or of another program, is refused.
+
+Writes go in chunks: one SQLite transaction per chunk of blocks, with a savepoint per block, so a
+chunk is stored whole or not at all. On every start the store checks itself: the block count is
+the tip's height; the transaction count, fee sum and amount sum agree with the block columns; no
+round rows lie above the next round; there is one undo record per height from 2 to the tip; and the
+state row names the tip. The crate stores rows, not state: it does not depend on
+`heartwood-state`.
+
+```sh
+cargo test -p heartwood-database --locked   # row round trips, chunks, reverts, the start checks, killed commits
+```
+
+The kill test (`tests/kill.rs`) kills a child process that commits chunks in a loop with SIGKILL
+at random moments, 20 times by default (`HEARTWOOD_DATABASE_KILLS` sets another number), and
+checks that the file holds the last reported chunk or the one after it, complete.
+
+## heartwood-pool
+
+`packages/pool` is the transaction pool. It admits transactions as the reference's pool does: the
+same checks in the same order, the same error codes and messages, the same `accept`, `broadcast`,
+`invalid` and `excess` lists and `errors` map in a processor's result, and the same orders when it
+is queried and collated. Every admission, re-add and collation runs under the rules of the next
+block (the tip plus one); the collator's byte budget is the tip's.
+
+- A processor decodes a batch on up to `worker_count` threads and then adds its entries in the
+  reference's two loops: first the decoding and a 30-second cooldown per transaction id (each
+  processor has its own, as the API and the peer-to-peer port each hold one), then the pool's
+  checks: a duplicate, the fee rule (the milestone's dynamic fees; when they are off, the pool's
+  own floor, or with that off too the exact static fee), a full pool, the per-sender limit, and on
+  the sender's view the size, the network, the signature and the handler's pool-entry checks and
+  apply.
+- Each sender has its own view of the wallets, a copy of the state's, so a transfer waiting in the
+  pool does not fund its recipient's own transactions.
+- Admitted transactions are stored in `<data>/pool/pool.sqlite`, in the reference's table, and a
+  restarted node adds them back. Re-adds, clean-ups (by age and by size), removals with the
+  sender's later transactions and the removal of forged transactions follow the reference.
+- A removed transaction type is refused at decode, but answered as the reference answers it:
+  `ERR_OTHER` "Transaction type Core/N is deactivated".
+- Votes, and revokes of a resignation, enter the pool only for delegates that operate a node. That
+  online record is node-local: the store keeps it across restarts, and an entry expires five rounds
+  after its round.
+
+Three things differ on purpose. The first two show only after a crash or with an invalid
+transaction; the third depends on when the online record changes. A transaction is stored only
+once it is admitted: the reference stores it first, so a crash before its checks end
+leaves a row that its re-add trusts. In a full pool, a new transaction is checked before the
+lowest-priority one is evicted for it: the reference evicts first, so an invalid transaction with a
+higher fee evicts a valid one. And the pool reads the online record when it checks, where the
+reference's view of a sender keeps the copy of a delegate's wallet it took when it first read it,
+until the view is rebuilt after the next block.
+
+The pool is synchronous: each operation takes `&mut self` and returns what it added and removed,
+and it reads the time only through the kernel's clock seam.
+
+```sh
+cargo test -p heartwood-pool --locked   # every admission step with its code and message, lists, cooldown, orders, collation, storage
+make pool-bench                          # the cost of the per-sender views and of the store's commit (release build)
+```
+
+Each sender's view is a full copy of the state's wallets, which `make pool-bench` measures: at
+100,000 wallets one copy takes about 0.5 ms and 4.3 MiB, but adding back the transactions of 1,000
+senders at 10,000 wallets takes about 340 ms and 680 MiB, and memory grows with senders times
+wallets. A cheaper view is needed before a network with more than a few thousand wallets. The same
+target measures the store's commit: between about 8 and 17 ms per block on the maintainers'
+machines, nearly all of it the file system's sync under `synchronous = FULL`, and about 1,800 bytes
+of database per block on the committed chain (undo records about 560 bytes on average).
+
+## heartwood-blockchain
+
+`packages/blockchain` holds, so far, the part of the blockchain component that stores the chain and
+restores the state from it; the block processor, the queue and the state machine that drive it come
+later. A chunk writer commits each applied or reverted block in the chunk's one transaction: the
+block and transaction rows with the columns the reference derives (the generator's username, the
+burned fee, the donations), the wallets that changed since the last commit, the block's undo
+record, the state row, the round rows at a round start and the block's missed slots. A revert
+deletes what lies above the new tip, as the reference's does.
+
+`restore` is a node's start:
+
+- An empty store is a first start: the genesis block is checked and stored with round 1's rows,
+  the wallets, the state row and the chain's identity, in one transaction.
+- Otherwise the start first checks the store (the checks above, and that it holds the configured
+  network and genesis block) and stops, naming the check, when one fails; there is no automatic
+  rewind.
+- The state is then read back from the state tables. When they are missing, of an older format or
+  fail `State::restore`'s checks, or when a replay is asked for, every stored block is applied
+  again from the genesis block through the handlers, and the state tables are written again. A
+  balance that would go below zero during a replay stops the start with the reference's text,
+  "State Generation failed: Wallet with negative balance".
+- A milestone entry that the tip has reached is fingerprinted when it is first reached. A start
+  refuses a milestone file in which such an entry changed or disappeared, or which adds an entry at
+  or below the tip, and names the height to roll back to. `p2p` and `fees.staticFees` are left out
+  of the fingerprint: they decide which peers a node talks to and what its pool takes, never whether
+  a block is valid.
+
+```sh
+cargo test -p heartwood-blockchain --locked   # commit and restart at every height of the committed chain, the start's refusals, the milestone check
 ```
 
 ## heartwood-p2p-wire
@@ -380,14 +544,17 @@ models the reference's class. On a run of every class (reference tag `s1-ref-v2`
 
 | Outcome | Records |
 |---|---|
-| compared, equal to the reference | 5,554 |
-| documented differences, each with its form checked on the input or shown by the oracle's answer | 74 |
+| compared, equal to the reference | 6,220 |
+| documented differences, each with its form checked on the input or shown by the oracle's answer | 161 |
 | skipped: builders of types or headers that Heartwood does not build | 6 |
 
 `cargo test` checks the classes of each crate in that crate; the difftest test `l0` runs the
-comparison over the committed vectors of `heartwood-crypto` (1,701 compared, 58 documented, 6
-skipped), and the test `l0_wire` over the wire class of `heartwood-p2p-wire` (1,179 compared, 14
-documented, none skipped).
+comparison over the committed vectors of `heartwood-crypto` (2,212 compared, 58 documented, 6
+skipped), the test `l0_wire` over the wire class of `heartwood-p2p-wire` (1,179 compared, 14
+documented, none skipped), `pool_vectors` over the pool class (42 sessions compared, 8
+documented) and `config_vectors` over the crypto-file class (17 compared, 79 documented).
+A refusal's message is compared as well as its class: the handlers' messages in V17 and every
+message of the pool.
 
 Outside the wire class, all but the last of the documented differences are inputs that Heartwood
 refuses and the reference accepts:
@@ -413,11 +580,35 @@ refuses and the reference accepts:
 - a transaction from a sender whose wallet has no public key yet, which both sides refuse with the
   same error class. The reference binds the sender's key to the wallet before its checks run and
   keeps it after the refusal; Heartwood leaves the wallet as it was. The comparison leaves that key
-  out and compares everything else.
+  out and compares everything else;
+- crypto files that the strict schema refuses (see heartwood-kernel above): the reference loads
+  them, or falls back to its built-in preset when a file is missing. Each refusal kind has its own
+  predicate on the input, and a file that the reference refuses must be refused by Heartwood.
+
+In the pool's sessions, a step is compared in full (the lists in order, the errors with their codes
+and messages in order, the pool's contents after the step), with these documented cases, each
+checked on the entries or shown by the oracle's answer:
+
+- the reason after "Invalid transaction data: " of an entry that does not decode: Heartwood names
+  its own decoder's reason, where the reference names its decoder's or its schema validator's; the
+  code, the entry id, the place in the lists and the verdict must be equal;
+- an entry of a removed type, or a JSON vote given as an array or a string: left out on both sides,
+  under any id either side gave it, and the rest of the step must be equal;
+- a full pool that the reference emptied by one eviction for a transaction it then refused (the
+  oracle notes each such eviction): Heartwood must refuse the same transaction and agree on every
+  entry before it; its pool keeps the transaction the reference evicted, so the rest of the session
+  is not compared;
+- after the session changed the online record, an entry refused as offline on one side only: the
+  reference's view of the sender kept the delegate's wallet as it copied it before the change. The
+  rest of the session is not compared;
+- a count in a message that the oracle's default locale groups otherwise (the oracle notes its
+  locale; in the image and on the maintainers' machines it is English, so no case shows it).
 
 The wire class counts 14 documented differences, each shown by the oracle's answer: 1 status
 plugin named `__proto__`, 2 payloads with groups nested 50,000 deep and 11 amounts beyond 128 bits
-(see heartwood-p2p-wire above).
+(see heartwood-p2p-wire above). The pool class counts 8: 5 decode reasons, 2 full-pool evictions
+and 1 JSON vote with indices. The crypto-file class counts 79: 75 strict-schema refusals and 4
+fee-table values of the wrong type.
 
 ## L1: properties
 
@@ -436,6 +627,9 @@ minimal case, which is written to `--regressions`.
 | P7 handlers | wallet sets of 3 to 12 wallets and a mutated transaction from one of them, under the devnet's milestones or variants of them (fewer active delegates, fees off, and the fee floor, burn minimum and revoke delay changing at the rule height or the height after it) | `state.applyTransaction`: the verdict, the error class, and the wallets after apply and after revert; the revert must also give back the wallet set on each side |
 | P8 kernel text | JSON values, `.env` text, address lists | `kernel.stringify`, `kernel.dotenv`, `kernel.ip` |
 | P9 digest | wallet sets | `state.digest` |
+| P10 pool | fixtures of 3 to 12 wallets, some of them online delegates, with random options (small limits in a quarter of the cases, milestone fees on or off, the static mode), and 1 to 8 steps: batches of 1 to 6 entries built from the fixture's keys and mutated (nonces, fees around the floor and the lowest, amounts around the balance, duplicates, removed types, another network, bad signatures, pending conflicts, bytes or JSON with a correct, wrong or missing id), the clock moving on, removals, re-adds, a restart of the storage, changes of the online record, and a collation at the end | `pool.run`: every step's result and the pool's contents after it |
+| P11 text | amounts over the whole `i64` and `u64` range, weighted to `2^53` and to rounding ties; fraction digits; symbols; counts; transactions | `text.formatSatoshi`, `text.toLocaleFixed`, `text.toLocaleString`, `text.pluralise`, `text.transaction` |
+| P12 crypto files | the devnet's milestone and network files with keys added at random paths, `null`s, heights repeated, value types changed, removed features turned on, and files removed | `config.load`: a file the reference refuses must be refused by Heartwood; one only Heartwood refuses must match one strict-schema predicate; accepted files must merge to the same milestones |
 
 With the date as the seed and 10,000 cases per property (50,000 for P7), every property agrees
 with the reference. The only documented difference that appears is the one of a refused
@@ -444,6 +638,17 @@ checks run and keeps it after the refusal, Heartwood leaves the wallet as it was
 lists such cases apart, and the comparison leaves that key out and compares everything else. P7
 also counts the reference's error classes it reached; each class of the handlers' checks that a
 transaction can reach from a consistent wallet set appears.
+
+P10, P11 and P12 run 10,000 cases each with the date as the seed (P10 also 20,000). P11 agrees with
+the reference on every case. In P12 about half the files are ones that only Heartwood refuses, each
+matching exactly one strict-schema predicate, and every file the reference refuses Heartwood
+refuses too. In P10 about a third of the sessions compare in full; the others show one of the pool's
+documented differences (see L0), most often an entry that does not decode, which the generator puts
+in most batches. P10 reaches every error code the reference's pool can give, each more than 250
+times in 10,000 cases, apart from two that it cannot give: `ERR_WRONG_NETWORK` (its schema refuses
+another network byte first) and `ERR_RETRY` (a failed revert empties the sender's mempool). The
+report also counts the reference's refusals with its `ColdWalletError` text; there are none, since
+the reference binds a sender's key before its checks run, so the pool cannot reach that error.
 
 ## L2: chains, corpora and the state digest
 
@@ -463,19 +668,66 @@ fee floor, burn minimum and revoke delay changing at a height, a vote at a round
 fees at their limits, a block by a key that is no delegate, and a competing chain after a revert
 across a round end) and sends them to both sides.
 
+Heartwood's replay goes through its store, as a node does: the state after the first start is
+read from the store, and every applied or reverted block is committed with the chunk writer, one
+block per chunk (and in a second run, chunks of 100 blocks). At the end the store's rows are
+compared with the rows the reference node wrote to its own database: the round rows of every round
+in the order of the reference's `getRound`, the missed slots, and each block's username, burned fee
+and donations.
+
+**Restarts.** `make corpus-judge RESTARTS=every` (or `rounds`) writes a restart plan into the
+corpus: the heights at which the replay restarts, and after a restart at a round end a revert of
+one block and of 54 blocks and their re-apply. The judge restarts the reference at each planned
+height by its two start paths, headless: its rebuild (`StateBuilder` from the stored rows and
+`RoundState.restore`) and a start from its saved state (`StateSaver` on the running node, then
+`StateLoader`), and writes their lines to `ts-restarts.jsonl`. `make l2-restart` replays the chain
+once per start path of Heartwood (the state tables, and the replay from the genesis block), closing
+and opening the store at each planned height. A restart line must equal the continuous line of its
+height in the last block, the supply, the round and the wallets, and the reference's lines of both
+paths; every later line (applies, reverts, re-applies) must equal the continuous line of its step,
+and each delegate's resignation height must still be that of its latest resignation.
+
+**Synthetic cases.** `--synthetic` also runs restarts and pool sessions on top of the chain, on both
+sides. The restarts: a revoke one block after a restart; a resignation, a restart 50 blocks later
+and revokes at the delay minus one, the delay and the delay plus one; a resignation, a revoke and a
+registration in one round with a restart in it; restarts at a round end and at the next round's
+first block with equal vote balances; delegates named `0x10`, `0b101` and `1e5` (the reference's
+saved state reads such names as numbers, which is a documented difference of that path only); a
+stored transfer raised above its sender's balance, on which both refuse to start without a saved
+state, with "State Generation failed: Wallet with negative balance"; and a restart followed by a
+revert across a round end and a competing chain. Each Heartwood restart must also give back each
+delegate's resignation height and each wallet's vote shares, which the digest leaves out. The pool
+sessions: transfers from three senders collated, forged by the scheduled delegate and applied, then
+the synced node's steps (remove the forged transactions, clean up, add the rest back); a competing
+transaction for a pending nonce forged in a block; a revert of a block with pool transactions and
+their re-add; a vote before and after its delegate is online, and the online record's expiry five
+rounds later; a milestone that raises the fee floor at the tip plus two; and a restart of the pool's
+storage.
+
+**Kill test.** `make crash-test` replays the chain through the store in a child process
+(`difftest store replay`) and kills it with SIGKILL after a random delay, `KILLS` times; after each
+kill it restores the store by both of Heartwood's start paths (`difftest store check`), which must
+land on the last or the next committed block with a state whose digest equals the continuous line of
+that height, and goes on from there.
+
 ```sh
 make corpus-import ARCHIVE='archive/...' NAME=my-chain   # into target/corpus/my-chain
-make corpus-judge NAME=my-chain                           # the judge's digest lines and checks
-make l2 NAME=my-chain                                     # Heartwood against those lines
-make l2-synthetic NAME=my-chain                           # with the synthetic blocks (needs the oracle)
-cargo test -p heartwood-difftest --locked --test l2       # the committed corpus, no oracle
+make corpus-judge NAME=my-chain RESTARTS=every            # the judge's digest lines, checks and restart lines
+make l2 NAME=my-chain                                     # Heartwood through its store against those lines
+make l2-restart NAME=my-chain                             # the same with the restarts of the plan
+make l2-synthetic NAME=my-chain                           # with the synthetic blocks, restarts and pool sessions (needs the oracle)
+make crash-test NAME=my-chain KILLS=200                   # the store after SIGKILLs
+cargo test -p heartwood-difftest --locked --test l2       # the committed corpus with its restart lines, no oracle
 ```
 
 The committed corpus, `tools/difftest/corpus/txgen-one-node`, is a one-node devnet chain of five
-rounds with every kept transaction type; its README describes it. The maintainers also replay
-longer chains made with the same unpublished tooling (three nodes with partitions, kills and
-restarts, and a soak of at least 50 rounds); they are imported under `target/corpus` and are not
-committed.
+rounds with every kept transaction type and one live restart of the node, with the judge's lines
+and a restart line of both reference paths at every height; its README describes it. The
+maintainers also replay chains made with the same unpublished tooling, which are imported under
+`target/corpus` and are not committed: three nodes with partitions, kills and restarts (replayed up
+to the end of its fifth round), and a one-node chain of five rounds restarted once from its saved
+state and once without it, with an API checkpoint after each restart, which the judge's headless
+restarts must reproduce.
 
 ## The oracle image
 
@@ -522,15 +774,18 @@ run without `DEVNET_GENERATOR`, and then installs nothing.
 | `V11-external.jsonl` | the published vector files in `external/` (BIP340, the bip-schnorr draft at `d194620`, BIP39 English), each with its source URL and SHA-256 in `external/SOURCES.json`, and the reference's answers on their inputs |
 | `V12-milestone-config.jsonl` | milestone files as JSON text, accepted (with the merged milestones, rewards and donations) or refused by the configuration manager's start-up checks; transaction rules at the block's height |
 | `V19-fee-floor.jsonl` | the dynamic fee floor of the six types over memo lengths, recipients, votes of 1 to 53 entries and resignation types; fee tables switched off, with `minFee` 0 and negative, and without a type's key; tables and revoke delays of the wrong type |
+| `V22-text.jsonl` | the number formats of the messages: `formatSatoshi` of 0, 1, 5, `10^8`, `10^8 + 1`, every power of ten, amounts near `2^53`, above it, at `2^63 - 1` and `2^64 - 1`, negatives; `toLocaleString` of doubles at rounding ties with 0 to 8 fraction digits and of integers; a transaction's short text for the six types, nonces up to `2^63 - 1` and the versions |
 | `V08-ranking.jsonl` (state) | the delegate ranking over generated sets: equal vote balances broken by public key, resignations, 53 to 80 delegates, rounds larger than the ranking, identical keys refused; the key order over random key pairs, every first byte and keys that first differ at each byte |
 | `V09-rounds.jsonl` (kernel) | the round of a height and whether it starts one, for heights 1 to 10,000, ranges hashed, 1 to 53 delegates and heights near 2^32; the forger index, next forger, block timestamp and `canForge` over slot edges, half slots, gaps and times before the epoch; block chaining (previous id, height plus one, a later slot) |
 | `V09-shuffle.jsonl` (state) | the forging order: for every count 1 to 53 the SHA-256 of the orders of rounds 1 to 10,000; full orders of rounds 1 to 100 for counts 1, 2, 3, 52 and 53; rounds where a draw is rejected; round 2^53 - 1 |
 | `V13-p2p-wire.jsonl` (p2p-wire) | nes frames, protobuf messages, every route codec both ways, and signed and received peer statuses, each record with its own network configuration (see heartwood-p2p-wire above) |
 | `V15-vote-amounts.jsonl` (state) | a voter's balance split over 1 to 53 delegates, for balances 0, 1, 101, near 2^63 and random, the remainder in map order |
-| `V16-kernel.jsonl` (kernel) | the status canonical JSON; `.env` text (separators, comments, quotes, digits, booleans, empty values); epoch timestamps; address lists with globs, brackets and IPv6; node directories with their environment overrides |
-| `V17-handlers.jsonl` (transactions) | the transaction handlers on wallet sets: at least one case of each error class and of each apply effect, the revoke delay at 105, 106 and 107 blocks, the fee floor and one below it, the burn minimum and one below it, votes identical, empty, too many and unknown, second signatures missing, wrong and unexpected, and a refused first transaction of a wallet without a key |
+| `V16-kernel.jsonl` (kernel) | the status canonical JSON; `.env` text (separators, comments, quotes, digits, booleans, empty values); epoch timestamps; address lists with globs, brackets and IPv6; node directories with their environment overrides; `pluralise` over words and counts 0, 1, 2, 999, 1,000 and 2,000,000 |
+| `V17-handlers.jsonl` (transactions) | the transaction handlers on wallet sets: at least one case of each error class and of each apply effect, the revoke delay at 105, 106 and 107 blocks, the fee floor and one below it, the burn minimum and one below it, votes identical, empty, too many and unknown, second signatures missing, wrong and unexpected, and a refused first transaction of a wallet without a key; each refusal with its message |
 | `V18-genesis-state.jsonl` (state) | the state digest after the genesis block of the three V10 chain definitions and of six variants of the first (fees and burns, a second key, resignations and a revoke, split votes, a transfer before the issuance record, more issuance records, a generator that registers and votes, a vote and a resignation before their registration; two that the reference refuses to start on: a negative balance, too few delegates for round 1), and of five wallet sets, one per record shape |
 | `V20-logger.jsonl` (logger) | the log line of every level, coloured and plain, with and without emoji codes (the whole table, in slices), over times at the edges of a JavaScript date and messages with line breaks and colour codes |
+| `V21-pool.jsonl` (pool) | 50 scripted pool sessions over wallet fixtures, each step with the reference's answer and the pool's contents after it: every error code with its message (duplicates, the cooldown from 0 to 30 seconds and per channel, the size limit, another network byte, the fee floor and one below it, the static fee exact, lower and higher, a full pool with fee ties and evictions, the per-sender limit with `excess` and allowed senders, every handler refusal, the pending and offline texts, bad signatures and bytes that do not decode, the seven removed types as bytes and as JSON); JSON entries with a correct, wrong or missing id; accepted but not broadcast; a pending incoming transfer; nonce chains and gaps; re-adds after a flush and a restart of the storage; age expiry; removal cascades; forged removal; the online record's expiry; collation (fee and nonce order, ties, `exclude`, the most transactions, the byte budget, a failed sender) |
+| `V23-config.jsonl` (kernel) | `config.load` of the four crypto files: the devnet's files, accepted by both, and each refusal kind of the strict schema at each level, the keys of removed features on and off, `exceptions.json` other than `{}`, and missing files (the reference then falls back to its built-in preset) |
 
 The first line of each file is a meta record: format `heartwood-vectors/1`; the reference's version,
 commit and tree, and the SHA-256 of the reference's patch register (null when the commit has none);
@@ -569,17 +824,23 @@ difftest vectors verify DIR
 difftest vectors diff DIR DIR
 difftest run l0 DIR
 difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR] [--regressions DIR] [ORACLE]
-difftest run l2 DIR [--synthetic] [ORACLE]
+difftest run l2 DIR [--synthetic] [--restart] [--memory] [--to H] [ORACLE]
 difftest run l3|l4              says that the level is not built yet
 difftest corpus import ARCHIVE... --out DIR [--seed TEXT]
-difftest corpus judge DIR [--dump H,...] [ORACLE]
+difftest corpus judge DIR [--restarts every|rounds] [--restart-plan FILE] [--to H] [--dump H,...] [ORACLE]
 difftest corpus verify DIR
+difftest store replay DIR --db PATH [--to H]
+difftest store check DIR --db PATH
+difftest store crash DIR [--kills N] [--seed S] [--max-delay MS]
 difftest levels
 difftest oracle replay OP CORPUS --vectors DIR [--height N] [--milestones FILE] [ORACLE]
 difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--compare DIR]
 ```
 
-`ORACLE` is `--image TAG` or `--solar-dir DIR`; `difftest --help` lists every option.
+`ORACLE` is `--image TAG` or `--solar-dir DIR`; `difftest --help` lists every option. `run l2
+--memory` replays without a store, as before the store existed; `store replay` goes on replaying a
+corpus through the store under `PATH`, one block per chunk, and `store check` restores it by both
+start paths and prints each one's tip and restart line: the kill test's two halves.
 
 Library modules: `oracle` (run the scripts in the image or locally; `OracleServer` for L1),
 `vectors` (files, meta records, manifest), `subject` (a Rust implementation of one oracle
@@ -590,8 +851,11 @@ path and, for hex values, the first differing byte with the bytes around it; num
 their double value and object keys by their JavaScript order), `report`, `replay` (a corpus of
 inputs through the oracle and Heartwood), `genesis` (the chain-definition driver), `fixture`
 (wallet sets as both sides read them), `strategies` (the L1 generators), `corpus` and `digests`
-(L2 corpora and digest files), `synthetic` (the L2 synthetic blocks) and `levels` (L0, L1 and L2
-run; L3 and L4 are described with what each one arrives with).
+(L2 corpora and digest files), `synthetic` and `synthetic_pool` (the L2 synthetic blocks,
+restarts and pool sessions), `restart` (restart plans and the reference's restart lines), `store`
+(the replay through the store, the store's rows against the node's, and the kill test) and `levels`
+(L0, L1 and L2 run, with `levels::pool`, the judge of a pool session; L3 and L4 are described with
+what each one arrives with).
 
 A difference names the JSON path and, for bytes, the first differing offset. This is
 `difftest vectors diff` against a copy of the vectors with one byte and one fee changed; an L0
