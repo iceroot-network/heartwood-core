@@ -37,7 +37,8 @@ use std::time::{Duration, Instant};
 use heartwood_kernel::paths::resolve_paths;
 use heartwood_kernel::{Clock, SystemClock};
 use nix::spawn::{PosixSpawnAttr, PosixSpawnFileActions, PosixSpawnFlags, posix_spawnp};
-use nix::sys::signal::{SigSet, Signal};
+use nix::sys::signal::SigSet;
+use nix::sys::signal::Signal::{self, SIGHUP, SIGINT, SIGKILL, SIGPIPE, SIGQUIT, SIGTERM};
 use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
 use nix::unistd::Pid;
 
@@ -153,7 +154,6 @@ pub(crate) fn at<T>(path: &Path, result: std::io::Result<T>) -> Result<T, Proces
 /// A running supervisor.
 struct Supervisor {
     instance: Instance,
-    argv: Vec<OsString>,
     state: SupervisorState,
     out: Arc<Mutex<Capture>>,
     err: Arc<Mutex<Capture>>,
@@ -165,11 +165,8 @@ struct Supervisor {
 impl Supervisor {
     fn start(instance: Instance, argv: Vec<OsString>) -> Result<Supervisor, ProcessError> {
         // Blocked before any thread starts, so every thread inherits the mask and only the
-        // signal thread takes them; a child starts with an empty mask (the standard library
-        // resets it).
-        let mask: SigSet = [Signal::SIGTERM, Signal::SIGINT, Signal::SIGHUP]
-            .into_iter()
-            .collect();
+        // signal thread takes them; the node starts with none blocked ([`spawn`]).
+        let mask: SigSet = [SIGTERM, SIGINT, SIGHUP].into_iter().collect();
         let pid = std::process::id();
         let blocked = mask.thread_block();
         blocked.map_err(|e| ProcessError::Signal {
@@ -180,11 +177,8 @@ impl Supervisor {
         run_dir(&instance)?;
         let lock = signals::take_lock(&instance.supervisor_lock_path())?;
         let lock = lock.ok_or_else(|| ProcessError::AlreadyRunning { name: name.clone() })?;
-        let argv_text: Option<Vec<String>> = argv
-            .iter()
-            .map(|arg| arg.to_str().map(str::to_owned))
-            .collect();
-        let argv_text = argv_text.ok_or_else(|| ProcessError::Spawn {
+        let argv: Option<Vec<String>> = argv.into_iter().map(|a| a.into_string().ok()).collect();
+        let argv = argv.ok_or_else(|| ProcessError::Spawn {
             program: name.clone(),
             message: "the command line is not UTF-8".into(),
         })?;
@@ -203,7 +197,7 @@ impl Supervisor {
             status: SupervisedStatus::Launching,
             supervisor_pid: pid,
             pid: None,
-            argv: argv_text,
+            argv,
             started_at_ms: None,
             restarts: 0,
             unstable: 0,
@@ -212,7 +206,6 @@ impl Supervisor {
         };
         Ok(Supervisor {
             instance,
-            argv,
             state,
             out: Arc::new(Mutex::new(out)),
             err: Arc::new(Mutex::new(err)),
@@ -254,7 +247,7 @@ impl Supervisor {
             message,
         };
         self.line(&format!("starting {}", self.state.argv.join(" ")));
-        let (node, out, err) = spawn(&self.argv).map_err(|e| failed(e.to_string()))?;
+        let (node, out, err) = spawn(&self.state.argv).map_err(|e| failed(e.to_string()))?;
         let started = Instant::now();
         let pumps = [pump(out, &self.out), pump(err, &self.err)];
         self.state.started_at_ms = Some(SystemClock.now_ms());
@@ -263,13 +256,13 @@ impl Supervisor {
         let (mut interrupted, mut killed) = (None::<Instant>, false);
         let exit = loop {
             if let Ok(signal) = self.signals.recv_timeout(POLL)
-                && signal != Signal::SIGHUP
+                && signal != SIGHUP
                 && interrupted.is_none()
             {
                 self.set(SupervisedStatus::Stopping, Some(pid));
                 self.line(&format!("{signal}: SIGINT to the node {pid}"));
                 // The child is not reaped yet, so its pid names no other process.
-                signals::send(pid, Signal::SIGINT)?;
+                signals::send(pid, SIGINT)?;
                 interrupted = Some(Instant::now());
             }
             let status = waitpid(node, Some(WaitPidFlag::WNOHANG));
@@ -283,7 +276,7 @@ impl Supervisor {
             }
             if !killed && interrupted.is_some_and(|at| at.elapsed() >= KILL_AFTER) {
                 self.line(&format!("the node {pid} did not stop within 30 s: SIGKILL"));
-                signals::send(pid, Signal::SIGKILL)?;
+                signals::send(pid, SIGKILL)?;
                 killed = true;
             }
         };
@@ -323,43 +316,37 @@ impl Supervisor {
 /// returned, no signal blocked, and SIGHUP, SIGINT, SIGQUIT, SIGPIPE and SIGTERM at their
 /// defaults, whatever the supervisor (which blocks them) and its caller (a shell may ignore
 /// SIGINT) had.
-fn spawn(argv: &[OsString]) -> Result<(Pid, PipeReader, PipeReader), Box<dyn Error>> {
+fn spawn(argv: &[String]) -> Result<(Pid, PipeReader, PipeReader), Box<dyn Error>> {
     let (out, out_writer) = std::io::pipe()?;
     let (err, err_writer) = std::io::pipe()?;
     let null = File::open("/dev/null")?;
     let mut actions = PosixSpawnFileActions::init()?;
-    for (fd, target) in [(null.as_raw_fd(), 0), (out_writer.as_raw_fd(), 1)] {
+    let fds = [
+        null.as_raw_fd(),
+        out_writer.as_raw_fd(),
+        err_writer.as_raw_fd(),
+    ];
+    for (target, fd) in (0..).zip(fds) {
         actions.add_dup2(fd, target)?;
     }
-    actions.add_dup2(err_writer.as_raw_fd(), 2)?;
     let mut attributes = PosixSpawnAttr::init()?;
     attributes.set_sigmask(&SigSet::empty())?;
-    let defaults = [
-        Signal::SIGHUP,
-        Signal::SIGINT,
-        Signal::SIGQUIT,
-        Signal::SIGPIPE,
-        Signal::SIGTERM,
-    ];
+    let defaults = [SIGHUP, SIGINT, SIGQUIT, SIGPIPE, SIGTERM];
     attributes.set_sigdefault(&defaults.into_iter().collect())?;
     attributes.set_flags(
         PosixSpawnFlags::POSIX_SPAWN_SETSIGMASK | PosixSpawnFlags::POSIX_SPAWN_SETSIGDEF,
     )?;
-    let text = |bytes: Vec<u8>| CString::new(bytes);
     let args: Vec<CString> = argv
         .iter()
-        .map(|a| text(a.as_bytes().to_vec()))
+        .map(|a| CString::new(a.as_str()))
         .collect::<Result<_, _>>()?;
     let pair = |(key, value): (OsString, OsString)| {
-        text([key.as_bytes(), b"=", value.as_bytes()].concat())
+        CString::new([key.as_bytes(), b"=", value.as_bytes()].concat())
     };
     let env: Vec<CString> = std::env::vars_os().map(pair).collect::<Result<_, _>>()?;
     let program = args.first().ok_or("no command line")?;
-    Ok((
-        posix_spawnp(program, &actions, &attributes, &args, &env)?,
-        out,
-        err,
-    ))
+    let node = posix_spawnp(program, &actions, &attributes, &args, &env)?;
+    Ok((node, out, err))
 }
 
 /// Copy `from`, a stream of the node, into `into`, a line (or 64 KiB) at a time.
