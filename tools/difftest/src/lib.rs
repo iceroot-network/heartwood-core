@@ -20,7 +20,7 @@
 //!   and revert plans.
 //! - [`digests`]: the state digest files of L2 replays, and their comparison.
 //! - [`synthetic`]: blocks built on top of a corpus chain for the synthetic L2 cases.
-//! - [`levels`]: L0 to L4; L0 runs today, the others plug in as the node's crates arrive.
+//! - [`levels`]: L0 to L4; L0, L1 and L2 run, L3 and L4 plug in with the node's processes.
 //! - [`genesis`]: the devnet chain-definition driver (`difftest genesis`).
 
 #![warn(missing_docs)]

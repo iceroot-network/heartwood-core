@@ -56,6 +56,14 @@ pub enum Error {
         message: String,
     },
 
+    /// A wallet fixture is malformed, or its wallets cannot be built.
+    #[error("fixture: {0}")]
+    Fixture(String),
+
+    /// A milestone file does not load.
+    #[error("milestones: {0}")]
+    Milestones(#[from] heartwood_crypto::errors::ConfigError),
+
     /// The oracle could not be started or answered wrongly.
     #[error("oracle: {0}")]
     Oracle(String),

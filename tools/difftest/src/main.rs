@@ -277,8 +277,7 @@ fn run_l1(args: &L1Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
             vectors.display()
         ))
     })?;
-    let context = TxContext::new(devnet.network.clone(), l1::devnet_milestones(&set)?)
-        .map_err(|e| Error::Usage(format!("the devnet milestones: {e}")))?;
+    let context = TxContext::new(devnet.network.clone(), l1::devnet_milestones(&set)?)?;
     let registry = subject::heartwood(Some(devnet));
     let oracle = args.oracle.resolve(env)?;
     let mut server = oracle.server()?;

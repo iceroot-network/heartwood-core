@@ -36,8 +36,8 @@ pub struct TxContext {
 
 impl TxContext {
     /// The context of the devnet `network` and milestone file `milestones_text`.
-    pub fn new(network: Network, milestones_text: String) -> Result<TxContext, String> {
-        let milestones = Milestones::load(&milestones_text, &network).map_err(|e| e.to_string())?;
+    pub fn new(network: Network, milestones_text: String) -> crate::Result<TxContext> {
+        let milestones = Milestones::load(&milestones_text, &network)?;
         let recipients = (0..256)
             .map(|i| address_of(keys(&format!("l1 recipient {i}")).public_key()))
             .collect();

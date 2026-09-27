@@ -193,8 +193,13 @@ impl RevertPlan {
         })
     }
 
-    /// The plan in `value`, the JSON of `revert-plan.json`.
-    pub fn from_json(value: &Value) -> std::result::Result<RevertPlan, String> {
+    /// The plan in `value`, the JSON of the file `path` (a corpus's `revert-plan.json`);
+    /// [`Error::Corpus`] when it breaks the plan's format.
+    pub fn from_json(value: &Value, path: &Path) -> Result<RevertPlan> {
+        RevertPlan::parse(value).map_err(|message| corpus_error(path, message))
+    }
+
+    fn parse(value: &Value) -> std::result::Result<RevertPlan, String> {
         if value.get("format").and_then(Value::as_str) != Some(PLAN_FORMAT) {
             return Err(format!("not a {PLAN_FORMAT} file"));
         }
@@ -422,8 +427,8 @@ impl Corpus {
                 .ok_or_else(|| bad("no block bytes"))?;
             blocks.push(CorpusBlock { height, id, bytes });
         }
-        let revert_plan = RevertPlan::from_json(&read_json(&dir.join("revert-plan.json"))?)
-            .map_err(|e| corpus_error(dir.join("revert-plan.json"), e))?;
+        let plan = dir.join("revert-plan.json");
+        let revert_plan = RevertPlan::from_json(&read_json(&plan)?, &plan)?;
         Ok(Corpus {
             dir: dir.to_path_buf(),
             network,
@@ -939,7 +944,10 @@ mod tests {
             assert!(s.after_height >= 2 && s.after_height <= 2_650, "{s:?}");
         }
         let json = a.to_json();
-        assert_eq!(RevertPlan::from_json(&json).unwrap(), a);
+        assert_eq!(
+            RevertPlan::from_json(&json, Path::new("revert-plan.json")).unwrap(),
+            a
+        );
     }
 
     #[test]
@@ -955,7 +963,7 @@ mod tests {
         }
         let bad = json!({"format": PLAN_FORMAT, "seed": "1", "roundLength": 53, "tip": 5,
                          "steps": [{"after": 3, "blocks": 3}]});
-        assert!(RevertPlan::from_json(&bad).is_err());
+        assert!(RevertPlan::from_json(&bad, Path::new("revert-plan.json")).is_err());
     }
 
     /// A tiny archive in the devnet tooling's format: `heights` blocks with fake headers whose

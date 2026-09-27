@@ -21,6 +21,8 @@ use heartwood_state::wallets::vote_balances::{increase_vote_balances, update_vot
 use heartwood_state::wallets::{Resignation, WalletRepository};
 use serde_json::{Map, Value, json};
 
+use crate::errors::Error;
+
 /// A wallet fixture.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fixture {
@@ -125,8 +127,13 @@ const KEYS: [&str; 15] = [
 ];
 
 impl Fixture {
-    /// The fixture in `value`, the JSON the oracle reads; a message when it is malformed.
-    pub fn from_json(value: &Value) -> Result<Fixture, String> {
+    /// The fixture in `value`, the JSON the oracle reads; [`Error::Fixture`] when it is
+    /// malformed.
+    pub fn from_json(value: &Value) -> crate::Result<Fixture> {
+        Fixture::parse(value).map_err(Error::Fixture)
+    }
+
+    fn parse(value: &Value) -> Result<Fixture, String> {
         let list = value.as_array().ok_or("a fixture is an array of wallets")?;
         let mut wallets = Vec::with_capacity(list.len());
         for (at, item) in list.iter().enumerate() {
@@ -266,9 +273,14 @@ impl Fixture {
     }
 
     /// The fixture as a wallet repository of the network with address byte `network`: the
-    /// wallets, then the vote balances and voter counts built from the voters. A message when the
-    /// fixture cannot be built (for example, a vote for a name no fixture delegate has).
-    pub fn to_wallets(&self, network: u8) -> Result<WalletRepository, String> {
+    /// wallets, then the vote balances and voter counts built from the voters.
+    /// [`Error::Fixture`] when the fixture cannot be built (for example, a vote for a name no
+    /// fixture delegate has).
+    pub fn to_wallets(&self, network: u8) -> crate::Result<WalletRepository> {
+        self.build(network).map_err(Error::Fixture)
+    }
+
+    fn build(&self, network: u8) -> Result<WalletRepository, String> {
         let mut wallets = WalletRepository::new(network);
         for (at, w) in self.wallets.iter().enumerate() {
             if wallets.has_by_address(&w.address) {
@@ -376,12 +388,18 @@ mod tests {
     fn refuses_malformed_fixtures() {
         let mut value = sample();
         value[1]["bal"] = json!(20);
-        assert!(Fixture::from_json(&value).unwrap_err().contains("bal"));
+        assert!(
+            Fixture::from_json(&value)
+                .unwrap_err()
+                .to_string()
+                .contains("bal")
+        );
         let mut value = sample();
         value[1]["rs"] = json!(1);
         assert!(
             Fixture::from_json(&value)
                 .unwrap_err()
+                .to_string()
                 .contains("without u")
         );
         let mut value = sample();
@@ -389,6 +407,7 @@ mod tests {
         assert!(
             Fixture::from_json(&value)
                 .unwrap_err()
+                .to_string()
                 .contains("unknown key")
         );
         assert!(Fixture::from_json(&json!({})).is_err());
@@ -399,10 +418,22 @@ mod tests {
         let mut value = sample();
         value[1]["v"] = json!([["nobody", 10000]]);
         let fixture = Fixture::from_json(&value).unwrap();
-        assert!(fixture.to_wallets(90).unwrap_err().contains("nobody"));
+        assert!(
+            fixture
+                .to_wallets(90)
+                .unwrap_err()
+                .to_string()
+                .contains("nobody")
+        );
         let mut value = sample();
         value[1].as_object_mut().unwrap().remove("pk");
         let fixture = Fixture::from_json(&value).unwrap();
-        assert!(fixture.to_wallets(90).unwrap_err().contains("public key"));
+        assert!(
+            fixture
+                .to_wallets(90)
+                .unwrap_err()
+                .to_string()
+                .contains("public key")
+        );
     }
 }

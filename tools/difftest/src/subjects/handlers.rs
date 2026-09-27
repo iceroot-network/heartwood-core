@@ -55,8 +55,10 @@ pub(super) fn apply_transaction(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdi
         .checked_add(1)
         .ok_or_else(|| failed("input.lastBlockHeight is the last height there is"))?;
     let params = milestones.at(height);
-    let fixture = Fixture::from_json(&case.input["fixture"]).map_err(failed)?;
-    let mut wallets = fixture.to_wallets(params.network()).map_err(failed)?;
+    let fixture = Fixture::from_json(&case.input["fixture"]).map_err(|e| failed(e.to_string()))?;
+    let mut wallets = fixture
+        .to_wallets(params.network())
+        .map_err(|e| failed(e.to_string()))?;
     let Some(bytes) = hex_bytes(case.input, "hex")? else {
         return Ok(rejected("TypeError"));
     };
