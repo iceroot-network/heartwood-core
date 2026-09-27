@@ -80,7 +80,7 @@ make e2e            # vectors in the image and locally, diff the two runs, run L
 make vectors-install  # copy the image's vectors into each crate's tests/vectors
 make test-oracle    # the oracle answers, and 256 L1 cases per property, in the image and locally
 make l1             # the L1 properties against the oracle
-make l2 NAME=c1-txgen CORPUS=tools/difftest/corpus   # replay a corpus against its digest lines
+make l2 NAME=txgen-one-node CORPUS=tools/difftest/corpus   # replay a corpus against its digest lines
 ```
 
 `make check` needs only Rust. It lints and tests every crate on its own, with no features and
@@ -325,8 +325,8 @@ transaction can reach from a consistent wallet set appears.
 
 ## L2: chains, corpora and the state digest
 
-A corpus is a chain that a reference devnet produced, imported from the devnet tooling's archives
-with `difftest corpus import`: the chain definition, every block as a relay receives it, and what
+A corpus is a chain that a reference devnet produced, imported with `difftest corpus import` from
+the archives of the maintainers' devnet tooling (a separate tool that is not published): the chain definition, every block as a relay receives it, and what
 the node itself recorded (round rows, missed slots, block columns, API checkpoints). The oracle's
 judge, `replay-chain.js` (`difftest corpus judge`), replays the corpus in the reference's own state
 classes with storage replaced by memory, checks that replay against the node's records, follows a
@@ -346,10 +346,11 @@ make l2-synthetic NAME=my-chain                           # with the synthetic b
 cargo test -p heartwood-difftest --locked --test l2       # the committed corpus, no oracle
 ```
 
-The committed corpus, `tools/difftest/corpus/c1-txgen`, is a one-node devnet chain of five rounds
-with every kept transaction type; its README describes it. Longer chains (three nodes with
-partitions, kills and restarts, and a soak of at least 50 rounds) are replayed the same way from
-`target/corpus`.
+The committed corpus, `tools/difftest/corpus/txgen-one-node`, is a one-node devnet chain of five
+rounds with every kept transaction type; its README describes it. The maintainers also replay
+longer chains made with the same unpublished tooling (three nodes with partitions, kills and
+restarts, and a soak of at least 50 rounds); they are imported under `target/corpus` and are not
+committed.
 
 ## The oracle image
 

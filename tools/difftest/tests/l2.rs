@@ -10,7 +10,7 @@ use heartwood_difftest::digests;
 use heartwood_difftest::levels::l2::{self, L2Options};
 
 fn committed() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus/c1-txgen")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus/txgen-one-node")
 }
 
 #[test]
