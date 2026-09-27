@@ -28,6 +28,9 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// Schema version 1: every table and index, as SQL statements.
 pub const SCHEMA: &str = include_str!("schema.sql");
 
+/// The prepared statements the connection keeps.
+const STATEMENTS: usize = 64;
+
 /// Where a node's database is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
@@ -79,6 +82,8 @@ impl Database {
                 "the file cannot use WAL mode (journal mode {mode})"
             )));
         }
+        // Every statement of the store stays prepared: they are fewer than this.
+        connection.set_prepared_statement_cache_capacity(STATEMENTS);
         let mut database = Database { connection };
         database.check_schema()?;
         Ok(database)
