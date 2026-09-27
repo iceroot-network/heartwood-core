@@ -601,7 +601,7 @@ fn check_bans(
                         format!(
                             "{} banned it at {} outside every fault window: {}",
                             ban.node,
-                            ban.at.map(|t| t.to_string()).unwrap_or_default(),
+                            ban.at.map(run::format_time).unwrap_or_default(),
                             ban.reason
                         ),
                     );

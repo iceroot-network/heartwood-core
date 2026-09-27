@@ -366,6 +366,29 @@ pub fn parse_time(text: &str) -> Option<i64> {
     Some(((days * 24 + hour) * 60 + minute) * 60_000 + second * 1_000 + millis)
 }
 
+/// The UTC time `YYYY-MM-DDTHH:MM:SS.fffZ` of `ms` milliseconds since the Unix epoch.
+pub fn format_time(ms: i64) -> String {
+    let days = ms.div_euclid(86_400_000);
+    let rest = ms.rem_euclid(86_400_000);
+    // The civil date of a day count (the proleptic Gregorian calendar).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
+        rest / 3_600_000,
+        rest / 60_000 % 60,
+        rest / 1_000 % 60,
+        rest % 1_000
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,6 +406,14 @@ mod tests {
             parse_time("2026-09-27T10:24:19.332Z")
         );
         assert_eq!(parse_time("2000-02-29T12:00:00Z"), Some(951_825_600_000));
+        for t in [
+            "1970-01-01T00:00:00.000Z",
+            "2000-02-29T12:00:00.000Z",
+            "2026-09-27T10:24:19.332Z",
+            "2100-12-31T23:59:59.999Z",
+        ] {
+            assert_eq!(format_time(parse_time(t).unwrap()), t);
+        }
         for bad in [
             "",
             "2026-09-27T10:24:19",
