@@ -39,7 +39,7 @@ GENERATOR_ARG := $(if $(DEVNET_GENERATOR),--devnet-generator '$(DEVNET_GENERATOR
 # The vector classes of each crate: crate=class prefixes. vectors-install writes each crate's
 # classes, with their own MANIFEST.sha256, into packages/<crate>/tests/vectors.
 VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12 kernel=V09-rounds,V16 logger=V20 \
-                 state=V08,V09-shuffle,V15,V18 transactions=V17,V19
+                 state=V08,V09-shuffle,V15,V18 transactions=V17,V19 p2p-wire=V13
 # L1: cases per property, the generator's seed, the properties (P1 to P9 or their names, comma
 # separated; all when empty).
 L1_CASES      ?= 256
@@ -239,3 +239,93 @@ lines: ## code lines per crate against the review ceilings (tokei, inline tests 
 lines-if-tokei:
 	@$(TOOLCHAIN) && if command -v tokei >/dev/null 2>&1; then tools/check-lines.sh; \
 	else echo "lines: tokei is not installed, so the review ceilings are not checked (make lines)"; fi
+
+# ---- heartwood-p2p-wire: the peer-to-peer wire codec ----
+# Its golden vectors (class WIRE_CLASS) live beside the crate, with their own manifest; the
+# p2p-wire row of VECTOR_CRATES installs them.
+WIRE_VECTORS  ?= packages/p2p-wire/tests/vectors
+WIRE_CLASS    := V13-p2p-wire
+WIRE_FUZZ     := nes_frame wire_message status_verify
+# The oracle operation that replays each wire fuzz target's corpus.
+WIRE_REPLAY   := nes_frame=nes.parse wire_message=wire.decodeSelected status_verify=status.verify
+FUZZ_SECONDS  ?= 600
+FUZZ_FORK     ?= 8
+# The vector file that seeds the wire corpora, and the longest seed in bytes.
+WIRE_SEEDS    ?= $(WIRE_VECTORS)/$(WIRE_CLASS).jsonl
+WIRE_SEED_MAX ?= 65536
+# The corpora (git-ignored), and the logs of fuzz-wire and replay-wire.
+FUZZ_CORPUS   := fuzz/corpus
+WIRE_LOGS     ?= target/wire-fuzz
+# libFuzzer's options for every wire target: in fork mode a timeout or an out-of-memory stop ends
+# the run and fails it, as a crash does.
+WIRE_LIBFUZZER = -fork=$(FUZZ_FORK) -max_total_time=$(FUZZ_SECONDS) -rss_limit_mb=4096 -timeout=30 \
+                 -ignore_timeouts=0 -ignore_ooms=0
+# The only packages that may enable the legacy-schnorr feature of heartwood-crypto.
+WIRE_SCHNORR  := heartwood-difftest heartwood-p2p-wire
+RELEASE_PACKAGES += heartwood-p2p-wire
+
+.PHONY: test-wire wire-features fuzz-wire replay-wire
+
+check: test-wire wire-features
+
+test-wire: ## heartwood-p2p-wire alone: clippy (warnings are errors) and cargo test; it has no features
+	$(TOOLCHAIN) && cargo clippy -p heartwood-p2p-wire --all-targets --locked -- -D warnings
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-p2p-wire
+
+wire-features: ## only WIRE_SCHNORR enable the legacy-schnorr feature of heartwood-crypto
+	@$(TOOLCHAIN) && set -o pipefail && enablers=$$(cargo tree --locked --workspace -e features,normal,build -i heartwood-crypto \
+	        --prefix depth | awk '/^1/ { on = /feature "legacy-schnorr"/ } on && /^2/ { sub(/^2/, ""); print $$1 }' \
+	        | sort -u | tr '\n' ' ') || exit 1; \
+	if [ "$$enablers" != "$(WIRE_SCHNORR) " ]; then \
+	    echo "wire-features: legacy-schnorr is enabled by $$enablers, not by $(WIRE_SCHNORR) only" >&2; exit 1; \
+	fi; \
+	echo "wire-features: legacy-schnorr is enabled by $(WIRE_SCHNORR) only"
+
+# The three targets run at the same time, FUZZ_FORK jobs each, on corpora seeded from WIRE_SEEDS
+# (when the file exists). Each log's last status line gives the runs, the coverage and the corpus.
+fuzz-wire: ## the wire fuzz targets at once, FUZZ_SECONDS each (nightly and cargo-fuzz); logs in WIRE_LOGS
+	@$(TOOLCHAIN) && if [ -f '$(WIRE_SEEDS)' ]; then \
+	    node tools/wire-fuzz-seeds.js '$(WIRE_SEEDS)' $(FUZZ_CORPUS) $(WIRE_SEED_MAX); \
+	else \
+	    echo "fuzz-wire: no seeds: $(WIRE_SEEDS) does not exist"; \
+	fi
+	$(TOOLCHAIN) && for target in $(WIRE_FUZZ); do cargo +nightly fuzz build $$target || exit 1; done
+	@$(TOOLCHAIN) && mkdir -p $(WIRE_LOGS) && pids=; \
+	for target in $(WIRE_FUZZ); do \
+	    mkdir -p $(FUZZ_CORPUS)/$$target; \
+	    cargo +nightly fuzz run $$target -- $(WIRE_LIBFUZZER) > $(WIRE_LOGS)/$$target.log 2>&1 & pids="$$pids $$!"; \
+	done; \
+	echo "fuzz-wire: $(WIRE_FUZZ) running for $(FUZZ_SECONDS) s, $(FUZZ_FORK) jobs each; logs in $(WIRE_LOGS)"; \
+	fail=0; set -- $(WIRE_FUZZ); \
+	for pid in $$pids; do \
+	    target=$$1; shift; \
+	    wait $$pid || { echo "fuzz-wire: $$target stopped with a failure, see $(WIRE_LOGS)/$$target.log" >&2; fail=1; }; \
+	    last=$$(grep -E '^#[0-9]+: cov: ' $(WIRE_LOGS)/$$target.log | tail -n 1); \
+	    files=$$(find $(FUZZ_CORPUS)/$$target -type f | wc -l); \
+	    size=$$(du -sk $(FUZZ_CORPUS)/$$target | cut -f1); \
+	    echo "fuzz-wire: $$target: $${last:-no status line}; corpus $$files files, $$size KiB"; \
+	    case "$$last" in *'oom/timeout/crash: 0/0/0 '*) ;; *) fail=1 ;; esac; \
+	done; \
+	exit $$fail
+
+# Every input of a corpus must be compared: an empty corpus, a skipped input or one without a
+# subject fails too. The devnet configuration comes from the genesis class, with heartwood-crypto's
+# vectors.
+replay-wire: build ## each wire fuzz corpus through the oracle (ORACLE_ARGS) and Heartwood; logs in WIRE_LOGS
+	$(need-image)
+	@$(TOOLCHAIN) && mkdir -p $(WIRE_LOGS) && fail=0; \
+	for pair in $(WIRE_REPLAY); do \
+	    target=$${pair%%=*}; op=$${pair#*=}; log=$(WIRE_LOGS)/replay-$$target.log; \
+	    if [ -z "$$(ls -A $(FUZZ_CORPUS)/$$target 2>/dev/null)" ]; then \
+	        echo "replay-wire: $(FUZZ_CORPUS)/$$target is missing or empty (make fuzz-wire)" >&2; fail=1; continue; \
+	    fi; \
+	    $(DIFFTEST) oracle replay $$op $(FUZZ_CORPUS)/$$target --vectors packages/crypto/tests/vectors $(ORACLE_ARGS) \
+	        > $$log 2>&1; status=$$?; cat $$log; \
+	    if [ $$status != 0 ]; then \
+	        echo "replay-wire: $$target: the replay failed (exit $$status)" >&2; fail=1; \
+	    elif grep -qE '^  [0-9]+ (skipped|records have no Rust implementation)' $$log; then \
+	        echo "replay-wire: $$target: some inputs were not compared" >&2; fail=1; \
+	    fi; \
+	done; \
+	exit $$fail
+# ---- end of heartwood-p2p-wire ----

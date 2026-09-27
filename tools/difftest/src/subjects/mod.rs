@@ -36,6 +36,7 @@ mod keys;
 mod signatures;
 mod state;
 mod transactions;
+mod wire;
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -267,10 +268,10 @@ const OPS: &[(&str, Run)] = &[
     ("state.applyTransaction", handlers::apply_transaction),
 ];
 
-/// Register every operation of [`OPS`] in `registry`.
+/// Register every operation of [`OPS`] and of the wire's table in `registry`.
 pub(crate) fn register(registry: &mut Registry, devnet: Option<Devnet>) {
     let devnet = devnet.map(Arc::new);
-    for &(op, run) in OPS {
+    for &(op, run) in OPS.iter().chain(wire::OPS) {
         // The table names each operation once (a unit test checks it), so this cannot fail.
         let _ = registry.register(Box::new(Op {
             op,
@@ -413,6 +414,8 @@ const MULTI_SIGNATURE_ENTRY: usize = 65;
 fn has_form(difference: Documented, bytes: &[u8]) -> bool {
     let standard = bytes.first() == Some(&STANDARD_HEADER);
     match difference {
+        // The wire's differences are shown by the oracle's answer, not by a transaction.
+        Documented::PluginsPrototype | Documented::DeepGroups | Documented::WideAmount => false,
         Documented::ExtendedHeader => bytes.first() == Some(&EXTENDED_HEADER),
         Documented::RemovedType => {
             let group = bytes
@@ -482,12 +485,13 @@ mod tests {
 
     #[test]
     fn every_operation_is_registered_once() {
-        let mut ops: Vec<&str> = OPS.iter().map(|(op, _)| *op).collect();
+        let mut ops: Vec<&str> = OPS.iter().chain(wire::OPS).map(|(op, _)| *op).collect();
         let registry = crate::subject::heartwood(None);
         assert_eq!(registry.ops().count(), ops.len());
+        let count = ops.len();
         ops.sort_unstable();
         ops.dedup();
-        assert_eq!(ops.len(), OPS.len());
+        assert_eq!(ops.len(), count);
     }
 
     #[test]

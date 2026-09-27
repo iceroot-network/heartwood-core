@@ -32,6 +32,7 @@ Release builds must select one package at a time, for example `cargo build --rel
 | `packages/logger/` | The reference's log lines, console and file output, daily rotation |
 | `packages/state/` | Wallets, delegates, rounds, block application and reversal, genesis, the supply check and the state digest |
 | `packages/transactions/` | The six transaction handlers, the dynamic fee floor and the pool-entry checks |
+| `packages/p2p-wire/` | The peer-to-peer wire codec: nes frames, the protobuf messages of the public routes, list framing and the signed peer status |
 | `tools/difftest/` | Compatibility harness and command-line tools |
 | `tools/oracle/` | Reference execution, container builds and vector generation |
 | `packages/*/tests/vectors/` | Committed vectors of each crate, with checksums and source metadata |
@@ -41,7 +42,7 @@ The current implementation uses the retained reference cryptography and transact
 
 ## Compatibility
 
-The reference is [solar-core-ref](https://github.com/iceroot-network/solar-core-ref), based on Solar Core 4.3.1 with a documented patch series. Over the five crates, the committed L0 vectors give 4,370 equal comparisons, 60 documented differences and 11 skipped records. L1 (random cases against the reference, one call each) and L2 (reference devnet chains replayed block by block, with a state digest at every height) run as well; L3 and L4 remain planned.
+The reference is [solar-core-ref](https://github.com/iceroot-network/solar-core-ref), based on Solar Core 4.3.1 with a documented patch series. Over the six crates, the committed L0 vectors give 5,554 equal comparisons, 74 documented differences and 6 skipped records. L1 (random cases against the reference, one call each) and L2 (reference devnet chains replayed block by block, with a state digest at every height) run as well; L3 and L4 remain planned.
 
 See [compatibility and testing](docs/compatibility.md) for exact boundaries, oracle prerequisites, vector classes, release requirements and regeneration instructions. Oracle runs are isolated from the network. Standard Rust checks use committed vectors and do not require the reference checkout or Docker.
 

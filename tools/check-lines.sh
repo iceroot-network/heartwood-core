@@ -23,6 +23,7 @@ CHECKS=(
     "heartwood-state:packages/state/src:3000"
     "heartwood-state wallets, ranking and rounds:packages/state/src/wallets packages/state/src/dpos packages/state/src/round_state.rs:"
     "heartwood-transactions:packages/transactions/src:2500"
+    "heartwood-p2p-wire:packages/p2p-wire/src:2500"
 )
 
 work=$(mktemp -d)

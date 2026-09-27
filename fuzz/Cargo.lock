@@ -155,6 +155,7 @@ version = "0.0.0"
 dependencies = [
  "arbitrary",
  "heartwood-crypto",
+ "heartwood-p2p-wire",
  "heartwood-state",
  "heartwood-transactions",
  "libfuzzer-sys",
@@ -169,6 +170,14 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "heartwood-p2p-wire"
+version = "0.1.0"
+dependencies = [
+ "heartwood-crypto",
+ "thiserror",
 ]
 
 [[package]]
