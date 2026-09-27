@@ -498,4 +498,4 @@ property, in the image and locally (`DIFFTEST_TEST_IMAGE`, `DIFFTEST_TEST_SOLAR_
 
 ## Licence
 
-Not yet decided. [NOTICE](../NOTICE) lists the projects Heartwood Core credits.
+Heartwood Core is licensed under the [Apache License, Version 2.0](../LICENSE). [NOTICE](../NOTICE) lists the projects Heartwood Core credits; code adapted from ARK Core keeps its MIT notice.

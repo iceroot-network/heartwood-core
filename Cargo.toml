@@ -8,8 +8,7 @@ exclude = ["fuzz"]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
-# The licence is not decided yet.
-license = "UNLICENSED"
+license = "Apache-2.0"
 publish = false
 
 [workspace.lints.rust]
