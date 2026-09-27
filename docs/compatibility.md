@@ -11,8 +11,8 @@ equal byte for byte, including which inputs each side rejects.
 | Level | What is compared | Status |
 |---|---|---|
 | L0 | golden vectors written by the reference, against Heartwood | runs against the seven crates with vector classes: 6,220 of 6,387 records compared, all equal (see below) |
-| L1 | random and mutated cases, one oracle call each | runs: fifteen properties, from the fee floor to the pool, the crypto files and the peer-to-peer client's network monitor (see below) |
-| L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets through Heartwood's store, with seeded reverts, restarts at every height, synthetic blocks and pool sessions (see below) |
+| L1 | random and mutated cases, one oracle call each | runs: seventeen properties, from the fee floor to the pool, the crypto files, the peer-to-peer client's network monitor and the forger's blocks and decisions (see below) |
+| L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets through Heartwood's store, with seeded reverts, restarts at every height, synthetic blocks and pool sessions, and every block of those chains rebuilt by the forger (see below) |
 | L3 | the same scenario on a reference devnet and on a Heartwood devnet | planned |
 | L4 | a mixed network of reference and Heartwood nodes | planned |
 
@@ -45,6 +45,12 @@ packages/blockchain/  heartwood-blockchain: so far, a block's commit to the stor
 packages/p2p/         heartwood-p2p: the client side of the peer-to-peer protocol (nes sessions,
                       requests and reply checks, peer acceptance and verification, the network
                       monitor), not yet wired into a node; the mock peer behind `difftest`
+packages/forger/      heartwood-forger: the forger (the slot loop its relay drives, the relay
+                      client, block assembly, the signing record, the key file and the status
+                      attester), not yet wired into a process
+packages/cli/         heartwood-cli: the commands without the node (the colon aliases,
+                      instances, the supervisor and the role commands, `network generate`'s
+                      files, the local devnet library)
 packages/*/tests/vectors/  each crate's golden vectors, with its own MANIFEST.sha256
 tools/difftest/       heartwood-difftest: the harness library and the `difftest` binary
   corpus/               a committed L2 corpus (a reference devnet chain and its digest lines)
@@ -68,10 +74,12 @@ tools/oracle/         the oracle: Node scripts and the image recipe
   check-native.js       checks that the reference's native modules build and load
 tools/wire-fuzz-seeds.js  seeds the wire fuzz corpora from the wire vectors
 tools/p2p-fuzz-seeds.js   seeds the p2p fuzz corpora from a vector run's V24 and V26 records
+tools/forger-fuzz-seeds.js  seeds the forger's internal_body corpus from a vector run's V29 records
 packages/crypto/tests/vectors/external/  published vector files, with their source URLs and SHA-256
 fuzz/                 cargo-fuzz targets for the transaction and block decoders, the
                       transaction handlers, whole blocks on the state, the state's records, the
-                      pool and the wire decoders (own workspace)
+                      pool, the wire decoders, the peer-to-peer client and the forger's inputs
+                      (own workspace)
 ```
 
 ## Requirements
@@ -126,18 +134,20 @@ oracle answers, in the image and locally), `make oracle-save` (`docker save` of 
 | `DIFFTEST_DOCKER` | `tools/oracle/docker.sh` | the docker command |
 | `DEVNET_GENERATOR` | empty | the devnet generator, `gen-network.js`, for the genesis class; a separate tool that is not published |
 | `VECTOR_CRATES` | every crate and its classes | which classes `make vectors-install` puts into which crate's `tests/vectors` |
-| `L1_CASES`, `L1_SEED`, `L1_PROPERTY` | `256`, `1`, all | cases per property, the generator's seed, the properties (`P1` to `P12`, `P14` to `P16`, or their names, comma separated) |
+| `L1_CASES`, `L1_SEED`, `L1_PROPERTY` | `256`, `1`, all | cases per property, the generator's seed, the properties (`P1` to `P12`, `P14` to `P17`, `P19`, or their names, comma separated) |
 | `CORPUS`, `NAME` | `target/corpus`, empty | the L2 corpus `CORPUS/NAME` |
 | `ARCHIVE`, `CORPUS_SEED`, `DUMP` | empty | the devnet archives `make corpus-import` joins (in chain order); the chain's public key-derivation seed; heights whose records the judge writes |
 | `TO` | empty | cut the corpus at this height, in `corpus-judge`, `l2`, `l2-synthetic` and `l2-restart` (the judge and the replays must use the same cut) |
 | `RESTARTS` | empty | the restart plan `corpus-judge` writes into the corpus before it judges: `every` (a restart at every height) or `rounds` (the round ends, the first blocks of rounds, 20 seeded heights and the node's live restarts) |
-| `KILLS`, `KILL_SEED` | `200`, empty | the kill test's number of kills, and the seed of its delays |
+| `KILLS`, `KILL_SEED` | `200`, empty | the number of kills of the kill test and of the forger's crash test, and the seed of their delays |
+| `DIRECTION` | empty | `oracle` makes `forge-replay` have the reference rebuild the corpus's blocks; empty, Heartwood rebuilds them |
 | `ORACLE_ARGS` | `--image $(IMAGE)` | where the oracle of `l1`, `corpus-judge`, `l2-synthetic` and `replay-wire` runs; `--solar-dir DIR` for a local reference |
 | `RELEASE_PACKAGES` | the ten library crates | the packages `make release-check` builds without test seams |
 | `FUZZ_SECONDS`, `FUZZ_FORK` | `600`, `8` | how long each wire or p2p fuzz target runs, and its libFuzzer jobs |
 | `WIRE_SEEDS`, `WIRE_SEED_MAX` | the installed wire class, `65536` | the vector file that seeds the wire fuzz corpora, and the longest seed in bytes |
 | `WIRE_LOGS` | `target/wire-fuzz` | the logs of `make fuzz-wire` and `make replay-wire` |
 | `P2P_SEEDS`, `P2P_LOGS` | `$(VECTORS)/local`, `target/p2p-fuzz` | the vector run that seeds the p2p fuzz corpora, and the logs of `make fuzz-p2p` and `make replay-p2p` |
+| `FORGER_SEEDS`, `FORGER_LOGS` | `$(VECTORS)/local`, `target/forger-fuzz` | the vector run that seeds the forger's internal_body corpus, and the logs of `make fuzz-forger` |
 
 Settings for one machine go in `local.mk` beside the Makefile. It is git-ignored and read before
 the defaults, for example:
@@ -654,6 +664,138 @@ The fuzz targets, seeded by `tools/p2p-fuzz-seeds.js` from a vector run's V24 an
 | `reply_check` | a selector byte (modulo 6: the routes other than getStatus), then a reply | no panic; an accepted reply encodes to bytes that decode and check to the same value | `wire.checkReply` |
 | `listed_block` | a getBlocks reply | no panic in the download path (the codec, the reply check, the transaction reader and the block rebuilt from the listed fields); a rebuilt block decodes to the same block | `block.fromListed` |
 
+## heartwood-forger
+
+`packages/forger` is the forger: the process that holds the delegates' keys and signs their
+blocks, driven by its relays as the reference's forger is. It opens no listening socket and has no
+store and no API. Its edges are `heartwood-crypto`, `heartwood-kernel`, `heartwood-p2p-wire` and
+`heartwood-p2p` built without its `node` feature, so it links only the nes client session and the
+transport; `make layers` checks that its tree holds no crate of the state, the transactions, the
+pool, the store, the chain or the API. It is not yet wired into a process.
+
+- **the slot loop**: at every slot, the round from the selected relay; when one of the forger's
+  delegates is the slot's forger, attempts one second apart with the reference's checks and log
+  lines, the 2,000 ms margin before the slot's end, the forging quorum's reading
+  (`isForgingAllowed`), the error count that ends a slot's attempts after `blockTime - 1` failed
+  ones, and the forger events. A shutdown lets a `postBlock` in flight finish before the sessions
+  close.
+- **the relay client**: one nes session per configured host with a 20 MiB receive limit, the
+  reference's host selection (up to ten sweeps 250 ms apart, the first ready host in list order),
+  each call with its route's codec and the forger's headers, and the two attestation routes on the
+  selected host.
+- **blocks**: a delegate's block from the relay's inputs (the collated transactions, the previous
+  block, the timestamp and the reward), byte for byte the reference's for the same inputs and aux.
+- **the signing record**: per key, the height, slot, id and bytes of the last block signed,
+  written and synced before the block leaves (`<data>/forger/signing-record.json`, mode 0600).
+- **the key file**: `delegates.json`, with the reference's messages for a missing file and a file
+  without keys.
+- **the attester**: signs the status its relay offers over the forger's own session, one
+  signature per offered key, naming the offer by the SHA-256 of its text.
+
+Where Heartwood differs on purpose, none of which an honest relay on the same host shows except the
+first (the bytes a slot gets stay the reference's):
+
+- the reference signs a fresh block in every attempt of a slot, before its checks; Heartwood
+  checks first, then signs a slot once per key through the signing record, and a retry or a
+  restart inside the slot sends the recorded bytes again. A slot below the recorded one is
+  refused, and so is a slot more than one away from the slot of the forger's own clock, so that
+  one far answer from a relay cannot stop a key;
+- every relay call has a deadline, where the reference sets none: 20 s for the round, the sync
+  and the events; the longer of 4 s and the end of the next slot for the network state, the pool's
+  transactions and `postBlock`; the longer of 2 s and the end of the next slot for the status and
+  the slot numbers; 15 s and 2 s for the attestation routes;
+- a wait the loop computes as zero or less is 200 ms, where the reference polls again at once;
+- an over-height header by the delegate's own key stops the forger when its signature verifies;
+  the reference verifies it as a whole block built from the header alone, which only an empty
+  block passes (the documented difference of L0 and P19 below);
+- a key file that the group or others can read is refused, and so is a non-empty `secrets` list;
+  the file is never rewritten;
+- the attester signs an offer only when its text reads back as a status tree and writes back to
+  the same bytes, for the forger's network, with a height equal to its header's and a slot within
+  one of the forger's clock, and only for the forger's own keys;
+- the fields of an internal body that the forger uses are read when the body arrives, so a missing
+  or out-of-range field fails the call, where the reference fails later.
+
+```sh
+make test-forger                # clippy and tests of heartwood-forger alone, and of heartwood-p2p without node
+make forger-features            # only heartwood-forger enables heartwood-crypto's forger-aux
+make forge-replay NAME=txgen-one-node CORPUS=tools/difftest/corpus   # Heartwood rebuilds every block of a corpus
+make forger-crash KILLS=50      # the signing record under SIGKILL
+make fuzz-forger                # the two forger fuzz targets at once, FUZZ_SECONDS each
+cargo test -p heartwood-forger --all-features -- --include-ignored   # also the loop against a far relay
+```
+
+The crate's tests run on tokio's paused clock, against a scripted relay over the mock peer's
+in-memory connections (loopback addresses `127.10.0.x`) and a recording signer, and read the log
+lines the loop writes. They cover every branch and line of the slot check, the attempt and the
+quorum's reading, each call's codec, headers and deadline, host selection and failover (a relay
+that stops answering is left at its deadline, then through the session's heartbeat), the key
+file's modes, the signing record's decisions and write order (a crash between the write and the
+send, a torn temporary file), the attester against the status preimages of the signature class
+and crafted offers, and blocks against the forging records of V29. The test that runs the loop
+against a relay whose slot answers are two ahead of the forger's clock is marked `integration`.
+
+The crash test (`difftest forger crash`) starts the `forger-child` binary (feature `difftest`),
+which runs the slot loop, the relay client and the signer with a fresh random aux for every
+signature, against a mock relay on `127.14.0.1` whose answers follow the clock on a test network
+with 3-second slots: the child's delegate forges every slot, every network state names a new
+random previous block, and a posted block becomes the relay's last block once its answer is sent,
+after a random hold. The harness kills the child with SIGKILL at random moments, most of them
+while a `postBlock` answer is held, and starts it again. No slot may have two different blocks at
+the relay or in the child's reports, a block posted for a recorded slot must be the recorded one,
+and a restart inside a recorded slot that the relay has not taken sends the recorded block again
+when it sends at all (with less than 2,000 ms of the slot left it sends nothing).
+
+The fuzz targets:
+
+| Target | Input | Checks | Seeded from |
+|---|---|---|---|
+| `internal_body` | a selector byte (modulo 9: the nine internal bodies) and the body's JSON text | no panic; an accepted body writes bytes that read back to a body that writes the same bytes | the round and network-state bodies of a vector run's V29 records (`FORGER_SEEDS`) |
+| `status_to_sign` | an offer: arbitrary text, or a status tree in canonical form perhaps cut or changed by one byte, and a list of keys | no panic; only an offer whose text is the canonical form of a status for the attester's network, height and slot window, with the attester's own keys, is signed, and every such offer is | none (the target builds its status trees) |
+
+## heartwood-cli
+
+`packages/cli` holds the commands that are not a node process, which the one `heartwood` binary
+calls. It depends on `heartwood-crypto` and `heartwood-kernel` only, so it links no node
+component, and it starts every child process with an explicit argv, never through a shell. clap
+and nix are used by this crate only (`make layers`).
+
+- **the colon aliases**: `relay:start` is `relay start`, for every command built.
+- **instances**: a token, a network and a role, named `<token>-<network>-<role>`, with the five
+  directories of the `CORE_PATH_*` variables; `config.json` only fills a missing `--token` or
+  `--network`.
+- **the supervisor** (`heartwood supervise`): pm2's restart rules (a child that ran for 1 second or
+  more restarts at once; after 5 shorter runs in a row the role is `errored`), a stop by SIGINT
+  and SIGKILL 30 seconds later, a lock per role, a state file, and the child's output captured
+  into `<name>-out.log` and `<name>-error.log`, rotated at 500 MB into seven numbered files.
+- **the role commands**: `start`, `stop`, `restart`, `status` (with a process table read from
+  `/proc`, or from `ps` elsewhere) and `log`, with their refusals.
+- **network generate**: a network's chain definition, keys and single-node instance for a seed.
+  The built-in devnet profile writes crypto files byte-identical to the genesis vectors (V10) for
+  their three seeds.
+- **the devnet library** (feature `devnet`, on by default): `init`, `start`, `stop`, `status`,
+  `logs`, `stop-node`, `start-node`, `restart-node`, `reset`, `wait` and `env` for a local devnet
+  with one loopback address per node (node k on `127.0.0.(10 + k)`, P2P on port 6002 and the API
+  on 6003; another prefix lets devnets run side by side), its relays and forgers started through
+  the supervisor, and the relays' APIs read with a loopback HTTP GET.
+
+Where the commands differ on purpose from the reference's: the process names carry the network;
+a second supervisor of an instance's role refuses to start (its lock); a `config.json` that is not
+a JSON object of texts is refused, where the reference ignores it; `status` of a role that never
+ran gives a `stopped` row, where the reference aborts; rotated captures are numbered and not
+compressed, where pm2-logrotate writes dated gzip files.
+
+```sh
+make test-cli                   # clippy and tests of heartwood-cli alone, with no feature, the default ones and all
+cargo test -p heartwood-cli --all-features -- --include-ignored   # also devnet init over the real network generate
+target/debug/difftest network generate packages/crypto/tests/vectors   # network generate against V10
+```
+
+The supervisor's tests run the `test-child` binary (feature `test-child`), whose behaviour each
+test scripts; one of them waits the 30 seconds before SIGKILL. The devnet's tests run against
+recording fakes of the process operations and of the API reads, on loopback addresses
+`127.13.0.x`.
+
 ## L0: golden vectors
 
 `difftest run l0` compares the records of a vector run with Heartwood, with one subject per
@@ -755,6 +897,8 @@ minimal case, which is written to `--regressions`.
 | P14 verifier | a chain of 70 headers signed by the delegates of their rounds, our height, a peer on our chain or forked from a random height with a branch of its own, bogus and short common-block replies, a failing or unlinked header, a deadline | `verifier.checkState`: the result and every request |
 | P15 exchange | the client's requests with random versions, ports and fields; replies of the six routes other than getStatus around the schemas' edges, a quarter of them with a byte changed, cut or added | `p2p.validateRequest`, `wire.checkReply` |
 | P16 monitor | peer sets with attested keys, ranks, heights and verification results around the fork threshold, with common heights of different digit counts; lists of heights | `monitor.forkDecision`, `monitor.networkHeight` |
+| P17 forging | P10's pool sessions, whose collation at the end is the forger's, with a random previous block, slot, reward (mostly the devnet's, sometimes 0 or any 64-bit value), key and aux | `forger.collateAndForge`: the collated and removed ids and the block's bytes |
+| P19 decisions | one attempt of a slot: rounds, network states of every status with quorum counts around the threshold and over-height headers (empty blocks of two delegates, the forging delegate's signed header that counts a transaction, and one of its headers whose signature fails), status headers, slot answers, times left around the 2,000 ms margin, and failing calls | `forger.decide`: the attempt's action, the quorum's reason and every log line |
 
 With the date as the seed and 10,000 cases per property (50,000 for P7), every property agrees
 with the reference. The only documented difference that appears is the one of a refused
@@ -777,7 +921,12 @@ the reference binds a sender's key before its checks run, so the pool cannot rea
 
 P14 to P16 agree with the reference at 10,000 cases each with the date as the seed. The only
 documented difference among them is P14's fork segment whose headers do not chain (about one case
-in twenty-four), which Heartwood refuses (see heartwood-p2p).
+in twenty-four), which Heartwood refuses (see heartwood-p2p). P17 and P19 agree with the reference
+at 1,000 cases each with the date as the seed. P17's documented cases are the pool's full-pool
+eviction (about one in seventy). P19's are the over-height header of the delegate's own key that
+is not an empty block and whose signature verifies (about one in seventeen), on which Heartwood
+does not forge; the report counts the reference's actions, and every action of an attempt and
+every reason of the quorum's refusal appears.
 
 ## L2: chains, corpora and the state digest
 
@@ -839,6 +988,15 @@ their re-add; a vote before and after its delegate is online, and the online rec
 rounds later; a milestone that raises the fee floor at the tip plus two; and a restart of the pool's
 storage.
 
+**Forge replay.** `make forge-replay` rebuilds every block of a corpus with Heartwood's forger from
+the block's inputs (its transactions, the previous block, the timestamp and the reward) and the
+forger aux of the chain: `forgerAux` in `corpus.json` when present, else the one the devnet
+tooling derives from the chain's seed. Each rebuilt block must equal the stored bytes; a corpus
+whose blocks do not rebuild is reported as "aux unknown", never as passed. With `DIRECTION=oracle`
+the reference rebuilds the blocks instead, which checks a chain that Heartwood forged. The
+committed corpus and the maintainers' fault and restart chains (to height 265) rebuild in both
+directions.
+
 **Kill test.** `make crash-test` replays the chain through the store in a child process
 (`difftest store replay`) and kills it with SIGKILL after a random delay, `KILLS` times; after each
 kill it restores the store by both of Heartwood's start paths (`difftest store check`), which must
@@ -852,6 +1010,7 @@ make l2 NAME=my-chain                                     # Heartwood through it
 make l2-restart NAME=my-chain                             # the same with the restarts of the plan
 make l2-synthetic NAME=my-chain                           # with the synthetic blocks, restarts and pool sessions (needs the oracle)
 make crash-test NAME=my-chain KILLS=200                   # the store after SIGKILLs
+make forge-replay NAME=my-chain                           # every block rebuilt by the forger
 cargo test -p heartwood-difftest --locked --test l2       # the committed corpus with its restart lines, no oracle
 ```
 
@@ -920,6 +1079,7 @@ run without `DEVNET_GENERATOR`, and then installs nothing.
 | `V18-genesis-state.jsonl` (state) | the state digest after the genesis block of the three V10 chain definitions and of six variants of the first (fees and burns, a second key, resignations and a revoke, split votes, a transfer before the issuance record, more issuance records, a generator that registers and votes, a vote and a resignation before their registration; two that the reference refuses to start on: a negative balance, too few delegates for round 1), and of five wallet sets, one per record shape |
 | `V24-p2p-exchange.jsonl` (not installed) | the client's requests as a reference server reads them (accepted with the reference client's bytes, or refused by the version gate or the payload limit), and the reply checks of the six routes other than getStatus, with their verdicts and changed values |
 | `V25-peer-rules.jsonl` (not installed) | the address rules of candidate peers, the version gate over the devnet's, the default and 400 seeded ranges, the same-subnet test and the outgoing rate limiter's waits |
+| `V29-forging.jsonl` (not installed) | block assembly (`forger.forge`: an empty block, each kept type alone and together, burns, 256 recipients, 150 and 151 transactions, a block over `maxPayload`, totals and rewards at the 64-bit edges, three aux values, milestones that change at the next height), collation and assembly after pool sessions (`forger.collateAndForge`), one attempt of the forger's slot (`forger.decide`, with its log lines), and the internal routes' round and network-state bodies as a relay writes them and the forger reads them |
 | `V26-network.jsonl` (not installed) | the status attestations of a ping, the n-ary search for the common block and the peer verification over forks of a devnet chain, the monitor's network height, fork decisions and download plans, and blocks rebuilt from getBlocks replies |
 | `V20-logger.jsonl` (logger) | the log line of every level, coloured and plain, with and without emoji codes (the whole table, in slices), over times at the edges of a JavaScript date and messages with line breaks and colour codes |
 | `V21-pool.jsonl` (pool) | 50 scripted pool sessions over wallet fixtures, each step with the reference's answer and the pool's contents after it: every error code with its message (duplicates, the cooldown from 0 to 30 seconds and per channel, the size limit, another network byte, the fee floor and one below it, the static fee exact, lower and higher, a full pool with fee ties and evictions, the per-sender limit with `excess` and allowed senders, every handler refusal, the pending and offline texts, bad signatures and bytes that do not decode, the seven removed types as bytes and as JSON); JSON entries with a correct, wrong or missing id; accepted but not broadcast; a pending incoming transfer; nonce chains and gaps; re-adds after a flush and a restart of the storage; age expiry; removal cascades; forged removal; the online record's expiry; collation (fee and nonce order, ties, `exclude`, the most transactions, the byte budget, a failed sender) |

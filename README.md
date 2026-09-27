@@ -2,7 +2,7 @@
 
 # Heartwood Core
 
-The Rust implementation of IceRoot's node software. This repository currently provides cryptography, transaction and block codecs, network configuration, the headless state machine (wallets, delegates, rounds, transaction handlers, block application and reversal), the peer-to-peer wire codec, the store (SQLite) with a node's commit and restart, the transaction pool, and a differential-testing harness. It does not yet provide a running node, block processing, networking or REST server.
+The Rust implementation of IceRoot's node software. This repository currently provides cryptography, transaction and block codecs, network configuration, the headless state machine (wallets, delegates, rounds, transaction handlers, block application and reversal), the peer-to-peer wire codec and client, the store (SQLite) with a node's commit and restart, the transaction pool, the forger, the commands (a process supervisor, `network generate` and a local devnet library), and a differential-testing harness. It does not yet provide a running node binary, block processing, a peer-to-peer server or a REST server.
 
 [Core overview](https://docs.iceroot.com/core/overview/) · [Build from source](https://docs.iceroot.com/core/installation/) · [Architecture](https://docs.iceroot.com/core/architecture/) · [Protocol design](https://docs.iceroot.com/core/protocol-design/)
 
@@ -32,6 +32,15 @@ make test-p2p
 
 It lints and tests `heartwood-p2p` without and with its test feature. [Compatibility and testing](docs/compatibility.md#heartwood-p2p) describes its tests against a mock peer and a reference node.
 
+The forger and the commands have their own targets too, which `make check` also runs:
+
+```sh
+make test-forger
+make test-cli
+```
+
+They lint and test `heartwood-forger` and `heartwood-cli` with and without their features. `make forger-crash` kills a forger at random moments against a mock relay and checks that no slot gets two different blocks, and `make forge-replay` rebuilds a corpus's blocks through the forger. [Compatibility and testing](docs/compatibility.md#heartwood-forger) describes these tests.
+
 Release builds must select one package at a time, for example `cargo build --release -p heartwood-crypto`. Do not use `--workspace` for releases: the test harness enables features that must not enter production packages.
 
 ## Components
@@ -48,10 +57,12 @@ Release builds must select one package at a time, for example `cargo build --rel
 | `packages/pool/` | The transaction pool: admission with the reference's checks, codes and messages, storage, queries, collation and the online record |
 | `packages/blockchain/` | A block's commit to the store, a node's start (first start, restart from the state tables, or replay from the genesis block) and the pool's online record in the store |
 | `packages/p2p/` | The client side of the peer-to-peer protocol, not yet wired into a node: nes sessions over WebSocket, requests and reply checks, peer acceptance and verification, discovery, downloads and broadcasts |
+| `packages/forger/` | The forger, not yet wired into a process: the slot loop its relay drives, the relay client with failover and call deadlines, block assembly and signing through a persisted signing record, the key file and the status attester |
+| `packages/cli/` | The commands without the node: the colon aliases, instances, a built-in process supervisor and the role commands, the files of `network generate`, and a local devnet library with one loopback address per node |
 | `tools/difftest/` | Compatibility harness and command-line tools |
 | `tools/oracle/` | Reference execution, container builds and vector generation |
 | `packages/*/tests/vectors/` | Committed vectors of each crate, with checksums and source metadata |
-| `fuzz/` | Decoder fuzz targets, the state machine's apply and revert targets, the state's records, the pool, and the peer-to-peer client's session, reply checks and download path |
+| `fuzz/` | Decoder fuzz targets, the state machine's apply and revert targets, the state's records, the pool, the peer-to-peer client's session, reply checks and download path, and the forger's internal bodies and status offers |
 
 The current implementation uses the retained reference cryptography and transaction formats. Proposed protocol features in the whitepaper describe a separate target; they are not all implemented here.
 
