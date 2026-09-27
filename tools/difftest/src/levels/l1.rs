@@ -7,7 +7,9 @@
 //! One difference is documented and applied here: when the reference refuses a transaction whose
 //! sender has no public key, it has already bound the key (it binds it before its checks), and
 //! Heartwood leaves the state unchanged. For those cases the sender's key is left out of the
-//! oracle's wallet records before they are compared (the refused-unbound-sender predicate).
+//! oracle's wallet records before they are compared (the refused-unbound-sender predicate). A
+//! handler case whose revert does not give back its fixture, on either side, fails as a harness
+//! error even when both sides agree.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
