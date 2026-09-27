@@ -1,0 +1,55 @@
+{
+ "format": "heartwood-live-run/1",
+ "run": "h",
+ "network": "fixture-h",
+ "dryRun": false,
+ "seed": "solar-devnet",
+ "roundLength": 53,
+ "blockTime": 8,
+ "stopHeight": 265,
+ "control": "node1",
+ "gateway": "198.51.100.1",
+ "nodes": [
+  {
+   "name": "node1",
+   "ip": "198.51.100.11",
+   "implementation": "reference",
+   "role": "forger",
+   "delegates": 18,
+   "underTest": false
+  },
+  {
+   "name": "node2",
+   "ip": "198.51.100.12",
+   "implementation": "reference",
+   "role": "forger",
+   "delegates": 18,
+   "underTest": false
+  },
+  {
+   "name": "node3",
+   "ip": "198.51.100.13",
+   "implementation": "reference",
+   "role": "forger",
+   "delegates": 17,
+   "underTest": false
+  },
+  {
+   "name": "node4",
+   "ip": "198.51.100.14",
+   "implementation": "heartwood",
+   "role": "observer",
+   "delegates": 0,
+   "underTest": true
+  }
+ ],
+ "corpora": {
+  "live-h": "archives/node1"
+ },
+ "faultWindowSeconds": 30,
+ "started": "2026-09-27T13:42:18.594Z",
+ "status": "complete",
+ "note": "",
+ "pair": "r",
+ "finished": "2026-09-27T14:21:01.955Z"
+}
