@@ -13,9 +13,9 @@
 
 use heartwood_crypto::identities::{Address, PublicKeyBytes};
 use heartwood_crypto::{Block, BlockHeader, Milestones};
-use heartwood_kernel::is_new_round;
 
 use crate::block_state;
+use crate::dpos::dpos::set_rank;
 use crate::errors::{ApplyError, GenesisError, RevertError, RewardError, rolled_back};
 use crate::handlers::TransactionHandlers;
 use crate::round_state::{MissedBlock, RoundDelegate, RoundReward, RoundState};
@@ -59,7 +59,7 @@ pub struct Reverted {
     pub round_reverted: Option<u64>,
 }
 
-/// The round state and ranks before a round step, kept until the step succeeds.
+/// The round state and ranks before a revert, kept until the revert succeeds.
 struct SavedRound {
     round: RoundState,
     ranks: Option<Vec<(Address, Option<u32>)>>,
@@ -92,11 +92,15 @@ impl State {
 
     /// Apply `block`, the block after the last one: detect the slots missed before it, apply its
     /// transactions and pay its forger, make it the last block, and record it in the round,
-    /// starting the next round when it ends one. On an error the state is unchanged.
+    /// starting the next round when it ends one. On an error the state is unchanged (see the
+    /// module documentation for the one exception).
     ///
-    /// The block's rules (chaining, signatures, the scheduled generator, the reward) are the
-    /// block processor's; this only requires the height to follow and the generator to be a
-    /// registered delegate.
+    /// The block's rules (chaining, signatures, the scheduled generator, the reward, and a
+    /// timestamp that is not in the future) are the block processor's, which refuses a block that
+    /// breaks one before it calls this; this only requires the height to follow and the generator
+    /// to be a registered delegate, and checks both before it detects the missed slots. Missed
+    /// slots are detected one row per slot between the last block and `block`, so their number
+    /// is bounded only by the processor's timestamp rule.
     pub fn apply_block<H: TransactionHandlers>(
         &mut self,
         block: &Block,
@@ -104,15 +108,12 @@ impl State {
         handlers: &H,
     ) -> Result<Applied, ApplyError<H::Error>> {
         let height = block.height();
-        let expected = self
-            .height()
-            .checked_add(1)
-            .filter(|expected| *expected == height)
-            .ok_or(ApplyError::Height {
+        if self.height().checked_add(1) != Some(height) {
+            return Err(ApplyError::Height {
                 expected: self.height().saturating_add(1),
                 height,
-            })?;
-        let missed = self.detect_missed_blocks(block.header(), milestones);
+            });
+        }
         let generator = block.header().generator_public_key;
         let username = self
             .wallets
@@ -120,6 +121,7 @@ impl State {
             .and_then(Wallet::delegate)
             .map(|delegate| delegate.username().to_owned())
             .ok_or(ApplyError::GeneratorNotDelegate { generator })?;
+        let missed = self.detect_missed_blocks(block.header(), milestones);
 
         let mut undo = block_state::apply_block(
             &mut self.wallets,
@@ -129,14 +131,13 @@ impl State {
             handlers,
         )?;
         let previous_block = self.store.replace_last_block(block.clone());
-        let saved = self.save_round(is_new_round(expected.saturating_add(1), milestones));
+        // On an error the round state keeps its round and every rank as they were.
         match self
             .round
             .apply_block(&mut self.wallets, height, &username, milestones)
         {
             Ok(round) => undo.round = round,
             Err(error) => {
-                self.restore_round(saved);
                 let undone = block_state::revert_block(
                     &mut self.wallets,
                     self.store.totals_mut(),
@@ -202,8 +203,8 @@ impl State {
         })
     }
 
-    /// The round state and, when `with_ranks`, every delegate's rank, to restore them if a round
-    /// step fails.
+    /// The round state and, when `with_ranks`, every delegate's rank, to restore them if a revert
+    /// fails after the round's part.
     fn save_round(&self, with_ranks: bool) -> SavedRound {
         SavedRound {
             round: self.round.clone(),
@@ -220,17 +221,13 @@ impl State {
     fn restore_round(&mut self, saved: SavedRound) {
         self.round = saved.round;
         for (address, rank) in saved.ranks.into_iter().flatten() {
-            if let Some(delegate) = self
-                .wallets
-                .wallet_mut(&address)
-                .and_then(Wallet::delegate_mut)
-            {
-                delegate.rank = rank;
-            }
+            set_rank(&mut self.wallets, &address, rank);
         }
     }
 
-    /// The slots missed between the last block and `next`, without applying anything.
+    /// The slots missed between the last block and `next`, without applying anything: one row
+    /// per slot between them, so the caller first refuses a `next` whose timestamp lies in the
+    /// future, as the reference's block processor does.
     pub fn detect_missed_blocks(
         &self,
         next: &BlockHeader,

@@ -432,6 +432,28 @@ fn a_refused_block_leaves_the_state_unchanged() {
 }
 
 #[test]
+fn a_block_is_checked_before_its_missed_slots_are_counted() {
+    // Dated at the end of the timestamp range, the block would leave about 5 × 10^8 slots
+    // missed. Its height and its generator are checked first, so it is refused at once, without
+    // one row per slot (a regression aborts on the allocation or takes minutes).
+    let mut chain = Chain::new();
+    let block = chain.block(Vec::new(), 0);
+    chain.apply(&block);
+    let before = chain.sections(&[]);
+    let far = u32::MAX - 7;
+    let stranger = chain.block_by(Vec::new(), far, chain.keys("wallet/1"));
+    assert_eq!(
+        chain
+            .state
+            .apply_block(&stranger, &chain.milestones, &Handlers),
+        Err(ApplyError::GeneratorNotDelegate {
+            generator: chain.keys("wallet/1").public_key().to_compressed()
+        })
+    );
+    assert_eq!(chain.sections(&[]), before);
+}
+
+#[test]
 fn revert_across_a_round_end_restores_the_round_start_ranks() {
     let mut chain = Chain::new();
     let genesis_ranks = chain.ranks();
