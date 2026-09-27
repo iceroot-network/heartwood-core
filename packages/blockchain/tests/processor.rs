@@ -31,9 +31,8 @@ use heartwood_kernel::{ChainLink, ManualClock};
 use heartwood_state::State;
 use heartwood_transactions::Handlers;
 
-/// The devnet tooling's key-derivation tag and the chain's public seed.
+/// The devnet tooling's key-derivation tag.
 const TAG: &str = "solar-devnet-v1/";
-const SEED: &str = "solar-devnet";
 /// The aux of every signature here.
 const AUX: [u8; 32] = [0x5a; 32];
 /// A fee above every floor of the devnet.
@@ -55,11 +54,14 @@ static FIXTURE: LazyLock<Fixture> = LazyLock::new(|| {
         tip.apply_block(block, milestones, &Handlers).unwrap();
     }
     let network = chain.files.network.pub_key_hash;
+    // The chain's public key-derivation seed.
+    let meta: serde_json::Value = serde_json::from_str(&common::read("corpus.json")).unwrap();
+    let seed = meta["seed"].as_str().unwrap();
     let mut roles: Vec<String> = vec!["genesis-1".into(), "genesis-2".into()];
     roles.extend((1..=53).map(|k| format!("delegate/{k}")));
     let keys = roles
         .iter()
-        .map(|role| role_key(TAG, role, SEED, network).unwrap())
+        .map(|role| role_key(TAG, role, seed, network).unwrap())
         .collect();
     let epoch_ms = slots::epoch_unix_ms(milestones.at(1).epoch()).unwrap();
     Fixture {
