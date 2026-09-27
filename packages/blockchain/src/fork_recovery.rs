@@ -7,6 +7,16 @@
 //! stored tip, reset the count, resume the queue, refresh the peers with a forced cleanse, and
 //! dispatch `SUCCESS`. A live fork is judged by its converged result, never by the depth.
 //!
+//! The recovery is the machine's `startForkRecovery` action, run by the blockchain service. A
+//! failed removal stops the node, and the machine exits (`FAILURE`).
+
+use std::sync::Arc;
+
+use heartwood_kernel::info;
+
+use crate::blockchain::{Blockchain, Queue};
+use crate::network::Network;
+use crate::state_machine::MachineEvent;
 
 /// How many blocks a recovery without a set count removes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +51,29 @@ impl RollbackDepth {
         };
         // The remainder is below 99.
         MIN_RANDOM_DEPTH.saturating_add(u32::try_from(random % SPAN).unwrap_or(0))
+    }
+}
+
+impl<N: Network, Q: Queue> Blockchain<N, Q> {
+    /// `startForkRecovery` (see the module documentation).
+    pub(crate) async fn start_fork_recovery(self: Arc<Self>) {
+        if self.flags().forking {
+            return;
+        }
+        let set = self.chain().blocks_to_rollback;
+        let count = if set > 0 { set } else { self.draw_depth() };
+        self.flags().forking = true;
+        info!("Starting fork recovery :fork_and_knife:");
+        self.queue.stop().await;
+        let removed = self.remove_blocks(count).await;
+        self.queue.clear();
+        self.rolled_back(count);
+        if removed.is_err() {
+            return self.dispatch(MachineEvent::Failure);
+        }
+        self.queue.resume();
+        self.parts.network.refresh_peers_after_fork().await;
+        self.dispatch(MachineEvent::Success);
     }
 }
 

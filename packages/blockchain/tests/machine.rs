@@ -1,9 +1,15 @@
 //! The blockchain machine: every event in every state against the reference's table (the ignored
-//! events included), the entry actions and the names.
+//! events included), the entry actions, the names, and the service's start, failure and stop.
+
+mod common;
+mod service;
+
+use std::time::Duration;
 
 use heartwood_blockchain::state_machine::{
     Action, MachineEvent as E, MachineState as S, SyncState as Y, transition,
 };
+use service::{Harness, Setup};
 
 const SYNC: [Y; 7] = [
     Y::Syncing,
@@ -212,4 +218,100 @@ fn names_are_the_reference_s() {
     );
     assert_eq!(Action::ExitApp.name(), "exitApp");
     assert!(S::Idle.is_idle() && !S::NewBlock.is_idle());
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_ignored_event_changes_nothing() {
+    let h = Harness::new(Setup::default());
+    for event in [
+        E::ProcessFinished,
+        E::WakeUp,
+        E::NewBlock,
+        E::Success,
+        E::Synced,
+    ] {
+        h.service.dispatch(event);
+    }
+    h.settle(Duration::from_secs(5)).await;
+    assert_eq!(h.state(), "uninitialised");
+    assert!(h.network.calls().is_empty());
+    assert!(h.node.log().is_empty());
+    assert!(!h.status.has_changed().unwrap());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_start_restores_the_pool_boots_the_network_and_syncs_to_idle() {
+    let mut h = Harness::new(Setup {
+        peers: 0,
+        ..Setup::default()
+    });
+    h.service.boot().await.unwrap();
+    h.until("idle", Duration::from_secs(1)).await;
+    assert!(h.status.borrow().started && h.chain().started);
+    // The pool's re-add and the online record's save come before the network's boot.
+    assert_eq!(h.node.log()[..2], ["drain", "expire 1"]);
+    let calls = h.network.calls();
+    assert_eq!(calls[0], "boot");
+    assert!(calls.contains(&"synced".to_owned()));
+    // The boot pings 10 random peers once the blockchain has started, and the first idle entry
+    // pings every peer fast, without common blocks.
+    assert!(calls.contains(&"cleanse fast=false force=true count=10 skip=false".to_owned()));
+    assert!(calls.contains(&"cleanse fast=true force=true count=all skip=true".to_owned()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_start_exits_and_fails_the_boot() {
+    let mut h = Harness::new(Setup::default());
+    h.network.state().boot_fails = true;
+    let booted = h.service.boot().await;
+    assert_eq!(booted.unwrap_err().package, "@solar-network/blockchain");
+    h.until("exit", Duration::from_secs(1)).await;
+    assert!(!h.chain().started);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_network_start_mode_finishes_the_sync_at_once() {
+    let options = heartwood_blockchain::BlockchainOptions {
+        network_start: true,
+        ..Default::default()
+    };
+    let mut h = Harness::new(Setup {
+        options,
+        now_ms: service::time_of(265) + 600_000,
+        ..Setup::default()
+    });
+    h.service.boot().await.unwrap();
+    h.until("idle", Duration::from_secs(1)).await;
+    // `downloadFinished` turns the flag off for the next sync, and nothing was downloaded.
+    assert!(!h.chain().network_start);
+    let syncs = h
+        .network
+        .calls()
+        .iter()
+        .filter(|c| c.contains("silent=false"))
+        .count();
+    assert_eq!(syncs, 0, "no sync download");
+    assert_eq!(
+        h.network.count("synced"),
+        0,
+        "no syncingComplete in this mode"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_stop_ends_the_machine_the_queue_and_the_loops() {
+    let mut h = Harness::new(Setup {
+        peers: 0,
+        ..Setup::default()
+    });
+    h.service.boot().await.unwrap();
+    h.until("idle", Duration::from_secs(1)).await;
+    h.service.dispose().await;
+    h.until("stopped", Duration::from_secs(1)).await;
+    let polls = h.network.count("download ");
+    h.settle(Duration::from_secs(120)).await;
+    assert_eq!(h.network.count("download "), polls, "the idle loops ended");
+    assert_eq!(h.state(), "stopped", "no wake-up after the stop");
+    // A second stop does nothing.
+    h.service.dispose().await;
 }
