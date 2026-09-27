@@ -8,7 +8,7 @@
 
 use std::collections::VecDeque;
 use std::net::IpAddr;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use indexmap::IndexMap;
 use rand::SeedableRng;
@@ -27,10 +27,10 @@ enum Source {
     Scripted(VecDeque<Vec<usize>>, usize),
 }
 
-/// The random source of the samples.
-#[derive(Debug)]
+/// The random source of the samples. A clone is a handle to the same source.
+#[derive(Debug, Clone)]
 pub struct Sampler {
-    source: Mutex<Source>,
+    source: Arc<Mutex<Source>>,
 }
 
 /// The subnet a sample spreads over: the first three bytes of an IPv4 address, the first three
@@ -86,7 +86,7 @@ impl Sampler {
 
     fn with(source: Source) -> Sampler {
         Sampler {
-            source: Mutex::new(source),
+            source: Arc::new(Mutex::new(source)),
         }
     }
 
