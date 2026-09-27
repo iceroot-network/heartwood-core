@@ -144,6 +144,11 @@ function of the transaction's type, its size and the milestone, so that a client
 before it signs. The crate forbids unsafe code, and its decoders return typed errors instead of
 panicking on untrusted input.
 
+Every signature names what it is for with a signing domain: a transaction, a block, a peer status
+or an off-chain message. In this signature format the domain changes no bytes; an off-chain message
+is signed as the reference signs it, BIP340 over SHA-256 of the message's UTF-8 text. From the
+post-quantum formats on, each domain carries its own tag of the signing-tag registry.
+
 Features, all off by default:
 
 | Feature | What it enables |
