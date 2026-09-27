@@ -12,7 +12,9 @@
 //! - [`lifecycle`]: the component lifecycle, [`lifecycle::Component`].
 //! - [`log`]: the eight log levels of the reference and their macros over `tracing`.
 //! - [`paths`]: the config, data, cache, log and temp directories of a node.
-//! - [`config`]: the `.env` parser and the option merge.
+//! - [`config`]: the `.env` parser and the node's environment, the option merge, `app.json` and
+//!   the components' options, `peers.json`, the crypto files and the version floor.
+//! - `bus` (feature `bus`): the event bus, which the node's processes use.
 //! - [`errors`]: the crate's error types.
 //!
 //! Rules: the consensus utilities read the round length and the block time from the milestone at
@@ -20,7 +22,8 @@
 //! clock. Nothing in this crate holds global mutable state.
 //!
 //! Features: `difftest` adds `ManualClock`, a test seam that only test code enables; a release
-//! build never has it.
+//! build never has it. `bus` adds the event bus on tokio's broadcast channel; only the node's
+//! runtime crates enable it, so the consensus crates stay free of tokio.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -34,6 +37,8 @@
     )
 )]
 
+#[cfg(feature = "bus")]
+pub mod bus;
 pub mod clock;
 pub mod config;
 pub mod errors;

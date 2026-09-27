@@ -16,6 +16,8 @@
 //! - [`digest`]: the canonical state digest, per height and over a replay.
 //! - [`persist`]: the records a store keeps of the state, and the checks of a state read back
 //!   from them.
+//! - [`snapshot`]: [`StateView`], the view of the state that the node publishes after each
+//!   commit.
 //! - [`errors`]: the crate's error types.
 //!
 //! Rules: no I/O, no clock and no async; the store's records are values, written and read by
@@ -50,6 +52,7 @@ pub mod handlers;
 pub mod machine;
 pub mod persist;
 pub mod round_state;
+pub mod snapshot;
 pub mod stores;
 pub mod supply;
 pub mod undo;
@@ -58,4 +61,5 @@ pub mod wallets;
 pub use crate::handlers::{ApplyContext, Rejection, TransactionHandlers};
 pub use crate::machine::State;
 pub use crate::round_state::RoundState;
+pub use crate::snapshot::StateView;
 pub use crate::wallets::{Delegate, Resignation, Wallet, WalletRepository};

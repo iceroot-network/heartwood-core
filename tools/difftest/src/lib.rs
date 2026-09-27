@@ -24,11 +24,16 @@
 //! - [`restart`]: restart plans, and restarts of the reference and of Heartwood during a replay.
 //! - [`store`]: a corpus replayed through Heartwood's store, its store anchors, and the kill
 //!   test.
+//! - [`synthetic_processor`]: the synthetic processor and fork cases on a corpus chain.
+//! - [`runtime_kill`]: the kill test through the full runtime of a relay.
+//! - [`api`]: the route corpus, its projections and `difftest api compare`.
+//! - [`live`]: `difftest live check`, the comparisons of a live run on a devnet.
 //! - [`levels`]: L0 to L4; L0, L1 and L2 run, L3 and L4 plug in with the node's processes.
 //! - [`genesis`]: the devnet chain-definition driver (`difftest genesis`).
 
 #![warn(missing_docs)]
 
+pub mod api;
 pub mod cli;
 pub mod compare;
 pub mod corpus;
@@ -37,16 +42,19 @@ pub mod errors;
 pub mod fixture;
 pub mod genesis;
 pub mod levels;
+pub mod live;
 pub mod oracle;
 pub mod replay;
 pub mod report;
 pub mod restart;
+pub mod runtime_kill;
 pub mod store;
 pub mod strategies;
 pub mod subject;
 pub mod subjects;
 pub mod synthetic;
 pub mod synthetic_pool;
+pub mod synthetic_processor;
 pub mod vectors;
 
 pub use errors::{Error, Result};

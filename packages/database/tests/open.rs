@@ -1,5 +1,5 @@
-//! Opening a store: a new file gets schema version 1 in a new directory, a reopened file keeps its
-//! rows, and a file of another schema version or of another program is refused.
+//! Opening a store: a new file gets the current schema version in a new directory, a reopened file
+//! keeps its rows, and a file of another schema version or of another program is refused.
 
 mod common;
 
@@ -23,7 +23,7 @@ fn refused(path: &Path) -> String {
 }
 
 #[test]
-fn a_new_file_gets_its_directory_and_schema_version_1() {
+fn a_new_file_gets_its_directory_and_the_current_schema_version() {
     let data = scratch("open-new");
     let settings = Settings::in_data_dir(&data);
     assert_eq!(settings.path, data.join("database").join("blockchain.db"));
@@ -56,6 +56,7 @@ fn a_new_file_gets_its_directory_and_schema_version_1() {
             "missed_blocks",
             "rounds",
             "state",
+            "transaction_recipients",
             "transactions",
             "undo",
             "wallets"

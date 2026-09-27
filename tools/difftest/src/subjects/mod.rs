@@ -45,17 +45,21 @@
 //! Most operations run under the devnet configuration the oracle was set up with, which the
 //! [`Devnet`] context carries; a case that brings its own milestone file runs under that file.
 
+mod api;
 mod blocks;
 mod config;
+mod config_app;
 mod digest;
 mod genesis;
 mod handlers;
+mod job;
 mod kernel;
 mod keys;
 mod monitor;
 mod peer_rules;
 mod peers;
 mod pool;
+mod processor;
 mod signatures;
 mod state;
 mod text;
@@ -292,8 +296,8 @@ const OPS: &[(&str, Run)] = &[
     ("state.applyTransaction", handlers::apply_transaction),
 ];
 
-/// Every operation: [`OPS`], then the tables of the wire, `config`, `text`, `pool` and the peer
-/// network.
+/// Every operation: [`OPS`], then the tables of the wire, `config`, `text`, `pool`, the peer
+/// network, the processor and the job, the API and the node's configuration.
 fn all_ops() -> impl Iterator<Item = &'static (&'static str, Run)> {
     OPS.iter()
         .chain(wire::OPS)
@@ -304,6 +308,10 @@ fn all_ops() -> impl Iterator<Item = &'static (&'static str, Run)> {
         .chain(peers::OPS)
         .chain(verifier::OPS)
         .chain(monitor::OPS)
+        .chain(processor::OPS)
+        .chain(job::OPS)
+        .chain(api::OPS)
+        .chain(config_app::OPS)
 }
 
 /// Register every operation of [`all_ops`] in `registry`.
@@ -487,7 +495,9 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
         | Documented::Locale
         | Documented::OnlineView
         | Documented::StrictSchema
-        | Documented::UnlinkedForkSegment => false,
+        | Documented::UnlinkedForkSegment
+        | Documented::MissedRowsOfRefusedBlock
+        | Documented::Api(_) => false,
     }
 }
 

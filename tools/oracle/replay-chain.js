@@ -6,7 +6,7 @@
 // the live node's chain (the anchors).
 //
 //   node replay-chain.js --corpus DIR --out FILE [--anchors FILE] [--revert-plan FILE]
-//                        [--restart-plan FILE] [--restarts FILE] [--to H]
+//                        [--restart-plan FILE] [--restarts FILE] [--to H] [--processor]
 //                        [--dump H,...] [--dump-dir DIR] [--solar-dir DIR]
 //
 // --out        the digest lines, one JSON object per step (ts-digests.jsonl)
@@ -23,6 +23,10 @@
 //              id, b, s, r, m, w, sd, cd}, or {mode, h, step: "restart", refused: {reason}}, with
 //              notes when the oracle saw a documented difference (savedStateUsername)
 // --to         judge the chain cut at height H: the blocks, reverts, rows and checkpoints up to it
+// --processor  also replay the chain through the reference's process-blocks job, one block per
+//              job (lib/ops/job.js), and write each block's result beside its digest line to
+//              ts-processor.jsonl next to --out; the judge fails when a block is not accepted or
+//              a line differs from the plain replay's
 // --dump       heights whose forward-step records (the five sections) are written to --dump-dir
 //              [the directory of --out] as dump-h<H>.json
 //
@@ -65,6 +69,7 @@ function parseArgs(argv) {
         dump: [],
         dumpDir: undefined,
         solarDir: undefined,
+        processor: false,
     };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
@@ -82,11 +87,12 @@ function parseArgs(argv) {
         else if (a === "--dump") opts.dump = value().split(",").filter(Boolean).map(Number);
         else if (a === "--dump-dir") opts.dumpDir = value();
         else if (a === "--solar-dir") opts.solarDir = value();
+        else if (a === "--processor") opts.processor = true;
         else throw new UsageError(`unknown argument ${a}`);
     }
     if (!opts.corpus || !opts.out) {
         throw new UsageError(
-            "usage: replay-chain.js --corpus DIR --out FILE [--anchors FILE] [--revert-plan FILE] [--restart-plan FILE] [--restarts FILE] [--to H] [--dump H,...] [--dump-dir DIR] [--solar-dir DIR]",
+            "usage: replay-chain.js --corpus DIR --out FILE [--anchors FILE] [--revert-plan FILE] [--restart-plan FILE] [--restarts FILE] [--to H] [--processor] [--dump H,...] [--dump-dir DIR] [--solar-dir DIR]",
         );
     }
     if (opts.dump.some((h) => !Number.isSafeInteger(h) || h < 1)) throw new UsageError("--dump takes heights");
@@ -624,8 +630,13 @@ async function main() {
             anchors.A6 = { ok: all.every((r) => r.differences.length === 0), restarts: all };
         }
     }
+    let processor;
+    if (opts.processor) {
+        const { processorJudge } = require("./lib/ops/job");
+        processor = await processorJudge({ solar, corpus, out: path.join(outDir, "ts-processor.jsonl") });
+    }
     const last = session.lines[session.lines.length - 1];
-    const ok = failures.length === 0 && Object.values(anchors).every((a) => a.ok);
+    const ok = failures.length === 0 && Object.values(anchors).every((a) => a.ok) && (!processor || processor.ok);
     const report = {
         format: "heartwood-judge/1",
         ok,
@@ -642,6 +653,7 @@ async function main() {
     };
     if (opts.to !== undefined) report.to = opts.to;
     if (restarts) report.restarts = restarts;
+    if (processor) report.processor = processor;
     fs.writeFileSync(anchorsFile, JSON.stringify(report, null, 1) + "\n");
     const summary = Object.entries(anchors)
         .map(([k, a]) => `${k} ${a.ok ? "ok" : "FAIL"}`)

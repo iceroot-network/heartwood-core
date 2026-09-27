@@ -4,11 +4,14 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use heartwood_difftest::cli::{self, Command, GenesisArgs, JudgeArgs, L1Args, L2Args, USAGE};
+use heartwood_difftest::cli::{
+    self, Command, GenesisArgs, JudgeArgs, L1Args, L2Args, L2ProcessorArgs, USAGE,
+};
 use heartwood_difftest::corpus::{self, Corpus};
 use heartwood_difftest::genesis::{self, Built};
 use heartwood_difftest::levels::l1::{self, L1Options, Property};
 use heartwood_difftest::levels::l2::{self, L2Options};
+use heartwood_difftest::levels::l2_processor::{self, L2ProcessorOptions};
 use heartwood_difftest::levels::{Level, l0};
 use heartwood_difftest::oracle::GenOptions;
 use heartwood_difftest::report::describe_meta;
@@ -17,7 +20,7 @@ use heartwood_difftest::store;
 use heartwood_difftest::strategies::transactions::TxContext;
 use heartwood_difftest::subjects::Devnet;
 use heartwood_difftest::vectors::VectorSet;
-use heartwood_difftest::{Error, Result, replay, subject};
+use heartwood_difftest::{Error, Result, api, live, replay, runtime_kill, subject};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -258,17 +261,28 @@ fn execute(command: Command) -> Result<bool> {
             kills,
             seed,
             max_delay_ms,
+            runtime,
         } => {
             let loaded = Corpus::load(&dir)?;
             let exe = std::env::current_exe()
                 .map_err(|e| Error::Usage(format!("cannot find this program: {e}")))?;
-            let report = store::crash(
-                &loaded,
-                &exe,
-                kills,
-                seed,
-                std::time::Duration::from_millis(max_delay_ms),
-            )?;
+            let max_delay = std::time::Duration::from_millis(max_delay_ms);
+            let report = if runtime {
+                runtime_kill::crash(&loaded, &exe, kills, seed, max_delay)?
+            } else {
+                store::crash(&loaded, &exe, kills, seed, max_delay)?
+            };
+            print!("{report}");
+            Ok(report.is_success())
+        }
+        Command::RunL2Processor(args) => run_l2_processor(&args, env),
+        Command::LiveCheck { dir } => {
+            let report = live::check(&dir)?;
+            print!("{report}");
+            Ok(report.is_success())
+        }
+        Command::ApiCompare(args) => {
+            let report = api::compare(&args)?;
             print!("{report}");
             Ok(report.is_success())
         }
@@ -376,6 +390,9 @@ fn judge(args: &JudgeArgs, env: impl Fn(&str) -> Option<String>) -> Result<bool>
     if let Some(to) = args.to {
         extra.extend(["--to".to_string(), to.to_string()]);
     }
+    if args.processor {
+        extra.push("--processor".to_string());
+    }
     let ok = oracle.judge(dir, &work, &extra)?;
     let recorded = corpus::record_judge(dir, &work)?;
     println!(
@@ -428,6 +445,25 @@ fn run_l2(args: &L2Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
             println!("    {verdict:<4} {}", r.label);
         }
     }
+    Ok(report.is_success())
+}
+
+fn run_l2_processor(args: &L2ProcessorArgs, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
+    let corpus = Corpus::load(&args.dir)?;
+    let mut server = match &args.oracle {
+        Some(oracle) => Some(oracle.resolve(env)?.server()?),
+        None => None,
+    };
+    let report = l2_processor::run(
+        &corpus,
+        &L2ProcessorOptions {
+            chunks: args.chunks,
+            to: args.to,
+            synthetic: args.synthetic,
+        },
+        server.as_mut(),
+    )?;
+    print!("{report}");
     Ok(report.is_success())
 }
 

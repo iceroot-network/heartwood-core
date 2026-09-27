@@ -1,6 +1,7 @@
 //! Error types of the crate.
 
 use heartwood_database::{DatabaseError, IntegrityProblem};
+use heartwood_pool::StorageError;
 use heartwood_state::errors::{ApplyError, GenesisError};
 use thiserror::Error;
 
@@ -111,5 +112,53 @@ pub enum StartError<E> {
 impl<E> From<DatabaseError> for StartError<E> {
     fn from(error: DatabaseError) -> StartError<E> {
         StartError::Store(StoreError::Database(error))
+    }
+}
+
+/// The node thread stopped, or has stopped: a request to it gets no answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("the node has stopped")]
+pub struct NodeStopped;
+
+/// A fatal error of the node thread: the node stops (the reference exits with 1), and its next
+/// start restores the committed tip.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum NodeError {
+    /// The store could not be written or read.
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    /// The pool's storage could not be written or read.
+    #[error("the pool's storage failed: {0}")]
+    Pool(#[from] StorageError),
+    /// A block of a removal could not be reverted.
+    #[error("the block at height {height} could not be reverted: {reason}")]
+    Revert {
+        /// The block's height.
+        height: u32,
+        /// Why.
+        reason: String,
+    },
+    /// The processor reported a corrupted state.
+    #[error("the block at height {height} left the state corrupted")]
+    Corrupted {
+        /// The block's height.
+        height: u32,
+    },
+    /// The stored tip is not the state's tip after a removal.
+    #[error("the stored tip is at height {stored}, the state's at {state}")]
+    TipMismatch {
+        /// The stored tip's height.
+        stored: u32,
+        /// The state's tip's height.
+        state: u32,
+    },
+    /// The node thread had stopped.
+    #[error("the node has stopped")]
+    Stopped,
+}
+
+impl From<NodeStopped> for NodeError {
+    fn from(_: NodeStopped) -> NodeError {
+        NodeError::Stopped
     }
 }

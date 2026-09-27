@@ -60,6 +60,8 @@ pub enum Property {
     Text,
     /// The crypto files, loaded with the strict schema (`config.load`).
     Config,
+    /// The block processor (`chain.process`).
+    Processor,
     /// The peer verifier (`verifier.checkState`).
     Verifier,
     /// The client's requests and the peers' replies (`p2p.validateRequest`, `wire.checkReply`).
@@ -70,7 +72,7 @@ pub enum Property {
 
 impl Property {
     /// Every property.
-    pub const ALL: [Property; 15] = [
+    pub const ALL: [Property; 16] = [
         Property::FeeFloor,
         Property::Rounds,
         Property::Slots,
@@ -83,6 +85,7 @@ impl Property {
         Property::Pool,
         Property::Text,
         Property::Config,
+        Property::Processor,
         Property::Verifier,
         Property::Exchange,
         Property::Monitor,
@@ -103,13 +106,14 @@ impl Property {
             Property::Pool => "pool",
             Property::Text => "text",
             Property::Config => "config",
+            Property::Processor => "processor",
             Property::Verifier => "verifier",
             Property::Exchange => "exchange",
             Property::Monitor => "monitor",
         }
     }
 
-    /// The property's short name (P1 to P12, P14 to P16), which the command line accepts too.
+    /// The property's short name, P1 to P16, which the command line accepts too.
     pub const fn number(self) -> &'static str {
         match self {
             Property::FeeFloor => "P1",
@@ -124,6 +128,7 @@ impl Property {
             Property::Pool => "P10",
             Property::Text => "P11",
             Property::Config => "P12",
+            Property::Processor => "P13",
             Property::Verifier => "P14",
             Property::Exchange => "P15",
             Property::Monitor => "P16",
@@ -218,6 +223,9 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
             .prop_map(L1Case::plain)
             .boxed(),
         Property::Config => crate::strategies::config::config_cases(context.clone())
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::Processor => crate::strategies::processor::processor_cases(context)
             .prop_map(L1Case::plain)
             .boxed(),
         Property::Verifier => verifier::verifier_cases(context)
@@ -587,7 +595,13 @@ mod tests {
         assert_eq!("digest".parse::<Property>().unwrap(), Property::Digest);
         assert_eq!("P10".parse::<Property>().unwrap(), Property::Pool);
         assert_eq!("p12".parse::<Property>().unwrap(), Property::Config);
-        assert!("P13".parse::<Property>().is_err());
+        assert_eq!("P13".parse::<Property>().unwrap(), Property::Processor);
+        assert_eq!(
+            "processor".parse::<Property>().unwrap(),
+            Property::Processor
+        );
+        assert_eq!("P16".parse::<Property>().unwrap(), Property::Monitor);
+        assert!("P17".parse::<Property>().is_err());
     }
 
     #[test]

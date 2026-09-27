@@ -94,6 +94,34 @@ pub enum Documented {
     StrictSchema,
     /// A peer's fork segment whose fetched headers do not chain (previous id, height + 1).
     UnlinkedForkSegment,
+    /// A block refused in its apply after a gap of missed slots: the reference has written the
+    /// gap's missed rows before it validated the block.
+    MissedRowsOfRefusedBlock,
+    /// A served route's documented difference.
+    Api(ApiDifference),
+}
+
+/// A served route's documented difference from the reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiDifference {
+    /// A store error or a read's timeout on a list: the reference answers an empty 200 (a lookup
+    /// an unlogged 500); Heartwood answers a logged 500.
+    StoreFailure,
+    /// A block height above the tip, or a block's transactions of a value that is neither a full
+    /// id nor a height at or below the tip: the reference matches an id prefix; Heartwood answers
+    /// 404 "Block not found".
+    HeightAboveTip,
+    /// Requests beyond the semaphore's bound: the reference's semaphore is inert; Heartwood's
+    /// bounds the concurrency and answers 429 when its queue is full.
+    Semaphore,
+    /// The peers' `ip` filter: the reference validates it and ignores it; Heartwood filters.
+    PeersIpFilter,
+    /// Ties of a custom order and the order of text: the reference's depend on the database's
+    /// plan and locale; Heartwood breaks ties by the unique key and orders text by bytes.
+    TieOrder,
+    /// Pagination links under another base path than `/api`: the reference strips a hard-coded
+    /// `/api`; Heartwood strips the configured base path.
+    BasePathLinks,
 }
 
 impl Documented {
@@ -192,6 +220,44 @@ impl Documented {
                  header's signature, height and round delegate only, Heartwood also requires each \
                  to chain to the one before it and refuses the peer (crafted peers only; every \
                  honest segment chains)"
+            }
+            Documented::MissedRowsOfRefusedBlock => {
+                "a block refused in its apply after missed slots: the reference writes the missed \
+                 rows before it validates the block and keeps them, Heartwood writes missed rows \
+                 only with an applied block (a faulty or adversarial forger only)"
+            }
+            Documented::Api(difference) => difference.reason(),
+        }
+    }
+}
+
+impl ApiDifference {
+    /// What the reference does instead, and why the difference is accepted.
+    pub fn reason(self) -> &'static str {
+        match self {
+            ApiDifference::StoreFailure => {
+                "a store failure on a list: the reference answers an empty 200, Heartwood a logged \
+                 500 with a Boom body (a fault or a timeout only)"
+            }
+            ApiDifference::HeightAboveTip => {
+                "a height above the tip: the reference matches an id prefix and answers an \
+                 unrelated block or a 500, Heartwood answers 404 \"Block not found\""
+            }
+            ApiDifference::Semaphore => {
+                "the semaphore: the reference's is inert, Heartwood bounds the concurrency with \
+                 the same settings and answers 429 when its queue is full (heavy load only)"
+            }
+            ApiDifference::PeersIpFilter => {
+                "the peers' ip filter: the reference validates it and ignores it, Heartwood \
+                 filters by it"
+            }
+            ApiDifference::TieOrder => {
+                "ties of a custom order and text order: the reference's depend on its database's \
+                 plan and locale, Heartwood breaks ties by the unique key and orders text by bytes"
+            }
+            ApiDifference::BasePathLinks => {
+                "pagination links under another base path: the reference strips a hard-coded \
+                 /api, Heartwood strips the configured base path"
             }
         }
     }

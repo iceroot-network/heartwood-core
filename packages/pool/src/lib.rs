@@ -20,6 +20,7 @@
 //! - [`verifier`]: decoding and signature checks of a batch on several threads.
 //! - [`online`]: [`DelegateVersions`], the node-local record of the delegates that operate a
 //!   node.
+//! - [`view`]: [`PoolView`], the view of the pool and the online record that the node publishes.
 //! - [`errors`]: the error types, [`Refusal`] with its [`PoolCode`], [`AddError`] and
 //!   [`StorageError`].
 //!
@@ -52,6 +53,7 @@ pub mod sender_state;
 pub mod service;
 pub mod storage;
 pub mod verifier;
+pub mod view;
 
 pub use crate::collator::{Collated, collate};
 pub use crate::errors::{AddError, PoolCode, Refusal, StorageError};
@@ -62,3 +64,4 @@ pub use crate::query::Query;
 pub use crate::service::{Pool, PoolContext, Readded, Removed};
 pub use crate::storage::{Storage, StoredTransaction};
 pub use crate::verifier::Checked;
+pub use crate::view::{PoolView, PoolViewOptions};

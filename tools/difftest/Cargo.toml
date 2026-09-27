@@ -18,7 +18,9 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-heartwood-blockchain.workspace = true
+heartwood-api.workspace = true
+heartwood-blockchain = { workspace = true, features = ["difftest"] }
+heartwood-core = { workspace = true, features = ["difftest"] }
 heartwood-crypto = { workspace = true, features = ["genesis", "legacy-schnorr", "fixed-aux"] }
 heartwood-database.workspace = true
 heartwood-kernel = { workspace = true, features = ["difftest"] }

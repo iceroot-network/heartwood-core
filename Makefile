@@ -9,6 +9,8 @@
 #   make corpus-import corpus-judge l2 l2-synthetic   the L2 chains: import, judge, replay
 #   make l2-restart crash-test   the L2 chains restarted at planned heights, and killed mid-commit
 #   make pool-bench     the cost of the pool's per-sender views and of the store's commit
+#   make l2-processor   the L2 chains through the processor and the job, as a relay imports them
+#   make relay-image live live-check api-compare   the relay on a devnet, and its comparisons
 #
 # Settings for this machine (SOLAR_REPO, LOCAL_SOLAR, TOOLCHAIN_ENV, ...) go in local.mk, which is
 # git-ignored, or on the command line: make e2e SOLAR_REPO=/path/to/solar-core-ref
@@ -40,9 +42,10 @@ DEVNET_GENERATOR ?=
 GENERATOR_ARG := $(if $(DEVNET_GENERATOR),--devnet-generator '$(DEVNET_GENERATOR)',)
 # The vector classes of each crate: crate=class prefixes. vectors-install writes each crate's
 # classes, with their own MANIFEST.sha256, into packages/<crate>/tests/vectors.
-VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12,V19,V22 kernel=V09-rounds,V16,V23 \
-                 logger=V20 pool=V21 state=V08,V09-shuffle,V15,V18 transactions=V17 p2p-wire=V13
-# L1: cases per property, the generator's seed, the properties (P1 to P9 or their names, comma
+VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12,V19,V22 kernel=V09-rounds,V16,V23,V28 \
+                 logger=V20 pool=V21 state=V08,V09-shuffle,V15,V18 transactions=V17 p2p-wire=V13,V24 \
+                 p2p=V25,V26 blockchain=V27 api=V28
+# L1: cases per property, the generator's seed, the properties (P1 to P16 or their names, comma
 # separated; all when empty).
 L1_CASES      ?= 256
 L1_SEED       ?= 1
@@ -59,11 +62,15 @@ DUMP          ?=
 # the same cut); RESTARTS is `every` (a restart at every height) or `rounds` (the round ends, the
 # first blocks of rounds, 20 seeded heights and the node's live restarts), which corpus-judge writes
 # into the corpus's restart-plan.json before it judges; KILLS is the crash test's number of kills,
-# KILL_SEED the seed of its delays.
+# KILL_SEED the seed of its delays. PROCESSOR (any value) makes corpus-judge also record each
+# block's result through the reference's job; RUNTIME (any value) makes crash-test kill a relay
+# that imports the corpus from a mock peer.
 TO            ?=
 RESTARTS      ?=
 KILLS         ?= 200
 KILL_SEED     ?=
+PROCESSOR     ?=
+RUNTIME       ?=
 # Where the oracle of l1, corpus-judge and l2-synthetic runs: the image by default, or
 # ORACLE_ARGS='--solar-dir $(LOCAL_SOLAR)' for a local reference.
 ORACLE_ARGS   ?= --image $(IMAGE)
@@ -71,11 +78,12 @@ DIFFTEST      := target/debug/difftest
 # The packages whose builds are release artefacts, each built on its own (cargo build -p). None of
 # them may enable a test seam (SEAMS, crate:feature); `make release-check` checks it.
 RELEASE_PACKAGES ?= heartwood-crypto heartwood-kernel heartwood-logger heartwood-state heartwood-transactions \
-                    heartwood-database heartwood-pool heartwood-blockchain
-SEAMS         := heartwood-crypto:fixed-aux heartwood-kernel:difftest
+                    heartwood-database heartwood-pool heartwood-blockchain heartwood-api heartwood-core
+SEAMS         := heartwood-crypto:fixed-aux heartwood-kernel:difftest heartwood-blockchain:difftest \
+                 heartwood-core:difftest
 # The node's crates besides heartwood-crypto, tested and linted each on its own.
 NODE_CRATES   := heartwood-kernel heartwood-logger heartwood-state heartwood-transactions \
-                 heartwood-database heartwood-pool heartwood-blockchain
+                 heartwood-database heartwood-pool heartwood-blockchain heartwood-api heartwood-core
 empty         :=
 space         := $(empty) $(empty)
 # The cargo-fuzz targets, a package of their own outside the workspace.
@@ -91,7 +99,7 @@ need-name = $(if $(NAME),,$(error set NAME, the corpus under CORPUS=$(CORPUS)))
 .PHONY: help check build clippy fmt fmt-check test release-check oracle-context oracle-image \
         oracle-save vectors vectors-local vectors-diff vectors-install l0 ping test-oracle e2e \
         l1 corpus-import corpus-judge corpus-verify l2 l2-synthetic l2-restart crash-test pool-bench \
-        layers lines lines-if-tokei
+        layers lines lines-if-tokei l2-processor relay-image live live-check api-compare
 
 help: ## this list
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | awk -F'\t' '{ printf "  make %-15s %s\n", $$1, $$2 }'
@@ -225,11 +233,12 @@ corpus-import: build ## devnet archives (ARCHIVE='dir ...', in chain order) to t
 	$(if $(ARCHIVE),,$(error set ARCHIVE, the devnet archives of the chain in order))
 	$(DIFFTEST) corpus import $(ARCHIVE) --out $(CORPUS)/$(NAME) $(if $(CORPUS_SEED),--seed '$(CORPUS_SEED)')
 
-corpus-judge: build ## the oracle's judge of CORPUS/NAME: digest lines, anchors, restart lines (DUMP, RESTARTS, TO)
+corpus-judge: build ## the oracle's judge of CORPUS/NAME: digest lines, anchors, restart lines (DUMP, RESTARTS, TO, PROCESSOR)
 	$(need-name)
 	$(need-image)
 	$(TOOLCHAIN) && $(DIFFTEST) corpus judge $(CORPUS)/$(NAME) $(if $(DUMP),--dump $(DUMP)) \
-	    $(if $(RESTARTS),--restarts $(RESTARTS)) $(if $(TO),--to $(TO)) $(ORACLE_ARGS)
+	    $(if $(RESTARTS),--restarts $(RESTARTS)) $(if $(TO),--to $(TO)) $(if $(PROCESSOR),--processor) \
+	    $(ORACLE_ARGS)
 
 corpus-verify: build ## the manifest of CORPUS/NAME
 	$(need-name)
@@ -239,18 +248,20 @@ l2: build ## replay CORPUS/NAME in Heartwood through its store against the judge
 	$(need-name)
 	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) $(if $(TO),--to $(TO))
 
-l2-synthetic: build ## L2 of CORPUS/NAME with the synthetic restart and pool cases on top (needs the oracle)
+l2-synthetic: build ## L2 of CORPUS/NAME with the synthetic restart, pool and processor cases on top (needs the oracle)
 	$(need-name)
 	$(need-image)
 	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --synthetic $(if $(TO),--to $(TO)) $(ORACLE_ARGS)
+	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor --synthetic $(if $(TO),--to $(TO)) $(ORACLE_ARGS)
 
 l2-restart: build ## L2 of CORPUS/NAME with the restarts of its restart plan, by both of Heartwood's paths (TO=H)
 	$(need-name)
 	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --restart $(if $(TO),--to $(TO))
 
-crash-test: build ## CORPUS/NAME replayed through the store in a child process killed KILLS times
+crash-test: build ## CORPUS/NAME replayed through the store (or a relay, RUNTIME=1) in a child process killed KILLS times
 	$(need-name)
-	$(DIFFTEST) store crash $(CORPUS)/$(NAME) --kills $(KILLS) $(if $(KILL_SEED),--seed $(KILL_SEED))
+	$(DIFFTEST) store crash $(CORPUS)/$(NAME) --kills $(KILLS) $(if $(KILL_SEED),--seed $(KILL_SEED)) \
+	    $(if $(RUNTIME),--runtime)
 
 pool-bench: ## the cost of the pool's per-sender views and of the store's commit (release build)
 	$(TOOLCHAIN) && cargo test --release --locked -p heartwood-pool --test view_cost -- --ignored --nocapture
@@ -428,3 +439,50 @@ replay-p2p: build ## the reply_check and listed_block corpora through the oracle
 	done; \
 	exit $$fail
 # ---- end of heartwood-p2p ----
+
+# ---- the relay: the processor, the runtime, the API and the node process ----
+# The live runs are orchestrated by the maintainers' devnet tooling, a separate tool that is not
+# published: LIVE_RECIPE (run, steps, archives and the API corpus at the pause, for RUN=r, h, m1 or
+# m2), RELAY_IMAGE_RECIPE (the relay's container image from a binary) and LIVE_RESULTS (the run
+# directories) are set in local.mk. The comparisons of a run are the harness's (live check, api
+# compare). CHUNKS names one job cut of l2-processor (reference or 1; both when empty); LEFT and
+# RIGHT are two nodes' API URLs for a direct api-compare.
+LIVE_RECIPE        ?=
+RELAY_IMAGE_RECIPE ?=
+LIVE_RESULTS       ?=
+RUN                ?=
+CHUNKS             ?=
+LEFT               ?=
+RIGHT              ?=
+API_COMPARE_OUT    ?= target/api-compare
+need-live = $(if $(LIVE_RECIPE),,$(error set LIVE_RECIPE, the devnet tooling's live recipe, in local.mk))
+need-run = $(if $(RUN),,$(error set RUN, the live run: r, h, m1 or m2))
+need-results = $(if $(LIVE_RESULTS),,$(error set LIVE_RESULTS, the live runs' directory, in local.mk))
+
+l2-processor: build ## replay CORPUS/NAME through the processor and the job against the judge's lines (TO, CHUNKS)
+	$(need-name)
+	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor $(if $(CHUNKS),--chunks $(CHUNKS)) $(if $(TO),--to $(TO))
+
+relay-image: ## the relay's release binary with the harness's flags, and its devnet image (RELAY_IMAGE_RECIPE)
+	$(if $(RELAY_IMAGE_RECIPE),,$(error set RELAY_IMAGE_RECIPE, the devnet tooling's image recipe, in local.mk))
+	$(TOOLCHAIN) && cargo build --release --locked -p heartwood-core --features difftest
+	$(RELAY_IMAGE_RECIPE) $(CURDIR)/target/release/heartwood
+
+live: ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2, LIVE_RECIPE)
+	$(need-live)
+	$(need-run)
+	$(LIVE_RECIPE) $(RUN) $(CURDIR)
+
+live-check: build ## the comparisons of a live run (RUN, LIVE_RESULTS)
+	$(need-run)
+	$(need-results)
+	$(TOOLCHAIN) && $(DIFFTEST) live check $(LIVE_RESULTS)/$(RUN)
+
+api-compare: build ## judge the API answers a live run recorded (RUN, LIVE_RESULTS), or two nodes' (LEFT, RIGHT)
+	$(TOOLCHAIN) && if [ -n '$(LEFT)' ] && [ -n '$(RIGHT)' ]; then \
+	    $(DIFFTEST) api compare --left '$(LEFT)' --right '$(RIGHT)' --out $(API_COMPARE_OUT); \
+	else \
+	    [ -n '$(RUN)' ] && [ -n '$(LIVE_RESULTS)' ] || { echo "api-compare: set RUN and LIVE_RESULTS, or LEFT and RIGHT" >&2; exit 2; }; \
+	    $(DIFFTEST) api compare --run $(LIVE_RESULTS)/$(RUN); \
+	fi
+# ---- end of the relay ----

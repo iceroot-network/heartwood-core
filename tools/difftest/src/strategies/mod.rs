@@ -13,13 +13,15 @@
 //! - [`text`]: amounts, counts, symbols and transactions for the message formats;
 //! - [`config`]: mutations of the devnet's crypto files;
 //! - [`verifier`], [`exchange`] and [`monitor`]: the peer network's verifier, requests and
-//!   replies, and monitor decisions.
+//!   replies, and monitor decisions;
+//! - [`processor`]: the next block of a corpus prefix, mutated, for the block processor.
 
 pub mod config;
 pub mod exchange;
 pub mod kernel;
 pub mod monitor;
 pub mod pool;
+pub mod processor;
 pub mod state;
 pub mod text;
 pub mod transactions;

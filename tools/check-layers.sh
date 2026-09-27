@@ -22,13 +22,20 @@ declare -A ALLOWED=(
     [heartwood-p2p-wire]="heartwood-crypto heartwood-kernel"
     [heartwood-database]="heartwood-crypto heartwood-kernel"
     [heartwood-pool]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions"
-    [heartwood-blockchain]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions heartwood-database heartwood-pool"
+    [heartwood-blockchain]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-p2p"
     [heartwood-p2p]="heartwood-crypto heartwood-kernel heartwood-p2p-wire"
-    [heartwood-difftest]="heartwood-crypto heartwood-kernel heartwood-logger heartwood-p2p heartwood-p2p-wire heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-blockchain"
+    [heartwood-api]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-p2p"
+    [heartwood-core]="heartwood-crypto heartwood-kernel heartwood-logger heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-p2p-wire heartwood-p2p heartwood-blockchain heartwood-api"
+    [heartwood-difftest]="heartwood-crypto heartwood-kernel heartwood-logger heartwood-p2p heartwood-p2p-wire heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-blockchain heartwood-api heartwood-core"
 )
 # external crate: the only workspace crates that may depend on it directly
 declare -A ONLY_UNDER=(
     [tokio-tungstenite]="heartwood-p2p"
+    [axum]="heartwood-api"
+    [hyper]="heartwood-api"
+    [hyper-util]="heartwood-api"
+    [tower-http]="heartwood-api"
+    [clap]="heartwood-core"
 )
 # The consensus crates, and the crates none of them may pull in.
 CONSENSUS="heartwood-kernel heartwood-state heartwood-transactions"

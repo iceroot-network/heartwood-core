@@ -14,6 +14,8 @@
 //! - `reference/restarts.jsonl`, when the node restarted while it made the chain: each live
 //!   restart's height and path and the file of the state right after it;
 //! - `ts-digests.jsonl` and `anchors.json`: the oracle's digest lines and anchor results;
+//! - `ts-processor.jsonl`, when the corpus is judged with `--processor`: each block's result
+//!   through the reference's job, one block per job;
 //! - `corpus.json`: the reference commit and tree, the oracle image, heights and counts;
 //! - `MANIFEST.sha256`: the SHA-256 of every other file.
 //!
@@ -43,6 +45,9 @@ pub const ARCHIVE_FORMAT: &str = "solar-devnet-archive/1";
 pub const MANIFEST: &str = "MANIFEST.sha256";
 /// The oracle's digest lines, written by the judge.
 pub const TS_DIGESTS: &str = "ts-digests.jsonl";
+/// The judge's processor results, written with `--processor`: each block's result through the
+/// reference's job with one block per job, beside its digest line.
+pub const TS_PROCESSOR: &str = "ts-processor.jsonl";
 /// The judge's anchor results.
 pub const ANCHORS: &str = "anchors.json";
 /// The chain definition files, in `crypto/`.
@@ -690,9 +695,10 @@ fn check_seed(dir: &Path, crypto: &[Vec<u8>], seed: &str) -> Result<()> {
 /// `corpus.json`, and write the manifest again. Returns whether the judge's anchors hold.
 pub fn record_judge(dir: &Path, work: &Path) -> Result<bool> {
     let mut files = Vec::new();
-    for name in [TS_DIGESTS, ANCHORS, restart::TS_RESTARTS] {
+    let optional = [restart::TS_RESTARTS, TS_PROCESSOR];
+    for name in [TS_DIGESTS, ANCHORS, restart::TS_RESTARTS, TS_PROCESSOR] {
         let path = work.join(name);
-        if name == restart::TS_RESTARTS && !path.exists() {
+        if optional.contains(&name) && !path.exists() {
             continue;
         }
         let text = read_text(&path)?;
@@ -705,9 +711,11 @@ pub fn record_judge(dir: &Path, work: &Path) -> Result<bool> {
     for (name, text) in &files {
         write_file(&dir.join(name), text)?;
     }
-    let stale = dir.join(restart::TS_RESTARTS);
-    if !work.join(restart::TS_RESTARTS).exists() && stale.exists() {
-        fs::remove_file(&stale).map_err(|e| Error::io(&stale, e))?;
+    for name in optional {
+        let stale = dir.join(name);
+        if !work.join(name).exists() && stale.exists() {
+            fs::remove_file(&stale).map_err(|e| Error::io(&stale, e))?;
+        }
     }
     let meta_path = dir.join("corpus.json");
     let mut meta = read_json(&meta_path)?;

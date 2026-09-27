@@ -1,5 +1,7 @@
 //! Transaction rows, written with their block (see [`crate::Chunk::save_block`]) and read back
-//! with it (see [`crate::StoredBlock`]) or on their own ([`Database::transaction_rows`]).
+//! with it (see [`crate::StoredBlock`]) or on their own ([`Database::transaction_rows`]). Each
+//! row's recipients are written to the `transaction_recipients` side table with it, and read back
+//! from it.
 
 use heartwood_crypto::{BlockId, TransactionId};
 use rusqlite::{Connection, Row, params};
@@ -56,6 +58,10 @@ pub struct TransactionRow {
     pub serialised: Vec<u8>,
     /// The asset as the reference's JSON, if the transaction has one.
     pub asset: Option<String>,
+    /// Every recipient of the transaction, once each, in the order it first names them: the
+    /// items of a transfer (1/6). Stored in the `transaction_recipients` side table, which the
+    /// API's address criteria read.
+    pub recipients: Vec<String>,
 }
 
 impl Database {
@@ -72,8 +78,27 @@ impl Database {
         while let Some(row) = rows.next()? {
             transactions.push(read(row)?);
         }
+        for transaction in &mut transactions {
+            transaction.recipients = recipients(&self.connection, &transaction.id)?;
+        }
         Ok(transactions)
     }
+}
+
+/// The recipients of the transaction `id`, in the order they were written.
+pub(crate) fn recipients(
+    connection: &Connection,
+    id: &TransactionId,
+) -> Result<Vec<String>, DatabaseError> {
+    let mut statement = connection.prepare_cached(
+        "SELECT recipient_id FROM transaction_recipients WHERE transaction_id = ?1 ORDER BY rowid",
+    )?;
+    let mut rows = statement.query([id.to_hex()])?;
+    let mut recipients = Vec::new();
+    while let Some(row) = rows.next()? {
+        recipients.push(Columns::new("transaction_recipients", row).get(0)?);
+    }
+    Ok(recipients)
 }
 
 /// A row of `transactions`, selected with its columns in their order.
@@ -98,6 +123,7 @@ fn read(row: &Row<'_>) -> Result<TransactionRow, DatabaseError> {
         burned_fee: columns.uint(15)?,
         serialised: columns.get(16)?,
         asset: columns.get(17)?,
+        recipients: Vec::new(),
     })
 }
 
@@ -128,5 +154,11 @@ pub(crate) fn insert(connection: &Connection, row: &TransactionRow) -> Result<()
         row.serialised,
         row.asset,
     ])?;
+    let mut statement = connection.prepare_cached(
+        "INSERT OR IGNORE INTO transaction_recipients (transaction_id, recipient_id) VALUES (?1, ?2)",
+    )?;
+    for recipient in &row.recipients {
+        statement.execute(params![row.id.to_hex(), recipient])?;
+    }
     Ok(())
 }

@@ -15,10 +15,14 @@ default = []
 # Test seam: `ManualClock`, a clock that the caller sets. Only test code enables it (the difftest
 # harness and tests); a release build never does.
 difftest = []
+# The event bus of the node's processes (tokio's broadcast channel). The consensus crates never
+# enable it.
+bus = ["dep:tokio"]
 
 [dependencies]
 heartwood-crypto.workspace = true
 indexmap.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, optional = true, features = ["sync"] }
 tracing.workspace = true

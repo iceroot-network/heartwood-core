@@ -1,0 +1,6 @@
+# Lints of heartwood-api: time comes from the kernel's Clock or from tokio's clock, which the tests
+# pause.
+disallowed-types = [
+    { path = "std::time::SystemTime", reason = "read the time through heartwood_kernel::clock::Clock" },
+    { path = "std::time::Instant", reason = "read the time through heartwood_kernel::clock::Clock or tokio's clock" },
+]

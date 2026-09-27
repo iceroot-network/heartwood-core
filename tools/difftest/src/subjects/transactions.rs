@@ -118,7 +118,9 @@ fn has_json_form(difference: Documented, json: &Value) -> bool {
         | Documented::Locale
         | Documented::OnlineView
         | Documented::StrictSchema
-        | Documented::UnlinkedForkSegment => false,
+        | Documented::UnlinkedForkSegment
+        | Documented::MissedRowsOfRefusedBlock
+        | Documented::Api(_) => false,
     }
 }
 

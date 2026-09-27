@@ -12,6 +12,7 @@
 use heartwood_crypto::blocks::serialiser::serialise_header;
 use heartwood_crypto::crypto::sig::Signature;
 use heartwood_crypto::identities::PublicKeyBytes;
+use heartwood_crypto::transactions::types::Asset;
 use heartwood_crypto::utils::{burn, hex};
 use heartwood_crypto::{Block, BlockHeader, BlockId, Milestones};
 use heartwood_database::{BlockRow, MissedRow, RoundRow, StoredBlock, TransactionRow};
@@ -74,7 +75,8 @@ fn jsonb_order(entries: impl IntoIterator<Item = (String, Value)>) -> Map<String
 }
 
 /// The rows of `block`'s transactions, in block order. None of the transaction types carried
-/// has a top-level recipient, so `recipient_id` is empty, as the reference leaves it for them.
+/// has a top-level recipient, so `recipient_id` is empty, as the reference leaves it for them; a
+/// transfer's recipients go to the recipients side table.
 pub fn transaction_rows(
     block: &Block,
     milestones: &Milestones,
@@ -111,9 +113,25 @@ pub fn transaction_rows(
                     .to_json(params)
                     .get("asset")
                     .map(Value::to_string),
+                recipients: recipients(&data.asset),
             }
         });
     Ok(rows.collect())
+}
+
+/// Every recipient of a transaction with `asset`, once each, in the order it first names them:
+/// the items of a transfer (1/6); no other kept type has one.
+fn recipients(asset: &Asset) -> Vec<String> {
+    let mut recipients: Vec<String> = Vec::new();
+    if let Asset::Transfer { transfers } = asset {
+        for item in transfers {
+            let address = item.recipient.to_base58();
+            if !recipients.contains(&address) {
+                recipients.push(address);
+            }
+        }
+    }
+    recipients
 }
 
 /// The block that `stored` holds, rebuilt from its row and its transactions' bytes, which this
