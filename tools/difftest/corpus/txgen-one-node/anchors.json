@@ -9,7 +9,7 @@
  },
  "oracle": {
   "mode": "container",
-  "image": "sha256:70bda225225dab5442be42b2c60a4edafa36e39084f0a0af33ada4a846a9c9d9",
+  "image": "sha256:d85b76bf10d3153898f97c3d7f3f1d4d2f1bbc85dcd0c4d85cf45f6993eac597",
   "node": "v18.20.8"
  },
  "blocks": 264,
