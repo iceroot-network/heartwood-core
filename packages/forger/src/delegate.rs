@@ -7,8 +7,9 @@
 
 use std::sync::Arc;
 
-use heartwood_crypto::blocks::factory::BlockDraft;
-use heartwood_crypto::{Address, Aux, Block, KeyPair, Milestones, PublicKeyBytes};
+use heartwood_crypto::blocks::factory::{self, BlockDraft};
+use heartwood_crypto::crypto::hash::sha256_concat;
+use heartwood_crypto::{Address, Aux, Block, KeyPair, Milestones, PublicKeyBytes, Transaction};
 
 use crate::errors::ForgeError;
 use crate::seams::ForgeInputs;
@@ -46,8 +47,32 @@ impl Delegate {
     /// The header draft of the delegate's block from `inputs`. A sum over the transactions beyond
     /// 64 bits is refused, where the reference's serialiser throws.
     pub fn draft(&self, inputs: &ForgeInputs<'_>) -> Result<BlockDraft, ForgeError> {
-        let _ = (&self.keys, inputs);
-        todo!("Delegate.createBlock's draft")
+        let transactions = inputs.transactions;
+        let too_many = || ForgeError::TooManyTransactions {
+            count: transactions.len(),
+        };
+        let count = u32::try_from(transactions.len()).map_err(|_| too_many())?;
+        let sum = |field: &'static str, value: fn(&Transaction) -> u64| {
+            (transactions.iter())
+                .try_fold(0u64, |total, transaction| {
+                    total.checked_add(value(transaction))
+                })
+                .ok_or(ForgeError::TotalOverflow { field })
+        };
+        Ok(BlockDraft {
+            version: 0,
+            timestamp: inputs.timestamp,
+            height: (inputs.previous_height.checked_add(1)).ok_or(ForgeError::Height {
+                height: inputs.previous_height,
+            })?,
+            previous_block: *inputs.previous_id.as_bytes(),
+            number_of_transactions: count,
+            total_amount: sum("totalAmount", Transaction::amount)?,
+            total_fee: sum("totalFee", Transaction::fee)?,
+            reward: inputs.reward,
+            payload_length: count.checked_mul(32).ok_or_else(too_many)?,
+            payload_hash: sha256_concat(transactions.iter().map(|t| t.id().as_bytes().as_slice())),
+        })
     }
 
     /// The delegate's signed block from `inputs`, under the merged milestone at its height.
@@ -57,7 +82,14 @@ impl Delegate {
         aux: Aux,
         milestones: &Milestones,
     ) -> Result<Block, ForgeError> {
-        let _ = (inputs, aux, milestones);
-        todo!("Delegate.forge")
+        let draft = self.draft(inputs)?;
+        let transactions = inputs.transactions.to_vec();
+        Ok(factory::make(
+            draft,
+            transactions,
+            &self.keys,
+            aux,
+            milestones,
+        )?)
     }
 }
