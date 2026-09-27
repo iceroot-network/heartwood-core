@@ -109,7 +109,15 @@ fn has_json_form(difference: Documented, json: &Value) -> bool {
             Value::String(text) => !text.is_empty(),
             _ => false,
         },
-        Documented::NonUtf8Memo | Documented::FeeKeyValueType => false,
+        Documented::NonUtf8Memo
+        | Documented::FeeKeyValueType
+        | Documented::DecodeReason
+        | Documented::FullPoolEviction
+        | Documented::SavedStateUsername
+        | Documented::RoundRowsAfterRevert
+        | Documented::Locale
+        | Documented::OnlineView
+        | Documented::StrictSchema => false,
     }
 }
 

@@ -12,9 +12,17 @@
 //   reference/missed-blocks.jsonl   {timestamp, height, username}: the node's missed-slot rows
 //   reference/rejections.jsonl      blocks the node refused or reverted (fault chains), optional
 //   reference/checkpoints/h<H>.json the node's REST API state at height H
+//   reference/restarts.jsonl        the node's live restarts, optional: {height, path, checkpoint},
+//                                   path "saved" or "rebuild" (how the node started again), and
+//                                   checkpoint the file of the state right after it: an API
+//                                   checkpoint, or a snapshot (reference/restarts/h<H>.json, the
+//                                   devnet tooling's snapshot format)
 //   revert-plan.json                {seed, roundLength, tip, steps: [{after, blocks}]}
+//   restart-plan.json               the restarts the judge and the L2 replay run, optional:
+//                                   {kind, seed, roundLength, tip, live, heights, reverts, modes}
 //   corpus.json                     provenance, heights and counts
 //   ts-digests.jsonl, anchors.json  written by replay-chain.js
+//   ts-restarts.jsonl               written by replay-chain.js with a restart plan
 //   MANIFEST.sha256                 sha256sum lines of every other file
 
 const fs = require("fs");
@@ -62,6 +70,13 @@ function loadCorpus(dir) {
               .map((f) => ({ file: `reference/checkpoints/${f}`, data: readJson(path.join(checkpointDir, f)) }))
         : [];
     const planFile = path.join(dir, "revert-plan.json");
+    const restartPlanFile = path.join(dir, "restart-plan.json");
+    const restarts = readJsonl(path.join(dir, "reference", "restarts.jsonl"), true).map((r, i) => {
+        if (!Number.isSafeInteger(r.height) || (r.path !== "saved" && r.path !== "rebuild") || typeof r.checkpoint !== "string" || !/^reference\/[a-z]+\/h\d+\.json$/.test(r.checkpoint)) {
+            throw new Error(`${dir}/reference/restarts.jsonl: line ${i + 1} is not {height, path, checkpoint}`);
+        }
+        return { ...r, data: readJson(path.join(dir, r.checkpoint)) };
+    });
     return {
         dir,
         meta,
@@ -73,12 +88,41 @@ function loadCorpus(dir) {
             missed: readJsonl(path.join(dir, "reference", "missed-blocks.jsonl")),
             rejections: readJsonl(path.join(dir, "reference", "rejections.jsonl"), true),
             checkpoints,
+            restarts,
         },
         revertPlan: fs.existsSync(planFile) ? readJson(planFile) : { steps: [] },
+        restartPlan: fs.existsSync(restartPlanFile) ? readJson(restartPlanFile) : undefined,
     };
 }
 
-module.exports = { FORMAT, CRYPTO_FILES, loadCorpus, readJson, readJsonl };
+/**
+ * `corpus` cut at height `to`: the blocks up to it, the reverts that run after them and revert
+ * no more than they hold, and the node's rows, block columns, checkpoints and live restarts up to
+ * it. `lastRound` is the last round whose rows a replay to `to` saves: the round of `to`, or the
+ * next round when `to` ends a round.
+ */
+function cutCorpus(corpus, to, lastRound) {
+    if (!Number.isSafeInteger(to) || to < 1) throw new TypeError("the cut must be a height");
+    if (to > corpus.blocks.length + 1) throw new RangeError(`the corpus ends at ${corpus.blocks.length + 1}, below the cut ${to}`);
+    const reference = corpus.reference;
+    return {
+        ...corpus,
+        blocks: corpus.blocks.filter((b) => b.h <= to),
+        reference: {
+            ...reference,
+            meta: reference.meta.filter((m) => m.h <= to),
+            rounds: reference.rounds.filter((r) => r.round <= lastRound),
+            missed: reference.missed.filter((r) => r.height <= to),
+            rejections: reference.rejections.filter((r) => typeof r.height !== "number" || r.height <= to),
+            checkpoints: reference.checkpoints.filter((c) => c.data.height <= to),
+            restarts: reference.restarts.filter((r) => r.height <= to),
+        },
+        revertPlan: { ...corpus.revertPlan, steps: (corpus.revertPlan.steps || []).filter((s) => s.after <= to) },
+        cut: to,
+    };
+}
+
+module.exports = { FORMAT, CRYPTO_FILES, cutCorpus, loadCorpus, readJson, readJsonl };
 
 /**
  * A replay of a chain on the reference's headless state, with a digest line after every step. The
@@ -86,11 +130,12 @@ module.exports = { FORMAT, CRYPTO_FILES, loadCorpus, readJson, readJsonl };
  * wraps them in chain.withConfig when other configurations share the process).
  */
 class ReplaySession {
-    constructor(solar, crypto) {
+    /** `options` are the chain's (HeadlessChain): a pool binding for one. */
+    constructor(solar, crypto, options = {}) {
         const { HeadlessChain } = require("./state");
         const { DigestChain } = require("./digest");
         this.solar = solar;
-        this.chain = new HeadlessChain(solar, crypto);
+        this.chain = new HeadlessChain(solar, crypto, options);
         this.digests = new DigestChain();
         this.lines = [];
         this.lastMissed = [];
@@ -141,6 +186,42 @@ class ReplaySession {
         return lines;
     }
 
+    /**
+     * Stop the node at its tip and start it again (HeadlessChain.restart), then continue on the
+     * started node. Returns {line} with the restart's digest line (step "restart", no missed
+     * slots), or {refused: {reason}}; the session then keeps its node. `notes.savedStateUsername`
+     * is true for a restart by the saved state when a delegate's name or a voted name reads as an
+     * integer (the saved-state reviver turns it into a number, or cannot load the file).
+     * `notes.roundRowsMissing` is true when the store holds no round row of the tip's round, as
+     * after a revert to the last block of the round before (the reference's deleteBlocks deletes
+     * the rows above the new tip's round, and nothing saves them again before the next round):
+     * the start then reads an empty forging list, or, when the store has no missed row, its
+     * productivity backfill finds no delegate for the round and rolls the chain back.
+     * With `probe`, the started node only gives its line: the session goes on with the node it
+     * had, so that the next restart starts from the same store (a node with a pool cannot be
+     * probed, since the stop closes its pool).
+     */
+    async restart(mode, { probe = false } = {}) {
+        if (probe && this.chain.pool) throw new Error("a node with a pool cannot be probed");
+        const notes = {};
+        if (mode === "saved" && integerLikeNames(this.chain.wallets()).length) notes.savedStateUsername = true;
+        const tip = this.chain.lastBlock().data.height;
+        const round = this.chain.pkgs.kernel.Utils.roundCalculator.calculateRound(tip).round;
+        if (tip > 1 && !(this.chain.store.rounds.get(round) || []).length) notes.roundRowsMissing = true;
+        const result = await this.chain.restart(mode);
+        const out = Object.keys(notes).length ? { notes } : {};
+        if (result.refused) return { ...out, refused: result.refused };
+        if (probe) {
+            const { DigestChain, chainSections } = require("./digest");
+            const digests = new DigestChain();
+            digests.cd = this.digests.cd;
+            const last = result.chain.lastBlock();
+            return { ...out, line: digests.line({ height: last.data.height, step: "restart", id: last.data.id }, chainSections(result.chain, [])) };
+        }
+        this.chain = result.chain;
+        return { ...out, line: this.emit("restart", undefined, []) };
+    }
+
     /** The sections of the current state, with the missed rows of the last step. */
     sections() {
         const { chainSections } = require("./digest");
@@ -148,4 +229,27 @@ class ReplaySession {
     }
 }
 
+/**
+ * Whether the saved-state loader's reviver turns the string `value` into a number: text without a
+ * dot that reads as an integer.
+ */
+function revivedAsNumber(value) {
+    return typeof value === "string" && !value.includes(".") && !isNaN(+value) && Number.isInteger(+value);
+}
+
+/** The delegate names and voted names among `wallets` that the saved-state reviver turns into numbers. */
+function integerLikeNames(wallets) {
+    const names = new Set();
+    for (const wallet of wallets) {
+        if (wallet.hasAttribute("delegate.username") && revivedAsNumber(wallet.getAttribute("delegate.username"))) {
+            names.add(wallet.getAttribute("delegate.username"));
+        }
+        if (wallet.hasAttribute("votes")) {
+            for (const name of wallet.getAttribute("votes").keys()) if (revivedAsNumber(name)) names.add(name);
+        }
+    }
+    return [...names];
+}
+
 module.exports.ReplaySession = ReplaySession;
+module.exports.integerLikeNames = integerLikeNames;

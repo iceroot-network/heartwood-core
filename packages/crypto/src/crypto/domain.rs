@@ -20,14 +20,18 @@ pub enum DomainTag {
     StateDigestHeight,
     /// The running digest over the height digests of a replay.
     StateDigestChain,
+    /// A milestone entry that a node has applied, recorded so that a change to it after it was
+    /// applied refuses the node's start.
+    MilestoneEntry,
 }
 
 impl DomainTag {
     /// Every tag of the registry.
-    pub const ALL: [DomainTag; 3] = [
+    pub const ALL: [DomainTag; 4] = [
         DomainTag::StateDigestSection,
         DomainTag::StateDigestHeight,
         DomainTag::StateDigestChain,
+        DomainTag::MilestoneEntry,
     ];
 
     /// The tag text that the hash commits to.
@@ -36,6 +40,7 @@ impl DomainTag {
             DomainTag::StateDigestSection => "heartwood/csd1/section",
             DomainTag::StateDigestHeight => "heartwood/csd1/height",
             DomainTag::StateDigestChain => "heartwood/csd1/chain",
+            DomainTag::MilestoneEntry => "heartwood/milestone-entry",
         }
     }
 }

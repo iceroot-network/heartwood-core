@@ -1,4 +1,4 @@
-{"op":"meta","format":"heartwood-vectors/1","class":"V16-kernel","records":901,"generator":"tools/oracle/gen-vectors.js","solar":{"version":"4.3.1","commit":"23a7d941e5e906305b3e2a0beea1bb9f38ab9a7c","tree":"a4df428c8612290af2e7c8139a23d31eb057ce8f","dirty":false,"source":"image","seriesSha256":"ff7a3841c59986b13c553762840c5c342c9360e9ea2008208ed449b61c90464d"},"oracle":{"mode":"container","image":"sha256:d85b76bf10d3153898f97c3d7f3f1d4d2f1bbc85dcd0c4d85cf45f6993eac597"},"node":"v18.20.8","icu":"74.2","bcrypto":"native","network":{"name":"devnet","pubKeyHash":90,"profile":"iceroot-devnet","seed":"solar-devnet","epoch":"2026-01-01T00:00:00.000Z","rulesHeight":5000000,"keyFormat":{"donations":"basisPoints","burn":"feeBasisPoints"},"milestonesSha256":"f4bd899b6f5f0086ce6e69c912426760954d894c58b848dbdcefbc3502aa4644"},"aux":"4242424242424242424242424242424242424242424242424242424242424242"}
+{"op":"meta","format":"heartwood-vectors/1","class":"V16-kernel","records":997,"generator":"tools/oracle/gen-vectors.js","solar":{"version":"4.3.1","commit":"23a7d941e5e906305b3e2a0beea1bb9f38ab9a7c","tree":"a4df428c8612290af2e7c8139a23d31eb057ce8f","dirty":false,"source":"image","seriesSha256":"ff7a3841c59986b13c553762840c5c342c9360e9ea2008208ed449b61c90464d"},"oracle":{"mode":"container","image":"sha256:b801040fbfe96febe29b6ae79577855bc28dcf47cbd88c9825f4cfdb6d2bc839"},"node":"v18.20.8","icu":"74.2","bcrypto":"native","network":{"name":"devnet","pubKeyHash":90,"profile":"iceroot-devnet","seed":"solar-devnet","epoch":"2026-01-01T00:00:00.000Z","rulesHeight":5000000,"keyFormat":{"donations":"basisPoints","burn":"feeBasisPoints"},"milestonesSha256":"f4bd899b6f5f0086ce6e69c912426760954d894c58b848dbdcefbc3502aa4644"},"aux":"4242424242424242424242424242424242424242424242424242424242424242"}
 {"op":"kernel.stringify","network":"devnet","height":2,"name":"an empty object","input":{"value":{}},"output":{"text":"{}"}}
 {"op":"kernel.stringify","network":"devnet","height":2,"name":"an empty array","input":{"value":[]},"output":{"text":"[]"}}
 {"op":"kernel.stringify","network":"devnet","height":2,"name":"null","input":{"value":null},"output":{"text":"null"}}
@@ -900,3 +900,99 @@
 {"op":"kernel.paths","network":"devnet","height":2,"name":"TEMP","input":{"token":"solar","network":"devnet","home":"/srv/node","env":{"TMPDIR":"","TEMP":"/tmp3"}},"output":{"data":"/srv/node/.local/share/solar-core/devnet","config":"/srv/node/.config/solar-core/devnet","cache":"/srv/node/.cache/solar-core/devnet","log":"/srv/node/.local/state/solar-core/devnet","temp":"/tmp3/node/solar-core/devnet"}}
 {"op":"kernel.paths","network":"devnet","height":2,"name":"a root TMPDIR","input":{"token":"solar","network":"devnet","home":"/srv/node","env":{"TMPDIR":"/"}},"output":{"data":"/srv/node/.local/share/solar-core/devnet","config":"/srv/node/.config/solar-core/devnet","cache":"/srv/node/.cache/solar-core/devnet","log":"/srv/node/.local/state/solar-core/devnet","temp":"/node/solar-core/devnet"}}
 {"op":"kernel.paths","network":"devnet","height":2,"name":"a relative TMPDIR","input":{"token":"solar","network":"devnet","home":"/srv/node","cwd":"/usr","env":{"TMPDIR":"tmp"}},"output":{"data":"/srv/node/.local/share/solar-core/devnet","config":"/srv/node/.config/solar-core/devnet","cache":"/srv/node/.cache/solar-core/devnet","log":"/srv/node/.local/state/solar-core/devnet","temp":"/usr/tmp/node/solar-core/devnet"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 0 true","input":{"word":"second","count":0,"inclusive":true},"output":{"text":"0 seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 0 false","input":{"word":"second","count":0,"inclusive":false},"output":{"text":"seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 1 true","input":{"word":"second","count":1,"inclusive":true},"output":{"text":"1 second"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 1 false","input":{"word":"second","count":1,"inclusive":false},"output":{"text":"second"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 2 true","input":{"word":"second","count":2,"inclusive":true},"output":{"text":"2 seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 2 false","input":{"word":"second","count":2,"inclusive":false},"output":{"text":"seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" -1 true","input":{"word":"second","count":-1,"inclusive":true},"output":{"text":"-1 seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" -1 false","input":{"word":"second","count":-1,"inclusive":false},"output":{"text":"seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 999 true","input":{"word":"second","count":999,"inclusive":true},"output":{"text":"999 seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 999 false","input":{"word":"second","count":999,"inclusive":false},"output":{"text":"seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 1000 true","input":{"word":"second","count":1000,"inclusive":true},"output":{"text":"1,000 seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 1000 false","input":{"word":"second","count":1000,"inclusive":false},"output":{"text":"seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 2000000 true","input":{"word":"second","count":2000000,"inclusive":true},"output":{"text":"2,000,000 seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 2000000 false","input":{"word":"second","count":2000000,"inclusive":false},"output":{"text":"seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 9007199254740991 true","input":{"word":"second","count":9007199254740991,"inclusive":true},"output":{"text":"9,007,199,254,740,991 seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"second\" 9007199254740991 false","input":{"word":"second","count":9007199254740991,"inclusive":false},"output":{"text":"seconds"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 0 true","input":{"word":"byte","count":0,"inclusive":true},"output":{"text":"0 bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 0 false","input":{"word":"byte","count":0,"inclusive":false},"output":{"text":"bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 1 true","input":{"word":"byte","count":1,"inclusive":true},"output":{"text":"1 byte"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 1 false","input":{"word":"byte","count":1,"inclusive":false},"output":{"text":"byte"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 2 true","input":{"word":"byte","count":2,"inclusive":true},"output":{"text":"2 bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 2 false","input":{"word":"byte","count":2,"inclusive":false},"output":{"text":"bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" -1 true","input":{"word":"byte","count":-1,"inclusive":true},"output":{"text":"-1 bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" -1 false","input":{"word":"byte","count":-1,"inclusive":false},"output":{"text":"bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 999 true","input":{"word":"byte","count":999,"inclusive":true},"output":{"text":"999 bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 999 false","input":{"word":"byte","count":999,"inclusive":false},"output":{"text":"bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 1000 true","input":{"word":"byte","count":1000,"inclusive":true},"output":{"text":"1,000 bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 1000 false","input":{"word":"byte","count":1000,"inclusive":false},"output":{"text":"bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 2000000 true","input":{"word":"byte","count":2000000,"inclusive":true},"output":{"text":"2,000,000 bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 2000000 false","input":{"word":"byte","count":2000000,"inclusive":false},"output":{"text":"bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 9007199254740991 true","input":{"word":"byte","count":9007199254740991,"inclusive":true},"output":{"text":"9,007,199,254,740,991 bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"byte\" 9007199254740991 false","input":{"word":"byte","count":9007199254740991,"inclusive":false},"output":{"text":"bytes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 0 true","input":{"word":"transaction","count":0,"inclusive":true},"output":{"text":"0 transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 0 false","input":{"word":"transaction","count":0,"inclusive":false},"output":{"text":"transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 1 true","input":{"word":"transaction","count":1,"inclusive":true},"output":{"text":"1 transaction"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 1 false","input":{"word":"transaction","count":1,"inclusive":false},"output":{"text":"transaction"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 2 true","input":{"word":"transaction","count":2,"inclusive":true},"output":{"text":"2 transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 2 false","input":{"word":"transaction","count":2,"inclusive":false},"output":{"text":"transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" -1 true","input":{"word":"transaction","count":-1,"inclusive":true},"output":{"text":"-1 transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" -1 false","input":{"word":"transaction","count":-1,"inclusive":false},"output":{"text":"transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 999 true","input":{"word":"transaction","count":999,"inclusive":true},"output":{"text":"999 transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 999 false","input":{"word":"transaction","count":999,"inclusive":false},"output":{"text":"transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 1000 true","input":{"word":"transaction","count":1000,"inclusive":true},"output":{"text":"1,000 transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 1000 false","input":{"word":"transaction","count":1000,"inclusive":false},"output":{"text":"transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 2000000 true","input":{"word":"transaction","count":2000000,"inclusive":true},"output":{"text":"2,000,000 transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 2000000 false","input":{"word":"transaction","count":2000000,"inclusive":false},"output":{"text":"transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 9007199254740991 true","input":{"word":"transaction","count":9007199254740991,"inclusive":true},"output":{"text":"9,007,199,254,740,991 transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"transaction\" 9007199254740991 false","input":{"word":"transaction","count":9007199254740991,"inclusive":false},"output":{"text":"transactions"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 0 true","input":{"word":"more block","count":0,"inclusive":true},"output":{"text":"0 more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 0 false","input":{"word":"more block","count":0,"inclusive":false},"output":{"text":"more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 1 true","input":{"word":"more block","count":1,"inclusive":true},"output":{"text":"1 more block"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 1 false","input":{"word":"more block","count":1,"inclusive":false},"output":{"text":"more block"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 2 true","input":{"word":"more block","count":2,"inclusive":true},"output":{"text":"2 more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 2 false","input":{"word":"more block","count":2,"inclusive":false},"output":{"text":"more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" -1 true","input":{"word":"more block","count":-1,"inclusive":true},"output":{"text":"-1 more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" -1 false","input":{"word":"more block","count":-1,"inclusive":false},"output":{"text":"more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 999 true","input":{"word":"more block","count":999,"inclusive":true},"output":{"text":"999 more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 999 false","input":{"word":"more block","count":999,"inclusive":false},"output":{"text":"more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 1000 true","input":{"word":"more block","count":1000,"inclusive":true},"output":{"text":"1,000 more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 1000 false","input":{"word":"more block","count":1000,"inclusive":false},"output":{"text":"more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 2000000 true","input":{"word":"more block","count":2000000,"inclusive":true},"output":{"text":"2,000,000 more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 2000000 false","input":{"word":"more block","count":2000000,"inclusive":false},"output":{"text":"more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 9007199254740991 true","input":{"word":"more block","count":9007199254740991,"inclusive":true},"output":{"text":"9,007,199,254,740,991 more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"more block\" 9007199254740991 false","input":{"word":"more block","count":9007199254740991,"inclusive":false},"output":{"text":"more blocks"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 0 true","input":{"word":"vote","count":0,"inclusive":true},"output":{"text":"0 votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 0 false","input":{"word":"vote","count":0,"inclusive":false},"output":{"text":"votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 1 true","input":{"word":"vote","count":1,"inclusive":true},"output":{"text":"1 vote"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 1 false","input":{"word":"vote","count":1,"inclusive":false},"output":{"text":"vote"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 2 true","input":{"word":"vote","count":2,"inclusive":true},"output":{"text":"2 votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 2 false","input":{"word":"vote","count":2,"inclusive":false},"output":{"text":"votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" -1 true","input":{"word":"vote","count":-1,"inclusive":true},"output":{"text":"-1 votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" -1 false","input":{"word":"vote","count":-1,"inclusive":false},"output":{"text":"votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 999 true","input":{"word":"vote","count":999,"inclusive":true},"output":{"text":"999 votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 999 false","input":{"word":"vote","count":999,"inclusive":false},"output":{"text":"votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 1000 true","input":{"word":"vote","count":1000,"inclusive":true},"output":{"text":"1,000 votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 1000 false","input":{"word":"vote","count":1000,"inclusive":false},"output":{"text":"votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 2000000 true","input":{"word":"vote","count":2000000,"inclusive":true},"output":{"text":"2,000,000 votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 2000000 false","input":{"word":"vote","count":2000000,"inclusive":false},"output":{"text":"votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 9007199254740991 true","input":{"word":"vote","count":9007199254740991,"inclusive":true},"output":{"text":"9,007,199,254,740,991 votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"vote\" 9007199254740991 false","input":{"word":"vote","count":9007199254740991,"inclusive":false},"output":{"text":"votes"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 0 true","input":{"word":"","count":0,"inclusive":true},"output":{"text":"0 s"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 0 false","input":{"word":"","count":0,"inclusive":false},"output":{"text":"s"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 1 true","input":{"word":"","count":1,"inclusive":true},"output":{"text":"1 "}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 1 false","input":{"word":"","count":1,"inclusive":false},"output":{"text":""}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 2 true","input":{"word":"","count":2,"inclusive":true},"output":{"text":"2 s"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 2 false","input":{"word":"","count":2,"inclusive":false},"output":{"text":"s"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" -1 true","input":{"word":"","count":-1,"inclusive":true},"output":{"text":"-1 s"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" -1 false","input":{"word":"","count":-1,"inclusive":false},"output":{"text":"s"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 999 true","input":{"word":"","count":999,"inclusive":true},"output":{"text":"999 s"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 999 false","input":{"word":"","count":999,"inclusive":false},"output":{"text":"s"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 1000 true","input":{"word":"","count":1000,"inclusive":true},"output":{"text":"1,000 s"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 1000 false","input":{"word":"","count":1000,"inclusive":false},"output":{"text":"s"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 2000000 true","input":{"word":"","count":2000000,"inclusive":true},"output":{"text":"2,000,000 s"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 2000000 false","input":{"word":"","count":2000000,"inclusive":false},"output":{"text":"s"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 9007199254740991 true","input":{"word":"","count":9007199254740991,"inclusive":true},"output":{"text":"9,007,199,254,740,991 s"}}
+{"op":"text.pluralise","network":"devnet","height":2,"name":"\"\" 9007199254740991 false","input":{"word":"","count":9007199254740991,"inclusive":false},"output":{"text":"s"}}

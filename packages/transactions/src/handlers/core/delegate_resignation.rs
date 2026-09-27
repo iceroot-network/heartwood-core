@@ -196,14 +196,15 @@ pub fn check_pool_entry<P: PoolQuery, O: OnlineDelegates>(
     online: &O,
 ) -> Result<(), PoolError> {
     let sender = transaction.data().sender_address(ctx.params);
+    let delegate = wallets.find_by_address(&sender).and_then(Wallet::delegate);
     if pool.has_sender_kind(&sender, transaction.kind()) {
-        return Err(PoolError::SenderPending {
-            sender,
-            kind: transaction.kind(),
+        // A resignation enters the pool only from a delegate, so a pending one has a name.
+        return Err(PoolError::ResignationPending {
+            username: delegate.map_or_else(String::new, |d| d.username().to_owned()),
         });
     }
     if resignation_type == Some(ResignationType::NotResigned)
-        && let Some(delegate) = wallets.find_by_address(&sender).and_then(Wallet::delegate)
+        && let Some(delegate) = delegate
         && !online.is_online(delegate.username())
     {
         return Err(PoolError::Offline {

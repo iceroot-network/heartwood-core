@@ -4,7 +4,8 @@
 //! writes JSON with `JSON.stringify`, which prints numbers with `Number.prototype.toString`. This
 //! module is the only place in the crate that models either, together with the two other parts of
 //! JavaScript that decide how a parsed JSON value behaves: truthiness and the order in which an
-//! object's keys are enumerated.
+//! object's keys are enumerated. It also writes numbers as `toLocaleString` does in English,
+//! which the reference's messages use for amounts and counts.
 
 use serde_json::{Map, Number, Value};
 
@@ -321,6 +322,73 @@ fn write_string(out: &mut String, text: &str) {
     out.push('"');
 }
 
+/// `value.toLocaleString("en", {minimumFractionDigits: 0, maximumFractionDigits})`, as Node's ICU
+/// writes it.
+///
+/// ICU rounds the shortest decimal digits of the double, the digits `Number.prototype.toString`
+/// prints, not its exact binary value: `1.000000005` (exactly `1.00000000499999996…`) is
+/// `"1.00000001"` at 8 digits, and `2^64` is `"18,446,744,073,709,552,000"`. The digits are
+/// rounded to `max_fraction_digits` fraction digits with a tie away from zero, trailing fraction
+/// zeros are removed, and the integer part is grouped by three with commas. A negative value,
+/// `-0` included, keeps its `-` even when it rounds to 0; `NaN` is `"NaN"` and an infinity `"∞"`.
+pub fn to_locale_fixed(value: f64, max_fraction_digits: u8) -> String {
+    if value.is_nan() {
+        return "NaN".to_owned();
+    }
+    let sign = if value.is_sign_negative() { "-" } else { "" };
+    if value.is_infinite() {
+        return format!("{sign}∞");
+    }
+    let fraction = usize::from(max_fraction_digits);
+    let (digits, n) = match value {
+        0.0 => (String::new(), 0),
+        _ => shortest_digits(value.abs()),
+    };
+    // `value × 10^fraction` is `0.digits × 10^keep`; its integer part is the first `keep` digits.
+    let keep = usize::try_from(n.saturating_add(i64::from(max_fraction_digits))).ok();
+    let zeros = std::iter::repeat(b'0');
+    let mut scaled: Vec<u8> = digits
+        .bytes()
+        .chain(zeros)
+        .take(keep.unwrap_or(0))
+        .collect();
+    let first_dropped = keep.and_then(|keep| digits.as_bytes().get(keep)).copied();
+    if first_dropped.is_some_and(|digit| digit >= b'5') {
+        let carried = scaled.iter_mut().rev().all(|digit| {
+            let nine = *digit == b'9';
+            *digit = if nine { b'0' } else { *digit + 1 };
+            nine
+        });
+        if carried {
+            scaled.insert(0, b'1');
+        }
+    }
+    let (whole, part) = scaled.split_at(scaled.len().saturating_sub(fraction));
+    let mut part = format!("{:0>fraction$}", String::from_utf8_lossy(part));
+    part.truncate(part.trim_end_matches('0').len());
+    let whole = String::from_utf8_lossy(if whole.is_empty() { b"0" } else { whole });
+    let mut out = String::from(sign);
+    for (position, digit) in whole.chars().enumerate() {
+        if position > 0 && (whole.len() - position).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    if !part.is_empty() {
+        out.push('.');
+        out.push_str(&part);
+    }
+    out
+}
+
+/// An integer's `toLocaleString()` in English, as a JavaScript number holds it: the nearest
+/// double, written by [`to_locale_fixed`] (digits grouped by three with commas, a leading `-` for
+/// a negative value).
+pub fn to_locale_integer(value: i128) -> String {
+    // The conversion rounds to the nearest double, a tie to even, as `Number` does.
+    to_locale_fixed(value as f64, 0)
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
@@ -459,7 +527,68 @@ mod tests {
         assert_eq!(keys, ["2", "10", "b", "a", "01"]);
     }
 
+    /// Answers of Node 18 (ICU 74) to `x.toLocaleString("en", {minimumFractionDigits: 0,
+    /// maximumFractionDigits: 8})`.
+    #[test]
+    fn locale_fixed_rounds_the_shortest_digits_half_up() {
+        let cases: [(f64, &str); 23] = [
+            (1.000000005, "1.00000001"),
+            (1.000000015, "1.00000002"),
+            (1.0000000249999998, "1.00000002"),
+            (1.000000035, "1.00000004"),
+            (5e-9, "0.00000001"),
+            (1.5e-8, "0.00000002"),
+            (3.4999999999999996e-8, "0.00000003"),
+            (9.5e-8, "0.0000001"),
+            (1.0499999999999999e-7, "0.0000001"),
+            (-0.0, "-0"),
+            (0.0, "0"),
+            (-1e-10, "-0"),
+            (1e-10, "0"),
+            (-1e-8, "-0.00000001"),
+            (1e21, "1,000,000,000,000,000,000,000"),
+            (
+                1.2345678901234568e29,
+                "123,456,789,012,345,680,000,000,000,000",
+            ),
+            (18_446_744_073_709_551_616.0, "18,446,744,073,709,552,000"),
+            (9_007_199_254_740_994.0, "9,007,199,254,740,994"),
+            (0.30000000000000004, "0.3"),
+            (0.999999995, "1"),
+            (f64::NAN, "NaN"),
+            (f64::INFINITY, "∞"),
+            (f64::NEG_INFINITY, "-∞"),
+        ];
+        for (value, text) in cases {
+            assert_eq!(to_locale_fixed(value, 8), text, "{value:e}");
+        }
+        let rounded_up: f64 = "99999999.999999999".parse().unwrap();
+        assert_eq!(to_locale_fixed(rounded_up, 8), "100,000,000");
+        assert_eq!(
+            to_locale_fixed(99_999_999.999_999_99, 8),
+            "99,999,999.99999999"
+        );
+        assert_eq!(to_locale_fixed(1234.5, 3), "1,234.5");
+        assert_eq!(to_locale_fixed(0.5, 0), "1");
+        assert_eq!(to_locale_fixed(-2.5, 0), "-3");
+        assert_eq!(to_locale_integer(2_000_000), "2,000,000");
+        assert_eq!(to_locale_integer(-1234), "-1,234");
+        assert_eq!(to_locale_integer(999), "999");
+        assert_eq!(
+            to_locale_integer(12_345_678_901_234_567_890),
+            "12,345,678,901,234,567,000"
+        );
+    }
+
     proptest! {
+        #[test]
+        fn locale_integers_below_two_to_the_53_are_exact(value in -(MAX_SAFE_INTEGER as i64)..=MAX_SAFE_INTEGER as i64) {
+            let text = to_locale_integer(i128::from(value));
+            prop_assert_eq!(text.replace(',', ""), value.to_string());
+            let digits = text.trim_start_matches('-');
+            prop_assert!(digits.split(',').skip(1).all(|group| group.len() == 3));
+        }
+
         #[test]
         fn printed_numbers_read_back(bits in any::<u64>()) {
             let value = f64::from_bits(bits);

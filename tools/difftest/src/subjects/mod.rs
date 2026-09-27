@@ -23,18 +23,29 @@
 //! - `digest`: the canonical state digest of a wallet fixture.
 //! - `handlers`: the dynamic fee floor, and a transaction applied to a wallet fixture and
 //!   reverted.
+//! - `config`: the crypto files, loaded with the strict schema.
+//! - `text`: the reference's formatting of amounts, counts and transactions in messages.
+//! - `pool`: the transaction pool.
+//!
+//! With the peer-to-peer wire codec: `wire`, the codecs, the nes frames and the peer statuses.
+//!
+//! `wire`, `config`, `text` and `pool` each list their operations in a table of their own
+//! (`OPS`), which `register` adds to this module's table.
 //!
 //! Most operations run under the devnet configuration the oracle was set up with, which the
 //! [`Devnet`] context carries; a case that brings its own milestone file runs under that file.
 
 mod blocks;
+mod config;
 mod digest;
 mod genesis;
 mod handlers;
 mod kernel;
 mod keys;
+mod pool;
 mod signatures;
 mod state;
+mod text;
 mod transactions;
 mod wire;
 
@@ -248,7 +259,6 @@ const OPS: &[(&str, Run)] = &[
     ("fee.burned", blocks::fee_burned),
     ("reward.calculate", blocks::reward_calculate),
     ("reward.donations", blocks::reward_donations),
-    ("config.load", blocks::config_load),
     ("genesis.generate", genesis::generate),
     ("round.calculate", kernel::round_calculate),
     ("round.isNew", kernel::round_is_new),
@@ -268,10 +278,19 @@ const OPS: &[(&str, Run)] = &[
     ("state.applyTransaction", handlers::apply_transaction),
 ];
 
-/// Register every operation of [`OPS`] and of the wire's table in `registry`.
+/// Every operation: [`OPS`], then the tables of the wire, `config`, `text` and `pool`.
+fn all_ops() -> impl Iterator<Item = &'static (&'static str, Run)> {
+    OPS.iter()
+        .chain(wire::OPS)
+        .chain(config::OPS)
+        .chain(text::OPS)
+        .chain(pool::OPS)
+}
+
+/// Register every operation of [`all_ops`] in `registry`.
 pub(crate) fn register(registry: &mut Registry, devnet: Option<Devnet>) {
     let devnet = devnet.map(Arc::new);
-    for &(op, run) in OPS.iter().chain(wire::OPS) {
+    for &(op, run) in all_ops() {
         // The table names each operation once (a unit test checks it), so this cannot fail.
         let _ = registry.register(Box::new(Op {
             op,
@@ -439,7 +458,16 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
                 .get(..end)
                 .is_some_and(|prefix| deserialiser::deserialise(prefix).is_ok())
         }),
-        Documented::VotesWithIndices | Documented::FeeKeyValueType => false,
+        // The other differences are not forms of a transaction's bytes.
+        Documented::VotesWithIndices
+        | Documented::FeeKeyValueType
+        | Documented::DecodeReason
+        | Documented::FullPoolEviction
+        | Documented::SavedStateUsername
+        | Documented::RoundRowsAfterRevert
+        | Documented::Locale
+        | Documented::OnlineView
+        | Documented::StrictSchema => false,
     }
 }
 
@@ -485,7 +513,7 @@ mod tests {
 
     #[test]
     fn every_operation_is_registered_once() {
-        let mut ops: Vec<&str> = OPS.iter().chain(wire::OPS).map(|(op, _)| *op).collect();
+        let mut ops: Vec<&str> = all_ops().map(|(op, _)| *op).collect();
         let registry = crate::subject::heartwood(None);
         assert_eq!(registry.ops().count(), ops.len());
         let count = ops.len();

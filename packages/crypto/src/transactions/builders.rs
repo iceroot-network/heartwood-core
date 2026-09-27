@@ -188,9 +188,10 @@ impl TransactionBuilder {
     }
 }
 
-/// The static fee of `kind` at the height of `params`: the milestone's `fees.staticFees` entry,
-/// else the type's default.
-fn static_fee(kind: TransactionType, params: &Params) -> Result<u64, BuildError> {
+/// The static fee of `kind` at the height of `params`, as the reference's `staticFee` reads it:
+/// the milestone's `fees.staticFees` entry, else the type's default. The builders use it for a
+/// transaction without a fee, and the pool's static-fee mode requires it exactly.
+pub fn static_fee(kind: TransactionType, params: &Params) -> Result<u64, BuildError> {
     let entry = params
         .as_json()
         .get("fees")

@@ -11,15 +11,20 @@
 //! the steps already taken, which no consistent state reaches
 //! ([`RollbackFailed`](crate::errors::RollbackFailed)).
 
+use std::collections::BTreeMap;
+
 use heartwood_crypto::identities::{Address, PublicKeyBytes};
 use heartwood_crypto::{Block, BlockHeader, Milestones};
+use heartwood_kernel::calculate_round;
 
 use crate::block_state;
 use crate::dpos::dpos::set_rank;
 use crate::errors::{ApplyError, GenesisError, RevertError, RewardError, rolled_back};
 use crate::handlers::TransactionHandlers;
+use crate::persist::{RestoreError, STATE_FORMAT, StateRecord, TotalsRecord, bad};
 use crate::round_state::{MissedBlock, RoundDelegate, RoundReward, RoundState};
 use crate::stores::state::{StateStore, Totals};
+use crate::supply::check_supply;
 use crate::undo::BlockUndo;
 use crate::wallets::{Wallet, WalletRepository};
 
@@ -294,4 +299,89 @@ impl State {
     pub fn journal(&self) -> &[BlockUndo] {
         &self.journal
     }
+}
+
+/// The state read back from the store (see [`crate::persist`]).
+impl State {
+    /// The record of the tip's state besides the wallets.
+    pub fn state_record(&self) -> StateRecord {
+        StateRecord {
+            format: STATE_FORMAT,
+            height: self.height(),
+            block_id: self.last_block().id().to_hex(),
+            totals: TotalsRecord::from_totals(self.totals()),
+            round: self.round.to_record(),
+        }
+    }
+
+    /// The state made of what the store holds: the genesis block, the last block, the wallets
+    /// read back from their records, the state record, and the undo record of every block from
+    /// height 2 to the tip, in order. Refused when the parts do not make a consistent state (see
+    /// [`crate::persist`]); the state is then to be replayed from the genesis block.
+    pub fn restore(
+        genesis: Block,
+        last: Block,
+        wallets: WalletRepository,
+        record: StateRecord,
+        journal: Vec<BlockUndo>,
+        milestones: &Milestones,
+    ) -> Result<State, RestoreError> {
+        if record.format != STATE_FORMAT {
+            return Err(RestoreError::Format(record.format));
+        }
+        let height = last.height();
+        let tip = journal.last().map_or(&genesis, |undo| &undo.block);
+        if (record.height, &record.block_id) != (height, &last.id().to_hex()) || tip != &last {
+            return Err(RestoreError::LastBlock {
+                record_height: record.height,
+                record_id: record.block_id,
+                block_height: height,
+                block_id: last.id().to_hex(),
+            });
+        }
+        // One record per height from 2, in order; the last one is the last block's (checked above).
+        let mut heights = journal.iter().map(|undo| undo.block.height());
+        if let Some(expected) = (2..=height).find(|expected| heights.next() != Some(*expected)) {
+            return Err(RestoreError::Journal { expected });
+        }
+        let totals = record.totals.to_totals()?;
+        let round = RoundState::from_record(record.round)?;
+        let (info, next) = (
+            round.info(),
+            calculate_round(height.saturating_add(1), milestones),
+        );
+        if (info.round, info.round_height) != (next.round, next.round_height) {
+            return Err(bad("round", format!("not the round after height {height}")));
+        }
+        check_vote_balances(&wallets)?;
+        let mut store = StateStore::new(genesis, totals.issued);
+        store.set_last_block(last);
+        *store.totals_mut() = totals;
+        let mut state = State::from_parts(wallets, round, store);
+        state.journal = journal;
+        check_supply(&state)?;
+        Ok(state)
+    }
+}
+
+/// Every delegate's vote balance and voter count must be the sum and the number of its voters'
+/// shares, as the reference's start-up builds them, and every share must name a delegate.
+fn check_vote_balances(wallets: &WalletRepository) -> Result<(), RestoreError> {
+    let mut sums: BTreeMap<&str, (u128, u64)> = BTreeMap::new();
+    for (name, share) in wallets.iter().flat_map(Wallet::vote_shares) {
+        let (balance, voters) = sums.entry(name).or_default();
+        *balance = balance.saturating_add((*share).into());
+        *voters = voters.saturating_add(1);
+    }
+    let wrong = |username: &str| RestoreError::VoteBalance {
+        username: username.to_owned(),
+    };
+    for delegate in wallets.delegates().filter_map(Wallet::delegate) {
+        let sum = sums.remove(delegate.username()).unwrap_or_default();
+        if sum != (delegate.vote_balance.into(), delegate.voters) {
+            return Err(wrong(delegate.username()));
+        }
+    }
+    let unknown = sums.into_keys().next();
+    unknown.map_or(Ok(()), |name| Err(wrong(name)))
 }

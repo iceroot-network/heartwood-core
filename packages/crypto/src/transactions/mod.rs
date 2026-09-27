@@ -28,4 +28,6 @@ pub mod verifier;
 
 pub use self::builders::TransactionBuilder;
 pub use self::registry::TransactionType;
-pub use self::types::{Asset, Memo, Transaction, TransactionData, TransactionId};
+pub use self::types::{
+    Asset, Memo, Transaction, TransactionData, TransactionDisplay, TransactionId,
+};

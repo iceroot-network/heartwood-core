@@ -3,7 +3,7 @@
 //   V09-rounds  calculateRound and isNewRound over heights 1 to 10,000 and around 2^32, under the
 //               devnet's 53 delegates and under other delegate counts; calculateForgingInfo over
 //               slot edges, half slots and gaps; isBlockChained cases;
-//   V16-kernel  stringify, .env text, epoch timestamps, IP lists and node paths;
+//   V16-kernel  stringify, .env text, epoch timestamps, IP lists, node paths and pluralise;
 //   V20-logger  log lines for every level, coloured and plain, with and without emoji, over the
 //               whole emoji table of the reference's logger.
 
@@ -325,6 +325,14 @@ async function kernel({ rec, must, shared }) {
         ["a relative TMPDIR", { token: "solar", network: "devnet", home: "/srv/node", cwd: "/usr", env: { TMPDIR: "tmp" } }],
     ];
     for (const [name, input] of paths) await pushOk("kernel.paths", input, name);
+
+    // pluralise, as the pool's and the handlers' messages count seconds, bytes, transactions and
+    // blocks.
+    for (const word of ["second", "byte", "transaction", "more block", "vote", ""]) {
+        for (const count of [0, 1, 2, -1, 999, 1000, 2000000, 2 ** 53 - 1]) {
+            for (const inclusive of [true, false]) await pushOk("text.pluralise", { word, count, inclusive }, `${JSON.stringify(word)} ${count} ${inclusive}`);
+        }
+    }
     return out;
 }
 

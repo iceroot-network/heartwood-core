@@ -33,6 +33,19 @@ pub fn minimum_fee(transaction: &Transaction, params: &Params) -> i128 {
     fee_floor::minimum_fee(transaction.kind(), transaction.bytes().len(), params)
 }
 
+/// The dynamic fee floor of `transaction` with the fee table `min_fee` and `addon_bytes` (the
+/// entry for the transaction's type), as the reference's `getMinimumFee` computes it from any
+/// table: the milestone's, or the pool's own when the milestone's dynamic fees are off. A wrapper
+/// of [`heartwood_crypto::utils::fee_floor::minimum_fee_with`] (see [`minimum_fee`]).
+pub fn minimum_fee_with(transaction: &Transaction, min_fee: i64, addon_bytes: i64) -> i128 {
+    fee_floor::minimum_fee_with(
+        transaction.kind(),
+        transaction.bytes().len(),
+        min_fee,
+        addon_bytes,
+    )
+}
+
 /// Whether transactions of `kind` may be applied under `params`. Every type this implementation
 /// carries is always active: the burn is active while `burn.txAmount` is a number, which the
 /// milestone loader requires at every height.

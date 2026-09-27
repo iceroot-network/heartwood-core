@@ -7,6 +7,7 @@ use heartwood_crypto::utils::sort_votes::sort_votes;
 use indexmap::IndexMap;
 
 use crate::errors::WalletError;
+use crate::persist::{DelegateRecord, RestoreError, WalletRecord, amount, bad, read, resignation};
 
 /// How a delegate has resigned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -222,5 +223,88 @@ impl Wallet {
     /// delegates' vote balances by the same amounts.
     pub(crate) fn set_vote_shares(&mut self, shares: IndexMap<String, u64>) {
         self.vote_shares = shares;
+    }
+}
+
+/// The wallet's record in the store (see [`crate::persist`]).
+impl Wallet {
+    /// The wallet's record.
+    pub fn to_record(&self) -> WalletRecord {
+        let delegate = self.delegate.as_ref().map(|d| DelegateRecord {
+            u: d.username.clone(),
+            vb: d.vote_balance.to_string(),
+            vc: d.voters,
+            rk: d.rank,
+            rs: d.resigned.map(Resignation::number),
+            ra: d.resigned_at,
+            pb: d.produced_blocks,
+            ff: d.forged_fees.to_string(),
+            fr: d.forged_rewards.to_string(),
+            bf: d.burned_fees.to_string(),
+            dn: d.donations.to_string(),
+            lb: d.last_block.as_ref().map(BlockId::to_hex),
+        });
+        let shares = self
+            .vote_shares
+            .iter()
+            .map(|(n, s)| (n.clone(), s.to_string()));
+        WalletRecord {
+            a: self.address.to_base58(),
+            pk: self.public_key.as_ref().map(PublicKey::to_hex),
+            bal: self.balance.to_string(),
+            n: self.nonce.to_string(),
+            spk: self.second_public_key.as_ref().map(PublicKeyBytes::to_hex),
+            d: delegate,
+            v: self.votes.clone().into_iter().collect(),
+            vs: shares.collect(),
+        }
+    }
+
+    /// The wallet of `record`, on the network with address byte `network`. It is the one
+    /// constructor that sets the public key, the delegate record and the vote shares; the
+    /// repository indexes them in [`crate::WalletRepository::from_wallets`]. A key that is not
+    /// the key of the address, or a name held twice in the votes or shares, is refused.
+    pub fn from_record(record: WalletRecord, network: u8) -> Result<Wallet, RestoreError> {
+        const W: &str = "wallet";
+        let address = read(W, Address::from_base58_for(&record.a, network))?;
+        let public_key = read(W, record.pk.as_deref().map(PublicKey::from_hex).transpose())?;
+        let key_address = public_key
+            .as_ref()
+            .map(|key| Address::from_public_key(key, network));
+        if key_address.is_some_and(|key_address| key_address != address) {
+            return Err(bad(W, format!("{address} is not the address of its key")));
+        }
+        let second_public_key = record.spk.as_deref().map(PublicKeyBytes::from_hex);
+        let delegate = match record.d {
+            None => None,
+            Some(d) => Some(Delegate {
+                vote_balance: amount(W, &d.vb)?,
+                voters: d.vc,
+                rank: d.rk,
+                resigned: d.rs.map(|number| resignation(W, number)).transpose()?,
+                resigned_at: d.ra,
+                produced_blocks: d.pb,
+                forged_fees: amount(W, &d.ff)?,
+                burned_fees: amount(W, &d.bf)?,
+                forged_rewards: amount(W, &d.fr)?,
+                donations: amount(W, &d.dn)?,
+                last_block: read(W, d.lb.as_deref().map(BlockId::from_hex).transpose())?,
+                username: d.u,
+            }),
+        };
+        let mut vote_shares = IndexMap::with_capacity(record.vs.len());
+        for (name, share) in record.vs {
+            vote_shares.insert(name, amount(W, &share)?);
+        }
+        Ok(Wallet {
+            address,
+            public_key,
+            balance: amount(W, &record.bal)?,
+            nonce: amount(W, &record.n)?,
+            second_public_key: read(W, second_public_key.transpose())?,
+            delegate,
+            votes: sort_votes(&record.v.into_iter().collect()),
+            vote_shares,
+        })
     }
 }

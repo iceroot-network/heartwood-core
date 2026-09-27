@@ -64,6 +64,9 @@ const CLASSES = [
     ["V18-genesis-state", require("./lib/vectors/genesis-state")],
     ["V19-fee-floor", require("./lib/vectors/fees")],
     ["V20-logger", kernel.logger],
+    ["V21-pool", require("./lib/vectors/pool")],
+    ["V22-text", require("./lib/vectors/text")],
+    ["V23-config", require("./lib/vectors/config-schema")],
 ];
 // The peer-to-peer wire (heartwood-p2p-wire), generated last; its builder returns null while it
 // has no records, and the class is then not written.

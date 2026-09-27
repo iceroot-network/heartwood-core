@@ -15,6 +15,7 @@ use heartwood_crypto::identities::{Address, PublicKey, PublicKeyBytes};
 use indexmap::IndexMap;
 
 use crate::errors::WalletError;
+use crate::persist::{RestoreError, bad};
 use crate::wallets::indexes::Indexes;
 use crate::wallets::wallet::{Delegate, Wallet};
 
@@ -176,6 +177,57 @@ impl WalletRepository {
         self.indexes
             .usernames()
             .filter_map(|(_, address)| self.find_by_address(address))
+    }
+}
+
+/// The repository read back from the store, and what changed since the last commit.
+impl WalletRepository {
+    /// The repository of `wallets`, in their order, on the network with address byte `network`,
+    /// with the public-key and username indexes built again. Refused when two wallets hold the
+    /// same key or the same name.
+    pub fn from_wallets(
+        network: u8,
+        wallets: Vec<Wallet>,
+    ) -> Result<WalletRepository, RestoreError> {
+        let mut repository = WalletRepository::new(network);
+        for wallet in wallets {
+            let address = *wallet.address();
+            if let Some(key) = wallet.public_key() {
+                if repository.has_by_public_key(&key.to_compressed()) {
+                    return Err(RestoreError::DuplicatePublicKey(key.to_hex()));
+                }
+                (repository.indexes).set_public_key(key.to_compressed(), address);
+            }
+            if let Some(delegate) = wallet.delegate() {
+                if repository.has_by_username(delegate.username()) {
+                    return Err(RestoreError::DuplicateUsername(delegate.username().into()));
+                }
+                (repository.indexes).set_username(delegate.username().into(), address);
+            }
+            let held = repository.wallets.insert(address, Arc::new(wallet));
+            if held.is_some() {
+                return Err(bad("wallet", format!("{address} is held twice")));
+            }
+        }
+        Ok(repository)
+    }
+
+    /// The wallets that changed since `earlier`, a clone of this repository taken before: those
+    /// that `earlier` does not have, and those whose value is no longer shared with it. A wallet
+    /// is copied when it changes while a clone shares it, so this compares pointers, not values.
+    pub fn changed_since<'a>(
+        &'a self,
+        earlier: &'a WalletRepository,
+    ) -> impl Iterator<Item = &'a Wallet> + 'a {
+        self.wallets
+            .iter()
+            .filter(|(address, wallet)| {
+                earlier
+                    .wallets
+                    .get(*address)
+                    .is_none_or(|before| !Arc::ptr_eq(before, wallet))
+            })
+            .map(|(_, wallet)| wallet.as_ref())
     }
 }
 

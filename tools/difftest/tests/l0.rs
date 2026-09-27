@@ -30,7 +30,7 @@ fn the_committed_vectors_pass_l0() {
     // vectors.
     assert_eq!(
         (report.compared(), report.documented(), report.skipped()),
-        (1701, 58, 6),
+        (2212, 58, 6),
         "{report}"
     );
 }

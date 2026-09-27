@@ -1,0 +1,13 @@
+# Lints of heartwood-blockchain, a consensus crate: the same result on every machine. No
+# hash-ordered collections, no wall clock (the kernel's Clock is the seam), and no float rounding
+# outside heartwood_crypto::utils::js.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order differs between runs; use IndexMap or BTreeMap" },
+    { path = "std::collections::HashSet", reason = "iteration order differs between runs; use IndexSet or BTreeSet" },
+    { path = "std::time::SystemTime", reason = "read the time through heartwood_kernel::clock::Clock" },
+    { path = "std::time::Instant", reason = "read the time through heartwood_kernel::clock::Clock" },
+]
+disallowed-methods = [
+    { path = "f64::round", reason = "JavaScript's Math.round rounds halves differently; use heartwood_crypto::utils::js" },
+    { path = "f64::mul_add", reason = "a fused multiply-add rounds differently from JavaScript" },
+]

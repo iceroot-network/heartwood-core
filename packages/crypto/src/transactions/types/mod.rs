@@ -325,6 +325,48 @@ impl Transaction {
     }
 }
 
+impl Transaction {
+    /// The transaction as the reference's `toString` writes it in its log lines and pool
+    /// messages: `<senderId>#<nonce> <last 8 hex digits of the id> <Key> v<version>`, the type key
+    /// capitalised (`Transfer`, `SecondSignature`, `DelegateRegistration`,
+    /// `DelegateResignation`, `Burn`, `Vote`). The sender's address is derived with `network`,
+    /// the node's address byte, as the reference derives it, whatever the transaction's own
+    /// network byte.
+    pub fn display(&self, network: u8) -> TransactionDisplay<'_> {
+        TransactionDisplay {
+            transaction: self,
+            network,
+        }
+    }
+}
+
+/// A transaction written as the reference's `toString` writes it (see [`Transaction::display`]).
+#[derive(Debug, Clone, Copy)]
+pub struct TransactionDisplay<'a> {
+    transaction: &'a Transaction,
+    network: u8,
+}
+
+impl fmt::Display for TransactionDisplay<'_> {
+    /// The version is the one the reference reads: a wire byte 0 is `v3`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let data = &self.transaction.data;
+        let sender = Address::from_public_key(&data.sender_public_key, self.network);
+        let id = self.transaction.id.to_hex();
+        let key = data.kind.key();
+        let (first, rest) = key.split_at(key.len().min(1));
+        write!(
+            f,
+            "{}#{} {} {}{rest} v{}",
+            sender.to_base58(),
+            data.nonce,
+            id.get(id.len().saturating_sub(8)..).unwrap_or_default(),
+            first.to_ascii_uppercase(),
+            data.effective_version()
+        )
+    }
+}
+
 /// The `asset` object of the reference's JSON form.
 fn asset_json(asset: &Asset) -> Value {
     let mut out = Map::new();

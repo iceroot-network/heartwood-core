@@ -1,0 +1,9 @@
+# Lints of heartwood-pool. The pool's orders are observable (the lists of a processor result, the
+# query orders, the collation), and it reads the time only through heartwood_kernel::clock::Clock,
+# so tests can drive the cooldown with a manual clock.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order differs between runs; use IndexMap or BTreeMap" },
+    { path = "std::collections::HashSet", reason = "iteration order differs between runs; use IndexSet or BTreeSet" },
+    { path = "std::time::SystemTime", reason = "read the time through heartwood_kernel::clock::Clock" },
+    { path = "std::time::Instant", reason = "read the time through heartwood_kernel::clock::Clock" },
+]

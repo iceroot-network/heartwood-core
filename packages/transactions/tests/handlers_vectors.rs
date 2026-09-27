@@ -1,6 +1,7 @@
 //! V17: one transaction applied to a wallet fixture as a block applies it, then reverted,
 //! compared with the reference by the `#W` records of the state digest after each step, or by the
-//! refusal's class and the records after the refused attempt.
+//! refusal's class, its message (with amounts in the devnet's token symbol) and the records after
+//! the refused attempt.
 //!
 //! The fixture reader and the record writer here are independent of the harness's, so that the
 //! handlers are checked against the reference by this crate alone.
@@ -229,6 +230,11 @@ fn check(devnet: &Devnet, record: &Record, label: &str) -> bool {
                 class,
                 Some(rejected.class()),
                 "{label}: the refusal's class"
+            );
+            assert_eq!(
+                expected["error"]["message"].as_str(),
+                Some(rejected.message(&devnet.network.symbol).as_str()),
+                "{label}: the refusal's message"
             );
             let after = section("after", "W");
             let ours = wallet_section(&wallets);

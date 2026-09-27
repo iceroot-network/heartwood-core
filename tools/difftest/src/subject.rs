@@ -73,6 +73,25 @@ pub enum Documented {
     /// A milestone file with a `dynamicFees` or `blocksToRevokeDelegateResignation` value of a
     /// type the reference coerces or fails on when it checks a fee or a revoke.
     FeeKeyValueType,
+    /// The reason after "Invalid transaction data: " in the pool's answer to an entry that does
+    /// not decode.
+    DecodeReason,
+    /// A full pool and a new transaction with a fee above the lowest, which the reference refuses
+    /// only after it has evicted the lowest-priority transaction.
+    FullPoolEviction,
+    /// A restart from the reference's saved state with a delegate name that reads as a number.
+    SavedStateUsername,
+    /// A restart in a round whose round rows a revert to the last block of the round before
+    /// deleted.
+    RoundRowsAfterRevert,
+    /// A count in a message, written by the reference in a default locale that is not English.
+    Locale,
+    /// A pool session whose online record changed while a sender's pool view that had read the
+    /// delegate's wallet before the change lived on.
+    OnlineView,
+    /// Crypto files that the strict schema refuses: an unknown key, a `null`, a height twice, a
+    /// removed feature turned on, a missing file, or a non-empty `exceptions.json`.
+    StrictSchema,
 }
 
 impl Documented {
@@ -125,6 +144,47 @@ impl Documented {
                  Heartwood refuses the milestone file at load, the reference loads it (a \
                  configuration-only difference; generated devnets never contain one)"
             }
+            Documented::DecodeReason => {
+                "the reason text of a pool entry that does not decode: Heartwood names its own \
+                 decoder's reason where the reference names its decoder's or its schema \
+                 validator's; the code, the entry id, the place in the lists and the verdict are \
+                 the same (malformed input only)"
+            }
+            Documented::FullPoolEviction => {
+                "a full pool: the reference evicts the lowest-priority transaction before it \
+                 checks the new one, so an invalid transaction with a higher fee evicts a valid \
+                 one; Heartwood checks the new transaction first and evicts nothing when it \
+                 refuses it, so its pool keeps the transaction the reference evicted"
+            }
+            Documented::SavedStateUsername => {
+                "a delegate name such as 123, 0x10 or 1e5 after a restart from the reference's \
+                 saved state: its reviver turns the name into a number, or makes the file \
+                 unloadable; Heartwood's wallet records keep the name as text on every restart \
+                 path"
+            }
+            Documented::RoundRowsAfterRevert => {
+                "a restart after a revert to the last block of a round: the reference's revert \
+                 deletes the next round's rows, which its running node saved with that block and \
+                 does not save again, so its restart in that round reads no delegate for it and \
+                 keeps an empty forging list, or, when the store holds no missed-block row, rolls \
+                 the chain back; Heartwood deletes the same rows but restarts from its state, \
+                 which holds the round"
+            }
+            Documented::Locale => {
+                "a count in a message: the reference groups its digits in the process's default \
+                 locale; Heartwood always writes the English grouping (node-local text only)"
+            }
+            Documented::OnlineView => {
+                "a delegate's online record in a sender's pool view: the reference's view keeps \
+                 the delegate's wallet, with its version, as it copied it the first time it read \
+                 it, until the view is rebuilt; Heartwood's pool reads the node's online record \
+                 when it checks (node-local policy, whose changes depend on the network's timing)"
+            }
+            Documented::StrictSchema => {
+                "crypto files that the strict schema refuses: Heartwood refuses to start and names \
+                 the file and key, the reference loads them or falls back to its built-in preset \
+                 (a configuration-only difference; generated devnets never contain one)"
+            }
         }
     }
 }
@@ -138,11 +198,12 @@ const STACK_OVERFLOW: &str = "Maximum call stack size exceeded";
 
 impl Documented {
     /// Whether the oracle's answer `expected` shows the reference's side of this difference: a
-    /// `true` note in the output's `notes` (`pluginsPrototype`, `stackOverflow`, `wideAmount`),
-    /// or, for deep groups, a `RangeError` for the overflow of the Node stack. A replaced
-    /// prototype is shown only with the reply check's refusal of the plugins, the one step it
-    /// changes. The differences that Heartwood checks on the input ([`Verdict::RefusedByDesign`])
-    /// are never shown.
+    /// `true` note in the output's `notes` (`pluginsPrototype`, `stackOverflow`, `wideAmount`,
+    /// `fullPoolEviction`, `savedStateUsername`, `roundRowsMissing`, `locale`), or, for deep
+    /// groups, a `RangeError` for the overflow of the Node stack. A replaced prototype is shown
+    /// only with the reply check's refusal of the plugins, the one step it changes. The
+    /// differences that Heartwood checks on the input ([`Verdict::RefusedByDesign`]) are never
+    /// shown.
     pub fn shown_by(self, expected: &Expected) -> bool {
         let note = |name: &str| match expected {
             Expected::Output(output) => output[NOTES][name] == Value::Bool(true),
@@ -160,6 +221,10 @@ impl Documented {
                         if error.class == "RangeError" && error.message.starts_with(STACK_OVERFLOW))
             }
             Documented::WideAmount => note("wideAmount"),
+            Documented::FullPoolEviction => note("fullPoolEviction"),
+            Documented::SavedStateUsername => note("savedStateUsername"),
+            Documented::RoundRowsAfterRevert => note("roundRowsMissing"),
+            Documented::Locale => note("locale"),
             _ => false,
         }
     }
