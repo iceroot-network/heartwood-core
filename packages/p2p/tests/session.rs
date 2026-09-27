@@ -951,7 +951,7 @@ async fn devnet_smoke() {
     use heartwood_p2p_wire::messages::blocks::GetBlocksRequest;
     use heartwood_p2p_wire::messages::peer::{GetPeersRequest, GetStatusRequest};
     use heartwood_p2p_wire::messages::shared::Headers;
-    use heartwood_p2p_wire::status;
+    use heartwood_p2p_wire::{replies, status};
 
     let Ok(node) = std::env::var("HEARTWOOD_SMOKE_PEER") else {
         println!("devnet_smoke: HEARTWOOD_SMOKE_PEER is not set, so nothing was run");
@@ -996,7 +996,7 @@ async fn devnet_smoke() {
         .await
         .expect("getPeers is answered");
     let peers = peer::get_peers_decode_response(&reply).unwrap();
-    assert!(peers.len() <= 2_000);
+    let peers = replies::check_peers(&peers).expect("the getPeers reply passes its check");
     println!("devnet_smoke: getPeers: {} peers", peers.len());
 
     let request = GetBlocksRequest {
@@ -1015,7 +1015,8 @@ async fn devnet_smoke() {
         )
         .await
         .expect("getBlocks is answered");
-    let listed = blocks::get_blocks_decode_response(&reply).unwrap();
+    let mut listed = blocks::get_blocks_decode_response(&reply).unwrap();
+    replies::check_blocks(&mut listed).expect("the getBlocks reply passes its check");
     assert!(
         !listed.is_empty() && listed.len() <= 400,
         "{} blocks",
