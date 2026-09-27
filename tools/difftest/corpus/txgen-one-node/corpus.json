@@ -44,7 +44,7 @@
     },
     "oracle": {
       "mode": "container",
-      "image": "sha256:26629b4b14ab434609286683781e956c8aca28ee594d7c21cae8aeb4974e7bdf",
+      "image": "sha256:b801040fbfe96febe29b6ae79577855bc28dcf47cbd88c9825f4cfdb6d2bc839",
       "node": "v18.20.8"
     },
     "lines": 2073,
