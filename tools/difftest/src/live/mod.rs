@@ -417,7 +417,44 @@ fn check_judge(
             }
         }
     }
+    check_both_sides(manifest, &out, cases);
     out
+}
+
+/// After a partition, both sides forged: the minority's chain has blocks of its own after the
+/// height where it leaves the final chain.
+fn check_both_sides(manifest: &Manifest, chains: &Chains, cases: &mut Cases) {
+    let Some((_, name)) = &manifest.minority else {
+        return;
+    };
+    let (Some(last), Some(minority)) = (final_chain(manifest, chains), chains.get(name)) else {
+        return;
+    };
+    let fork = (1..=minority.tip).find(|h| {
+        let id = minority.chain.forward[h]
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        !last.chain.holds(*h, id)
+    });
+    match fork {
+        Some(fork) => cases.push(
+            "judge",
+            format!(
+                "both sides forged: {name} leaves the final chain at height {fork} with {} blocks of its own (to {}); the final chain goes on to {}",
+                minority.tip - fork + 1,
+                minority.tip,
+                last.tip
+            ),
+            fork,
+            Outcome::Pass,
+        ),
+        None => cases.fail(
+            "judge",
+            "both sides forged",
+            format!("{name} holds no block of its own: every block up to its tip {} is the final chain's", minority.tip),
+        ),
+    }
 }
 
 /// The final chain's corpus: the one that is not the minority's.
