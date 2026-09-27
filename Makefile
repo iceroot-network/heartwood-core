@@ -55,13 +55,15 @@ NAME          ?=
 ARCHIVE       ?=
 CORPUS_SEED   ?=
 DUMP          ?=
-# L2 restarts and the store: TO cuts the corpus at a height; RESTARTS is `every` (a restart at
-# every height) or `rounds` (the round ends, the first blocks of rounds and 20 seeded heights),
-# which the judge writes into the corpus's restart-plan.json; KILLS is the crash test's number of
-# kills.
+# L2 restarts and the store: TO cuts the corpus at a height (the judge and the replays must use
+# the same cut); RESTARTS is `every` (a restart at every height) or `rounds` (the round ends, the
+# first blocks of rounds, 20 seeded heights and the node's live restarts), which corpus-judge writes
+# into the corpus's restart-plan.json before it judges; KILLS is the crash test's number of kills,
+# KILL_SEED the seed of its delays.
 TO            ?=
 RESTARTS      ?=
 KILLS         ?= 200
+KILL_SEED     ?=
 # Where the oracle of l1, corpus-judge and l2-synthetic runs: the image by default, or
 # ORACLE_ARGS='--solar-dir $(LOCAL_SOLAR)' for a local reference.
 ORACLE_ARGS   ?= --image $(IMAGE)
@@ -223,31 +225,32 @@ corpus-import: build ## devnet archives (ARCHIVE='dir ...', in chain order) to t
 	$(if $(ARCHIVE),,$(error set ARCHIVE, the devnet archives of the chain in order))
 	$(DIFFTEST) corpus import $(ARCHIVE) --out $(CORPUS)/$(NAME) $(if $(CORPUS_SEED),--seed '$(CORPUS_SEED)')
 
-corpus-judge: build ## the oracle's judge of CORPUS/NAME: digest lines and anchors (DUMP=H,...)
+corpus-judge: build ## the oracle's judge of CORPUS/NAME: digest lines, anchors, restart lines (DUMP, RESTARTS, TO)
 	$(need-name)
 	$(need-image)
-	$(TOOLCHAIN) && $(DIFFTEST) corpus judge $(CORPUS)/$(NAME) $(if $(DUMP),--dump $(DUMP)) $(ORACLE_ARGS)
+	$(TOOLCHAIN) && $(DIFFTEST) corpus judge $(CORPUS)/$(NAME) $(if $(DUMP),--dump $(DUMP)) \
+	    $(if $(RESTARTS),--restarts $(RESTARTS)) $(if $(TO),--to $(TO)) $(ORACLE_ARGS)
 
 corpus-verify: build ## the manifest of CORPUS/NAME
 	$(need-name)
 	$(DIFFTEST) corpus verify $(CORPUS)/$(NAME)
 
-l2: build ## replay CORPUS/NAME in Heartwood against the judge's digest lines
+l2: build ## replay CORPUS/NAME in Heartwood through its store against the judge's lines (TO=H)
 	$(need-name)
-	$(DIFFTEST) run l2 $(CORPUS)/$(NAME)
+	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) $(if $(TO),--to $(TO))
 
-l2-synthetic: build ## L2 of CORPUS/NAME with the synthetic blocks on top (needs the oracle)
+l2-synthetic: build ## L2 of CORPUS/NAME with the synthetic restart and pool cases on top (needs the oracle)
 	$(need-name)
 	$(need-image)
-	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --synthetic $(ORACLE_ARGS)
+	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --synthetic $(if $(TO),--to $(TO)) $(ORACLE_ARGS)
 
-l2-restart: build ## L2 of CORPUS/NAME with restarts at the planned heights, both ways (TO=H)
+l2-restart: build ## L2 of CORPUS/NAME with the restarts of its restart plan, by both of Heartwood's paths (TO=H)
 	$(need-name)
 	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --restart $(if $(TO),--to $(TO))
 
 crash-test: build ## CORPUS/NAME replayed through the store in a child process killed KILLS times
 	$(need-name)
-	$(DIFFTEST) store crash $(CORPUS)/$(NAME) --kills $(KILLS)
+	$(DIFFTEST) store crash $(CORPUS)/$(NAME) --kills $(KILLS) $(if $(KILL_SEED),--seed $(KILL_SEED))
 
 pool-bench: ## the cost of the pool's per-sender views and of the store's commit (release build)
 	$(TOOLCHAIN) && cargo test --release --locked -p heartwood-pool --test view_cost -- --ignored --nocapture

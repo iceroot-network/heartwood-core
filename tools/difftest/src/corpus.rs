@@ -9,6 +9,10 @@
 //! - `reference/`: the devnet node's round rows, missed slots, block metadata and API checkpoints,
 //!   which anchor the oracle's replay to the node;
 //! - `revert-plan.json`: the reverts both sides run;
+//! - `restart-plan.json` and `ts-restarts.jsonl`, when the corpus is judged with restarts: the
+//!   restarts both sides run and the reference's restart lines ([`crate::restart`]);
+//! - `reference/restarts.jsonl`, when the node restarted while it made the chain: each live
+//!   restart's height and path and the file of the state right after it;
 //! - `ts-digests.jsonl` and `anchors.json`: the oracle's digest lines and anchor results;
 //! - `corpus.json`: the reference commit and tree, the oracle image, heights and counts;
 //! - `MANIFEST.sha256`: the SHA-256 of every other file.
@@ -26,6 +30,7 @@ use heartwood_crypto::{Block, BlockId, Milestones, Network};
 use serde_json::{Map, Value, json};
 
 use crate::errors::{Error, Result};
+use crate::restart::{self, LiveRestart, RestartPlan};
 use crate::vectors::sha256_hex;
 
 /// The format string of `corpus.json`.
@@ -58,8 +63,14 @@ pub struct Corpus {
     pub blocks: Vec<CorpusBlock>,
     /// The reverts to run.
     pub revert_plan: RevertPlan,
+    /// The restarts to run, when the corpus has a restart plan.
+    pub restart_plan: Option<RestartPlan>,
+    /// The node's live restarts.
+    pub live_restarts: Vec<LiveRestart>,
     /// `corpus.json`.
     pub meta: Value,
+    /// The height the corpus is cut at, when it is ([`Corpus::cut`]).
+    pub cut: Option<u32>,
 }
 
 /// One block of a corpus, as the devnet node stored it.
@@ -429,6 +440,15 @@ impl Corpus {
         }
         let plan = dir.join("revert-plan.json");
         let revert_plan = RevertPlan::from_json(&read_json(&plan)?, &plan)?;
+        let restart_path = dir.join(restart::RESTART_PLAN);
+        let restart_plan = if restart_path.exists() {
+            Some(RestartPlan::from_json(
+                &read_json(&restart_path)?,
+                &restart_path,
+            )?)
+        } else {
+            None
+        };
         Ok(Corpus {
             dir: dir.to_path_buf(),
             network,
@@ -436,8 +456,69 @@ impl Corpus {
             genesis,
             blocks,
             revert_plan,
+            restart_plan,
+            live_restarts: restart::read_live(dir)?,
             meta,
+            cut: None,
         })
+    }
+
+    /// The height the judge cut the corpus at when it recorded its lines, if it did.
+    pub fn judged_to(&self) -> Option<u32> {
+        self.meta
+            .pointer("/judge/to")
+            .and_then(Value::as_u64)
+            .and_then(|h| u32::try_from(h).ok())
+    }
+
+    /// The corpus cut at height `to`: its blocks up to `to`, the reverts that run after them, and
+    /// the live restarts up to it. The restart plan is kept only when it was made for `to`.
+    pub fn cut(mut self, to: u32) -> Result<Corpus> {
+        if to < 1 || to > self.tip() {
+            return Err(corpus_error(
+                &self.dir,
+                format!("cannot cut the chain of tip {} at {to}", self.tip()),
+            ));
+        }
+        self.blocks.retain(|b| b.height <= to);
+        self.revert_plan.steps.retain(|s| s.after_height <= to);
+        self.live_restarts.retain(|l| l.height <= to);
+        if self.restart_plan.as_ref().is_some_and(|p| p.tip != to) {
+            self.restart_plan = None;
+        }
+        self.cut = Some(to);
+        Ok(self)
+    }
+
+    /// The corpus as the judge recorded it: cut at `to` when given, else at the height the judge
+    /// cut it at. Refuses a `to` that is not the judge's.
+    pub fn as_judged(self, to: Option<u32>) -> Result<Corpus> {
+        match (to, self.judged_to()) {
+            (Some(to), Some(judged)) if to != judged => Err(corpus_error(
+                &self.dir,
+                format!(
+                    "the judge's lines are for the chain cut at {judged}, not {to}: judge it again with TO={to}"
+                ),
+            )),
+            (Some(to), None) if to != self.tip() => Err(corpus_error(
+                &self.dir,
+                format!(
+                    "the judge's lines are for the whole chain, not cut at {to}: judge it again with TO={to}"
+                ),
+            )),
+            (_, Some(judged)) => self.cut(judged),
+            (Some(to), None) => self.cut(to),
+            (None, None) => Ok(self),
+        }
+    }
+
+    /// The id of the block at `height` (1 to the tip).
+    pub fn block_id(&self, height: u32) -> Option<BlockId> {
+        if height == 1 {
+            Some(*self.genesis.id())
+        } else {
+            self.block(height).map(|b| b.id)
+        }
     }
 
     /// The height of the last block.
@@ -603,13 +684,18 @@ fn check_seed(dir: &Path, crypto: &[Vec<u8>], seed: &str) -> Result<()> {
     Ok(())
 }
 
-/// Add the judge's output in `work` (`ts-digests.jsonl`, `anchors.json`) to the corpus in `dir`:
-/// copy both, record the judge's provenance in `corpus.json`, and write the manifest again.
-/// Returns whether the judge's anchors hold.
+/// Add the judge's output in `work` (`ts-digests.jsonl`, `anchors.json`, and `ts-restarts.jsonl`
+/// when it ran restarts) to the corpus in `dir`: copy them, remove a restart file the judge did
+/// not write again, record the judge's provenance (and the height it cut the chain at) in
+/// `corpus.json`, and write the manifest again. Returns whether the judge's anchors hold.
 pub fn record_judge(dir: &Path, work: &Path) -> Result<bool> {
     let mut files = Vec::new();
-    for name in [TS_DIGESTS, ANCHORS] {
-        let text = read_text(&work.join(name))?;
+    for name in [TS_DIGESTS, ANCHORS, restart::TS_RESTARTS] {
+        let path = work.join(name);
+        if name == restart::TS_RESTARTS && !path.exists() {
+            continue;
+        }
+        let text = read_text(&path)?;
         check_no_machine_paths(name, &text)?;
         files.push((name, text));
     }
@@ -618,6 +704,10 @@ pub fn record_judge(dir: &Path, work: &Path) -> Result<bool> {
     let ok = anchors.get("ok") == Some(&Value::Bool(true));
     for (name, text) in &files {
         write_file(&dir.join(name), text)?;
+    }
+    let stale = dir.join(restart::TS_RESTARTS);
+    if !work.join(restart::TS_RESTARTS).exists() && stale.exists() {
+        fs::remove_file(&stale).map_err(|e| Error::io(&stale, e))?;
     }
     let meta_path = dir.join("corpus.json");
     let mut meta = read_json(&meta_path)?;
@@ -628,6 +718,21 @@ pub fn record_judge(dir: &Path, work: &Path) -> Result<bool> {
         "lines": anchors.get("lines").cloned().unwrap_or(Value::Null),
         "finalChainDigest": anchors.get("finalChainDigest").cloned().unwrap_or(Value::Null),
     });
+    if let Some(to) = anchors.get("to") {
+        meta["judge"]["to"] = to.clone();
+    }
+    if let Some(restarts) = anchors.get("restarts") {
+        meta["judge"]["restarts"] = json!({
+            "ok": restarts.get("ok").cloned().unwrap_or(Value::Null),
+            "plan": restarts.get("plan").cloned().unwrap_or(Value::Null),
+            "finalChainDigests": restarts.get("modes").and_then(Value::as_object).map(|modes| {
+                modes
+                    .iter()
+                    .map(|(mode, m)| (mode.clone(), m.get("finalChainDigest").cloned().unwrap_or(Value::Null)))
+                    .collect::<Map<String, Value>>()
+            }),
+        });
+    }
     write_file(
         &meta_path,
         &format!(
@@ -637,6 +742,15 @@ pub fn record_judge(dir: &Path, work: &Path) -> Result<bool> {
     )?;
     write_manifest(dir)?;
     Ok(ok)
+}
+
+/// Write `plan` as the restart plan of the corpus in `dir`, and the manifest again.
+pub fn write_restart_plan(dir: &Path, plan: &RestartPlan) -> Result<()> {
+    write_file(
+        &dir.join(restart::RESTART_PLAN),
+        &format!("{}\n", plan.to_json()),
+    )?;
+    write_manifest(dir)
 }
 
 /// The top directories whose absolute paths name a machine: home and temporary directories.
@@ -745,6 +859,7 @@ pub fn import(archives: &[PathBuf], out: &Path, seed: &str) -> Result<()> {
     let mut rounds: BTreeMap<u64, Vec<Value>> = BTreeMap::new();
     let mut missed = Vec::new();
     let mut rejections = Vec::new();
+    let mut live_restarts = Vec::new();
     let mut checkpoints: Vec<(String, String)> = Vec::new();
     let mut archive_notes = Vec::new();
     for archive in &opened {
@@ -816,6 +931,10 @@ pub fn import(archives: &[PathBuf], out: &Path, seed: &str) -> Result<()> {
         if rejections_path.exists() {
             rejections.extend(read_jsonl(&rejections_path)?);
         }
+        let restarts_path = archive.dir.join("restarts.jsonl");
+        if restarts_path.exists() {
+            live_restarts.extend(read_jsonl(&restarts_path)?);
+        }
         for rel in archive.files("checkpoints/") {
             let text = read_text(&archive.dir.join(&rel))?;
             let name = rel.trim_start_matches("checkpoints/").to_owned();
@@ -853,6 +972,9 @@ pub fn import(archives: &[PathBuf], out: &Path, seed: &str) -> Result<()> {
     if !rejections.is_empty() {
         files.push(("reference/rejections.jsonl".into(), jsonl(&rejections)));
     }
+    if !live_restarts.is_empty() {
+        files.push((restart::LIVE_RESTARTS.into(), jsonl(&live_restarts)));
+    }
     for (name, text) in &checkpoints {
         files.push((format!("reference/checkpoints/{name}"), text.clone()));
     }
@@ -887,6 +1009,7 @@ pub fn import(archives: &[PathBuf], out: &Path, seed: &str) -> Result<()> {
         "roundRows": round_rows.len(),
         "missedRows": missed.len(),
         "rejections": rejections.len(),
+        "liveRestarts": live_restarts.len(),
         "checkpoints": checkpoints.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
         "archives": archive_notes,
         "revertSteps": plan.steps.len(),

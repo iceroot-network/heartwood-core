@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use heartwood_difftest::cli::{self, Command, GenesisArgs, L1Args, L2Args, USAGE};
+use heartwood_difftest::cli::{self, Command, GenesisArgs, JudgeArgs, L1Args, L2Args, USAGE};
 use heartwood_difftest::corpus::{self, Corpus};
 use heartwood_difftest::genesis::{self, Built};
 use heartwood_difftest::levels::l1::{self, L1Options, Property};
@@ -12,6 +12,8 @@ use heartwood_difftest::levels::l2::{self, L2Options};
 use heartwood_difftest::levels::{Level, l0};
 use heartwood_difftest::oracle::GenOptions;
 use heartwood_difftest::report::describe_meta;
+use heartwood_difftest::restart::RestartPlan;
+use heartwood_difftest::store;
 use heartwood_difftest::strategies::transactions::TxContext;
 use heartwood_difftest::subjects::Devnet;
 use heartwood_difftest::vectors::VectorSet;
@@ -226,34 +228,49 @@ fn execute(command: Command) -> Result<bool> {
             );
             Ok(true)
         }
-        Command::CorpusJudge { oracle, dir, dump } => {
-            corpus::verify(&dir)?;
-            let oracle = oracle.resolve(env)?;
-            let work = std::env::temp_dir().join(format!("heartwood-judge-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&work);
-            let extra = if dump.is_empty() {
-                Vec::new()
-            } else {
-                let list: Vec<String> = dump.iter().map(u32::to_string).collect();
-                vec!["--dump".to_string(), list.join(",")]
-            };
-            let ok = oracle.judge(&dir, &work, &extra)?;
-            let recorded = corpus::record_judge(&dir, &work)?;
+        Command::CorpusJudge(args) => judge(&args, env),
+        Command::StoreReplay { dir, db, to } => {
+            let loaded = Corpus::load(&dir)?;
+            let tip = store::replay(&loaded, &db, to)?;
             println!(
-                "difftest: the judge's lines and anchors are in {} (anchors {})",
-                dir.display(),
-                if recorded && ok {
-                    "hold"
-                } else {
-                    "FAILED: see anchors.json"
-                }
+                "difftest: the store under {} is at height {tip}",
+                db.display()
             );
-            if dump.is_empty() {
-                let _ = std::fs::remove_dir_all(&work);
-            } else {
-                println!("  dumps: {}", work.display());
+            Ok(true)
+        }
+        Command::StoreCheck { dir, db } => {
+            let loaded = Corpus::load(&dir)?;
+            let checked = store::check(&loaded, &db)?;
+            let mut ok = true;
+            for (mode, outcome) in &checked.modes {
+                match outcome {
+                    Ok((tip, line)) => println!("{} {tip} {line}", mode.name()),
+                    Err(message) => {
+                        ok = false;
+                        println!("{} refused: {message}", mode.name());
+                    }
+                }
             }
-            Ok(ok && recorded)
+            Ok(ok)
+        }
+        Command::StoreCrash {
+            dir,
+            kills,
+            seed,
+            max_delay_ms,
+        } => {
+            let loaded = Corpus::load(&dir)?;
+            let exe = std::env::current_exe()
+                .map_err(|e| Error::Usage(format!("cannot find this program: {e}")))?;
+            let report = store::crash(
+                &loaded,
+                &exe,
+                kills,
+                seed,
+                std::time::Duration::from_millis(max_delay_ms),
+            )?;
+            print!("{report}");
+            Ok(report.is_success())
         }
         Command::Run { level, .. } => Err(Error::NotYet(format!(
             "{} is not built yet; it arrives with {}",
@@ -307,6 +324,77 @@ fn run_l1(args: &L1Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
     Ok(run.report.is_success())
 }
 
+/// `difftest corpus judge`: write the restart plan when asked, run the judge, record its output.
+fn judge(args: &JudgeArgs, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
+    let dir = &args.dir;
+    corpus::verify(dir)?;
+    if let Some(kind) = args.restarts {
+        let loaded = Corpus::load(dir)?;
+        let tip = args.to.unwrap_or_else(|| loaded.tip());
+        let tip_id = loaded
+            .block_id(tip)
+            .ok_or_else(|| Error::Usage(format!("the chain has no block {tip}")))?;
+        let mut live: Vec<u32> = loaded
+            .live_restarts
+            .iter()
+            .map(|l| l.height)
+            .filter(|h| *h <= tip)
+            .collect();
+        live.sort_unstable();
+        live.dedup();
+        let plan = RestartPlan::generate(
+            kind,
+            RestartPlan::seed_of(&tip_id),
+            tip,
+            loaded.revert_plan.round_length,
+            &live,
+        );
+        corpus::write_restart_plan(dir, &plan)?;
+        println!(
+            "difftest: restart plan {kind} for tip {tip}: {} restarts",
+            plan.heights.len()
+        );
+    } else if let Some(file) = &args.restart_plan {
+        let text = std::fs::read_to_string(file).map_err(|e| Error::Io {
+            path: file.clone(),
+            source: e,
+        })?;
+        let value = serde_json::from_str(&text).map_err(|e| Error::Corpus {
+            path: file.clone(),
+            message: e.to_string(),
+        })?;
+        corpus::write_restart_plan(dir, &RestartPlan::from_json(&value, file)?)?;
+    }
+    let oracle = args.oracle.resolve(env)?;
+    let work = std::env::temp_dir().join(format!("heartwood-judge-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    let mut extra = Vec::new();
+    if !args.dump.is_empty() {
+        let list: Vec<String> = args.dump.iter().map(u32::to_string).collect();
+        extra.extend(["--dump".to_string(), list.join(",")]);
+    }
+    if let Some(to) = args.to {
+        extra.extend(["--to".to_string(), to.to_string()]);
+    }
+    let ok = oracle.judge(dir, &work, &extra)?;
+    let recorded = corpus::record_judge(dir, &work)?;
+    println!(
+        "difftest: the judge's lines and anchors are in {} (anchors {})",
+        dir.display(),
+        if recorded && ok {
+            "hold"
+        } else {
+            "FAILED: see anchors.json"
+        }
+    );
+    if args.dump.is_empty() {
+        let _ = std::fs::remove_dir_all(&work);
+    } else {
+        println!("  dumps: {}", work.display());
+    }
+    Ok(ok && recorded)
+}
+
 fn run_l2(args: &L2Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
     let corpus = Corpus::load(&args.dir)?;
     let mut server = match &args.oracle {
@@ -317,6 +405,9 @@ fn run_l2(args: &L2Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
         &corpus,
         &L2Options {
             synthetic: args.synthetic,
+            restart: args.restart,
+            store: !args.memory,
+            to: args.to,
         },
         server.as_mut(),
     )?;
