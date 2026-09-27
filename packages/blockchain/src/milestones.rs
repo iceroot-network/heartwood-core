@@ -8,7 +8,10 @@
 //! deletes it. At start, a stored entry whose digest differs or whose entry is gone, or an entry
 //! at or below the tip with no stored digest, refuses the start.
 
+use heartwood_crypto::crypto::domain::{DomainTag, tagged_hash};
 use heartwood_database::MilestoneEntryRow;
+use heartwood_kernel::utils::stringify::stringify;
+use serde_json::Value;
 
 use crate::errors::StoreError;
 
@@ -17,16 +20,53 @@ use crate::errors::StoreError;
 pub const EXCLUDED_KEYS: [&str; 2] = ["p2p", "fees.staticFees"];
 
 /// The height and digest of every entry of the milestone file `milestones_text`, in file order.
+/// An object that the removal of an excluded key leaves empty is removed too, so adding or
+/// removing an excluded key never changes a digest.
 pub fn entry_digests(milestones_text: &str) -> Result<Vec<MilestoneEntryRow>, StoreError> {
-    let _ = milestones_text;
-    todo!("the entries' digests")
+    let refused = |detail: String| StoreError::Milestones(detail);
+    let entries: Vec<Value> =
+        serde_json::from_str(milestones_text).map_err(|e| refused(e.to_string()))?;
+    entries
+        .into_iter()
+        .map(|mut entry| {
+            let height = entry.get("height").and_then(Value::as_u64);
+            let height = height.and_then(|height| u32::try_from(height).ok());
+            let height = height.ok_or_else(|| refused("an entry has no height".into()))?;
+            for path in EXCLUDED_KEYS {
+                remove(&mut entry, path);
+            }
+            let text = stringify(&entry);
+            let digest = tagged_hash(DomainTag::MilestoneEntry, &[text.as_bytes()]);
+            Ok(MilestoneEntryRow { height, digest })
+        })
+        .collect()
+}
+
+/// Remove the key at the dotted `path` from `value`, and an object the removal leaves empty.
+fn remove(value: &mut Value, path: &str) {
+    let Value::Object(map) = value else { return };
+    match path.split_once('.') {
+        None => {
+            map.shift_remove(path);
+        }
+        Some((key, rest)) => {
+            if let Some(child) = map.get_mut(key) {
+                remove(child, rest);
+                if child.as_object().is_some_and(serde_json::Map::is_empty) {
+                    map.shift_remove(key);
+                }
+            }
+        }
+    }
 }
 
 /// The entries of `configured` whose height lies in `(from, to]`: those a tip that moves from
 /// `from` to `to` reaches.
 pub fn reached(configured: &[MilestoneEntryRow], from: u32, to: u32) -> Vec<MilestoneEntryRow> {
-    let _ = (configured, from, to);
-    todo!("the entries reached")
+    let reached = configured
+        .iter()
+        .filter(|entry| from < entry.height && entry.height <= to);
+    reached.copied().collect()
 }
 
 /// The check at start: every `stored` entry must be in `configured` with the same digest, and
@@ -37,6 +77,10 @@ pub fn first_changed(
     configured: &[MilestoneEntryRow],
     tip: u32,
 ) -> Option<u32> {
-    let _ = (stored, configured, tip);
-    todo!("compare the applied entries")
+    let changed = stored.iter().filter(|entry| !configured.contains(entry));
+    let is_stored = |height: u32| stored.iter().any(|entry| entry.height == height);
+    let missing = configured
+        .iter()
+        .filter(|e| e.height <= tip && !is_stored(e.height));
+    changed.chain(missing).map(|entry| entry.height).min()
 }

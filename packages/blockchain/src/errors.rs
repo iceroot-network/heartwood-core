@@ -67,6 +67,19 @@ pub enum StartError<E> {
     /// The configured genesis block is refused.
     #[error(transparent)]
     Genesis(GenesisError<E>),
+    /// The configured genesis block's JSON does not decode.
+    #[error("the genesis block could not be decoded: {detail}")]
+    GenesisDecode {
+        /// Why.
+        detail: String,
+    },
+    /// The store holds blocks without the chain's identity, or the identity without blocks: a
+    /// first start writes both in one transaction, so the file was changed outside the node.
+    #[error("the database's chain identity is incomplete: {detail}")]
+    Identity {
+        /// What is missing.
+        detail: &'static str,
+    },
     /// An applied milestone entry changed, disappeared, or a new entry lies at or below the tip.
     #[error(
         "the milestone at height {height} changed after it was applied; roll back to height {} or resync",
@@ -90,4 +103,10 @@ pub enum StartError<E> {
         /// Why.
         error: ApplyError<E>,
     },
+}
+
+impl<E> From<DatabaseError> for StartError<E> {
+    fn from(error: DatabaseError) -> StartError<E> {
+        StartError::Store(StoreError::Database(error))
+    }
 }
