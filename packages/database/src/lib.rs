@@ -44,6 +44,7 @@ pub mod node_local;
 pub mod rounds;
 pub mod state;
 pub mod transactions;
+mod values;
 
 pub use crate::blocks::{BlockRow, StoredBlock};
 pub use crate::connection::{Chunk, Database, SCHEMA_VERSION, Savepoint, Settings};
