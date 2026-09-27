@@ -500,3 +500,44 @@ fn the_crypto_crate_loaders_run_after_the_schema() {
         }
     ));
 }
+
+/// V23: the kernel's verdict on each record's files, and the merged milestones where both accept.
+/// Where only the reference loads the files, the documented form of the refusal is the harness's
+/// to check (`tools/difftest/tests/config_vectors.rs`).
+#[test]
+fn v23_config() {
+    let file = vector_file!("V23-config");
+    common::check_devnet(&file);
+    let (mut both, mut refused_here) = (0, 0);
+    for record in &file.records {
+        let label = record.label(&file.class);
+        let files = &record.input["files"];
+        let text = |name: &str| files.get(name).and_then(Value::as_str).map(str::to_owned);
+        let [network, milestones, genesis, exceptions] = FILES.map(text);
+        let texts = CryptoTexts {
+            network,
+            milestones,
+            genesis,
+            exceptions,
+        };
+        match (crypto::parse(&texts), &record.expected) {
+            (Ok(loaded), Ok(output)) => {
+                assert_eq!(output["accepted"], json!(true), "{label}");
+                let merged: Vec<Value> = (loaded.milestones.all().iter())
+                    .map(|params| Value::Object(params.as_json().clone()))
+                    .collect();
+                assert!(
+                    common::same_json(&Value::Array(merged), &output["milestones"]),
+                    "{label}"
+                );
+                both += 1;
+            }
+            (Err(_), Err(_)) => both += 1,
+            (Err(_), Ok(_)) => refused_here += 1,
+            (Ok(_), Err(class)) => {
+                panic!("{label}: the reference refused ({class}), the kernel accepted")
+            }
+        }
+    }
+    assert!(both > 0 && refused_here > 0, "{both} {refused_here}");
+}

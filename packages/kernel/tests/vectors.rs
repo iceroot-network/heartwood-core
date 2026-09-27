@@ -1,6 +1,6 @@
 //! The kernel against the reference (vector classes V09-rounds and V16-kernel): rounds, forging
 //! slots and block chaining under the devnet and other milestone files; the status canonical
-//! JSON, `.env` text, epoch timestamps, IP lists and node directories.
+//! JSON, `.env` text, epoch timestamps, IP lists, node directories and pluralise.
 
 #[macro_use]
 mod common;
@@ -16,6 +16,7 @@ use heartwood_kernel::errors::{NotChained, TimestampError};
 use heartwood_kernel::ip;
 use heartwood_kernel::paths::resolve_paths;
 use heartwood_kernel::timestamp::format_timestamp;
+use heartwood_kernel::utils::pluralise::pluralise;
 use heartwood_kernel::utils::stringify;
 use heartwood_kernel::{
     ChainLink, calculate_forging_info, calculate_round, is_block_chained, is_new_round,
@@ -197,6 +198,11 @@ fn kernel(record: &Record) -> Result<Value, String> {
                 "log": shown(&paths.log),
                 "temp": shown(&paths.temp),
             }))
+        }
+        "text.pluralise" => {
+            let count = input["count"].as_i64().expect("a count");
+            let inclusive = input["inclusive"].as_bool().expect("a flag");
+            Ok(json!({"text": pluralise(text("word"), count.into(), inclusive)}))
         }
         other => panic!("unknown operation {other}"),
     }
