@@ -7,6 +7,23 @@
 //! records an entry's digest when the tip first reaches its height, and a revert below the height
 //! deletes it. At start, a stored entry whose digest differs or whose entry is gone, or an entry
 //! at or below the tip with no stored digest, refuses the start.
+//!
+//! The scope of each key a milestone file may hold (the strict schema's keys):
+//!
+//! | Key | Scope | Why |
+//! |---|---|---|
+//! | `height` | consensus | where the entry applies |
+//! | `activeDelegates`, `blockTime`, `epoch` | consensus | rounds, slots and the forging schedule |
+//! | `block.version`, `block.maxTransactions`, `block.maxPayload` | consensus | block validity |
+//! | `blocksToRevokeDelegateResignation` | consensus | the revoke rule of resignations |
+//! | `burn.feeBasisPoints`, `burn.txAmount` | consensus | burned fees and the burn type |
+//! | `dynamicFees.enabled`, `dynamicFees.minFee`, `dynamicFees.addonBytes` | consensus | the fee floor that applying a transaction checks |
+//! | `transfer.minimum`, `transfer.maximum` | consensus | transfer validity |
+//! | `reward`, `dynamicReward.*` | consensus | block rewards |
+//! | `donations` | consensus | the donations taken from rewards |
+//! | `legacyTransfer`, `legacyVote`, `bip340`, `acceptLegacySchnorrTransactions`, `htlcEnabled` | consensus | removed features, accepted only at their off values |
+//! | `fees.staticFees` | pool policy (excluded) | the static fees of the pool's static mode, never a block rule |
+//! | `p2p.minimumVersions` | network (excluded) | which peers a node talks to |
 
 use heartwood_crypto::crypto::domain::{DomainTag, tagged_hash};
 use heartwood_database::MilestoneEntryRow;

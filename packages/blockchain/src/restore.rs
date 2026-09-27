@@ -90,15 +90,12 @@ pub fn restore<H: TransactionHandlers>(
     genesis::issued(&genesis).ok_or(StartError::Genesis(GenesisError::Issuance))?;
     store.entries = entry_digests(&files.milestones_text)?;
     let database = store.database();
+    let incomplete = |detail| Err(StartError::Identity { detail });
     let (meta, tip) = match (database.meta()?, database.last_block()?) {
         (None, None) => return first_start(store, files, &genesis, handlers),
         (Some(meta), Some(last)) => (meta, last.row.height),
-        (None, Some(_)) => {
-            return Err(StartError::Identity {
-                detail: "no identity",
-            });
-        }
-        (Some(_), None) => return Err(StartError::Identity { detail: "no block" }),
+        (None, Some(_)) => return incomplete("no identity"),
+        (Some(_), None) => return incomplete("no block"),
     };
     let meta = boot_checks(database, files, &store.entries, &genesis, meta, tip)?;
     let stored = if tip >= 2 {
