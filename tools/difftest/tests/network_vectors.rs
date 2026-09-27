@@ -6,8 +6,9 @@
 //! (`peer.attest`), the verifier (`nsect.find`, `verifier.checkState`) or the monitor
 //! (`monitor.networkHeight`, `monitor.forkDecision`, `monitor.downloadPlan`, `block.fromListed`).
 //! A record of any other operation fails the test. No record may fail; a record whose subject is
-//! not written yet is listed, not failed, and the only documented difference is the unlinked fork
-//! segment.
+//! not written yet is listed, not failed, and the only documented differences are the unlinked
+//! fork segment and, in a listed block, a transaction of a removed type or with a memo that is
+//! not UTF-8.
 //!
 //! The class is read from `packages/p2p/tests/vectors`, or from the directory that `P2P_VECTORS`
 //! names (relative to the workspace root), for example `target/vectors/local`. When the class is
@@ -92,8 +93,15 @@ fn the_network_vectors_pass_l0() {
     eprintln!("{CLASS}: records per area {per_area:?}\n{report}");
     assert!(report.is_success(), "{report}");
     assert_eq!(report.skipped(), 0, "{report}");
-    let unlinked = Documented::UnlinkedForkSegment.reason();
+    // Besides the unlinked fork segment, a listed block may hold a transaction of a removed
+    // type or with a memo that is not UTF-8, which the transaction reader refuses.
+    let allowed = [
+        Documented::UnlinkedForkSegment,
+        Documented::RemovedType,
+        Documented::NonUtf8Memo,
+    ]
+    .map(Documented::reason);
     for reason in report.documented_by_reason().keys() {
-        assert_eq!(*reason, unlinked, "{report}");
+        assert!(allowed.contains(reason), "{report}");
     }
 }
