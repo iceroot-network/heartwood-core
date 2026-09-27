@@ -20,8 +20,9 @@ use crate::errors::StoreError;
 pub const EXCLUDED_KEYS: [&str; 2] = ["p2p", "fees.staticFees"];
 
 /// The height and digest of every entry of the milestone file `milestones_text`, in file order.
-/// An object that the removal of an excluded key leaves empty is removed too, so adding or
-/// removing an excluded key never changes a digest.
+/// An object on the path of an excluded key that is empty without it is removed too (under the
+/// strict schema `fees` holds only `staticFees`), so adding or removing an excluded key never
+/// changes a digest.
 pub fn entry_digests(milestones_text: &str) -> Result<Vec<MilestoneEntryRow>, StoreError> {
     let refused = |detail: String| StoreError::Milestones(detail);
     let entries: Vec<Value> =
@@ -42,7 +43,8 @@ pub fn entry_digests(milestones_text: &str) -> Result<Vec<MilestoneEntryRow>, St
         .collect()
 }
 
-/// Remove the key at the dotted `path` from `value`, and an object the removal leaves empty.
+/// Remove the key at the dotted `path` from `value`, and each object on the path that is then
+/// empty.
 fn remove(value: &mut Value, path: &str) {
     let Value::Object(map) = value else { return };
     match path.split_once('.') {

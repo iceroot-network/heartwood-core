@@ -253,8 +253,8 @@ fn unreadable(what: &'static str, detail: impl std::fmt::Display) -> RestoreErro
     RestoreError::Record { what, detail }
 }
 
-/// The start's refusal when the genesis block's state cannot be built: patch 45's text when a
-/// balance would be negative, as the reference's start builds that state with the same check.
+/// The start's refusal when the genesis block's state cannot be built: the reference's text when
+/// a balance would be negative, as the reference's start builds that state with the same check.
 fn genesis_error<E>(error: GenesisError<E>) -> StartError<E> {
     match error {
         GenesisError::NegativeBalance { .. } => StartError::NegativeBalance { height: 1 },
@@ -262,7 +262,7 @@ fn genesis_error<E>(error: GenesisError<E>) -> StartError<E> {
     }
 }
 
-/// The start's refusal when replaying the block at `height` failed: patch 45's text when a
+/// The start's refusal when replaying the block at `height` failed: the reference's text when a
 /// balance would go below zero (a failed debit, or the handlers' insufficient balance), else the
 /// reference's prefix and the error.
 fn replay_error<E: Rejection>(height: u32, error: ApplyError<E>) -> StartError<E> {
@@ -280,5 +280,54 @@ fn replay_error<E: Rejection>(height: u32, error: ApplyError<E>) -> StartError<E
         StartError::NegativeBalance { height }
     } else {
         StartError::Replay { height, error }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use heartwood_crypto::TransactionId;
+    use heartwood_crypto::identities::Address;
+    use heartwood_transactions::TransactionError;
+
+    use super::*;
+
+    const NEGATIVE: &str = "State Generation failed: Wallet with negative balance";
+
+    fn refused(rejected: TransactionError) -> StartError<TransactionError> {
+        let id = TransactionId::from_array([0; 32]);
+        let error = ApplyError::Transaction {
+            index: 0,
+            id,
+            rejected,
+        };
+        replay_error(7, error)
+    }
+
+    #[test]
+    fn a_balance_below_zero_refuses_with_the_reference_text() {
+        let address = Address::from_bytes([30; 21]);
+        let debit = WalletError::NegativeBalance { address };
+        for error in [
+            replay_error(7, ApplyError::Wallet(debit.clone())),
+            refused(TransactionError::from(debit)),
+            refused(TransactionError::InsufficientBalance {
+                needed: 2,
+                balance: 1,
+            }),
+        ] {
+            assert_eq!(error, StartError::NegativeBalance { height: 7 });
+            assert_eq!(error.to_string(), NEGATIVE);
+        }
+        let genesis = genesis_error::<TransactionError>(GenesisError::NegativeBalance { address });
+        assert_eq!(genesis.to_string(), NEGATIVE);
+        let other = refused(TransactionError::UnexpectedSecondSignature);
+        assert!(matches!(other, StartError::Replay { height: 7, .. }));
+        assert!(
+            other
+                .to_string()
+                .starts_with("State Generation failed: transaction 0 ")
+        );
+        let other = genesis_error::<TransactionError>(GenesisError::Issuance);
+        assert_eq!(other, StartError::Genesis(GenesisError::Issuance));
     }
 }
