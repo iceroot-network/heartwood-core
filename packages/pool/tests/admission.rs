@@ -660,7 +660,13 @@ fn removed_types_are_refused_in_the_second_loop() {
             )
         );
     }
-    // Another version byte is refused as the decoder refuses it.
+    // The wire byte 0 reads as version 3; another version byte is refused as the decoder
+    // refuses it.
+    let mut zero = removed_type(&tx, 9);
+    zero[1] = 0;
+    let checked = heartwood_pool::verifier::check_entries(&[Entry::Bytes(zero)], params(), 1);
+    let display = checked[0].as_ref().unwrap().display(NETWORK);
+    assert!(display.ends_with(" HtlcClaim v3"), "{display}");
     let mut version = removed_type(&tx, 5);
     version[1] = 2;
     let result = harness.process(&ctx, vec![Entry::Bytes(version)]);

@@ -150,7 +150,7 @@ fn invalid_data(reason: impl std::fmt::Display) -> Refusal {
 /// The placeholder of the bytes of a removed type, read from the header that every type shares:
 /// the version at byte 1, the nonce at bytes 9 to 16 and the sender's key at bytes 17 to 49.
 /// A version other than 3 (or 0, which reads as 3) is refused, as the decoder refuses it; the
-/// placeholder's text shows the wire byte, as the text of a decoded transaction does.
+/// placeholder's text shows the version as read, as the text of a decoded transaction does.
 fn removed_from_bytes(
     bytes: &[u8],
     type_group: u32,
@@ -178,7 +178,7 @@ fn removed_from_bytes(
         kind,
         &key,
         &nonce.to_string(),
-        version,
+        3,
         params,
     ))
 }
