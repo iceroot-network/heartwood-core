@@ -22,7 +22,15 @@ use std::num::NonZeroU32;
 
 use heartwood_crypto::{BlockId, TransactionId};
 
+use crate::codecs::transactions::{
+    PostTransactionsInput, UnconfirmedRequestInput, get_unconfirmed_transactions_encode_request,
+    post_transactions_encode_request,
+};
 use crate::errors::RequestError;
+use crate::messages::Proto;
+use crate::messages::blocks::{GetBlocksRequest, PostBlockRequest};
+use crate::messages::peer::{GetCommonBlocksRequest, GetPeersRequest, GetStatusRequest};
+use crate::messages::shared;
 use crate::routes::RouteId;
 
 /// The headers of every request: the node's version (never empty) and its peer-to-peer port.
@@ -130,9 +138,63 @@ impl ClientRequest {
         }
     }
 
-    /// The request's payload with `headers`, as the reference's client encodes it.
+    /// The request's payload with `headers`, as the reference's client encodes it: the headers'
+    /// version and port are always written, and so are the lists, even when they are empty.
     pub fn encode(&self, headers: &Headers) -> Vec<u8> {
-        let _ = headers;
-        todo!("the payload of each request")
+        let headers = Some(shared::Headers {
+            version: Some(headers.version.clone()),
+            port: Some(headers.port),
+            ..shared::Headers::default()
+        });
+        match self {
+            ClientRequest::GetStatus => GetStatusRequest {
+                headers,
+                ..GetStatusRequest::default()
+            }
+            .encode(),
+            ClientRequest::GetPeers => GetPeersRequest {
+                headers,
+                ..GetPeersRequest::default()
+            }
+            .encode(),
+            ClientRequest::GetCommonBlocks { ids } => GetCommonBlocksRequest {
+                ids: ids.ids().iter().map(BlockId::to_hex).collect(),
+                headers,
+                ..GetCommonBlocksRequest::default()
+            }
+            .encode(),
+            ClientRequest::GetBlocks {
+                last_block_height,
+                block_limit,
+                headers_only,
+            } => GetBlocksRequest {
+                last_block_height: Some(last_block_height.get()),
+                block_limit: Some(block_limit.get()),
+                headers_only: headers_only.then_some(true),
+                serialised: Some(true),
+                headers,
+                ..GetBlocksRequest::default()
+            }
+            .encode(),
+            ClientRequest::GetUnconfirmedTransactions { exclude } => {
+                get_unconfirmed_transactions_encode_request(&UnconfirmedRequestInput {
+                    count_only: None,
+                    exclude: exclude.iter().map(|id| *id.as_bytes()).collect(),
+                    headers,
+                })
+            }
+            ClientRequest::PostBlock { block } => PostBlockRequest {
+                block: Some(block.clone()),
+                headers,
+                ..PostBlockRequest::default()
+            }
+            .encode(),
+            ClientRequest::PostTransactions { transactions } => {
+                post_transactions_encode_request(&PostTransactionsInput {
+                    transactions: transactions.clone(),
+                    headers,
+                })
+            }
+        }
     }
 }

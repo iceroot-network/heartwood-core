@@ -29,6 +29,7 @@ pub use self::reply::{
     CheckedStatus, ReceivedStatus, check_reply, decode_response, encode_response,
     verifying_preimage,
 };
+pub(crate) use self::reply::{header_passes, is_hex};
 pub use self::tree::{
     NetworkConfig, PeerConfig, PluginConfig, SignedState, StatusHeaderData, TokenConfig,
     signing_preimage,
