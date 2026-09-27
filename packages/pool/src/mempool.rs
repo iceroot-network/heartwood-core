@@ -9,6 +9,7 @@ use indexmap::map::Values;
 
 use crate::errors::Refusal;
 use crate::options::Options;
+use crate::query::Query;
 use crate::sender_mempool::SenderMempool;
 use crate::service::PoolContext;
 
@@ -50,16 +51,56 @@ impl Mempool {
     }
 
     /// Add `transaction` to its sender's mempool, creating it with a fresh view of `ctx.wallets`
-    /// when the sender has none: the per-sender limit, then the sender state's checks and apply.
-    /// A sender mempool left empty by a refusal is dropped.
+    /// when the sender has none: the per-sender limit, then the sender state's checks and apply,
+    /// whose pool-entry checks read the whole pool. A sender mempool left empty by a refusal is
+    /// dropped.
     pub fn add_transaction(
         &mut self,
         ctx: &PoolContext<'_>,
         options: &Options,
         transaction: Transaction,
     ) -> Result<(), Refusal> {
-        let _ = (ctx, options, transaction);
-        todo!("add to the sender mempool")
+        let address = transaction.data().sender_address(ctx.params());
+        let index = match self.senders.get_index_of(&address) {
+            Some(index) => index,
+            None => {
+                self.senders
+                    .insert_full(address, SenderMempool::new(address, ctx.wallets))
+                    .0
+            }
+        };
+        let result = self.add_at(index, ctx, options, transaction);
+        if self
+            .senders
+            .get_index(index)
+            .is_some_and(|(_, sender)| sender.is_empty())
+        {
+            self.senders.shift_remove_index(index);
+        }
+        result
+    }
+
+    /// Add `transaction` to the sender mempool at `index`. Its view is taken out while it checks
+    /// the transaction, so that the pool-entry checks can read every sender's transactions.
+    fn add_at(
+        &mut self,
+        index: usize,
+        ctx: &PoolContext<'_>,
+        options: &Options,
+        transaction: Transaction,
+    ) -> Result<(), Refusal> {
+        let Some((_, sender)) = self.senders.get_index_mut(index) else {
+            return Ok(());
+        };
+        sender.check_count(ctx, options, &transaction)?;
+        let mut state = sender.take_state();
+        let applied = state.apply(ctx, options, &Query::new(self), &transaction);
+        let Some((_, sender)) = self.senders.get_index_mut(index) else {
+            return Ok(());
+        };
+        sender.put_state(state);
+        sender.push(transaction, applied?);
+        Ok(())
     }
 
     /// Remove the transaction `id` of `sender` and the sender's later transactions (see
@@ -70,8 +111,12 @@ impl Mempool {
         sender: &Address,
         id: &TransactionId,
     ) -> Vec<Transaction> {
-        let _ = (ctx, sender, id);
-        todo!("remove from the sender mempool")
+        let Some(mempool) = self.senders.get_mut(sender) else {
+            return Vec::new();
+        };
+        let removed = mempool.remove_transaction(ctx, id);
+        self.drop_if_empty(sender);
+        removed
     }
 
     /// Remove the forged transaction `id` of `sender` and the sender's earlier transactions (see
@@ -81,12 +126,28 @@ impl Mempool {
         sender: &Address,
         id: &TransactionId,
     ) -> Vec<Transaction> {
-        let _ = (sender, id);
-        todo!("remove forged from the sender mempool")
+        let Some(mempool) = self.senders.get_mut(sender) else {
+            return Vec::new();
+        };
+        let removed = mempool.remove_forged_transaction(id);
+        self.drop_if_empty(sender);
+        removed
     }
 
     /// Drop every sender mempool.
     pub fn flush(&mut self) {
         self.senders.clear();
+    }
+
+    /// Drop the sender mempool of `sender` when it holds no transaction, keeping the others in
+    /// creation order.
+    fn drop_if_empty(&mut self, sender: &Address) {
+        if self
+            .senders
+            .get(sender)
+            .is_some_and(SenderMempool::is_empty)
+        {
+            self.senders.shift_remove(sender);
+        }
     }
 }

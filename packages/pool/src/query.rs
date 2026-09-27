@@ -8,8 +8,12 @@
 //! A merge takes, at each step, the head with the lowest (or highest) fee; on a tie, the head of
 //! the sender mempool created first, as the reference's `IteratorMany` keeps the first minimum.
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+
 use heartwood_crypto::identities::Address;
-use heartwood_crypto::{Transaction, TransactionType};
+use heartwood_crypto::transactions::types::Asset;
+use heartwood_crypto::{Transaction, TransactionId, TransactionType};
 use heartwood_transactions::PoolQuery;
 
 use crate::mempool::Mempool;
@@ -45,29 +49,114 @@ impl<'p> Query<'p> {
 
     /// Every transaction, from the lowest priority.
     pub fn from_lowest_priority(&self) -> Vec<&'p Transaction> {
-        todo!("merge by fee, lowest first")
+        merge(
+            self.mempool.senders().map(SenderMempool::from_latest),
+            |fee, sender| Reverse((fee, sender)),
+        )
     }
 
     /// Every transaction, from the highest priority.
     pub fn from_highest_priority(&self) -> Vec<&'p Transaction> {
-        todo!("merge by fee, highest first")
+        merge(
+            self.mempool.senders().map(SenderMempool::from_earliest),
+            |fee, sender| (fee, Reverse(sender)),
+        )
     }
 
     /// The transaction of the lowest priority, the first that
-    /// [`Query::from_lowest_priority`] gives.
+    /// [`Query::from_lowest_priority`] gives: the newest transaction of each sender with the
+    /// lowest fee, of the earliest sender mempool on a tie.
     pub fn lowest_priority(&self) -> Option<&'p Transaction> {
-        todo!("the lowest priority")
+        let mut lowest: Option<&'p Transaction> = None;
+        for transaction in self
+            .mempool
+            .senders()
+            .filter_map(|sender| sender.from_latest().next())
+        {
+            if lowest.is_none_or(|lowest| transaction.fee() < lowest.fee()) {
+                lowest = Some(transaction);
+            }
+        }
+        lowest
     }
+}
+
+/// Merge the lists of the sender mempools, in creation order, as the reference's `IteratorMany`
+/// does: each step takes the head whose `key` (of its fee and its list's position) is the
+/// greatest, and moves that list on.
+fn merge<'p, I, K>(
+    lists: impl Iterator<Item = I>,
+    key: impl Fn(u64, usize) -> K,
+) -> Vec<&'p Transaction>
+where
+    I: Iterator<Item = &'p Transaction>,
+    K: Ord,
+{
+    let mut lists: Vec<I> = lists.collect();
+    let mut heads: Vec<Option<&'p Transaction>> = Vec::with_capacity(lists.len());
+    let mut heap = BinaryHeap::with_capacity(lists.len());
+    for (position, list) in lists.iter_mut().enumerate() {
+        let head = list.next();
+        if let Some(transaction) = head {
+            heap.push((key(transaction.fee(), position), position));
+        }
+        heads.push(head);
+    }
+    let mut merged = Vec::new();
+    while let Some((_, position)) = heap.pop() {
+        let (Some(head), Some(list)) = (heads.get_mut(position), lists.get_mut(position)) else {
+            continue;
+        };
+        if let Some(transaction) = head.take() {
+            merged.push(transaction);
+        }
+        *head = list.next();
+        if let Some(transaction) = *head {
+            heap.push((key(transaction.fee(), position), position));
+        }
+    }
+    merged
 }
 
 impl PoolQuery for Query<'_> {
     fn has_sender_kind(&self, sender: &Address, kind: TransactionType) -> bool {
-        let _ = (sender, kind);
-        todo!("a pending transaction of this kind")
+        self.by_sender(sender)
+            .iter()
+            .any(|transaction| transaction.kind() == kind)
     }
 
     fn has_pending_username(&self, username: &str) -> bool {
-        let _ = username;
-        todo!("a pending registration of this name")
+        self.all()
+            .iter()
+            .any(|transaction| is_registration_of(transaction, username))
     }
+}
+
+/// The pool's transactions without the ones about to be evicted, as the pool-entry checks of a
+/// new transaction see them once the eviction has happened.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct QueryExcept<'p> {
+    /// The pool.
+    pub(crate) query: Query<'p>,
+    /// The transactions that are not counted.
+    pub(crate) excluded: &'p [TransactionId],
+}
+
+impl PoolQuery for QueryExcept<'_> {
+    fn has_sender_kind(&self, sender: &Address, kind: TransactionType) -> bool {
+        self.query.by_sender(sender).iter().any(|transaction| {
+            transaction.kind() == kind && !self.excluded.contains(transaction.id())
+        })
+    }
+
+    fn has_pending_username(&self, username: &str) -> bool {
+        self.query.all().iter().any(|transaction| {
+            is_registration_of(transaction, username) && !self.excluded.contains(transaction.id())
+        })
+    }
+}
+
+/// Whether `transaction` registers the delegate name `username`.
+fn is_registration_of(transaction: &Transaction, username: &str) -> bool {
+    matches!(&transaction.data().asset, Asset::DelegateRegistration { username: name } if name == username)
 }
