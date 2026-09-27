@@ -2,7 +2,8 @@
 //!
 //! The derived columns are those the reference computes: a block's `burned_fee` under the
 //! milestone at its height, its `donations` as the reference's object (every entry the block
-//! carries, in the milestone's order), the generator's `username` (none at height 1); a
+//! carries, with its keys in the order PostgreSQL's `jsonb` keeps them: shorter keys first, then
+//! by bytes), the generator's `username` (none at height 1); a
 //! transaction's `sequence` in block order, the block's `timestamp`, the derived `sender_id`, the
 //! `recipient_id` where the reference sets one, the top-level `amount`, the transaction's
 //! `burned_fee`, the bytes the block carries after it was received, and the `asset` as the
@@ -32,9 +33,9 @@ pub fn block_row(
             height: header.height,
         })?;
     let donations = block.donations(milestones).into_iter();
-    let donations: Map<String, Value> = donations
-        .map(|(address, amount)| (address.to_base58(), Value::from(amount.to_string())))
-        .collect();
+    let donations = jsonb_order(
+        donations.map(|(address, amount)| (address.to_base58(), Value::from(amount.to_string()))),
+    );
     Ok(BlockRow {
         id: *block.id(),
         height: header.height,
@@ -53,6 +54,23 @@ pub fn block_row(
         username: username.map(str::to_owned),
         block_signature: header.block_signature.to_hex(),
     })
+}
+
+/// An object of `entries` with its keys in the order PostgreSQL's `jsonb` stores them, which is
+/// the order the reference reads its `jsonb` columns back in: shorter keys first, then by bytes. A
+/// key given twice keeps its last value.
+fn jsonb_order(entries: impl IntoIterator<Item = (String, Value)>) -> Map<String, Value> {
+    let mut entries: Vec<(String, Value)> = entries
+        .into_iter()
+        .collect::<Map<_, _>>()
+        .into_iter()
+        .collect();
+    entries.sort_by(|(a, _), (b, _)| {
+        a.len()
+            .cmp(&b.len())
+            .then_with(|| a.as_bytes().cmp(b.as_bytes()))
+    });
+    entries.into_iter().collect()
 }
 
 /// The rows of `block`'s transactions, in block order. None of the transaction types carried
@@ -156,4 +174,27 @@ pub fn missed_rows(missed: &[MissedBlock]) -> Vec<MissedRow> {
         username: slot.username.clone(),
     };
     missed.iter().map(row).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn donations_keep_the_jsonb_key_order() {
+        let entry = |key: &str, value: u64| (key.to_owned(), Value::from(value.to_string()));
+        let object = jsonb_order([
+            entry("DZb", 1),
+            entry("Da", 2),
+            entry("DZa", 3),
+            entry("Da", 4),
+        ]);
+        let keys: Vec<&str> = object.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["Da", "DZa", "DZb"]);
+        assert_eq!(object["Da"], Value::from("4"));
+        assert_eq!(
+            Value::Object(object).to_string(),
+            r#"{"Da":"4","DZa":"3","DZb":"1"}"#
+        );
+    }
 }
