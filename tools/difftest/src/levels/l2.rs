@@ -3,16 +3,22 @@
 //!
 //! The replay decodes every block as a node receives it, checks the scheduled generator and the
 //! reward before applying it, runs the supply check after every step, and follows the corpus's
-//! revert plan. At the first difference it shows both sides' records of that step.
+//! revert plan. It also checks, after every step, the one value of Heartwood's state that the
+//! digest leaves out: each delegate's `resigned_at` must be the height of its latest delegate
+//! resignation in the chain so far, which is what the reference looks up in its history and
+//! what a restart has to rebuild. At the first difference it shows both sides' records of that
+//! step.
 //!
 //! The steps of a replay are [`actions`]: the genesis step, then for every block an apply, and
 //! after a block that the revert plan names, its reverts (one line each) and the re-applies of
 //! the reverted blocks. The oracle's judge (`replay-chain.js`) walks the same steps, so line `i`
 //! of both files describes the same state.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
-use heartwood_crypto::Block;
+use heartwood_crypto::identities::Address;
+use heartwood_crypto::{Block, TransactionType};
 use heartwood_kernel::utils::calculate_forging_info::calculate_forging_info;
 use heartwood_state::State;
 use heartwood_state::digest::{self, DigestLine, Sections, Step};
@@ -108,6 +114,53 @@ fn decode(corpus: &Corpus, height: u32) -> std::result::Result<Block, String> {
     Ok(decoded)
 }
 
+/// The heights of the delegate resignations (1/7, of any kind) of each sender in the applied
+/// chain, oldest first.
+#[derive(Debug, Default)]
+struct Resignations(BTreeMap<Address, Vec<u32>>);
+
+impl Resignations {
+    /// Add the resignations of `block`.
+    fn apply(&mut self, block: &Block, network: u8) {
+        for transaction in block.transactions() {
+            if transaction.kind() == TransactionType::DelegateResignation {
+                let sender =
+                    Address::from_public_key(&transaction.data().sender_public_key, network);
+                self.0.entry(sender).or_default().push(block.height());
+            }
+        }
+    }
+
+    /// Drop the resignations above `height`, the last block's height after a revert.
+    fn revert_to(&mut self, height: u32) {
+        for heights in self.0.values_mut() {
+            while heights.last().is_some_and(|h| *h > height) {
+                heights.pop();
+            }
+        }
+    }
+
+    /// The delegates of `state` whose `resigned_at` is not the height of their latest
+    /// resignation.
+    fn differences(&self, state: &State) -> Vec<String> {
+        state
+            .wallets()
+            .delegates()
+            .filter_map(|wallet| {
+                let delegate = wallet.delegate()?;
+                let latest = self.0.get(wallet.address()).and_then(|h| h.last().copied());
+                (delegate.resigned_at != latest).then(|| {
+                    format!(
+                        "{}'s resigned_at is {:?}, its latest resignation is at {latest:?}",
+                        delegate.username(),
+                        delegate.resigned_at
+                    )
+                })
+            })
+            .collect()
+    }
+}
+
 /// Replay `corpus` in Heartwood, up to and including line `stop_at` (all lines when `None`),
 /// keeping the records of that line.
 pub fn replay(corpus: &Corpus, stop_at: Option<usize>) -> Replay {
@@ -125,9 +178,13 @@ pub fn replay(corpus: &Corpus, stop_at: Option<usize>) -> Replay {
             return out;
         }
     };
+    let network = corpus.network.pub_key_hash;
+    let mut resignations = Resignations::default();
+    resignations.apply(&corpus.genesis, network);
     let mut chain = [0u8; 32];
     let mut push = |out: &mut Replay,
                     state: &State,
+                    resignations: &Resignations,
                     step: Step,
                     missed: &[MissedBlock],
                     reward: Option<u64>| {
@@ -141,11 +198,18 @@ pub fn replay(corpus: &Corpus, stop_at: Option<usize>) -> Replay {
                 message: format!("supply check: {e}"),
             });
         }
+        for message in resignations.differences(state) {
+            out.problems.push(Problem {
+                line: out.lines.len(),
+                height: state.height(),
+                message,
+            });
+        }
         if stop_at == Some(out.lines.len()) {
             out.records = Some(digest::records(state, milestones, missed));
         }
     };
-    push(&mut out, &state, Step::Genesis, &[], None);
+    push(&mut out, &state, &resignations, Step::Genesis, &[], None);
     for action in actions(corpus) {
         if stop_at.is_some_and(|stop| out.lines.len() >= stop) {
             break;
@@ -161,7 +225,8 @@ pub fn replay(corpus: &Corpus, stop_at: Option<usize>) -> Replay {
                     });
                     break;
                 }
-                push(&mut out, &state, Step::Revert, &[], None);
+                resignations.revert_to(state.height());
+                push(&mut out, &state, &resignations, Step::Revert, &[], None);
             }
             Action::Apply(height) | Action::Reapply(height) => {
                 let step = if matches!(action, Action::Apply(_)) {
@@ -221,7 +286,17 @@ pub fn replay(corpus: &Corpus, stop_at: Option<usize>) -> Replay {
                     }
                 };
                 match state.apply_block(&block, milestones, &handlers) {
-                    Ok(applied) => push(&mut out, &state, step, &applied.missed, reward),
+                    Ok(applied) => {
+                        resignations.apply(&block, network);
+                        push(
+                            &mut out,
+                            &state,
+                            &resignations,
+                            step,
+                            &applied.missed,
+                            reward,
+                        );
+                    }
                     Err(e) => {
                         out.problems.push(Problem {
                             line,

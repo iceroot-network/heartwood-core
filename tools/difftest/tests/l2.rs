@@ -1,7 +1,8 @@
 //! L2 over the committed corpus: a chain of the reference devnet (native, one node: every kept
 //! transaction type, resignations and a revoke, a restart, missed slots and secondary rewards),
 //! replayed in Heartwood with its revert plan and compared line by line with the digest lines the
-//! oracle's judge recorded for it. No oracle runs here.
+//! oracle's judge recorded for it, with Heartwood's own checks (the schedule, the reward, the
+//! supply, and each delegate's latest resignation height). No oracle runs here.
 
 use std::path::{Path, PathBuf};
 
