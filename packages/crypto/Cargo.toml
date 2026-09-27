@@ -44,6 +44,10 @@ name = "blocks"
 required-features = ["fixed-aux"]
 
 [[test]]
+name = "fee_floor"
+required-features = ["fixed-aux"]
+
+[[test]]
 name = "genesis"
 required-features = ["genesis", "fixed-aux"]
 

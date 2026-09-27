@@ -1,6 +1,6 @@
 //! Drivers shared by the block and milestone vector tests: the devnet configuration every record
-//! runs under, the oracle's `block.make`, `block.fromBytes` and `tx.fromBytes` operations, and
-//! their outputs in the shape the vector files record them.
+//! runs under, the oracle's `block.make`, `block.fromBytes`, `tx.fromBytes` and `fee.minimum`
+//! operations, and their outputs in the shape the vector files record them.
 
 #![allow(dead_code)]
 
@@ -11,6 +11,7 @@ use heartwood_crypto::blocks::serialiser;
 use heartwood_crypto::crypto::hash::{sha256, sha256_concat};
 use heartwood_crypto::managers::{Milestones, Network};
 use heartwood_crypto::transactions::serialiser::{SerialiseOptions, serialise};
+use heartwood_crypto::utils::fee_floor::minimum_fee;
 use heartwood_crypto::utils::{hex, js};
 use heartwood_crypto::{Aux, Block, BlockHeader, KeyPair, Signature, Transaction};
 use serde_json::{Map, Value, json};
@@ -481,6 +482,26 @@ pub fn receive_record(record: &Record) -> Result<(), String> {
     let summary = record.input["summary"].as_bool().unwrap_or(false);
     let actual = receive_block(&record.input, &milestones)
         .map(|block| block_output(&block, &milestones, summary));
+    compare(record, actual)
+}
+
+/// The oracle's `fee.minimum`: the dynamic fee floor of the record's transaction, decoded at the
+/// record's height under `milestones`, with the type key and the size it is computed from.
+pub fn fee_minimum(record: &Record, milestones: &Milestones) -> Result<Value, String> {
+    let params = milestones.at(u32::try_from(record.height).map_err(|error| error.to_string())?);
+    let bytes = hex::decode(text(&record.input, "hex")?).map_err(|error| error.to_string())?;
+    let transaction = Transaction::decode(&bytes, params).map_err(|error| error.to_string())?;
+    let (kind, size) = (transaction.kind(), transaction.bytes().len());
+    Ok(json!({
+        "key": kind.key(),
+        "size": size,
+        "minimumFee": minimum_fee(kind, size, params).to_string(),
+    }))
+}
+
+/// Run a `fee.minimum` record.
+pub fn fee_record(record: &Record) -> Result<(), String> {
+    let actual = milestones(record).and_then(|milestones| fee_minimum(record, &milestones));
     compare(record, actual)
 }
 

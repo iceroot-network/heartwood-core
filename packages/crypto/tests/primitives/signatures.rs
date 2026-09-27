@@ -11,10 +11,11 @@ use crate::common::{self, VectorFile};
 use crate::support::{Case, assert_coverage, cases, split_legacy};
 
 /// Every signing domain; none of them changes the bytes of a signature.
-pub const DOMAINS: [SigningDomain; 3] = [
+pub const DOMAINS: [SigningDomain; 4] = [
     SigningDomain::Transaction,
     SigningDomain::Block,
     SigningDomain::PeerStatus,
+    SigningDomain::Message,
 ];
 
 fn file() -> VectorFile {
@@ -59,11 +60,12 @@ pub fn check_legacy_sign(case: Case<'_>) {
     let secret = SecretKey::from_hex(case.text("privateKey")).unwrap();
     let message = case.bytes("message");
     let expected = case.output_text("signature");
-    for (domain, aux) in
-        DOMAINS
-            .into_iter()
-            .zip([Aux::random(), Aux::fixed([0; 32]), Aux::fixed([0xff; 32])])
-    {
+    for (domain, aux) in DOMAINS.into_iter().zip([
+        Aux::random(),
+        Aux::fixed([0; 32]),
+        Aux::fixed([0xff; 32]),
+        Aux::fixed([0x42; 32]),
+    ]) {
         let signature =
             sig::sign(SchemeId::Secp256k1Legacy, domain, &message, &secret, aux).unwrap();
         assert_eq!(signature.to_hex(), expected, "{} {domain:?}", case.label());

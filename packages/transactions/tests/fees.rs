@@ -1,16 +1,14 @@
-//! The dynamic fee floor: the formula under milestone variants, and the `fee.minimum` records of
-//! the golden vectors (V06 of `heartwood-crypto`, V19 of this crate).
+//! The dynamic fee floor of a decoded transaction ([`minimum_fee`], a wrapper of
+//! `heartwood-crypto`'s fee floor): each type, milestone variants and the height the floor is
+//! read at. The golden vectors of the floor (V19, and the `fee.minimum` records of V06) are
+//! checked in `heartwood-crypto`, and through this wrapper by difftest's L0.
 
-mod golden;
 mod support;
 
-use golden::{Devnet, VectorFile};
 use heartwood_crypto::transactions::TransactionBuilder;
 use heartwood_crypto::transactions::types::{Memo, ResignationType};
-use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Milestones, Transaction};
 use heartwood_transactions::minimum_fee;
-use serde_json::{Value, json};
 use support::*;
 
 /// The byte length rounded as the reference's `Math.round(size / 2)` rounds it.
@@ -132,82 +130,4 @@ fn the_floor_is_read_at_the_height() {
     let tx = sender.sign(transfer(&Account::new("recipient"), 1).nonce(1).fee(FEE));
     assert_eq!(minimum_fee(&tx, milestones.at(9)), (10 + half(&tx)) * 100);
     assert_eq!(minimum_fee(&tx, milestones.at(10)), (10 + half(&tx)) * 1000);
-}
-
-/// The oracle's `fee.minimum` output for the record's transaction under its milestones.
-fn fee_minimum(devnet: &Devnet, input: &Value, height: u64) -> Result<Value, String> {
-    let milestones = devnet.milestones_of(input)?;
-    let params = milestones.at(u32::try_from(height).map_err(|error| error.to_string())?);
-    let bytes = hex::decode(input["hex"].as_str().ok_or("hex is not text")?)
-        .map_err(|error| error.to_string())?;
-    let tx = Transaction::decode(&bytes, params).map_err(|error| error.to_string())?;
-    Ok(json!({
-        "key": tx.key(),
-        "size": tx.bytes().len(),
-        "minimumFee": minimum_fee(&tx, params).to_string(),
-    }))
-}
-
-fn check_fee_records(file: &VectorFile, devnet: &Devnet) -> usize {
-    let mut compared = 0;
-    for record in file
-        .records
-        .iter()
-        .filter(|record| record.op == "fee.minimum")
-    {
-        let expected = record.expected.as_ref().unwrap_or_else(|class| {
-            panic!(
-                "{}: the oracle refused with {class}",
-                record.label(&file.class)
-            )
-        });
-        let actual = fee_minimum(devnet, &record.input, record.height)
-            .unwrap_or_else(|error| panic!("{}: {error}", record.label(&file.class)));
-        assert_eq!(&actual, expected, "{}", record.label(&file.class));
-        compared += 1;
-    }
-    compared
-}
-
-#[test]
-fn v06_fee_floor_records() {
-    let devnet = Devnet::load();
-    let file = VectorFile::parse("V06-arithmetic", golden::V06);
-    devnet.check(&file);
-    assert_eq!(check_fee_records(&file, &devnet), 16);
-}
-
-#[test]
-fn v19_fee_floor() {
-    let devnet = Devnet::load();
-    let file = VectorFile::parse("V19-fee-floor", golden::V19);
-    devnet.check(&file);
-    let (mut compared, mut refused_files) = (0, 0);
-    for record in &file.records {
-        let label = record.label(&file.class);
-        assert_eq!(record.op, "fee.minimum", "{label}");
-        match devnet.milestones_of(&record.input) {
-            Ok(_) => {
-                let expected = record
-                    .expected
-                    .as_ref()
-                    .unwrap_or_else(|class| panic!("{label}: the oracle refused with {class}"));
-                let actual = fee_minimum(&devnet, &record.input, record.height)
-                    .unwrap_or_else(|error| panic!("{label}: {error}"));
-                assert_eq!(&actual, expected, "{label}");
-                compared += 1;
-            }
-            // A fee or revoke-delay value the reference loads, and coerces or fails on when it
-            // checks a fee: Heartwood refuses the file.
-            Err(error) => {
-                assert!(
-                    error.contains("dynamicFees")
-                        || error.contains("blocksToRevokeDelegateResignation"),
-                    "{label}: {error}"
-                );
-                refused_files += 1;
-            }
-        }
-    }
-    assert_eq!((compared, refused_files), (204, 43));
 }

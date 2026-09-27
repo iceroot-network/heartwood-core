@@ -3,8 +3,9 @@
 //! - [`handlers`]: one handler per transaction type (1/6 transfer, 1/1 second-signature
 //!   registration, 1/2 delegate registration, 1/7 delegate resignation, 2/0 burn, 2/2 vote), each
 //!   with its checks in the reference's order, its apply, revert and genesis paths; the base
-//!   checks and the dynamic fee floor ([`minimum_fee`]); and [`Handlers`], the closed registry,
-//!   which is the one implementation of `heartwood_state::TransactionHandlers`.
+//!   checks and the dynamic fee floor of a decoded transaction ([`minimum_fee`], a wrapper of
+//!   `heartwood_crypto::utils::fee_floor`); and [`Handlers`], the closed registry, which is the
+//!   one implementation of `heartwood_state::TransactionHandlers`.
 //! - [`pool_query`]: the checks a transaction must pass to enter the pool, and the two views of
 //!   the pool and the network they read.
 //! - [`errors`]: [`TransactionError`], whose [`TransactionError::class`] is the reference's error
