@@ -101,6 +101,10 @@ pub enum Documented {
     MissedRowsOfRefusedBlock,
     /// A served route's documented difference.
     Api(ApiDifference),
+    /// An over-height header by the forging delegate's own key: the reference verifies it as a
+    /// whole block from its header, which only an empty block passes; Heartwood verifies its
+    /// signature.
+    OverHeightOwnBlock,
 }
 
 /// A served route's documented difference from the reference.
@@ -229,6 +233,13 @@ impl Documented {
                  only with an applied block (a faulty or adversarial forger only)"
             }
             Documented::Api(difference) => difference.reason(),
+            Documented::OverHeightOwnBlock => {
+                "a peer's header above our height, signed by the forging delegate's own key: the \
+                 reference verifies it as a whole block built from the header alone, which only \
+                 an empty block passes, so it forges again beside a non-empty one; Heartwood \
+                 verifies the header's signature and does not forge (the same key forging on two \
+                 nodes only)"
+            }
         }
     }
 }

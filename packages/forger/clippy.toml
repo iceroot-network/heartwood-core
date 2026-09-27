@@ -1,0 +1,7 @@
+# Lints of heartwood-forger. Wall-clock time comes from heartwood_kernel::clock::Clock (slots, the
+# signing record's window) and delays and deadlines from tokio's clock, which the tests pause, so no
+# code reads the operating system's clock directly.
+disallowed-types = [
+    { path = "std::time::SystemTime", reason = "read the time through heartwood_kernel::clock::Clock" },
+    { path = "std::time::Instant", reason = "use tokio::time::Instant, which the tests pause" },
+]

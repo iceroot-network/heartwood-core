@@ -30,6 +30,8 @@
 //! - [`live`]: `difftest live check`, the comparisons of a live run on a devnet.
 //! - [`levels`]: L0 to L4; L0, L1 and L2 run, L3 and L4 plug in with the node's processes.
 //! - [`genesis`]: the devnet chain-definition driver (`difftest genesis`).
+//! - [`forger_kill`]: the forger's crash test (`difftest forger crash`).
+//! - [`network_generate`]: `heartwood network generate` against the genesis vectors.
 
 #![warn(missing_docs)]
 
@@ -40,9 +42,11 @@ pub mod corpus;
 pub mod digests;
 pub mod errors;
 pub mod fixture;
+pub mod forger_kill;
 pub mod genesis;
 pub mod levels;
 pub mod live;
+pub mod network_generate;
 pub mod oracle;
 pub mod replay;
 pub mod report;

@@ -44,11 +44,11 @@ GENERATOR_ARG := $(if $(DEVNET_GENERATOR),--devnet-generator '$(DEVNET_GENERATOR
 # The vector classes of each crate: crate=class prefixes. vectors-install writes each crate's
 # classes, with their own MANIFEST.sha256, into packages/<crate>/tests/vectors.
 VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12,V19,V22 kernel=V09-rounds,V16,V23,V28 \
-                 logger=V20 pool=V21 state=V08,V09-shuffle,V15,V18 transactions=V17 p2p-wire=V13,V24 \
-                 p2p=V25,V26 blockchain=V27 api=V28
-# L1: cases per property, the generator's seed, the properties (P1 to P16 or their names, comma
-# separated; all when empty); L1_MIN_REACH, how often P13 must reach each reachable result of the
-# processor and each unchained status (when empty: 20 from 1,000 cases per property, else none).
+                 logger=V20 pool=V21 state=V08,V09-shuffle,V15,V18 transactions=V17 p2p-wire=V13,V24,V29 \
+                 p2p=V25,V26 blockchain=V27 api=V28 forger=V29
+# L1: cases per property, the generator's seed, the properties (P1 to P17 and P19 or their names,
+# comma separated; all when empty); L1_MIN_REACH, how often P13 must reach each reachable result of
+# the processor and each unchained status (when empty: 20 from 1,000 cases per property, else none).
 L1_CASES      ?= 256
 L1_SEED       ?= 1
 L1_PROPERTY   ?=
@@ -521,3 +521,78 @@ api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the
 	    $(DIFFTEST) api compare --run $(LIVE_RESULTS)/$(RUN) $(STRICT); \
 	fi
 # ---- end of the relay ----
+
+# ---- heartwood-forger and heartwood-cli: the forger, the commands and the devnet ----
+# The forger's vector class (V29) is installed beside the forger and the wire crate once an oracle
+# image writes it (VECTOR_CRATES); until then the crate tests read it from a local vector run, as
+# the p2p classes are read. The forger's crash test runs the forger-child binary (feature
+# difftest) against a mock relay. DIRECTION=oracle makes forge-replay rebuild a chain Heartwood
+# forged with the reference; otherwise Heartwood rebuilds a chain the reference forged.
+FORGER_FUZZ   := internal_body status_to_sign
+FORGER_LOGS   ?= target/forger-fuzz
+FORGER_CHILD  := target/debug/forger-child
+FORGER_AUX    := heartwood-forger
+DIRECTION     ?=
+RELEASE_PACKAGES += heartwood-forger heartwood-cli
+SEAMS         += heartwood-forger:difftest heartwood-cli:test-child
+
+.PHONY: test-forger test-cli forger-features forge-replay forger-crash fuzz-forger
+
+check: test-forger test-cli forger-features
+
+test-forger: ## heartwood-forger alone, and heartwood-p2p without node: clippy (warnings are errors) and cargo test, without and with features
+	$(TOOLCHAIN) && cargo clippy -p heartwood-forger --all-targets --locked -- -D warnings
+	$(TOOLCHAIN) && cargo clippy -p heartwood-forger --all-targets --all-features --locked -- -D warnings
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-forger
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-forger --all-features
+	$(TOOLCHAIN) && cargo clippy -p heartwood-p2p --no-default-features --features difftest --all-targets --locked -- -D warnings
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-p2p --no-default-features --features difftest
+
+test-cli: ## heartwood-cli alone: clippy (warnings are errors) and cargo test, with no feature, the default ones and all
+	$(TOOLCHAIN) && cargo clippy -p heartwood-cli --all-targets --locked -- -D warnings
+	$(TOOLCHAIN) && cargo clippy -p heartwood-cli --all-targets --no-default-features --locked -- -D warnings
+	$(TOOLCHAIN) && cargo clippy -p heartwood-cli --all-targets --all-features --locked -- -D warnings
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-cli
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-cli --all-features
+
+forger-features: ## only FORGER_AUX enables the forger-aux feature of heartwood-crypto
+	@$(TOOLCHAIN) && set -o pipefail && enablers=$$(cargo tree --locked --workspace -e features,normal,build -i heartwood-crypto \
+	        --prefix depth | awk '/^1/ { on = /feature "forger-aux"/ } on && /^2/ { sub(/^2/, ""); print $$1 }' \
+	        | sort -u | tr '\n' ' ') || exit 1; \
+	if [ "$$enablers" != "$(FORGER_AUX) " ]; then \
+	    echo "forger-features: forger-aux is enabled by $$enablers, not by $(FORGER_AUX) only" >&2; exit 1; \
+	fi; \
+	echo "forger-features: forger-aux is enabled by $(FORGER_AUX) only"
+
+forge-replay: build ## the forge replay of CORPUS/NAME (TO=H); DIRECTION=oracle has the reference rebuild a chain Heartwood forged
+	$(need-name)
+	$(if $(filter oracle,$(DIRECTION)),$(need-image))
+	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --forge $(if $(TO),--to $(TO)) \
+	    $(if $(filter oracle,$(DIRECTION)),--oracle $(ORACLE_ARGS))
+
+forger-crash: build ## the forger's crash test: forger-child against a mock relay, killed KILLS times (KILL_SEED)
+	$(TOOLCHAIN) && cargo build --locked -p heartwood-forger --features difftest --bin forger-child
+	$(TOOLCHAIN) && $(DIFFTEST) forger crash --kills $(KILLS) --child $(FORGER_CHILD) $(if $(KILL_SEED),--seed $(KILL_SEED))
+
+# The two targets run at the same time, FUZZ_FORK jobs each, with the wire targets' libFuzzer
+# options, on corpora of their own (git-ignored).
+fuzz-forger: ## the forger's fuzz targets at once, FUZZ_SECONDS each (nightly and cargo-fuzz); logs in FORGER_LOGS
+	$(TOOLCHAIN) && for target in $(FORGER_FUZZ); do cargo +nightly fuzz build $$target || exit 1; done
+	@$(TOOLCHAIN) && mkdir -p $(FORGER_LOGS) && pids=; \
+	for target in $(FORGER_FUZZ); do \
+	    mkdir -p $(FUZZ_CORPUS)/$$target; \
+	    cargo +nightly fuzz run $$target -- $(WIRE_LIBFUZZER) > $(FORGER_LOGS)/$$target.log 2>&1 & pids="$$pids $$!"; \
+	done; \
+	echo "fuzz-forger: $(FORGER_FUZZ) running for $(FUZZ_SECONDS) s, $(FUZZ_FORK) jobs each; logs in $(FORGER_LOGS)"; \
+	fail=0; set -- $(FORGER_FUZZ); \
+	for pid in $$pids; do \
+	    target=$$1; shift; \
+	    wait $$pid || { echo "fuzz-forger: $$target stopped with a failure, see $(FORGER_LOGS)/$$target.log" >&2; fail=1; }; \
+	    last=$$(grep -E '^#[0-9]+: cov: ' $(FORGER_LOGS)/$$target.log | tail -n 1); \
+	    files=$$(find $(FUZZ_CORPUS)/$$target -type f | wc -l); \
+	    size=$$(du -sk $(FUZZ_CORPUS)/$$target | cut -f1); \
+	    echo "fuzz-forger: $$target: $${last:-no status line}; corpus $$files files, $$size KiB"; \
+	    case "$$last" in *'oom/timeout/crash: 0/0/0 '*) ;; *) fail=1 ;; esac; \
+	done; \
+	exit $$fail
+# ---- end of heartwood-forger and heartwood-cli ----

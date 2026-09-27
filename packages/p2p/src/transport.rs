@@ -11,12 +11,12 @@
 
 use std::future::Future;
 use std::io::{self, Cursor};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
-use tokio::net::TcpStream;
+use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -51,6 +51,32 @@ pub fn tcp() -> Dial {
     Arc::new(|address| {
         Box::pin(async move {
             let stream = TcpStream::connect(address).await?;
+            stream.set_nodelay(true)?;
+            Ok(Box::new(stream) as Box<dyn Stream>)
+        })
+    })
+}
+
+/// Streams over TCP whose sockets are bound to `local` (any port) before they connect, so that the
+/// peer sees `local` as the source: a forger's `localAddress` option, and in a devnet the node's
+/// own loopback address. An address of the other family than `local`'s fails with
+/// [`io::ErrorKind::InvalidInput`]; a `local` that is not an address of this host fails at the
+/// bind.
+pub fn tcp_bound(local: IpAddr) -> Dial {
+    Arc::new(move |address: SocketAddr| {
+        Box::pin(async move {
+            let socket = match (local, address) {
+                (IpAddr::V4(_), SocketAddr::V4(_)) => TcpSocket::new_v4()?,
+                (IpAddr::V6(_), SocketAddr::V6(_)) => TcpSocket::new_v6()?,
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("cannot reach {address} from {local}: the address families differ"),
+                    ));
+                }
+            };
+            socket.bind(SocketAddr::new(local, 0))?;
+            let stream = socket.connect(address).await?;
             stream.set_nodelay(true)?;
             Ok(Box::new(stream) as Box<dyn Stream>)
         })

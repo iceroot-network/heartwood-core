@@ -28,9 +28,10 @@
 //!   decoded fields as the reference does.
 //!
 //! Features: `legacy-schnorr` enables the pre-BIP340 Schnorr scheme, which is used only for peer
-//! status attestations; `genesis` enables the chain-definition builder. `fixed-aux` is a test seam
-//! (`Aux::fixed`, reproducible signatures) that only test code enables; a release build never
-//! has it.
+//! status attestations; `genesis` enables the chain-definition builder; `forger-aux` enables
+//! `Aux::configured`, the aux of a forger's `aux` option, for the forger only. `fixed-aux` is a
+//! test seam (`Aux::fixed`, reproducible signatures) that only test code enables; a release build
+//! never has it.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

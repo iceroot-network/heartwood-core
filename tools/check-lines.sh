@@ -31,6 +31,12 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # the state machine and the fork recovery) is listed on its own. The parts listed without a ceiling
 # (the blockchain's runtime and storage, heartwood-p2p's client side, ...) are informational: the
 # crate's ceiling bounds them. CI installs tokei, so make check holds every ceiling there too.
+# heartwood-p2p was re-baselined from 6,000 to 8,000 and heartwood-p2p-wire from 2,500 to 3,200
+# before the server side: the integrated client measures 4,815 lines (about 1,100 above its
+# estimate), the server side is estimated at 2,500, and the wire crate, at 2,437 with the client's
+# requests and reply checks, gains the internal routes' bodies, the status reader and the server's
+# request checks (about 550). heartwood-forger and heartwood-cli start at their planned ceilings;
+# the parts of each are listed on their own.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"
@@ -39,18 +45,24 @@ CHECKS=(
     "heartwood-state:packages/state/src:3000"
     "heartwood-state wallets, ranking and rounds:packages/state/src/wallets packages/state/src/dpos packages/state/src/round_state.rs:"
     "heartwood-transactions:packages/transactions/src:2500"
-    "heartwood-p2p-wire:packages/p2p-wire/src:2500"
+    "heartwood-p2p-wire:packages/p2p-wire/src:3200"
     "heartwood-database:packages/database/src:3000"
     "heartwood-pool:packages/pool/src:2000"
     "heartwood-blockchain:packages/blockchain/src:3500"
     "heartwood-blockchain storage and restart:packages/blockchain/src/commit.rs packages/blockchain/src/rows.rs packages/blockchain/src/restore.rs packages/blockchain/src/milestones.rs packages/blockchain/src/online.rs:"
     "heartwood-blockchain processor:packages/blockchain/src/processor:1200"
     "heartwood-blockchain runtime:packages/blockchain/src/node.rs packages/blockchain/src/process_blocks_job.rs packages/blockchain/src/queue.rs packages/blockchain/src/pool_task.rs packages/blockchain/src/events.rs packages/blockchain/src/options.rs packages/blockchain/src/blockchain.rs packages/blockchain/src/state_machine packages/blockchain/src/fork_recovery.rs packages/blockchain/src/chain_state.rs packages/blockchain/src/network.rs packages/blockchain/src/work.rs:"
-    "heartwood-p2p:packages/p2p/src !packages/p2p/src/testing:6000"
+    "heartwood-p2p:packages/p2p/src !packages/p2p/src/testing:8000"
     "heartwood-p2p client side:packages/p2p/src/nes packages/p2p/src/transport.rs packages/p2p/src/connector.rs packages/p2p/src/rate_limiter.rs packages/p2p/src/utils packages/p2p/src/peer.rs packages/p2p/src/repository.rs packages/p2p/src/communicator.rs packages/p2p/src/attestation.rs packages/p2p/src/processor.rs packages/p2p/src/scoring.rs packages/p2p/src/verifier.rs packages/p2p/src/nsect.rs packages/p2p/src/monitor.rs packages/p2p/src/chunk_cache.rs packages/p2p/src/download.rs packages/p2p/src/broadcaster.rs packages/p2p/src/seeds.rs packages/p2p/src/diversity.rs packages/p2p/src/options.rs packages/p2p/src/view.rs packages/p2p/src/seams.rs packages/p2p/src/errors.rs packages/p2p/src/lib.rs:"
     "heartwood-p2p test support (difftest only):packages/p2p/src/testing:"
     "heartwood-api:packages/api/src:5000"
     "heartwood-core:packages/core/src:2000"
+    "heartwood-forger:packages/forger/src:1500"
+    "heartwood-forger loop and relay client:packages/forger/src/forger_service.rs packages/forger/src/client.rs packages/forger/src/deadlines.rs:"
+    "heartwood-forger forging, keys, record and attester:packages/forger/src/delegate.rs packages/forger/src/keys.rs packages/forger/src/signing_record.rs packages/forger/src/signer.rs packages/forger/src/attestation.rs:"
+    "heartwood-cli:packages/cli/src:3500"
+    "heartwood-cli supervisor, commands and network generate:packages/cli/src/argv.rs packages/cli/src/instance.rs packages/cli/src/supervisor packages/cli/src/process.rs packages/cli/src/process_table.rs packages/cli/src/network.rs:"
+    "heartwood-cli devnet:packages/cli/src/devnet packages/cli/src/http.rs:"
 )
 
 work=$(mktemp -d)

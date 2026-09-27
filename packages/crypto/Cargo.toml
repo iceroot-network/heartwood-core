@@ -16,6 +16,10 @@ default = []
 legacy-schnorr = []
 # The chain-definition builder for devnets (genesis block, milestones, network and key material).
 genesis = []
+# `Aux::configured`: the aux that a forger's `aux` option sets for every block signature, as the
+# reference's forger reads it from its options. Only heartwood-forger enables it; nothing else may
+# choose the aux of a signature in a release build.
+forger-aux = []
 # Test seam: `Aux::fixed`, reproducible BIP340 signatures for test vectors. Only test code enables
 # it (the integration tests below and the difftest harness); a release build never does.
 fixed-aux = []

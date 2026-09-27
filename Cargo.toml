@@ -18,9 +18,11 @@ unused_must_use = "deny"
 [workspace.dependencies]
 heartwood-api = { path = "packages/api" }
 heartwood-blockchain = { path = "packages/blockchain" }
+heartwood-cli = { path = "packages/cli" }
 heartwood-core = { path = "packages/core" }
 heartwood-crypto = { path = "packages/crypto" }
 heartwood-database = { path = "packages/database" }
+heartwood-forger = { path = "packages/forger" }
 heartwood-kernel = { path = "packages/kernel" }
 heartwood-logger = { path = "packages/logger" }
 heartwood-p2p = { path = "packages/p2p" }
@@ -54,12 +56,16 @@ rand = "0.9"
 
 # The served API (heartwood-api only): axum 0.8 on hyper 1, without its default features, so the
 # query grammar, JSON bodies, CORS and error bodies are the crate's own and match the reference's;
-# hyper-util for the accept loop's tokio glue. heartwood-core, the relay's binary, parses its
-# command line with clap.
+# hyper-util for the accept loop's tokio glue.
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
 hyper = { version = "1.11.1", default-features = false, features = ["http1", "server"] }
 hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"] }
+
+# The commands (heartwood-cli and heartwood-core, the relay's binary, only): clap 4.6 with derive
+# and the help, usage and error texts; nix 0.31 for the supervisor's signals and process calls,
+# with no other module. Every child process gets an explicit argv, never a shell string.
 clap = { version = "4.6.7", default-features = false, features = ["derive", "error-context", "help", "std", "usage"] }
+nix = { version = "0.31.3", default-features = false, features = ["signal", "process"] }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }

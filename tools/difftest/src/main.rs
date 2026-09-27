@@ -5,12 +5,13 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use heartwood_difftest::cli::{
-    self, Command, GenesisArgs, JudgeArgs, L1Args, L2Args, L2ProcessorArgs, USAGE,
+    self, Command, ForgeArgs, GenesisArgs, JudgeArgs, L1Args, L2Args, L2ProcessorArgs, USAGE,
 };
 use heartwood_difftest::corpus::{self, Corpus};
 use heartwood_difftest::genesis::{self, Built};
 use heartwood_difftest::levels::l1::{self, L1Options, Property};
 use heartwood_difftest::levels::l2::{self, L2Options};
+use heartwood_difftest::levels::l2_forge::{self, ForgeOptions};
 use heartwood_difftest::levels::l2_processor::{self, L2ProcessorOptions};
 use heartwood_difftest::levels::{Level, l0};
 use heartwood_difftest::oracle::GenOptions;
@@ -20,7 +21,9 @@ use heartwood_difftest::store;
 use heartwood_difftest::strategies::transactions::TxContext;
 use heartwood_difftest::subjects::Devnet;
 use heartwood_difftest::vectors::VectorSet;
-use heartwood_difftest::{Error, Result, api, live, replay, runtime_kill, subject};
+use heartwood_difftest::{
+    Error, Result, api, forger_kill, live, network_generate, replay, runtime_kill, subject,
+};
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -243,6 +246,19 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             Ok(true)
         }
         Command::CorpusJudge(args) => judge(&args, env),
+        Command::ForgeReplay(args) => forge_replay(&args, env),
+        Command::ForgerCrash { kills, seed, child } => {
+            let options = forger_kill::KillOptions { kills, seed, child };
+            let report = built(store::guarded(|| forger_kill::run(&options)))?;
+            print!("{report}");
+            Ok(report.is_success())
+        }
+        Command::NetworkGenerate { vectors } => {
+            let set = VectorSet::load(&vectors)?;
+            let report = built(store::guarded(|| network_generate::check(&set)))?;
+            print!("{report}");
+            Ok(report.is_success())
+        }
         Command::StoreReplay { dir, db, to } => {
             let loaded = Corpus::load(&dir)?;
             let tip = store::replay(&loaded, &db, to)?;
@@ -502,6 +518,29 @@ fn run_l2_processor(
     )?;
     print!("{report}");
     Ok(verdict(&report, strict))
+}
+
+/// The result of a part that may still be a stub: its `todo!()` is "not built yet".
+fn built<T>(outcome: std::result::Result<Result<T>, store::Unbuilt>) -> Result<T> {
+    outcome.map_err(|store::Unbuilt(message)| Error::NotYet(format!("not built yet: {message}")))?
+}
+
+/// The forge replay of a corpus, in the direction the arguments give.
+fn forge_replay(args: &ForgeArgs, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
+    let corpus = Corpus::load(&args.dir)?;
+    let mut server = match &args.oracle {
+        Some(oracle) => Some(oracle.resolve(env)?.server()?),
+        None => None,
+    };
+    let options = ForgeOptions {
+        direction: args.direction,
+        to: args.to,
+    };
+    let report = built(store::guarded(|| {
+        l2_forge::run(&corpus, &options, server.as_mut())
+    }))?;
+    print!("{report}");
+    Ok(report.is_success())
 }
 
 /// Write a chain definition, and compare it with the devnet generator's output when asked.

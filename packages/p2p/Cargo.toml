@@ -11,7 +11,12 @@ publish.workspace = true
 workspace = true
 
 [features]
-default = []
+default = ["node"]
+# Everything but the nes client session and its transport: peers, the communicator, the verifier,
+# the monitor and the rules. A node builds the crate with it; heartwood-forger builds it without,
+# so that it can reach nothing but the session and the transport. The `testing` module compiles
+# without it.
+node = []
 # Test seam: a sampling generator with a fixed seed, and the scripted mock peer with its
 # `mock-peer` binary. Only test code enables it (the harness, the fuzz targets and tests); a
 # release build never does.
@@ -50,8 +55,33 @@ doc = false
 # The tests of the nes session and the connector run against the mock peer.
 [[test]]
 name = "session"
-required-features = ["difftest"]
+required-features = ["node", "difftest"]
 
 [[test]]
 name = "connector"
+required-features = ["node", "difftest"]
+
+# The session's readiness and the bound dial, which the forger uses without `node`.
+[[test]]
+name = "forger_link"
 required-features = ["difftest"]
+
+[[test]]
+name = "acceptance"
+required-features = ["node"]
+
+[[test]]
+name = "communicator"
+required-features = ["node"]
+
+[[test]]
+name = "monitor"
+required-features = ["node"]
+
+[[test]]
+name = "scoring"
+required-features = ["node"]
+
+[[test]]
+name = "verifier"
+required-features = ["node"]

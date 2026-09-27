@@ -42,6 +42,11 @@
 //!
 //! The wire's reply checks and the requests the client writes are in `wire`.
 //!
+//! With the forger:
+//!
+//! - `forging`: a delegate's block from its inputs, and from a pool session's collation.
+//! - `forger_decide`: the forger's decisions in a slot, and the internal routes' bodies.
+//!
 //! Most operations run under the devnet configuration the oracle was set up with, which the
 //! [`Devnet`] context carries; a case that brings its own milestone file runs under that file.
 
@@ -50,6 +55,8 @@ mod blocks;
 mod config;
 mod config_app;
 mod digest;
+mod forger_decide;
+mod forging;
 mod genesis;
 mod handlers;
 mod job;
@@ -312,6 +319,8 @@ fn all_ops() -> impl Iterator<Item = &'static (&'static str, Run)> {
         .chain(job::OPS)
         .chain(api::OPS)
         .chain(config_app::OPS)
+        .chain(forging::OPS)
+        .chain(forger_decide::OPS)
 }
 
 /// Register every operation of [`all_ops`] in `registry`.
@@ -497,7 +506,8 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
         | Documented::StrictSchema
         | Documented::UnlinkedForkSegment
         | Documented::MissedRowsOfRefusedBlock
-        | Documented::Api(_) => false,
+        | Documented::Api(_)
+        | Documented::OverHeightOwnBlock => false,
     }
 }
 

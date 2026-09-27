@@ -29,7 +29,9 @@ use crate::fixture::Fixture;
 use crate::oracle::OracleServer;
 use crate::report::{CaseResult, Outcome, Report};
 use crate::strategies::transactions::{TxContext, fee_cases, handler_cases};
-use crate::strategies::{exchange, fixtures, kernel, monitor, state, verifier};
+use crate::strategies::{
+    exchange, fixtures, forger_decide, forging, kernel, monitor, state, verifier,
+};
 use crate::subject::{Case, Registry};
 use crate::vectors::Expected;
 
@@ -68,11 +70,15 @@ pub enum Property {
     Exchange,
     /// The network monitor's decisions (`monitor.forkDecision`, `monitor.networkHeight`).
     Monitor,
+    /// Forging from a pool session (`forger.collateAndForge`).
+    Forging,
+    /// The forger's decisions in a slot (`forger.decide`).
+    Decisions,
 }
 
 impl Property {
     /// Every property.
-    pub const ALL: [Property; 16] = [
+    pub const ALL: [Property; 18] = [
         Property::FeeFloor,
         Property::Rounds,
         Property::Slots,
@@ -89,6 +95,8 @@ impl Property {
         Property::Verifier,
         Property::Exchange,
         Property::Monitor,
+        Property::Forging,
+        Property::Decisions,
     ];
 
     /// The property's name on the command line.
@@ -110,10 +118,12 @@ impl Property {
             Property::Verifier => "verifier",
             Property::Exchange => "exchange",
             Property::Monitor => "monitor",
+            Property::Forging => "forging",
+            Property::Decisions => "decisions",
         }
     }
 
-    /// The property's short name, P1 to P16, which the command line accepts too.
+    /// The property's short name (P1 to P17, P19), which the command line accepts too.
     pub const fn number(self) -> &'static str {
         match self {
             Property::FeeFloor => "P1",
@@ -132,6 +142,8 @@ impl Property {
             Property::Verifier => "P14",
             Property::Exchange => "P15",
             Property::Monitor => "P16",
+            Property::Forging => "P17",
+            Property::Decisions => "P19",
         }
     }
 }
@@ -238,6 +250,12 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
             .prop_map(L1Case::plain)
             .boxed(),
         Property::Monitor => monitor::monitor_cases(context)
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::Forging => forging::forging_cases(context)
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::Decisions => forger_decide::decision_cases(context)
             .prop_map(L1Case::plain)
             .boxed(),
     }

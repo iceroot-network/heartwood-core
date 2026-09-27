@@ -11,9 +11,14 @@ publish.workspace = true
 workspace = true
 
 # The codec reads untrusted bytes only: no async runtime, no protobuf or URL library. Legacy
-# Schnorr signs and verifies the peer status, and this crate is its one production user.
+# Schnorr signs and verifies the peer status, and this crate is its one production user. The
+# internal routes' bodies and the status preimage's reader are JSON: serde_json's values, with the
+# workspace's features (insertion order kept, floats read back exactly), and indexmap for the maps
+# keyed as the reference keys them.
 [dependencies]
 heartwood-crypto = { workspace = true, features = ["legacy-schnorr"] }
+indexmap.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

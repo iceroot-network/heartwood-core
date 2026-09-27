@@ -82,6 +82,9 @@ CLASSES.push(
 // The node's processor and job, and its API grammar and configuration; a builder returns null
 // while it has no records, and the class is then not written.
 CLASSES.push(["V27-processor", require("./lib/vectors/chain-process")], ["V28-node", require("./lib/vectors/node")]);
+// The forger (heartwood-forger and the wire's internal bodies); its builders return null while
+// they have no records, and the class is then not written.
+CLASSES.push(["V29-forging", require("./lib/vectors/forging")]);
 
 function parseArgs(argv) {
     const opts = {

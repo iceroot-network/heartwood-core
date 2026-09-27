@@ -25,11 +25,16 @@
 //! chain, the store or the pool. Every reply is untrusted input: it never causes a panic, and
 //! arithmetic on it is checked.
 //!
-//! Features: `difftest` adds the `testing` module (the mock peer) and a fixed sampling seed, test
-//! seams that only test code enables; a release build never has them.
+//! Features: `node` (on by default) builds everything but [`nes`], [`transport`] and [`errors`],
+//! which a forger's link to its relay needs and which compile without it; `heartwood-forger`
+//! depends on the crate without `node`. `difftest` adds the `testing` module (the mock peer) and a
+//! fixed sampling seed, test seams that only test code enables; a release build never has them.
+//! The `testing` module compiles without `node`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+// The crate's documentation names the `node` modules, which a build without it does not have.
+#![cfg_attr(not(feature = "node"), allow(rustdoc::broken_intra_doc_links))]
 #![cfg_attr(
     not(test),
     deny(
@@ -41,40 +46,72 @@
     )
 )]
 
+#[cfg(feature = "node")]
 pub mod attestation;
+#[cfg(feature = "node")]
 pub mod broadcaster;
+#[cfg(feature = "node")]
 pub mod chunk_cache;
+#[cfg(feature = "node")]
 pub mod communicator;
+#[cfg(feature = "node")]
 pub mod connector;
+#[cfg(feature = "node")]
 pub mod diversity;
+#[cfg(feature = "node")]
 pub mod download;
 pub mod errors;
+#[cfg(feature = "node")]
 pub mod monitor;
 pub mod nes;
+#[cfg(feature = "node")]
 pub mod nsect;
+#[cfg(feature = "node")]
 pub mod options;
+#[cfg(feature = "node")]
 pub mod peer;
+#[cfg(feature = "node")]
 pub mod processor;
+#[cfg(feature = "node")]
 pub mod rate_limiter;
+#[cfg(feature = "node")]
 pub mod repository;
+#[cfg(feature = "node")]
 pub mod scoring;
+#[cfg(feature = "node")]
 pub mod seams;
+#[cfg(feature = "node")]
 pub mod seeds;
 #[cfg(feature = "difftest")]
 pub mod testing;
 pub mod transport;
+#[cfg(feature = "node")]
 pub mod utils;
+#[cfg(feature = "node")]
 pub mod verifier;
+#[cfg(feature = "node")]
 pub mod view;
 
+#[cfg(feature = "node")]
 pub use crate::communicator::{BlocksRequest, Communicator, CommunicatorParts};
+#[cfg(feature = "node")]
 pub use crate::connector::Connector;
+#[cfg(feature = "node")]
 pub use crate::download::{DownloadedBlock, to_block};
-pub use crate::errors::{PingError, SessionError};
+#[cfg(feature = "node")]
+pub use crate::errors::PingError;
+pub use crate::errors::SessionError;
+#[cfg(feature = "node")]
 pub use crate::monitor::{MonitorParts, NetworkMonitor};
+#[cfg(feature = "node")]
 pub use crate::options::P2pOptions;
+#[cfg(feature = "node")]
 pub use crate::peer::{FastVerification, Peer, PeerState, SharedPeer, Verification};
+#[cfg(feature = "node")]
 pub use crate::processor::{AcceptOptions, PeerProcessor, ProcessorParts};
+#[cfg(feature = "node")]
 pub use crate::repository::PeerRepository;
+#[cfg(feature = "node")]
 pub use crate::verifier::PeerVerifier;
+#[cfg(feature = "node")]
 pub use crate::view::{BlockLookup, ChainView, OnlineSink, PeerEvents};

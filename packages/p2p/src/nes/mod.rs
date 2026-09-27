@@ -17,7 +17,10 @@
 //! - A WebSocket ping or pong frame ends the connection for good, without a report.
 //! - Server pings are answered with type 1 and the next id, untracked.
 //! - The WebSocket opens within 5 s, and one automatic reconnect follows a close, after 1 s, in
-//!   the session's whole life.
+//!   the session's whole life (the connector's options; a forger's link reconnects without
+//!   limit).
+//! - [`Session::is_ready`] tells whether the WebSocket is open, as the reference's `_isReady`
+//!   does.
 //!
 //! The frames themselves are `heartwood_p2p_wire::nes`.
 

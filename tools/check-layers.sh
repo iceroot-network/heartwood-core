@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # check-layers.sh: the dependency edges between the workspace's crates follow the layer map, no
-# async runtime, storage or HTTP crate is in the dependency tree of the consensus crates, and only
-# the store and the pool use SQLite directly.
+# async runtime, storage or HTTP crate is in the dependency tree of the consensus crates, only the
+# store and the pool use SQLite directly, and the forger's tree holds no node crate and builds the
+# peer-to-peer crate without its `node` feature.
 #
 #   tools/check-layers.sh
 #
@@ -26,7 +27,9 @@ declare -A ALLOWED=(
     [heartwood-p2p]="heartwood-crypto heartwood-kernel heartwood-p2p-wire"
     [heartwood-api]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-p2p"
     [heartwood-core]="heartwood-crypto heartwood-kernel heartwood-logger heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-p2p-wire heartwood-p2p heartwood-blockchain heartwood-api"
-    [heartwood-difftest]="heartwood-crypto heartwood-kernel heartwood-logger heartwood-p2p heartwood-p2p-wire heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-blockchain heartwood-api heartwood-core"
+    [heartwood-forger]="heartwood-crypto heartwood-kernel heartwood-p2p-wire heartwood-p2p"
+    [heartwood-cli]="heartwood-crypto heartwood-kernel"
+    [heartwood-difftest]="heartwood-crypto heartwood-kernel heartwood-logger heartwood-p2p heartwood-p2p-wire heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-blockchain heartwood-api heartwood-core heartwood-forger heartwood-cli"
 )
 # external crate: the only workspace crates that may depend on it directly
 declare -A ONLY_UNDER=(
@@ -34,8 +37,12 @@ declare -A ONLY_UNDER=(
     [axum]="heartwood-api"
     [hyper]="heartwood-api"
     [hyper-util]="heartwood-api"
-    [clap]="heartwood-core"
+    [clap]="heartwood-cli heartwood-core"
+    [nix]="heartwood-cli"
 )
+# The forger links only the session and the transport of heartwood-p2p: none of these crates may
+# be in its normal dependency tree, and heartwood-p2p is built there without `node`.
+FORGER_FORBIDDEN="heartwood-state heartwood-transactions heartwood-pool heartwood-database heartwood-blockchain heartwood-api"
 # The consensus crates, and the crates none of them may pull in.
 CONSENSUS="heartwood-kernel heartwood-state heartwood-transactions"
 FORBIDDEN="tokio rusqlite axum hyper"
@@ -107,6 +114,21 @@ done
 # shellcheck disable=SC2086,SC2116  # the list on one line
 users=$(echo $direct)
 echo "check-layers: rusqlite is used directly by ${users:-no crate}"
+
+forger_tree=$(cargo tree --locked --offline -p heartwood-forger -e normal,build --prefix none --format '{p}' |
+    awk '{print $1}' | sort -u)
+for bad in $FORGER_FORBIDDEN; do
+    if grep -qx "$bad" <<<"$forger_tree"; then
+        echo "check-layers: $bad is in the dependency tree of heartwood-forger" >&2
+        fail=1
+    fi
+done
+if cargo tree --locked --offline -p heartwood-forger -e features,normal -i heartwood-p2p --prefix none |
+    grep -q 'heartwood-p2p feature "node"'; then
+    echo "check-layers: heartwood-forger builds heartwood-p2p with its node feature" >&2
+    fail=1
+fi
+echo "check-layers: heartwood-forger links no node crate and heartwood-p2p without node"
 
 [ "$fail" = 0 ] && echo "check-layers: every edge follows the layers; no $FORBIDDEN in $CONSENSUS"
 exit "$fail"
