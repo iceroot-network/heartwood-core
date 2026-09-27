@@ -177,6 +177,13 @@ where
         chain.milestones().at(chain.last_block().height())
     }
 
+    /// The largest `value` of the milestones (0 without one), as the reference's reply schemas
+    /// compute their bounds when they load.
+    fn largest(&self, value: impl Fn(&Params) -> Option<u64>) -> usize {
+        let milestones = self.parts.chain.milestones().all();
+        milestones.iter().filter_map(value).max().map_or(0, size)
+    }
+
     /// Whether `peer` has a protocol violation in its window: it is then no source.
     fn violator(&self, peer: &SharedPeer) -> bool {
         let now = self.parts.clock.now_ms();
@@ -190,7 +197,6 @@ where
         peer: &SharedPeer,
         request: ClientRequest,
         (timeout, limit): (Duration, usize),
-        disconnect: bool,
         decode: impl FnOnce(&[u8]) -> Result<D, DecodeError>,
         check: impl FnOnce(D) -> Result<V, ReplyRefused>,
     ) -> Option<V> {
@@ -224,12 +230,13 @@ where
                 }
             }
         };
-        self.fail(peer, failure, disconnect);
+        self.fail(peer, failure, route);
         None
     }
 
-    /// The reference's `handleSocketError`, with the violation recorded first.
-    fn fail(&self, peer: &SharedPeer, (class, violation, refused): Failure, disconnect: bool) {
+    /// The reference's `handleSocketError`, with the violation recorded first. The reference's
+    /// getBlocks and getUnconfirmedTransactions disconnect no peer for the error's class.
+    fn fail(&self, peer: &SharedPeer, (class, violation, refused): Failure, route: RouteId) {
         let ip = peer.ip();
         self.parts.transport.set_error(ip, class);
         if let Some(violation) = violation {
@@ -246,7 +253,13 @@ where
             heartwood_kernel::debug!(
                 "Socket data validation error (peer {ip}) : Response validation failed from peer {ip} : {refused} :warning:"
             );
-        } else if disconnect && class != VALIDATION && class != "Error" {
+        } else if class != VALIDATION
+            && class != "Error"
+            && !matches!(
+                route,
+                RouteId::GetBlocks | RouteId::GetUnconfirmedTransactions
+            )
+        {
             self.remove_peer(ip);
         }
     }
@@ -279,7 +292,6 @@ where
             peer,
             ClientRequest::GetCommonBlocks { ids },
             (timeout, SMALL),
-            true,
             peer_codecs::get_common_blocks_decode_response,
             |reply| rules.check_common_blocks(&reply),
         )
@@ -316,7 +328,6 @@ where
                 peer,
                 get,
                 (timeout.unwrap_or(parts.options.get_blocks_timeout), limit),
-                false,
                 blocks::get_blocks_decode_response,
                 |mut listed| parts.rules.check_blocks(&mut listed).map(|()| listed),
             )
@@ -370,7 +381,6 @@ where
                 &peer,
                 ClientRequest::PostTransactions { transactions },
                 (LONG, SMALL),
-                true,
                 transactions::post_transactions_decode_response,
                 |accept| rules.check_post_transactions(&accept),
             )
@@ -440,19 +450,14 @@ where
         if skip {
             return Ok(None);
         }
-        let milestones = parts.chain.milestones().all();
-        let most = milestones
-            .iter()
-            .map(|params| size(params.active_delegates()))
-            .max();
+        let most = shared.largest(|params| Some(params.active_delegates()));
         let checked = shared
             .emit(
                 peer,
                 ClientRequest::GetStatus,
                 (timeout.min(SHORT), SMALL),
-                true,
                 status::decode_response,
-                |received| status::check_reply(received, most.unwrap_or(0)),
+                |received| status::check_reply(received, most),
             )
             .await;
         let checked =
@@ -562,7 +567,6 @@ where
                 peer,
                 ClientRequest::GetPeers,
                 (SHORT, SMALL),
-                true,
                 peer_codecs::get_peers_decode_response,
                 |peers| rules.check_peers(&peers),
             )
@@ -598,8 +602,7 @@ where
         if shared.violator(peer) {
             return Vec::new();
         }
-        let milestones = parts.chain.milestones().all();
-        let most = milestones.iter().filter_map(Params::max_transactions).max();
+        let most = shared.largest(|params| params.max_transactions().map(u64::from));
         let milestone = shared.milestone();
         let limit = milestone.max_payload().map_or(SMALL, size);
         let exclude = exclude.to_vec();
@@ -608,12 +611,8 @@ where
                 peer,
                 ClientRequest::GetUnconfirmedTransactions { exclude },
                 (LONG, limit),
-                false,
                 transactions::get_unconfirmed_transactions_decode_response,
-                |reply| {
-                    let most = most.map_or(0, size);
-                    parts.rules.check_unconfirmed(&reply, most).map(|()| reply)
-                },
+                |reply| parts.rules.check_unconfirmed(&reply, most).map(|()| reply),
             )
             .await;
         // More than the current milestone allows discards the whole reply.
@@ -633,7 +632,6 @@ where
                 peer,
                 ClientRequest::PostBlock { block },
                 (LONG, SMALL),
-                true,
                 blocks::post_block_decode_response,
                 |reply| rules.check_post_block(&reply),
             )

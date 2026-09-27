@@ -117,20 +117,19 @@ where
     R: PeerRules + 'static,
 {
     fn validate_peer_ip(&self, peer: &mut PeerAddress, options: AcceptOptions) -> bool {
-        let parts = &self.parts;
-        let config = &parts.options;
+        let (parts, config) = (&self.parts, &self.parts.options);
         if config.disable_discovery {
+            let ip = &peer.ip;
             heartwood_kernel::warning!(
-                "Rejected {} because the relay is in non-discovery mode :see_no_evil:",
-                peer.ip
+                "Rejected {ip} because the relay is in non-discovery mode :see_no_evil:"
             );
             return false;
         }
-        if !parts.rules.is_valid_peer(
-            &mut peer.ip,
-            config.allow_private_ip_ranges,
-            &parts.interfaces,
-        ) {
+        let private = config.allow_private_ip_ranges;
+        if !parts
+            .rules
+            .is_valid_peer(&mut peer.ip, private, &parts.interfaces)
+        {
             return false;
         }
         // The processed text of an address ipaddr.js accepts; a zone index, which only a
@@ -138,24 +137,16 @@ where
         let Ok(address) = peer.ip.parse::<IpAddr>() else {
             return false;
         };
-        if parts.repository.has_pending(address)
-            || !ip::is_whitelisted(&config.whitelist, &peer.ip)
-            || ip::is_blacklisted(&config.blacklist, &peer.ip)
-        {
-            return false;
-        }
-        let same_subnet = parts
-            .repository
-            .peers()
+        let repository = &parts.repository;
+        let known = repository.peers();
+        let same_subnet = known
             .iter()
-            .filter(|known| parts.rules.same_subnet(known.ip(), address))
-            .count();
-        if same_subnet >= config.max_same_subnet_peers && !options.seed {
-            return false;
-        }
-        !parts
-            .repository
-            .has_violation(address, parts.clock.now_ms())
+            .filter(|known| parts.rules.same_subnet(known.ip(), address));
+        !repository.has_pending(address)
+            && ip::is_whitelisted(&config.whitelist, &peer.ip)
+            && !ip::is_blacklisted(&config.blacklist, &peer.ip)
+            && (options.seed || same_subnet.count() < config.max_same_subnet_peers)
+            && !repository.has_violation(address, parts.clock.now_ms())
     }
 
     async fn validate_and_accept(&self, mut peer: PeerAddress, options: AcceptOptions) {
