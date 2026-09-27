@@ -1796,7 +1796,7 @@ pub fn job_case(devnet: &Devnet, case: &Case<'_>) -> std::result::Result<Verdict
 mod tests {
     use super::*;
     use crate::corpus::RevertPlan;
-    use heartwood_p2p::to_block;
+    use heartwood_p2p::{DownloadedBlock, to_block};
     use std::path::Path;
 
     fn corpus() -> Corpus {
@@ -1837,9 +1837,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_enqueueing_cuts_as_the_reference_did() {
-        let cases = [
+    /// V27's enqueueing records, as the reference answered them.
+    fn recorded_cuts() -> [Cut; 15] {
+        [
             cut(11, &[100, 49, 1, 5], 0, DEVNET, &[3, 1]),
             cut(11, &[100, 49], 0, DEVNET, &[2]),
             cut(11, &[0, 150, 0], 0, DEVNET, &[2, 1]),
@@ -1858,20 +1858,29 @@ mod tests {
             cut(11, &[], 2, &[1, 2, 12], &[2, 0]),
             cut(2, &[], 3, DEVNET, &[3]),
             cut(11, &[], 0, DEVNET, &[]),
-        ];
-        for (i, c) in cases.iter().enumerate() {
-            let counts: Vec<u32> = if c.transactions.is_empty() {
-                vec![0; c.empty]
-            } else {
-                c.transactions.to_vec()
-            };
-            let blocks: Vec<Queued> = (c.first..)
-                .zip(counts)
-                .map(|(height, transactions)| Queued {
-                    height,
-                    transactions,
-                })
-                .collect();
+        ]
+    }
+
+    /// The block heights and transaction counts of `c`'s blocks.
+    fn cut_blocks(c: &Cut) -> Vec<Queued> {
+        let counts: Vec<u32> = if c.transactions.is_empty() {
+            vec![0; c.empty]
+        } else {
+            c.transactions.to_vec()
+        };
+        (c.first..)
+            .zip(counts)
+            .map(|(height, transactions)| Queued {
+                height,
+                transactions,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_enqueueing_cuts_as_the_reference_did() {
+        for (i, c) in recorded_cuts().iter().enumerate() {
+            let blocks = cut_blocks(c);
             let jobs = cut_jobs(&blocks, c.last_downloaded, c.milestones, c.max_last_blocks);
             let sizes: Vec<usize> = jobs.iter().map(Vec::len).collect();
             assert_eq!(sizes, c.jobs, "case {}", i + 1);
@@ -1882,6 +1891,58 @@ mod tests {
                 "case {}",
                 i + 1
             );
+        }
+    }
+
+    /// The blockchain service's own enqueueing cuts every recorded case as the reference did (a
+    /// case's milestones are the committed chain's with the case's heights added; a job of the
+    /// service holds at most 100 blocks, which is the reference's cut for any larger
+    /// `maxLastBlocks`, and an empty download pushes no job, as the service returns first).
+    #[test]
+    fn the_services_enqueueing_cuts_as_the_reference_did() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus/txgen-one-node/crypto");
+        let read = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap();
+        let committed: Value = serde_json::from_str(&read("milestones.json")).unwrap();
+        for (i, c) in recorded_cuts().iter().enumerate() {
+            let mut entries = committed.clone();
+            let list = entries.as_array_mut().unwrap();
+            let known: Vec<u64> = list.iter().filter_map(|m| m["height"].as_u64()).collect();
+            for height in c.milestones {
+                if !known.contains(&u64::from(*height)) {
+                    list.push(json!({ "height": height }));
+                }
+            }
+            let files = crypto_of(&CryptoTexts {
+                network: Some(read("network.json")),
+                milestones: Some(entries.to_string()),
+                genesis: Some(read("genesisBlock.json")),
+                exceptions: Some(read("exceptions.json")),
+            })
+            .unwrap();
+            let blocks: Vec<IncomingBlock> = cut_blocks(c)
+                .iter()
+                .map(|queued| {
+                    let mut block = DownloadedBlock {
+                        header: Default::default(),
+                        transactions: None,
+                        ip: PEER,
+                    };
+                    block.header.header.height = Some(queued.height);
+                    block.header.header.number_of_transactions = Some(queued.transactions);
+                    IncomingBlock::downloaded(block)
+                })
+                .collect();
+            let jobs = if blocks.is_empty() {
+                Vec::new()
+            } else {
+                heartwood_blockchain::blockchain::cut_jobs(
+                    blocks,
+                    c.last_downloaded,
+                    &files.milestones,
+                )
+            };
+            let sizes: Vec<usize> = jobs.iter().map(|job| job.blocks.len()).collect();
+            assert_eq!(sizes, c.jobs, "case {}", i + 1);
         }
     }
 
