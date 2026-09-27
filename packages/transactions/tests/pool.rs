@@ -281,3 +281,76 @@ fn votes() {
         Ok(())
     );
 }
+
+/// The reference's texts of the pool-entry refusals, which the pool reports after
+/// "`<transaction>` cannot be applied: ".
+#[test]
+fn texts() {
+    let mut setup = setup();
+    let [a, b, _] = &setup.delegates;
+    let sender = setup.sender.address.to_base58();
+    let online = FakeOnline(Vec::new());
+    let text = |setup: &Setup, tx: &Transaction, pool: &FakePool| {
+        check_pool_entry(&ctx(), &setup.wallets, tx, pool, &online)
+            .unwrap_err()
+            .to_string()
+    };
+    let second = Account::new("second");
+    let tx = setup.sender.sign(
+        TransactionBuilder::second_signature(second.public_key().to_compressed())
+            .nonce(2)
+            .fee(FEE),
+    );
+    let pool = pending(&setup.sender, TransactionType::SecondSignature);
+    assert_eq!(
+        text(&setup, &tx, &pool),
+        format!("{sender} already has a second signature registration transaction in the pool")
+    );
+    let tx = setup.sender.sign(
+        TransactionBuilder::delegate_registration("newcomer")
+            .nonce(2)
+            .fee(FEE),
+    );
+    let pool = pending(&setup.sender, TransactionType::DelegateRegistration);
+    assert_eq!(
+        text(&setup, &tx, &pool),
+        format!("{sender} already has a delegate registration transaction in the pool")
+    );
+    let pool = FakePool {
+        senders: Vec::new(),
+        usernames: vec!["newcomer".into()],
+    };
+    assert_eq!(
+        text(&setup, &tx, &pool),
+        "Delegate registration for 'newcomer' already in the pool"
+    );
+    let tx = setup.sender.sign(
+        TransactionBuilder::vote(support::votes(&[("del_b", 10_000)]))
+            .nonce(2)
+            .fee(FEE),
+    );
+    let pool = pending(&setup.sender, TransactionType::Vote);
+    assert_eq!(
+        text(&setup, &tx, &pool),
+        format!("{sender} already has a vote transaction in the pool")
+    );
+    assert_eq!(
+        text(&setup, &tx, &FakePool::default()),
+        "del_b is not operating a node on the network"
+    );
+    let resign = |account: &Account, resignation_type| {
+        account.sign(resignation(resignation_type).nonce(2).fee(FEE))
+    };
+    let tx = resign(a, None);
+    let pool = pending(a, TransactionType::DelegateResignation);
+    assert_eq!(
+        text(&setup, &tx, &pool),
+        "Delegate resignation for 'del_a' already in the pool"
+    );
+    resign_as(&mut setup.wallets, b, Resignation::Temporary);
+    let revoke = resign(b, Some(ResignationType::NotResigned));
+    assert_eq!(
+        text(&setup, &revoke, &FakePool::default()),
+        "del_b is not operating a node on the network"
+    );
+}
