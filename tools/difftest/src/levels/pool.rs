@@ -9,13 +9,18 @@
 //!   decoder's ([`Documented::DecodeReason`]): the code, the entry id, the place in the lists and
 //!   the verdict must still be equal;
 //! - a full pool that evicted a transaction and then refused the new one, as the oracle notes it
-//!   ([`Documented::FullPoolEviction`]): Heartwood refuses the same entries without evicting, so
-//!   its pool must be the reference's plus the evicted transactions; the later steps are not
-//!   compared, since the two pools differ from there on purpose;
+//!   ([`Documented::FullPoolEviction`]): Heartwood refuses the same transaction without evicting,
+//!   and the entries before it must have the same outcomes on both sides. From that entry on the
+//!   two pools differ on purpose (the reference has a free place, Heartwood's pool is still full),
+//!   so the rest of the step and the later steps are not compared. A step whose results and
+//!   contents are equal all the same (a later entry evicted the same transaction on both sides) is
+//!   compared as any other;
 //! - entries of a removed type and JSON votes given as an array or a string
 //!   ([`Documented::RemovedType`], [`Documented::VotesWithIndices`]), checked on the entries
 //!   themselves: the step's lists and errors must be equal once those entries are left out on both
-//!   sides, whatever ids they were given;
+//!   sides, whatever ids they were given. The reference names such a JSON entry by the id of the
+//!   transaction it rebuilt, which no other entry and no id of Heartwood's answer names; at most
+//!   one such id per documented JSON entry is left out of the reference's side too;
 //! - a count in a message that the oracle's default locale groups otherwise
 //!   ([`Documented::Locale`], shown by the oracle's `locale` note).
 
@@ -181,8 +186,9 @@ enum Form {
 }
 
 /// The documented forms among the entries of a `process` step, with the ids either side may give
-/// each: its index, the SHA-256 of its bytes, and for JSON the id it gives.
-fn documented_entries(step: &Value) -> Vec<(Form, BTreeSet<String>)> {
+/// each (its index, the SHA-256 of its bytes, and for JSON the id it gives) and whether it is
+/// JSON.
+fn documented_entries(step: &Value) -> Vec<(Form, BTreeSet<String>, bool)> {
     let Some(entries) = step.get("entries").and_then(Value::as_array) else {
         return Vec::new();
     };
@@ -216,7 +222,7 @@ fn documented_entries(step: &Value) -> Vec<(Form, BTreeSet<String>)> {
             None
         };
         if let Some(form) = form {
-            out.push((form, ids));
+            out.push((form, ids, entry.get("json").is_some()));
         }
     }
     out
@@ -237,20 +243,24 @@ fn is_removed_bytes(bytes: &[u8]) -> bool {
         && kind.is_some_and(|k| REMOVED_TYPES.contains(&u64::from(k)))
 }
 
-/// A processor result without the entries whose ids are in `ids`, and with the ids of those
-/// entries' transactions (the second-loop ids of `also`) left out too.
+/// A processor result without the entries whose ids are in `ids`.
 fn without_entries(result: &Value, ids: &BTreeSet<String>) -> Value {
+    entries_where(result, |id| !ids.contains(id))
+}
+
+/// A processor result with only the list items and errors whose ids `keep` accepts.
+fn entries_where(result: &Value, keep: impl Fn(&str) -> bool) -> Value {
     let mut out = result.clone();
     let Some(object) = out.as_object_mut() else {
         return out;
     };
     for list in LISTS {
         if let Some(Value::Array(items)) = object.get_mut(list) {
-            items.retain(|v| v.as_str().is_none_or(|id| !ids.contains(id)));
+            items.retain(|v| v.as_str().is_none_or(&keep));
         }
     }
     if let Some(Value::Object(errors)) = object.get_mut("errors") {
-        errors.retain(|id, _| !ids.contains(id));
+        errors.retain(|id, _| keep(id));
     }
     if object
         .get("errors")
@@ -260,6 +270,52 @@ fn without_entries(result: &Value, ids: &BTreeSet<String>) -> Value {
         object.shift_remove("errors");
     }
     out
+}
+
+/// The ids of the reference's result `expected` that neither an entry of `step` nor Heartwood's
+/// result `actual` names: the ids of transactions the reference rebuilt from a JSON entry.
+fn rebuilt_ids(step: &Value, expected: &Value, actual: &Value) -> BTreeSet<String> {
+    let mut known: BTreeSet<String> = entry_ids(step).into_iter().flatten().collect();
+    known.extend(result_ids(actual));
+    result_ids(expected)
+        .into_iter()
+        .filter(|id| !known.contains(id))
+        .collect()
+}
+
+/// Every id a processor result lists or maps to an error.
+fn result_ids(result: &Value) -> BTreeSet<String> {
+    let mut out: BTreeSet<String> = LISTS
+        .iter()
+        .flat_map(|list| result[*list].as_array().into_iter().flatten())
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    if let Some(errors) = result["errors"].as_object() {
+        out.extend(errors.keys().cloned());
+    }
+    out
+}
+
+/// The ids either side may give each entry of a `process` step, in entry order: its index, the
+/// SHA-256 of its bytes (the transaction id of canonical bytes), and for JSON the id it gives.
+fn entry_ids(step: &Value) -> Vec<BTreeSet<String>> {
+    let Some(entries) = step.get("entries").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let mut ids = BTreeSet::from([i.to_string()]);
+            if let Some(text) = entry.get("hex").and_then(Value::as_str) {
+                ids.insert(hex::encode(&sha256(&hex::decode(text).unwrap_or_default())));
+            } else if let Some(id) = entry.pointer("/json/id").and_then(Value::as_str) {
+                ids.insert(id.to_owned());
+            }
+            ids
+        })
+        .collect()
 }
 
 /// How the messages of two processor results compare, when everything else is equal.
@@ -315,46 +371,42 @@ fn without_messages(result: &Value) -> Value {
     out
 }
 
-/// The ids of a contents' `all`, as a set.
-fn all_ids(contents: &Value) -> BTreeSet<String> {
-    contents
-        .get("all")
+/// Whether Heartwood's step shows the fixed eviction the oracle noted: Heartwood refused every
+/// transaction the reference refused after an eviction, and the entries before the first of them
+/// have the same outcomes on both sides (the messages within the decode-reason rule).
+fn eviction_holds(step: &Value, notes: &Value, expected: &Value, actual: &Value) -> bool {
+    let refused: Vec<&str> = notes
+        .get("evictions")
         .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Whether Heartwood's step shows the fixed eviction the oracle noted: the entries the reference
-/// refused after an eviction are refused by Heartwood too, and Heartwood's pool is the
-/// reference's plus the evicted transactions.
-fn eviction_holds(notes: &Value, expected: &Value, actual: &Value) -> bool {
-    let Some(evictions) = notes.get("evictions").and_then(Value::as_array) else {
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.get("id").and_then(Value::as_str))
+        .collect();
+    let Some(first) = refused.first() else {
         return false;
     };
-    let mut want = all_ids(&expected["contents"]);
-    for eviction in evictions {
-        let refused = eviction.get("id").and_then(Value::as_str).unwrap_or("");
-        let ours_refused = actual["result"]["invalid"]
-            .as_array()
-            .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(refused)));
-        if !ours_refused {
-            return false;
-        }
-        for id in eviction
-            .get("evicted")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            want.insert(id.as_str().unwrap_or("").to_owned());
-        }
+    let ours_invalid: BTreeSet<&str> = actual["invalid"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    if !refused.iter().all(|id| ours_invalid.contains(id)) {
+        return false;
     }
-    all_ids(&actual["contents"]) == want
+    let entries = entry_ids(step);
+    let before: BTreeSet<String> = entries
+        .iter()
+        .take_while(|ids| !ids.contains(*first))
+        .flatten()
+        .cloned()
+        .collect();
+    let (a, b) = (
+        entries_where(expected, |id| before.contains(id)),
+        entries_where(actual, |id| before.contains(id)),
+    );
+    compare::diff(&without_messages(&a), &without_messages(&b)).is_empty()
+        && messages(&a, &b) != Messages::Different
 }
 
 /// Judge Heartwood's answer `actual` to the pool session `input` against the oracle's
@@ -391,8 +443,12 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
             .as_object_mut()
             .and_then(|o| o.shift_remove(NOTES))
             .unwrap_or(Value::Null);
-        if notes["fullPoolEviction"] == Value::Bool(true) {
-            return if eviction_holds(&notes, a, b) {
+        let agree = || {
+            compare::diff(&a_result, &b["result"]).is_empty()
+                && compare::diff(&a["contents"], &b["contents"]).is_empty()
+        };
+        if notes["fullPoolEviction"] == Value::Bool(true) && !agree() {
+            return if eviction_holds(step, &notes, &a_result, &b["result"]) {
                 Outcome::Documented(Documented::FullPoolEviction.reason().to_owned())
             } else {
                 Outcome::Mismatch(prefixed(
@@ -411,17 +467,27 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
             (true, Vec::new())
         } else {
             let entries = documented_entries(step);
-            let ids: BTreeSet<String> = entries.iter().flat_map(|(_, ids)| ids.clone()).collect();
+            let ids: BTreeSet<String> =
+                entries.iter().flat_map(|(_, ids, _)| ids.clone()).collect();
+            let rebuilt = rebuilt_ids(step, &a_result, b_result);
+            let json = entries.iter().filter(|(_, _, json)| *json).count();
+            let mut theirs = ids.clone();
+            if rebuilt.len() <= json {
+                theirs.extend(rebuilt);
+            }
             let equal = !entries.is_empty()
                 && compare::diff(
-                    &without_messages(&without_entries(&a_result, &ids)),
+                    &without_messages(&without_entries(&a_result, &theirs)),
                     &without_messages(&without_entries(b_result, &ids)),
                 )
                 .is_empty();
             if !equal {
                 return Outcome::Mismatch(prefixed(i, same_shape));
             }
-            (false, entries.into_iter().map(|(form, _)| form).collect())
+            (
+                false,
+                entries.into_iter().map(|(form, _, _)| form).collect(),
+            )
         };
         if !contents.is_empty() {
             return Outcome::Mismatch(prefixed(i, contents));
@@ -546,23 +612,73 @@ mod tests {
     }
 
     #[test]
-    fn a_fixed_eviction_is_documented_when_the_pool_keeps_the_evicted() {
-        let input = json!({"steps": [{"op": "process", "entries": [], "now": 0}]});
-        let theirs = json!({"accept": [], "broadcast": [], "invalid": ["n"], "excess": [],
+    fn a_fixed_eviction_is_documented_when_the_entries_before_it_agree() {
+        // Entry 0 is accepted by both; entry 1 (id n) made the reference evict e and was refused;
+        // entry 2 then took the reference's free place, while Heartwood's pool is still full.
+        let input =
+            process(json!([{"json": {"id": "a"}}, {"json": {"id": "n"}}, {"json": {"id": "c"}}]));
+        let theirs = json!({"accept": ["a", "c"], "broadcast": ["a", "c"], "invalid": ["n"], "excess": [],
             "errors": {"n": {"type": "ERR_APPLY", "message": "m"}},
             "notes": {"fullPoolEviction": true, "evictions": [{"id": "n", "evicted": ["e"]}]}});
-        let ours = json!({"accept": [], "broadcast": [], "invalid": ["n"], "excess": [],
-            "errors": {"n": {"type": "ERR_APPLY", "message": "other"}}});
-        let expected = run(vec![step(theirs, &["b"])]);
+        let ours = json!({"accept": ["a"], "broadcast": ["a"], "invalid": ["n", "c"], "excess": [],
+            "errors": {"n": {"type": "ERR_APPLY", "message": "other"},
+                       "c": {"type": "ERR_POOL_FULL", "message": "full"}}});
+        let expected = run(vec![step(theirs, &["a", "c"])]);
         assert_eq!(
             judge(
                 &input,
                 &expected,
-                &run(vec![step(ours.clone(), &["b", "e"])])
+                &run(vec![step(ours.clone(), &["a", "e"])])
             ),
             Outcome::Documented(Documented::FullPoolEviction.reason().into())
         );
-        assert!(judge(&input, &expected, &run(vec![step(ours, &["b"])])).is_failure());
+        // Heartwood must refuse the transaction the reference refused after its eviction.
+        let mut admitted = ours.clone();
+        admitted["accept"] = json!(["a", "n"]);
+        admitted["invalid"] = json!(["c"]);
+        assert!(judge(&input, &expected, &run(vec![step(admitted, &["a", "n"])])).is_failure());
+        // The entries before it must agree.
+        let mut earlier = ours;
+        earlier["accept"] = json!([]);
+        earlier["broadcast"] = json!([]);
+        assert!(judge(&input, &expected, &run(vec![step(earlier, &["e"])])).is_failure());
+    }
+
+    #[test]
+    fn a_step_that_agrees_after_a_noted_eviction_is_compared() {
+        // A later entry evicted the same transaction on both sides: the step is compared as any
+        // other, and the next step too.
+        let input = json!({"steps": [{"op": "process", "entries": [], "now": 0},
+                                     {"op": "process", "entries": [], "now": 0}]});
+        let result = json!({"accept": ["m"], "broadcast": ["m"], "invalid": ["n"], "excess": [],
+            "errors": {"n": {"type": "ERR_APPLY", "message": "m"}}});
+        let mut noted = result.clone();
+        noted["notes"] =
+            json!({"fullPoolEviction": true, "evictions": [{"id": "n", "evicted": ["e"]}]});
+        let next = json!({"accept": [], "broadcast": [], "invalid": [], "excess": []});
+        let expected = run(vec![
+            step(noted, &["b", "m"]),
+            step(next.clone(), &["b", "m"]),
+        ]);
+        assert_eq!(
+            judge(
+                &input,
+                &expected,
+                &run(vec![
+                    step(result.clone(), &["b", "m"]),
+                    step(next.clone(), &["b", "m"])
+                ])
+            ),
+            Outcome::Pass
+        );
+        assert!(
+            judge(
+                &input,
+                &expected,
+                &run(vec![step(result, &["b", "m"]), step(next, &["b"])])
+            )
+            .is_failure()
+        );
     }
 
     #[test]
@@ -588,6 +704,38 @@ mod tests {
                 &run(vec![step(ours, &["t"])])
             ),
             Outcome::Documented(Documented::RemovedType.reason().into())
+        );
+    }
+
+    #[test]
+    fn a_rebuilt_json_vote_is_left_out_under_the_reference_s_id() {
+        let vote = |votes: Value| json!({"json": {"typeGroup": 2, "type": 2, "id": "g", "asset": {"votes": votes}}});
+        let input = process(json!([vote(json!(["a"])), vote(json!("a")), {"hex": "00"}]));
+        let bad = |message: &str| json!({"type": "ERR_BAD_DATA", "message": message});
+        let theirs = json!({"accept": ["t"], "broadcast": ["t"], "invalid": ["r1", "r2"], "excess": [],
+            "errors": {"r1": bad("r1 failed signature verification check"),
+                       "r2": bad("r2 failed signature verification check")}});
+        let ours = json!({"accept": ["t"], "broadcast": ["t"], "invalid": ["g", "g"], "excess": [],
+            "errors": {"g": bad("Invalid transaction data: votes")}});
+        assert_eq!(
+            judge(
+                &input,
+                &run(vec![step(theirs.clone(), &["t"])]),
+                &run(vec![step(ours.clone(), &["t"])])
+            ),
+            Outcome::Documented(Documented::VotesWithIndices.reason().into())
+        );
+        // More ids than documented JSON entries: one of them belongs to another entry.
+        let mut three = theirs;
+        three["invalid"] = json!(["r1", "r2", "r3"]);
+        three["errors"]["r3"] = bad("r3");
+        assert!(
+            judge(
+                &input,
+                &run(vec![step(three, &["t"])]),
+                &run(vec![step(ours, &["t"])])
+            )
+            .is_failure()
         );
     }
 
