@@ -1,0 +1,17 @@
+{"step":"generate","node":"all","start":"2026-09-27T13:42:18.673Z","end":"2026-09-27T13:42:20.416Z","ok":true,"epoch":"2026-09-27T13:43:50.000Z"}
+{"step":"up","node":"all","start":"2026-09-27T13:42:20.429Z","end":"2026-09-27T13:42:21.346Z","ok":true}
+{"step":"settle","node":"node1","start":"2026-09-27T13:42:20.429Z","end":"2026-09-27T13:44:06.618Z","ok":true,"height":3}
+{"step":"peers-node4","node":"node4","start":"2026-09-27T13:44:06.651Z","end":"2026-09-27T13:44:06.755Z","ok":true,"detail":{"ok":true,"step":"peers","seconds":0,"listed":["198.51.100.11","198.51.100.12","198.51.100.13"],"expect":["198.51.100.11","198.51.100.12","198.51.100.13"]}}
+{"step":"txgen-fund","node":"node4","start":"2026-09-27T13:44:06.769Z","end":"2026-09-27T13:44:16.774Z","ok":true,"exit":0,"read":"node1","submit":"node4"}
+{"step":"txgen-once","node":"node4","start":"2026-09-27T13:44:16.790Z","end":"2026-09-27T14:00:02.028Z","ok":true,"exit":0,"read":"node1","submit":"node4"}
+{"step":"batch-node4","node":"node4","start":"2026-09-27T14:00:02.115Z","end":"2026-09-27T14:00:06.794Z","ok":true,"detail":{"ok":true,"step":"batch","relays":{"node1":{"seenAllMs":236},"node2":{"seenAllMs":237},"node3":{"seenAllMs":237},"node4":{"seenAllMs":31}}}}
+{"step":"vote-before-node4","node":"node4","start":"2026-09-27T14:00:06.811Z","end":"2026-09-27T14:00:07.045Z","ok":true,"detail":{"ok":true,"step":"vote","expect":"accepted","outcome":"accepted","id":"eda1f973d53389ac2bd04263090a19d72425a0feb2530aea938c636eb525e98b"}}
+{"step":"vote-after-node4","node":"node4","start":"2026-09-27T14:00:10.856Z","end":"2026-09-27T14:00:11.092Z","ok":true,"detail":{"ok":true,"step":"vote","expect":"accepted","outcome":"accepted","id":"e344fc7236f2a35c91e4484fe399c58539ec66927c607493b481a69ef6b9f087"}}
+{"step":"pause","node":"all","start":"2026-09-27T14:00:11.736Z","end":"2026-09-27T14:19:21.429Z","ok":true,"height":265,"stopHeight":265}
+{"step":"api-corpus","node":"node4","start":"2026-09-27T14:19:21.444Z","end":"2026-09-27T14:19:51.455Z","ok":true,"exit":101,"left":"node4","right":"node1","skipped":"the route corpus's runner is not built yet"}
+{"step":"api-rate-limit","node":"node4","start":"2026-09-27T14:19:51.471Z","end":"2026-09-27T14:19:52.555Z","ok":true,"left":"node4","right":"node1"}
+{"step":"check-chain","node":"node1","start":"2026-09-27T14:19:52.571Z","end":"2026-09-27T14:19:53.259Z","ok":true}
+{"step":"tips","node":"all","start":"2026-09-27T14:19:53.357Z","end":"2026-09-27T14:19:53.450Z","ok":true,"detail":{"ok":true,"step":"tips"}}
+{"step":"archive","node":"node1","start":"2026-09-27T14:19:53.840Z","end":"2026-09-27T14:20:57.207Z","ok":true}
+{"step":"archive-node4","node":"node4","start":"2026-09-27T14:20:57.221Z","end":"2026-09-27T14:21:00.776Z","ok":true}
+{"step":"collect","node":"all","start":"2026-09-27T14:21:00.790Z","end":"2026-09-27T14:21:01.905Z","ok":true,"bans":0}
