@@ -217,7 +217,11 @@ fn chain_link(value: &Value) -> Outcome<ChainLink> {
         value[key]
             .as_str()
             .and_then(|text| BlockId::from_hex(text).ok())
-            .ok_or_else(|| failed(format!("input.state.lastDownloaded.{key} is not a block id")))
+            .ok_or_else(|| {
+                failed(format!(
+                    "input.state.lastDownloaded.{key} is not a block id"
+                ))
+            })
     };
     let number = |key: &str| {
         value[key]
@@ -267,7 +271,11 @@ fn process(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let pending: Vec<Block> = kept.blocks[kept.blocks.len() - unstored..].to_vec();
     let stored = Stored {
         chain: &kept.ids,
-        unstored: pending.iter().flat_map(Block::transaction_ids).copied().collect(),
+        unstored: pending
+            .iter()
+            .flat_map(Block::transaction_ids)
+            .copied()
+            .collect(),
         extra: forged,
     };
     let mut state = kept.state.clone();
@@ -310,9 +318,10 @@ fn process(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     out.insert("missed".into(), missed_json(&missed));
     out.insert(
         "lastDownloaded".into(),
-        chain.last_downloaded.map_or(Value::Null, |link| {
-            json!({"height": link.height, "id": link.id.to_hex()})
-        }),
+        chain.last_downloaded.map_or(
+            Value::Null,
+            |link| json!({"height": link.height, "id": link.id.to_hex()}),
+        ),
     );
     out.insert(
         "forked".into(),
