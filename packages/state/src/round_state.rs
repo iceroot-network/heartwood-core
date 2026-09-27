@@ -24,7 +24,7 @@ use heartwood_kernel::{RoundInfo, calculate_round, is_new_round};
 use crate::dpos::dpos::set_rank;
 use crate::dpos::{build_delegate_ranking, set_delegates_round};
 use crate::errors::{RewardError, RoundError};
-use crate::persist::{RestoreError, RoundRecord};
+use crate::persist::{RestoreError, RoundDelegateRecord, RoundRecord, amount, read};
 use crate::undo::RoundUndo;
 use crate::wallets::{Delegate, Wallet, WalletRepository};
 
@@ -256,14 +256,48 @@ impl RoundState {
 impl RoundState {
     /// The round state's record.
     pub fn to_record(&self) -> RoundRecord {
-        todo!("the round's record")
+        let delegates = self.delegates.iter().map(|delegate| RoundDelegateRecord {
+            u: delegate.username.clone(),
+            pk: delegate.public_key.to_hex(),
+            vb: delegate.vote_balance.to_string(),
+        });
+        RoundRecord {
+            round: self.info.round,
+            rh: self.info.round_height,
+            nr: self.info.next_round,
+            md: self.info.max_delegates,
+            d: delegates.collect(),
+            f: self.forging.iter().map(|d| d.public_key.to_hex()).collect(),
+            b: self.blocks.clone(),
+        }
     }
 
-    /// The round state of `record`. The forging list is taken as recorded; the caller checks it
-    /// against the shuffle of the round's delegates.
+    /// The round state of `record`, whose forging list must be the shuffle of the round's
+    /// delegates.
     pub fn from_record(record: RoundRecord) -> Result<RoundState, RestoreError> {
-        let _ = record;
-        todo!("the record's round")
+        let mut delegates = Vec::with_capacity(record.d.len());
+        for d in record.d {
+            delegates.push(RoundDelegate {
+                public_key: read("round", PublicKeyBytes::from_hex(&d.pk))?,
+                vote_balance: amount("round", &d.vb)?,
+                username: d.u,
+            });
+        }
+        let forging = shuffle_delegates(record.round, &delegates);
+        if forging.iter().map(|d| d.public_key.to_hex()).ne(record.f) {
+            return Err(RestoreError::Forging);
+        }
+        Ok(RoundState {
+            info: RoundInfo {
+                round: record.round,
+                round_height: record.rh,
+                next_round: record.nr,
+                max_delegates: record.md,
+            },
+            delegates,
+            forging,
+            blocks: record.b,
+        })
     }
 }
 

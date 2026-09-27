@@ -16,13 +16,19 @@
 //!
 //! [`STATE_FORMAT`] is the format of these records; a change of any record changes it.
 
-use heartwood_crypto::Block;
+use std::fmt::Display;
+use std::str::FromStr;
+
+use heartwood_crypto::identities::Address;
+use heartwood_crypto::{Block, BlockId};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::errors::SupplyError;
+use crate::round_state::RoundState;
 use crate::stores::state::Totals;
-use crate::undo::BlockUndo;
+use crate::undo::{BlockUndo, ForgerUndo, RoundUndo, TxUndo};
+use crate::wallets::Resignation;
 
 /// The format of the records.
 pub const STATE_FORMAT: u32 = 1;
@@ -199,32 +205,131 @@ pub struct StateRecord {
     pub round: RoundRecord,
 }
 
+/// The result of reading a record.
+pub(crate) type Read<T> = Result<T, RestoreError>;
+
 impl TotalsRecord {
     /// The record of `totals`.
     pub fn from_totals(totals: &Totals) -> TotalsRecord {
-        let _ = totals;
-        todo!("the totals' record")
+        TotalsRecord {
+            issued: totals.issued.to_string(),
+            rewards: totals.rewards.to_string(),
+            burned_fees: totals.burned_fees.to_string(),
+            burned_amounts: totals.burned_amounts.to_string(),
+        }
     }
 
     /// The totals of the record.
-    pub fn to_totals(&self) -> Result<Totals, RestoreError> {
-        todo!("the record's totals")
+    pub fn to_totals(&self) -> Read<Totals> {
+        const W: &str = "totals";
+        Ok(Totals {
+            issued: amount(W, &self.issued)?,
+            rewards: amount(W, &self.rewards)?,
+            burned_fees: amount(W, &self.burned_fees)?,
+            burned_amounts: amount(W, &self.burned_amounts)?,
+        })
     }
 }
 
 impl UndoRecord {
     /// The record of `undo`.
     pub fn from_undo(undo: &BlockUndo) -> UndoRecord {
-        let _ = undo;
-        todo!("the undo record")
+        let transactions = undo.transactions.iter().map(|undo| match undo {
+            TxUndo::None => TxUndoRecord::None,
+            TxUndo::Vote { previous } => TxUndoRecord::Vote {
+                p: previous.clone().into_iter().collect(),
+            },
+            TxUndo::Resignation {
+                previous,
+                previous_height,
+            } => TxUndoRecord::Resignation {
+                p: previous.map(Resignation::number),
+                ph: *previous_height,
+            },
+        });
+        let (address, last_block) = (&undo.forger.address, &undo.forger.last_block);
+        UndoRecord {
+            h: undo.block.height(),
+            id: undo.block.id().to_hex(),
+            t: transactions.collect(),
+            f: ForgerUndoRecord {
+                a: address.to_base58(),
+                lb: last_block.as_ref().map(BlockId::to_hex),
+            },
+            tot: TotalsRecord::from_totals(&undo.totals),
+            r: undo.round.as_ref().map(|round| RoundUndoRecord {
+                p: round.previous.to_record(),
+                rk: (round.ranks.iter().map(|(a, rank)| (a.to_base58(), *rank))).collect(),
+            }),
+        }
     }
 
     /// The undo record of `block`, which the record belongs to, on the network with address byte
     /// `network`.
-    pub fn into_undo(self, block: Block, network: u8) -> Result<BlockUndo, RestoreError> {
-        let _ = (block, network);
-        todo!("the record's undo")
+    pub fn into_undo(self, block: Block, network: u8) -> Read<BlockUndo> {
+        const W: &str = "undo";
+        let (id, count) = (block.id().to_hex(), block.transactions().len());
+        if (self.h, &self.id, self.t.len()) != (block.height(), &id, count) {
+            return Err(bad(W, format!("height {} is not its block's", self.h)));
+        }
+        let mut transactions = Vec::with_capacity(count);
+        for undo in self.t {
+            transactions.push(match undo {
+                TxUndoRecord::None => TxUndo::None,
+                TxUndoRecord::Vote { p } => TxUndo::Vote {
+                    previous: p.into_iter().collect(),
+                },
+                TxUndoRecord::Resignation { p, ph } => TxUndo::Resignation {
+                    previous: p.map(|number| resignation(W, number)).transpose()?,
+                    previous_height: ph,
+                },
+            });
+        }
+        let round = self.r.map(|round| -> Read<RoundUndo> {
+            let rank = |(a, rank): (String, _)| {
+                Ok((read(W, Address::from_base58_for(&a, network))?, rank))
+            };
+            let ranks = round.rk.into_iter().map(rank);
+            Ok(RoundUndo {
+                previous: RoundState::from_record(round.p)?,
+                ranks: ranks.collect::<Read<_>>()?,
+            })
+        });
+        Ok(BlockUndo {
+            transactions,
+            forger: ForgerUndo {
+                address: read(W, Address::from_base58_for(&self.f.a, network))?,
+                last_block: read(W, self.f.lb.as_deref().map(BlockId::from_hex).transpose())?,
+            },
+            totals: self.tot.to_totals()?,
+            round: round.transpose()?,
+            block,
+        })
     }
+}
+
+/// A record of `what` whose value does not read, for the reason `detail`.
+pub(crate) fn bad(what: &'static str, detail: impl Display) -> RestoreError {
+    let detail = detail.to_string();
+    RestoreError::Record { what, detail }
+}
+
+/// The value of `result`, or its error as an error of the record of `what`.
+pub(crate) fn read<T, E: Display>(what: &'static str, result: Result<T, E>) -> Read<T> {
+    result.map_err(|error| bad(what, error))
+}
+
+/// The amount in the decimal `text`: digits only, no sign.
+pub(crate) fn amount<T: FromStr>(what: &'static str, text: &str) -> Read<T> {
+    let digits = !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    read(what, text.parse().ok().filter(|_| digits).ok_or(text))
+}
+
+/// The resignation with the reference's number `number`.
+pub(crate) fn resignation(what: &'static str, number: u8) -> Read<Resignation> {
+    let all = [Resignation::Temporary, Resignation::Permanent];
+    let found = all.into_iter().find(|r| r.number() == number);
+    read(what, found.ok_or(number))
 }
 
 /// A stored state cannot be restored; the node then replays the chain instead.
@@ -249,9 +354,7 @@ pub enum RestoreError {
     #[error("two wallets hold the delegate name {0}")]
     DuplicateUsername(String),
     /// The state record is not at the last block.
-    #[error(
-        "the state record is at height {record_height} ({record_id}); the last block is at height {block_height} ({block_id})"
-    )]
+    #[error("the state record is at height {record_height}, the last block at {block_height}")]
     LastBlock {
         /// The record's height.
         record_height: u32,
@@ -263,9 +366,7 @@ pub enum RestoreError {
         block_id: String,
     },
     /// A delegate's vote balance or voter count is not what its voters' shares add up to.
-    #[error(
-        "the vote balance or voter count of {username} is not what its voters' shares add up to"
-    )]
+    #[error("the vote balance or voter count of {username} is not its voters' shares")]
     VoteBalance {
         /// The delegate's name.
         username: String,
