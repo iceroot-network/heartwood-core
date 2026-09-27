@@ -95,7 +95,7 @@ impl Queue for JobQueue {
 }
 
 /// What the service publishes of the machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MachineStatus {
     /// The machine's state.
     pub state: MachineState,
@@ -195,15 +195,11 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
         chain_state::lock(&parts.chain).network_start = parts.options.network_start;
         Arc::new_cyclic(|service| {
             let hooks: Arc<dyn QueueEvents> = Arc::new(Hooks(service.clone()));
-            let initial = MachineStatus {
-                state: MachineState::Uninitialised,
-                started: false,
-            };
             Blockchain {
                 queue: queue(parts.node.clone(), hooks, parts.runtime.clone()),
                 depth: Mutex::new(parts.rollback.clone()),
                 parts,
-                status: watch::channel(initial).0,
+                status: watch::channel(MachineStatus::default()).0,
                 flags: Mutex::default(),
                 tasks: Mutex::default(),
             }
@@ -247,13 +243,9 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
             return;
         }
         if let Some(link) = link(&block.block) {
-            let now = self.parts.clock.now_ms();
-            let mut chain = self.chain();
-            if let Some(ping) = chain.push_ping_block(link.id, link.height, block.from_forger, now)
-            {
-                let (height, count) = (locale(ping.ping.height), ping.count);
-                debug!("Previous block {height} pinged blockchain {count} times");
-            }
+            let (now, forger) = (self.parts.clock.now_ms(), block.from_forger);
+            self.chain()
+                .push_ping_block(link.id, link.height, forger, now);
         }
         if self.chain().started {
             self.dispatch(MachineEvent::NewBlock);
@@ -592,15 +584,10 @@ pub fn cut_jobs(
     let mut heights = heights.into_iter().peekable();
     let (mut jobs, mut job, mut transactions) = (Vec::new(), Job::default(), Some(0_u64));
     for block in blocks {
-        let count = block
-            .block
-            .header
-            .header
-            .number_of_transactions
-            .map(u64::from);
+        let stated = block.block.header.header.number_of_transactions;
         transactions = transactions
-            .zip(count)
-            .map(|(sum, n)| sum.saturating_add(n));
+            .zip(stated)
+            .map(|(sum, n)| sum.saturating_add(n.into()));
         let milestone = heights.next_if_eq(&block.height()).is_some();
         job.blocks.push(block);
         let full =

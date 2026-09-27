@@ -161,11 +161,9 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
         let exclude: Vec<_> = pool.by_priority.iter().map(|t| *t.id()).collect();
         let transactions = self.parts.network.download_transactions(&exclude).await;
         if !transactions.is_empty() {
-            let entries = transactions.into_iter().map(Entry::Bytes).collect();
-            let _ = self
-                .parts
-                .node
-                .pool_entries(Channel::Download, entries)
+            let (entries, node) = (transactions.into_iter().map(Entry::Bytes), &self.parts.node);
+            let _ = node
+                .pool_entries(Channel::Download, entries.collect())
                 .await;
         }
     }

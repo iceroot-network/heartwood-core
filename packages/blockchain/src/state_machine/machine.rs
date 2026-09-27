@@ -45,10 +45,11 @@ named! {
     }
 }
 
-/// A state of the machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A state of the machine; `uninitialised` by default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum MachineState {
     /// `uninitialised`.
+    #[default]
     Uninitialised,
     /// `initialise`.
     Initialise,
