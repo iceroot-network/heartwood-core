@@ -12,8 +12,11 @@ cd "$(dirname "$0")/.."
 command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (cargo install tokei)" >&2; exit 2; }
 
 # name: path (a crate's src/ or a part of it), ceiling (empty: informational)
+# heartwood-crypto was re-baselined from 5,500 to 5,750 with the state machine crates, which added
+# the milestones' fee table and revoke delay, the domain-tag registry and the transaction type key;
+# about 680 of its lines are the devnet chain-definition builder behind the `genesis` feature.
 CHECKS=(
-    "heartwood-crypto:packages/crypto/src:5500"
+    "heartwood-crypto:packages/crypto/src:5750"
     "heartwood-kernel:packages/kernel/src:1500"
     "heartwood-kernel utils:packages/kernel/src/utils:400"
     "heartwood-logger:packages/logger/src:500"
@@ -83,7 +86,7 @@ fail=0
 for check in "${CHECKS[@]}"; do
     IFS=: read -r name paths ceiling <<<"$check"
     # shellcheck disable=SC2086  # paths is a list
-    existing=$(for p in $paths; do [ -e "$p" ] && echo "$p"; done)
+    existing=$(for p in $paths; do if [ -e "$p" ]; then echo "$p"; fi; done)
     [ -n "$existing" ] || { echo "check-lines: $name: not in this tree"; continue; }
     dir="$work/$(echo "$name" | tr -c 'a-z0-9' '_')"
     mkdir -p "$dir"

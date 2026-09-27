@@ -1,6 +1,7 @@
 # Heartwood Core: Rust checks and the differential-test workflow. `make help` lists the targets.
 #
-#   make check          build, clippy (warnings are errors), fmt check, tests and the release check
+#   make check          build, clippy (warnings are errors), fmt check, tests, the release check,
+#                       the crate layers, and the review ceilings where tokei is installed
 #   make oracle-image   build the oracle image for COMMIT from scratch (needs Docker and the network)
 #   make e2e            vectors in the container and locally, diff the two runs, run L0
 #   make vectors-install  copy the container run into each crate's tests/vectors
@@ -76,7 +77,7 @@ need-name = $(if $(NAME),,$(error set NAME, the corpus under CORPUS=$(CORPUS)))
 
 .PHONY: help check build clippy fmt fmt-check test release-check oracle-context oracle-image \
         oracle-save vectors vectors-local vectors-diff vectors-install l0 ping test-oracle e2e \
-        l1 corpus-import corpus-judge corpus-verify l2 l2-synthetic layers lines
+        l1 corpus-import corpus-judge corpus-verify l2 l2-synthetic layers lines lines-if-tokei
 
 help: ## this list
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | awk -F'\t' '{ printf "  make %-15s %s\n", $$1, $$2 }'
@@ -84,7 +85,7 @@ help: ## this list
 	@echo "           VECTORS=$(VECTORS) IMAGE_DIR=$(IMAGE_DIR) TOOLCHAIN_ENV=$(TOOLCHAIN_ENV)"
 	@echo "           DEVNET_GENERATOR=$(DEVNET_GENERATOR) CORPUS=$(CORPUS) ORACLE_ARGS=$(ORACLE_ARGS)"
 
-check: build clippy fmt-check test release-check ## build, clippy, fmt check, tests, release check
+check: build clippy fmt-check test release-check layers lines-if-tokei ## build, clippy, fmt check, tests, release check, layers, ceilings
 
 build: ## cargo build (the difftest binary)
 	$(TOOLCHAIN) && cargo build --locked
@@ -233,3 +234,8 @@ layers: ## crate edges follow the layers; no async, storage or HTTP crate in the
 
 lines: ## code lines per crate against the review ceilings (tokei, inline tests excluded)
 	$(TOOLCHAIN) && tools/check-lines.sh
+
+# make check runs the ceilings only where tokei is installed; `make lines` needs it.
+lines-if-tokei:
+	@$(TOOLCHAIN) && if command -v tokei >/dev/null 2>&1; then tools/check-lines.sh; \
+	else echo "lines: tokei is not installed, so the review ceilings are not checked (make lines)"; fi
