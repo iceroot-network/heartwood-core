@@ -316,7 +316,7 @@ fn run_l1(args: &L1Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
     )?;
     print!("{}", run.report);
     if !run.classes.is_empty() {
-        println!("  handler outcomes (the reference's):");
+        println!("  outcomes (the reference's):");
         for (class, n) in &run.classes {
             println!("    {n:>7}  {class}");
         }

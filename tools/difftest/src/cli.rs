@@ -30,7 +30,7 @@ Usage:
   difftest run l0 DIR             compare golden vectors with Heartwood's implementations
   difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR]
                   [--regressions DIR] [ORACLE]
-                                  random and mutated cases of the properties (P1 to P9, or
+                                  random and mutated cases of the properties (P1 to P12, or
                                   their names; all by default), one oracle call each; 256
                                   cases and seed 1 by default; DIR is a vector set with the
                                   genesis class [packages/crypto/tests/vectors]; the minimal
@@ -855,7 +855,7 @@ mod tests {
             "run l0",
             "run l2",
             "run l1 --cases 0",
-            "run l1 --property P10",
+            "run l1 --property P13",
             "corpus import --out o",
             "corpus import a",
             "corpus judge c --dump x",

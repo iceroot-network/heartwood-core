@@ -54,11 +54,17 @@ pub enum Property {
     KernelText,
     /// The state digest of a fixture (`state.digest`).
     Digest,
+    /// A pool session over a fixture (`pool.run`).
+    Pool,
+    /// The reference's message formats (`text.*`).
+    Text,
+    /// The crypto files, loaded with the strict schema (`config.load`).
+    Config,
 }
 
 impl Property {
     /// Every property.
-    pub const ALL: [Property; 9] = [
+    pub const ALL: [Property; 12] = [
         Property::FeeFloor,
         Property::Rounds,
         Property::Slots,
@@ -68,6 +74,9 @@ impl Property {
         Property::Handlers,
         Property::KernelText,
         Property::Digest,
+        Property::Pool,
+        Property::Text,
+        Property::Config,
     ];
 
     /// The property's name on the command line.
@@ -82,10 +91,13 @@ impl Property {
             Property::Handlers => "handlers",
             Property::KernelText => "kernel-text",
             Property::Digest => "digest",
+            Property::Pool => "pool",
+            Property::Text => "text",
+            Property::Config => "config",
         }
     }
 
-    /// The property's short name, P1 to P9, which the command line accepts too.
+    /// The property's short name, P1 to P12, which the command line accepts too.
     pub const fn number(self) -> &'static str {
         match self {
             Property::FeeFloor => "P1",
@@ -97,6 +109,9 @@ impl Property {
             Property::Handlers => "P7",
             Property::KernelText => "P8",
             Property::Digest => "P9",
+            Property::Pool => "P10",
+            Property::Text => "P11",
+            Property::Config => "P12",
         }
     }
 }
@@ -181,6 +196,51 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
                 input: json!({"fixture": f.to_json()}),
             })
             .boxed(),
+        Property::Pool => crate::strategies::pool::pool_cases(context.clone())
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::Text => crate::strategies::text::text_cases()
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::Config => crate::strategies::config::config_cases(context.clone())
+            .prop_map(L1Case::plain)
+            .boxed(),
+    }
+}
+
+/// The outcomes of the reference in a pool session's answer, counted: each error code, an
+/// `ERR_APPLY` of the cold-wallet refusal apart, and every accepted entry.
+fn pool_outcomes(expected: &Expected, seen: &mut BTreeMap<String, usize>) {
+    let Expected::Output(output) = expected else {
+        return;
+    };
+    for step in output["results"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let result = &step["result"];
+        let accepted = result["accept"].as_array().map_or(0, Vec::len);
+        if accepted > 0 {
+            *seen.entry("pool accepted".into()).or_insert(0) += accepted;
+        }
+        for error in result["errors"]
+            .as_object()
+            .into_iter()
+            .flat_map(|e| e.values())
+        {
+            let code = error["type"].as_str().unwrap_or("?");
+            let message = error["message"].as_str().unwrap_or("");
+            let key = if code == "ERR_APPLY" && message.contains("cold") {
+                "pool ERR_APPLY (cold wallet)".to_owned()
+            } else {
+                format!("pool {code}")
+            };
+            *seen.entry(key).or_insert(0) += 1;
+        }
+        if result["notes"]["fullPoolEviction"] == Value::Bool(true) {
+            *seen.entry("pool full-pool eviction".into()).or_insert(0) += 1;
+        }
     }
 }
 
@@ -233,7 +293,9 @@ pub struct L1Run {
     /// One result per case (the passes, skips and documented differences) and the minimal failing
     /// case of each failed property.
     pub report: Report,
-    /// For the handler property: how often each outcome occurred (`applied` or an error class).
+    /// For the handler property: how often each outcome occurred (`applied` or an error class);
+    /// for the pool property, each error code of the reference's answers (`pool ERR_...`), the
+    /// accepted entries and the full-pool evictions.
     pub classes: BTreeMap<String, usize>,
 }
 
@@ -265,7 +327,22 @@ pub fn run(
         };
         let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &seed_for(options.seed, *property));
         let mut runner = TestRunner::new_with_rng(config, rng);
-        let outcome = runner.run(&strategy(*property, context), |case| {
+        // A property whose strategy is still a stub is skipped, as its subject's cases would be.
+        let cases = match crate::store::guarded(|| strategy(*property, context)) {
+            Ok(cases) => cases,
+            Err(crate::store::Unbuilt(message)) => {
+                results.push(CaseResult {
+                    file: format!("l1/{}", property.name()),
+                    line: 0,
+                    op: property.number().to_owned(),
+                    label: property.number().into(),
+                    height: 0,
+                    outcome: Outcome::Skipped(format!("not built yet: {message}")),
+                });
+                continue;
+            }
+        };
+        let outcome = runner.run(&cases, |case| {
             if harness.borrow().is_some() {
                 return Err(TestCaseError::fail("the oracle failed"));
             }
@@ -293,6 +370,9 @@ pub fn run(
                 let class = refusal_class(&answer).unwrap_or_else(|| "applied".into());
                 *seen.borrow_mut().entry(class).or_insert(0) += 1;
             }
+            if *property == Property::Pool {
+                pool_outcomes(&answer, &mut seen.borrow_mut());
+            }
             let judged = super::judge_documented(&request, &answer, registry);
             let failed = judged.is_failure();
             let message = format!("{judged:?}");
@@ -306,7 +386,7 @@ pub fn run(
         if let Some(e) = harness.into_inner() {
             return Err(e);
         }
-        if *property == Property::Handlers {
+        if matches!(*property, Property::Handlers | Property::Pool) {
             for (class, n) in seen.into_inner() {
                 *classes.entry(class).or_insert(0) += n;
             }
@@ -474,7 +554,9 @@ mod tests {
         assert_eq!("P7".parse::<Property>().unwrap(), Property::Handlers);
         assert_eq!("p1".parse::<Property>().unwrap(), Property::FeeFloor);
         assert_eq!("digest".parse::<Property>().unwrap(), Property::Digest);
-        assert!("P10".parse::<Property>().is_err());
+        assert_eq!("P10".parse::<Property>().unwrap(), Property::Pool);
+        assert_eq!("p12".parse::<Property>().unwrap(), Property::Config);
+        assert!("P13".parse::<Property>().is_err());
     }
 
     #[test]
