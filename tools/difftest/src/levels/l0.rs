@@ -122,6 +122,7 @@ fn judge_result(result: Result<Verdict, SubjectError>, expected: &Expected) -> O
         },
         (Err(SubjectError::Unsupported(why)), _) => Outcome::Skipped(why),
         (Err(SubjectError::Failed(why)), _) => Outcome::HarnessError(why),
+        (Err(SubjectError::NotImplemented), _) => Outcome::NoSubject,
     }
 }
 
@@ -264,6 +265,7 @@ mod tests {
                     holds: false,
                 }),
                 Some("later") => Err(SubjectError::Unsupported("later".into())),
+                Some("not written") => Err(SubjectError::NotImplemented),
                 _ => Ok(Verdict::Output(
                     json!({"privateKey": "00", "publicKey": self.0}),
                 )),
@@ -296,6 +298,24 @@ mod tests {
             report
                 .to_string()
                 .contains("0 compared: 0 passed, 0 failed")
+        );
+    }
+
+    #[test]
+    fn a_subject_not_written_yet_counts_as_no_implementation() {
+        let (_dir, set) = set(
+            "not-written",
+            &[keys_record("not written", "02aa")],
+            "native",
+        );
+        let mut registry = Registry::new();
+        registry.register(Box::new(FakeKeys("02aa"))).unwrap();
+        let report = run(&set, &registry);
+        assert_eq!(report.results[0].outcome, Outcome::NoSubject);
+        assert!(report.is_success());
+        assert_eq!(
+            report.without_subject().get("keys.fromPassphrase"),
+            Some(&1)
         );
     }
 

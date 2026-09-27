@@ -356,3 +356,75 @@ replay-wire: build ## each wire fuzz corpus through the oracle (ORACLE_ARGS) and
 	done; \
 	exit $$fail
 # ---- end of heartwood-p2p-wire ----
+
+# ---- heartwood-p2p: the client side of the peer protocol ----
+# Its vector classes, and the wire's new one, are installed once an oracle image writes them.
+# Until then the crate tests read a class that is not installed from the directory that
+# P2P_VECTORS (heartwood-p2p and difftest's network_vectors test) or WIRE_VECTORS
+# (heartwood-p2p-wire) names, relative to the workspace root, such as the run of
+# `make vectors-local`; without either the test reports the class as not installed and passes.
+P2P_FUZZ      := nes_session reply_check listed_block
+# The oracle operation that replays each p2p fuzz target's corpus; the session's has none.
+P2P_REPLAY    := reply_check=wire.checkReply listed_block=block.fromListed
+# The vector run whose records seed the corpora of reply_check and listed_block.
+P2P_SEEDS     ?= $(VECTORS)/local
+P2P_LOGS      ?= target/p2p-fuzz
+RELEASE_PACKAGES += heartwood-p2p
+SEAMS         += heartwood-p2p:difftest
+
+.PHONY: test-p2p fuzz-p2p replay-p2p
+
+check: test-p2p
+
+test-p2p: ## heartwood-p2p alone: clippy (warnings are errors) and cargo test, without and with its features
+	$(TOOLCHAIN) && cargo clippy -p heartwood-p2p --all-targets --locked -- -D warnings
+	$(TOOLCHAIN) && cargo clippy -p heartwood-p2p --all-targets --all-features --locked -- -D warnings
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-p2p
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-p2p --all-features
+
+# The three targets run at the same time, FUZZ_FORK jobs each, with the wire targets' libFuzzer
+# options; reply_check and listed_block are seeded from the records of P2P_SEEDS when it exists.
+fuzz-p2p: ## the p2p fuzz targets at once, FUZZ_SECONDS each (nightly and cargo-fuzz); logs in P2P_LOGS
+	@$(TOOLCHAIN) && if [ -d '$(P2P_SEEDS)' ]; then \
+	    node tools/p2p-fuzz-seeds.js '$(P2P_SEEDS)' $(FUZZ_CORPUS) $(WIRE_SEED_MAX); \
+	else \
+	    echo "fuzz-p2p: no seeds: $(P2P_SEEDS) does not exist"; \
+	fi
+	$(TOOLCHAIN) && for target in $(P2P_FUZZ); do cargo +nightly fuzz build $$target || exit 1; done
+	@$(TOOLCHAIN) && mkdir -p $(P2P_LOGS) && pids=; \
+	for target in $(P2P_FUZZ); do \
+	    mkdir -p $(FUZZ_CORPUS)/$$target; \
+	    cargo +nightly fuzz run $$target -- $(WIRE_LIBFUZZER) > $(P2P_LOGS)/$$target.log 2>&1 & pids="$$pids $$!"; \
+	done; \
+	echo "fuzz-p2p: $(P2P_FUZZ) running for $(FUZZ_SECONDS) s, $(FUZZ_FORK) jobs each; logs in $(P2P_LOGS)"; \
+	fail=0; set -- $(P2P_FUZZ); \
+	for pid in $$pids; do \
+	    target=$$1; shift; \
+	    wait $$pid || { echo "fuzz-p2p: $$target stopped with a failure, see $(P2P_LOGS)/$$target.log" >&2; fail=1; }; \
+	    last=$$(grep -E '^#[0-9]+: cov: ' $(P2P_LOGS)/$$target.log | tail -n 1); \
+	    files=$$(find $(FUZZ_CORPUS)/$$target -type f | wc -l); \
+	    size=$$(du -sk $(FUZZ_CORPUS)/$$target | cut -f1); \
+	    echo "fuzz-p2p: $$target: $${last:-no status line}; corpus $$files files, $$size KiB"; \
+	    case "$$last" in *'oom/timeout/crash: 0/0/0 '*) ;; *) fail=1 ;; esac; \
+	done; \
+	exit $$fail
+
+# Every input of a corpus must be compared, as in replay-wire.
+replay-p2p: build ## the reply_check and listed_block corpora through the oracle (ORACLE_ARGS) and Heartwood; logs in P2P_LOGS
+	$(need-image)
+	@$(TOOLCHAIN) && mkdir -p $(P2P_LOGS) && fail=0; \
+	for pair in $(P2P_REPLAY); do \
+	    target=$${pair%%=*}; op=$${pair#*=}; log=$(P2P_LOGS)/replay-$$target.log; \
+	    if [ -z "$$(ls -A $(FUZZ_CORPUS)/$$target 2>/dev/null)" ]; then \
+	        echo "replay-p2p: $(FUZZ_CORPUS)/$$target is missing or empty (make fuzz-p2p)" >&2; fail=1; continue; \
+	    fi; \
+	    $(DIFFTEST) oracle replay $$op $(FUZZ_CORPUS)/$$target --vectors packages/crypto/tests/vectors $(ORACLE_ARGS) \
+	        > $$log 2>&1; status=$$?; cat $$log; \
+	    if [ $$status != 0 ]; then \
+	        echo "replay-p2p: $$target: the replay failed (exit $$status)" >&2; fail=1; \
+	    elif grep -qE '^  [0-9]+ (skipped|records have no Rust implementation)' $$log; then \
+	        echo "replay-p2p: $$target: some inputs were not compared" >&2; fail=1; \
+	    fi; \
+	done; \
+	exit $$fail
+# ---- end of heartwood-p2p ----

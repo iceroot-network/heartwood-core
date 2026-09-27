@@ -9,7 +9,9 @@
 use std::fmt::Debug;
 
 use heartwood_p2p_wire::codecs::blocks::{self, ListedBlock};
-use heartwood_p2p_wire::codecs::transactions::{self, UnconfirmedRequest, WithTransactions};
+use heartwood_p2p_wire::codecs::transactions::{
+    self, PostTransactionsInput, UnconfirmedRequest, UnconfirmedRequestInput, WithTransactions,
+};
 use heartwood_p2p_wire::codecs::{Amount, peer};
 use heartwood_p2p_wire::status::{self, ReceivedStatus};
 use heartwood_p2p_wire::{Codec, DecodeError, list};
@@ -81,7 +83,15 @@ fuzz_target!(|bytes: &[u8]| {
         Codec::GetUnconfirmedTransactionsRequest => check(
             payload,
             transactions::get_unconfirmed_transactions_decode_request,
-            transactions::get_unconfirmed_transactions_encode_request,
+            |request: &UnconfirmedRequest| {
+                transactions::get_unconfirmed_transactions_encode_request(
+                    &UnconfirmedRequestInput {
+                        count_only: request.request.count_only,
+                        exclude: request.exclude.clone(),
+                        headers: request.request.headers.clone(),
+                    },
+                )
+            },
             |request: &mut UnconfirmedRequest| {
                 request.request.exclude = Some(request.exclude.as_flattened().to_vec());
             },
@@ -98,7 +108,12 @@ fuzz_target!(|bytes: &[u8]| {
         Codec::PostTransactionsRequest => check(
             payload,
             transactions::post_transactions_decode_request,
-            transactions::post_transactions_encode_request,
+            |request: &WithTransactions<_>| {
+                transactions::post_transactions_encode_request(&PostTransactionsInput {
+                    transactions: request.transactions.clone(),
+                    headers: request.message.headers.clone(),
+                })
+            },
             |request: &mut WithTransactions<_>| {
                 request.message.transactions = Some(list::encode(&request.transactions));
                 drop_final_empty(&mut request.transactions);

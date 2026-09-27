@@ -1,0 +1,7 @@
+# Lints of heartwood-p2p. Time comes from heartwood_kernel::clock::Clock (wall-clock readings:
+# infractions, last pings, slots) or from tokio's clock (timeouts, delays and rate windows), which
+# the tests pause, so no code reads the operating system's clock directly.
+disallowed-types = [
+    { path = "std::time::SystemTime", reason = "read the time through heartwood_kernel::clock::Clock" },
+    { path = "std::time::Instant", reason = "use tokio::time::Instant, which the tests pause" },
+]

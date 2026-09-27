@@ -29,7 +29,7 @@ use crate::fixture::Fixture;
 use crate::oracle::OracleServer;
 use crate::report::{CaseResult, Outcome, Report};
 use crate::strategies::transactions::{TxContext, fee_cases, handler_cases};
-use crate::strategies::{fixtures, kernel, state};
+use crate::strategies::{exchange, fixtures, kernel, monitor, state, verifier};
 use crate::subject::{Case, Registry};
 use crate::vectors::Expected;
 
@@ -60,11 +60,17 @@ pub enum Property {
     Text,
     /// The crypto files, loaded with the strict schema (`config.load`).
     Config,
+    /// The peer verifier (`verifier.checkState`).
+    Verifier,
+    /// The client's requests and the peers' replies (`p2p.validateRequest`, `wire.checkReply`).
+    Exchange,
+    /// The network monitor's decisions (`monitor.forkDecision`, `monitor.networkHeight`).
+    Monitor,
 }
 
 impl Property {
     /// Every property.
-    pub const ALL: [Property; 12] = [
+    pub const ALL: [Property; 15] = [
         Property::FeeFloor,
         Property::Rounds,
         Property::Slots,
@@ -77,6 +83,9 @@ impl Property {
         Property::Pool,
         Property::Text,
         Property::Config,
+        Property::Verifier,
+        Property::Exchange,
+        Property::Monitor,
     ];
 
     /// The property's name on the command line.
@@ -94,10 +103,13 @@ impl Property {
             Property::Pool => "pool",
             Property::Text => "text",
             Property::Config => "config",
+            Property::Verifier => "verifier",
+            Property::Exchange => "exchange",
+            Property::Monitor => "monitor",
         }
     }
 
-    /// The property's short name, P1 to P12, which the command line accepts too.
+    /// The property's short name (P1 to P12, P14 to P16), which the command line accepts too.
     pub const fn number(self) -> &'static str {
         match self {
             Property::FeeFloor => "P1",
@@ -112,6 +124,9 @@ impl Property {
             Property::Pool => "P10",
             Property::Text => "P11",
             Property::Config => "P12",
+            Property::Verifier => "P14",
+            Property::Exchange => "P15",
+            Property::Monitor => "P16",
         }
     }
 }
@@ -203,6 +218,15 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
             .prop_map(L1Case::plain)
             .boxed(),
         Property::Config => crate::strategies::config::config_cases(context.clone())
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::Verifier => verifier::verifier_cases(context)
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::Exchange => exchange::exchange_cases(context)
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::Monitor => monitor::monitor_cases(context)
             .prop_map(L1Case::plain)
             .boxed(),
     }

@@ -11,14 +11,19 @@
 //! - [`state`]: shuffles, rankings and vote maps;
 //! - [`pool`]: pool sessions: fixtures, options and steps;
 //! - [`text`]: amounts, counts, symbols and transactions for the message formats;
-//! - [`config`]: mutations of the devnet's crypto files.
+//! - [`config`]: mutations of the devnet's crypto files;
+//! - [`verifier`], [`exchange`] and [`monitor`]: the peer network's verifier, requests and
+//!   replies, and monitor decisions.
 
 pub mod config;
+pub mod exchange;
 pub mod kernel;
+pub mod monitor;
 pub mod pool;
 pub mod state;
 pub mod text;
 pub mod transactions;
+pub mod verifier;
 
 use heartwood_crypto::BlockId;
 use heartwood_crypto::identities::{Address, KeyPair, PublicKey, PublicKeyBytes};

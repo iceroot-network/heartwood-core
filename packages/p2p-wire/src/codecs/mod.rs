@@ -13,6 +13,12 @@
 //!   as 32-byte ids.
 //! - getUnconfirmedTransactions response and postTransactions request
 //!   ([`transactions::WithTransactions`]): the transactions as a list.
+//!
+//! The encoders of the requests a node's client writes take inputs that hold each value once:
+//! [`transactions::UnconfirmedRequestInput`] and [`transactions::PostTransactionsInput`] (the
+//! getPeers, getCommonBlocks, getStatus, getBlocks and postBlock requests are their messages,
+//! which hold nothing twice). The response encoders take the decoded values, whose message fields
+//! for the lists and amounts they do not read.
 //! - getPeers and postTransactions responses: the message's one repeated field.
 //!
 //! Where the reference spreads a decoded object and sets keys (`{...decoded, block}`), the decoder

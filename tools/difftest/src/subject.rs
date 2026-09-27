@@ -92,6 +92,8 @@ pub enum Documented {
     /// Crypto files that the strict schema refuses: an unknown key, a `null`, a height twice, a
     /// removed feature turned on, a missing file, or a non-empty `exceptions.json`.
     StrictSchema,
+    /// A peer's fork segment whose fetched headers do not chain (previous id, height + 1).
+    UnlinkedForkSegment,
 }
 
 impl Documented {
@@ -185,6 +187,12 @@ impl Documented {
                  the file and key, the reference loads them or falls back to its built-in preset \
                  (a configuration-only difference; generated devnets never contain one)"
             }
+            Documented::UnlinkedForkSegment => {
+                "a fork segment whose headers do not chain: the reference checks each fetched \
+                 header's signature, height and round delegate only, Heartwood also requires each \
+                 to chain to the one before it and refuses the peer (crafted peers only; every \
+                 honest segment chains)"
+            }
         }
     }
 }
@@ -239,6 +247,10 @@ pub enum SubjectError {
     /// The subject itself failed (a harness bug, not a Heartwood verdict).
     #[error("{0}")]
     Failed(String),
+    /// The operation's subject is registered but not written yet; the case is reported as having
+    /// no Rust implementation, as an unregistered operation is.
+    #[error("no Rust implementation yet")]
+    NotImplemented,
 }
 
 /// One case as both levels describe it.

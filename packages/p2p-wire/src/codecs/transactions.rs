@@ -2,6 +2,7 @@
 
 use crate::errors::DecodeError;
 use crate::list;
+use crate::messages::shared::Headers;
 use crate::messages::transactions::{
     GetUnconfirmedTransactionsRequest, GetUnconfirmedTransactionsResponse, PostTransactionsRequest,
     PostTransactionsResponse,
@@ -11,11 +12,12 @@ use crate::messages::{Proto, WireOrder};
 /// The field number of `GetUnconfirmedTransactionsRequest.exclude`.
 const EXCLUDE: u32 = 2;
 
-/// A getUnconfirmedTransactions request: `{...decoded, exclude}`.
+/// A decoded getUnconfirmedTransactions request: `{...decoded, exclude}`.
 ///
 /// The message's `exclude` holds the bytes as they came (none where it was absent, as it is
 /// always present in a decoded request), and is noted in the wire order;
-/// [`UnconfirmedRequest::exclude`] is the list the reference reads from them.
+/// [`UnconfirmedRequest::exclude`] is the list the reference reads from them. The encoder takes an
+/// [`UnconfirmedRequestInput`], which holds each value once.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UnconfirmedRequest {
     /// The message. When encoding, its `exclude` is not used.
@@ -23,6 +25,26 @@ pub struct UnconfirmedRequest {
     /// The excluded transaction ids: empty unless the bytes are a multiple of 32 long, and at
     /// most 15,001 ids.
     pub exclude: Vec<[u8; 32]>,
+}
+
+/// What the getUnconfirmedTransactions request encoder writes: each field once.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UnconfirmedRequestInput {
+    /// `countOnly`, written when present. The reference's client never writes it.
+    pub count_only: Option<bool>,
+    /// The excluded transaction ids, written concatenated as `exclude`, even when there is none.
+    pub exclude: Vec<[u8; 32]>,
+    /// The client's headers, written when present.
+    pub headers: Option<Headers>,
+}
+
+/// What the postTransactions request encoder writes: each field once.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PostTransactionsInput {
+    /// The serialised transactions, written as a list, even when there is none.
+    pub transactions: Vec<Vec<u8>>,
+    /// The client's headers, written when present.
+    pub headers: Option<Headers>,
 }
 
 /// A message whose `transactions` field is a list of transactions: `{...decoded, transactions}`.
@@ -40,10 +62,12 @@ pub struct WithTransactions<M> {
 
 /// The getUnconfirmedTransactions request: the ids concatenated as `exclude`, written even when
 /// there is none.
-pub fn get_unconfirmed_transactions_encode_request(request: &UnconfirmedRequest) -> Vec<u8> {
+pub fn get_unconfirmed_transactions_encode_request(request: &UnconfirmedRequestInput) -> Vec<u8> {
     GetUnconfirmedTransactionsRequest {
+        count_only: request.count_only,
         exclude: Some(request.exclude.as_flattened().to_vec()),
-        ..request.request.clone()
+        headers: request.headers.clone(),
+        ..GetUnconfirmedTransactionsRequest::default()
     }
     .encode()
 }
@@ -73,10 +97,13 @@ pub fn get_unconfirmed_transactions_decode_response(
 }
 
 /// The postTransactions request: the transactions as a list, always written.
-pub fn post_transactions_encode_request(
-    request: &WithTransactions<PostTransactionsRequest>,
-) -> Vec<u8> {
-    encode_listed(request)
+pub fn post_transactions_encode_request(request: &PostTransactionsInput) -> Vec<u8> {
+    PostTransactionsRequest {
+        transactions: Some(list::encode(&request.transactions)),
+        headers: request.headers.clone(),
+        ..PostTransactionsRequest::default()
+    }
+    .encode()
 }
 
 /// The postTransactions request, with its transaction list read.

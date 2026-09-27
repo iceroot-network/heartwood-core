@@ -10,11 +10,11 @@
 //!
 //! Verifier side. [`decode_response`] is the getStatus response codec; [`check_reply`] is the
 //! reference's reply schema for getStatus, with the changes it makes to the reply (it drops plugin
-//! names outside 4 to 64 UTF-16 code units and lowercases the generator's key);
-//! [`verifying_preimage`] rebuilds the signed bytes from the checked reply, turning the slot
-//! negative again when the verifier's own slot is; [`verify_attestation`] checks one pair of key
-//! and signature. What a node then does with the verified keys (the slot window, the delegate
-//! list) is not part of the codec.
+//! names outside 4 to 64 UTF-16 code units and lowercases the generator's key), and gives the
+//! accepted reply back as a [`CheckedStatus`]; [`verifying_preimage`] rebuilds the signed bytes
+//! from a checked reply only, turning the slot negative again when the verifier's own slot is;
+//! [`verify_attestation`] checks one pair of key and signature. What a node then does with the
+//! verified keys (the slot window, the delegate list) is not part of the codec.
 
 mod attest;
 mod json;
@@ -26,7 +26,8 @@ mod tests;
 
 pub use self::attest::{Attestation, attest, response, verify_attestation};
 pub use self::reply::{
-    ReceivedStatus, check_reply, decode_response, encode_response, verifying_preimage,
+    CheckedStatus, ReceivedStatus, check_reply, decode_response, encode_response,
+    verifying_preimage,
 };
 pub use self::tree::{
     NetworkConfig, PeerConfig, PluginConfig, SignedState, StatusHeaderData, TokenConfig,

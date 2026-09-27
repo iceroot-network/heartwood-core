@@ -124,23 +124,23 @@ pub(super) fn verify(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     }
     .and_then(|n| usize::try_from(n).ok())
     .ok_or_else(|| failed("input.maxDelegates is not a count"))?;
-    let mut received = match status::decode_response(&bytes) {
+    let received = match status::decode_response(&bytes) {
         Ok(received) => received,
         Err(error) => return Ok(deep(refused(error))),
     };
     let inherits =
         (received.message.config.as_ref()).is_some_and(|config| config.plugins.inherits_plugin());
-    let checked = status::check_reply(&mut received, max_delegates);
+    let checked = status::check_reply(received, max_delegates);
     // The reference's check sees the inherited plugin's properties among the plugins, so it refuses
     // there; Heartwood's check drops the entry, accepts, or refuses at a later part.
     let documented = inherits
         && matches!(
             checked,
-            Ok(()) | Err(ReplyRefused::PublicKeys | ReplyRefused::Signatures)
+            Ok(_) | Err(ReplyRefused::PublicKeys | ReplyRefused::Signatures)
         );
     let output = match checked {
         Err(part) => json!({ "valid": false, "refused": part_name(part) }),
-        Ok(()) => {
+        Ok(received) => {
             let message = &received.message;
             let pairs = |preimage: &[u8]| -> Vec<bool> {
                 (message.signatures.iter().enumerate())
@@ -192,6 +192,10 @@ fn part_name(part: ReplyRefused) -> &'static str {
         ReplyRefused::Plugins => "plugins",
         ReplyRefused::PublicKeys => "publicKeys",
         ReplyRefused::Signatures => "signatures",
+        ReplyRefused::Peer => "peer",
+        ReplyRefused::Common => "common",
+        ReplyRefused::PostBlock => "postBlock",
+        ReplyRefused::Unconfirmed => "unconfirmed",
     }
 }
 

@@ -1,0 +1,55 @@
+[package]
+name = "heartwood-p2p"
+description = "The peer-to-peer network of Heartwood Core, client side: nes sessions over WebSocket, peers and their acceptance, the communicator, status attestations, peer verification and the network monitor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Test seam: a sampling generator with a fixed seed, and the scripted mock peer with its
+# `mock-peer` binary. Only test code enables it (the harness, the fuzz targets and tests); a
+# release build never does.
+difftest = []
+
+# The client reaches the node's chain, store and online record only through the traits of
+# `view`, so its edges are the crypto crate, the kernel (without its event bus) and the wire
+# codec. Every reply is untrusted input.
+[dependencies]
+futures-util.workspace = true
+heartwood-crypto.workspace = true
+heartwood-kernel.workspace = true
+heartwood-p2p-wire.workspace = true
+indexmap.workspace = true
+rand.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "net", "rt", "sync", "time"] }
+tokio-tungstenite.workspace = true
+
+# The tests drive time with tokio's paused clock and the kernel's manual clock.
+[dev-dependencies]
+heartwood-kernel = { workspace = true, features = ["difftest"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
+
+# The standalone mock peer, for the node's kill and end-to-end tests.
+[[bin]]
+name = "mock-peer"
+path = "src/testing/mock_peer_main.rs"
+required-features = ["difftest"]
+test = false
+doc = false
+
+# The tests of the nes session and the connector run against the mock peer.
+[[test]]
+name = "session"
+required-features = ["difftest"]
+
+[[test]]
+name = "connector"
+required-features = ["difftest"]

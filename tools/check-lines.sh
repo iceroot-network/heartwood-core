@@ -19,6 +19,8 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # heartwood-transactions (a move, not new code), and the JavaScript number formatting of the
 # reference's messages (grouped integers and fractions, amounts with the network's symbol, a
 # transaction's short text) joined the one module that holds JavaScript number semantics.
+# heartwood-p2p's ceiling covers the client and the server side of the peer protocol; the client
+# side is listed on its own.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1500"
@@ -32,6 +34,8 @@ CHECKS=(
     "heartwood-pool:packages/pool/src:2000"
     "heartwood-blockchain:packages/blockchain/src:3500"
     "heartwood-blockchain storage and restart:packages/blockchain/src/commit.rs packages/blockchain/src/rows.rs packages/blockchain/src/restore.rs packages/blockchain/src/milestones.rs:"
+    "heartwood-p2p:packages/p2p/src:6000"
+    "heartwood-p2p client side:packages/p2p/src/nes packages/p2p/src/transport.rs packages/p2p/src/connector.rs packages/p2p/src/testing packages/p2p/src/rate_limiter.rs packages/p2p/src/utils packages/p2p/src/peer.rs packages/p2p/src/repository.rs packages/p2p/src/communicator.rs packages/p2p/src/attestation.rs packages/p2p/src/processor.rs packages/p2p/src/scoring.rs packages/p2p/src/verifier.rs packages/p2p/src/nsect.rs packages/p2p/src/monitor.rs packages/p2p/src/chunk_cache.rs packages/p2p/src/download.rs packages/p2p/src/broadcaster.rs packages/p2p/src/seeds.rs packages/p2p/src/diversity.rs packages/p2p/src/options.rs packages/p2p/src/view.rs packages/p2p/src/seams.rs packages/p2p/src/errors.rs packages/p2p/src/lib.rs:"
 )
 
 work=$(mktemp -d)

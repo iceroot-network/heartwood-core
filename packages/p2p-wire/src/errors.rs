@@ -88,19 +88,26 @@ impl DecodeError {
     }
 }
 
-/// A getStatus reply broke a rule of the reference's reply schema. The variant names the part of
-/// the reply whose rule failed. The reference logs the reply and treats the peer as not
+/// A reply broke a rule of the reference's reply schema for its route. The variant names the part
+/// of the reply whose rule failed first. The reference logs the reply and treats the peer as not
 /// responding; it raises no error class of its own.
+///
+/// The getStatus parts are [`ReplyRefused::Root`] to [`ReplyRefused::Signatures`]; the other
+/// routes' replies use [`ReplyRefused::Root`] and [`ReplyRefused::Header`] as well as their own
+/// parts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum ReplyRefused {
-    /// The reply object: a required key is missing (`state`, `config` or `signatures`).
-    #[error("the status reply lacks state, config or signatures")]
+    /// The reply as a whole: a required key is missing (for getStatus: `state`, `config` or
+    /// `signatures`), a key the schema does not allow is present, or a list has more items than
+    /// the schema allows.
+    #[error("the reply breaks its schema")]
     Root,
     /// `state`: `height`, `forgingAllowed` or `currentSlot` is missing or out of range.
     #[error("the status reply's state breaks the reply schema")]
     State,
-    /// `state.header`: neither a block header nor an empty object.
-    #[error("the status reply's header breaks the block header schema")]
+    /// A block header breaks the block header schema: the getStatus `state.header` (neither a
+    /// block header nor an empty object), or a block of a getBlocks reply.
+    #[error("a block header breaks the block header schema")]
     Header,
     /// `config`: the version or a required key.
     #[error("the status reply's config breaks the reply schema")]
@@ -117,4 +124,31 @@ pub enum ReplyRefused {
     /// `signatures`: too many, or not 128 hex characters.
     #[error("the status reply's signatures break the reply schema")]
     Signatures,
+    /// getPeers: an entry's `ip` is in neither the IPv4 nor the IPv6 format, or its `port` is not
+    /// an integer from 0 to 65535.
+    #[error("a getPeers entry breaks the reply schema")]
+    Peer,
+    /// getCommonBlocks: `common` is neither `null` nor a block with a height of at least 1 and a
+    /// block id.
+    #[error("the getCommonBlocks reply's common block breaks the reply schema")]
+    Common,
+    /// postBlock: `status` is not a boolean, or `height` is not an integer of at least 1.
+    #[error("the postBlock reply breaks the reply schema")]
+    PostBlock,
+    /// getUnconfirmedTransactions: `poolSize` is not an integer of at least 0, or `transactions`
+    /// has more entries than the largest `block.maxTransactions` of the milestones.
+    #[error("the getUnconfirmedTransactions reply breaks the reply schema")]
+    Unconfirmed,
+}
+
+/// A request the reference's client never writes, refused when it is built. A reference server
+/// refuses each of these shapes and bans the caller's IP, so no such request may be sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum RequestError {
+    /// The request headers' version is empty.
+    #[error("a request's headers need a version")]
+    EmptyVersion,
+    /// A getCommonBlocks request with no id, or with more than 10.
+    #[error("a getCommonBlocks request asks for 1 to 10 ids, got {0}")]
+    CommonBlockIds(usize),
 }

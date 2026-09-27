@@ -117,7 +117,8 @@ fn has_json_form(difference: Documented, json: &Value) -> bool {
         | Documented::RoundRowsAfterRevert
         | Documented::Locale
         | Documented::OnlineView
-        | Documented::StrictSchema => false,
+        | Documented::StrictSchema
+        | Documented::UnlinkedForkSegment => false,
     }
 }
 

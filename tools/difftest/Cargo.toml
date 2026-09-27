@@ -23,6 +23,7 @@ heartwood-crypto = { workspace = true, features = ["genesis", "legacy-schnorr", 
 heartwood-database.workspace = true
 heartwood-kernel = { workspace = true, features = ["difftest"] }
 heartwood-logger.workspace = true
+heartwood-p2p = { workspace = true, features = ["difftest"] }
 heartwood-p2p-wire.workspace = true
 heartwood-pool.workspace = true
 heartwood-state.workspace = true
@@ -32,3 +33,5 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+# The peer network's subjects drive the client's asynchronous parts on a runtime of their own.
+tokio = { workspace = true, features = ["rt", "time"] }
