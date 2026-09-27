@@ -1,11 +1,14 @@
 //! The connector: one nes session per peer IP, opened only when a request needs it.
 //!
-//! A new session to an IP less than 10 s after the previous one was created waits for the rest of
-//! the 10 s. A session that fails is terminated and forgotten. The class of the last error of a
-//! request is recorded per IP.
+//! The IP is the key and the port comes from the peer, so a peer's later port does not open a
+//! second session. A new session to an IP less than 10 s after the previous one was created waits
+//! for the rest of the 10 s. A session that reports an error is terminated and forgotten; one
+//! that closed for good stays until the peer is disconnected, and its requests fail at once. The
+//! class of the last error of a request is recorded per IP.
 
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
 use heartwood_p2p_wire::RouteId;
@@ -13,33 +16,69 @@ use indexmap::IndexMap;
 use tokio::time::Instant;
 
 use crate::errors::SessionError;
-use crate::nes::{ConnectOptions, Session};
+use crate::nes::{ConnectOptions, ErrorHook, Session};
 use crate::seams::PeerTransport;
+use crate::transport::{self, Dial};
 
 /// The pause between the creation of two sessions to one IP.
 pub const RECONNECT_PAUSE: Duration = Duration::from_secs(10);
 
 /// The sessions, the last errors and the last creation times, by IP.
-#[derive(Debug, Default)]
+#[derive(Clone)]
 pub struct Connector {
-    #[expect(dead_code, reason = "the connector's methods read it")]
     options: ConnectOptions,
-    #[expect(dead_code, reason = "the connector's methods read it")]
-    sessions: Mutex<IndexMap<IpAddr, Arc<Session>>>,
-    #[expect(dead_code, reason = "the connector's methods read it")]
+    dial: Dial,
+    shared: Arc<Shared>,
+}
+
+#[derive(Debug, Default)]
+struct Shared {
+    /// Each session with the serial number it was created with.
+    sessions: Mutex<IndexMap<IpAddr, (u64, Session)>>,
     errors: Mutex<IndexMap<IpAddr, &'static str>>,
-    #[expect(dead_code, reason = "the connector's methods read it")]
     created: Mutex<IndexMap<IpAddr, Instant>>,
+    serial: AtomicU64,
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+impl Default for Connector {
+    fn default() -> Connector {
+        Connector::with_dial(transport::tcp())
+    }
+}
+
+impl std::fmt::Debug for Connector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Connector")
+            .field("shared", &self.shared)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Connector {
-    /// A connector with no session, connecting with the reference's options (5 s, one reconnect).
+    /// A connector with no session, connecting over TCP with the reference's options (5 s, one
+    /// reconnect).
     pub fn new() -> Connector {
         Connector::default()
     }
 
+    /// A connector whose sessions run on streams from `dial` (a test seam: the mock peer's
+    /// in-memory connections, which tokio's paused clock can drive).
+    pub fn with_dial(dial: Dial) -> Connector {
+        let (options, shared) = (ConnectOptions::default(), Arc::default());
+        Connector {
+            options,
+            dial,
+            shared,
+        }
+    }
+
     /// Send `payload` on `route` to `address` and wait for the response's payload, opening a
-    /// session to its IP first when there is none.
+    /// session to its IP first when there is none. The session's receive limit becomes
+    /// `max_payload` and its request timeout `timeout` (a zero keeps the setting).
     pub async fn emit(
         &self,
         address: SocketAddr,
@@ -48,33 +87,90 @@ impl Connector {
         timeout: Duration,
         max_payload: usize,
     ) -> Result<Vec<u8>, SessionError> {
-        let _ = (address, route, payload, timeout, max_payload);
-        todo!("emit on the IP's session")
+        let session = self.connect(address).await?;
+        session.request(route, payload, timeout, max_payload).await
+    }
+
+    /// The IP's session, created and connected when there is none. A session being created is
+    /// returned as it is, so a request made before it has connected fails at once, as the
+    /// reference's does.
+    async fn connect(&self, address: SocketAddr) -> Result<Session, SessionError> {
+        let ip = address.ip();
+        if let Some((_, session)) = lock(&self.shared.sessions).get(&ip) {
+            return Ok(session.clone());
+        }
+        let since = lock(&self.shared.created).get(&ip).map(Instant::elapsed);
+        if let Some(wait) = since.and_then(|since| RECONNECT_PAUSE.checked_sub(since)) {
+            tokio::time::sleep(wait).await;
+        }
+        let (session, connected) = {
+            let mut sessions = lock(&self.shared.sessions);
+            if let Some((_, session)) = sessions.get(&ip) {
+                return Ok(session.clone());
+            }
+            let serial = self.shared.serial.fetch_add(1, Ordering::Relaxed);
+            let hook = hook(Arc::downgrade(&self.shared), ip, serial);
+            let (session, connected) =
+                Session::connect(address, self.options, hook, self.dial.clone());
+            sessions.insert(ip, (serial, session.clone()));
+            lock(&self.shared.created).insert(ip, Instant::now());
+            (session, connected)
+        };
+        connected.await?;
+        Ok(session)
     }
 
     /// Terminate and forget the session to `ip`.
     pub fn disconnect(&self, ip: IpAddr) {
-        let _ = ip;
-        todo!("disconnect the IP")
+        self.shared.remove(ip, None);
     }
 
     /// The class of the last recorded error of `ip`.
     pub fn last_error(&self, ip: IpAddr) -> Option<&'static str> {
-        let _ = ip;
-        todo!("the IP's last error")
+        lock(&self.shared.errors).get(&ip).copied()
     }
 
     /// Record `name` as the last error of `ip`.
     pub fn set_error(&self, ip: IpAddr, name: &'static str) {
-        let _ = (ip, name);
-        todo!("record the IP's error")
+        lock(&self.shared.errors).insert(ip, name);
     }
 
     /// Forget the last error of `ip`.
     pub fn forget_error(&self, ip: IpAddr) {
-        let _ = ip;
-        todo!("forget the IP's error")
+        lock(&self.shared.errors).shift_remove(&ip);
     }
+}
+
+impl Shared {
+    /// Terminate and forget the session to `ip`, only if it is the one numbered `serial` when
+    /// given; creation times older than the pause are forgotten for IPs without a session.
+    fn remove(&self, ip: IpAddr, serial: Option<u64>) {
+        let removed = {
+            let mut sessions = lock(&self.sessions);
+            let current = sessions.get(&ip).map(|(number, _)| *number);
+            match current {
+                Some(number) if serial.is_none_or(|serial| serial == number) => {
+                    sessions.shift_remove(&ip)
+                }
+                _ => None,
+            }
+        };
+        if let Some((_, session)) = removed {
+            session.terminate();
+        }
+        let sessions = lock(&self.sessions);
+        lock(&self.created)
+            .retain(|ip, at| sessions.contains_key(ip) || at.elapsed() < RECONNECT_PAUSE);
+    }
+}
+
+/// The error hook of session `serial` to `ip`: the connector terminates and forgets it.
+fn hook(shared: Weak<Shared>, ip: IpAddr, serial: u64) -> ErrorHook {
+    Arc::new(move |_error| {
+        if let Some(shared) = shared.upgrade() {
+            shared.remove(ip, Some(serial));
+        }
+    })
 }
 
 impl PeerTransport for Connector {

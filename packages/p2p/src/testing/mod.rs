@@ -4,4 +4,6 @@
 
 pub mod mock_peer;
 
-pub use self::mock_peer::{MockFrame, MockPeer, MockPeerError, Reply, Script, ServedChain};
+pub use self::mock_peer::{
+    MockFrame, MockPeer, MockPeerError, Reply, Script, ServedChain, upgrade,
+};
