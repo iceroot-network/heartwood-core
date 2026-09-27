@@ -139,7 +139,14 @@ impl Session {
 
     /// Close the connection at once and give up reconnecting; every pending request fails.
     pub fn terminate(&self) {
-        let _ = self.commands.send(Command::Terminate);
+        let _ = self.commands.send(Command::Terminate(None));
+    }
+
+    /// Terminate as [`Session::terminate`] does, failing the pending requests with `error`
+    /// instead of a disconnect. The connector does this after a reported protocol error, so the
+    /// requests that were waiting carry it; every session error is of the same class.
+    pub fn terminate_for(&self, error: SessionError) {
+        let _ = self.commands.send(Command::Terminate(Some(error)));
     }
 }
 
@@ -157,7 +164,8 @@ struct Request {
 #[derive(Debug)]
 enum Command {
     Request(Request),
-    Terminate,
+    /// Close at once; the pending requests fail with the error, or with a disconnect.
+    Terminate(Option<SessionError>),
 }
 
 /// The reconnects left, the delay of the last one, and the attempts' timeout.
@@ -255,7 +263,7 @@ impl Actor {
             match event {
                 Event::Command(None) => return,
                 Event::Command(Some(Command::Request(request))) => self.request(request),
-                Event::Command(Some(Command::Terminate)) => self.terminate(),
+                Event::Command(Some(Command::Terminate(error))) => self.terminate(error),
                 Event::Timer => self.timers(),
                 Event::Opened(opened) => self.opened(opened),
                 Event::Received(received) => self.received(received),
@@ -295,14 +303,14 @@ impl Actor {
         self.write(&Message::request(id, request.route, request.payload));
     }
 
-    fn terminate(&mut self) {
+    fn terminate(&mut self, error: Option<SessionError>) {
         self.reconnection = None;
         match std::mem::replace(&mut self.link, Link::Idle) {
             Link::Idle | Link::Waiting(_) => {}
             Link::Connecting(..) => self.fail(ws("Socket error")),
             Link::Open(_, writer, _) => {
                 writer.terminate();
-                self.cleanup();
+                self.cleanup_with(error.unwrap_or(SessionError::Disconnect));
             }
         }
     }
@@ -498,12 +506,17 @@ impl Actor {
 
     /// Drop the connection, stop the heartbeat, and fail every pending request (`_cleanup`).
     fn cleanup(&mut self) {
+        self.cleanup_with(SessionError::Disconnect);
+    }
+
+    /// [`Actor::cleanup`], failing the pending requests with `error`.
+    fn cleanup_with(&mut self, error: SessionError) {
         if matches!(self.link, Link::Open(..) | Link::Connecting(..)) {
             self.link = Link::Idle;
         }
         self.beat_at = None;
         for pending in std::mem::take(&mut self.pending).into_values() {
-            self.settle(pending, Err(SessionError::Disconnect));
+            self.settle(pending, Err(error.clone()));
         }
     }
 

@@ -7,7 +7,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use heartwood_p2p::connector::{Connector, RECONNECT_PAUSE};
-use heartwood_p2p::errors::SessionError;
+use heartwood_p2p::errors::{ProtocolError, SessionError};
 use heartwood_p2p::seams::PeerTransport;
 use heartwood_p2p::testing::{MockFrame, MockPeer, Reply, Script};
 use heartwood_p2p_wire::RouteId;
@@ -128,10 +128,11 @@ async fn a_session_that_reports_an_error_is_forgotten() {
     let a = MockPeer::scripted(ip(1), script).await.unwrap();
     let connector = Connector::with_dial(MockPeer::dial(&[&a]));
     let start = Instant::now();
-    // The text frame is reported: the session is terminated, and its request fails.
+    // The text frame is reported: the session is terminated, and its request fails with the
+    // protocol error (the reference's fails as disconnected; both are of the class Error).
     assert_eq!(
         answer(emit(&connector, a.address())).await,
-        Err(SessionError::Disconnect)
+        Err(SessionError::Protocol(ProtocolError::TextFrame))
     );
     // The next request opens a new session, 10 s after the first was created.
     let (answer, at) = emit(&connector, a.address()).await.unwrap();

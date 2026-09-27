@@ -29,7 +29,8 @@ pub enum SessionError {
         /// The first 512 bytes of the response's payload, as text.
         payload: String,
     },
-    /// The server broke the nes protocol; the connector terminates and forgets the connection.
+    /// The server broke the nes protocol; the connector terminates and forgets the connection,
+    /// and the requests pending on it fail with this error.
     #[error("Error: {0}")]
     Protocol(ProtocolError),
     /// The WebSocket could not be opened, or failed: the transport's error, as text.

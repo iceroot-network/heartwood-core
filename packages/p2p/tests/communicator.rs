@@ -1130,7 +1130,7 @@ mod over_the_mock_peer {
     //! real, so tokio's clock is not paused).
 
     use heartwood_p2p::Connector;
-    use heartwood_p2p::testing::{MockPeer, Reply, Script};
+    use heartwood_p2p::testing::{MockFrame, MockPeer, Reply, Script};
     use heartwood_p2p::utils::rules::Rules as RealRules;
 
     use super::*;
@@ -1226,6 +1226,15 @@ mod over_the_mock_peer {
         assert_eq!(fixture.communicator.get_peers(&other, true).await, None);
         assert!(!fixture.repository.has(other.ip()));
         assert_eq!(other.snapshot().violations.len(), 1);
+        // A text frame breaks the nes protocol: the connector forgets the session and the request
+        // fails with class Error, so the peer is only counted, and it is a violation.
+        let text = Reply::Frames(vec![MockFrame::Text("{}".into())]);
+        let (_mock, third) = start(15, Script::new().on(RouteId::GetPeers, text)).await;
+        fixture.repository.set(third.clone());
+        assert_eq!(fixture.communicator.get_peers(&third, true).await, None);
+        assert!(fixture.repository.has(third.ip()));
+        assert_eq!(third.snapshot().sequential_errors, 1);
+        assert_eq!(third.snapshot().violations.len(), 1);
     }
 
     #[tokio::test]

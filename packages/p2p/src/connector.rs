@@ -122,7 +122,7 @@ impl Connector {
 
     /// Terminate and forget the session to `ip`.
     pub fn disconnect(&self, ip: IpAddr) {
-        self.shared.remove(ip, None);
+        self.shared.remove(ip, None, None);
     }
 
     /// The class of the last recorded error of `ip`.
@@ -143,8 +143,9 @@ impl Connector {
 
 impl Shared {
     /// Terminate and forget the session to `ip`, only if it is the one numbered `serial` when
-    /// given; creation times older than the pause are forgotten for IPs without a session.
-    fn remove(&self, ip: IpAddr, serial: Option<u64>) {
+    /// given, failing its pending requests with `error` when given; creation times older than the
+    /// pause are forgotten for IPs without a session.
+    fn remove(&self, ip: IpAddr, serial: Option<u64>, error: Option<SessionError>) {
         let removed = {
             let mut sessions = lock(&self.sessions);
             let current = sessions.get(&ip).map(|(number, _)| *number);
@@ -156,7 +157,10 @@ impl Shared {
             }
         };
         if let Some((_, session)) = removed {
-            session.terminate();
+            match error {
+                Some(error) => session.terminate_for(error),
+                None => session.terminate(),
+            }
         }
         let sessions = lock(&self.sessions);
         lock(&self.created)
@@ -164,11 +168,14 @@ impl Shared {
     }
 }
 
-/// The error hook of session `serial` to `ip`: the connector terminates and forgets it.
+/// The error hook of session `serial` to `ip`: the connector terminates and forgets it. After a
+/// protocol error the requests pending on it fail with that error, so the communicator can record
+/// the violation; the reference fails them as disconnected, and both are of the class `Error`.
 fn hook(shared: Weak<Shared>, ip: IpAddr, serial: u64) -> ErrorHook {
-    Arc::new(move |_error| {
+    Arc::new(move |error| {
         if let Some(shared) = shared.upgrade() {
-            shared.remove(ip, Some(serial));
+            let protocol = matches!(error, SessionError::Protocol(_)).then_some(error);
+            shared.remove(ip, Some(serial), protocol);
         }
     })
 }
