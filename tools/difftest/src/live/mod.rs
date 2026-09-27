@@ -119,10 +119,17 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
         results: Vec::new(),
     };
     let windows = run::windows(run_dir, manifest.window_seconds)?;
-    check_run(run_dir, &manifest, &mut cases)?;
+    // The route corpus first: whether its judge is built in this tree decides how a failed
+    // recording of it counts.
+    let mut api_cases = Cases {
+        run: manifest.run.clone(),
+        results: Vec::new(),
+    };
+    let api_built = check_api(run_dir, &manifest, &mut api_cases);
+    check_run(run_dir, &manifest, api_built, &mut cases)?;
     let chains = check_judge(run_dir, &manifest, options, &mut cases);
     check_nodes(run_dir, &manifest, &chains, &mut cases);
-    check_api(run_dir, &manifest, &mut cases);
+    cases.results.extend(api_cases.results);
     check_bans(run_dir, &manifest, &windows, &mut cases)?;
     check_invariants(run_dir, &manifest, &windows, &mut cases)?;
     let report = Report {
@@ -174,7 +181,16 @@ fn write_listing(run_dir: &Path, report: &Report) -> Result<()> {
     std::fs::write(&path, text).map_err(|e| Error::io(&path, e))
 }
 
-fn check_run(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> Result<()> {
+/// The steps that record the route corpus: a failed one is skipped, not failed, in a tree whose
+/// route corpus is still a stub (a dry run of the recipe against the stubs).
+const API_STEPS: [&str; 1] = ["api-corpus"];
+
+fn check_run(
+    run_dir: &Path,
+    manifest: &Manifest,
+    api_built: bool,
+    cases: &mut Cases,
+) -> Result<()> {
     if manifest.status == "complete" {
         cases.pass(
             "run",
@@ -194,7 +210,27 @@ fn check_run(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> Result<(
             format!("its stop height is {}", manifest.stop_height),
         );
     }
-    let steps = run::steps(run_dir)?;
+    let mut steps = run::steps(run_dir)?;
+    for s in &mut steps {
+        let reason = s
+            .record
+            .get("skipped")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| {
+                (!s.ok && !api_built && API_STEPS.contains(&s.name.as_str()))
+                    .then(|| "the route corpus is not built in this tree".to_owned())
+            });
+        if let Some(reason) = reason {
+            s.ok = true;
+            cases.push(
+                "run",
+                format!("step {} ({})", s.name, s.node),
+                0,
+                Outcome::Skipped(reason),
+            );
+        }
+    }
     let problems = steps::problems(&manifest.run, &steps);
     if problems.is_empty() {
         cases.pass(
@@ -438,20 +474,25 @@ fn check_nodes(run_dir: &Path, manifest: &Manifest, chains: &Chains, cases: &mut
     }
 }
 
-fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) {
+/// The route corpus and the rate limit; whether the route corpus's judge is built in this tree.
+fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
     let Some((left, right)) = &manifest.api else {
-        return;
+        return true;
     };
+    let mut built = true;
     let args = ApiCompareArgs::Recorded {
         run: run_dir.to_path_buf(),
     };
     match store::guarded(|| api::compare(&args)) {
-        Err(unbuilt) => cases.push(
-            "api",
-            format!("the route corpus, {left} against {right}"),
-            0,
-            Outcome::Skipped(format!("its judge is not built yet ({})", unbuilt.0)),
-        ),
+        Err(unbuilt) => {
+            built = false;
+            cases.push(
+                "api",
+                format!("the route corpus, {left} against {right}"),
+                0,
+                Outcome::Skipped(format!("its judge is not built yet ({})", unbuilt.0)),
+            );
+        }
         Ok(Err(e)) => cases.fail(
             "api",
             format!("the route corpus, {left} against {right}"),
@@ -491,6 +532,7 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) {
             }
         }
     }
+    built
 }
 
 fn check_bans(
@@ -649,16 +691,24 @@ fn check_invariants(
                 .get("ok")
                 .and_then(Value::as_bool)
                 .unwrap_or(problems == 0);
-            if ok && problems == 0 {
+            let scheduled = c
+                .pointer("/stats/scheduleChecked")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if ok && problems == 0 && scheduled > 0 {
                 cases.pass(
                     "invariants",
-                    "node 1's chain: every generator the scheduled one, the supply check holds",
+                    format!(
+                        "node 1's chain: {scheduled} blocks forged by their scheduled delegate, the supply check holds"
+                    ),
                 );
             } else {
                 cases.fail(
                     "invariants",
                     "node 1's chain: the schedule and the supply",
-                    format!("{problems} problems in check-chain.json"),
+                    format!(
+                        "{problems} problems in check-chain.json, {scheduled} blocks checked against the schedule"
+                    ),
                 );
             }
         }
