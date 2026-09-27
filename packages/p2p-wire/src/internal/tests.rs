@@ -353,8 +353,8 @@ fn records() -> Option<Vec<Value>> {
 }
 
 /// Each record: the relay's bytes as the reference writes them, and the forger's reading of them.
-/// A network state built from the reading is written to the same bytes; a round is read to the
-/// same fields, and written and read again to the same round.
+/// A network state read from the bytes is written to the same bytes; a round is read to the same
+/// fields, and written and read again to the same round.
 #[test]
 fn the_internal_bodies_agree_with_the_reference_records() {
     let Some(records) = records() else {
@@ -368,7 +368,9 @@ fn the_internal_bodies_agree_with_the_reference_records() {
     for record in &records {
         let name = &record["name"];
         let output = &record["output"];
-        let bytes = output["json"].as_str().unwrap().as_bytes();
+        // A network state's record has the relay's bytes in its output; a round's, in its input.
+        let json = output.get("json").unwrap_or(&record["input"]["json"]);
+        let bytes = json.as_str().unwrap().as_bytes();
         let read = &output["read"];
         if record["op"] == "internal.networkState" {
             let state: NetworkState = decode(bytes).unwrap();
@@ -390,7 +392,9 @@ fn the_internal_bodies_agree_with_the_reference_records() {
                 .values()
                 .collect();
             assert_eq!(json!(headers), read["overHeightBlockHeaders"], "{name}");
-            if state.status != NetworkStateStatus::Unknown {
+            // A body given as text is only read; a state the reference's class built is written
+            // back to the relay's bytes.
+            if record["input"].get("body").is_none() {
                 assert_eq!(encode(&state), bytes, "{name}: the relay's bytes");
             }
         } else {
