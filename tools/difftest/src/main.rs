@@ -419,7 +419,12 @@ fn run_l2(args: &L2Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
             .iter()
             .filter(|r| r.file.ends_with("/synthetic"))
         {
-            let verdict = if r.outcome.is_failure() { "FAIL" } else { "ok" };
+            let verdict = match &r.outcome {
+                o if o.is_failure() => "FAIL",
+                heartwood_difftest::report::Outcome::Skipped(_) => "skip",
+                heartwood_difftest::report::Outcome::Documented(_) => "doc",
+                _ => "ok",
+            };
             println!("    {verdict:<4} {}", r.label);
         }
     }

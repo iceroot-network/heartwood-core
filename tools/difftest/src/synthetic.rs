@@ -11,6 +11,14 @@
 //! Blocks are built as the scheduled delegate of their slot builds them: the reward of the block
 //! in its round, the donations and the fee burn of the milestone at its height, and a timestamp
 //! in the first slot at or after the requested gap whose delegate's key the seed derives.
+//!
+//! The restart cases (R-a to R-g) run Heartwood's side through its store: every applied or
+//! reverted block is committed, and a restart stops both nodes and starts them again, the
+//! reference's by its saved state and then without it (`chain.restart`), Heartwood's from its
+//! state tables and then by a replay of the stored chain. Each of the four restart lines must be
+//! the line of the state before the restart; the reference's saved-state line may differ only as
+//! the oracle notes it (a delegate name that reads as a number). Where the store is still a stub,
+//! Heartwood's restarts are skipped and the reference's are compared with Heartwood's state.
 
 use heartwood_crypto::blocks::{BlockHeader, serialiser};
 use heartwood_crypto::crypto::hash::sha256;
@@ -31,6 +39,10 @@ use heartwood_state::round_state::MissedBlock;
 use heartwood_transactions::Handlers;
 use serde_json::{Value, json};
 
+use heartwood_blockchain::{ChainStore, RestoreMode, rows};
+use heartwood_kernel::config::crypto::{self as crypto_files, CryptoFiles, CryptoTexts};
+use heartwood_state::machine::{Applied, Reverted};
+
 use crate::compare;
 use crate::corpus::Corpus;
 use crate::digests;
@@ -38,6 +50,9 @@ use crate::errors::{Error, Result};
 use crate::levels::l2::{call, corpus_crypto};
 use crate::oracle::OracleServer;
 use crate::report::{CaseResult, Outcome};
+use crate::restart::HeartwoodMode;
+use crate::store::{self, ScratchDir, StartProblem, StoreNode, guarded};
+use crate::subject::Documented;
 
 /// A synthetic case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -65,11 +80,29 @@ pub enum SyntheticCase {
     /// Two blocks after a round end, then a revert of three blocks across it and a competing
     /// chain from there, with other slots and other transactions.
     ForkAcrossRoundEnd,
+    /// R-a: a revoke in the first block after a restart.
+    RestartRevoke,
+    /// R-b: a resignation, a restart, then revokes one block before the delay, at it and after it.
+    RestartRevokeDelay,
+    /// R-c: a resignation, a revoke and a registration in one round, a restart in that round,
+    /// then the round's end and the next round's start.
+    RestartRoundRanks,
+    /// R-d: restarts at a round end and at the first block of the next round, among delegates
+    /// with equal vote balances.
+    RestartEqualBalances,
+    /// R-e: delegates named `0x10`, `1e5` and `0b101`, registered and voted for, then restarts
+    /// (a name of digits only, such as `123`, is refused by the username rule on both sides).
+    RestartNumericNames,
+    /// R-f: a stored transfer raised above its sender's balance: a start without a saved state
+    /// refuses the chain.
+    RestartNegativeBalance,
+    /// R-g: a restart, then a revert across a round end and a competing chain.
+    RestartFork,
 }
 
 impl SyntheticCase {
     /// Every case.
-    pub const ALL: [SyntheticCase; 10] = [
+    pub const ALL: [SyntheticCase; 17] = [
         SyntheticCase::OverspendAfterGap,
         SyntheticCase::RuleHeight,
         SyntheticCase::VoteAtRoundEnd,
@@ -80,6 +113,13 @@ impl SyntheticCase {
         SyntheticCase::FeeFloorInBlock,
         SyntheticCase::HandlerRuleHeight,
         SyntheticCase::ForkAcrossRoundEnd,
+        SyntheticCase::RestartRevoke,
+        SyntheticCase::RestartRevokeDelay,
+        SyntheticCase::RestartRoundRanks,
+        SyntheticCase::RestartEqualBalances,
+        SyntheticCase::RestartNumericNames,
+        SyntheticCase::RestartNegativeBalance,
+        SyntheticCase::RestartFork,
     ];
 
     /// The case's name in reports.
@@ -95,8 +135,109 @@ impl SyntheticCase {
             SyntheticCase::FeeFloorInBlock => "fee-floor-in-block",
             SyntheticCase::HandlerRuleHeight => "handler-rule-height",
             SyntheticCase::ForkAcrossRoundEnd => "fork-across-round-end",
+            SyntheticCase::RestartRevoke => "restart-revoke",
+            SyntheticCase::RestartRevokeDelay => "restart-revoke-delay",
+            SyntheticCase::RestartRoundRanks => "restart-round-ranks",
+            SyntheticCase::RestartEqualBalances => "restart-equal-balances",
+            SyntheticCase::RestartNumericNames => "restart-numeric-names",
+            SyntheticCase::RestartNegativeBalance => "restart-negative-balance",
+            SyntheticCase::RestartFork => "restart-fork",
         }
     }
+
+    /// Whether the case restarts, and so runs Heartwood's side through its store.
+    pub const fn restarts(self) -> bool {
+        matches!(
+            self,
+            SyntheticCase::RestartRevoke
+                | SyntheticCase::RestartRevokeDelay
+                | SyntheticCase::RestartRoundRanks
+                | SyntheticCase::RestartEqualBalances
+                | SyntheticCase::RestartNumericNames
+                | SyntheticCase::RestartNegativeBalance
+                | SyntheticCase::RestartFork
+        )
+    }
+}
+
+/// The revoke delay of the restart cases' milestone, from the corpus's tip plus one.
+const RESTART_REVOKE_DELAY: u32 = 3;
+
+/// Heartwood's store in a case, with what it needs to start again.
+struct StoreSide {
+    scratch: ScratchDir,
+    files: CryptoFiles,
+    store: ChainStore,
+}
+
+/// The crypto files of `corpus` with the milestone file `milestones_text` when given, loaded by
+/// the kernel's loader.
+fn case_files(
+    corpus: &Corpus,
+    milestones_text: Option<&str>,
+) -> std::result::Result<CryptoFiles, StartProblem> {
+    let read = |name: &str| std::fs::read_to_string(corpus.dir.join("crypto").join(name)).ok();
+    let texts = CryptoTexts {
+        network: read("network.json"),
+        milestones: milestones_text
+            .map(str::to_owned)
+            .or_else(|| read("milestones.json")),
+        genesis: read("genesisBlock.json"),
+        exceptions: read("exceptions.json"),
+    };
+    guarded(|| crypto_files::parse(&texts))?
+        .map_err(|e| StartProblem::Failed(format!("the crypto files are refused: {e}")))
+}
+
+/// Heartwood's state after `corpus` written through a new store: the first start, then every
+/// block committed, one per chunk.
+fn store_side(
+    corpus: &Corpus,
+    milestones: &Milestones,
+    milestones_text: Option<&str>,
+) -> std::result::Result<(StoreSide, State), StartProblem> {
+    let files = case_files(corpus, milestones_text)?;
+    let scratch =
+        ScratchDir::new("synthetic-store").map_err(|e| StartProblem::Failed(e.to_string()))?;
+    let node = StoreNode::start(scratch.path(), &files, RestoreMode::Auto)?;
+    let (mut store, mut state, _) = node.into_parts();
+    for block in &corpus.blocks {
+        let decoded = Block::receive(&block.bytes, milestones)
+            .map_err(|e| StartProblem::Failed(format!("block {}: {e}", block.height)))?;
+        let applied = state
+            .apply_block(&decoded, milestones, &Handlers)
+            .map_err(|e| {
+                StartProblem::Failed(format!("Heartwood refused block {}: {e}", block.height))
+            })?;
+        commit(&mut store, |w| {
+            w.applied(&state, &decoded, &applied, milestones)
+        })?;
+    }
+    Ok((
+        StoreSide {
+            scratch,
+            files,
+            store,
+        },
+        state,
+    ))
+}
+
+/// Commit one chunk that `write` fills.
+fn commit(
+    store: &mut ChainStore,
+    write: impl FnOnce(
+        &mut heartwood_blockchain::ChunkWriter<'_>,
+    ) -> std::result::Result<(), heartwood_blockchain::StoreError>,
+) -> std::result::Result<(), StartProblem> {
+    let done = guarded(
+        || -> std::result::Result<(), heartwood_blockchain::StoreError> {
+            let mut writer = store.chunk()?;
+            write(&mut writer)?;
+            writer.commit()
+        },
+    )?;
+    done.map_err(|e| StartProblem::Failed(format!("the store refused a chunk: {e}")))
 }
 
 /// The key-derivation tag of the devnet tooling.
@@ -202,6 +343,10 @@ struct Sides<'a> {
     step: usize,
     last_missed: Vec<MissedBlock>,
     oracle_missed: usize,
+    /// Heartwood's store, for the restart cases.
+    store: Option<StoreSide>,
+    /// Why a restart case has no store (a stub): its restarts are skipped on Heartwood's side.
+    store_problem: Option<StartProblem>,
 }
 
 fn missed_json(rows: &[MissedBlock]) -> Vec<Value> {
@@ -234,17 +379,36 @@ impl<'a> Sides<'a> {
             None => corpus.milestones.clone(),
         };
         let handlers = Handlers;
-        let mut state = State::from_genesis(&corpus.genesis, &milestones, &handlers)
-            .map_err(|e| Error::Oracle(format!("Heartwood refused the genesis block: {e}")))?;
-        for block in &corpus.blocks {
-            let decoded = Block::receive(&block.bytes, &milestones)
-                .map_err(|e| Error::Oracle(format!("block {}: {e}", block.height)))?;
-            state
-                .apply_block(&decoded, &milestones, &handlers)
-                .map_err(|e| {
-                    Error::Oracle(format!("Heartwood refused block {}: {e}", block.height))
-                })?;
+        let (mut store, mut store_problem) = (None, None);
+        let mut built = None;
+        if case.restarts() {
+            match store_side(corpus, &milestones, milestones_text.as_deref()) {
+                Ok((side, state)) => {
+                    store = Some(side);
+                    built = Some(state);
+                }
+                Err(problem) => store_problem = Some(problem),
+            }
         }
+        let state = match built {
+            Some(state) => state,
+            None => {
+                let mut state = State::from_genesis(&corpus.genesis, &milestones, &handlers)
+                    .map_err(|e| {
+                        Error::Oracle(format!("Heartwood refused the genesis block: {e}"))
+                    })?;
+                for block in &corpus.blocks {
+                    let decoded = Block::receive(&block.bytes, &milestones)
+                        .map_err(|e| Error::Oracle(format!("block {}: {e}", block.height)))?;
+                    state
+                        .apply_block(&decoded, &milestones, &handlers)
+                        .map_err(|e| {
+                            Error::Oracle(format!("Heartwood refused block {}: {e}", block.height))
+                        })?;
+                }
+                state
+            }
+        };
         let mut args = json!({"crypto": corpus_crypto(corpus)?});
         if let Some(text) = milestones_text {
             args["milestones"] = json!(text);
@@ -265,7 +429,7 @@ impl<'a> Sides<'a> {
                 )));
             }
         }
-        Ok(Sides {
+        let mut sides = Sides {
             corpus,
             milestones,
             state,
@@ -276,7 +440,41 @@ impl<'a> Sides<'a> {
             step: 0,
             last_missed: Vec::new(),
             oracle_missed: 0,
-        })
+            store,
+            store_problem: None,
+        };
+        if let Some(problem) = store_problem {
+            let outcome = problem.outcome();
+            sides.record("Heartwood's store for the restarts", outcome);
+            sides.store_problem = Some(problem);
+        }
+        Ok(sides)
+    }
+
+    /// Commit what applying `block` changed, when the case has a store.
+    fn commit_applied(&mut self, block: &Block, applied: &Applied) {
+        let Some(side) = &mut self.store else {
+            return;
+        };
+        let (state, milestones) = (&self.state, &self.milestones);
+        if let Err(problem) = commit(&mut side.store, |w| {
+            w.applied(state, block, applied, milestones)
+        }) {
+            let outcome = problem.outcome();
+            self.record("the commit of an applied block", outcome);
+        }
+    }
+
+    /// Commit what reverting a block changed, when the case has a store.
+    fn commit_reverted(&mut self, reverted: &Reverted) {
+        let Some(side) = &mut self.store else {
+            return;
+        };
+        let (state, milestones) = (&self.state, &self.milestones);
+        if let Err(problem) = commit(&mut side.store, |w| w.reverted(state, reverted, milestones)) {
+            let outcome = problem.outcome();
+            self.record("the commit of a reverted block", outcome);
+        }
     }
 
     fn record(&mut self, what: &str, outcome: Outcome) {
@@ -466,6 +664,7 @@ impl<'a> Sides<'a> {
         let previous = self.state.clone();
         match self.state.apply_block(&block, &self.milestones, &Handlers) {
             Ok(applied) => {
+                self.commit_applied(&block, &applied);
                 self.last_missed = applied.missed.clone();
                 let line = digest::height_digest(
                     &self.state,
@@ -650,14 +849,17 @@ impl<'a> Sides<'a> {
             .unwrap_or_default();
         for i in 0..count as usize {
             let ours = match self.state.revert_block(&self.milestones, &Handlers) {
-                Ok(_) => digest::height_digest(
-                    &self.state,
-                    &self.milestones,
-                    Step::Revert,
-                    &[],
-                    None,
-                    &[0; 32],
-                ),
+                Ok(reverted) => {
+                    self.commit_reverted(&reverted);
+                    digest::height_digest(
+                        &self.state,
+                        &self.milestones,
+                        Step::Revert,
+                        &[],
+                        None,
+                        &[0; 32],
+                    )
+                }
                 Err(e) => {
                     self.record(
                         what,
@@ -684,6 +886,172 @@ impl<'a> Sides<'a> {
                 },
             );
         }
+        Ok(())
+    }
+
+    /// The line of Heartwood's state as a restart line: what every restart of this state must
+    /// give.
+    fn restart_line(&self, state: &State) -> Value {
+        digests::line_value(&digest::height_digest(
+            state,
+            &self.milestones,
+            Step::Restart,
+            &[],
+            None,
+            &[0; 32],
+        ))
+    }
+
+    /// Stop both nodes and start them again: the reference's from its saved state, then without
+    /// it; Heartwood's from its state tables, then by a replay. Every start must give the state
+    /// before it (`expect` names the starts that must be refused instead); the case goes on with
+    /// the node each side started last.
+    fn restart(&mut self, what: &str, expect: Expect, server: &mut OracleServer) -> Result<bool> {
+        let want = self.restart_line(&self.state);
+        let mut saved_documented = false;
+        let keys = ["h", "step", "id", "b", "s", "r", "m", "w", "sd"];
+        for mode in ["saved", "rebuild"] {
+            let r = call(
+                server,
+                "chain.restart",
+                1,
+                &json!({"session": self.session, "mode": mode}),
+            )?;
+            let refusal = expect == Expect::RefusedWithoutSavedState && mode == "rebuild";
+            let noted = mode == "saved" && r["notes"]["savedStateUsername"] == Value::Bool(true);
+            let outcome = match (
+                r.pointer("/refused/reason").and_then(Value::as_str),
+                refusal,
+            ) {
+                (Some(reason), true) if reason == NEGATIVE_BALANCE => Outcome::Pass,
+                // A name that its saved state loads as a number can stop the reference's start.
+                (Some(_), false) if noted => {
+                    saved_documented = true;
+                    Outcome::Documented(Documented::SavedStateUsername.reason().to_owned())
+                }
+                (Some(reason), _) => {
+                    Outcome::HarnessError(format!("the reference refused to start: {reason}"))
+                }
+                (None, true) => Outcome::HarnessError(
+                    "the reference started; the case expects it to refuse the chain".into(),
+                ),
+                (None, false) => {
+                    let line = r.get("line").cloned().unwrap_or(Value::Null);
+                    if crate::restart::differing_keys(&line, &want, &keys).is_empty() {
+                        Outcome::Pass
+                    } else if noted {
+                        saved_documented = true;
+                        Outcome::Documented(Documented::SavedStateUsername.reason().to_owned())
+                    } else {
+                        Outcome::Mismatch(compare::diff(&want, &line))
+                    }
+                }
+            };
+            self.record(
+                &format!("{what}: the reference's restart by its {mode} path"),
+                outcome,
+            );
+        }
+        for mode in HeartwoodMode::ALL {
+            let label = format!("{what}: Heartwood's restart by its {} path", mode.name());
+            let Some(StoreSide {
+                scratch,
+                files,
+                store,
+            }) = self.store.take()
+            else {
+                let why = match &self.store_problem {
+                    Some(StartProblem::Unbuilt(m)) => format!("not built yet: {m}"),
+                    Some(StartProblem::Failed(m)) => m.clone(),
+                    None => "the case has no store".into(),
+                };
+                self.record(&label, Outcome::Skipped(why));
+                continue;
+            };
+            drop(store);
+            let refusal =
+                expect == Expect::RefusedWithoutSavedState && mode == HeartwoodMode::Replay;
+            match StoreNode::start(scratch.path(), &files, store::restore_mode(mode)) {
+                Ok(node) => {
+                    let (store, state, path) = node.into_parts();
+                    let line = self.restart_line(&state);
+                    let outcome = if refusal {
+                        Outcome::HarnessError(
+                            "Heartwood started; the case expects it to refuse the chain".into(),
+                        )
+                    } else if !store::took_its_path(mode, &path) {
+                        Outcome::HarnessError(format!("the start took the path {path:?}"))
+                    } else if crate::restart::differing_keys(&line, &want, &keys).is_empty() {
+                        Outcome::Pass
+                    } else {
+                        Outcome::Mismatch(compare::diff(&want, &line))
+                    };
+                    self.state = state;
+                    self.store = Some(StoreSide {
+                        scratch,
+                        files,
+                        store,
+                    });
+                    self.record(&label, outcome);
+                }
+                Err(problem) => {
+                    let outcome = match &problem {
+                        StartProblem::Failed(m) if refusal && m.contains(NEGATIVE_BALANCE) => {
+                            Outcome::Pass
+                        }
+                        other => other.outcome(),
+                    };
+                    self.record(&label, outcome);
+                    // Go on from the state tables.
+                    match StoreNode::start(scratch.path(), &files, RestoreMode::Auto) {
+                        Ok(node) => {
+                            let (store, state, _) = node.into_parts();
+                            self.state = state;
+                            self.store = Some(StoreSide {
+                                scratch,
+                                files,
+                                store,
+                            });
+                        }
+                        Err(again) => {
+                            let outcome = again.outcome();
+                            self.record("a start from the state tables to go on", outcome);
+                            self.store_problem = Some(again);
+                        }
+                    }
+                }
+            }
+        }
+        self.last_missed.clear();
+        Ok(saved_documented)
+    }
+
+    /// Replace the stored bytes of transaction `index` of the tip block by `bytes` on both sides,
+    /// as a database changed on disk would hold them; the state in memory is unchanged.
+    fn tamper_tip(
+        &mut self,
+        block: &Block,
+        index: usize,
+        bytes: &[u8],
+        server: &mut OracleServer,
+    ) -> Result<()> {
+        call(
+            server,
+            "chain.replaceStored",
+            1,
+            &json!({"session": self.session, "height": block.height(), "index": index, "hex": hex::encode(bytes)}),
+        )?;
+        let Some(side) = &mut self.store else {
+            return Ok(());
+        };
+        let milestones = &self.milestones;
+        let done = guarded(|| rewrite_tip(&mut side.store, block, index, bytes, milestones));
+        let outcome = match done {
+            Ok(Ok(())) => return Ok(()),
+            Ok(Err(message)) => Outcome::HarnessError(message),
+            Err(store::Unbuilt(message)) => Outcome::Skipped(format!("not built yet: {message}")),
+        };
+        self.record("the stored transaction changed on disk", outcome);
         Ok(())
     }
 
@@ -722,6 +1090,87 @@ impl<'a> Sides<'a> {
     }
 }
 
+/// What a restart of both nodes must give.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expect {
+    /// Every start gives the state before it.
+    Started,
+    /// The starts without a saved state (the reference's rebuild, Heartwood's replay) refuse the
+    /// stored chain with the reference's text; the others give the state before it.
+    RefusedWithoutSavedState,
+}
+
+/// The reference's text when a start without a saved state meets a negative balance.
+const NEGATIVE_BALANCE: &str = "State Generation failed: Wallet with negative balance";
+
+/// Rewrite the stored tip `block` with the bytes of transaction `index` replaced by `bytes`,
+/// through the database's own writes: everything above the block below it is deleted and written
+/// again as it was, but for those bytes.
+fn rewrite_tip(
+    store: &mut ChainStore,
+    block: &Block,
+    index: usize,
+    bytes: &[u8],
+    milestones: &Milestones,
+) -> std::result::Result<(), String> {
+    let tip = block.height();
+    let below = tip
+        .checked_sub(1)
+        .ok_or("the genesis block is not rewritten")?;
+    let round_below = heartwood_kernel::calculate_round(below, milestones).round;
+    let database = store.database();
+    let failed = |e: heartwood_database::DatabaseError| e.to_string();
+    let stored = database
+        .blocks(tip, tip)
+        .map_err(failed)?
+        .into_iter()
+        .next()
+        .ok_or("the tip block is not stored")?;
+    let undo = database
+        .undo_records()
+        .map_err(failed)?
+        .into_iter()
+        .find(|u| u.height == tip);
+    let state_row = database.state_row().map_err(failed)?;
+    let missed: Vec<_> = database
+        .missed_blocks()
+        .map_err(failed)?
+        .into_iter()
+        .filter(|m| m.height == tip)
+        .collect();
+    let entries: Vec<_> = database
+        .milestone_entries()
+        .map_err(failed)?
+        .into_iter()
+        .filter(|e| e.height == tip)
+        .collect();
+    let next_round = database.round(round_below + 1).map_err(failed)?;
+    let block_row = rows::block_row(block, stored.row.username.as_deref(), milestones)
+        .map_err(|e| e.to_string())?;
+    let mut transactions = rows::transaction_rows(block, milestones).map_err(|e| e.to_string())?;
+    transactions
+        .get_mut(index)
+        .ok_or("the block has no such transaction")?
+        .serialised = bytes.to_vec();
+    let mut chunk = store.database_mut().begin().map_err(failed)?;
+    chunk.delete_above(below, round_below).map_err(failed)?;
+    chunk
+        .save_block(&block_row, &transactions)
+        .map_err(failed)?;
+    chunk.save_round(&next_round).map_err(failed)?;
+    chunk.save_missed(&missed).map_err(failed)?;
+    if let Some(undo) = undo {
+        chunk.put_undo(tip, &undo.record).map_err(failed)?;
+    }
+    if let Some(row) = state_row {
+        chunk.put_state(&row).map_err(failed)?;
+    }
+    for entry in &entries {
+        chunk.put_milestone_entry(entry).map_err(failed)?;
+    }
+    chunk.commit().map_err(failed)
+}
+
 fn transfer(items: &[(Address, u64)]) -> TransactionBuilder {
     TransactionBuilder::transfer(
         items
@@ -745,6 +1194,16 @@ fn run_case(
             Some(json!({"height": corpus.tip() + 2, "transfer": {"maximum": 2}}))
         }
         SyntheticCase::HandlerRuleHeight => Some(Value::Null),
+        // The restart cases shorten the revoke delay from the tip plus one, so that a revoke
+        // falls a few blocks after its resignation (R-b keeps 55, to restart 50 blocks after it).
+        c if c.restarts() => {
+            let delay = if c == SyntheticCase::RestartRevokeDelay {
+                55
+            } else {
+                RESTART_REVOKE_DELAY
+            };
+            Some(json!({"height": corpus.tip() + 1, "blocksToRevokeDelegateResignation": delay}))
+        }
         _ => None,
     };
     let milestones_text = match extra {
@@ -995,6 +1454,15 @@ fn run_case(
         SyntheticCase::ForkAcrossRoundEnd => {
             fork_across_round_end(&mut s, &recipients, server)?;
         }
+        SyntheticCase::RestartRevoke => restart_revoke(&mut s, server, false)?,
+        SyntheticCase::RestartRevokeDelay => restart_revoke(&mut s, server, true)?,
+        SyntheticCase::RestartRoundRanks => restart_round_ranks(&mut s, server)?,
+        SyntheticCase::RestartEqualBalances => restart_equal_balances(&mut s, server)?,
+        SyntheticCase::RestartNumericNames => restart_numeric_names(&mut s, server)?,
+        SyntheticCase::RestartNegativeBalance => {
+            restart_negative_balance(&mut s, &recipients, server)?
+        }
+        SyntheticCase::RestartFork => restart_fork(&mut s, &recipients, server)?,
     }
     call(server, "chain.close", 1, &json!({"session": s.session}))?;
     Ok(s.results)
@@ -1226,6 +1694,407 @@ fn fork_across_round_end(
         order != first_order,
         "the competing branch schedules the round differently",
     );
+    s.compare_records("the state at the competing tip", server)?;
+    Ok(())
+}
+
+/// The revoke delay in force at the next height.
+fn revoke_delay(s: &Sides<'_>) -> u32 {
+    s.milestones
+        .at(s.params_height())
+        .blocks_to_revoke_delegate_resignation()
+        .and_then(|d| u32::try_from(d).ok())
+        .unwrap_or(crate::strategies::transactions::REVOKE_DELAY)
+}
+
+/// A new delegate named `name` and a temporary resignation of a delegate of the seed, in one
+/// block (the new delegate keeps enough delegates active); the resigned delegate's key.
+fn register_and_resign<'k>(
+    s: &mut Sides<'k>,
+    name: &str,
+    server: &mut OracleServer,
+) -> Result<&'k DerivedKey> {
+    let w = s.wallet(|s, k| {
+        s.funded(k, REGISTRATION_FEE * 2)
+            && s.state
+                .wallets()
+                .find_by_address(&k.address)
+                .is_some_and(|w| !w.is_delegate())
+    })?;
+    let d = s.delegate(|s, k| {
+        s.funded(k, FEE * 4)
+            && s.state
+                .wallets()
+                .find_by_address(&k.address)
+                .and_then(|w| w.delegate())
+                .is_some_and(|d| d.resigned.is_none())
+    })?;
+    let register = s.build(
+        TransactionBuilder::delegate_registration(name)
+            .nonce(s.nonce(&w.address) + 1)
+            .fee(REGISTRATION_FEE),
+        w,
+    )?;
+    let resign = s.build(
+        TransactionBuilder::delegate_resignation(None)
+            .nonce(s.nonce(&d.address) + 1)
+            .fee(FEE),
+        d,
+    )?;
+    let bytes = s.next_block(vec![register, resign], 0, None)?;
+    s.apply(
+        "a delegate registration and a temporary resignation",
+        &bytes,
+        true,
+        server,
+    )?;
+    Ok(d)
+}
+
+/// Apply empty blocks until the tip is `height`.
+fn empty_blocks_to(s: &mut Sides<'_>, height: u32, server: &mut OracleServer) -> Result<()> {
+    while s.state.height() < height {
+        let bytes = s.next_block(Vec::new(), 0, None)?;
+        let h = s.state.height() + 1;
+        if !s.apply(&format!("an empty block at {h}"), &bytes, true, server)? {
+            return Err(Error::Oracle(format!("the empty block at {h} was refused")));
+        }
+    }
+    Ok(())
+}
+
+/// R-a and R-b: a temporary resignation, a restart, then revokes. R-a: the restart right
+/// before the first block that may revoke, and the revoke in it. R-b: the restart 50 blocks after
+/// the resignation, then revokes one block before the delay, at it and after it (each accepted
+/// one taken back, so the next try runs on the same state).
+fn restart_revoke(s: &mut Sides<'_>, server: &mut OracleServer, around: bool) -> Result<()> {
+    let d = register_and_resign(s, if around { "synthrb" } else { "synthra" }, server)?;
+    let resigned_at = s.state.height();
+    let delay = revoke_delay(s);
+    // A revoke in block H needs (H - 1) - resigned_at >= delay.
+    let first_allowed = resigned_at + delay + 1;
+    let revoke = |s: &Sides<'_>| {
+        s.build(
+            TransactionBuilder::delegate_resignation(Some(ResignationType::NotResigned))
+                .nonce(s.nonce(&d.address) + 1)
+                .fee(FEE),
+            d,
+        )
+    };
+    if around {
+        empty_blocks_to(s, resigned_at + 50, server)?;
+        s.restart(
+            "a restart 50 blocks after the resignation",
+            Expect::Started,
+            server,
+        )?;
+        empty_blocks_to(s, first_allowed - 2, server)?;
+        for (offset, accepted) in [(0u32, false), (1, true), (2, true)] {
+            let elapsed = delay - 1 + offset;
+            let t = revoke(s)?;
+            let bytes = s.next_block(vec![t], 0, None)?;
+            let applied = s.apply(
+                &format!("a revoke {elapsed} blocks after the resignation (delay {delay})"),
+                &bytes,
+                accepted,
+                server,
+            )?;
+            if applied {
+                s.revert("the revoke taken back", 1, server)?;
+            }
+            let bytes = s.next_block(Vec::new(), 0, None)?;
+            s.apply("an empty block", &bytes, true, server)?;
+        }
+    } else {
+        empty_blocks_to(s, first_allowed - 1, server)?;
+        s.restart(
+            "a restart before the first block that may revoke",
+            Expect::Started,
+            server,
+        )?;
+        let t = revoke(s)?;
+        let bytes = s.next_block(vec![t], 0, None)?;
+        s.apply(
+            "a revoke in the first block after the restart",
+            &bytes,
+            true,
+            server,
+        )?;
+        s.compare_records("the revoked delegate after the restart", server)?;
+    }
+    Ok(())
+}
+
+/// R-c: in one round, a temporary resignation, its revoke and a registration, a restart in
+/// that round, then the round's end and the first block of the next round.
+fn restart_round_ranks(s: &mut Sides<'_>, server: &mut OracleServer) -> Result<()> {
+    let d = register_and_resign(s, "synthrc", server)?;
+    let resigned_at = s.state.height();
+    let delay = revoke_delay(s);
+    empty_blocks_to(s, resigned_at + delay, server)?;
+    let t = s.build(
+        TransactionBuilder::delegate_resignation(Some(ResignationType::NotResigned))
+            .nonce(s.nonce(&d.address) + 1)
+            .fee(FEE),
+        d,
+    )?;
+    let bytes = s.next_block(vec![t], 0, None)?;
+    s.apply("the revoke", &bytes, true, server)?;
+    let w = s.wallet(|s, k| {
+        s.funded(k, REGISTRATION_FEE * 2)
+            && s.state
+                .wallets()
+                .find_by_address(&k.address)
+                .is_some_and(|w| !w.is_delegate())
+    })?;
+    let t = s.build(
+        TransactionBuilder::delegate_registration("synthrc2")
+            .nonce(s.nonce(&w.address) + 1)
+            .fee(REGISTRATION_FEE),
+        w,
+    )?;
+    let bytes = s.next_block(vec![t], 0, None)?;
+    s.apply(
+        "a registration in the round of the revoke",
+        &bytes,
+        true,
+        server,
+    )?;
+    let round_of =
+        |h: u32, s: &Sides<'_>| heartwood_kernel::calculate_round(h, &s.milestones).round;
+    s.premise(
+        round_of(resigned_at + 1, s) <= round_of(s.state.height(), s)
+            && round_of(resigned_at + delay + 1, s) == round_of(s.state.height(), s),
+        "the revoke and the registration fall in one round",
+    );
+    s.restart(
+        "a restart in the round of the revoke",
+        Expect::Started,
+        server,
+    )?;
+    s.compare_records("the ranks and the schedule after the restart", server)?;
+    let round = round_of(s.state.height(), s);
+    let mut steps = 0;
+    while round_of(s.state.height() + 1, s) == round && steps < 60 {
+        let bytes = s.next_block(Vec::new(), 0, None)?;
+        s.apply("an empty block to the round's end", &bytes, true, server)?;
+        steps += 1;
+    }
+    let bytes = s.next_block(Vec::new(), 0, None)?;
+    s.apply("the first block of the next round", &bytes, true, server)?;
+    s.compare_records("the ranks and the schedule of the next round", server)?;
+    Ok(())
+}
+
+/// R-d: restarts at a round end and at the first block of the next round, whose delegates
+/// have equal vote balances.
+fn restart_equal_balances(s: &mut Sides<'_>, server: &mut OracleServer) -> Result<()> {
+    s.back_to_round_end(0, server)?;
+    let balances: Vec<u64> = s
+        .state
+        .round()
+        .round_delegates()
+        .iter()
+        .map(|d| d.vote_balance)
+        .collect();
+    let mut sorted = balances.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    s.premise(
+        sorted.len() < balances.len(),
+        "the next round's delegates include equal vote balances",
+    );
+    s.restart("a restart at a round end", Expect::Started, server)?;
+    let bytes = s.next_block(Vec::new(), 0, None)?;
+    s.apply("the first block of the next round", &bytes, true, server)?;
+    s.restart(
+        "a restart at the first block of a round",
+        Expect::Started,
+        server,
+    )?;
+    let bytes = s.next_block(Vec::new(), 0, None)?;
+    s.apply("the second block of the round", &bytes, true, server)?;
+    s.compare_records("the schedule after the restarts", server)?;
+    Ok(())
+}
+
+/// R-e: delegates whose names read as integers registered and voted for, then restarts. First
+/// `0x10` and `0b101`, which the reference's saved state loads as numbers (a documented
+/// difference on that path only); then `1e5`, which makes the saved state unloadable, so the
+/// reference falls back to its rebuild and every path agrees.
+fn restart_numeric_names(s: &mut Sides<'_>, server: &mut OracleServer) -> Result<()> {
+    let mut used = Vec::new();
+    for (names, shown) in [(&["0x10", "0b101"][..], true), (&["1e5"][..], false)] {
+        let mut registrations = Vec::new();
+        for name in names {
+            let w = s.wallet(|s, k| {
+                s.funded(k, REGISTRATION_FEE * 2)
+                    && !used.contains(&k.address)
+                    && s.state
+                        .wallets()
+                        .find_by_address(&k.address)
+                        .is_some_and(|w| !w.is_delegate())
+            })?;
+            used.push(w.address);
+            registrations.push(
+                s.build(
+                    TransactionBuilder::delegate_registration(name)
+                        .nonce(s.nonce(&w.address) + 1)
+                        .fee(REGISTRATION_FEE),
+                    w,
+                )?,
+            );
+        }
+        let list = names.join(", ");
+        let bytes = s.next_block(registrations, 0, None)?;
+        s.apply(&format!("delegates named {list}"), &bytes, true, server)?;
+        let voter = s.wallet(|s, k| s.funded(k, 10_000_000_000) && !used.contains(&k.address))?;
+        used.push(voter.address);
+        let mut votes = Votes::new();
+        let shares = crate::strategies::split_now(names.len());
+        for (name, bps) in names.iter().zip(shares) {
+            votes.insert((*name).to_owned(), bps);
+        }
+        let t = s.build(
+            TransactionBuilder::vote(votes)
+                .nonce(s.nonce(&voter.address) + 1)
+                .fee(FEE),
+            voter,
+        )?;
+        let bytes = s.next_block(vec![t], 0, None)?;
+        s.apply(&format!("a vote for {list}"), &bytes, true, server)?;
+        let documented = s.restart(
+            &format!("a restart with the names {list}"),
+            Expect::Started,
+            server,
+        )?;
+        s.premise(
+            documented == shown,
+            if shown {
+                "the reference's saved state loads these names as numbers"
+            } else {
+                "the reference's saved state falls back to its rebuild"
+            },
+        );
+        let bytes = s.next_block(Vec::new(), 0, None)?;
+        s.apply("a block after the restart", &bytes, true, server)?;
+        s.compare_records("the named delegates after the restart", server)?;
+    }
+    Ok(())
+}
+
+/// R-f: a transfer, then its stored bytes changed on both sides to an amount above the sender's
+/// balance: a start without a saved state refuses the stored chain.
+fn restart_negative_balance(
+    s: &mut Sides<'_>,
+    recipients: &[Address],
+    server: &mut OracleServer,
+) -> Result<()> {
+    // A sender that votes for no one: its balance, not a delegate's vote balance, goes negative.
+    let a = s.wallet(|s, k| {
+        s.funded(k, 1_000_000_000)
+            && s.state
+                .wallets()
+                .find_by_address(&k.address)
+                .is_some_and(|w| !w.has_voted())
+    })?;
+    let nonce = s.nonce(&a.address) + 1;
+    let t = s.build(transfer(&[(recipients[4], 1_000)]).nonce(nonce).fee(FEE), a)?;
+    let bytes = s.next_block(vec![t], 0, None)?;
+    s.apply("a transfer", &bytes, true, server)?;
+    let block = Block::receive(&bytes, &s.milestones)
+        .map_err(|e| Error::Oracle(format!("the transfer's block: {e}")))?;
+    let raised = s
+        .balance(&a.address)
+        .saturating_mul(2)
+        .max(1_000_000_000_000);
+    let tampered = s.build(
+        transfer(&[(recipients[4], raised)]).nonce(nonce).fee(FEE),
+        a,
+    )?;
+    s.tamper_tip(&block, 0, tampered.bytes(), server)?;
+    s.restart(
+        "a restart over the changed transfer",
+        Expect::RefusedWithoutSavedState,
+        server,
+    )?;
+    Ok(())
+}
+
+/// R-g: two blocks after a round end, a restart, then a revert of three blocks across the round
+/// end and a competing chain in other slots.
+fn restart_fork(
+    s: &mut Sides<'_>,
+    recipients: &[Address],
+    server: &mut OracleServer,
+) -> Result<()> {
+    s.back_to_round_end(0, server)?;
+    let end = s.state.last_block().clone();
+    let a = s.wallet(|s, k| s.funded(k, 1_000_000_000))?;
+    let t = s.build(
+        transfer(&[(recipients[5], 1_000)])
+            .nonce(s.nonce(&a.address) + 1)
+            .fee(FEE),
+        a,
+    )?;
+    let bytes = s.next_block(vec![t], 0, None)?;
+    s.apply("one block into the round", &bytes, true, server)?;
+    let bytes = s.next_block(Vec::new(), 0, None)?;
+    s.apply("two blocks into the round", &bytes, true, server)?;
+    s.restart(
+        "a restart two blocks into the round",
+        Expect::Started,
+        server,
+    )?;
+    s.revert(
+        "the revert across the round end after the restart",
+        3,
+        server,
+    )?;
+    let voter = s.wallet(|s, k| s.funded(k, 10_000_000_000) && k.address != a.address)?;
+    let target = s
+        .state
+        .wallets()
+        .delegates()
+        .filter_map(|w| w.delegate())
+        .filter(|d| d.resigned.is_none())
+        .max_by_key(|d| d.rank.unwrap_or(u32::MAX))
+        .map(|d| d.username().to_owned())
+        .ok_or_else(|| Error::Oracle("no delegate to vote for".into()))?;
+    let mut votes = Votes::new();
+    votes.insert(target, 10_000);
+    let vote = s.build(
+        TransactionBuilder::vote(votes)
+            .nonce(s.nonce(&voter.address) + 1)
+            .fee(FEE),
+        voter,
+    )?;
+    let bytes = s.next_block(vec![vote], 1, None)?;
+    s.apply(
+        "the competing round end, a slot later",
+        &bytes,
+        true,
+        server,
+    )?;
+    s.premise(
+        s.state.last_block().id() != end.id(),
+        "the competing block is another block",
+    );
+    let bytes = s.next_block(Vec::new(), 2, None)?;
+    s.apply(
+        "the competing branch, one block into the round",
+        &bytes,
+        true,
+        server,
+    )?;
+    s.restart("a restart on the competing branch", Expect::Started, server)?;
+    let bytes = s.next_block(Vec::new(), 0, None)?;
+    s.apply(
+        "the competing branch, two blocks into the round",
+        &bytes,
+        true,
+        server,
+    )?;
     s.compare_records("the state at the competing tip", server)?;
     Ok(())
 }
