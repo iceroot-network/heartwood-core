@@ -247,9 +247,9 @@ pub const DEVNET_SEED: &str = "solar-devnet";
 /// The aux of every synthetic signature.
 const AUX: [u8; 32] = [0x5a; 32];
 /// A fee above every floor of the devnet for the small transactions of the cases.
-const FEE: u64 = 20_000_000;
+pub(crate) const FEE: u64 = 20_000_000;
 /// The fee of a delegate registration (the devnet's surcharge is about 75 coins).
-const REGISTRATION_FEE: u64 = 7_600_000_000;
+pub(crate) const REGISTRATION_FEE: u64 = 7_600_000_000;
 
 /// The keys the seed derives: the generator, the delegates, the genesis and test wallets.
 pub struct Keys {
@@ -290,11 +290,11 @@ impl Keys {
             .map(|k| k.keys.public_key().to_compressed())
     }
 
-    fn wallets(&self) -> impl Iterator<Item = &DerivedKey> {
+    pub(crate) fn wallets(&self) -> impl Iterator<Item = &DerivedKey> {
         self.keys.iter().filter(|k| k.role.starts_with("wallet/"))
     }
 
-    fn delegates(&self) -> impl Iterator<Item = &DerivedKey> {
+    pub(crate) fn delegates(&self) -> impl Iterator<Item = &DerivedKey> {
         self.keys.iter().filter(|k| k.role.starts_with("delegate/"))
     }
 }
@@ -332,14 +332,14 @@ struct Verdict {
 }
 
 /// Both sides of a case, at the same state.
-struct Sides<'a> {
-    corpus: &'a Corpus,
-    milestones: Milestones,
-    state: State,
-    session: Value,
-    case: SyntheticCase,
+pub(crate) struct Sides<'a> {
+    pub(crate) corpus: &'a Corpus,
+    pub(crate) milestones: Milestones,
+    pub(crate) state: State,
+    pub(crate) session: Value,
+    name: &'static str,
     keys: &'a Keys,
-    results: Vec<CaseResult>,
+    pub(crate) results: Vec<CaseResult>,
     step: usize,
     last_missed: Vec<MissedBlock>,
     oracle_missed: usize,
@@ -364,12 +364,17 @@ fn without_chain_digest(line: &Value) -> Value {
 }
 
 impl<'a> Sides<'a> {
-    fn open(
+    /// Both sides at the corpus's tip, the case `name` in reports: Heartwood's through a new
+    /// store when `with_store`, the oracle's session with the reference's pool when `pool` gives
+    /// its options.
+    pub(crate) fn open(
         corpus: &'a Corpus,
         keys: &'a Keys,
         server: &mut OracleServer,
-        case: SyntheticCase,
+        name: &'static str,
+        with_store: bool,
         milestones_text: Option<String>,
+        pool: Option<Value>,
     ) -> Result<Sides<'a>> {
         let milestones = match &milestones_text {
             Some(text) => Milestones::load(text, &corpus.network).map_err(|e| Error::Corpus {
@@ -381,7 +386,7 @@ impl<'a> Sides<'a> {
         let handlers = Handlers;
         let (mut store, mut store_problem) = (None, None);
         let mut built = None;
-        if case.restarts() {
+        if with_store {
             match store_side(corpus, &milestones, milestones_text.as_deref()) {
                 Ok((side, state)) => {
                     store = Some(side);
@@ -413,6 +418,9 @@ impl<'a> Sides<'a> {
         if let Some(text) = milestones_text {
             args["milestones"] = json!(text);
         }
+        if let Some(options) = pool {
+            args["pool"] = json!({ "options": options });
+        }
         let opened = call(server, "chain.open", 1, &args)?;
         let session = opened.get("session").cloned().unwrap_or(Value::Null);
         for block in &corpus.blocks {
@@ -434,7 +442,7 @@ impl<'a> Sides<'a> {
             milestones,
             state,
             session,
-            case,
+            name,
             keys,
             results: Vec::new(),
             step: 0,
@@ -477,30 +485,30 @@ impl<'a> Sides<'a> {
         }
     }
 
-    fn record(&mut self, what: &str, outcome: Outcome) {
+    pub(crate) fn record(&mut self, what: &str, outcome: Outcome) {
         self.step += 1;
         self.results.push(CaseResult {
             file: format!("{}/synthetic", self.corpus.name()),
             line: self.step,
-            op: self.case.name().to_owned(),
-            label: format!("{} {}: {what}", self.case.name(), self.step),
+            op: self.name.to_owned(),
+            label: format!("{} {}: {what}", self.name, self.step),
             height: u64::from(self.state.height()),
             outcome,
         });
     }
 
-    fn params_height(&self) -> u32 {
+    pub(crate) fn params_height(&self) -> u32 {
         self.state.height().saturating_add(1)
     }
 
-    fn nonce(&self, address: &Address) -> u64 {
+    pub(crate) fn nonce(&self, address: &Address) -> u64 {
         self.state
             .wallets()
             .find_by_address(address)
             .map_or(0, heartwood_state::Wallet::nonce)
     }
 
-    fn balance(&self, address: &Address) -> u64 {
+    pub(crate) fn balance(&self, address: &Address) -> u64 {
         self.state
             .wallets()
             .find_by_address(address)
@@ -508,50 +516,53 @@ impl<'a> Sides<'a> {
     }
 
     /// A test wallet that `accept` accepts, by the seed's order.
-    fn wallet(&self, accept: impl Fn(&Sides<'_>, &DerivedKey) -> bool) -> Result<&'a DerivedKey> {
+    pub(crate) fn wallet(
+        &self,
+        accept: impl Fn(&Sides<'_>, &DerivedKey) -> bool,
+    ) -> Result<&'a DerivedKey> {
         self.keys
             .wallets()
             .find(|k| accept(self, k))
-            .ok_or_else(|| {
-                Error::Oracle(format!(
-                    "{}: no test wallet fits the case",
-                    self.case.name()
-                ))
-            })
+            .ok_or_else(|| Error::Oracle(format!("{}: no test wallet fits the case", self.name)))
     }
 
     /// A delegate of the seed that `accept` accepts, by the seed's order.
-    fn delegate(&self, accept: impl Fn(&Sides<'_>, &DerivedKey) -> bool) -> Result<&'a DerivedKey> {
+    pub(crate) fn delegate(
+        &self,
+        accept: impl Fn(&Sides<'_>, &DerivedKey) -> bool,
+    ) -> Result<&'a DerivedKey> {
         self.keys
             .delegates()
             .find(|k| accept(self, k))
             .ok_or_else(|| {
                 Error::Oracle(format!(
                     "{}: no delegate of the seed fits the case",
-                    self.case.name()
+                    self.name
                 ))
             })
     }
 
-    fn funded(&self, k: &DerivedKey, at_least: u64) -> bool {
+    pub(crate) fn funded(&self, k: &DerivedKey, at_least: u64) -> bool {
         let wallet = self.state.wallets().find_by_address(&k.address);
         wallet.is_some_and(|w| w.balance() >= at_least && w.public_key().is_some())
     }
 
-    fn build(&self, builder: TransactionBuilder, key: &DerivedKey) -> Result<Transaction> {
+    pub(crate) fn build(
+        &self,
+        builder: TransactionBuilder,
+        key: &DerivedKey,
+    ) -> Result<Transaction> {
         let params = self.milestones.at(self.params_height());
         builder
             .network(params.network())
             .build(&key.keys, Aux::fixed(AUX), params)
-            .map_err(|e| {
-                Error::Oracle(format!("{}: building a transaction: {e}", self.case.name()))
-            })
+            .map_err(|e| Error::Oracle(format!("{}: building a transaction: {e}", self.name)))
     }
 
     /// The next block on the current state, with `transactions`, in the first slot at least
     /// `gap` slots after the next one whose delegate the seed derives, signed by `signer` (the
     /// scheduled delegate when `None`).
-    fn next_block(
+    pub(crate) fn next_block(
         &self,
         transactions: Vec<Transaction>,
         gap: u32,
@@ -611,7 +622,7 @@ impl<'a> Sides<'a> {
                 signer.keys.secret_key(),
                 Aux::fixed(AUX),
             )
-            .map_err(|e| Error::Oracle(format!("{}: signing a block: {e}", self.case.name())))?;
+            .map_err(|e| Error::Oracle(format!("{}: signing a block: {e}", self.name)))?;
             return Ok(serialiser::serialise_with_transactions(
                 &header,
                 &transactions,
@@ -619,7 +630,7 @@ impl<'a> Sides<'a> {
         }
         Err(Error::Oracle(format!(
             "{}: no slot has a derived delegate",
-            self.case.name()
+            self.name
         )))
     }
 
@@ -701,17 +712,33 @@ impl<'a> Sides<'a> {
     }
 
     /// Send block bytes to both sides and compare; `expect_accepted` is the case's premise.
-    fn apply(
+    pub(crate) fn apply(
         &mut self,
         what: &str,
         bytes: &[u8],
         expect_accepted: bool,
         server: &mut OracleServer,
     ) -> Result<bool> {
+        Ok(self
+            .apply_by(what, bytes, expect_accepted, server, "chain.apply")?
+            .0)
+    }
+
+    /// [`Sides::apply`] with the oracle operation `op` (`chain.apply`, or `pool.blockApplied`,
+    /// which also runs the pool's steps after a block); whether both accepted the block, and the
+    /// oracle's answer.
+    pub(crate) fn apply_by(
+        &mut self,
+        what: &str,
+        bytes: &[u8],
+        expect_accepted: bool,
+        server: &mut OracleServer,
+        op: &str,
+    ) -> Result<(bool, Value)> {
         let before = self.dump(server)?;
         let theirs = call(
             server,
-            "chain.apply",
+            op,
             1,
             &json!({"session": self.session, "hex": hex::encode(bytes)}),
         )?;
@@ -733,7 +760,7 @@ impl<'a> Sides<'a> {
                     },
                 },
             );
-            return Ok(false);
+            return Ok((false, theirs));
         }
         if oracle_accepted != expect_accepted {
             self.record(
@@ -800,10 +827,10 @@ impl<'a> Sides<'a> {
             }
             self.compare_records(&format!("{what}: state after the refusal"), server)?;
         }
-        Ok(oracle_accepted)
+        Ok((oracle_accepted, theirs))
     }
 
-    fn dump(&self, server: &mut OracleServer) -> Result<Value> {
+    pub(crate) fn dump(&self, server: &mut OracleServer) -> Result<Value> {
         let mut sections = call(server, "chain.dump", 1, &json!({"session": self.session}))?
             .get("sections")
             .cloned()
@@ -815,7 +842,7 @@ impl<'a> Sides<'a> {
     }
 
     /// The oracle's records against Heartwood's, the missed slots aside.
-    fn compare_records(&mut self, what: &str, server: &mut OracleServer) -> Result<()> {
+    pub(crate) fn compare_records(&mut self, what: &str, server: &mut OracleServer) -> Result<()> {
         let theirs = self.dump(server)?;
         let ours = digest::records(&self.state, &self.milestones, &self.last_missed);
         let mut ours_json = digests::sections_to_json(&ours);
@@ -835,13 +862,33 @@ impl<'a> Sides<'a> {
     }
 
     /// Revert `count` blocks on both sides and compare every revert line.
-    fn revert(&mut self, what: &str, count: u32, server: &mut OracleServer) -> Result<()> {
+    pub(crate) fn revert(
+        &mut self,
+        what: &str,
+        count: u32,
+        server: &mut OracleServer,
+    ) -> Result<()> {
+        self.revert_by(what, count, server, "chain.revert")?;
+        Ok(())
+    }
+
+    /// [`Sides::revert`] with the oracle operation `op` (`chain.revert`, or `pool.revert`, which
+    /// also re-adds the reverted transactions to the pool); the oracle's answer and the blocks
+    /// Heartwood reverted, the last one first.
+    pub(crate) fn revert_by(
+        &mut self,
+        what: &str,
+        count: u32,
+        server: &mut OracleServer,
+        op: &str,
+    ) -> Result<(Value, Vec<Block>)> {
         let theirs = call(
             server,
-            "chain.revert",
+            op,
             1,
             &json!({"session": self.session, "count": count}),
         )?;
+        let mut reverted_blocks = Vec::new();
         let their_lines = theirs
             .get("lines")
             .and_then(Value::as_array)
@@ -851,6 +898,7 @@ impl<'a> Sides<'a> {
             let ours = match self.state.revert_block(&self.milestones, &Handlers) {
                 Ok(reverted) => {
                     self.commit_reverted(&reverted);
+                    reverted_blocks.push(reverted.block.clone());
                     digest::height_digest(
                         &self.state,
                         &self.milestones,
@@ -865,7 +913,7 @@ impl<'a> Sides<'a> {
                         what,
                         Outcome::HarnessError(format!("Heartwood refused the revert: {e}")),
                     );
-                    return Ok(());
+                    return Ok((theirs, reverted_blocks));
                 }
             };
             self.last_missed.clear();
@@ -886,7 +934,7 @@ impl<'a> Sides<'a> {
                 },
             );
         }
-        Ok(())
+        Ok((theirs, reverted_blocks))
     }
 
     /// The line of Heartwood's state as a restart line: what every restart of this state must
@@ -1056,7 +1104,7 @@ impl<'a> Sides<'a> {
     }
 
     /// Record a failed premise: the case did not set up what it tests.
-    fn premise(&mut self, holds: bool, what: &str) {
+    pub(crate) fn premise(&mut self, holds: bool, what: &str) {
         if !holds {
             self.record(
                 what,
@@ -1075,7 +1123,11 @@ impl<'a> Sides<'a> {
     }
 
     /// Revert the corpus's last blocks until the state ends a round minus `before_end` blocks.
-    fn back_to_round_end(&mut self, before_end: u32, server: &mut OracleServer) -> Result<()> {
+    pub(crate) fn back_to_round_end(
+        &mut self,
+        before_end: u32,
+        server: &mut OracleServer,
+    ) -> Result<()> {
         let mut steps = 0;
         while !is_new_round(self.state.height() + 1 + before_end, &self.milestones) {
             steps += 1;
@@ -1171,7 +1223,7 @@ fn rewrite_tip(
     chunk.commit().map_err(failed)
 }
 
-fn transfer(items: &[(Address, u64)]) -> TransactionBuilder {
+pub(crate) fn transfer(items: &[(Address, u64)]) -> TransactionBuilder {
     TransactionBuilder::transfer(
         items
             .iter()
@@ -1230,7 +1282,15 @@ fn run_case(
         }
         None => None,
     };
-    let mut s = Sides::open(corpus, keys, server, case, milestones_text.clone())?;
+    let mut s = Sides::open(
+        corpus,
+        keys,
+        server,
+        case.name(),
+        case.restarts(),
+        milestones_text.clone(),
+        None,
+    )?;
     let recipients: Vec<Address> = keys.wallets().map(|k| k.address).collect();
     match case {
         SyntheticCase::OverspendAfterGap => {

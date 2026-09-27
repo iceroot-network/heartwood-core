@@ -31,9 +31,10 @@
 //   pool.restart {session}      a new Storage and Service over the same file, then the start's
 //                               re-add -> {contents}
 //   pool.tip {session, height}  a fixture session's last block moved to `height` -> {contents}
-//   pool.blockApplied {session, hex}   a chain session: the block applied, then as a synced node
-//       does: removeForgedTransaction for each of its transactions, cleanUp, then the queue
-//       drain's readdTransactions(none, true) -> {accepted, line?, error?, contents}
+//   pool.blockApplied {session, hex}   a chain session: the block applied (as chain.apply), then
+//       as a synced node does: removeForgedTransaction for each of its transactions, cleanUp,
+//       then the queue drain's readdTransactions(none, true)
+//       -> {accepted, height, id, reward?, missed, line?, stage?, error?, contents}
 //   pool.revert {session, count}   a chain session: `count` blocks reverted as the blockchain's
 //       removeBlocks does, then readdTransactions of their transactions, in chain order
 //       -> {lines, contents}
@@ -154,11 +155,13 @@ module.exports = function poolOps(context) {
             withContents(session, async (pool, s) => {
                 if (s.kind !== "chain") throw new Error("pool.blockApplied needs a chain session");
                 const r = await s.replay.apply(Buffer.from(hex, "hex"), "apply");
-                if (!r.accepted) return { accepted: false, stage: r.stage, error: r.error };
+                const out = { accepted: r.accepted, height: r.height, id: r.id, missed: r.missed };
+                if (r.reward !== undefined) out.reward = r.reward;
+                if (!r.accepted) return { ...out, stage: r.stage, error: r.error };
                 for (const transaction of r.block.transactions) await pool.service.removeForgedTransaction(transaction);
                 await pool.cleanUp();
                 await pool.readd([], true);
-                return { accepted: true, line: r.line };
+                return { ...out, line: r.line };
             }),
 
         "pool.revert": async ({ session, count }) =>

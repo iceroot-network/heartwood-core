@@ -838,7 +838,10 @@ pub fn run(
     }
     if options.synthetic {
         match oracle {
-            Some(server) => results.extend(crate::synthetic::run(corpus, server)?),
+            Some(server) => {
+                results.extend(crate::synthetic::run(corpus, server)?);
+                results.extend(crate::synthetic_pool::run(corpus, server)?);
+            }
             None => return Err(Error::Usage("the synthetic cases need the oracle".into())),
         }
     }
