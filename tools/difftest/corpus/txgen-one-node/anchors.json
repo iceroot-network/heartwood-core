@@ -3,13 +3,13 @@
  "ok": true,
  "reference": {
   "version": "4.3.1",
-  "commit": "ddbd58100d0b39a234cbbce6b9213c9f99dbc0f9",
+  "commit": "23a7d941e5e906305b3e2a0beea1bb9f38ab9a7c",
   "tree": "a4df428c8612290af2e7c8139a23d31eb057ce8f",
   "seriesSha256": "ff7a3841c59986b13c553762840c5c342c9360e9ea2008208ed449b61c90464d"
  },
  "oracle": {
-  "mode": "local",
-  "image": null,
+  "mode": "container",
+  "image": "sha256:26629b4b14ab434609286683781e956c8aca28ee594d7c21cae8aeb4974e7bdf",
   "node": "v18.20.8"
  },
  "blocks": 264,
