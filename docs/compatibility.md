@@ -315,7 +315,7 @@ minimal case, which is written to `--regressions`.
 | P4 shuffle | rounds up to 2^53 - 1, 1 to 53 delegates | `state.shuffle` |
 | P5 ranking | 1 to 80 delegates with many equal vote balances and resignations | `state.rank` |
 | P6 vote amounts | balances up to 2^63 - 1, 1 to 53 votes | `wallet.voteAmounts` |
-| P7 handlers | wallet sets of 3 to 12 wallets and a mutated transaction from one of them | `state.applyTransaction`: the verdict, the error class, and the wallets after apply and after revert |
+| P7 handlers | wallet sets of 3 to 12 wallets and a mutated transaction from one of them, under the devnet's milestones or variants of them (fewer active delegates, fees off, and the fee floor, burn minimum and revoke delay changing at the rule height or the height after it) | `state.applyTransaction`: the verdict, the error class, and the wallets after apply and after revert; the revert must also give back the wallet set on each side |
 | P8 kernel text | JSON values, `.env` text, address lists | `kernel.stringify`, `kernel.dotenv`, `kernel.ip` |
 | P9 digest | wallet sets | `state.digest` |
 
@@ -330,14 +330,16 @@ transaction can reach from a consistent wallet set appears.
 ## L2: chains, corpora and the state digest
 
 A corpus is a chain that a reference devnet produced, imported with `difftest corpus import` from
-the archives of the maintainers' devnet tooling (a separate tool that is not published): the chain definition, every block as a relay receives it, and what
-the node itself recorded (round rows, missed slots, block columns, API checkpoints). The oracle's
+the archives of the maintainers' devnet tooling (a separate tool that is not published): the chain
+definition, every block as a relay receives it, and what the node itself recorded (round rows,
+missed slots, block columns, API checkpoints). The oracle's
 judge, `replay-chain.js` (`difftest corpus judge`), replays the corpus in the reference's own state
 classes with storage replaced by memory, checks that replay against the node's records, follows a
 seeded plan of reverts and re-applies, and writes one digest line per step. `difftest run l2`
 replays the same steps in Heartwood and compares every line; it also checks, before each block,
 that the scheduled forger is the block's generator and that the reward in its round is the header's,
-and runs the supply check after every step. `--synthetic` adds blocks that the harness signs with
+and runs the supply check after every step, with a check of the one value the digest leaves out:
+each delegate's resignation height must be that of its latest resignation in the chain. `--synthetic` adds blocks that the harness signs with
 the devnet's derived keys on top of the chain (refused blocks, a decoding rule and the handlers'
 fee floor, burn minimum and revoke delay changing at a height, a vote at a round's end, burns and
 fees at their limits, a block by a key that is no delegate, and a competing chain after a revert
