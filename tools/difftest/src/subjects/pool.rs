@@ -17,9 +17,9 @@ use serde_json::{Map, Value, json};
 
 use super::{Env, Outcome, Run, failed, integer};
 use crate::fixture::Fixture;
-use crate::levels::pool::{VERSION, contents, options};
+use crate::levels::pool::{ENTRY_IDS, VERSION, contents, options};
 use crate::store::{ScratchDir, Unbuilt, guarded};
-use crate::subject::{Case, SubjectError, Verdict};
+use crate::subject::{Case, NOTES, SubjectError, Verdict};
 
 /// The operations of this module.
 pub(super) const OPS: &[(&str, Run)] = &[("pool.run", run)];
@@ -42,6 +42,23 @@ impl Session<'_> {
         let bytes = heartwood_crypto::utils::hex::decode(text).map_err(|e| e.to_string())?;
         let params = self.milestones.at(self.tip.saturating_add(1));
         Transaction::decode(&bytes, params).map_err(|e| format!("a step's transaction: {e}"))
+    }
+
+    /// The transaction id of each entry that decodes under the rules of the tip's next height
+    /// (null for one that does not): the judge's way to find an entry by the id the reference
+    /// gives its transaction, which for JSON is not always the id the entry carries.
+    fn entry_ids(&self, entries: &[Entry]) -> Vec<Value> {
+        let params = self.milestones.at(self.tip.saturating_add(1));
+        entries
+            .iter()
+            .map(|entry| {
+                let transaction = match entry {
+                    Entry::Bytes(bytes) => Transaction::decode(bytes, params).ok(),
+                    Entry::Data(json) => Transaction::from_json(json, params).ok(),
+                };
+                transaction.map_or(Value::Null, |t| Value::from(t.id().to_hex()))
+            })
+            .collect()
     }
 
     fn online(&self) -> Value {
@@ -92,16 +109,21 @@ impl Session<'_> {
                         }
                     })
                     .collect::<Result<Vec<_>, String>>()?;
+                let ids = self.entry_ids(&entries);
                 let processor = match step.get("channel").and_then(Value::as_str) {
                     None | Some("api") => &mut self.api,
                     Some("p2p") => &mut self.p2p,
                     Some(other) => return Err(format!("unknown channel {other}")),
                 };
                 let clock = ManualClock::new(now);
-                processor
+                let mut result = processor
                     .process(&mut self.pool, &ctx, &clock, entries)
                     .map_err(storage)?
-                    .to_json()
+                    .to_json();
+                if let Some(object) = result.as_object_mut() {
+                    object.insert(NOTES.into(), json!({ ENTRY_IDS: ids }));
+                }
+                result
             }
             "setOnline" => {
                 for d in step
