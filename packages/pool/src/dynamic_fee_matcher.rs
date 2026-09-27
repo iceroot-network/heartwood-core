@@ -6,9 +6,13 @@
 //! `minFeeBroadcast` (to be broadcast) and the pool's `addonBytes`; when disabled, the fee must be
 //! the milestone's static fee exactly (`ERR_LOW_FEE` below it, `ERR_HIGH_FEE` above it).
 
-use heartwood_crypto::Transaction;
+use std::cmp::Ordering;
 
-use crate::errors::Refusal;
+use heartwood_crypto::Transaction;
+use heartwood_crypto::transactions::builders::static_fee;
+use heartwood_transactions::{minimum_fee, minimum_fee_with};
+
+use crate::errors::{PoolCode, Refusal};
 use crate::options::Options;
 use crate::service::PoolContext;
 
@@ -20,8 +24,7 @@ pub fn check_enter_pool(
     options: &Options,
     transaction: &Transaction,
 ) -> Result<(), Refusal> {
-    let _ = (ctx, options, transaction);
-    todo!("the fee rule to enter the pool")
+    check(ctx, options, transaction, options.dynamic_fees.min_fee_pool)
 }
 
 /// Refuse `transaction` when its fee does not let it be broadcast.
@@ -31,6 +34,60 @@ pub fn check_broadcast(
     options: &Options,
     transaction: &Transaction,
 ) -> Result<(), Refusal> {
-    let _ = (ctx, options, transaction);
-    todo!("the fee rule to be broadcast")
+    check(
+        ctx,
+        options,
+        transaction,
+        options.dynamic_fees.min_fee_broadcast,
+    )
+}
+
+/// The fee rule, with `pool_min_fee` as the price of a byte when the pool's own floor applies.
+fn check(
+    ctx: &PoolContext<'_>,
+    options: &Options,
+    transaction: &Transaction,
+    pool_min_fee: u64,
+) -> Result<(), Refusal> {
+    let params = ctx.params();
+    let pool_fees = &options.dynamic_fees;
+    let floor = if params.dynamic_fees().is_some_and(|fees| fees.enabled()) {
+        Some(minimum_fee(transaction, params))
+    } else if pool_fees.enabled {
+        let addon = pool_fees
+            .addon_bytes
+            .get(transaction.key())
+            .copied()
+            .unwrap_or(0);
+        Some(minimum_fee_with(
+            transaction,
+            i64::try_from(pool_min_fee).unwrap_or(i64::MAX),
+            i64::try_from(addon).unwrap_or(i64::MAX),
+        ))
+    } else {
+        None
+    };
+    let text = || transaction.display(ctx.network.pub_key_hash);
+    let too_low = || {
+        Refusal::new(
+            PoolCode::LowFee,
+            format!("{} fee is too low to enter the pool", text()),
+        )
+    };
+    match floor {
+        Some(floor) if i128::from(transaction.fee()) >= floor => Ok(()),
+        Some(_) => Err(too_low()),
+        None => {
+            let fee = static_fee(transaction.kind(), params)
+                .map_err(|error| Refusal::new(PoolCode::Other, error.to_string()))?;
+            match transaction.fee().cmp(&fee) {
+                Ordering::Equal => Ok(()),
+                Ordering::Less => Err(too_low()),
+                Ordering::Greater => Err(Refusal::new(
+                    PoolCode::HighFee,
+                    format!("{} fee is too high to enter the pool", text()),
+                )),
+            }
+        }
+    }
 }
