@@ -9,7 +9,7 @@
 //! [`SessionError::Server`], protocol errors to [`SessionError::Protocol`], and the socket's own
 //! failures to [`SessionError::Ws`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::future::{Future, poll_fn};
 use std::io;
 use std::net::SocketAddr;
@@ -37,6 +37,9 @@ const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(5);
 const PING_LIMIT: Duration = Duration::from_secs(1);
 /// How much of an error response's payload becomes the error's text.
 const MAX_ERROR_TEXT: usize = 512;
+/// How many timed-out request ids a connection remembers, so that a late response to one is told
+/// from a response to an unknown id.
+const REMEMBERED_TIMEOUTS: usize = 1024;
 
 /// How a session connects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +104,7 @@ impl Session {
             link: Link::Idle,
             caller: Some(caller),
             pending: BTreeMap::new(),
+            timed_out: VecDeque::new(),
             heartbeat: None,
             beat_at: None,
             last_pinged: None,
@@ -220,6 +224,8 @@ struct Actor {
     /// The first attempt's caller, until the attempt ends.
     caller: Option<Reply<()>>,
     pending: BTreeMap<u32, Pending>,
+    /// The ids of the connection's requests that timed out, oldest first.
+    timed_out: VecDeque<u32>,
     heartbeat: Option<Duration>,
     beat_at: Option<Instant>,
     last_pinged: Option<Instant>,
@@ -335,18 +341,16 @@ impl Actor {
         match received {
             Received::Binary(bytes) => self.message(Some(bytes)),
             Received::Text => self.message(None),
-            // The WebSocket library answers a ping; then the client drops the connection for good.
+            // The WebSocket library answers a ping; then the client drops the connection for good,
+            // without a report. The pending requests fail as disconnected in the reference; here
+            // they carry the frame, of the same class, so the peer's violation can be recorded.
             Received::Ping(payload) => {
                 if let Link::Open(_, writer, _) = &self.link {
                     writer.pong(payload);
                 }
-                self.reconnection = None;
-                self.cleanup();
+                self.control_frame();
             }
-            Received::Pong => {
-                self.reconnection = None;
-                self.cleanup();
-            }
+            Received::Pong => self.control_frame(),
             Received::Closed(None) => self.closed(),
             Received::Closed(Some(code)) => {
                 self.end(Some(code).filter(|code| *code != 1005));
@@ -400,7 +404,11 @@ impl Actor {
             }
         });
         let Some(pending) = self.pending.remove(&update.id) else {
-            return self.report(ProtocolError::UnknownRequest);
+            let late = self.timed_out.iter().position(|id| *id == update.id);
+            return match late.and_then(|index| self.timed_out.remove(index)) {
+                Some(_) => self.report(ProtocolError::LateResponse),
+                None => self.report(ProtocolError::UnknownRequest),
+            };
         };
         let answer = match update.kind {
             Kind::Request => Ok(update.payload),
@@ -454,6 +462,12 @@ impl Actor {
             .collect();
         for id in expired {
             if let Some(pending) = self.pending.remove(&id) {
+                if pending.reply.is_some() {
+                    if self.timed_out.len() == REMEMBERED_TIMEOUTS {
+                        self.timed_out.pop_front();
+                    }
+                    self.timed_out.push_back(id);
+                }
                 self.settle(pending, Err(SessionError::Timeout));
             }
         }
@@ -515,9 +529,16 @@ impl Actor {
             self.link = Link::Idle;
         }
         self.beat_at = None;
+        self.timed_out.clear();
         for pending in std::mem::take(&mut self.pending).into_values() {
             self.settle(pending, Err(error.clone()));
         }
+    }
+
+    /// A WebSocket ping or pong: the connection ends for good.
+    fn control_frame(&mut self) {
+        self.reconnection = None;
+        self.cleanup_with(SessionError::Protocol(ProtocolError::ControlFrame));
     }
 
     /// Wait before the next reconnect, if one is left (`_reconnect`).

@@ -129,6 +129,18 @@ impl PeerRepository {
         self.with(|tables| tables.pending.insert(peer.ip(), peer));
     }
 
+    /// Mark `peer` pending under its IP unless a peer at that IP is pending already, in one step;
+    /// whether it was marked.
+    pub fn try_set_pending(&self, peer: SharedPeer) -> bool {
+        self.with(|tables| match tables.pending.entry(peer.ip()) {
+            indexmap::map::Entry::Occupied(_) => false,
+            indexmap::map::Entry::Vacant(entry) => {
+                entry.insert(peer);
+                true
+            }
+        })
+    }
+
     /// Forget the pending peer at `ip`, if any.
     pub fn forget_pending(&self, ip: IpAddr) {
         self.with(|tables| tables.pending.shift_remove(&ip));
@@ -212,7 +224,10 @@ mod tests {
         assert!(!repository.has(pending.ip()));
         assert!(repository.get_pending(pending.ip()).unwrap().same(&pending));
         assert_eq!(repository.pending().len(), 1);
+        assert!(!repository.try_set_pending(peer(7, 4003)));
+        assert_eq!(repository.get_pending(pending.ip()).unwrap().port(), 4002);
         repository.forget_pending(pending.ip());
         assert!(!repository.has_pending(pending.ip()));
+        assert!(repository.try_set_pending(peer(7, 4003)));
     }
 }

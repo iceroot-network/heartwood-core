@@ -9,8 +9,9 @@
 //!
 //! - infractions: the reference's own, a cleanse ping still running at the cleanse's deadline;
 //! - violations: protocol violations that no honest reference peer produces (a reply that fails
-//!   decoding or its schema, a nes protocol error, a bogus common-block reply, a fork header that
-//!   fails its checks, a downloaded block that fails decoding or verification).
+//!   decoding or its schema, a nes protocol error that no honest server causes, a bogus
+//!   common-block reply, a fork header that fails its checks, a downloaded block that fails
+//!   decoding or verification).
 //!
 //! A peer with at least 3 infractions and violations together in the window is ignored by the
 //! ping, as the reference ignores one with 3 infractions ([`Peer::is_ignored`]); only a peer with

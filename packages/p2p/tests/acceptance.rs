@@ -10,7 +10,6 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use heartwood_crypto::crypto::slots::SlotInfo;
 use heartwood_crypto::{Block, BlockId, TransactionId};
 use heartwood_kernel::{Event, ManualClock};
 use heartwood_p2p::communicator::BlocksRequest;
@@ -65,7 +64,7 @@ impl PeerClient for Client {
         &self,
         peer: &SharedPeer,
         timeout: Duration,
-        slot: Option<SlotInfo>,
+        attest: bool,
         force: bool,
         skip_common_blocks: bool,
     ) -> Result<Option<PeerState>, PingError> {
@@ -73,7 +72,7 @@ impl PeerClient for Client {
         self.pinged
             .lock()
             .unwrap()
-            .push((peer.ip(), timeout, slot.is_some()));
+            .push((peer.ip(), timeout, attest));
         if let Some(repository) = self.repository.lock().unwrap().as_ref() {
             self.pending_while_pinged
                 .lock()
@@ -169,7 +168,6 @@ fn acceptance(options: P2pOptions) -> Acceptance {
         client: Arc::clone(&client),
         rules: Arc::new(Rules::default()),
         repository: Arc::clone(&repository),
-        chain: Arc::new(Chain::at(10)),
         events: events.clone(),
         options: Arc::new(options),
         interfaces: vec![IpAddr::from(OWN)],
@@ -248,6 +246,58 @@ async fn a_failed_or_late_ping_disconnects_the_new_peer() {
         .validate_and_accept(candidate("192.0.2.3"), PLAIN)
         .await;
     assert!(accept.repository.has(ip("192.0.2.3")));
+}
+
+#[test]
+fn two_acceptances_of_one_new_ip_on_two_threads_ping_it_once() {
+    // The pending check and the mark are one step: whichever thread marks the IP first pings it
+    // as a new peer, and the other stops.
+    let runtime = || {
+        let mut builder = tokio::runtime::Builder::new_current_thread();
+        builder.enable_time().build().unwrap()
+    };
+    for round in 0..200 {
+        let accept = acceptance(options());
+        let start = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                let (accept, start) = (&accept, &start);
+                scope.spawn(move || {
+                    let one = accept
+                        .processor
+                        .validate_and_accept(candidate("192.0.2.1"), PLAIN);
+                    start.wait();
+                    runtime().block_on(one);
+                });
+            }
+        });
+        // One ping of a new peer; a second acceptance that ran after the first had stored it
+        // pings a known peer, which is not pending.
+        let pending = accept.client.pending_while_pinged.lock().unwrap().clone();
+        let new = pending.iter().filter(|pending| **pending).count();
+        assert_eq!(new, 1, "round {round}");
+        assert_eq!(accept.events.all(), [Event::PeerAdded], "round {round}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_ping_that_loses_the_race_runs_on() {
+    // As the reference's: the race is lost at verifyTimeout, but the ping goes on and still sets
+    // the known peer's state when the peer answers.
+    let accept = acceptance(options());
+    let known = peer(1);
+    accept.repository.set(known.clone());
+    let late = Ping::Answers("4.3.2", Duration::from_secs(61));
+    accept.client.plan(known.ip(), late);
+    accept
+        .processor
+        .validate_and_accept(candidate("192.0.2.1"), PLAIN)
+        .await;
+    assert!(accept.client.probed.lock().unwrap().is_empty());
+    assert_eq!(known.snapshot().version, None);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(known.snapshot().version.as_deref(), Some("4.3.2"));
+    assert!(!known.snapshot().stale);
 }
 
 #[tokio::test(start_paused = true)]
@@ -431,7 +481,6 @@ async fn the_real_address_rules_process_and_refuse_addresses() {
             client: Arc::new(Client::default()),
             rules: Arc::new(heartwood_p2p::utils::rules::Rules::new(100, 25)),
             repository: Arc::new(PeerRepository::new()),
-            chain: Arc::new(Chain::at(10)),
             events: Arc::new(Events::default()),
             options: Arc::new(P2pOptions {
                 allow_private_ip_ranges: allow_private,

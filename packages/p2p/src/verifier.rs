@@ -22,8 +22,8 @@
 //! rebuilt as a block or its generator is no registered delegate, and when the node cannot read
 //! its own chain; a deadline passed before a fetch of the fork segment is caught and does not
 //! verify. A throw fails the ping and leaves the peer's last verification as it was;
-//! [`StateCheck::check_state`] gives that with [`PastDeadline`], the seam's one error, whatever
-//! stopped the verification (the reference's error text differs, which only its logs show).
+//! [`StateCheck::check_state`] gives that with [`VerificationStopped`], which names what stopped
+//! it. The fast verification throws only when the node cannot read its own chain.
 //!
 //! A bogus common-block reply and a header of the fork segment that fails its checks are protocol
 //! violations that no honest peer commits; each is recorded on the peer.
@@ -37,7 +37,7 @@ use heartwood_kernel::{Clock, calculate_round};
 use heartwood_p2p_wire::codecs::Amount;
 use heartwood_p2p_wire::codecs::blocks::ListedBlock;
 
-use crate::errors::PastDeadline;
+use crate::errors::VerificationStopped;
 use crate::nsect::NSect;
 use crate::peer::{FastVerification, PeerState, SharedPeer, Verification};
 use crate::seams::{Deadline, StateCheck, VerifierLink};
@@ -56,7 +56,7 @@ pub enum Outcome {
     /// The chain did not verify (the reference answers `undefined`).
     Refused(Refusal),
     /// The verification stopped (the reference throws).
-    Stopped(Stop),
+    Stopped(VerificationStopped),
 }
 
 /// Why a chain did not verify.
@@ -74,18 +74,6 @@ pub enum Refusal {
     /// A header of the fork segment does not chain to the block before it; the reference does not
     /// check this.
     Unlinked,
-}
-
-/// Why a verification stopped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stop {
-    /// The deadline passed before a common-block probe.
-    Deadline,
-    /// A header of the fork segment cannot be rebuilt as a block, or its generator is no
-    /// registered delegate.
-    Header,
-    /// The node could not read its own chain.
-    Lookup,
 }
 
 /// The peer verifier, over the node's chain and stored blocks.
@@ -153,23 +141,22 @@ impl PeerVerifier {
     }
 
     /// The fast verification of `claimed`: the header only, and whether it is our block at its
-    /// height.
-    pub fn verify_fast(&self, claimed: &PeerState) -> Option<FastVerification> {
+    /// height; [`VerificationStopped::Lookup`] when our block cannot be read, where the reference
+    /// throws.
+    pub fn verify_fast(
+        &self,
+        claimed: &PeerState,
+    ) -> Result<Option<FastVerification>, VerificationStopped> {
         if !self.header_verifies(claimed) {
-            return None;
+            return Ok(None);
         }
         let ours = self.our_height();
-        let common = match self.have_their_block(claimed, ours) {
-            Ok(true) => Some(claimed.height),
-            Ok(false) => None,
-            // The reference throws; the fast check has no error to give.
-            Err(_) => return None,
-        };
-        Some(FastVerification {
+        let have = self.have_their_block(claimed, ours)?;
+        Ok(Some(FastVerification {
             my_height: ours,
             their_height: claimed.height,
-            highest_common_height: common,
-        })
+            highest_common_height: have.then_some(claimed.height),
+        }))
     }
 
     fn our_height(&self) -> u32 {
@@ -203,16 +190,20 @@ impl PeerVerifier {
     }
 
     /// `weHavePeersHighestBlock`: whether the claimed header is our block at its height.
-    fn have_their_block(&self, claimed: &PeerState, ours: u32) -> Result<bool, Stop> {
+    fn have_their_block(
+        &self,
+        claimed: &PeerState,
+        ours: u32,
+    ) -> Result<bool, VerificationStopped> {
         if claimed.height > ours {
             return Ok(false);
         }
         let blocks = self
             .lookup
             .blocks_by_height(&[claimed.height])
-            .map_err(|_| Stop::Lookup)?;
+            .map_err(|_| VerificationStopped::Lookup)?;
         let [block] = blocks.as_slice() else {
-            return Err(Stop::Lookup);
+            return Err(VerificationStopped::Lookup);
         };
         Ok(claimed.header_id() == Some(block_id(block).to_hex().as_str()))
     }
@@ -224,7 +215,7 @@ impl PeerVerifier {
         peer: &SharedPeer,
         high: u32,
         deadline: Deadline,
-    ) -> Result<Option<(u32, BlockId)>, Stop> {
+    ) -> Result<Option<(u32, BlockId)>, VerificationStopped> {
         let last_match = Mutex::new(None);
         let height = NSect::new(N_ARY)
             .find(1, high, |heights| {
@@ -246,11 +237,11 @@ impl PeerVerifier {
         heights: Vec<u32>,
         deadline: Deadline,
         last_match: &Mutex<Option<BlockId>>,
-    ) -> Result<Option<u32>, Stop> {
+    ) -> Result<Option<u32>, VerificationStopped> {
         let headers = self
             .lookup
             .blocks_by_height(&heights)
-            .map_err(|_| Stop::Lookup)?;
+            .map_err(|_| VerificationStopped::Lookup)?;
         let ours: Vec<(u32, BlockId)> = headers
             .iter()
             .map(|header| (header.height, block_id(header)))
@@ -260,9 +251,11 @@ impl PeerVerifier {
                 .iter()
                 .all(|height| ours.iter().any(|(ours, _)| ours == height));
         if !complete {
-            return Err(Stop::Lookup);
+            return Err(VerificationStopped::Lookup);
         }
-        let remaining = deadline.remaining().map_err(|_| Stop::Deadline)?;
+        let remaining = deadline
+            .remaining()
+            .map_err(|_| VerificationStopped::Deadline)?;
         let ids: Vec<BlockId> = ours.iter().map(|(_, id)| *id).collect();
         let Some(common) = link.common_blocks(peer, &ids, remaining).await else {
             return Ok(None);
@@ -297,7 +290,7 @@ impl PeerVerifier {
         let delegates = self
             .lookup
             .round_delegate_keys(round)
-            .map_err(|_| Outcome::Stopped(Stop::Lookup))?;
+            .map_err(|_| Outcome::Stopped(VerificationStopped::Lookup))?;
         let last_in_round = round
             .round_height
             .saturating_add(round.max_delegates)
@@ -326,7 +319,7 @@ impl PeerVerifier {
                 return Err(Outcome::Refused(Refusal::NoHeaders));
             };
             let outcome = match rebuild(&listed_fields(listed)) {
-                None => Outcome::Stopped(Stop::Header),
+                None => Outcome::Stopped(VerificationStopped::Header),
                 Some(rebuilt) => match self.header_passes(&rebuilt, height, &delegates) {
                     Err(stop) => Outcome::Stopped(stop),
                     Ok(false) => Outcome::Refused(Refusal::Segment),
@@ -353,7 +346,7 @@ impl PeerVerifier {
         header: &BlockHeader,
         expected_height: u32,
         delegates: &[PublicKeyBytes],
-    ) -> Result<bool, Stop> {
+    ) -> Result<bool, VerificationStopped> {
         // The reference names the generator only for a version 0 block, and requires a name.
         if header.version != 0
             || self
@@ -361,7 +354,7 @@ impl PeerVerifier {
                 .delegate_by_key(&header.generator_public_key)
                 .is_none()
         {
-            return Err(Stop::Header);
+            return Err(VerificationStopped::Header);
         }
         Ok(signed(header)
             && header.height == expected_height
@@ -376,11 +369,11 @@ impl StateCheck for PeerVerifier {
         peer: &SharedPeer,
         claimed: &PeerState,
         deadline: Deadline,
-    ) -> Result<Option<Verification>, PastDeadline> {
+    ) -> Result<Option<Verification>, VerificationStopped> {
         match self.verify(link, peer, claimed, deadline).await {
             Outcome::Verified(verification) => Ok(Some(verification)),
             Outcome::Refused(_) => Ok(None),
-            Outcome::Stopped(_) => Err(PastDeadline),
+            Outcome::Stopped(stop) => Err(stop),
         }
     }
 
@@ -388,7 +381,7 @@ impl StateCheck for PeerVerifier {
         &self,
         _peer: &SharedPeer,
         claimed: &PeerState,
-    ) -> Option<FastVerification> {
+    ) -> Result<Option<FastVerification>, VerificationStopped> {
         self.verify_fast(claimed)
     }
 }

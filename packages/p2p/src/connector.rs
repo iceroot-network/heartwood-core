@@ -169,8 +169,9 @@ impl Shared {
 }
 
 /// The error hook of session `serial` to `ip`: the connector terminates and forgets it. After a
-/// protocol error the requests pending on it fail with that error, so the communicator can record
-/// the violation; the reference fails them as disconnected, and both are of the class `Error`.
+/// protocol error the requests pending on it fail with that error, so the communicator can tell a
+/// violation from what an honest server causes (a late response, a ping flood); the reference
+/// fails them as disconnected, and both are of the class `Error`.
 fn hook(shared: Weak<Shared>, ip: IpAddr, serial: u64) -> ErrorHook {
     Arc::new(move |error| {
         if let Some(shared) = shared.upgrade() {

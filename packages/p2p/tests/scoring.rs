@@ -84,7 +84,7 @@ async fn a_violation_makes_the_peer_no_source() {
         .answer(RouteId::GetStatus, Answer::Bytes(status));
     let pinged = fixture
         .communicator
-        .ping(&peer, Duration::from_secs(5), None, true, false)
+        .ping(&peer, Duration::from_secs(5), false, true, false)
         .await;
     assert!(pinged.unwrap().is_some());
     let reply = blocks::post_block_encode_response(&PostBlockResponse::default());
@@ -107,7 +107,7 @@ async fn an_honest_slow_peer_with_three_cleanse_infractions_stays_a_source() {
     // The reference's ignore rule: the ping skips it.
     let ping = fixture
         .communicator
-        .ping(&slow, Duration::from_secs(5), None, true, false);
+        .ping(&slow, Duration::from_secs(5), false, true, false);
     assert_eq!(ping.await, Ok(None));
     assert!(fixture.transport.sent_on(RouteId::GetStatus).is_empty());
     // But it is asked for peers, blocks and transactions as before.
@@ -127,7 +127,7 @@ async fn infractions_and_violations_count_together_toward_the_ignore_rule() {
     });
     let ping = fixture
         .communicator
-        .ping(&peer, Duration::from_secs(5), None, true, false);
+        .ping(&peer, Duration::from_secs(5), false, true, false);
     assert_eq!(ping.await, Ok(None));
     assert!(fixture.transport.sent().is_empty());
 }
@@ -138,23 +138,35 @@ async fn only_what_no_honest_peer_does_is_a_violation() {
     let client = &fixture.communicator;
     let transport = &fixture.transport;
     let violations = |peer: &SharedPeer| peer.snapshot().violations.len();
-    // Timeouts, disconnects, server errors and heartbeat timeouts: honest peers have them.
+    // Timeouts, disconnects, server errors, heartbeat timeouts, a response after our timeout
+    // and pings bunched by a stall: honest peers have them.
     let honest = stored(&fixture, 1);
-    let heartbeat = SessionError::Protocol(ProtocolError::HeartbeatTimeout);
-    for error in [SessionError::Disconnect, heartbeat] {
+    let server = SessionError::Server {
+        status: 500,
+        payload: "boom".into(),
+    };
+    let quiet = [
+        ProtocolError::HeartbeatTimeout,
+        ProtocolError::LateResponse,
+        ProtocolError::PingFlood,
+    ];
+    let failures = [SessionError::Disconnect, server];
+    for error in failures
+        .into_iter()
+        .chain(quiet.map(SessionError::Protocol))
+    {
         transport.answer(RouteId::GetPeers, Answer::Fail(error));
     }
-    for _ in 0..2 {
+    for _ in 0..6 {
         client.get_peers(&honest, true).await;
     }
-    client.get_peers(&honest, true).await;
     assert_eq!(violations(&honest), 0);
-    // A nes protocol error is one; so is a reply the codec refuses.
-    let flooding = stored(&fixture, 2);
-    let flood = SessionError::Protocol(ProtocolError::PingFlood);
-    transport.answer(RouteId::GetPeers, Answer::Fail(flood));
-    client.get_peers(&flooding, true).await;
-    assert_eq!(violations(&flooding), 1);
+    // Any other nes protocol error is one; so is a reply the codec refuses.
+    let texting = stored(&fixture, 2);
+    let text = SessionError::Protocol(ProtocolError::TextFrame);
+    transport.answer(RouteId::GetPeers, Answer::Fail(text));
+    client.get_peers(&texting, true).await;
+    assert_eq!(violations(&texting), 1);
     let garbled = stored(&fixture, 3);
     transport.answer(RouteId::GetPeers, Answer::Bytes(vec![0x7a, 0x05]));
     client.get_peers(&garbled, true).await;
@@ -174,6 +186,20 @@ async fn only_what_no_honest_peer_does_is_a_violation() {
     assert_eq!(violations(&bad), 1);
     assert_eq!(bad.snapshot().sequential_errors, 0);
     assert!(fixture.repository.has(bad.ip()));
+    // A memo that is not UTF-8 fails the download too, but the reference accepts it, so honest
+    // peers serve such a block: no violation.
+    let memo = stored(&fixture, 5);
+    let block = one_block(vec![transfer_with_non_utf8_memo()]);
+    transport.answer(RouteId::GetBlocks, Answer::Bytes(block));
+    let download = client.get_peer_blocks(&memo, BlocksRequest::after(5)).await;
+    assert!(matches!(
+        download,
+        Err(DownloadError::Transaction {
+            source: heartwood_crypto::errors::DecodeError::InvalidMemo,
+            ..
+        })
+    ));
+    assert_eq!(violations(&memo), 0);
 }
 
 #[tokio::test(start_paused = true)]
@@ -184,7 +210,6 @@ async fn a_new_peer_found_violating_is_not_accepted_again_within_the_window() {
         client: Arc::clone(&client),
         rules: Arc::clone(&fixture.rules),
         repository: Arc::clone(&fixture.repository),
-        chain: fixture.chain.clone(),
         events: fixture.events.clone(),
         options: Arc::clone(&fixture.options),
         interfaces: Vec::new(),

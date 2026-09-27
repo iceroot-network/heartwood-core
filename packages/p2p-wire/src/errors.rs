@@ -98,8 +98,8 @@ impl DecodeError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum ReplyRefused {
     /// The reply as a whole: a required key is missing (for getStatus: `state`, `config` or
-    /// `signatures`), a key the schema does not allow is present, or a list has more items than
-    /// the schema allows.
+    /// `signatures`), or a list has more items than the schema allows. A key the schema does not
+    /// allow is removed, not refused, as the reference's schema library does.
     #[error("the reply breaks its schema")]
     Root,
     /// `state`: `height`, `forgingAllowed` or `currentSlot` is missing or out of range.

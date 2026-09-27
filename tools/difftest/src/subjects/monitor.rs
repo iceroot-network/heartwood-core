@@ -16,7 +16,6 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use heartwood_crypto::blocks::factory::{self, BlockDraft};
-use heartwood_crypto::crypto::slots::SlotInfo;
 use heartwood_crypto::{
     Aux, Block, BlockId, KeyPair, Milestones, Network, Params, PublicKeyBytes, Transaction,
     TransactionId,
@@ -154,7 +153,7 @@ impl PeerClient for PlanClient {
         &self,
         _: &SharedPeer,
         _: Duration,
-        _: Option<SlotInfo>,
+        _: bool,
         _: bool,
         _: bool,
     ) -> Result<Option<PeerState>, PingError> {
@@ -377,6 +376,10 @@ fn download_plan(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         .map_err(|e| failed(e.to_string()))?;
     let client = Arc::new(PlanClient::default());
     let sampler = Sampler::scripted(orders);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .map_err(|e| failed(e.to_string()))?;
     let monitor = Arc::new(NetworkMonitor::new(MonitorParts {
         client: Arc::clone(&client),
         acceptor: Arc::new(NoAcceptor),
@@ -391,11 +394,8 @@ fn download_plan(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         options: Arc::new(P2pOptions::default()),
         clock: Arc::new(ManualClock::new(0)) as Arc<dyn Clock>,
         sampler: sampler.clone(),
+        runtime: runtime.handle().clone(),
     }));
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .map_err(|e| failed(e.to_string()))?;
     let mut outputs = Vec::new();
     for call in calls {
         if let Some(height) = height_of(&call["networkHeight"], "networkHeight")? {

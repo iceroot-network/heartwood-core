@@ -33,5 +33,6 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-# The peer network's subjects drive the client's asynchronous parts on a runtime of their own.
-tokio = { workspace = true, features = ["rt", "time"] }
+# The peer network's subjects drive the client's asynchronous parts on a runtime of their own;
+# the verifier's runs on a paused clock (test-util).
+tokio = { workspace = true, features = ["rt", "test-util", "time"] }

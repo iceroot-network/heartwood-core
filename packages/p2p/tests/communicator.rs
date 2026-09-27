@@ -16,14 +16,16 @@ use std::time::Duration;
 use heartwood_crypto::{BlockId, TransactionId};
 use heartwood_kernel::Event;
 use heartwood_p2p::communicator::BlocksRequest;
-use heartwood_p2p::errors::{PastDeadline, PingError};
+use heartwood_p2p::errors::{PingError, VerificationStopped};
 use heartwood_p2p::seams::{PeerClient, VerifierLink};
 use heartwood_p2p::{ChainView, DownloadedBlock, SessionError, Verification};
 use heartwood_p2p_wire::RouteId;
 use heartwood_p2p_wire::codecs::blocks::{self, ListedBlock};
 use heartwood_p2p_wire::codecs::transactions::{self, WithTransactions};
 use heartwood_p2p_wire::codecs::{Amount, peer as peer_codecs};
+use heartwood_p2p_wire::errors::RequestError;
 use heartwood_p2p_wire::list;
+use heartwood_p2p_wire::messages::Proto;
 use heartwood_p2p_wire::messages::blocks::{BlockHeader, PostBlockResponse};
 use heartwood_p2p_wire::messages::peer::{Common, GetCommonBlocksResponse, Peer as ListedPeer};
 use heartwood_p2p_wire::messages::transactions::GetUnconfirmedTransactionsResponse;
@@ -306,19 +308,34 @@ async fn requests_the_reference_never_writes_are_not_sent() {
             .unwrap()
             .is_empty()
     );
-    // A node without a version sends nothing at all.
-    let unversioned = Fixture::with(
-        Chain::at(10),
-        heartwood_p2p::P2pOptions {
-            version: String::new(),
-            ..options()
-        },
-    );
-    let other = stored(&unversioned, 2);
-    assert_eq!(unversioned.communicator.get_peers(&other, true).await, None);
     assert!(fixture.transport.sent().is_empty());
-    assert!(unversioned.transport.sent().is_empty());
-    assert_eq!(other.snapshot().sequential_errors, 0);
+    // A limit above 400 asks for 400, the most a reference server accepts.
+    let reply = Answer::Bytes(blocks_reply(&[]));
+    fixture.transport.answer(RouteId::GetBlocks, reply);
+    let many = BlocksRequest {
+        block_limit: 500,
+        ..BlocksRequest::after(3)
+    };
+    client.get_peer_blocks(&peer, many).await.unwrap();
+    let encoded = fixture.rules.encoded.lock().unwrap().clone();
+    let limit = |request: &ClientRequest| match request {
+        ClientRequest::GetBlocks { block_limit, .. } => Some(block_limit.get()),
+        _ => None,
+    };
+    assert_eq!(encoded.iter().map(limit).collect::<Vec<_>>(), [Some(400)]);
+    assert_eq!(fixture.transport.sent()[0].limit, 20 * KIB * KIB);
+    // Every request carries the node's version: a communicator cannot be made without one.
+    let unversioned = heartwood_p2p::P2pOptions {
+        version: String::new(),
+        ..options()
+    };
+    let made = Fixture::try_over(
+        Transport::default(),
+        Rules::default(),
+        Chain::at(10),
+        unversioned,
+    );
+    assert_eq!(made.err(), Some(RequestError::EmptyVersion));
 }
 
 #[tokio::test(start_paused = true)]
@@ -501,7 +518,7 @@ async fn a_post_block_reply_with_a_height_sets_the_peers_height() {
         Answer::Bytes(devnet_status(&block(10), 125, &[])),
     );
     client
-        .ping(&peer, Duration::from_secs(5), None, true, false)
+        .ping(&peer, Duration::from_secs(5), false, true, false)
         .await
         .unwrap();
     assert_eq!(peer.snapshot().height(), Some(10));
@@ -657,13 +674,7 @@ async fn a_ping_verifies_the_peer_and_records_its_state() {
     );
     fixture.probe.open.lock().unwrap().insert(4003);
     let state = client
-        .ping(
-            &peer,
-            Duration::from_secs(60),
-            Some(slot(125)),
-            false,
-            false,
-        )
+        .ping(&peer, Duration::from_secs(60), true, false, false)
         .await
         .unwrap()
         .unwrap();
@@ -707,7 +718,7 @@ async fn a_ping_skips_ignored_and_recently_pinged_peers() {
     let status = devnet_status(&block(10), 125, &[]);
     let ignored = stored(&fixture, 1);
     ignored.with(|peer| (1..=3).for_each(|i| peer.add_infraction(START_MS - i)));
-    let ping = |peer, force| client.ping(peer, Duration::from_secs(5), None, force, false);
+    let ping = |peer, force| client.ping(peer, Duration::from_secs(5), false, force, false);
     assert_eq!(ping(&ignored, true).await, Ok(None));
     // The version defaults to our own before anything else.
     assert_eq!(ignored.snapshot().version.as_deref(), Some("4.3.1"));
@@ -737,7 +748,7 @@ async fn a_ping_fails_as_the_reference_names_it() {
     let client = &fixture.communicator;
     let peer = stored(&fixture, 1);
     let transport = &fixture.transport;
-    let ping = |timeout| client.ping(&peer, timeout, None, true, false);
+    let ping = |timeout| client.ping(&peer, timeout, false, true, false);
     let five = Duration::from_secs(5);
     // No reply.
     assert_eq!(ping(five).await, Err(PingError::StatusResponse(peer.ip())));
@@ -779,9 +790,10 @@ async fn a_ping_fails_as_the_reference_names_it() {
         Duration::from_secs(3)
     );
     // The deadline passed during the verification.
-    *fixture.verifier.full.lock().unwrap() = Err(PastDeadline);
+    *fixture.verifier.full.lock().unwrap() = Err(VerificationStopped::Deadline);
     transport.answer(RouteId::GetStatus, Answer::Bytes(status.clone()));
-    assert_eq!(ping(five).await, Err(PingError::Deadline(PastDeadline)));
+    let stopped = PingError::Stopped(VerificationStopped::Deadline);
+    assert_eq!(ping(five).await, Err(stopped));
     // The chain did not verify.
     *fixture.verifier.full.lock().unwrap() = Ok(None);
     transport.answer(RouteId::GetStatus, Answer::Bytes(status));
@@ -798,7 +810,7 @@ async fn a_fast_ping_still_needs_a_full_verification_on_record() {
     let client = &fixture.communicator;
     let peer = stored(&fixture, 1);
     let status = devnet_status(&block(10), 1, &[]);
-    let fast = |peer| client.ping(peer, Duration::from_millis(2_500), None, true, true);
+    let fast = |peer| client.ping(peer, Duration::from_millis(2_500), false, true, true);
     fixture
         .transport
         .answer(RouteId::GetStatus, Answer::Bytes(status.clone()));
@@ -819,7 +831,17 @@ async fn a_fast_ping_still_needs_a_full_verification_on_record() {
         fixture.transport.sent()[1].timeout,
         Duration::from_millis(2_500)
     );
-    *fixture.verifier.fast.lock().unwrap() = None;
+    // The node could not read its chain: the ping fails, and the last result stays.
+    let last = peer.snapshot().fast_verification;
+    assert!(last.is_some());
+    *fixture.verifier.fast.lock().unwrap() = Err(VerificationStopped::Lookup);
+    fixture
+        .transport
+        .answer(RouteId::GetStatus, Answer::Bytes(status.clone()));
+    let stopped = PingError::Stopped(VerificationStopped::Lookup);
+    assert_eq!(fast(&peer).await, Err(stopped));
+    assert_eq!(peer.snapshot().fast_verification, last);
+    *fixture.verifier.fast.lock().unwrap() = Ok(None);
     fixture
         .transport
         .answer(RouteId::GetStatus, Answer::Bytes(status));
@@ -836,8 +858,9 @@ async fn a_negative_slot_reads_the_peers_slot_as_signed() {
     fixture
         .transport
         .answer(RouteId::GetStatus, Answer::Bytes(status.clone()));
+    at_slot(&fixture.clock, -3);
     let state = client
-        .ping(&peer, Duration::from_secs(5), Some(slot(-3)), true, false)
+        .ping(&peer, Duration::from_secs(5), true, true, false)
         .await
         .unwrap()
         .unwrap();
@@ -847,8 +870,9 @@ async fn a_negative_slot_reads_the_peers_slot_as_signed() {
     fixture
         .transport
         .answer(RouteId::GetStatus, Answer::Bytes(status));
+    at_slot(&fixture.clock, 3);
     let state = client
-        .ping(&peer, Duration::from_secs(5), Some(slot(3)), true, false)
+        .ping(&peer, Duration::from_secs(5), true, true, false)
         .await
         .unwrap()
         .unwrap();
@@ -862,7 +886,7 @@ async fn attestations_break_at_an_unknown_key_and_move_keys_from_forked_peers() 
     let fixture = Fixture::new();
     let client = &fixture.communicator;
     let tip = fixture.chain.last_block();
-    let ping = |peer| client.ping(peer, Duration::from_secs(5), Some(slot(125)), true, false);
+    let ping = |peer| client.ping(peer, Duration::from_secs(5), true, true, false);
     // An unknown key before a delegate's ends the loop.
     let first = stored(&fixture, 1);
     let unknown = heartwood_crypto::KeyPair::from_passphrase("not a delegate").unwrap();
@@ -904,6 +928,76 @@ async fn attestations_break_at_an_unknown_key_and_move_keys_from_forked_peers() 
     assert_eq!(second.snapshot().public_keys, [key]);
     assert!(first.snapshot().public_keys.is_empty());
     assert_eq!(fixture.online.0.lock().unwrap().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_attestations_use_our_slot_after_the_verification() {
+    // The verification takes 6 s, and our slot moves from 125 to 126 at 4 s.
+    let fixture = Fixture::new();
+    let client = &fixture.communicator;
+    let tip = fixture.chain.last_block();
+    *fixture.verifier.delay.lock().unwrap() = Duration::from_secs(6);
+    let key = delegate(1).public_key().to_compressed();
+    // Read when the ping started, slot 124 would be in the window and 127 outside it.
+    for (last, theirs, attributed) in [(1, 124, false), (2, 127, true)] {
+        at_slot(&fixture.clock, 125);
+        let clock = Arc::clone(&fixture.clock);
+        let tick = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            at_slot(&clock, 126);
+        });
+        let peer = stored(&fixture, last);
+        let status = devnet_status(&tip, theirs, &[delegate(1)]);
+        fixture
+            .transport
+            .answer(RouteId::GetStatus, Answer::Bytes(status));
+        let ping = client.ping(&peer, Duration::from_secs(10), true, true, false);
+        assert!(ping.await.unwrap().is_some());
+        tick.await.unwrap();
+        let holds = peer.snapshot().public_keys.contains(&key);
+        assert_eq!(holds, attributed, "their slot {theirs}");
+    }
+    assert_eq!(fixture.online.0.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn pings_on_two_threads_attest_one_at_a_time() {
+    // Two relays of one forger, both at our last block: the ping that attests second takes the
+    // key from the other, so exactly one holds it, whichever thread ran first.
+    let runtime = || {
+        let mut builder = tokio::runtime::Builder::new_current_thread();
+        builder.enable_time().build().unwrap()
+    };
+    let key = delegate(1).public_key().to_compressed();
+    for round in 0..200 {
+        let fixture = {
+            let main = runtime();
+            let _entered = main.enter();
+            Fixture::new()
+        };
+        let status = devnet_status(&fixture.chain.last_block(), 125, &[delegate(1)]);
+        let peers = [stored(&fixture, 1), stored(&fixture, 2)];
+        let start = std::sync::Barrier::new(peers.len());
+        std::thread::scope(|scope| {
+            for peer in &peers {
+                let answer = Answer::Bytes(status.clone());
+                fixture.transport.answer(RouteId::GetStatus, answer);
+                let (fixture, start) = (&fixture, &start);
+                scope.spawn(move || {
+                    let client = &fixture.communicator;
+                    let ping = client.ping(peer, Duration::from_secs(5), true, true, false);
+                    start.wait();
+                    assert!(runtime().block_on(ping).unwrap().is_some());
+                });
+            }
+        });
+        let holders = peers.iter().filter(|peer| {
+            let keys = peer.snapshot().public_keys;
+            keys.contains(&key)
+        });
+        assert_eq!(holders.count(), 1, "round {round}");
+        assert_eq!(fixture.online.0.lock().unwrap().len(), 2, "round {round}");
+    }
 }
 
 // ---- the verifier's requests ------------------------------------------------------------------
@@ -972,6 +1066,38 @@ async fn downloaded_transactions_are_read_as_the_reference_reads_them() {
     assert_eq!(downloaded[1].transactions, Some(vec![]));
 }
 
+#[tokio::test(start_paused = true)]
+async fn an_amount_beyond_128_bits_is_read_before_it_is_refused() {
+    let fixture = Fixture::new();
+    let peer = stored(&fixture, 1);
+    peer.with(|peer| peer.sequential_errors = 2);
+    let header = BlockHeader {
+        height: Some(6),
+        total_amount: Some(format!("1{}", "0".repeat(40))),
+        total_fee: Some("0".into()),
+        reward: Some("0".into()),
+        transactions: Some(list::encode::<Vec<u8>>(&[])),
+        ..BlockHeader::default()
+    };
+    let reply = list::encode(&[header.encode()]);
+    let late = Answer::After(Duration::from_millis(40), Box::new(Answer::Bytes(reply)));
+    fixture.transport.answer(RouteId::GetBlocks, late);
+    let request = BlocksRequest::after(5);
+    let downloaded = fixture.communicator.get_peer_blocks(&peer, request).await;
+    assert!(downloaded.unwrap().is_empty());
+    // The reference reads it, resets the counter and records the latency, then its reply schema
+    // refuses it: counted once from zero, so the peer stays.
+    let snapshot = peer.snapshot();
+    assert_eq!(
+        (snapshot.sequential_errors, snapshot.latency),
+        (1, Some(40))
+    );
+    assert_eq!(snapshot.violations.len(), 1);
+    assert!(fixture.repository.has(peer.ip()));
+    let refused = (peer.ip(), "CoreValidationError");
+    assert_eq!(fixture.transport.errors(), [refused]);
+}
+
 // ---- integration: the real peer rules, and the connector against the mock peer ----------------
 
 /// The communicator over the scripted transport with the real peer rules.
@@ -1001,7 +1127,7 @@ async fn each_route_writes_the_reference_clients_request() {
         .transport
         .answer(RouteId::GetStatus, Answer::Bytes(status));
     client
-        .ping(&peer, Duration::from_secs(5), None, true, false)
+        .ping(&peer, Duration::from_secs(5), false, true, false)
         .await
         .ok();
     client.get_peers(&peer, true).await;
@@ -1199,7 +1325,7 @@ mod over_the_mock_peer {
         fixture.repository.set(peer.clone());
         let client = &fixture.communicator;
         let state = client
-            .ping(&peer, Duration::from_secs(5), Some(slot(125)), true, false)
+            .ping(&peer, Duration::from_secs(5), true, true, false)
             .await;
         assert_eq!(state.unwrap().unwrap().height, 10);
         assert_eq!(
@@ -1276,5 +1402,59 @@ mod over_the_mock_peer {
             "{waited:?}"
         );
         assert_eq!(peer.snapshot().sequential_errors, 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[ignore = "integration"]
+    async fn an_honest_late_reply_while_another_request_waits_is_no_violation() {
+        // getCommonBlocks times out after 1 s and its reply comes at 1.5 s, while getPeers waits.
+        // As in the reference, the session is dropped and the waiting request fails; the peer is
+        // counted, records no violation, and stays a source.
+        let late = |at: u64, reply| Reply::After(Duration::from_millis(at), Box::new(reply));
+        let script = Script::new()
+            .on(
+                RouteId::GetCommonBlocks,
+                late(1_500, Reply::Payload(vec![])),
+            )
+            .on(
+                RouteId::GetPeers,
+                late(3_000, Reply::Payload(peers_reply(&[]))),
+            )
+            .on(RouteId::GetBlocks, Reply::Payload(blocks_reply(&[])));
+        let mock = MockPeer::scripted(IpAddr::from([127, 0, 0, 16]), script)
+            .await
+            .unwrap();
+        let (ip, port) = (mock.address().ip(), mock.address().port());
+        let peer = heartwood_p2p::SharedPeer::new(heartwood_p2p::Peer::new(ip, port));
+        let fixture = Fixture::over(
+            Connector::with_dial(MockPeer::dial(&[&mock])),
+            RealRules::new(100, 25),
+            Chain::at(10),
+            options(),
+        );
+        fixture.repository.set(peer.clone());
+        let client = &fixture.communicator;
+        let started = Instant::now();
+        let asked = ids(1);
+        let common = client.has_common_blocks(&peer, &asked, Duration::from_secs(1));
+        assert_eq!(common.await, None);
+        assert_eq!(client.get_peers(&peer, true).await, None);
+        assert_eq!(started.elapsed(), Duration::from_millis(1_500));
+        let snapshot = peer.snapshot();
+        assert!(snapshot.violations.is_empty());
+        assert_eq!(snapshot.sequential_errors, 2);
+        assert!(fixture.repository.has(ip));
+        // Still a source: the next getBlocks is sent, on a new session after the 10 s pause.
+        let blocks = client.get_peer_blocks(&peer, BlocksRequest::after(5)).await;
+        assert!(blocks.unwrap().is_empty());
+        let routes: Vec<RouteId> = mock.requests().iter().map(|(route, _)| *route).collect();
+        let sent = [
+            RouteId::GetCommonBlocks,
+            RouteId::GetPeers,
+            RouteId::GetBlocks,
+        ];
+        assert_eq!(routes, sent);
+        assert_eq!(mock.connections(), 2);
+        assert_eq!(peer.snapshot().sequential_errors, 0);
     }
 }

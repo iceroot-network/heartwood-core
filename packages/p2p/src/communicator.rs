@@ -21,6 +21,9 @@
 //! Beyond the reference, a failure that no honest peer produces is recorded as a protocol
 //! violation ([`crate::scoring`]), and a peer with a violation in its window is asked for no
 //! blocks, transactions or peers: those requests answer empty without being sent.
+//!
+//! A communicator needs the node's version for the headers of its requests, so it cannot be made
+//! without one ([`RequestError::EmptyVersion`]).
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -35,14 +38,14 @@ use heartwood_crypto::{Block, BlockId, Params, Transaction, TransactionId};
 use heartwood_kernel::{Clock, Event};
 use heartwood_p2p_wire::RouteId;
 use heartwood_p2p_wire::codecs::{blocks, peer as peer_codecs, transactions};
-use heartwood_p2p_wire::errors::{DecodeError, ReplyRefused};
+use heartwood_p2p_wire::errors::{DecodeError, ReplyRefused, RequestError};
 use heartwood_p2p_wire::replies::{CommonBlock, PeerAddress};
 use heartwood_p2p_wire::requests::{ClientRequest, CommonBlockIds, Headers};
 use heartwood_p2p_wire::status::{self, CheckedStatus};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep};
 
-use crate::attestation::{self, AttestContext, Holder};
+use crate::attestation::{self, AttestContext, Holder, current_slot};
 use crate::download::DownloadedBlock;
 use crate::errors::{DownloadError, PingError};
 use crate::options::P2pOptions;
@@ -73,7 +76,8 @@ const VALIDATION: &str = "CoreValidationError";
 pub struct BlocksRequest {
     /// The height after which blocks are wanted.
     pub from_height: u32,
-    /// The most blocks wanted; [`MAX_DOWNLOAD_BLOCKS`] by default.
+    /// The most blocks wanted; [`MAX_DOWNLOAD_BLOCKS`] by default. A larger value asks for
+    /// [`MAX_DOWNLOAD_BLOCKS`], since a reference server refuses more and bans the caller.
     pub block_limit: u32,
     /// Whether only the headers are wanted.
     pub headers_only: bool,
@@ -119,6 +123,8 @@ pub struct CommunicatorParts<T, S, R, P> {
     pub options: Arc<P2pOptions>,
     /// The wall clock of infractions, pings and slots.
     pub clock: Arc<dyn Clock>,
+    /// The runtime the postTransactions queues run on, so a batch can be queued from any thread.
+    pub runtime: tokio::runtime::Handle,
 }
 
 /// The peer communicator.
@@ -132,9 +138,12 @@ type Batch = (SharedPeer, Arc<Vec<Vec<u8>>>);
 /// What the requests need, shared with the tasks of the postTransactions queues.
 struct Shared<T, S, R, P> {
     parts: CommunicatorParts<T, S, R, P>,
-    /// Every request's headers; `None` when the node's version is empty, and then nothing is sent.
-    headers: Option<Headers>,
+    /// Every request's headers.
+    headers: Headers,
     queues: Mutex<HashMap<IpAddr, mpsc::UnboundedSender<Batch>>>,
+    /// Held through each ping's attestation step, which reads and changes every peer's keys: the
+    /// reference runs each step whole, so one ping's step sees the keys the last one attributed.
+    attesting: Mutex<()>,
 }
 
 /// A failed request: the reference's error class, the violation it shows, and the schema's
@@ -147,19 +156,19 @@ fn size(n: impl Into<u64>) -> usize {
 }
 
 impl<T, S, R, P> Communicator<T, S, R, P> {
-    /// A communicator of `parts`.
-    pub fn new(parts: CommunicatorParts<T, S, R, P>) -> Communicator<T, S, R, P> {
-        let headers = Headers::new(parts.options.version.clone(), u32::from(parts.options.port));
-        if headers.is_err() {
-            heartwood_kernel::error!("The node's version is empty: no request is sent to peers");
-        }
-        let (headers, queues) = (headers.ok(), Mutex::default());
+    /// A communicator of `parts`; [`RequestError::EmptyVersion`] when the options' version is
+    /// empty, since every request carries it.
+    pub fn new(
+        parts: CommunicatorParts<T, S, R, P>,
+    ) -> Result<Communicator<T, S, R, P>, RequestError> {
+        let headers = Headers::new(parts.options.version.clone(), u32::from(parts.options.port))?;
         let shared = Arc::new(Shared {
             parts,
             headers,
-            queues,
+            queues: Mutex::default(),
+            attesting: Mutex::default(),
         });
-        Communicator { shared }
+        Ok(Communicator { shared })
     }
 }
 
@@ -192,6 +201,9 @@ where
 
     /// One request: the throttle, the codec, the session, the decode, the counter and latency,
     /// the reply check. `None` after a failure, which is counted.
+    ///
+    /// An amount beyond 128 bits fails at our decode; the reference decodes it, resets the
+    /// counter and records the latency, and refuses it at its reply schema, so that order is kept.
     async fn emit<D, V>(
         &self,
         peer: &SharedPeer,
@@ -204,27 +216,32 @@ where
         while let Some(wait) = parts.rules.throttle(ip, route, Instant::now()) {
             sleep(wait).await;
         }
-        let payload = parts.rules.encode_request(&request, self.headers.as_ref()?);
+        let payload = parts.rules.encode_request(&request, &self.headers);
         parts.transport.forget_error(ip);
         let started = Instant::now();
         let reply = parts
             .transport
             .emit(peer.address(), route, payload, timeout, limit);
+        let answered = || {
+            let latency = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+            peer.with(|peer| {
+                peer.sequential_errors = 0;
+                peer.latency = Some(latency);
+            });
+        };
         let failure: Failure = match reply.await.map(|bytes| decode(&bytes)) {
             Err(error) => (error.js_class(), Violation::of_session(&error), None),
             // A codec refusal has its class; an amount beyond 128 bits has none (the reference
             // reads it, and its reply schema then refuses it).
-            Ok(Err(error)) => (
-                error.js_class().unwrap_or(VALIDATION),
-                Some(Violation::of_decode(error)),
-                None,
-            ),
+            Ok(Err(error)) => {
+                if error == DecodeError::AmountTooWide {
+                    answered();
+                }
+                let class = error.js_class().unwrap_or(VALIDATION);
+                (class, Some(Violation::of_decode(error)), None)
+            }
             Ok(Ok(decoded)) => {
-                let latency = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
-                peer.with(|peer| {
-                    peer.sequential_errors = 0;
-                    peer.latency = Some(latency);
-                });
+                answered();
                 match check(decoded) {
                     Ok(value) => return Some(value),
                     Err(refused) => (VALIDATION, Some(Violation::ReplySchema), Some(refused)),
@@ -308,13 +325,13 @@ where
         let parts = &self.parts;
         let (Some(last_block_height), Some(block_limit)) = (
             NonZeroU32::new(request.from_height),
-            NonZeroU32::new(request.block_limit),
+            NonZeroU32::new(request.block_limit.min(MAX_DOWNLOAD_BLOCKS)),
         ) else {
             return Ok(Vec::new());
         };
         let headers_only = request.headers_only;
         let limit = if headers_only {
-            size(request.block_limit).saturating_mul(1024)
+            size(block_limit.get()).saturating_mul(1024)
         } else {
             LARGE
         };
@@ -356,7 +373,10 @@ where
                     }
                     Err(source) => source,
                 };
-                scoring::record(peer, Violation::DownloadedBlock, parts.clock.now_ms());
+                // A memo that is not UTF-8 the reference accepts, so honest peers serve it.
+                if source != heartwood_crypto::errors::DecodeError::InvalidMemo {
+                    scoring::record(peer, Violation::DownloadedBlock, parts.clock.now_ms());
+                }
                 let height = header.header.height.unwrap_or(0);
                 return Err(DownloadError::Transaction { height, source });
             }
@@ -391,8 +411,13 @@ where
     }
 
     /// The status attestations of a successful ping, applied: the keys attributed to `peer`, the
-    /// keys taken from other peers, and the versions recorded in the online record.
+    /// keys taken from other peers, and the versions recorded in the online record. One step at a
+    /// time across pings.
     fn attest(&self, peer: &SharedPeer, status: &CheckedStatus, slot: &SlotInfo) {
+        let _step = self
+            .attesting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let parts = &self.parts;
         let pinged = peer.with(|peer| Holder::of(peer));
         let mut others = parts.repository.peers();
@@ -436,7 +461,7 @@ where
         &self,
         peer: &SharedPeer,
         timeout: Duration,
-        slot: Option<SlotInfo>,
+        attest: bool,
         force: bool,
         skip_common_blocks: bool,
     ) -> Result<Option<PeerState>, PingError> {
@@ -492,24 +517,29 @@ where
         let verifier = &parts.verifier;
         if skip_common_blocks {
             let result = verifier.check_state_fast(peer, &state).await;
+            let result = result.map_err(PingError::Stopped)?;
             peer.with(|peer| peer.fast_verification = result);
             if result.is_none() {
                 return Err(PingError::VerificationFailed);
             }
         } else {
             let result = verifier.check_state(self, peer, &state, deadline).await;
-            let result = result.map_err(PingError::Deadline)?;
+            let result = result.map_err(PingError::Stopped)?;
             peer.with(|peer| peer.verification = result);
         }
         // The full verification decides here even after a fast one (reproduced).
         if !peer.with(|peer| peer.is_verified()) {
             return Err(PingError::VerificationFailed);
         }
+        // Our slot is read now, after the verification, as the reference reads it.
+        let now = parts.clock.now_ms();
+        let slot = attest
+            .then(|| current_slot(parts.chain.milestones(), now))
+            .flatten();
         if slot.is_some_and(|slot| slot.slot_number < 0) {
             let wire = u32::try_from(state.current_slot).unwrap_or(0);
             state.current_slot = i64::from(i32::from_ne_bytes(wire.to_ne_bytes()));
         }
-        let now = parts.clock.now_ms();
         peer.with(|peer| {
             peer.last_pinged = Some(now);
             peer.plugins = config.plugins.clone();
@@ -651,19 +681,14 @@ where
         let shared = &self.shared;
         let mut queues = shared.queues.lock().unwrap_or_else(PoisonError::into_inner);
         let open = queues.get(&peer.ip()).filter(|queue| !queue.is_closed());
-        let queue = match (open.cloned(), tokio::runtime::Handle::try_current()) {
-            (Some(queue), _) => queue,
-            (None, Ok(runtime)) => {
+        let queue = match open.cloned() {
+            Some(queue) => queue,
+            None => {
                 let (queue, batches) = mpsc::unbounded_channel();
-                runtime.spawn(Arc::clone(shared).run_queue(batches));
+                let task = Arc::clone(shared).run_queue(batches);
+                shared.parts.runtime.spawn(task);
                 queues.insert(peer.ip(), queue.clone());
                 queue
-            }
-            (None, Err(_)) => {
-                heartwood_kernel::error!(
-                    "No runtime to post transactions on: the batch is dropped"
-                );
-                return;
             }
         };
         drop(queues);

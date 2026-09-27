@@ -22,8 +22,9 @@ pub enum Violation {
     ReplyDecode,
     /// A reply that failed the route's reply schema.
     ReplySchema,
-    /// A nes protocol error: a response to an unknown id, a text frame, a WebSocket control frame,
-    /// a ping flood.
+    /// A nes protocol error: a response to an id never sent or answered already, a text frame, a
+    /// frame that does not parse, a message of an unknown type, a WebSocket control frame, or a
+    /// hello in answer to a request.
     Protocol,
     /// A getCommonBlocks reply naming a block we did not ask for, or at another height.
     BogusCommonBlock,
@@ -34,13 +35,18 @@ pub enum Violation {
 }
 
 impl Violation {
-    /// The violation a failed request shows, if any: every reply the codec refuses, every nes
-    /// protocol error but a heartbeat timeout (a peer that has gone quiet, which an honest peer
-    /// may), a hello in answer to a request, and nothing for the other session errors (timeouts,
-    /// disconnects, server errors).
+    /// The violation a failed request shows, if any: every nes protocol error but those an
+    /// honest server can cause, and a hello in answer to a request; nothing for the other session
+    /// errors (timeouts, disconnects, server errors). An honest server can go quiet (a heartbeat
+    /// timeout), answer after our timeout (a late response), and have its pings arrive together
+    /// after a stall (a ping flood); the connection still ends as the reference's does.
     pub fn of_session(error: &SessionError) -> Option<Violation> {
         match error {
-            SessionError::Protocol(ProtocolError::HeartbeatTimeout) => None,
+            SessionError::Protocol(
+                ProtocolError::HeartbeatTimeout
+                | ProtocolError::LateResponse
+                | ProtocolError::PingFlood,
+            ) => None,
             SessionError::Protocol(_) | SessionError::NoPayload => Some(Violation::Protocol),
             _ => None,
         }
@@ -74,14 +80,19 @@ mod tests {
     use crate::peer::Peer;
 
     #[test]
-    fn a_heartbeat_timeout_is_no_violation_and_other_protocol_errors_are() {
+    fn protocol_errors_an_honest_server_can_cause_are_no_violation() {
         let of = |error| Violation::of_session(&SessionError::Protocol(error));
-        assert_eq!(of(ProtocolError::HeartbeatTimeout), None);
+        for error in [
+            ProtocolError::HeartbeatTimeout,
+            ProtocolError::LateResponse,
+            ProtocolError::PingFlood,
+        ] {
+            assert_eq!(of(error), None);
+        }
         for error in [
             ProtocolError::UnknownRequest,
             ProtocolError::TextFrame,
             ProtocolError::UnknownType,
-            ProtocolError::PingFlood,
             ProtocolError::ControlFrame,
         ] {
             assert_eq!(of(error), Some(Violation::Protocol));

@@ -30,16 +30,16 @@ pub enum SessionError {
         /// The first 512 bytes of the response's payload, as text.
         payload: String,
     },
-    /// The server broke the nes protocol; the connector terminates and forgets the connection,
-    /// and the requests pending on it fail with this error.
+    /// The server broke the nes protocol, or sent what the reference's client reports as such;
+    /// the connector terminates and forgets the connection, and the requests pending on it fail
+    /// with this error (the reference fails them as disconnected, of the same class). A WebSocket
+    /// ping or pong ends the connection without a report, and the requests pending on it fail with
+    /// [`ProtocolError::ControlFrame`].
     #[error("Error: {0}")]
     Protocol(ProtocolError),
     /// The WebSocket could not be opened, or failed: the transport's error, as text.
     #[error("Error: {0}")]
     Ws(String),
-    /// The session was used in a way it does not allow (the reference's `user` errors).
-    #[error("Error: {0}")]
-    User(&'static str),
     /// A hello answered the request: the reference resolves the request with nothing, and its
     /// communicator then fails to read the payload, with the class `TypeError`.
     #[error("TypeError: Cannot read properties of undefined (reading 'payload')")]
@@ -57,13 +57,21 @@ impl SessionError {
     }
 }
 
-/// How a server broke the nes protocol. The session reports each to the connector, which
-/// terminates and forgets the connection.
+/// How a server broke the nes protocol, as the reference's client sees it. The session reports
+/// each but [`ProtocolError::ControlFrame`] to the connector, which terminates and forgets the
+/// connection. Two of them an honest server can cause, so they are no violation
+/// ([`crate::scoring::Violation::of_session`]): [`ProtocolError::LateResponse`] and
+/// [`ProtocolError::PingFlood`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum ProtocolError {
-    /// A response to an id with no pending request.
+    /// A response to an id that was never sent, was answered already, or timed out so long ago
+    /// that the session no longer remembers it.
     #[error("Received response for unknown request")]
     UnknownRequest,
+    /// A response to a request that had timed out: an honest server that answered late. The
+    /// reference cannot tell it from [`ProtocolError::UnknownRequest`] and reports it the same way.
+    #[error("Received response for unknown request")]
+    LateResponse,
     /// A text frame.
     #[error("Received message is not a Buffer")]
     TextFrame,
@@ -73,10 +81,13 @@ pub enum ProtocolError {
     /// A message whose type is not hello, request or ping.
     #[error("Received unknown response type")]
     UnknownType,
-    /// Two server pings less than 1 s apart.
+    /// Two server pings less than 1 s apart; an honest server's pings can arrive so when its
+    /// socket or the network stalled.
     #[error("Ping exceeded limit")]
     PingFlood,
-    /// A WebSocket ping or pong frame, which the reference's client never expects.
+    /// A WebSocket ping or pong frame, which no reference server sends: the connection ends for
+    /// good without a report, as the reference's does, and the requests pending on it fail with
+    /// this error.
     #[error("Received a WebSocket control frame")]
     ControlFrame,
     /// No message within the heartbeat interval plus its timeout.
@@ -100,17 +111,27 @@ pub enum PingError {
         /// The ping's timeout, in milliseconds.
         timeout_ms: u64,
     },
-    /// The deadline passed during the verification.
+    /// The verification stopped where the reference's throws.
     #[error("Error: {0}")]
-    Deadline(PastDeadline),
+    Stopped(VerificationStopped),
 }
 
-/// A peer verification stopped where the reference's throws: its deadline passed before a request
-/// could be sent, a fork-segment header could not be read, or the node could not read its chain.
-/// The ping then fails and keeps the peer's last verification.
+/// Why a peer verification stopped where the reference's throws. The ping then fails and keeps
+/// the peer's last verification. The deadline's text is the reference's; the other two stand for
+/// the errors the reference's block factory and database throw there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-#[error("timeout elapsed before successful completion of the verification")]
-pub struct PastDeadline;
+pub enum VerificationStopped {
+    /// The deadline passed before a request could be sent.
+    #[error("timeout elapsed before successful completion of the verification")]
+    Deadline,
+    /// A header of the fork segment cannot be rebuilt as a block, or its generator is no
+    /// registered delegate.
+    #[error("a header of the peer's fork segment could not be read as a block")]
+    Header,
+    /// The node could not read its own chain.
+    #[error("the node could not read its chain")]
+    Lookup,
+}
 
 /// The node could not read its chain for a peer's request or a verification: the node's own
 /// error, as text. The P2P crate reaches the store only through [`crate::view::BlockLookup`].

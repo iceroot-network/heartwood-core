@@ -20,9 +20,9 @@ use heartwood_crypto::{
 };
 use heartwood_kernel::{ManualClock, RoundInfo, calculate_round};
 use heartwood_p2p::download::DownloadedBlock;
-use heartwood_p2p::errors::{LookupError, PastDeadline};
+use heartwood_p2p::errors::{LookupError, VerificationStopped};
 use heartwood_p2p::seams::{Deadline, StateCheck, VerifierLink};
-use heartwood_p2p::verifier::{Outcome, PeerVerifier, Refusal, Stop};
+use heartwood_p2p::verifier::{Outcome, PeerVerifier, Refusal};
 use heartwood_p2p::view::{BlockLookup, BlockPing, ChainView, DelegateInfo};
 use heartwood_p2p::{FastVerification, Peer, PeerState, SharedPeer, Verification};
 use heartwood_p2p_wire::codecs::Amount;
@@ -763,7 +763,7 @@ async fn a_fork_segment_header_the_reference_throws_on_stops_the_ping() {
     ];
     for change in changes {
         let (outcome, peer, _) = segment_with(change).await;
-        assert_eq!(outcome, Outcome::Stopped(Stop::Header));
+        assert_eq!(outcome, Outcome::Stopped(VerificationStopped::Header));
         assert_eq!(violations(&peer), 1);
     }
     // Through the seam, the ping fails and the peer keeps its last verification.
@@ -773,7 +773,7 @@ async fn a_fork_segment_header_the_reference_throws_on_stops_the_ping() {
     let checked = verifier(200)
         .check_state(&link, &a_peer(), &claimed(&chain), far())
         .await;
-    assert_eq!(checked, Err(PastDeadline));
+    assert_eq!(checked, Err(VerificationStopped::Header));
     // Node reads hex in pairs: an odd last digit is dropped, so 65 digits still make 32 bytes.
     let (outcome, _, _) = segment_with(|block| {
         block
@@ -856,14 +856,14 @@ async fn the_deadline_is_checked_before_every_request() {
     let link = Link::serving(&chain);
     assert_eq!(
         verifier(200).verify(&link, &a_peer(), &claimed, past).await,
-        Outcome::Stopped(Stop::Deadline)
+        Outcome::Stopped(VerificationStopped::Deadline)
     );
     assert!(link.asked().is_empty());
     assert_eq!(
         verifier(200)
             .check_state(&link, &a_peer(), &claimed, past)
             .await,
-        Err(PastDeadline)
+        Err(VerificationStopped::Deadline)
     );
     // Each probe waits at most the time left.
     let link = Link::serving(&chain);
@@ -883,7 +883,7 @@ async fn the_deadline_is_checked_before_every_request() {
         verifier(200)
             .verify(&link, &a_peer(), &claimed, deadline)
             .await,
-        Outcome::Stopped(Stop::Deadline)
+        Outcome::Stopped(VerificationStopped::Deadline)
     );
     assert_eq!(link.asked().len(), 1);
     // Passed during the last probe: the reference catches it before the fetch, and the chain
@@ -906,20 +906,21 @@ async fn the_fast_verification_checks_the_header_only() {
     let same = claimed(&peer_chain(200, 200));
     assert_eq!(
         verifier(200).check_state_fast(&peer, &same).await,
-        Some(FastVerification {
+        Ok(Some(FastVerification {
             my_height: 200,
             their_height: 200,
             highest_common_height: Some(200),
-        })
+        }))
     );
     let forked = verifier(200)
         .check_state_fast(&peer, &claimed(&peer_chain(180, 190)))
         .await
+        .unwrap()
         .expect("the header verifies");
     assert_eq!(forked.highest_common_height, None);
     assert!(forked.forked());
     let bad = state_at(201, &C1.header(200));
-    assert_eq!(verifier(200).check_state_fast(&peer, &bad).await, None);
+    assert_eq!(verifier(200).check_state_fast(&peer, &bad).await, Ok(None));
 }
 
 /// The verifier through the communicator, over the connector, against a mock peer that serves a
@@ -985,7 +986,7 @@ mod through_the_communicator {
         });
         let clock = Arc::new(ManualClock::new(NOW_MS));
         let verifier = Arc::new(PeerVerifier::new(ours.clone(), ours.clone(), clock.clone()));
-        // The node's version goes into every request's headers; without one nothing is sent.
+        // The node's version goes into every request's headers; a communicator needs one.
         let options = Arc::new(P2pOptions {
             version: "4.3.1-heartwood.0".into(),
             ..P2pOptions::default()
@@ -1006,7 +1007,9 @@ mod through_the_communicator {
             events: Arc::new(NoEvents),
             options,
             clock,
-        });
+            runtime: tokio::runtime::Handle::current(),
+        })
+        .unwrap();
         let honest = peer_chain(180, 190);
         let mut unlinked = honest.clone();
         unlinked[184] = signed_by(

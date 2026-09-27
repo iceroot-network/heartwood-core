@@ -38,7 +38,6 @@ use heartwood_p2p_wire::replies::PeerAddress;
 use indexmap::{IndexMap, IndexSet};
 use tokio::time::{sleep, timeout};
 
-use crate::attestation::current_slot;
 use crate::broadcaster::{self, grouped, plural};
 use crate::chunk_cache::ChunkCache;
 use crate::communicator::BlocksRequest;
@@ -177,6 +176,9 @@ pub struct MonitorParts<C, A, R> {
     pub clock: Arc<dyn Clock>,
     /// The random samples.
     pub sampler: Sampler,
+    /// The runtime the background work runs on (the network status, the cleanse's pings, the
+    /// port probes, `pingAll`), so the monitor's methods can be called from any thread.
+    pub runtime: tokio::runtime::Handle,
 }
 
 /// How discovery accepts a candidate.
@@ -373,7 +375,7 @@ where
     fn schedule_network_status(self: &Arc<Self>, after: Duration) {
         if !self.scheduled.swap(true, SeqCst) {
             let monitor = Arc::clone(self);
-            tokio::spawn(async move {
+            self.p.runtime.spawn(async move {
                 sleep(after).await;
                 monitor.scheduled.store(false, SeqCst);
                 monitor.update_network_status(false).await;
@@ -396,7 +398,6 @@ where
         if options.log {
             info!("Checking {} :telescope:", plural("peer", max));
         }
-        let slot = current_slot(self.p.chain.milestones(), self.p.clock.now_ms());
         let tally = Arc::new(Mutex::new(Tally::default()));
         lock(&tally).pinging.clone_from(&peers);
         let pings: Vec<_> = peers
@@ -404,9 +405,9 @@ where
             .map(|peer| {
                 let (client, events) = (Arc::clone(&self.p.client), Arc::clone(&self.p.events));
                 let tally = Arc::clone(&tally);
-                tokio::spawn(async move {
+                self.p.runtime.spawn(async move {
                     let (force, skip) = (options.force_ping, options.skip_common_blocks);
-                    let pinged = client.ping(&peer, delay, slot, force, skip).await;
+                    let pinged = client.ping(&peer, delay, true, force, skip).await;
                     let mut counts = lock(&tally);
                     counts.pinging.retain(|other| !other.same(&peer));
                     if let Err(failure) = pinged {
@@ -475,7 +476,8 @@ where
         if !silent {
             debug!("Checking ports of {}", plural("peer", peers.len()));
         }
-        tokio::spawn(async move { join_all(peers.iter().map(|p| client.ping_ports(p))).await });
+        let probes = async move { join_all(peers.iter().map(|p| client.ping_ports(p))).await };
+        self.p.runtime.spawn(probes);
         accept
     }
 
@@ -791,14 +793,15 @@ where
         });
         if due {
             let monitor = Arc::clone(self);
-            tokio::spawn(async move { monitor.cleanse_peers(CleanseOptions::PING_ALL).await });
+            let cleanse = async move { monitor.cleanse_peers(CleanseOptions::PING_ALL).await };
+            self.p.runtime.spawn(cleanse);
         }
     }
 
     /// The `blockchain.synced` listener: [`Self::ping_all`] after 1 s, in the background.
     pub fn synced(self: &Arc<Self>) {
         let monitor = Arc::clone(self);
-        tokio::spawn(async move {
+        self.p.runtime.spawn(async move {
             sleep(SETTLE_DELAY).await;
             monitor.ping_all();
         });

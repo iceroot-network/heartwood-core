@@ -148,9 +148,10 @@ async fn a_session_closed_for_good_stays_until_the_peer_is_disconnected() {
         .on(RouteId::GetStatus, Reply::Payload(vec![2]));
     let a = MockPeer::scripted(ip(1), script).await.unwrap();
     let connector = Connector::with_dial(MockPeer::dial(&[&a]));
+    // The WebSocket ping ends the connection for good; the request carries the frame.
     assert_eq!(
         answer(emit(&connector, a.address())).await,
-        Err(SessionError::Disconnect)
+        Err(SessionError::Protocol(ProtocolError::ControlFrame))
     );
     sleep(RECONNECT_PAUSE).await;
     assert_eq!(

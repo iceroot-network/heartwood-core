@@ -12,7 +12,9 @@
 //! - A response with status 400 or more fails its request with the first 512 bytes of its
 //!   payload as text. A response to an unknown id, a text frame, a frame that does not parse, a
 //!   type other than hello, request or ping, and two server pings less than 1 s apart are
-//!   reported through the session's error hook, and the connector then terminates it.
+//!   reported through the session's error hook, and the connector then terminates it. A response
+//!   to a request that timed out is reported the same way, as a late response.
+//! - A WebSocket ping or pong frame ends the connection for good, without a report.
 //! - Server pings are answered with type 1 and the next id, untracked.
 //! - The WebSocket opens within 5 s, and one automatic reconnect follows a close, after 1 s, in
 //!   the session's whole life.

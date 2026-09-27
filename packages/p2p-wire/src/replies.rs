@@ -4,14 +4,16 @@
 //! | Route | Schema |
 //! |---|---|
 //! | getPeers | at most 2,000 entries `{ip, port}`: `ip` in the IPv4 or the IPv6 format, `port` from 0 to 65535 |
-//! | getCommonBlocks | `{common}`: `null`, or a block with a height of at least 1 and a block id; no other key |
+//! | getCommonBlocks | `{common}`: `null`, or a block with a height of at least 1 and a block id; other keys are removed |
 //! | getBlocks | at most 400 block headers (the block header schema, as getStatus's header); the generator's key is lowercased |
-//! | postBlock | `{status?, height?}`: a boolean and an integer of at least 1; no other key |
-//! | getUnconfirmedTransactions | `{poolSize?, transactions?}`: an integer of at least 0 and at most the largest `block.maxTransactions` of the milestones; no other key |
+//! | postBlock | `{status?, height?}`: a boolean and an integer of at least 1; other keys are removed |
+//! | getUnconfirmedTransactions | `{poolSize?, transactions?}`: an integer of at least 0 and at most the largest `block.maxTransactions` of the milestones; other keys are removed |
 //! | postTransactions | an array |
 //!
-//! A refused reply names the part whose rule failed first ([`ReplyRefused`]). The communicator
-//! counts a refusal as the reference's `CoreValidationError`.
+//! The reference's schema library removes the keys a schema does not allow instead of refusing the
+//! reply; a decoded reply has no such keys anyway. A refused reply names the part whose rule
+//! failed first ([`ReplyRefused`]). The communicator counts a refusal as the reference's
+//! `CoreValidationError`.
 
 use crate::codecs::blocks::ListedBlock;
 use crate::codecs::transactions::WithTransactions;

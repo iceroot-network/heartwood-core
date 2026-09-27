@@ -8,10 +8,10 @@
 //!    (the kernel's globs), and when `maxSameSubnetPeers` peers already share its /24, unless it
 //!    is a seed; also refused while the peer has a protocol violation in its window.
 //! 4. A known peer is pinged again (and its ports probed when it is stale); nothing else changes.
-//! 5. A new peer is marked pending, pinged with `verifyTimeout` as a race against a timer, its
-//!    ports probed, stored, logged `Accepted new peer <ip>:<port> (v<version>)` unless less
-//!    verbose, and `peer.added` is reported. Any failure disconnects it; the pending mark is
-//!    always removed.
+//! 5. A new peer is marked pending, pinged with `verifyTimeout` as a race against a timer (a ping
+//!    that loses runs on), its ports probed, stored, logged `Accepted new peer <ip>:<port>
+//!    (v<version>)` unless less verbose, and `peer.added` is reported. Any failure disconnects
+//!    it; the pending mark is always removed.
 
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -19,12 +19,11 @@ use std::sync::Arc;
 use heartwood_kernel::{Clock, Event, ip};
 use heartwood_p2p_wire::replies::PeerAddress;
 
-use crate::attestation::current_slot;
 use crate::options::P2pOptions;
 use crate::peer::{Peer, SharedPeer};
 use crate::repository::PeerRepository;
 use crate::seams::{PeerAcceptor, PeerClient, PeerRules};
-use crate::view::{ChainView, PeerEvents};
+use crate::view::PeerEvents;
 
 /// How a candidate is accepted.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -43,8 +42,6 @@ pub struct ProcessorParts<C, R> {
     pub rules: Arc<R>,
     /// The peers and the pending peers.
     pub repository: Arc<PeerRepository>,
-    /// The node's chain, for the slot of the ping.
-    pub chain: Arc<dyn ChainView>,
     /// Where peer events go.
     pub events: Arc<dyn PeerEvents>,
     /// The p2p options.
@@ -71,13 +68,14 @@ where
     }
 
     /// The ping of acceptance: a full ping with `verifyTimeout`, as a race against a timer of the
-    /// same length; whether it succeeded in time. A ping that loses the race is dropped.
+    /// same length; whether it succeeded in time. A ping that loses the race runs on in the
+    /// background, as the reference's does, and may still change the peer and the attestations.
     async fn ping(&self, peer: &SharedPeer) -> bool {
-        let parts = &self.parts;
-        let timeout = parts.options.verify_timeout;
-        let slot = current_slot(parts.chain.milestones(), parts.clock.now_ms());
-        let ping = parts.client.ping(peer, timeout, slot, false, false);
-        matches!(tokio::time::timeout(timeout, ping).await, Ok(Ok(_)))
+        let (client, peer) = (Arc::clone(&self.parts.client), peer.clone());
+        let timeout = self.parts.options.verify_timeout;
+        let ping =
+            tokio::spawn(async move { client.ping(&peer, timeout, true, false, false).await });
+        matches!(tokio::time::timeout(timeout, ping).await, Ok(Ok(Ok(_))))
     }
 
     /// `acceptNewPeer`: a known peer is pinged again, and its ports probed when it was stale; a
@@ -92,7 +90,11 @@ where
             return;
         }
         let peer = SharedPeer::new(Peer::new(ip, port));
-        parts.repository.set_pending(peer.clone());
+        // The pending check of the address rules and the mark are one step, as the reference's
+        // are: a second acceptance of the same new IP started meanwhile stops here.
+        if !parts.repository.try_set_pending(peer.clone()) {
+            return;
+        }
         if self.ping(&peer).await {
             parts.client.ping_ports(&peer).await;
             parts.repository.set(peer.clone());

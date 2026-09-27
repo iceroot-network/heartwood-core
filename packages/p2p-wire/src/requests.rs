@@ -7,7 +7,11 @@
 //! `blockLimit` or `lastBlockHeight` that is absent or 0 on getBlocks. [`ClientRequest`] cannot
 //! express any of them: every request carries its [`Headers`], whose version is never empty, a
 //! getCommonBlocks request holds 1 to 10 ids ([`CommonBlockIds`]), getBlocks' height and limit
-//! are non-zero, and getUnconfirmedTransactions has no `countOnly`.
+//! are non-zero, and getUnconfirmedTransactions has no `countOnly`. Two more shapes are refused
+//! and banned, and the caller keeps them out: a `blockLimit` above 400, and more transactions
+//! than the receiver's `maxTransactionsPerRequest` (the peer client asks for at most 400 blocks,
+//! and its broadcaster sends batches of at most its own `maxTransactionsPerRequest`, as the
+//! reference's does).
 //!
 //! | Route | Payload |
 //! |---|---|
@@ -102,8 +106,9 @@ pub enum ClientRequest {
     GetBlocks {
         /// The height after which blocks are wanted.
         last_block_height: NonZeroU32,
-        /// The most blocks wanted: at most 400, the most a reference server accepts (its request
-        /// schema refuses more, and bans the caller), as the reference's client never asks more.
+        /// The most blocks wanted. A reference server accepts at most 400 (its request schema
+        /// refuses more, and bans the caller); the caller keeps to that, as the reference's
+        /// client does.
         block_limit: NonZeroU32,
         /// Whether only the headers are wanted; `headersOnly` is written only when true.
         headers_only: bool,

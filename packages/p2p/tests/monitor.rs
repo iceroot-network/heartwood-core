@@ -15,7 +15,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use heartwood_crypto::blocks::factory::{self, BlockDraft};
-use heartwood_crypto::crypto::slots::SlotInfo;
 use heartwood_crypto::transactions::builders::TransactionBuilder;
 use heartwood_crypto::transactions::types::TransferItem;
 use heartwood_crypto::utils::hex;
@@ -307,11 +306,11 @@ impl PeerClient for Client {
         &self,
         peer: &SharedPeer,
         timeout: Duration,
-        slot: Option<SlotInfo>,
+        attest: bool,
         force: bool,
         skip_common_blocks: bool,
     ) -> Result<Option<PeerState>, PingError> {
-        assert!(slot.is_some(), "a cleanse pings with the current slot");
+        assert!(attest, "a cleanse's pings attest");
         self.log(Call::Ping {
             ip: peer.ip(),
             timeout,
@@ -568,6 +567,7 @@ fn net_with(options: P2pOptions, sampler: Sampler, adds: bool, height: u32) -> N
         options: Arc::new(options),
         clock: Arc::clone(&clock) as Arc<dyn heartwood_kernel::Clock>,
         sampler,
+        runtime: tokio::runtime::Handle::current(),
     }));
     Net {
         monitor,
@@ -1765,18 +1765,22 @@ mod with_the_real_client {
         let events: Arc<dyn PeerEvents> = Arc::new(Events::default());
         let chain: Arc<dyn ChainView> = ours.clone();
         let verifier = PeerVerifier::new(Arc::clone(&chain), ours.clone(), Arc::clone(&clock));
-        let client = Arc::new(Communicator::new(CommunicatorParts {
-            transport: Arc::new(Connector::new()),
-            verifier: Arc::new(verifier),
-            rules: Arc::clone(&rules),
-            probe: Arc::new(HttpProbe::default()),
-            repository: Arc::clone(&repository),
-            chain: Arc::clone(&chain),
-            online: ours.clone(),
-            events: Arc::clone(&events),
-            options: Arc::clone(&options),
-            clock: Arc::clone(&clock),
-        }));
+        let client = Arc::new(
+            Communicator::new(CommunicatorParts {
+                transport: Arc::new(Connector::new()),
+                verifier: Arc::new(verifier),
+                rules: Arc::clone(&rules),
+                probe: Arc::new(HttpProbe::default()),
+                repository: Arc::clone(&repository),
+                chain: Arc::clone(&chain),
+                online: ours.clone(),
+                events: Arc::clone(&events),
+                options: Arc::clone(&options),
+                clock: Arc::clone(&clock),
+                runtime: tokio::runtime::Handle::current(),
+            })
+            .unwrap(),
+        );
         let acceptor = Arc::new(Acceptor {
             accepted: Mutex::default(),
             adds: false,
@@ -1792,6 +1796,7 @@ mod with_the_real_client {
             options,
             clock,
             sampler: Sampler::from_os().unwrap(),
+            runtime: tokio::runtime::Handle::current(),
         }));
         let forced = CleanseOptions {
             fast: true,

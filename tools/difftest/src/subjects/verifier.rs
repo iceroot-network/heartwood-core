@@ -11,8 +11,9 @@
 //! height on do not chain (previous id against the id of the block before, as the input's chain
 //! gives it).
 //!
-//! The deadline is real time: the peer answers the last request allowed only when the deadline
-//! has passed, so the verifier finds it passed before its next request.
+//! The deadline runs on tokio's paused clock, so the case's own work takes no time: the peer
+//! answers the last request allowed only when the deadline has passed, so the verifier finds it
+//! passed before its next request, however loaded the machine is.
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::IpAddr;
@@ -47,14 +48,16 @@ pub(super) const OPS: &[(&str, Run)] = &[
     ("verifier.checkState", check_state),
 ];
 
-/// How long the deadline of a case with one runs: long enough for every request it allows.
+/// How long the deadline of a case with one runs, on the paused clock.
 const DEADLINE: Duration = Duration::from_millis(250);
 
-/// Run `future` to its end on a runtime of this thread.
+/// Run `future` to its end on a runtime of this thread, whose clock is paused: it moves only when
+/// every task waits for a timer.
 fn block_on<F: std::future::Future>(future: F) -> Outcome<F::Output> {
     thread_local! {
         static RUNTIME: Option<tokio::runtime::Runtime> = tokio::runtime::Builder::new_current_thread()
             .enable_time()
+            .start_paused(true)
             .build()
             .ok();
     }
@@ -510,7 +513,8 @@ fn check_state(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         None | Some(Value::Null) => None,
         Some(_) => Some(integer::<usize>(input, "deadline")?),
     };
-    let start = Instant::now();
+    // The time on the runtime's paused clock, which the verifier and the fake peer read.
+    let start = block_on(async { Instant::now() })?;
     let deadline = match allowed {
         Some(0) => Deadline(start),
         Some(_) => Deadline(start + DEADLINE),
@@ -547,8 +551,9 @@ fn check_state(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let fast = input["fast"].as_bool().unwrap_or(false);
     let result = if fast {
         match verifier.verify_fast(&claimed) {
-            None => Value::Null,
-            Some(v) => {
+            Err(_) => json!("stopped"),
+            Ok(None) => Value::Null,
+            Ok(Some(v)) => {
                 let mut out = json!({"myHeight": v.my_height, "theirHeight": v.their_height});
                 if let Some(common) = v.highest_common_height {
                     out["highestCommonHeight"] = json!(common);

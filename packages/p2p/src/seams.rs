@@ -20,7 +20,6 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use heartwood_crypto::crypto::slots::SlotInfo;
 use heartwood_crypto::{Block, BlockId, Params, TransactionId};
 use heartwood_p2p_wire::RouteId;
 use heartwood_p2p_wire::codecs::blocks::ListedBlock;
@@ -33,7 +32,7 @@ use tokio::time::Instant;
 
 use crate::communicator::BlocksRequest;
 use crate::download::DownloadedBlock;
-use crate::errors::{DownloadError, PastDeadline, PingError, SessionError};
+use crate::errors::{DownloadError, PingError, SessionError, VerificationStopped};
 use crate::peer::{FastVerification, PeerState, SharedPeer, Verification};
 use crate::processor::AcceptOptions;
 
@@ -49,12 +48,12 @@ impl Deadline {
         Deadline(now.checked_add(timeout).unwrap_or(now))
     }
 
-    /// The time left before the deadline, or [`PastDeadline`] when it is now or past (the
-    /// reference's `throwIfPastDeadline`).
-    pub fn remaining(&self) -> Result<Duration, PastDeadline> {
+    /// The time left before the deadline, or [`VerificationStopped::Deadline`] when it is now or
+    /// past (the reference's `throwIfPastDeadline`).
+    pub fn remaining(&self) -> Result<Duration, VerificationStopped> {
         let now = Instant::now();
         if self.0 <= now {
-            return Err(PastDeadline);
+            return Err(VerificationStopped::Deadline);
         }
         Ok(self.0.duration_since(now))
     }
@@ -89,14 +88,15 @@ pub trait PeerTransport: Send + Sync {
 /// returns an error.
 pub trait PeerClient: Send + Sync {
     /// Ping `peer`: getStatus, the network and version checks, a verification of its chain
-    /// (fast, without common blocks, when `skip_common_blocks`), then the status attestations for
-    /// the current `slot`. `None` when the peer is ignored, or was pinged recently and is not
-    /// stale and `force` is off.
+    /// (fast, without common blocks, when `skip_common_blocks`), then, when `attest`, the status
+    /// attestations for our slot, read at that moment (the reference passes its block-time
+    /// lookup and reads the slot after the verification). `None` when the peer is ignored, or was
+    /// pinged recently and is not stale and `force` is off.
     fn ping(
         &self,
         peer: &SharedPeer,
         timeout: Duration,
-        slot: Option<SlotInfo>,
+        attest: bool,
         force: bool,
         skip_common_blocks: bool,
     ) -> impl Future<Output = Result<Option<PeerState>, PingError>> + Send;
@@ -179,24 +179,26 @@ pub trait VerifierLink: Send + Sync {
 pub trait StateCheck: Send + Sync {
     /// The full verification (`checkState`): the claimed header, then the highest common block
     /// and the peer's blocks after it up to the round's end, fetched through `link`. `None` when
-    /// the state does not verify; [`PastDeadline`] wherever the reference's `checkState` throws:
-    /// the deadline passed before a common-block probe, a fork-segment header cannot be rebuilt
-    /// as a block or names no registered delegate, or the node could not read its own chain.
+    /// the state does not verify; [`VerificationStopped`] wherever the reference's `checkState`
+    /// throws: the deadline passed before a common-block probe, a fork-segment header cannot be
+    /// rebuilt as a block or names no registered delegate, or the node could not read its own
+    /// chain.
     fn check_state<L: VerifierLink>(
         &self,
         link: &L,
         peer: &SharedPeer,
         claimed: &PeerState,
         deadline: Deadline,
-    ) -> impl Future<Output = Result<Option<Verification>, PastDeadline>> + Send;
+    ) -> impl Future<Output = Result<Option<Verification>, VerificationStopped>> + Send;
 
     /// The fast verification (`checkStateFast`): the claimed header only; `None` when it does not
-    /// verify.
+    /// verify; [`VerificationStopped::Lookup`] when the node could not read its own chain, where
+    /// the reference's throws.
     fn check_state_fast(
         &self,
         peer: &SharedPeer,
         claimed: &PeerState,
-    ) -> impl Future<Output = Option<FastVerification>> + Send;
+    ) -> impl Future<Output = Result<Option<FastVerification>, VerificationStopped>> + Send;
 }
 
 /// The acceptance of candidate peers.

@@ -8,6 +8,8 @@
 //! wire vectors, and `devnet_smoke` runs against a reference node when `HEARTWOOD_SMOKE_PEER`
 //! names one.
 
+mod peer_fakes;
+
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
@@ -494,7 +496,7 @@ async fn the_first_requests_timeout_is_10_s() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_response_after_its_timeout_is_for_an_unknown_request() {
+async fn a_response_after_its_timeout_is_reported_as_late() {
     let script = Script::new().on(RouteId::GetStatus, after(secs(3), Reply::Payload(vec![])));
     let (_peer, session, errors) = scripted(script).await;
     assert_eq!(
@@ -502,7 +504,28 @@ async fn a_response_after_its_timeout_is_for_an_unknown_request() {
         Err(SessionError::Timeout)
     );
     sleep(ms(1_001)).await;
-    assert_eq!(seen(&errors), vec![protocol(ProtocolError::UnknownRequest)]);
+    assert_eq!(seen(&errors), vec![protocol(ProtocolError::LateResponse)]);
+    // The text is the reference's for an unknown request, which it cannot tell apart.
+    assert_eq!(
+        protocol(ProtocolError::LateResponse).to_string(),
+        protocol(ProtocolError::UnknownRequest).to_string()
+    );
+
+    // A second response to the same id, or one to an id never sent, is for an unknown request.
+    let (mut peer, session, errors) = wire_session().await;
+    let pending = ask(&session, secs(2), 0);
+    let (request, _) = peer.message().await;
+    assert_eq!(answer(pending).await, Err(SessionError::Timeout));
+    for id in [request.id, request.id, 77] {
+        peer.send(&Message::response(id, Vec::new())).await;
+    }
+    sleep(ms(1)).await;
+    let expected = [
+        ProtocolError::LateResponse,
+        ProtocolError::UnknownRequest,
+        ProtocolError::UnknownRequest,
+    ];
+    assert_eq!(seen(&errors), expected.map(protocol));
 }
 
 #[tokio::test(start_paused = true)]
@@ -773,23 +796,27 @@ async fn protocol_errors_are_reported_and_leave_the_session_open() {
 
 #[tokio::test(start_paused = true)]
 async fn a_websocket_ping_or_pong_ends_the_connection_for_good() {
+    // The pending request fails with the frame (the reference's "server disconnected" is of the
+    // same class), and nothing is reported.
+    let control_frame = Err(protocol(ProtocolError::ControlFrame));
     for control in [MockFrame::Ping, MockFrame::Pong] {
         let script = Script::new().on(RouteId::GetStatus, Reply::Frames(vec![control]));
         let (peer, session, errors) = scripted(script).await;
+        assert_eq!(answer(ask(&session, LONG, 0)).await, control_frame);
+        sleep(secs(10)).await;
+        assert_eq!(peer.connections(), 1, "no reconnect");
+        assert!(seen(&errors).is_empty());
         assert_eq!(
             answer(ask(&session, LONG, 0)).await,
             Err(SessionError::Disconnect)
         );
-        sleep(secs(10)).await;
-        assert_eq!(peer.connections(), 1, "no reconnect");
-        assert!(seen(&errors).is_empty());
     }
     // A ping is answered with a pong before the connection ends; the client never pings.
     let (mut peer, session, _) = wire_session().await;
     let pending = ask(&session, LONG, 0);
     peer.message().await;
     peer.write(&frame(0x89, b"hi")).await;
-    assert_eq!(answer(pending).await, Err(SessionError::Disconnect));
+    assert_eq!(answer(pending).await, control_frame);
     assert_eq!(peer.frame().await, Some((0x8a, b"hi".to_vec())));
     assert_eq!(peer.frame().await, None);
 }
@@ -960,7 +987,10 @@ async fn the_standalone_mock_peer_serves_a_corpus_chain() {
 /// the test does nothing): getStatus, getPeers and getBlocks of 400 blocks from height 1, each
 /// decoded and checked; an idle minute in which the node's pings are answered; getStatus again
 /// on the same connection; then the connection is terminated, as the reference's connector ends
-/// its sessions. The requests carry this implementation's version and the node's own port.
+/// its sessions. Then the same exchange through the connector and the communicator, with the
+/// client's own requests, limits, timeouts and error classes: a ping, getPeers and getBlocks,
+/// none failed and no violation recorded. The requests carry this implementation's version and
+/// the node's own port.
 #[tokio::test]
 #[ignore = "devnet"]
 async fn devnet_smoke() {
@@ -976,8 +1006,9 @@ async fn devnet_smoke() {
         return;
     };
     let node: SocketAddr = node.parse().expect("HEARTWOOD_SMOKE_PEER is <ip:port>");
+    let version = format!("4.3.1-heartwood.{}", env!("CARGO_PKG_VERSION"));
     let headers = Some(Headers {
-        version: Some(format!("4.3.1-heartwood.{}", env!("CARGO_PKG_VERSION"))),
+        version: Some(version.clone()),
         port: Some(u32::from(node.port())),
         ..Headers::default()
     });
@@ -1065,4 +1096,53 @@ async fn devnet_smoke() {
     sleep(ms(100)).await;
     assert!(seen(&errors).is_empty(), "{:?}", seen(&errors));
     println!("devnet_smoke: closed");
+    communicator_smoke(node, version).await;
+}
+
+/// The smoke run's second part, through the connector and the communicator.
+async fn communicator_smoke(node: SocketAddr, version: String) {
+    use heartwood_p2p::communicator::BlocksRequest;
+    use heartwood_p2p::errors::PingError;
+    use heartwood_p2p::seams::PeerClient;
+    use heartwood_p2p::{Connector, P2pOptions, Peer, SharedPeer};
+
+    let options = P2pOptions {
+        version,
+        port: node.port(),
+        ..peer_fakes::options()
+    };
+    let fixture = peer_fakes::Fixture::over(
+        Connector::new(),
+        heartwood_p2p::utils::rules::Rules::new(100, 25),
+        peer_fakes::Chain::at(10),
+        options,
+    );
+    let peer = SharedPeer::new(Peer::new(node.ip(), node.port()));
+    fixture.repository.set(peer.clone());
+    let client = &fixture.communicator;
+    // The test's chain is not the devnet's, so the ping stops at the network check, after the
+    // status reply passed its check.
+    let pinged = client.ping(&peer, secs(5), true, true, false).await;
+    let passed = matches!(pinged, Ok(Some(_)) | Err(PingError::VerificationFailed));
+    assert!(passed, "{pinged:?}");
+    let peers = client.get_peers(&peer, true).await.expect("getPeers");
+    let blocks = client.get_peer_blocks(&peer, BlocksRequest::after(1)).await;
+    let blocks = blocks.expect("the downloaded blocks are read");
+    assert!(!blocks.is_empty());
+    let snapshot = peer.snapshot();
+    assert!(snapshot.violations.is_empty(), "{:?}", snapshot.violations);
+    assert_eq!(snapshot.sequential_errors, 0);
+    println!(
+        "devnet_smoke: communicator: ping {}, getPeers {} peers, getBlocks {} blocks, no violation",
+        if pinged.is_ok() {
+            "verified"
+        } else {
+            "checked"
+        },
+        peers.len(),
+        blocks.len()
+    );
+    fixture.transport.disconnect(node.ip());
+    sleep(ms(100)).await;
+    println!("devnet_smoke: communicator: closed");
 }

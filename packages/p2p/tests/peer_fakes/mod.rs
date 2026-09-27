@@ -12,10 +12,9 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use heartwood_crypto::blocks::factory::{self, BlockDraft};
-use heartwood_crypto::crypto::slots::SlotInfo;
 use heartwood_crypto::{Address, Aux, Block, KeyPair, Milestones, Network, Params, PublicKeyBytes};
 use heartwood_kernel::{Event, ManualClock};
-use heartwood_p2p::errors::PastDeadline;
+use heartwood_p2p::errors::VerificationStopped;
 use heartwood_p2p::seams::{
     Deadline, PeerRules, PeerTransport, PortProbe, StateCheck, VerifierLink,
 };
@@ -26,7 +25,7 @@ use heartwood_p2p::{
 };
 use heartwood_p2p_wire::RouteId;
 use heartwood_p2p_wire::codecs::blocks::ListedBlock;
-use heartwood_p2p_wire::errors::ReplyRefused;
+use heartwood_p2p_wire::errors::{ReplyRefused, RequestError};
 use heartwood_p2p_wire::messages::Proto;
 use heartwood_p2p_wire::messages::blocks::PostBlockResponse;
 use heartwood_p2p_wire::messages::peer::{GetCommonBlocksResponse, Peer as ListedPeer};
@@ -123,6 +122,29 @@ pub fn transfer_bytes(nonce: u64) -> Vec<u8> {
     .unwrap()
     .bytes()
     .to_vec()
+}
+
+/// A transfer signed by delegate 1 whose memo is not UTF-8, as bytes. Its signature no longer
+/// holds, which the reader of downloaded blocks does not check.
+pub fn transfer_with_non_utf8_memo() -> Vec<u8> {
+    use heartwood_crypto::transactions::builders::TransactionBuilder;
+    use heartwood_crypto::transactions::types::{Memo, TransferItem};
+    let params = DEVNET.milestones.at(1);
+    let recipient = Address::from_public_key(delegate(2).public_key(), DEVNET.network.pub_key_hash);
+    let transfer = TransactionBuilder::transfer(vec![TransferItem {
+        amount: 1,
+        recipient,
+    }])
+    .network(DEVNET.network.pub_key_hash)
+    .nonce(1)
+    .fee(50_000_000)
+    .memo(Memo::new("memo!").unwrap())
+    .build(&delegate(1), Aux::random(), params)
+    .unwrap();
+    let mut bytes = transfer.bytes().to_vec();
+    let at = bytes.windows(6).position(|w| w == b"\x05memo!").unwrap();
+    bytes[at + 1] = 0xff;
+    bytes
 }
 
 // ---- the node's chain ----------------------------------------------------------------------
@@ -453,8 +475,8 @@ impl PeerRules for Rules {
 
 /// A verifier that answers what it was set to, after its delay.
 pub struct Verifier {
-    pub full: Mutex<Result<Option<Verification>, PastDeadline>>,
-    pub fast: Mutex<Option<FastVerification>>,
+    pub full: Mutex<Result<Option<Verification>, VerificationStopped>>,
+    pub fast: Mutex<Result<Option<FastVerification>, VerificationStopped>>,
     pub delay: Mutex<Duration>,
     pub claimed: Mutex<Vec<PeerState>>,
     pub deadlines: Mutex<Vec<Deadline>>,
@@ -468,11 +490,11 @@ impl Default for Verifier {
                 their_height: 10,
                 highest_common_height: 10,
             }))),
-            fast: Mutex::new(Some(FastVerification {
+            fast: Mutex::new(Ok(Some(FastVerification {
                 my_height: 10,
                 their_height: 10,
                 highest_common_height: Some(10),
-            })),
+            }))),
             delay: Mutex::new(Duration::ZERO),
             claimed: Mutex::default(),
             deadlines: Mutex::default(),
@@ -487,7 +509,7 @@ impl StateCheck for Verifier {
         _peer: &SharedPeer,
         claimed: &PeerState,
         deadline: Deadline,
-    ) -> Result<Option<Verification>, PastDeadline> {
+    ) -> Result<Option<Verification>, VerificationStopped> {
         self.claimed.lock().unwrap().push(claimed.clone());
         self.deadlines.lock().unwrap().push(deadline);
         let delay = *self.delay.lock().unwrap();
@@ -499,7 +521,7 @@ impl StateCheck for Verifier {
         &self,
         _peer: &SharedPeer,
         claimed: &PeerState,
-    ) -> Option<FastVerification> {
+    ) -> Result<Option<FastVerification>, VerificationStopped> {
         self.claimed.lock().unwrap().push(claimed.clone());
         *self.fast.lock().unwrap()
     }
@@ -553,9 +575,11 @@ impl PeerEvents for Events {
 
 // ---- a communicator over the fakes ------------------------------------------------------------
 
+/// The devnet's epoch, in milliseconds since the Unix epoch.
+pub const EPOCH_MS: i64 = 1_767_225_600_000;
 /// The time the manual clock starts at, in milliseconds since the Unix epoch: the devnet epoch
 /// plus 1,000 s (slot 125).
-pub const START_MS: i64 = 1_767_225_600_000 + 1_000_000;
+pub const START_MS: i64 = EPOCH_MS + 1_000_000;
 
 /// The options of the tests: version 4.3.1, the reference's defaults otherwise.
 pub fn options() -> P2pOptions {
@@ -596,6 +620,15 @@ where
     Ru: PeerRules + 'static,
 {
     pub fn over(transport: Tr, rules: Ru, chain: Chain, options: P2pOptions) -> Fixture<Tr, Ru> {
+        Fixture::try_over(transport, rules, chain, options).expect("the options name a version")
+    }
+
+    pub fn try_over(
+        transport: Tr,
+        rules: Ru,
+        chain: Chain,
+        options: P2pOptions,
+    ) -> Result<Fixture<Tr, Ru>, RequestError> {
         let (transport, rules) = (Arc::new(transport), Arc::new(rules));
         let verifier = Arc::new(Verifier::default());
         let probe = Arc::new(Probe::default());
@@ -616,8 +649,9 @@ where
             events: events.clone(),
             options: Arc::clone(&options),
             clock: clock.clone(),
-        });
-        Fixture {
+            runtime: tokio::runtime::Handle::current(),
+        })?;
+        Ok(Fixture {
             transport,
             verifier,
             rules,
@@ -629,7 +663,7 @@ where
             clock,
             options,
             communicator,
-        }
+        })
     }
 }
 
@@ -695,7 +729,7 @@ pub fn devnet_status(block: &Block, slot: i64, signers: &[KeyPair]) -> Vec<u8> {
     )
 }
 
-/// Our slot `number`.
-pub fn slot(number: i64) -> SlotInfo {
-    heartwood_crypto::crypto::slots::slot_info(number.saturating_mul(8), 8)
+/// Set `clock` to the first second of our slot `number` (8-second slots from the epoch).
+pub fn at_slot(clock: &ManualClock, number: i64) {
+    clock.set(EPOCH_MS + number * 8_000);
 }
