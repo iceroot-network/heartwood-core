@@ -11,12 +11,16 @@
 //!
 //! The API and P2P each own a processor, as in the reference, so each has its own cooldown.
 
+use heartwood_crypto::utils::js::{number_to_string, number_value, property_order};
 use heartwood_kernel::clock::Clock;
+use heartwood_kernel::utils::pluralise::pluralise;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
-use crate::errors::{Refusal, StorageError};
+use crate::dynamic_fee_matcher::check_broadcast;
+use crate::errors::{AddError, PoolCode, Refusal, StorageError};
 use crate::service::{Pool, PoolContext};
+use crate::verifier::{Checked, check_entries};
 
 /// How long the processor refuses an id it has seen, in seconds.
 pub const COOLDOWN_SECONDS: i64 = 30;
@@ -47,7 +51,9 @@ pub struct ProcessorResult {
 
 impl ProcessorResult {
     /// The result in the reference's JSON form: `accept`, `broadcast`, `invalid`, `excess`, and
-    /// `errors` (`{id: {type, message}}`) when something was refused.
+    /// `errors` (`{id: {type, message}}`) when something was refused, its keys in the order
+    /// JavaScript enumerates them (entry indexes first, in numeric order, then the others in the
+    /// order they were first refused).
     pub fn to_json(&self) -> Value {
         let list = |ids: &[String]| Value::from(ids.to_vec());
         let mut out = Map::new();
@@ -56,7 +62,7 @@ impl ProcessorResult {
         out.insert("invalid".into(), list(&self.invalid));
         out.insert("excess".into(), list(&self.excess));
         if let Some(errors) = &self.errors {
-            let errors = errors
+            let errors: Map<String, Value> = errors
                 .iter()
                 .map(|(id, refusal)| {
                     let mut error = Map::new();
@@ -65,16 +71,29 @@ impl ProcessorResult {
                     (id.clone(), Value::Object(error))
                 })
                 .collect();
-            out.insert("errors".into(), Value::Object(errors));
+            let ordered = property_order(&errors)
+                .into_iter()
+                .map(|(id, error)| (id.clone(), error.clone()))
+                .collect();
+            out.insert("errors".into(), Value::Object(ordered));
         }
         Value::Object(out)
+    }
+
+    /// Record the refusal of entry `id`.
+    fn refuse(&mut self, id: String, refusal: Refusal) {
+        if refusal.code == PoolCode::ExceedsMaxCount {
+            self.excess.push(id.clone());
+        }
+        self.invalid.push(id.clone());
+        // A repeated entry id keeps its first place and its last refusal, as a JavaScript object.
+        self.errors.get_or_insert_default().insert(id, refusal);
     }
 }
 
 /// A processor, with its cooldown: the time in seconds at which each id was last seen.
 #[derive(Debug, Clone, Default)]
 pub struct Processor {
-    #[expect(dead_code, reason = "the processor's loops read it")]
     cooldown: IndexMap<String, i64>,
 }
 
@@ -85,6 +104,11 @@ impl Processor {
     }
 
     /// Process `entries` into `pool` at the time `clock` shows.
+    ///
+    /// The first loop decodes every entry ([`check_entries`], on the pool's `worker_count`
+    /// threads), then refuses in entry order each id seen in the last 30 seconds and records the
+    /// others as seen now. The second loop adds the rest in order. A storage failure is fatal
+    /// and ends the batch.
     pub fn process(
         &mut self,
         pool: &mut Pool,
@@ -92,7 +116,92 @@ impl Processor {
         clock: &dyn Clock,
         entries: Vec<Entry>,
     ) -> Result<ProcessorResult, StorageError> {
-        let _ = (pool, ctx, clock, entries);
-        todo!("the two loops")
+        let ms = clock.now_ms();
+        let now = ms
+            .div_euclid(1000)
+            .saturating_add(i64::from(ms.rem_euclid(1000) != 0));
+        self.cooldown
+            .retain(|_, seen| now.saturating_sub(*seen) < COOLDOWN_SECONDS);
+        let network = ctx.network.pub_key_hash;
+        let checked = check_entries(&entries, ctx.params(), pool.options().worker_count);
+        let mut result = ProcessorResult::default();
+        let mut admitted = Vec::new();
+        for (index, (entry, checked)) in entries.iter().zip(checked).enumerate() {
+            let entry_id = entry_id(entry, index);
+            let checked = match checked {
+                Ok(checked) => checked,
+                Err(refusal) => {
+                    result.refuse(entry_id, refusal);
+                    continue;
+                }
+            };
+            let id = checked.id();
+            match self.cooldown.get(&id) {
+                Some(seen) => {
+                    let wait = COOLDOWN_SECONDS.saturating_sub(now.saturating_sub(*seen));
+                    let message = format!(
+                        "{} must wait another {} before trying again",
+                        checked.display(network),
+                        pluralise("second", wait.into(), true)
+                    );
+                    result.refuse(entry_id, Refusal::new(PoolCode::Cooldown, message));
+                }
+                None => {
+                    self.cooldown.insert(id, now);
+                    admitted.push(checked);
+                }
+            }
+        }
+        for checked in admitted {
+            let entry_id = checked.id();
+            let broadcast = match &checked {
+                Checked::Decoded(transaction) => {
+                    check_broadcast(ctx, pool.options(), transaction).is_ok()
+                }
+                Checked::Removed { .. } => false,
+            };
+            match pool.add_transaction(ctx, checked) {
+                Ok(()) => {
+                    if broadcast {
+                        result.broadcast.push(entry_id.clone());
+                    }
+                    result.accept.push(entry_id);
+                }
+                Err(AddError::Refused(refusal)) => result.refuse(entry_id, refusal),
+                Err(AddError::Storage(error)) => return Err(error),
+            }
+        }
+        Ok(result)
+    }
+}
+
+/// The id of entry `index` in the first loop: the index for bytes; for JSON its `id` as
+/// JavaScript's `String` writes it, or the index when it has none or `null`.
+fn entry_id(entry: &Entry, index: usize) -> String {
+    match entry {
+        Entry::Data(Value::Object(object)) => match object.get("id") {
+            None | Some(Value::Null) => index.to_string(),
+            Some(id) => js_string(id),
+        },
+        Entry::Data(_) | Entry::Bytes(_) => index.to_string(),
+    }
+}
+
+/// `value` as JavaScript's `String(value)` writes it.
+fn js_string(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_owned(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::Number(number) => number_to_string(number_value(number)),
+        Value::String(text) => text.clone(),
+        Value::Array(items) => items
+            .iter()
+            .map(|item| match item {
+                Value::Null => String::new(),
+                item => js_string(item),
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+        Value::Object(_) => "[object Object]".to_owned(),
     }
 }
