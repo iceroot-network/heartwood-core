@@ -41,7 +41,7 @@ use heartwood_kernel::config::Options;
 use heartwood_kernel::errors::BootError;
 use heartwood_kernel::lifecycle::Component;
 use heartwood_kernel::{Clock, SystemClock};
-use heartwood_p2p::attestation_session::AttestationSession;
+use heartwood_p2p::attestation_session::{AttestationSession, DelegatesOnThisNode};
 use heartwood_p2p::diversity::Sampler;
 use heartwood_p2p::processor::ProcessorParts;
 use heartwood_p2p::seeds::HttpProbe;
@@ -65,7 +65,7 @@ use crate::config::{Package, RelayConfig};
 use crate::lock::{self, ProcessLock};
 use crate::network::Monitored;
 use crate::node_services::{MonitorSide, RelayServices, queue_state};
-use crate::views::{BusEvents, Links, Listener, NodeView, Submit};
+use crate::views::{BusEvents, Links, Listener, NodeView, OnThisNode, Submit};
 use crate::{VERSION, options, signals};
 
 /// The relay could not start, or stopped on a fatal error.
@@ -426,6 +426,8 @@ pub async fn serve_p2p(
 ) -> Result<P2p, RelayError> {
     let attestation = Arc::new(AttestationSession::new(node.clone(), clock.clone()));
     let _ = links.attested.set(attestation.clone());
+    let on_this_node = DelegatesOnThisNode(attestation.clone());
+    let _ = links.on_this_node.set(Arc::new(on_this_node));
     let status = Arc::new(StatusServer::new(
         node.clone(),
         attestation.clone(),
@@ -673,7 +675,7 @@ fn client(
         clock: Arc::clone(clock),
         sampler,
         runtime,
-        attested: links.clone(),
+        attested: Arc::new(OnThisNode(Arc::clone(links))),
     };
     let (monitor, clock) = (Arc::new(NetworkMonitor::new(parts)), Arc::clone(clock));
     let runtime = Handle::current();

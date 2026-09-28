@@ -98,6 +98,9 @@ pub struct Links {
     pub machine: OnceLock<Arc<dyn Machine>>,
     /// The forger's attestation session: the delegates on this node.
     pub attested: OnceLock<Arc<dyn AttestedKeys>>,
+    /// The delegates on this node that are in the round of the tip plus one, as the reference's
+    /// `getDelegatesOnThisNode` reads them for the fork check.
+    pub on_this_node: OnceLock<Arc<dyn AttestedKeys>>,
     /// When the node first reported itself synced, in milliseconds since the Unix epoch.
     pub first_synced: OnceLock<i64>,
     /// Whether the blockchain has booted.
@@ -111,6 +114,17 @@ impl AttestedKeys for Links {
         session
             .map(|session| session.attested())
             .unwrap_or_default()
+    }
+}
+
+/// The delegates on this node in the round of the tip plus one ([`Links::on_this_node`]), the
+/// fork check's local peer; none before the server is made.
+pub struct OnThisNode(pub Arc<Links>);
+
+impl AttestedKeys for OnThisNode {
+    fn attested(&self) -> Vec<PublicKeyBytes> {
+        let keys = self.0.on_this_node.get();
+        keys.map(|keys| keys.attested()).unwrap_or_default()
     }
 }
 
