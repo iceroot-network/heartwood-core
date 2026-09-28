@@ -8,7 +8,9 @@
 //!
 //! The reference's marker files are honoured at the start: `clear-saved-states.lock` in the temp
 //! directory restores the state by a replay (and is removed once it is done), and
-//! `clear-pool.lock` clears the pool's storage when the pool opens.
+//! `clear-pool.lock` clears the pool's storage when the pool opens. So are its reset variables:
+//! `CORE_RESET_DATABASE` empties the store (the start is a first start) and the pool, and
+//! `CORE_RESET_POOL` empties the pool, at every start while they are set.
 
 use std::fmt::Display;
 use std::fs;
@@ -40,7 +42,7 @@ use heartwood_p2p::{
 };
 use heartwood_p2p::{PeerProcessor, PeerRepository, PeerVerifier};
 use heartwood_p2p_wire::replies::PeerAddress;
-use heartwood_pool::Pool;
+use heartwood_pool::{Options as PoolOptions, Pool};
 use heartwood_transactions::Handlers;
 use thiserror::Error;
 use tokio::runtime::{Builder, Handle};
@@ -190,7 +192,7 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
     let (store, restored) = restored(&relay)?;
     let files = &relay.crypto;
     version_floor(&relay, restored.state.height(), &p2p.minimum_versions)?;
-    let pool = Pool::open(pool_options, Some(&relay.pool_marker())).map_err(component)?;
+    let pool = open_pool(&relay, pool_options)?;
     // The node thread.
     let (milestones, network) = (
         Arc::new(files.milestones.clone()),
@@ -370,10 +372,17 @@ async fn serve_api(
 }
 
 /// The store of `relay` and its restored state: by a replay when the reference's
-/// `clear-saved-states.lock` asks for one, which is removed once the replay is done.
+/// `clear-saved-states.lock` asks for one, which is removed once the replay is done; from the
+/// genesis block, in an emptied store, while `CORE_RESET_DATABASE` is set.
 pub fn restored(relay: &RelayConfig) -> Result<(ChainStore, Restored), RelayError> {
     let mut store =
         ChainStore::open(&Settings::in_data_dir(&relay.paths.data)).map_err(component)?;
+    if relay.env.is_set("CORE_RESET_DATABASE") {
+        heartwood_kernel::warning!(
+            "CORE_RESET_DATABASE is set: the store starts again from the genesis block"
+        );
+        store.database_mut().reset().map_err(component)?;
+    }
     let marker = relay.replay_marker();
     let mode = if marker.exists() {
         RestoreMode::Replay
@@ -385,6 +394,20 @@ pub fn restored(relay: &RelayConfig) -> Result<(ChainStore, Restored), RelayErro
         let _ = fs::remove_file(&marker);
     }
     Ok((store, restored))
+}
+
+/// The pool of `options`, its storage cleared by the reference's `clear-pool.lock`, and emptied
+/// while `CORE_RESET_DATABASE` or `CORE_RESET_POOL` is set, as the reference's pool flushes itself
+/// at its boot.
+pub fn open_pool(relay: &RelayConfig, options: PoolOptions) -> Result<Pool, RelayError> {
+    let mut pool = Pool::open(options, Some(&relay.pool_marker())).map_err(component)?;
+    if ["CORE_RESET_DATABASE", "CORE_RESET_POOL"]
+        .iter()
+        .any(|name| relay.env.is_set(name))
+    {
+        pool.flush().map_err(component)?;
+    }
+    Ok(pool)
 }
 
 /// The version floor of `relay`'s milestones at the stored tip `height`, with the peers' version

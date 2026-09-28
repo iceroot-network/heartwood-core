@@ -1,6 +1,7 @@
 //! The relay's configuration: the environment's precedence, `config.json`, the relay profile as
 //! compiled-in components, the command line's options under `app.json`'s, the warnings for what
-//! the relay does not honour, the components' option readers, the markers and the version floor.
+//! the relay does not honour, the components' option readers, the markers, the reset variables
+//! and the version floor.
 
 mod common;
 
@@ -8,11 +9,13 @@ use std::fs;
 
 use common::{Setup, relay_plugins, run};
 use heartwood_blockchain::{BlockchainOptions, ReplayReason, RestorePath};
-use heartwood_core::app::{RelayError, api_options, restored, version_floor};
+use heartwood_core::app::{RelayError, api_options, open_pool, restored, version_floor};
 use heartwood_core::config::{Package, RelayConfig};
 use heartwood_core::options;
+use heartwood_crypto::TransactionId;
 use heartwood_kernel::config::Env;
 use heartwood_logger::Level;
+use heartwood_pool::{Storage, StoredTransaction};
 use serde_json::{Value, json};
 
 fn load(setup: &Setup, flags: &str, extra: &[(&str, &str)]) -> Result<RelayConfig, RelayError> {
@@ -472,6 +475,44 @@ fn a_replay_marker_restores_by_the_replay_path_and_is_removed() {
         config.pool_marker(),
         setup.root.join("temp/clear-pool.lock")
     );
+}
+
+#[test]
+fn the_reset_variables_empty_the_store_and_the_pool_at_the_start() {
+    let setup = Setup::new("resets", "");
+    let config = load(&setup, "--network testnet", &[]).unwrap();
+    fs::create_dir_all(&config.paths.temp).unwrap();
+    assert_eq!(restored(&config).unwrap().1.path, RestorePath::FirstStart);
+    assert_eq!(restored(&config).unwrap().1.path, RestorePath::Table);
+    let reset = load(&setup, "--network testnet", &[("CORE_RESET_DATABASE", "1")]).unwrap();
+    assert_eq!(restored(&reset).unwrap().1.path, RestorePath::FirstStart);
+    // The pool: a stored transaction stays unless a reset variable is set and not empty.
+    let pool_options = |config: &RelayConfig| {
+        let entry = config.entry(Package::Pool);
+        options::pool(&entry, &config.env, &config.paths.data, 1).unwrap()
+    };
+    let storage = pool_options(&config).storage;
+    let row = StoredTransaction {
+        height: 1,
+        id: TransactionId::from_array([7; 32]),
+        recipient_id: String::new(),
+        sender_id: "sender".into(),
+        serialised: vec![1, 2, 3],
+    };
+    for (variable, value, kept) in [
+        ("CORE_RESET_POOL", "", true),
+        ("CORE_RESET_POOL", "1", false),
+        ("CORE_RESET_DATABASE", "false", false),
+    ] {
+        let mut stored = Storage::open(&storage, None).unwrap();
+        stored.flush().unwrap();
+        stored.add(&row).unwrap();
+        drop(stored);
+        let config = load(&setup, "--network testnet", &[(variable, value)]).unwrap();
+        drop(open_pool(&config, pool_options(&config)).unwrap());
+        let left = Storage::open(&storage, None).unwrap().all().unwrap();
+        assert_eq!(left.len(), usize::from(kept), "{variable}={value}");
+    }
 }
 
 #[test]
