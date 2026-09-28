@@ -148,9 +148,7 @@ fn the_draft_counts_burned_amounts_and_fees_and_hashes_the_ids() {
         TransactionBuilder::burn(2_000).fee(30).nonce(3),
     ]
     .map(|builder| builder.build(&keys, Aux::fixed([1; 32]), params).unwrap());
-    let draft = delegate("delegate one")
-        .draft(&inputs(&transactions))
-        .unwrap();
+    let draft = Delegate::draft(&inputs(&transactions)).unwrap();
     assert_eq!((draft.version, draft.height, draft.timestamp), (0, 6, 48));
     assert_eq!(draft.previous_block, [0xab; 32]);
     assert_eq!(draft.number_of_transactions, 3);
@@ -159,7 +157,7 @@ fn the_draft_counts_burned_amounts_and_fees_and_hashes_the_ids() {
     assert_eq!((draft.reward, draft.payload_length), (180_000_000, 96));
     let ids = transactions.iter().map(|t| t.id().as_bytes().as_slice());
     assert_eq!(draft.payload_hash, sha256_concat(ids));
-    let empty = delegate("delegate one").draft(&inputs(&[])).unwrap();
+    let empty = Delegate::draft(&inputs(&[])).unwrap();
     assert_eq!((empty.payload_length, empty.payload_hash), (0, sha256(b"")));
 }
 
@@ -177,7 +175,7 @@ fn totals_beyond_the_header_and_the_last_height_are_refused() {
         .collect();
     let forger = delegate("delegate one");
     assert_eq!(
-        forger.draft(&inputs(&burns)),
+        Delegate::draft(&inputs(&burns)),
         Err(ForgeError::TotalOverflow {
             field: "totalAmount"
         })
@@ -190,7 +188,7 @@ fn totals_beyond_the_header_and_the_last_height_are_refused() {
         ..inputs(&[])
     };
     assert_eq!(
-        forger.draft(&last),
+        Delegate::draft(&last),
         Err(ForgeError::Height { height: u32::MAX })
     );
 }

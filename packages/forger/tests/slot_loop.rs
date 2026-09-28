@@ -921,6 +921,23 @@ async fn a_sync_that_finds_no_host_checks_again_after_two_seconds() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_block_that_cannot_be_made_errors_the_attempt_before_the_status() {
+    let relay = FakeRelay::new(in_slot(10, 0), &[1], &[]);
+    let mut forger = forger(&relay, &[1], relay.clock.clone());
+    forger.service.boot().await.unwrap();
+    // No block can follow the network state's height.
+    *relay.state.lock().unwrap() = Some(state(u32::MAX));
+    let ours = key(1).public_key().to_compressed();
+    let slot_10 = round(80, 1, &[1], &[], Some(0), None);
+    assert_eq!(
+        forger.service.forge_attempt(&ours, true, &slot_10).await,
+        AttemptEnd::Errored
+    );
+    assert_eq!(relay.count("status"), 0, "the reference throws before it");
+    assert!(forger.signer.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_block_is_signed_for_the_slot_of_its_own_timestamp() {
     let relay = FakeRelay::new(in_slot(10, 0), &[1], &[]);
     let mut forger = forger(&relay, &[1], relay.clock.clone());

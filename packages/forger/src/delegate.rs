@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use heartwood_crypto::blocks::factory::{self, BlockDraft};
 use heartwood_crypto::crypto::hash::sha256_concat;
-use heartwood_crypto::{Address, Aux, Block, KeyPair, Milestones, PublicKeyBytes, Transaction};
+use heartwood_crypto::{
+    Address, Aux, Block, BlockHeader, KeyPair, Milestones, PublicKeyBytes, Signature, Transaction,
+};
 
 use crate::errors::ForgeError;
 use crate::seams::ForgeInputs;
@@ -44,9 +46,9 @@ impl Delegate {
         &self.address
     }
 
-    /// The header draft of the delegate's block from `inputs`. A sum over the transactions beyond
-    /// 64 bits is refused, where the reference's serialiser throws.
-    pub fn draft(&self, inputs: &ForgeInputs<'_>) -> Result<BlockDraft, ForgeError> {
+    /// The header draft of a block from `inputs`. A sum over the transactions beyond 64 bits is
+    /// refused, where the reference's serialiser throws.
+    pub fn draft(inputs: &ForgeInputs<'_>) -> Result<BlockDraft, ForgeError> {
         let transactions = inputs.transactions;
         let too_many = || ForgeError::TooManyTransactions {
             count: transactions.len(),
@@ -72,6 +74,33 @@ impl Delegate {
         })
     }
 
+    /// Whether `inputs` make a block by `generator`: the draft, then the block assembled and read
+    /// back as `BlockFactory.make` does, with an empty signature. Where the reference's forger
+    /// makes its block and throws, before its checks, the loop runs this; nothing is signed.
+    pub fn check(
+        generator: &PublicKeyBytes,
+        inputs: &ForgeInputs<'_>,
+        milestones: &Milestones,
+    ) -> Result<(), ForgeError> {
+        let draft = Delegate::draft(inputs)?;
+        let header = BlockHeader {
+            version: draft.version,
+            timestamp: draft.timestamp,
+            height: draft.height,
+            previous_block: draft.previous_block,
+            number_of_transactions: draft.number_of_transactions,
+            total_amount: draft.total_amount,
+            total_fee: draft.total_fee,
+            reward: draft.reward,
+            payload_length: draft.payload_length,
+            payload_hash: draft.payload_hash,
+            generator_public_key: *generator,
+            block_signature: Signature::from_array([0; 64]),
+        };
+        factory::from_data(header, inputs.transactions, milestones)?;
+        Ok(())
+    }
+
     /// The delegate's signed block from `inputs`, under the merged milestone at its height.
     pub fn forge(
         &self,
@@ -79,7 +108,7 @@ impl Delegate {
         aux: Aux,
         milestones: &Milestones,
     ) -> Result<Block, ForgeError> {
-        let (draft, transactions) = (self.draft(inputs)?, inputs.transactions.to_vec());
+        let (draft, transactions) = (Delegate::draft(inputs)?, inputs.transactions.to_vec());
         let block = factory::make(draft, transactions, &self.keys, aux, milestones)?;
         Ok(block)
     }

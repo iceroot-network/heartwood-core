@@ -15,12 +15,13 @@
 //!   [`POLL_FLOOR`] where the reference polls again at once.
 //! - **An attempt** (`forgeNewBlock`): the debug delay; the network state (logged by the relay on
 //!   the first attempt); the round's slot; on the first attempt only, the pool's transactions; the
-//!   block's inputs; the time left; the relay's status and slots; the two early stops with the
-//!   "already forged on another node" line; the height line; the quorum's reading; then, with at
-//!   least 2,000 ms left in the round's slot and the delegate still its forger, the block from the
-//!   signer ([`BlockSigner`], which signs a slot once and re-sends it after), "Delegate ... forged a
-//!   new block ...", `postBlock` and the events; else the two "Failed to forge new block" lines. Any
-//!   error marks the attempt errored. After 1,000 ms the round is loaded again, and while fewer
+//!   block's inputs, from which the block must be made (unsigned: a block the reference cannot
+//!   make errors its attempt here); the time left; the relay's status and slots; the two early
+//!   stops with the "already forged on another node" line; the height line; the quorum's reading;
+//!   then, with at least 2,000 ms left in the round's slot and the delegate still its forger, the
+//!   block from the signer ([`BlockSigner`], which signs a slot once and re-sends it after),
+//!   "Delegate ... forged a new block ...", `postBlock` and the events; else the two "Failed to
+//!   forge new block" lines. Any error marks the attempt errored. After 1,000 ms the round is loaded again, and while fewer
 //!   than `blockTime - 1` attempts in a row errored the next attempt runs. The reference signs
 //!   before its checks; Heartwood signs the same bytes after them, through the signing record.
 //! - **The quorum's reading** (`isForgingAllowed`): unknown, cold start and below the minimum
@@ -54,6 +55,7 @@ use serde_json::Value;
 use tokio::task::JoinSet;
 
 use crate::deadlines::{self, POLL_FLOOR};
+use crate::delegate::Delegate;
 use crate::errors::RelayError;
 use crate::options::Options;
 use crate::seams::{BlockSigner, Deadline, ForgeInputs, ForgerEvent, RelayLink, ShutdownSignal};
@@ -548,6 +550,17 @@ where
         let block = (u32::try_from(round.timestamp).ok())
             .zip(round.reward.parse::<u64>().ok())
             .ok_or_else(undefined)?;
+        // The reference makes its block here; one it cannot make ends the attempt before the
+        // checks. Heartwood signs only after them.
+        let inputs = ForgeInputs {
+            transactions: &transactions,
+            previous_id,
+            previous_height: height,
+            timestamp: block.0,
+            reward: block.1,
+        };
+        let made = Delegate::check(&key.0, &inputs, &self.milestones);
+        made.map_err(|error| Failure::Other(error.to_string()))?;
         let time_left = self.time_left(round);
         let pretty = name(&self.state().usernames, hex);
         let status = self.link.get_status(deadline(RouteId::GetStatus)).await?;
