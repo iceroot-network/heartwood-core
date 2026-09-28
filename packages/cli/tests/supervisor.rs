@@ -153,7 +153,7 @@ fn a_node_that_ran_a_second_or_more_is_restarted_at_once() {
 }
 
 #[test]
-fn five_unstable_runs_in_a_row_mark_the_role_errored() {
+fn five_unstable_runs_in_the_first_seconds_mark_the_role_errored() {
     let node = Node::new("errored");
     node.start(&["exit", "1"], &[]);
     wait_for("the supervisor's exit", Duration::from_secs(10), || {
@@ -164,7 +164,7 @@ fn five_unstable_runs_in_a_row_mark_the_role_errored() {
     assert_eq!((state.restarts, state.unstable, state.pid), (4, 5, None));
     let out = node.out();
     assert_eq!(count(&out, "test-child: exit 1"), 5);
-    assert!(out.contains("supervisor: the node exited within 1 s five times in a row"));
+    assert!(out.contains("supervisor: the node exited within 1 s five times in its first 5 s"));
     assert_eq!(transitions(&out).last(), Some(&"errored"));
     let row = process::status(&node.0).unwrap();
     assert_eq!((row.status, row.pid), (SupervisedStatus::Errored, None));

@@ -981,8 +981,11 @@ and nix are used by this crate only (`make layers`).
 - **instances**: a token, a network and a role, named `<token>-<network>-<role>`, with the five
   directories of the `CORE_PATH_*` variables; `config.json` only fills a missing `--token` or
   `--network`.
-- **the supervisor** (`heartwood supervise`): pm2's restart rules (a child that ran for 1 second or
-  more restarts at once; after 5 shorter runs in a row the role is `errored`), a stop by SIGINT
+- **the supervisor** (`heartwood supervise`): pm2's restart rules (a child that exits restarts at
+  once; a run under 1 second counts as unstable only in the supervisor's first 5 seconds, the
+  count is never reset, and the 5th unstable run makes the role `errored`), the child leading a
+  process group of its own, `relay start` and `forger start` daemons unless `--daemon=false` or
+  `--no-daemon` says otherwise, a stop by SIGINT
   and SIGKILL 30 seconds later, a lock per role, a state file, and the child's output captured
   into `<name>-out.log` and `<name>-error.log`, rotated at 500 MB into seven numbered files.
 - **the role commands**: `start`, `stop`, `restart`, `status` (with a process table read from

@@ -142,7 +142,7 @@ pub enum SupervisedStatus {
     Stopping,
     /// Nothing runs.
     Stopped,
-    /// The node exited within 1 s five times in a row, and the supervisor gave up.
+    /// The node exited within 1 s five times in the first 5 s, and the supervisor gave up.
     Errored,
 }
 

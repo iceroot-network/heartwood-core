@@ -8,9 +8,9 @@
 //!   instance's five `CORE_PATH_*`, from which it also takes the instance's directories), its
 //!   output captured to the `-out.log` and `-error.log` files ([`logs`]); its own lines go to
 //!   `-out.log` with the prefix `supervisor:`.
-//! - A node that exits without a stop request after running 1 s or more is restarted at once and
-//!   the unstable count reset; a run under 1 s is unstable, and after 5 unstable runs in a row the
-//!   status is `errored` and the supervisor exits ([`restart`]).
+//! - A node that exits without a stop request is restarted at once. A run under 1 s is unstable
+//!   while the supervisor is under 5 s old, and at the 5th unstable run the status is `errored`
+//!   and the supervisor exits; later short runs are restarted for good, as pm2 does ([`restart`]).
 //! - SIGTERM or SIGINT asks it to stop: it sends SIGINT to the node, SIGKILL after 30 s, and exits
 //!   when the node has ([`signals`]). SIGHUP is ignored. The node leads a process group of its
 //!   own, so that a terminal's SIGINT or hang-up never reaches it except through the supervisor.
@@ -168,6 +168,8 @@ struct Supervisor {
     err: Arc<Mutex<Capture>>,
     signals: Receiver<Signal>,
     restarts: Restarts,
+    /// When the supervisor started: the restart rule's window runs from it.
+    created: Instant,
     _lock: File,
 }
 
@@ -220,6 +222,7 @@ impl Supervisor {
             err: Arc::new(Mutex::new(err)),
             signals,
             restarts: Restarts::default(),
+            created: Instant::now(),
             _lock: lock,
         })
     }
@@ -234,7 +237,7 @@ impl Supervisor {
                 }
                 Ok(AfterExit::Stop) => (SupervisedStatus::Stopped, 0),
                 Ok(AfterExit::GiveUp) => {
-                    self.line("the node exited within 1 s five times in a row");
+                    self.line("the node exited within 1 s five times in its first 5 s");
                     (SupervisedStatus::Errored, 1)
                 }
                 Err(e) => {
@@ -299,7 +302,8 @@ impl Supervisor {
             uptime.as_millis()
         ));
         self.state.last_exit = Some(exit.to_string());
-        Ok(self.restarts.after_exit(uptime, interrupted.is_some()))
+        let age = self.created.elapsed();
+        Ok(self.restarts.after_exit(uptime, age, interrupted.is_some()))
     }
 
     /// Record `status` and the node's `pid` in the state file, and say so in the capture.

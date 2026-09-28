@@ -43,7 +43,7 @@ pub struct SupervisorState {
     pub started_at_ms: Option<i64>,
     /// Restarts since the supervisor started.
     pub restarts: u32,
-    /// Unstable runs in a row.
+    /// Unstable runs in the first seconds.
     pub unstable: u32,
     /// How the node last exited (`exit status: 3`, `signal: 9 (SIGKILL)`), once it has.
     pub last_exit: Option<String>,
