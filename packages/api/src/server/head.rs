@@ -13,13 +13,13 @@
 //! process stops; a stream that ends before its head does). A head the parser accepts is written
 //! again for hyper, which is stricter, with the meaning Node's server gives it: without the line
 //! ends before the request line; with single spaces, `HTTP/1.1` (Node answers every version it
-//! accepts as `HTTP/1.1`) and a target without its fragment, whose bytes hyper refuses are
-//! percent-encoded (a byte beyond ASCII as the UTF-8 of the Latin-1 character Node reads, so that
-//! the path and the query decode to the same text); with the header fields Node's server passes on
-//! (the first 2,000, and after them those that frame the body), less those whose name hyper
-//! refuses (empty, or with a space: none that the API reads), and `Expect` but for `HTTP/1.1`,
-//! the only version Node reads it for; with `\r\n` line ends. [`Rewind`] then gives hyper that
-//! head, followed by the rest of the connection.
+//! accepts as `HTTP/1.1`) and a target without its fragment, in which a byte beyond ASCII is the
+//! UTF-8 of the Latin-1 character Node reads and another byte hyper refuses is percent-encoded;
+//! with the header fields Node's server passes on (the first 2,000, and after them those that
+//! frame the body), less those whose name hyper refuses (empty, or with a space: none that the
+//! API reads), and `Expect` but for `HTTP/1.1`, the only version Node reads it for; with `\r\n`
+//! line ends. [`Rewind`] then gives hyper that head, followed by the rest of the connection. The
+//! request carries the target as Node gives it to hapi (`NodeRead`), which the plugins read.
 
 use std::io;
 use std::ops::Range;
@@ -28,6 +28,8 @@ use std::task::{Context, Poll};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
+
+use crate::plugins::NodeRead;
 
 /// Node's limit on the counted bytes of a request's head.
 const MAX_HEAD: usize = 16_384;
@@ -611,29 +613,38 @@ impl Head {
         }
         head.extend_from_slice(b"\r\n");
         head.extend_from_slice(read.get(self.at..).unwrap_or_default());
+        let path = target.first() == Some(&b'/');
+        let node = NodeRead {
+            url: path.then(|| latin1(target)),
+            invalid_url,
+        };
         Some(Served {
             bytes: head,
             fields,
-            invalid_url,
+            node,
         })
     }
 }
 
-/// `target` for hyper: each byte hyper refuses percent-encoded, one beyond ASCII as the UTF-8 of
-/// the Latin-1 character Node reads it as.
+/// `target` for hyper, which takes UTF-8 in a target: a byte beyond ASCII as the UTF-8 of the
+/// Latin-1 character Node reads it as (two bytes), and each other byte hyper refuses
+/// percent-encoded (three). Node's limit keeps the target within hyper's own (65,534 bytes).
 fn encode_target(target: &[u8], out: &mut Vec<u8>) {
     for &byte in target {
         match byte {
             _ if hyper_takes(byte) => out.push(byte),
             0x80.. => {
                 let mut utf8 = [0; 2];
-                for &unit in char::from(byte).encode_utf8(&mut utf8).as_bytes() {
-                    out.extend_from_slice(format!("%{unit:02X}").as_bytes());
-                }
+                out.extend_from_slice(char::from(byte).encode_utf8(&mut utf8).as_bytes());
             }
             _ => out.extend_from_slice(format!("%{byte:02X}").as_bytes()),
         }
     }
+}
+
+/// `bytes` as Latin-1 characters, as Node reads a target.
+fn latin1(bytes: &[u8]) -> String {
+    bytes.iter().map(|&byte| char::from(byte)).collect()
 }
 
 /// A head Node's server serves, as hyper is to read it.
@@ -643,8 +654,8 @@ pub(super) struct Served {
     pub(super) bytes: Vec<u8>,
     /// Its header fields.
     pub(super) fields: usize,
-    /// Its target starts with `*`, which hapi answers with 400 "Invalid URL".
-    pub(super) invalid_url: bool,
+    /// What Node's server made of it that hyper's reading does not show.
+    pub(super) node: NodeRead,
 }
 
 /// Read `stream` to the end of its request's head as Node's parser does: the head as hyper is to
@@ -878,7 +889,7 @@ mod tests {
             ),
             (
                 b"GET /\xff\xc3\xa9?q=\xe9 HTTP/1.1\r\n\r\n",
-                b"GET /%C3%BF%C3%83%C2%A9?q=%C3%A9 HTTP/1.1\r\n\r\n",
+                b"GET /\xc3\xbf\xc3\x83\xc2\xa9?q=\xc3\xa9 HTTP/1.1\r\n\r\n",
             ),
             (b"GET /x   HTTP/2.0\n\n", b"GET /x HTTP/1.1\r\n\r\n"),
             (b"GET /x\r\nOrigin: o\r\n\r\n", b"GET /x HTTP/1.1\r\nOrigin: o\r\n\r\n"),
@@ -918,6 +929,22 @@ mod tests {
             let answer = verdict(head).map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
             assert_eq!(answer, Ok(expected), "{shown:?}");
         }
+    }
+
+    #[test]
+    fn the_target_is_given_as_node_gives_it_to_hapi() {
+        let node = |head: &[u8]| {
+            let mut parsed = Head::new();
+            assert_eq!(parsed.feed(head), Progress::Ended);
+            parsed.outcome(head).map(|served| served.node)
+        };
+        let read = node(b"GET /a\"\xe9?b=%zz<#c HTTP/1.1\r\n\r\n").unwrap();
+        assert_eq!(read.url.as_deref(), Some("/a\"\u{e9}?b=%zz<"));
+        assert!(!read.invalid_url);
+        let absolute = node(b"GET http://a/b?c HTTP/1.1\r\n\r\n").unwrap();
+        assert!(absolute.url.is_none() && !absolute.invalid_url);
+        let star = node(b"GET *x HTTP/1.1\r\n\r\n").unwrap();
+        assert!(star.url.is_none() && star.invalid_url);
     }
 
     #[test]

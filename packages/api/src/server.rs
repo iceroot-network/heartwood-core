@@ -34,7 +34,7 @@ use tokio::task::JoinSet;
 use crate::context::ApiContext;
 use crate::controllers;
 use crate::errors::ServeError;
-use crate::plugins::{InvalidUrl, Pipeline};
+use crate::plugins::Pipeline;
 
 /// The rate limit's options (`plugins.rateLimit`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -364,13 +364,11 @@ async fn connection(
         let Ok(Some(head)) = head::read(&mut stream).await else {
             return;
         };
-        let invalid_url = head.invalid_url;
+        let node = head.node;
         let service = hyper::service::service_fn(move |request: hyper::Request<_>| {
             let pipeline = Arc::clone(&pipeline);
             let mut request = request.map(Body::new);
-            if invalid_url {
-                request.extensions_mut().insert(InvalidUrl);
-            }
+            request.extensions_mut().insert(node.clone());
             async move { Ok::<_, Infallible>(pipeline.handle(request, peer).await) }
         });
         let mut builder = http1::Builder::new();

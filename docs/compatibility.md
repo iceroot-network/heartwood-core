@@ -904,10 +904,13 @@ before the request line are skipped without being counted. A `CONNECT` and a str
 inside its head get no answer, as from Node's server; a target that starts with `*` is hapi's 400
 "Invalid URL". A head the parser accepts is written again for hyper with the meaning Node's server
 gives it: single spaces and `HTTP/1.1` in the request line (Node answers every version it accepts
-as `HTTP/1.1`), the target's bytes that hyper refuses percent-encoded (a byte beyond ASCII as the
-UTF-8 of its Latin-1 character) and its fragment dropped, the first 2,000 header fields (Node's
-server passes on no more) and those that frame the body, less those whose name hyper refuses (an
-empty name, or one with a space: none that the API reads).
+as `HTTP/1.1`), the target's bytes that hyper refuses rewritten (a byte beyond ASCII as the UTF-8
+of its Latin-1 character, another one percent-encoded) and its fragment dropped, the first 2,000
+header fields (Node's server passes on no more) and those that frame the body, less those whose
+name hyper refuses (an empty name, or one with a space: none that the API reads). The API reads
+the target itself as Node gives it to hapi: each byte a Latin-1 character, the path before the
+first `?` and the query after it, so the router, the catch-all's 20-character test and the query
+grammar see what the reference's do.
 
 Lists have the reference's pagination: `offset=0` is ignored and another offset replaces the page,
 and the links are relative to the configured base path, with the path written as hapi's request
@@ -981,11 +984,8 @@ reader; none is sent by a common HTTP client:
   a `POST /transactions` whose body ends early with a 422;
 - an absolute-form target (`GET http://host/path`, as a proxy is sent a request): the reference
   reads its path and query with the WHATWG URL parser, and answers 400 "Invalid URL" for a host that
-  parser refuses; Heartwood reads them as hyper gives them;
-- a target byte that hyper refuses is percent-encoded for it, so the documentation route's
-  20-character test counts it as three characters, and in a query value that is decoded byte by
-  byte (Node's fallback when `decodeURIComponent` fails) a byte beyond ASCII becomes the two
-  bytes of its UTF-8 where Node keeps one.
+  parser refuses (`http://a@b:c/`); Heartwood reads them as hyper gives them, and hyper refuses with
+  a 400 of its own headers some hosts that parser takes (`http://a%41/`).
 
 ```sh
 cargo test -p heartwood-api --locked                                # routes, grammar, envelope, plugins

@@ -21,7 +21,9 @@
 //! answered 404 before the rate limit.
 //!
 //! The request's headers are read as Node's server gives them to hapi (`node_header`): as
-//! Latin-1, and a repeated header's values joined with `, `.
+//! Latin-1, and a repeated header's values joined with `, `. So is its target, when the server
+//! read the request (`NodeRead`): its bytes as Latin-1 characters, the path before its first `?`
+//! and the query after it, each read as it is.
 
 mod catch_all;
 mod limits;
@@ -163,10 +165,17 @@ impl From<ApiError> for Answer {
     }
 }
 
-/// The request's target is one hapi cannot read as a URL (it starts with `*`): 400
-/// "Invalid URL", once the whitelist let the request through. The server marks such a request.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct InvalidUrl;
+/// What Node's server made of a request that hyper's reading of it does not show. The server adds
+/// it to each request it reads; a request without it is read as hyper gives it.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct NodeRead {
+    /// The target as Node gives it to hapi, when it is a path: its bytes as Latin-1 characters,
+    /// without its fragment. hapi splits it at its first `?` and reads both parts as they are.
+    pub(crate) url: Option<String>,
+    /// The target is one hapi cannot read as a URL (it starts with `*`): 400 "Invalid URL", once
+    /// the whitelist let the request through.
+    pub(crate) invalid_url: bool,
+}
 
 /// What an answer's headers depend on in its request.
 struct Asked {
@@ -286,31 +295,37 @@ impl Pipeline {
     async fn run(&self, request: Request<Body>, peer: SocketAddr) -> Result<Answer, ApiError> {
         let config = &self.host.config;
         let (parts, body) = request.into_parts();
+        let read = parts
+            .extensions
+            .get::<NodeRead>()
+            .cloned()
+            .unwrap_or_default();
         let client = client_address(&parts.headers, peer, config.trust_proxy);
         if !ip::is_whitelisted(&config.whitelist, &client) {
             return Err(ApiError::forbidden("Forbidden"));
         }
-        if parts.extensions.get::<InvalidUrl>().is_some() {
+        if read.invalid_url {
             return Err(ApiError::bad_request("Invalid URL"));
         }
+        let (full, raw) = match &read.url {
+            Some(url) => url.split_once('?').unwrap_or((url, "")),
+            None => (parts.uri.path(), parts.uri.query().unwrap_or("")),
+        };
         // The reference's query plugins run before its router and its rate limit: a query they
         // throw on is a 500 on any path, and is not charged. The query is parsed again once the
         // request is charged, so a request whose body is slow to come holds only its text.
         let grammar = &self.grammar;
-        let raw = parts.uri.query().unwrap_or("");
         if (grammar.parse)(raw).is_null() {
             return Err(ApiError::internal());
         }
-        let path = parts.uri.path();
-        let path = path.strip_suffix('/').filter(|_| path.len() > 1);
-        let path = path.unwrap_or(parts.uri.path());
+        let path = full.strip_suffix('/').filter(|_| full.len() > 1);
+        let path = path.unwrap_or(full);
         let method = match parts.method {
             // hapi's preflight route has CORS off: its refusals carry no CORS headers.
             Verb::OPTIONS => {
                 let refused = |error: ApiError| {
                     Answer::new(error.status, Some(error.body()), Vec::new(), false)
                 };
-                let full = parts.uri.path();
                 let answer = self.preflight(&parts.headers, path, full);
                 return Ok(answer.unwrap_or_else(refused));
             }
@@ -324,7 +339,7 @@ impl Pipeline {
             if method == Method::Post {
                 return Err(not_found());
             }
-            let answer = catch_all::answer(parts.uri.path());
+            let answer = catch_all::answer(full);
             if answer == CatchAll::Undecodable {
                 return Err(ApiError::bad_request("Bad Request"));
             }

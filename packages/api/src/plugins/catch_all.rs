@@ -32,7 +32,9 @@ pub(super) fn answer(path: &str) -> CatchAll {
     let Some(selection) = percent_decode(path.get(1..).unwrap_or_default()) else {
         return CatchAll::Undecodable;
     };
-    let served = path.len() < 20 && !selection.starts_with('/') && !hidden(&selection);
+    // JavaScript's length, in UTF-16 code units: one for each byte of a target Node read.
+    let short = path.encode_utf16().count() < 20;
+    let served = short && !selection.starts_with('/') && !hidden(&selection);
     match served && above(&selection) {
         true => CatchAll::Forbidden,
         false => CatchAll::NotFound,
@@ -44,12 +46,12 @@ fn hapi_path(path: &str) -> String {
     let bytes = path.as_bytes();
     let mut out = String::with_capacity(path.len());
     let mut at = 0;
-    while let Some(&byte) = bytes.get(at) {
-        let hex = bytes.get(at + 1..at + 3).filter(|_| byte == b'%');
+    while let Some(c) = path.get(at..).and_then(|rest| rest.chars().next()) {
+        let hex = bytes.get(at + 1..at + 3).filter(|_| c == '%');
         let hex = hex.filter(|hex| hex.iter().all(u8::is_ascii_hexdigit));
         let Some(hex) = hex.and_then(|hex| std::str::from_utf8(hex).ok()) else {
-            out.push(char::from(byte));
-            at += 1;
+            out.push(c);
+            at += c.len_utf8();
             continue;
         };
         let value = u8::from_str_radix(hex, 16).unwrap_or_default();
@@ -179,6 +181,16 @@ mod tests {
         for (path, answer) in cases {
             assert_eq!(super::answer(path), answer, "{path}");
         }
+        // A character beyond ASCII (a byte of the target, read as Latin-1) counts as one.
+        let lengths = [
+            (3, CatchAll::Forbidden),
+            (13, CatchAll::Forbidden),
+            (14, CatchAll::NotFound),
+        ];
+        for (count, answer) in lengths {
+            let path = format!("/..%2F{}", "\u{e9}".repeat(count));
+            assert_eq!(super::answer(&path), answer, "{path}");
+        }
     }
 
     #[test]
@@ -193,6 +205,7 @@ mod tests {
             ("/a/b/.", "/a/b"),
             ("/%2E%2E/x", "/x"),
             ("/%%41", "/%A"),
+            ("/\u{e9}%c3%a9", "/\u{e9}%C3%A9"),
         ] {
             assert_eq!(hapi_path(path), normal, "{path}");
         }

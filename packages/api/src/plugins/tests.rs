@@ -12,6 +12,7 @@ use heartwood_kernel::config::{Env, Options};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Notify, watch};
+use tokio::task::JoinHandle;
 
 use super::{Grammar, Host, Pipeline};
 use crate::context::{ApiReply, ApiRequest, HandlerFuture, RouteId};
@@ -1347,10 +1348,7 @@ async fn a_head_that_node_refuses_is_answered_as_hapi_answers_it() {
         "GET /api/node/status?a=\"<>\" HTTP/1.1\r\n\r\n".to_owned(),
     ])
     .await;
-    assert!(
-        quoted.contains(r#""query":{"a":"%22%3C%3E%22"}"#),
-        "{quoted}"
-    );
+    assert!(quoted.contains(r#""query":{"a":"\"<>\""}"#), "{quoted}");
     // The bytes read with the head are served again, and the body that comes after them.
     let body = r#"{"transactions":12}"#;
     let head = format!(
@@ -1364,6 +1362,89 @@ async fn a_head_that_node_refuses_is_answered_as_hapi_answers_it() {
             answer.contains(r#""payload":{"transactions":12}"#),
             "{answer}"
         );
+    }
+    stop.send(true).unwrap();
+    task.await.unwrap();
+}
+
+/// `pipeline` served on a local port: its address, and what stops it.
+async fn listening(pipeline: Pipeline) -> (SocketAddr, watch::Sender<bool>, JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop, stopped) = watch::channel(false);
+    let timeout = Duration::from_secs(5);
+    let task = tokio::spawn(server::accept(
+        listener,
+        Arc::new(pipeline),
+        stopped,
+        timeout,
+    ));
+    (address, stop, task)
+}
+
+/// The answer of the server at `address` to `request`, sent at once and followed by the end of
+/// the client's side when `shut`: its status line, its head and its body read as JSON (null
+/// when it has none, or none that reads).
+async fn exchange_bytes(
+    address: SocketAddr,
+    request: &[u8],
+    shut: bool,
+) -> (String, String, Value) {
+    let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
+    client.write_all(request).await.unwrap();
+    if shut {
+        client.shutdown().await.unwrap();
+    }
+    let mut answer = Vec::new();
+    let _ = client.read_to_end(&mut answer).await;
+    let answer = String::from_utf8_lossy(&answer).into_owned();
+    let (head, body) = answer.split_once("\r\n\r\n").unwrap_or((&answer, ""));
+    let line = head.lines().next().unwrap_or_default().to_owned();
+    (
+        line,
+        head.to_owned(),
+        serde_json::from_str(body).unwrap_or(Value::Null),
+    )
+}
+
+/// The plugins over the served grammar, and a handler that echoes the request.
+fn served_grammar() -> Pipeline {
+    let host = Host {
+        config: Arc::new(config()),
+        height: Box::new(|| 265),
+        dispatch: Box::new(echo),
+    };
+    Pipeline::with_parts(RouteId::ALL.to_vec(), host, Grammar::SCHEMAS)
+}
+
+#[tokio::test]
+async fn a_target_is_read_as_node_gives_it_to_hapi() {
+    let (address, stop, task) = listening(served_grammar()).await;
+    // Measured with Node 18.20.8 and hapi 20.2.1: each byte of the target is a Latin-1
+    // character, and the query is that text as Node's querystring decodes it (an escape Node
+    // does not find leaves a pair as it is, and its byte fallback truncates a character).
+    let request =
+        b"GET /api/node/status?%41%zz\xe9=1&b=\"<>\"&c=%zz\"\xe9&d=\xc3\xa9&%41\"=%zz\xe9 \
+        HTTP/1.1\r\n\r\n";
+    let (line, _, body) = exchange_bytes(address, request, false).await;
+    assert_eq!(line, "HTTP/1.1 200 OK");
+    let query = json!({
+        "A%zz\u{fffd}": "1", "b": "\"<>\"", "c": "%zz\"\u{e9}", "d": "\u{c3}\u{a9}", "A\"": "%zz\u{e9}"
+    });
+    assert_eq!(body["data"]["query"], query);
+    // The catch-all's short path counts a byte as a character.
+    let (line, _, _) =
+        exchange_bytes(address, b"GET /..%2F\xe9\xe9\xe9 HTTP/1.1\r\n\r\n", false).await;
+    assert_eq!(line, "HTTP/1.1 403 Forbidden");
+    // Within Node's 16 KiB, a target of bytes beyond ASCII is served.
+    let high = b"\xc3\xa9".repeat(6_000);
+    for (start, answered) in [
+        (&b"GET /"[..], "404 Not Found"),
+        (b"GET /api/node/status?q=", "200 OK"),
+    ] {
+        let request = [start, &high, b" HTTP/1.1\r\n\r\n"].concat();
+        let (line, _, _) = exchange_bytes(address, &request, false).await;
+        assert_eq!(line, format!("HTTP/1.1 {answered}"));
     }
     stop.send(true).unwrap();
     task.await.unwrap();
