@@ -1,7 +1,8 @@
 //! Locks and signals. A lock is an exclusive advisory lock on its file (`File::try_lock`), held by
 //! the process that runs as long as it runs; the node takes `<role>.lock` the same way. Whether a
 //! lock is held is probed with a shared lock, released at once, so that probes never disturb each
-//! other; a process taking a lock tries again briefly, in case a probe held it at that moment. The
+//! other; a process taking a lock refuses at once when another process holds it exclusively, and
+//! tries again while only probes hold it, for at most a second, however often they probe. The
 //! supervisor stops its node with SIGINT and kills it with SIGKILL 30 s later; any other process is
 //! signalled only while the lock that names it is held, so a stale pid is never signalled.
 
@@ -19,8 +20,9 @@ use crate::errors::ProcessError;
 
 /// How long the supervisor waits after SIGINT before it sends SIGKILL.
 pub const KILL_AFTER: Duration = Duration::from_secs(30);
-/// How often a process tries to take a lock before it counts the lock as held.
-const TAKE_ATTEMPTS: u32 = 5;
+/// How often a process tries to take a lock that only probes hold before it counts the lock as
+/// held.
+const TAKE_ATTEMPTS: u32 = 100;
 /// The pause between those tries, far longer than a probe holds a lock.
 const PROBE_WAIT: Duration = Duration::from_millis(10);
 
@@ -36,11 +38,23 @@ pub fn take_lock(path: &Path) -> Result<Option<File>, ProcessError> {
     for _ in 0..TAKE_ATTEMPTS {
         match file.try_lock() {
             Ok(()) => return Ok(Some(file)),
+            Err(TryLockError::WouldBlock) if held_exclusively(path)? => return Ok(None),
             Err(TryLockError::WouldBlock) => thread::sleep(PROBE_WAIT),
             Err(TryLockError::Error(e)) => return Err(lock_error(path, &e)),
         }
     }
     Ok(None)
+}
+
+/// Whether another process holds the lock at `path` exclusively, as a running process holds it:
+/// a shared lock is refused then, and granted beside the probes' shared locks.
+fn held_exclusively(path: &Path) -> Result<bool, ProcessError> {
+    let file = File::open(path).map_err(|e| lock_error(path, &e))?;
+    match file.try_lock_shared() {
+        Ok(()) => Ok(false),
+        Err(TryLockError::WouldBlock) => Ok(true),
+        Err(TryLockError::Error(e)) => Err(lock_error(path, &e)),
+    }
 }
 
 /// Whether a process holds the lock at `path`.
