@@ -578,7 +578,14 @@ online record and the stop. After each commit it runs the pool's steps (the onli
 at a round start, the re-add when a milestone starts, the clean-up), in the reference's order. The
 network and the API read the published snapshots and never wait for the thread, except for a
 submission's answer. A job locks the chain state it shares with the service for one block at a
-time, so the peer client sees each applied block as the tip.
+time, so the peer client sees each applied block as the tip. The chain state (the last blocks,
+the last downloaded block, the ping, and the rounds a running job has started) moves block by
+block while a job runs; the store and the published snapshots (the state, the pool and the chain
+status) move only at the job's commit. A round a block starts is recorded in the chain state with
+the tip that the same block moved, so the peer client's round lookup, which reads it there first,
+never pairs a new tip with an old round. After the commit the store answers. The published state
+answers only for its own round; any other round that is neither started nor stored is a lookup
+error, as the reference asserts before its fallback.
 
 The state machine has the reference's states, events and thirteen entry actions: the start
 (`initialise`: the pool re-added from its storage, the online record loaded, the network monitor
@@ -1320,8 +1327,14 @@ their answers are judged: equal status codes, `connection: close` and `X-Block-H
 equal at the paused tip, bodies equal after the volatile fields are left out (confirmations, times,
 versions, latencies), the peer routes compared by address for the peers both list, the rate
 limit's 429s equal, and each documented difference of heartwood-api behaving as documented. A 422
-message's text is not compared. The rate-limit requests go from a container on the devnet, since
-the nodes whitelist the host.
+message's text is not compared. A documented difference excuses the status and the body only: the
+headers are judged as for any case, except `accept-ranges` when the statuses differ, and a tie of
+an order excuses only the order of the same items (an item on both pages must be equal on both,
+and one on a single page must belong to a tie that the page's start or end cuts). The rate-limit
+requests go from a container on the devnet, since the nodes whitelist the host. A rate-limit
+request that failed, or an answer without a status, is a harness error, and each node must answer
+429 at least once in the section; a body is compared where the recipe records one, which is a
+429's. The live check's rate-limit step applies the same rules.
 
 On the last runs every run passed. Run `r`, the reference against itself, compared all 1,038
 queries with no difference. In `h` and `m1` the corpus compared 1,006 and 1,008 answers with no
@@ -1329,10 +1342,11 @@ undocumented difference; the documented ones were ties of an order (27 and 25), 
 tip (3 each), a store failure (1 each) and a decoder's reason text in the pool's refusals (2 each).
 The Heartwood relays' lines equalled the judge's on every chain, and the processor replays of the
 five live chains passed. A Heartwood relay applies a block 0.5 s after node 1 at the median (at most
-2 s away from a fault), where a reference relay applies it at once: it learns of blocks by its 500 ms poll,
-since no peer pushes to a relay without a listener; a relay started with an empty store while the
-chain was at height 107 was synced 11 s after its start, a kill during the sync included; a
-transaction posted to a Heartwood relay reached the reference nodes' pools in about 220 ms.
+2.5 s away from a fault), where a reference relay applies it at once: it learns of blocks by its
+500 ms poll, since no peer pushes to a relay without a listener; a relay started with an empty
+store while the chain was at height 107 was synced 12 s after its start, a kill during the sync
+included; a transaction posted to a Heartwood relay reached the reference nodes' pools in about
+220 ms.
 
 ## The oracle image
 
