@@ -83,6 +83,12 @@ impl StatusServer {
         }
     }
 
+    /// The same status server, waiting at most `wait` for a status's signatures (the server's
+    /// `attestation_wait`) instead of [`ATTESTATION_WAIT`].
+    pub fn with_wait(self, wait: Duration) -> StatusServer {
+        StatusServer { wait, ..self }
+    }
+
     /// The getStatus answer, encoded.
     pub async fn get_status(&self) -> Result<Vec<u8>, ServerRefusal> {
         let key = self.key(&self.slot());

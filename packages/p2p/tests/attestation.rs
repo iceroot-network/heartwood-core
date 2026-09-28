@@ -25,6 +25,7 @@ use heartwood_kernel::ManualClock;
 use heartwood_p2p::attestation_session::DelegatesOnThisNode;
 use heartwood_p2p::node_services::AttestedKeys;
 use heartwood_p2p::server::seams::{ServerRefusal, SessionEvents, SessionId};
+use heartwood_p2p::status_server::StatusServer;
 use heartwood_p2p_wire::internal::{StatusSignatures, StatusToSignRequest, StatusToSignResponse};
 use heartwood_p2p_wire::messages::Proto;
 use heartwood_p2p_wire::messages::peer::GetStatusResponse;
@@ -468,6 +469,32 @@ async fn a_slow_forger_costs_one_wait_of_500_ms_then_the_status_is_served_unsign
     let signed = server.status.get_status().await.unwrap();
     assert_eq!(served(&signed).public_keys.len(), 3);
     assert_eq!(server.status.get_status().await.unwrap(), signed);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_wait_for_signatures_is_the_one_the_status_server_is_given() {
+    let server = Arc::new(tokio_server());
+    let status = StatusServer::new(
+        server.node.clone(),
+        server.session.clone(),
+        server.clock.clone(),
+    )
+    .with_wait(Duration::from_millis(120));
+    // A forger that polls but does not sign.
+    let _quiet = {
+        let server = Arc::clone(&server);
+        tokio::spawn(async move {
+            server
+                .session
+                .status_to_sign(session(1), forger(), declared())
+                .await
+        })
+    };
+    sleep(Duration::from_millis(10)).await;
+    let started = Instant::now();
+    let unsigned = served(&status.get_status().await.unwrap());
+    assert_eq!(started.elapsed(), Duration::from_millis(120));
+    assert!(unsigned.public_keys.is_empty());
 }
 
 #[tokio::test(start_paused = true)]
