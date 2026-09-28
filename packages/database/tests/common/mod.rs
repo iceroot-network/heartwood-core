@@ -121,6 +121,7 @@ pub fn transaction_row(height: u32, sequence: u32) -> TransactionRow {
         burned_fee: 1,
         serialised: vec![0xff, height as u8, sequence as u8],
         asset: None,
+        recipients: vec!["TRecipient".into()],
     }
 }
 

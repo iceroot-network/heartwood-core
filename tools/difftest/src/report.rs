@@ -170,6 +170,35 @@ impl Report {
     pub fn is_success(&self) -> bool {
         self.failed() == 0
     }
+
+    /// Cases that were not compared and are not documented differences: skipped, or without a
+    /// Rust implementation.
+    pub fn not_compared(&self) -> usize {
+        self.count(|o| matches!(o, Outcome::Skipped(_) | Outcome::NoSubject))
+    }
+
+    /// Whether every case was compared or is a documented difference.
+    pub fn is_complete(&self) -> bool {
+        self.not_compared() == 0
+    }
+
+    /// The verdict of a run: no case failed, and, when `strict`, every case was compared or is a
+    /// documented difference. A gate runs strict, so that a case that was skipped, or that has no
+    /// subject, fails it instead of passing unseen.
+    pub fn passes(&self, strict: bool) -> bool {
+        self.is_success() && (!strict || self.is_complete())
+    }
+
+    /// The line that says why a strict run failed although no case failed, when it did.
+    pub fn strict_note(&self, strict: bool) -> Option<String> {
+        (strict && self.is_success() && !self.is_complete()).then(|| {
+            format!(
+                "  strict: {} cases were not compared (skipped, or without a Rust \
+                 implementation), so the run fails",
+                self.not_compared()
+            )
+        })
+    }
 }
 
 /// One line about where vectors came from: reference commit, oracle mode, Node, backend.
@@ -329,6 +358,8 @@ mod tests {
         );
         assert!(!report.is_success());
         assert_eq!((report.skipped(), report.documented()), (1, 1));
+        assert_eq!(report.not_compared(), 3);
+        assert!(!report.is_complete());
         let text = report.to_string();
         assert!(
             text.contains(
@@ -348,6 +379,34 @@ mod tests {
         assert!(
             text.contains("FAIL V01.jsonl:2 b (height 2)\n      $.x: expected 1, actual 2"),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn a_strict_run_fails_on_a_case_that_was_not_compared() {
+        let report = |outcomes: Vec<Outcome>| Report {
+            title: "t".into(),
+            source: "s".into(),
+            files: 1,
+            results: outcomes.into_iter().map(|o| case("a", o)).collect(),
+        };
+        let compared = report(vec![Outcome::Pass, Outcome::Documented("d".into())]);
+        assert!(compared.passes(true) && compared.passes(false));
+        assert_eq!(compared.strict_note(true), None);
+        for gap in [Outcome::Skipped("later".into()), Outcome::NoSubject] {
+            let partial = report(vec![Outcome::Pass, gap]);
+            assert!(partial.passes(false), "a lenient run passes");
+            assert!(!partial.passes(true), "a strict run fails");
+            let note = partial.strict_note(true).unwrap();
+            assert!(note.contains("1 cases were not compared"), "{note}");
+            assert_eq!(partial.strict_note(false), None);
+        }
+        let failed = report(vec![Outcome::HarnessError("x".into())]);
+        assert!(!failed.passes(false) && !failed.passes(true));
+        assert_eq!(
+            failed.strict_note(true),
+            None,
+            "the failure speaks for itself"
         );
     }
 }

@@ -3,10 +3,13 @@
 //! A node has one [`Database`], which owns the one writer connection to its file, opened in WAL
 //! mode with `synchronous = FULL` (a committed chunk survives a power loss), `foreign_keys = ON`,
 //! `busy_timeout = 5000`, `mmap_size = 0`, an 8 MB page cache and a 16 MB limit on the WAL file
-//! kept after a checkpoint. SQLite's defensive mode is on and the schema is not trusted, so
-//! neither a changed schema nor an SQL function can reach outside the tables; extensions are
-//! never loaded. An empty file gets schema version 1 ([`SCHEMA`]); a file of another version, or
-//! a file that is not a node's database, is refused.
+//! kept after a checkpoint; the writer checkpoints the log into the file when it closes, even
+//! while read-only connections stay open. SQLite's defensive mode is on and the schema is not
+//! trusted, so neither a changed schema nor an SQL function can reach outside the tables;
+//! extensions are never loaded. An empty file gets schema version 2 ([`SCHEMA`], then
+//! [`SCHEMA_2`]); a file of version 1 is upgraded in place, in one transaction, by adding the
+//! recipients side table and filling it from the stored transactions ([`crate::recipients`]); a
+//! file of another version, or a file that is not a node's database, is refused.
 //!
 //! Everything a chunk of blocks changes is written in one SQLite transaction, a [`Chunk`]: its
 //! rows are all stored, or, after a crash or when the chunk is dropped, none. Each block of the
@@ -23,10 +26,13 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension, TransactionB
 use crate::errors::DatabaseError;
 
 /// The schema version this build creates and reads.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Schema version 1: every table and index, as SQL statements.
 pub const SCHEMA: &str = include_str!("schema.sql");
+
+/// The step from schema version 1 to 2: the recipients side table and its index.
+pub const SCHEMA_2: &str = include_str!("schema_2.sql");
 
 /// The prepared statements the connection keeps.
 const STATEMENTS: usize = 64;
@@ -57,9 +63,9 @@ pub struct Database {
 }
 
 impl Database {
-    /// Open the database of `settings`, creating the file, its directory and schema version 1
-    /// when the file does not exist or is empty. A file of another schema version is refused
-    /// ([`DatabaseError::SchemaVersion`]).
+    /// Open the database of `settings`, creating the file, its directory and the schema when the
+    /// file does not exist or is empty, and upgrading a file of schema version 1. A file of
+    /// another schema version is refused ([`DatabaseError::SchemaVersion`]).
     pub fn open(settings: &Settings) -> Result<Database, DatabaseError> {
         if let Some(dir) = settings
             .path
@@ -89,7 +95,8 @@ impl Database {
         Ok(database)
     }
 
-    /// Create schema version 1 in an empty file, or check the version of a file that has one.
+    /// Create the schema in an empty file, upgrade a file of version 1, or check the version of a
+    /// file that has the current one.
     fn check_schema(&mut self) -> Result<(), DatabaseError> {
         let transaction = self
             .connection
@@ -101,6 +108,16 @@ impl Database {
         match (version, objects) {
             (0, 0) => {
                 transaction.execute_batch(SCHEMA)?;
+                transaction.execute_batch(SCHEMA_2)?;
+                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            }
+            (1, _) => {
+                transaction.execute_batch(SCHEMA_2)?;
+                crate::recipients::upgrade(&transaction)?;
+                transaction.execute(
+                    "UPDATE meta SET value = ?1 WHERE key = 'schema_version'",
+                    [SCHEMA_VERSION.to_string()],
+                )?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
             (0, _) => {
@@ -150,11 +167,21 @@ impl Database {
     pub fn reset(&mut self) -> Result<(), DatabaseError> {
         let chunk = self.begin()?;
         chunk.transaction.execute_batch(
-            "DELETE FROM undo; DELETE FROM transactions; DELETE FROM blocks; DELETE FROM rounds;
-             DELETE FROM missed_blocks; DELETE FROM wallets; DELETE FROM state;
+            "DELETE FROM undo; DELETE FROM transaction_recipients; DELETE FROM transactions;
+             DELETE FROM blocks; DELETE FROM rounds; DELETE FROM missed_blocks; DELETE FROM wallets;
+             DELETE FROM state;
              DELETE FROM milestone_entries; DELETE FROM meta; DELETE FROM delegate_versions;",
         )?;
         chunk.commit()
+    }
+}
+
+impl Drop for Database {
+    /// Copy the log's committed pages into the database file as the writer closes: SQLite does
+    /// so only when the last connection closes, and read-only connections may outlive the writer.
+    /// A passive checkpoint never waits for a reader; what it leaves, the next open replays.
+    fn drop(&mut self) {
+        let _ = (self.connection).query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
     }
 }
 

@@ -71,6 +71,17 @@ const CLASSES = [
 // The peer-to-peer wire (heartwood-p2p-wire), generated last; its builder returns null while it
 // has no records, and the class is then not written.
 CLASSES.push(["V13-p2p-wire", require("./lib/vectors/wire")]);
+// The peer-to-peer client (heartwood-p2p and its wire additions); a builder returns null while it
+// has no records, and the class is then not written.
+const p2pRules = require("./lib/vectors/p2p-rules");
+CLASSES.push(
+    ["V24-p2p-exchange", p2pRules.exchange],
+    ["V25-peer-rules", p2pRules.rules],
+    ["V26-network", require("./lib/vectors/p2p-network")],
+);
+// The node's processor and job, and its API grammar and configuration; a builder returns null
+// while it has no records, and the class is then not written.
+CLASSES.push(["V27-processor", require("./lib/vectors/chain-process")], ["V28-node", require("./lib/vectors/node")]);
 
 function parseArgs(argv) {
     const opts = {

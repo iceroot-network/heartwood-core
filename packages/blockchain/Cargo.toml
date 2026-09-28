@@ -1,6 +1,6 @@
 [package]
 name = "heartwood-blockchain"
-description = "The blockchain component of Heartwood Core: the commit of applied and reverted blocks to the store, and the start that restores the state from it"
+description = "The blockchain component of Heartwood Core: the block processor, the commit of applied and reverted blocks to the store, the start that restores the state from it, and the follower's runtime: the node thread, the job queue and the state machine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,17 +10,31 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+# Test seam: the seeded and fixed rollback depths of the fork recovery. Only test code enables it
+# (the harness and tests); a release build never does.
+difftest = []
+
+# The runtime reaches the network through the p2p crate's monitor, and runs on tokio: its node
+# thread answers through oneshot channels and publishes through watch channels. getrandom draws the
+# fork recovery's random depth.
 [dependencies]
+getrandom.workspace = true
 heartwood-crypto.workspace = true
 heartwood-database.workspace = true
-heartwood-kernel.workspace = true
+heartwood-kernel = { workspace = true, features = ["bus"] }
+heartwood-p2p.workspace = true
 heartwood-pool.workspace = true
 heartwood-state.workspace = true
 heartwood-transactions.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 
 # The tests build chains with the oracle's fixed aux and the devnet chain-definition builder.
 [dev-dependencies]
 heartwood-crypto = { workspace = true, features = ["fixed-aux", "genesis"] }
+heartwood-kernel = { workspace = true, features = ["bus", "difftest"] }
 hex.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "test-util", "time"] }

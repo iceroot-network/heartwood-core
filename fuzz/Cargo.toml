@@ -16,12 +16,17 @@ arbitrary = { version = "1.4.2", features = ["derive"] }
 heartwood-crypto = { path = "../packages/crypto", features = ["fixed-aux"] }
 # The manual clock (a test seam) drives the pool's cooldown.
 heartwood-kernel = { path = "../packages/kernel", features = ["difftest"] }
+# The client's session and download path; the test seam gives the session target its scripted
+# peer.
+heartwood-p2p = { path = "../packages/p2p", features = ["difftest"] }
 heartwood-p2p-wire = { path = "../packages/p2p-wire" }
 heartwood-pool = { path = "../packages/pool" }
 heartwood-state = { path = "../packages/state" }
 heartwood-transactions = { path = "../packages/transactions" }
 libfuzzer-sys = "0.4"
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+# The session target drives the client on a runtime of its own, with tokio's paused clock.
+tokio = { version = "~1.53", default-features = false, features = ["rt", "sync", "test-util", "time"] }
 
 [workspace]
 members = ["."]
@@ -83,8 +88,29 @@ doc = false
 bench = false
 
 [[bin]]
+name = "nes_session"
+path = "fuzz_targets/nes_session.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "state_records"
 path = "fuzz_targets/state_records.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "reply_check"
+path = "fuzz_targets/reply_check.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "listed_block"
+path = "fuzz_targets/listed_block.rs"
 test = false
 doc = false
 bench = false

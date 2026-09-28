@@ -292,6 +292,57 @@ impl VectorSet {
     }
 }
 
+/// Where a crate's test reads a vector class: its crate's directory, or another.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClassDir {
+    /// The crate's own `tests/vectors`, where `make vectors-install` puts the class: it must be
+    /// there.
+    Installed(PathBuf),
+    /// A directory named in the environment (a run of `make vectors-local`, say), which may lack
+    /// the class.
+    Named(PathBuf),
+}
+
+impl ClassDir {
+    /// The directory the environment variable `variable` names (relative to `workspace`), when it
+    /// is set and not empty; else `installed`, relative to `workspace`.
+    pub fn from_env(workspace: &Path, variable: &str, installed: &str) -> ClassDir {
+        match std::env::var_os(variable) {
+            Some(dir) if !dir.is_empty() => ClassDir::Named(workspace.join(dir)),
+            _ => ClassDir::Installed(workspace.join(installed)),
+        }
+    }
+
+    /// The directory.
+    pub fn path(&self) -> &Path {
+        match self {
+            ClassDir::Installed(dir) | ClassDir::Named(dir) => dir,
+        }
+    }
+
+    /// The vector set of the directory, which holds `class`: `None` when a named directory has no
+    /// set or no file of the class. An installed directory without it is an error, so that a
+    /// class that is not installed, or was removed, fails its crate's test.
+    pub fn load(&self, class: &str) -> Result<Option<VectorSet>> {
+        let dir = self.path();
+        let missing = |what: String| match self {
+            ClassDir::Named(_) => Ok(None),
+            ClassDir::Installed(_) => Err(Error::Vectors {
+                path: dir.to_path_buf(),
+                message: format!("{what}: install the class with `make vectors-install`"),
+            }),
+        };
+        if !dir.join(MANIFEST).exists() {
+            return missing(format!("no vector set, so {class} is not installed"));
+        }
+        let set = VectorSet::load(dir)?;
+        if set.files.iter().all(|file| file.meta.class != class) {
+            return missing(format!("{class} is not installed"));
+        }
+        Ok(Some(set))
+    }
+}
+
 /// SHA-256 of a byte string, lowercase hex.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
@@ -559,5 +610,29 @@ mod tests {
         write_manifest(dir.path()).unwrap();
         let err = VectorSet::load(dir.path()).unwrap_err().to_string();
         assert!(err.contains("format heartwood-vectors/0"), "{err}");
+    }
+
+    #[test]
+    fn an_installed_class_must_be_there_and_a_named_directory_may_lack_it() {
+        let dir = TestDir::new("class-dir");
+        let installed = ClassDir::Installed(dir.path().to_path_buf());
+        let named = ClassDir::Named(dir.path().to_path_buf());
+        let err = installed
+            .load("V01-keys-addresses")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("no vector set"), "{err}");
+        assert!(named.load("V01-keys-addresses").unwrap().is_none());
+        write_file(
+            dir.path(),
+            "V01-keys-addresses",
+            &[keys_record("a", "02aa")],
+            "native",
+        );
+        let set = installed.load("V01-keys-addresses").unwrap().unwrap();
+        assert_eq!(set.files.len(), 1);
+        let err = installed.load("V27-processor").unwrap_err().to_string();
+        assert!(err.contains("V27-processor is not installed"), "{err}");
+        assert!(named.load("V27-processor").unwrap().is_none());
     }
 }

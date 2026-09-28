@@ -7,6 +7,9 @@
 //! - `status`: the getStatus response, `status.sign` and `status.verify`.
 //! - `messages`: `proto.encode` and `proto.decode`, one message without a route's
 //!   post-processing, and the messages' JSON, which the other areas use.
+//! - `replies`: `wire.checkReply`, the reply checks of the routes other than getStatus.
+//! - `requests`: `p2p.validateRequest`, the requests the client writes as a reference server
+//!   reads them.
 //!
 //! `wire.encode` takes `route` (the reference's codec name, such as `getStatus`), `direction`
 //! (`request` or `response`) and `value` in the oracle's JSON shape: present keys only, bytes and
@@ -21,6 +24,8 @@ mod blocks;
 mod messages;
 mod nes;
 mod peer;
+mod replies;
+mod requests;
 mod status;
 mod transactions;
 
@@ -42,6 +47,8 @@ pub(super) const OPS: &[(&str, Run)] = &[
     ("proto.decode", messages::decode),
     ("status.sign", status::sign),
     ("status.verify", status::verify),
+    ("wire.checkReply", replies::check_reply),
+    ("p2p.validateRequest", requests::validate_request),
 ];
 
 /// The subject file that answers a codec.

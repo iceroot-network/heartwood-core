@@ -1,0 +1,210 @@
+//! The harness's seams of `relay run` (feature `difftest`), which no release build has.
+//!
+//! - [`Recorder`]: `--difftest-digest` writes one state digest line per applied, reverted and
+//!   restarted state (the replay's format), and `--difftest-blocks` one line per applied block
+//!   (`h`, `id`, `hex`, a corpus's block lines). Each line is written whole and flushed, so a kill
+//!   leaves at most a torn last line. The first line of a process is its start's (`genesis` at a
+//!   first start, else `restart`), whose running digest starts again from zero. An applied
+//!   block's line has the missed slots the round before it detects, and its reward, which the
+//!   processor checked against the state's; a block at or below a height applied before is a
+//!   `reapply`.
+//! - [`SeedRules`]: `--difftest-seed ip:port` names one seed that the address rules let through
+//!   (loopback and the host's own addresses included), for a mock peer on the same host; every
+//!   other rule is the client's.
+
+use std::cmp::Ordering;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::net::IpAddr;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
+use heartwood_blockchain::events::CommitObserver;
+use heartwood_crypto::blocks::serialiser;
+use heartwood_crypto::utils::hex;
+use heartwood_crypto::{Block, BlockHeader, Milestones, Params};
+use heartwood_p2p::seams::PeerRules;
+use heartwood_p2p::utils::rules::Rules;
+use heartwood_p2p_wire::RouteId;
+use heartwood_p2p_wire::codecs::blocks::ListedBlock;
+use heartwood_p2p_wire::errors::ReplyRefused;
+use heartwood_p2p_wire::messages::blocks::PostBlockResponse;
+use heartwood_p2p_wire::messages::peer::{GetCommonBlocksResponse, Peer as ListedPeer};
+use heartwood_p2p_wire::replies::{CommonBlock, PeerAddress, UnconfirmedReply};
+use heartwood_p2p_wire::requests::{ClientRequest, Headers};
+use heartwood_state::digest::{self, Step};
+use heartwood_state::{RoundState, State};
+use serde_json::json;
+use tokio::time::Instant;
+
+/// The digest and block files of a relay run.
+pub struct Recorder {
+    milestones: Arc<Milestones>,
+    digests: Option<File>,
+    blocks: Option<File>,
+    first_start: bool,
+    previous: [u8; 32],
+    /// The last block's header and the round after it, which detect the next block's missed slots.
+    last: Option<(BlockHeader, RoundState)>,
+    /// The highest height applied or restored.
+    highest: u32,
+}
+
+impl Recorder {
+    /// A recorder appending to `digests` and `blocks`, when given; `first_start` when the store
+    /// was empty.
+    pub fn open(
+        milestones: Arc<Milestones>,
+        digests: Option<&Path>,
+        blocks: Option<&Path>,
+        first_start: bool,
+    ) -> std::io::Result<Recorder> {
+        let open = |path: &Path| OpenOptions::new().create(true).append(true).open(path);
+        Ok(Recorder {
+            milestones,
+            digests: digests.map(open).transpose()?,
+            blocks: blocks.map(open).transpose()?,
+            first_start,
+            previous: [0; 32],
+            last: None,
+            highest: 0,
+        })
+    }
+
+    fn line(&mut self, state: &State, step: Step, block: Option<&Block>) {
+        let missed = match (block, &self.last) {
+            (Some(block), Some((last, round))) => {
+                round.detect_missed_blocks(last, block.header(), &self.milestones)
+            }
+            _ => Vec::new(),
+        };
+        let reward = block.map(|block| block.header().reward);
+        let line = digest::height_digest(
+            state,
+            &self.milestones,
+            step,
+            &missed,
+            reward,
+            &self.previous,
+        );
+        self.previous = line.chain_digest;
+        write(&mut self.digests, &line.to_json());
+        if let Some(block) = block {
+            let hex = hex::encode(&serialiser::serialise(block));
+            write(
+                &mut self.blocks,
+                &json!({"h": block.height(), "id": block.id().to_hex(), "hex": hex}).to_string(),
+            );
+        }
+        self.last = Some((state.last_block().header().clone(), state.round().clone()));
+        self.highest = self.highest.max(state.height());
+    }
+}
+
+/// Write `line` and a line break in one write, then flush; a failure is logged, as the harness
+/// finds the gap.
+fn write(file: &mut Option<File>, line: &str) {
+    let written = file.as_mut().map(|file| {
+        let bytes = format!("{line}\n");
+        file.write_all(bytes.as_bytes()).and_then(|()| file.flush())
+    });
+    if let Some(Err(error)) = written {
+        heartwood_kernel::error!("the harness's record could not be written: {error}");
+    }
+}
+
+impl CommitObserver for Recorder {
+    fn applied(&mut self, state: &State, block: &Block) {
+        let step = if block.height() <= self.highest {
+            Step::Reapply
+        } else {
+            Step::Apply
+        };
+        self.line(state, step, Some(block));
+    }
+
+    fn reverted(&mut self, state: &State) {
+        self.line(state, Step::Revert, None);
+    }
+
+    fn restarted(&mut self, state: &State) {
+        self.previous = [0; 32];
+        let step = if self.first_start {
+            Step::Genesis
+        } else {
+            Step::Restart
+        };
+        self.line(state, step, None);
+    }
+}
+
+/// The client's rules, with one seed that the address rules let through.
+pub struct SeedRules {
+    rules: Rules,
+    seed: Option<IpAddr>,
+}
+
+impl SeedRules {
+    /// `rules`, letting `seed` through the address rules when given.
+    pub fn new(rules: Rules, seed: Option<IpAddr>) -> SeedRules {
+        SeedRules { rules, seed }
+    }
+}
+
+impl PeerRules for SeedRules {
+    fn encode_request(&self, request: &ClientRequest, headers: &Headers) -> Vec<u8> {
+        self.rules.encode_request(request, headers)
+    }
+    fn check_peers(&self, peers: &[ListedPeer]) -> Result<Vec<PeerAddress>, ReplyRefused> {
+        self.rules.check_peers(peers)
+    }
+    fn check_common_blocks(
+        &self,
+        reply: &GetCommonBlocksResponse,
+    ) -> Result<Option<CommonBlock>, ReplyRefused> {
+        self.rules.check_common_blocks(reply)
+    }
+    fn check_blocks(&self, blocks: &mut [ListedBlock]) -> Result<(), ReplyRefused> {
+        self.rules.check_blocks(blocks)
+    }
+    fn check_post_block(&self, reply: &PostBlockResponse) -> Result<Option<u32>, ReplyRefused> {
+        self.rules.check_post_block(reply)
+    }
+    fn check_unconfirmed(
+        &self,
+        reply: &UnconfirmedReply,
+        max_transactions: usize,
+    ) -> Result<(), ReplyRefused> {
+        self.rules.check_unconfirmed(reply, max_transactions)
+    }
+    fn check_post_transactions(&self, accept: &[String]) -> Result<(), ReplyRefused> {
+        self.rules.check_post_transactions(accept)
+    }
+    fn throttle(&self, ip: IpAddr, route: RouteId, now: Instant) -> Option<Duration> {
+        self.rules.throttle(ip, route, now)
+    }
+    fn would_throttle(&self, ip: IpAddr, route: RouteId, now: Instant) -> bool {
+        self.rules.would_throttle(ip, route, now)
+    }
+    fn is_valid_peer(&self, ip: &mut String, allow_private: bool, interfaces: &[IpAddr]) -> bool {
+        let seed = self.seed.is_some_and(|seed| ip.parse() == Ok(seed));
+        seed || self.rules.is_valid_peer(ip, allow_private, interfaces)
+    }
+    fn is_valid_version(
+        &self,
+        version: Option<&str>,
+        milestone: &Params,
+        configured: &[String],
+        network_name: &str,
+    ) -> bool {
+        self.rules
+            .is_valid_version(version, milestone, configured, network_name)
+    }
+    fn same_subnet(&self, a: IpAddr, b: IpAddr) -> bool {
+        self.rules.same_subnet(a, b)
+    }
+    fn compare_versions(&self, a: &str, b: &str) -> Option<Ordering> {
+        self.rules.compare_versions(a, b)
+    }
+}

@@ -40,9 +40,11 @@ pub enum Verdict {
         holds: bool,
     },
     /// Heartwood took the path of a documented difference whose reference side only the oracle's
-    /// answer shows (a JavaScript prototype, the depth of the Node stack, an integer of any size).
-    /// When the oracle's answer shows it ([`Documented::shown_by`]), the case is a documented
-    /// difference; otherwise `verdict` is judged as usual.
+    /// answer shows (a JavaScript prototype, the depth of the Node stack, an integer of any size,
+    /// the missed rows of a refused block). When the oracle's answer shows it
+    /// ([`Documented::shown_by`]), or equals `verdict` once the part the difference changes is
+    /// left out ([`Documented::masked`]), the case is a documented difference; otherwise
+    /// `verdict` is judged as usual.
     DiffersWhereShown {
         /// The documented difference.
         difference: Documented,
@@ -92,6 +94,36 @@ pub enum Documented {
     /// Crypto files that the strict schema refuses: an unknown key, a `null`, a height twice, a
     /// removed feature turned on, a missing file, or a non-empty `exceptions.json`.
     StrictSchema,
+    /// A peer's fork segment whose fetched headers do not chain (previous id, height + 1).
+    UnlinkedForkSegment,
+    /// A block refused in its apply after a gap of missed slots: the reference has written the
+    /// gap's missed rows before it validated the block.
+    MissedRowsOfRefusedBlock,
+    /// A served route's documented difference.
+    Api(ApiDifference),
+}
+
+/// A served route's documented difference from the reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiDifference {
+    /// A store error or a read's timeout on a list: the reference answers an empty 200 (a lookup
+    /// an unlogged 500); Heartwood answers a logged 500.
+    StoreFailure,
+    /// A block height above the tip, or a block's transactions of a value that is neither a full
+    /// id nor a height at or below the tip: the reference matches an id prefix; Heartwood answers
+    /// 404 "Block not found".
+    HeightAboveTip,
+    /// Requests beyond the semaphore's bound: the reference's semaphore is inert; Heartwood's
+    /// bounds the concurrency and answers 429 when its queue is full.
+    Semaphore,
+    /// The peers' `ip` filter: the reference validates it and ignores it; Heartwood filters.
+    PeersIpFilter,
+    /// Ties of a custom order and the order of text: the reference's depend on the database's
+    /// plan and locale; Heartwood breaks ties by the unique key and orders text by bytes.
+    TieOrder,
+    /// Pagination links under another base path than `/api`: the reference strips a hard-coded
+    /// `/api`; Heartwood strips the configured base path.
+    BasePathLinks,
 }
 
 impl Documented {
@@ -185,6 +217,50 @@ impl Documented {
                  the file and key, the reference loads them or falls back to its built-in preset \
                  (a configuration-only difference; generated devnets never contain one)"
             }
+            Documented::UnlinkedForkSegment => {
+                "a fork segment whose headers do not chain: the reference checks each fetched \
+                 header's signature, height and round delegate only, Heartwood also requires each \
+                 to chain to the one before it and refuses the peer (crafted peers only; every \
+                 honest segment chains)"
+            }
+            Documented::MissedRowsOfRefusedBlock => {
+                "a block refused in its apply after missed slots: the reference writes the missed \
+                 rows before it validates the block and keeps them, Heartwood writes missed rows \
+                 only with an applied block (a faulty or adversarial forger only)"
+            }
+            Documented::Api(difference) => difference.reason(),
+        }
+    }
+}
+
+impl ApiDifference {
+    /// What the reference does instead, and why the difference is accepted.
+    pub fn reason(self) -> &'static str {
+        match self {
+            ApiDifference::StoreFailure => {
+                "a store failure on a list: the reference answers an empty 200, Heartwood a logged \
+                 500 with a Boom body (a fault or a timeout only)"
+            }
+            ApiDifference::HeightAboveTip => {
+                "a height above the tip: the reference matches an id prefix and answers an \
+                 unrelated block or a 500, Heartwood answers 404 \"Block not found\""
+            }
+            ApiDifference::Semaphore => {
+                "the semaphore: the reference's is inert, Heartwood bounds the concurrency with \
+                 the same settings and answers 429 when its queue is full (heavy load only)"
+            }
+            ApiDifference::PeersIpFilter => {
+                "the peers' ip filter: the reference validates it and ignores it, Heartwood \
+                 filters by it"
+            }
+            ApiDifference::TieOrder => {
+                "ties of a custom order and text order: the reference's depend on its database's \
+                 plan and locale, Heartwood breaks ties by the unique key and orders text by bytes"
+            }
+            ApiDifference::BasePathLinks => {
+                "pagination links under another base path: the reference strips a hard-coded \
+                 /api, Heartwood strips the configured base path"
+            }
         }
     }
 }
@@ -228,6 +304,42 @@ impl Documented {
             _ => false,
         }
     }
+
+    /// The oracle's answer `expected` without the part this difference changes, when Heartwood's
+    /// verdict `ours` and the answer both have that part; the case is then the documented
+    /// difference if `ours` equals what is left. Only the missed rows of a refused block have
+    /// one: the rows the reference recorded for a block both refused, in a `chain.process`
+    /// answer refused by the accept handler, or in each job of a `chain.job` answer.
+    pub fn masked(self, expected: &Expected, ours: &Verdict) -> Option<Expected> {
+        let (Documented::MissedRowsOfRefusedBlock, Expected::Output(theirs), Verdict::Output(ours)) =
+            (self, expected, ours)
+        else {
+            return None;
+        };
+        let rejected = |answer: &Value| answer["result"] == "Rejected";
+        if let (Some(jobs), Some(our_jobs)) = (theirs["jobs"].as_array(), ours["jobs"].as_array()) {
+            let mut adjusted = theirs.clone();
+            let mut changed = false;
+            for (index, (job, our_job)) in jobs.iter().zip(our_jobs).enumerate() {
+                let refused = |at: usize| rejected(&our_job["results"][at]);
+                let without = crate::levels::l2_processor::without_refused_rows(job, refused);
+                if let Some(without) = without {
+                    adjusted["jobs"][index] = without;
+                    changed = true;
+                }
+            }
+            return changed.then_some(Expected::Output(adjusted));
+        }
+        let accept = |answer: &Value| rejected(answer) && answer["handler"] == "AcceptBlockHandler";
+        let rows = theirs["missed"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty());
+        (accept(theirs) && accept(ours) && rows).then(|| {
+            let mut adjusted = theirs.clone();
+            adjusted["missed"] = Value::Array(Vec::new());
+            Expected::Output(adjusted)
+        })
+    }
 }
 
 /// A subject could not produce a verdict.
@@ -239,6 +351,10 @@ pub enum SubjectError {
     /// The subject itself failed (a harness bug, not a Heartwood verdict).
     #[error("{0}")]
     Failed(String),
+    /// The operation's subject is registered but not written yet; the case is reported as having
+    /// no Rust implementation, as an unregistered operation is.
+    #[error("no Rust implementation yet")]
+    NotImplemented,
 }
 
 /// One case as both levels describe it.

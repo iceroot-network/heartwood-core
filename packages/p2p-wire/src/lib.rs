@@ -12,6 +12,9 @@
 //!   with their post-processing (amounts, block and transaction lists, the exclude list), and
 //!   [`Amount`].
 //! - [`list`]: the length-prefixed list framing and its caps.
+//! - [`requests`]: the requests a node's client writes, which cannot take a shape a reference
+//!   server bans for.
+//! - [`replies`]: the reply schemas of the routes other than getStatus.
 //! - [`routes`]: the twelve routes with their ids, paths, payload limits and codec kinds, and the
 //!   14 protobuf codec directions.
 //! - [`status`]: the signed peer status: the tree a relay signs, its canonical JSON, the
@@ -23,7 +26,8 @@
 //! - Untrusted bytes never cause a panic, and no decoder recurses on the input's nesting.
 //! - Every refusal names the JavaScript class of the reference's error where the reference raises
 //!   one, so that tests compare classes, never messages.
-//! - No I/O and no clock. The nes sessions and the WebSocket transport are not part of the codec.
+//! - No I/O and no clock. The nes sessions and the WebSocket transport are not part of the codec:
+//!   they are in `heartwood-p2p`.
 //!
 //! Three inputs, which only a crafted message contains, are read differently from the reference on
 //! purpose: a status plugin named `__proto__` (the reference replaces an object's prototype),
@@ -53,10 +57,12 @@ pub mod list;
 pub mod messages;
 pub mod nes;
 mod proto;
+pub mod replies;
+pub mod requests;
 pub mod routes;
 pub mod status;
 
 pub use crate::codecs::Amount;
-pub use crate::errors::{DecodeError, FrameError, ReplyRefused};
+pub use crate::errors::{DecodeError, FrameError, ReplyRefused, RequestError};
 pub use crate::messages::Proto;
 pub use crate::routes::{Codec, CodecKind, Direction, RouteId};

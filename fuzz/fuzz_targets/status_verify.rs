@@ -1,5 +1,6 @@
 //! The status verifier on arbitrary bytes as a getStatus response: no input may panic the
-//! decoder, the reply check, either preimage, or the first two signature checks.
+//! decoder, the reply check, either preimage of a reply the check accepts, or the first two
+//! signature checks.
 //!
 //! A decoded response is also written again, and the writing must read back to the same amounts
 //! and be written again byte for byte.
@@ -13,7 +14,7 @@ use libfuzzer_sys::fuzz_target;
 const MAX_DELEGATES: usize = 53;
 
 fuzz_target!(|bytes: &[u8]| {
-    let Ok(mut received) = status::decode_response(bytes) else {
+    let Ok(received) = status::decode_response(bytes) else {
         return;
     };
 
@@ -25,9 +26,11 @@ fuzz_target!(|bytes: &[u8]| {
     );
     assert_eq!(status::encode_response(&again), written);
 
-    let _ = status::check_reply(&mut received, MAX_DELEGATES);
-    let preimages = [false, true].map(|negative| status::verifying_preimage(&received, negative));
-    let message = &received.message;
+    let Ok(checked) = status::check_reply(received, MAX_DELEGATES) else {
+        return;
+    };
+    let preimages = [false, true].map(|negative| status::verifying_preimage(&checked, negative));
+    let message = &checked.message;
     for (key, signature) in message.public_keys.iter().zip(&message.signatures).take(2) {
         for preimage in &preimages {
             let _ = status::verify_attestation(preimage, key, signature);

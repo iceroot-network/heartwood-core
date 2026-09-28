@@ -1,0 +1,5 @@
+# Lints of heartwood-core: time comes from the kernel's Clock or from tokio's clock.
+disallowed-types = [
+    { path = "std::time::SystemTime", reason = "read the time through heartwood_kernel::clock::Clock" },
+    { path = "std::time::Instant", reason = "read the time through heartwood_kernel::clock::Clock or tokio's clock" },
+]

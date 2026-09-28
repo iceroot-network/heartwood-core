@@ -4,7 +4,9 @@
 //! reference's four chain tables with the reference's columns (`blocks`, `transactions`, `rounds`,
 //! `missed_blocks`), the state tables (`wallets`, `state`, `undo`), `meta`, the digests of the
 //! applied milestone entries (`milestone_entries`) and the node-local delegate versions
-//! (`delegate_versions`).
+//! (`delegate_versions`). Schema version 2 ([`connection::SCHEMA_2`]) adds the recipients side
+//! table (`transaction_recipients`), which the API's address criteria read; a file of version 1 is
+//! upgraded at open.
 //!
 //! - [`connection`]: [`Database`], the one writer connection, and [`Chunk`], one SQLite
 //!   transaction per chunk of blocks with a [`Savepoint`] per block.
@@ -15,6 +17,10 @@
 //! - [`meta`]: the chain's identity and the applied milestone entries.
 //! - [`node_local`]: the delegate versions, which never enter consensus.
 //! - [`integrity`]: the checks a node runs on every start.
+//! - [`recipients`]: the recipients side table's upgrade from schema version 1.
+//! - [`reader`]: [`Readers`], the read-only connections of the API, each read interrupted after
+//!   3 s; [`history`]: the queries of the served routes on them, with the transaction criteria of
+//!   [`filters`] and the two SQL functions they need.
 //! - [`errors`]: the crate's error type, [`DatabaseError`].
 //!
 //! Rules: the crate stores rows, never state types: it does not depend on `heartwood-state`, and
@@ -37,10 +43,14 @@
 pub mod blocks;
 pub mod connection;
 pub mod errors;
+pub mod filters;
+pub mod history;
 pub mod integrity;
 pub mod meta;
 pub mod missed;
 pub mod node_local;
+pub mod reader;
+pub mod recipients;
 pub mod rounds;
 pub mod state;
 pub mod transactions;
@@ -49,10 +59,13 @@ mod values;
 pub use crate::blocks::{BlockRow, StoredBlock};
 pub use crate::connection::{Chunk, Database, SCHEMA_VERSION, Savepoint, Settings};
 pub use crate::errors::DatabaseError;
+pub use crate::filters::{Numeric, TransactionCriteria, TransactionFilter};
+pub use crate::history::{BlockSelector, Direction, Listing, Order, Page, TransactionRecord};
 pub use crate::integrity::{IntegrityProblem, IntegrityReport};
 pub use crate::meta::{ChainMeta, MilestoneEntryRow};
 pub use crate::missed::MissedRow;
 pub use crate::node_local::DelegateVersionRow;
+pub use crate::reader::{READ_TIMEOUT, Reader, Readers};
 pub use crate::rounds::RoundRow;
 pub use crate::state::{StateRow, UndoRow, WalletRow};
 pub use crate::transactions::TransactionRow;

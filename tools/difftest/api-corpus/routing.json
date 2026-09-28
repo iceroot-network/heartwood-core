@@ -1,0 +1,160 @@
+[
+ {
+  "name": "routing/method/PUT/api/blocks/last",
+  "method": "PUT",
+  "path": "/api/blocks/last"
+ },
+ {
+  "name": "routing/method/DELETE/api/transactions",
+  "method": "DELETE",
+  "path": "/api/transactions"
+ },
+ {
+  "name": "routing/method/PATCH/api/wallets/genesis_1",
+  "method": "PATCH",
+  "path": "/api/wallets/genesis_1"
+ },
+ {
+  "name": "routing/method/POST/api/blocks/last",
+  "method": "POST",
+  "path": "/api/blocks/last"
+ },
+ {
+  "name": "routing/method/PUT/api/peers",
+  "method": "PUT",
+  "path": "/api/peers"
+ },
+ {
+  "name": "routing/head",
+  "method": "HEAD",
+  "path": "/api/blocks/last"
+ },
+ {
+  "name": "routing/not-found/unknown",
+  "path": "/api/nothing"
+ },
+ {
+  "name": "routing/not-found/base",
+  "path": "/api"
+ },
+ {
+  "name": "routing/not-found/base-slash",
+  "path": "/api/"
+ },
+ {
+  "name": "routing/not-found/extra-segment",
+  "path": "/api/blocks/last/extra"
+ },
+ {
+  "name": "routing/not-found/double-slash",
+  "path": "/api//blocks/last"
+ },
+ {
+  "name": "routing/cors/simple",
+  "path": "/api/blocks/last",
+  "headers": {
+   "origin": "http://example.com"
+  }
+ },
+ {
+  "name": "routing/cors/error",
+  "path": "/api/blocks/0",
+  "headers": {
+   "origin": "http://example.com"
+  }
+ },
+ {
+  "name": "routing/cors/preflight",
+  "method": "OPTIONS",
+  "path": "/api/blocks/last",
+  "headers": {
+   "origin": "http://example.com",
+   "access-control-request-method": "GET"
+  }
+ },
+ {
+  "name": "routing/cors/preflight-headers",
+  "method": "OPTIONS",
+  "path": "/api/transactions",
+  "headers": {
+   "origin": "http://example.com",
+   "access-control-request-method": "POST",
+   "access-control-request-headers": "content-type"
+  }
+ },
+ {
+  "name": "routing/cors/options-without-origin",
+  "method": "OPTIONS",
+  "path": "/api/blocks/last"
+ },
+ {
+  "name": "grammar/proto-dropped",
+  "path": "/api/transactions",
+  "query": "__proto__=1&limit=1"
+ },
+ {
+  "name": "grammar/constructor-dropped",
+  "path": "/api/transactions",
+  "query": "constructor.x=1&limit=1"
+ },
+ {
+  "name": "grammar/escaped-comma",
+  "path": "/api/transactions",
+  "query": "memo=a%2Cb"
+ },
+ {
+  "name": "grammar/plus-space",
+  "path": "/api/transactions",
+  "query": "memo=a+b"
+ },
+ {
+  "name": "grammar/euro",
+  "path": "/api/transactions",
+  "query": "memo=%E2%82%AC"
+ },
+ {
+  "name": "grammar/invalid-utf8",
+  "path": "/api/transactions",
+  "query": "memo=%FF"
+ },
+ {
+  "name": "grammar/lone-percent",
+  "path": "/api/transactions",
+  "query": "memo=%25%25"
+ },
+ {
+  "name": "grammar/range-empty-bound",
+  "path": "/api/transactions",
+  "query": "amount.from=1&amount.to="
+ },
+ {
+  "name": "grammar/nested-and-plain",
+  "path": "/api/transactions",
+  "query": "amount=1&amount.from=2"
+ },
+ {
+  "name": "grammar/plain-after-nested",
+  "path": "/api/transactions",
+  "query": "amount.from=2&amount=1"
+ },
+ {
+  "name": "grammar/throws/lone-comma-in-list",
+  "path": "/api/transactions",
+  "query": "limit=1&limit=,"
+ },
+ {
+  "name": "grammar/throws/length-of-list",
+  "path": "/api/transactions",
+  "query": "limit=1,2&limit.length=1"
+ },
+ {
+  "name": "grammar/throws/lone-comma-unvalidated",
+  "path": "/api/node/status",
+  "query": "a=1&a=,"
+ },
+ {
+  "name": "grammar/throws/lone-comma-no-route",
+  "path": "/api/nothing",
+  "query": "a=1&a=,"
+ }
+]

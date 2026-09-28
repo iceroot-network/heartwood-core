@@ -1,0 +1,14 @@
+[
+ {
+  "name": "rate-limit/charged-before-validation",
+  "path": "/api/blocks/last",
+  "query": "foo=1",
+  "repeat": 101,
+  "source": "outside"
+ },
+ {
+  "name": "rate-limit/after",
+  "path": "/api/node/status",
+  "source": "outside"
+ }
+]

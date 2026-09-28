@@ -6,7 +6,8 @@
 # Code lines as tokei counts them (no blank or comment lines) in each crate's src/, without the
 # inline test modules (`#[cfg(test)] mod ... { ... }`) and without tests/, benches and examples.
 # The ceilings are the review budgets of the crates; a crate over its ceiling fails the check.
-# Some parts are also listed on their own (informational, or with their own ceiling).
+# Some parts are also listed on their own (informational, or with their own ceiling). A path
+# written `!path` is left out of its line.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (cargo install tokei)" >&2; exit 2; }
@@ -19,9 +20,20 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # heartwood-transactions (a move, not new code), and the JavaScript number formatting of the
 # reference's messages (grouped integers and fractions, amounts with the network's symbol, a
 # transaction's short text) joined the one module that holds JavaScript number semantics.
+# heartwood-p2p's ceiling covers the client and the server side of the peer protocol; the client
+# side is listed on its own. Its `testing` module (the mock peer, behind the `difftest` feature,
+# which no release build enables) is test support: it is left out, as tests/ is, and listed apart.
+# heartwood-kernel was re-baselined from 1,500 to 1,900 with the relay's process: the node's
+# configuration (the environment, app.json and the components' options, peers.json, the version
+# floor) and the event bus live in the kernel, which loads configuration in the reference too, and
+# the kernel was at its ceiling before them. heartwood-blockchain's processor has a ceiling of its
+# own; its runtime (the node thread, the job, the queue, the pool on the node thread, the service,
+# the state machine and the fork recovery) is listed on its own. The parts listed without a ceiling
+# (the blockchain's runtime and storage, heartwood-p2p's client side, ...) are informational: the
+# crate's ceiling bounds them. CI installs tokei, so make check holds every ceiling there too.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
-    "heartwood-kernel:packages/kernel/src:1500"
+    "heartwood-kernel:packages/kernel/src:1900"
     "heartwood-kernel utils:packages/kernel/src/utils:400"
     "heartwood-logger:packages/logger/src:500"
     "heartwood-state:packages/state/src:3000"
@@ -31,7 +43,14 @@ CHECKS=(
     "heartwood-database:packages/database/src:3000"
     "heartwood-pool:packages/pool/src:2000"
     "heartwood-blockchain:packages/blockchain/src:3500"
-    "heartwood-blockchain storage and restart:packages/blockchain/src/commit.rs packages/blockchain/src/rows.rs packages/blockchain/src/restore.rs packages/blockchain/src/milestones.rs:"
+    "heartwood-blockchain storage and restart:packages/blockchain/src/commit.rs packages/blockchain/src/rows.rs packages/blockchain/src/restore.rs packages/blockchain/src/milestones.rs packages/blockchain/src/online.rs:"
+    "heartwood-blockchain processor:packages/blockchain/src/processor:1200"
+    "heartwood-blockchain runtime:packages/blockchain/src/node.rs packages/blockchain/src/process_blocks_job.rs packages/blockchain/src/queue.rs packages/blockchain/src/pool_task.rs packages/blockchain/src/events.rs packages/blockchain/src/options.rs packages/blockchain/src/blockchain.rs packages/blockchain/src/state_machine packages/blockchain/src/fork_recovery.rs packages/blockchain/src/chain_state.rs packages/blockchain/src/network.rs packages/blockchain/src/work.rs:"
+    "heartwood-p2p:packages/p2p/src !packages/p2p/src/testing:6000"
+    "heartwood-p2p client side:packages/p2p/src/nes packages/p2p/src/transport.rs packages/p2p/src/connector.rs packages/p2p/src/rate_limiter.rs packages/p2p/src/utils packages/p2p/src/peer.rs packages/p2p/src/repository.rs packages/p2p/src/communicator.rs packages/p2p/src/attestation.rs packages/p2p/src/processor.rs packages/p2p/src/scoring.rs packages/p2p/src/verifier.rs packages/p2p/src/nsect.rs packages/p2p/src/monitor.rs packages/p2p/src/chunk_cache.rs packages/p2p/src/download.rs packages/p2p/src/broadcaster.rs packages/p2p/src/seeds.rs packages/p2p/src/diversity.rs packages/p2p/src/options.rs packages/p2p/src/view.rs packages/p2p/src/seams.rs packages/p2p/src/errors.rs packages/p2p/src/lib.rs:"
+    "heartwood-p2p test support (difftest only):packages/p2p/src/testing:"
+    "heartwood-api:packages/api/src:5000"
+    "heartwood-core:packages/core/src:2000"
 )
 
 work=$(mktemp -d)
@@ -44,7 +63,8 @@ strip_tests() {
     python3 - "$dir" "$@" <<'PY'
 import os, re, sys
 out = sys.argv[1]
-paths = sys.argv[2:]
+excluded = [os.path.normpath(p[1:]) for p in sys.argv[2:] if p.startswith("!")]
+paths = [p for p in sys.argv[2:] if not p.startswith("!")]
 files = []
 for p in paths:
     if os.path.isfile(p):
@@ -64,6 +84,8 @@ for f in files:
         test_files.add(os.path.normpath(os.path.join(base, m.group(1) + ".rs")))
         test_files.add(os.path.normpath(os.path.join(base, m.group(1), "mod.rs")))
 files = [f for f in files if os.path.normpath(f) not in test_files]
+files = [f for f in files
+         if not any(os.path.normpath(f) == e or os.path.normpath(f).startswith(e + os.sep) for e in excluded)]
 for i, f in enumerate(sorted(files)):
     lines = open(f, encoding="utf-8").read().split("\n")
     kept, skip, depth, pending = [], False, 0, False
@@ -95,7 +117,7 @@ fail=0
 for check in "${CHECKS[@]}"; do
     IFS=: read -r name paths ceiling <<<"$check"
     # shellcheck disable=SC2086  # paths is a list
-    existing=$(for p in $paths; do if [ -e "$p" ]; then echo "$p"; fi; done)
+    existing=$(for p in $paths; do case $p in '!'*) echo "$p" ;; *) if [ -e "$p" ]; then echo "$p"; fi ;; esac; done)
     [ -n "$existing" ] || { echo "check-lines: $name: not in this tree"; continue; }
     dir="$work/$(echo "$name" | tr -c 'a-z0-9' '_')"
     mkdir -p "$dir"

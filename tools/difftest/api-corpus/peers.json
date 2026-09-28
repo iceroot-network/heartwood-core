@@ -1,0 +1,170 @@
+[
+ {
+  "name": "peers",
+  "path": "/api/peers"
+ },
+ {
+  "name": "peers/version-exact",
+  "path": "/api/peers",
+  "query": "version=4.3.1"
+ },
+ {
+  "name": "peers/version-range",
+  "path": "/api/peers",
+  "query": "version=%3E%3D4.3.0"
+ },
+ {
+  "name": "peers/version-caret",
+  "path": "/api/peers",
+  "query": "version=%5E4.3"
+ },
+ {
+  "name": "peers/version-x",
+  "path": "/api/peers",
+  "query": "version=4.x"
+ },
+ {
+  "name": "peers/version-none-match",
+  "path": "/api/peers",
+  "query": "version=%3E%3D9"
+ },
+ {
+  "name": "peers/version-double-escaped",
+  "path": "/api/peers",
+  "query": "version=%253E%253D4.3.0"
+ },
+ {
+  "name": "peers/version-bad-range",
+  "path": "/api/peers",
+  "query": "version=not-a-range"
+ },
+ {
+  "name": "peers/version-lone-percent",
+  "path": "/api/peers",
+  "query": "version=%25"
+ },
+ {
+  "name": "peers/version-list",
+  "path": "/api/peers",
+  "query": "version=4.3.1,4.3.0"
+ },
+ {
+  "name": "peers/order-height-desc",
+  "path": "/api/peers",
+  "query": "orderBy=height:desc"
+ },
+ {
+  "name": "peers/order-version-asc",
+  "path": "/api/peers",
+  "query": "orderBy=version:asc"
+ },
+ {
+  "name": "peers/order-latency-asc",
+  "path": "/api/peers",
+  "query": "orderBy=latency:asc"
+ },
+ {
+  "name": "peers/order-latency-desc",
+  "path": "/api/peers",
+  "query": "orderBy=latency:desc"
+ },
+ {
+  "name": "peers/order-unknown",
+  "path": "/api/peers",
+  "query": "orderBy=foo:asc"
+ },
+ {
+  "name": "peers/order-no-direction",
+  "path": "/api/peers",
+  "query": "orderBy=height"
+ },
+ {
+  "name": "peers/limit-1",
+  "path": "/api/peers",
+  "query": "limit=1"
+ },
+ {
+  "name": "peers/page-2",
+  "path": "/api/peers",
+  "query": "limit=1&page=2"
+ },
+ {
+  "name": "peers/offset-1",
+  "path": "/api/peers",
+  "query": "offset=1"
+ },
+ {
+  "name": "peers/offset-0-ignored",
+  "path": "/api/peers",
+  "query": "offset=0&page=2&limit=1"
+ },
+ {
+  "name": "peers/limit-0",
+  "path": "/api/peers",
+  "query": "limit=0"
+ },
+ {
+  "name": "peers/limit-101",
+  "path": "/api/peers",
+  "query": "limit=101"
+ },
+ {
+  "name": "peers/page-0",
+  "path": "/api/peers",
+  "query": "page=0"
+ },
+ {
+  "name": "peers/unknown-key",
+  "path": "/api/peers",
+  "query": "foo=1"
+ },
+ {
+  "name": "peers/transform-not-allowed",
+  "path": "/api/peers",
+  "query": "transform=false"
+ },
+ {
+  "name": "peers/ip-invalid",
+  "path": "/api/peers",
+  "query": "ip=notanip"
+ },
+ {
+  "name": "peers/ip-listed",
+  "path": "/api/peers",
+  "query": "ip=${peerIp}",
+  "documented": "peersIpFilter"
+ },
+ {
+  "name": "peers/ip-unknown",
+  "path": "/api/peers",
+  "query": "ip=203.0.113.9",
+  "documented": "peersIpFilter"
+ },
+ {
+  "name": "peers/ip-cidr",
+  "path": "/api/peers",
+  "query": "ip=198.51.100.0/24",
+  "documented": "peersIpFilter"
+ },
+ {
+  "name": "peers/show/listed",
+  "path": "/api/peers/${peerIp}"
+ },
+ {
+  "name": "peers/show/listed-ignored-query",
+  "path": "/api/peers/${peerIp}",
+  "query": "foo=1"
+ },
+ {
+  "name": "peers/show/unknown",
+  "path": "/api/peers/203.0.113.9"
+ },
+ {
+  "name": "peers/show/loopback-v6",
+  "path": "/api/peers/::1"
+ },
+ {
+  "name": "peers/show/invalid",
+  "path": "/api/peers/notanip"
+ }
+]

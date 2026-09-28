@@ -1,0 +1,46 @@
+[package]
+name = "heartwood-core"
+description = "The heartwood binary of Heartwood Core: a relay's process, with its configuration, composition, process lock, signals and graceful shutdown"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "heartwood"
+path = "src/main.rs"
+
+[features]
+default = []
+# Test seam: the harness's flags of `relay run` (`--difftest-digest`, `--difftest-blocks`,
+# `--difftest-seed`) and the test seams of the crates below. Only the harness's builds enable it
+# (the kill test, the end-to-end test and the live runs' image); a release build never does.
+difftest = ["heartwood-blockchain/difftest", "heartwood-kernel/difftest", "heartwood-p2p/difftest"]
+
+# The composition root depends on every crate of the node.
+[dependencies]
+clap.workspace = true
+heartwood-api.workspace = true
+heartwood-blockchain.workspace = true
+heartwood-crypto.workspace = true
+heartwood-database.workspace = true
+heartwood-kernel = { workspace = true, features = ["bus"] }
+heartwood-logger.workspace = true
+heartwood-p2p.workspace = true
+heartwood-p2p-wire.workspace = true
+heartwood-pool.workspace = true
+heartwood-state.workspace = true
+heartwood-transactions.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "signal", "sync", "time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "test-util", "time"] }

@@ -7,8 +7,8 @@ mod common;
 use common::{block_id, block_row, open, tamper, transaction_id, transaction_row};
 use heartwood_crypto::BlockId;
 use heartwood_database::{
-    ChainMeta, DatabaseError, DelegateVersionRow, MilestoneEntryRow, MissedRow, RoundRow, StateRow,
-    StoredBlock, UndoRow, WalletRow,
+    ChainMeta, DatabaseError, DelegateVersionRow, MilestoneEntryRow, MissedRow, RoundRow,
+    SCHEMA_VERSION, StateRow, StoredBlock, UndoRow, WalletRow,
 };
 
 const MAX: u64 = i64::MAX as u64;
@@ -232,7 +232,7 @@ fn the_state_tables_meta_and_milestone_entries_are_read_back() {
     assert_eq!(database.meta().unwrap(), None);
     assert_eq!(database.state_row().unwrap(), None);
     let meta = ChainMeta {
-        schema_version: 1,
+        schema_version: SCHEMA_VERSION,
         nethash: "ab".repeat(32),
         genesis_id: block_id(1),
         state_format: 7,

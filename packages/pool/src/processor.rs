@@ -11,6 +11,7 @@
 //!
 //! The API and P2P each own a processor, as in the reference, so each has its own cooldown.
 
+use heartwood_crypto::Transaction;
 use heartwood_crypto::utils::js::{number_to_string, number_value, property_order};
 use heartwood_kernel::clock::Clock;
 use heartwood_kernel::utils::pluralise::pluralise;
@@ -116,6 +117,20 @@ impl Processor {
         clock: &dyn Clock,
         entries: Vec<Entry>,
     ) -> Result<ProcessorResult, StorageError> {
+        let processed = self.process_to_broadcast(pool, ctx, clock, entries);
+        processed.map(|(result, _)| result)
+    }
+
+    /// [`Processor::process`], with the admitted transactions that pass the broadcast fee rule,
+    /// in the result's order: the reference keeps them as they were admitted and broadcasts them
+    /// after the batch, so one that a later entry of the batch evicts is broadcast too.
+    pub fn process_to_broadcast(
+        &mut self,
+        pool: &mut Pool,
+        ctx: &PoolContext<'_>,
+        clock: &dyn Clock,
+        entries: Vec<Entry>,
+    ) -> Result<(ProcessorResult, Vec<Transaction>), StorageError> {
         let ms = clock.now_ms();
         let now = ms
             .div_euclid(1000)
@@ -124,8 +139,8 @@ impl Processor {
             .retain(|_, seen| now.saturating_sub(*seen) < COOLDOWN_SECONDS);
         let network = ctx.network.pub_key_hash;
         let checked = check_entries(&entries, ctx.params(), pool.options().worker_count);
-        let mut result = ProcessorResult::default();
-        let mut admitted = Vec::new();
+        let (mut result, mut admitted, mut to_broadcast) =
+            (ProcessorResult::default(), Vec::new(), Vec::new());
         for (index, (entry, checked)) in entries.iter().zip(checked).enumerate() {
             let entry_id = entry_id(entry, index);
             let checked = match checked {
@@ -155,15 +170,16 @@ impl Processor {
         for checked in admitted {
             let entry_id = checked.id();
             let broadcast = match &checked {
-                Checked::Decoded(transaction) => {
-                    check_broadcast(ctx, pool.options(), transaction).is_ok()
-                }
-                Checked::Removed { .. } => false,
+                Checked::Decoded(transaction) => check_broadcast(ctx, pool.options(), transaction)
+                    .is_ok()
+                    .then(|| Transaction::clone(transaction)),
+                Checked::Removed { .. } => None,
             };
             match pool.add_transaction(ctx, checked) {
                 Ok(()) => {
-                    if broadcast {
+                    if let Some(transaction) = broadcast {
                         result.broadcast.push(entry_id.clone());
+                        to_broadcast.push(transaction);
                     }
                     result.accept.push(entry_id);
                 }
@@ -171,7 +187,7 @@ impl Processor {
                 Err(AddError::Storage(error)) => return Err(error),
             }
         }
-        Ok(result)
+        Ok((result, to_broadcast))
     }
 }
 

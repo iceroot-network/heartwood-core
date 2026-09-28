@@ -100,8 +100,13 @@ fn text(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).unwrap()
 }
 
+/// `status` as the reply check gives it back; the replies of these tests pass the check.
+fn checked(status: ReceivedStatus) -> CheckedStatus {
+    check_reply(status, 53).unwrap()
+}
+
 /// Whether every attestation of a checked reply verifies against its preimage.
-fn verifies(status: &ReceivedStatus, local_slot_negative: bool) -> bool {
+fn verifies(status: &CheckedStatus, local_slot_negative: bool) -> bool {
     let preimage = verifying_preimage(status, local_slot_negative);
     let message = &status.message;
     message.public_keys.len() == message.signatures.len()
@@ -152,7 +157,7 @@ fn the_signing_preimage_is_the_references() {
 fn a_negative_slot_is_signed_negative_and_sent_as_its_32_bit_value() {
     let signer = key("delegate one");
     let (state, config) = (state(-3), config(vec![api()]));
-    let status = received(&state, &config, &[&signer]);
+    let status = checked(received(&state, &config, &[&signer]));
     assert!(text(signing_preimage(&state, &config)).contains("\"currentSlot\":-3,"));
     let wire_state = status.message.state.as_ref().unwrap();
     assert_eq!(wire_state.current_slot, Some(4_294_967_293));
@@ -164,10 +169,10 @@ fn a_negative_slot_is_signed_negative_and_sent_as_its_32_bit_value() {
     assert!(!verifies(&status, false));
     assert!(verifies(&status, true));
     // A slot of 2^31 or more turns negative when the verifier's own slot is.
-    let status = received(&self::state(1 << 31), &config, &[&signer]);
+    let status = checked(received(&self::state(1 << 31), &config, &[&signer]));
     assert!(text(verifying_preimage(&status, true)).contains("\"currentSlot\":-2147483648,"));
     // A slot of 0 stays 0.
-    let status = received(&self::state(0), &config, &[&signer]);
+    let status = checked(received(&self::state(0), &config, &[&signer]));
     assert!(verifies(&status, true) && verifies(&status, false));
 }
 
@@ -175,7 +180,7 @@ fn a_negative_slot_is_signed_negative_and_sent_as_its_32_bit_value() {
 fn an_empty_plugin_set_is_signed_but_left_out_by_every_verifier() {
     let signer = key("delegate one");
     let (state, config) = (state(5), config(Vec::new()));
-    let status = received(&state, &config, &[&signer]);
+    let status = checked(received(&state, &config, &[&signer]));
     assert!(text(signing_preimage(&state, &config)).contains("\"plugins\":{}"));
     assert!(!text(verifying_preimage(&status, false)).contains("plugins"));
     assert!(!verifies(&status, false));
@@ -184,7 +189,11 @@ fn an_empty_plugin_set_is_signed_but_left_out_by_every_verifier() {
 #[test]
 fn a_key_listed_twice_signs_twice() {
     let signer = key("delegate one");
-    let status = received(&state(5), &config(vec![api()]), &[&signer, &signer]);
+    let status = checked(received(
+        &state(5),
+        &config(vec![api()]),
+        &[&signer, &signer],
+    ));
     let message = &status.message;
     assert_eq!(message.public_keys.len(), 2);
     assert_eq!(message.public_keys[0], message.public_keys[1]);
@@ -261,7 +270,7 @@ fn an_own_proto_entry_lends_its_fields_to_the_preimage() {
             }
         });
         assert_eq!(result, Ok(()));
-        let preimage = text(verifying_preimage(&status, false));
+        let preimage = text(verifying_preimage(&status.unwrap(), false));
         let at = preimage.find("\"plugins\":").unwrap();
         let end = at + preimage[at..].find("},\"version\"").unwrap();
         preimage[at..=end].to_owned()
@@ -299,12 +308,17 @@ fn an_own_proto_entry_lends_its_fields_to_the_preimage() {
     );
 }
 
-/// A reply signed by one key, changed by `change`, and checked.
-fn check(change: impl FnOnce(&mut ReceivedStatus)) -> (ReceivedStatus, Result<(), ReplyRefused>) {
+/// A reply signed by one key, changed by `change`, and checked: the checked reply when the check
+/// accepts it, and the check's result.
+fn check(
+    change: impl FnOnce(&mut ReceivedStatus),
+) -> (Option<CheckedStatus>, Result<(), ReplyRefused>) {
     let mut status = received(&state(5), &config(vec![api()]), &[&key("delegate one")]);
     change(&mut status);
-    let result = check_reply(&mut status, 53);
-    (status, result)
+    match check_reply(status, 53) {
+        Ok(checked) => (Some(checked), Ok(())),
+        Err(part) => (None, Err(part)),
+    }
 }
 
 fn plugins(status: &mut ReceivedStatus) -> &mut crate::messages::peer::Plugins {
@@ -339,8 +353,9 @@ fn plugin_names_outside_4_to_64_utf16_units_are_removed_after_the_count() {
         (&*format!("a{astral}"), false),
         ("", false),
     ] {
-        let (mut status, result) = check(add_plugin(name, Some(1)));
+        let (status, result) = check(add_plugin(name, Some(1)));
         assert_eq!(result, Ok(()), "{name:?}");
+        let mut status = status.unwrap().into_status();
         assert_eq!(plugins(&mut status).get(name).is_some(), kept, "{name:?}");
         assert_eq!(
             plugins(&mut status).len(),
@@ -377,7 +392,7 @@ fn a_remaining_plugin_needs_a_value_and_a_port_that_fits_16_bits() {
     assert_eq!(check(add_plugin("abc", Some(65_536))).1, Ok(()));
     // A removed name changes the signed bytes back to what the signer signed.
     let (status, result) = check(add_plugin("xyz", Some(1)));
-    assert!(result.is_ok() && verifies(&status, false));
+    assert!(result.is_ok() && status.is_some_and(|status| verifies(&status, false)));
 }
 
 fn header(status: &mut ReceivedStatus) -> &mut crate::messages::peer::StatusHeader {
@@ -393,12 +408,16 @@ fn header(status: &mut ReceivedStatus) -> &mut crate::messages::peer::StatusHead
 
 #[test]
 fn the_generator_key_is_lowercased_and_still_verifies() {
-    let (mut status, result) = check(|status| {
+    let (status, result) = check(|status| {
         let key = header(status).generator_public_key.as_mut().unwrap();
         *key = key.to_uppercase();
     });
     assert_eq!(result, Ok(()));
-    let key = header(&mut status).generator_public_key.clone().unwrap();
+    let status = status.unwrap();
+    let key = header(&mut status.clone().into_status())
+        .generator_public_key
+        .clone()
+        .unwrap();
     assert_eq!(key, key.to_lowercase());
     assert!(verifies(&status, false));
     // The block id is not lowercased: the signed bytes change.
@@ -406,7 +425,7 @@ fn the_generator_key_is_lowercased_and_still_verifies() {
         let id = header(status).id.as_mut().unwrap();
         *id = id.to_uppercase();
     });
-    assert!(result.is_ok() && !verifies(&status, false));
+    assert!(result.is_ok() && status.is_some_and(|status| !verifies(&status, false)));
 }
 
 /// A change to a reply.

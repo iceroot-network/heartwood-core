@@ -7,7 +7,8 @@
 #
 # Each workspace crate may depend (normal and build dependencies) only on the crates its rule
 # lists; development dependencies are not checked. A crate without a rule fails the check, so a new
-# crate needs a rule here first. Needs cargo on PATH; reads the lockfile only (--locked --offline).
+# crate needs a rule here first. Some external crates may be a direct dependency of named crates
+# only (ONLY_UNDER). Needs cargo on PATH; reads the lockfile only (--locked --offline).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -21,8 +22,19 @@ declare -A ALLOWED=(
     [heartwood-p2p-wire]="heartwood-crypto heartwood-kernel"
     [heartwood-database]="heartwood-crypto heartwood-kernel"
     [heartwood-pool]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions"
-    [heartwood-blockchain]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions heartwood-database heartwood-pool"
-    [heartwood-difftest]="heartwood-crypto heartwood-kernel heartwood-logger heartwood-p2p-wire heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-blockchain"
+    [heartwood-blockchain]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-p2p"
+    [heartwood-p2p]="heartwood-crypto heartwood-kernel heartwood-p2p-wire"
+    [heartwood-api]="heartwood-crypto heartwood-kernel heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-p2p"
+    [heartwood-core]="heartwood-crypto heartwood-kernel heartwood-logger heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-p2p-wire heartwood-p2p heartwood-blockchain heartwood-api"
+    [heartwood-difftest]="heartwood-crypto heartwood-kernel heartwood-logger heartwood-p2p heartwood-p2p-wire heartwood-state heartwood-transactions heartwood-database heartwood-pool heartwood-blockchain heartwood-api heartwood-core"
+)
+# external crate: the only workspace crates that may depend on it directly
+declare -A ONLY_UNDER=(
+    [tokio-tungstenite]="heartwood-p2p"
+    [axum]="heartwood-api"
+    [hyper]="heartwood-api"
+    [hyper-util]="heartwood-api"
+    [clap]="heartwood-core"
 )
 # The consensus crates, and the crates none of them may pull in.
 CONSENSUS="heartwood-kernel heartwood-state heartwood-transactions"
@@ -54,6 +66,21 @@ PY
             *" $dep "*) ;;
             *) echo "check-layers: $crate depends on $dep, which its layer does not allow" >&2; fail=1 ;;
         esac
+    done
+    external=$(python3 - "$metadata" "$crate" <<'PY'
+import json, sys
+meta = json.load(open(sys.argv[1]))
+pkg = next(p for p in meta["packages"] if p["name"] == sys.argv[2])
+print(" ".join(sorted({d["name"] for d in pkg["dependencies"] if d.get("kind") != "dev"})))
+PY
+)
+    for dep in $external; do
+        if [ -n "${ONLY_UNDER[$dep]+set}" ]; then
+            case " ${ONLY_UNDER[$dep]} " in
+                *" $crate "*) ;;
+                *) echo "check-layers: $crate depends on $dep, which only ${ONLY_UNDER[$dep]} may" >&2; fail=1 ;;
+            esac
+        fi
     done
     echo "check-layers: $crate -> ${deps:-(no workspace crate)}"
 done

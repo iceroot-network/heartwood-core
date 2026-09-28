@@ -4,24 +4,28 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use heartwood_difftest::cli::{self, Command, GenesisArgs, JudgeArgs, L1Args, L2Args, USAGE};
+use heartwood_difftest::cli::{
+    self, Command, GenesisArgs, JudgeArgs, L1Args, L2Args, L2ProcessorArgs, USAGE,
+};
 use heartwood_difftest::corpus::{self, Corpus};
 use heartwood_difftest::genesis::{self, Built};
 use heartwood_difftest::levels::l1::{self, L1Options, Property};
 use heartwood_difftest::levels::l2::{self, L2Options};
+use heartwood_difftest::levels::l2_processor::{self, L2ProcessorOptions};
 use heartwood_difftest::levels::{Level, l0};
 use heartwood_difftest::oracle::GenOptions;
-use heartwood_difftest::report::describe_meta;
+use heartwood_difftest::report::{CaseResult, Outcome, Report, describe_meta};
 use heartwood_difftest::restart::RestartPlan;
 use heartwood_difftest::store;
 use heartwood_difftest::strategies::transactions::TxContext;
 use heartwood_difftest::subjects::Devnet;
 use heartwood_difftest::vectors::VectorSet;
-use heartwood_difftest::{Error, Result, replay, subject};
+use heartwood_difftest::{Error, Result, api, live, replay, runtime_kill, subject};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let outcome = cli::parse(&args).and_then(execute);
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let strict = cli::take_strict(&mut args);
+    let outcome = cli::parse(&args).and_then(|command| execute(command, strict));
     match outcome {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(1),
@@ -40,8 +44,18 @@ fn main() -> ExitCode {
     }
 }
 
-/// Run a command; `Ok(false)` means it ran and found differences.
-fn execute(command: Command) -> Result<bool> {
+/// The verdict of a comparing command's `report`: strict, a case that was not compared fails it
+/// too, and the report says so.
+fn verdict(report: &Report, strict: bool) -> bool {
+    if let Some(note) = report.strict_note(strict) {
+        println!("{note}");
+    }
+    report.passes(strict)
+}
+
+/// Run a command; `Ok(false)` means it ran and found differences (or, `strict`, left cases
+/// uncompared).
+fn execute(command: Command, strict: bool) -> Result<bool> {
     let env = |name: &str| std::env::var(name).ok();
     match command {
         Command::Help => {
@@ -161,7 +175,7 @@ fn execute(command: Command) -> Result<bool> {
             }
             let report = l0::run(&set, &subject::heartwood(devnet));
             print!("{report}");
-            Ok(report.is_success())
+            Ok(verdict(&report, strict))
         }
         Command::Genesis(args) => write_genesis(&args),
         Command::OracleReplay(args) => {
@@ -199,10 +213,10 @@ fn execute(command: Command) -> Result<bool> {
                 replayed.accepted,
                 replayed.report.results.len()
             );
-            Ok(replayed.report.is_success())
+            Ok(verdict(&replayed.report, strict))
         }
-        Command::RunL1(args) => run_l1(&args, env),
-        Command::RunL2(args) => run_l2(&args, env),
+        Command::RunL1(args) => run_l1(&args, env, strict),
+        Command::RunL2(args) => run_l2(&args, env, strict),
         Command::CorpusImport {
             archives,
             out,
@@ -258,19 +272,51 @@ fn execute(command: Command) -> Result<bool> {
             kills,
             seed,
             max_delay_ms,
+            runtime,
         } => {
             let loaded = Corpus::load(&dir)?;
             let exe = std::env::current_exe()
                 .map_err(|e| Error::Usage(format!("cannot find this program: {e}")))?;
-            let report = store::crash(
-                &loaded,
-                &exe,
-                kills,
-                seed,
-                std::time::Duration::from_millis(max_delay_ms),
-            )?;
+            let max_delay = std::time::Duration::from_millis(max_delay_ms);
+            let report = if runtime {
+                runtime_kill::crash(&loaded, &exe, kills, seed, max_delay)?
+            } else {
+                store::crash(&loaded, &exe, kills, seed, max_delay)?
+            };
             print!("{report}");
-            Ok(report.is_success())
+            Ok(verdict(&report, strict))
+        }
+        Command::RunL2Processor(args) => run_l2_processor(&args, env, strict),
+        Command::LiveCheck { dir } => {
+            let report = live::check(&dir)?;
+            print!("{report}");
+            Ok(verdict(&report, strict))
+        }
+        Command::ApiCompare(args) => {
+            let mut report = api::compare(&args)?;
+            // Recorded answers of a Heartwood relay count only for the tree whose relay answered.
+            if let api::ApiCompareArgs::Recorded { run } = &args
+                && let Ok(manifest) = live::run::Manifest::load(run)
+                && let Some(binding) =
+                    live::run::relay_binding(&manifest, Path::new(live::run::RELAY_BINARY))
+            {
+                report.results.insert(
+                    0,
+                    CaseResult {
+                        file: run.join("run.json").display().to_string(),
+                        line: 0,
+                        op: "relay".into(),
+                        label: "the relay that answered is this tree's".into(),
+                        height: 0,
+                        outcome: match binding {
+                            Ok(_) => Outcome::Pass,
+                            Err(why) => Outcome::HarnessError(why),
+                        },
+                    },
+                );
+            }
+            print!("{report}");
+            Ok(verdict(&report, strict))
         }
         Command::Run { level, .. } => Err(Error::NotYet(format!(
             "{} is not built yet; it arrives with {}",
@@ -285,7 +331,7 @@ fn default_vectors() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/crypto/tests/vectors")
 }
 
-fn run_l1(args: &L1Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
+fn run_l1(args: &L1Args, env: impl Fn(&str) -> Option<String>, strict: bool) -> Result<bool> {
     let vectors = args.vectors.clone().unwrap_or_else(default_vectors);
     let set = VectorSet::load(&vectors)?;
     let devnet = Devnet::from_vectors(&set)?.ok_or_else(|| {
@@ -312,6 +358,7 @@ fn run_l1(args: &L1Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
             cases: args.cases,
             seed: args.seed,
             regressions: args.regressions.clone(),
+            min_reach: args.min_reach,
         },
     )?;
     print!("{}", run.report);
@@ -321,7 +368,7 @@ fn run_l1(args: &L1Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
             println!("    {n:>7}  {class}");
         }
     }
-    Ok(run.report.is_success())
+    Ok(verdict(&run.report, strict))
 }
 
 /// `difftest corpus judge`: write the restart plan when asked, run the judge, record its output.
@@ -376,6 +423,9 @@ fn judge(args: &JudgeArgs, env: impl Fn(&str) -> Option<String>) -> Result<bool>
     if let Some(to) = args.to {
         extra.extend(["--to".to_string(), to.to_string()]);
     }
+    if args.processor {
+        extra.push("--processor".to_string());
+    }
     let ok = oracle.judge(dir, &work, &extra)?;
     let recorded = corpus::record_judge(dir, &work)?;
     println!(
@@ -395,7 +445,7 @@ fn judge(args: &JudgeArgs, env: impl Fn(&str) -> Option<String>) -> Result<bool>
     Ok(ok && recorded)
 }
 
-fn run_l2(args: &L2Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
+fn run_l2(args: &L2Args, env: impl Fn(&str) -> Option<String>, strict: bool) -> Result<bool> {
     let corpus = Corpus::load(&args.dir)?;
     let mut server = match &args.oracle {
         Some(oracle) => Some(oracle.resolve(env)?.server()?),
@@ -428,7 +478,30 @@ fn run_l2(args: &L2Args, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
             println!("    {verdict:<4} {}", r.label);
         }
     }
-    Ok(report.is_success())
+    Ok(verdict(&report, strict))
+}
+
+fn run_l2_processor(
+    args: &L2ProcessorArgs,
+    env: impl Fn(&str) -> Option<String>,
+    strict: bool,
+) -> Result<bool> {
+    let corpus = Corpus::load(&args.dir)?;
+    let mut server = match &args.oracle {
+        Some(oracle) => Some(oracle.resolve(env)?.server()?),
+        None => None,
+    };
+    let report = l2_processor::run(
+        &corpus,
+        &L2ProcessorOptions {
+            chunks: args.chunks,
+            to: args.to,
+            synthetic: args.synthetic,
+        },
+        server.as_mut(),
+    )?;
+    print!("{report}");
+    Ok(verdict(&report, strict))
 }
 
 /// Write a chain definition, and compare it with the devnet generator's output when asked.

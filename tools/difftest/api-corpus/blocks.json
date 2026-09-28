@@ -1,0 +1,1358 @@
+[
+ {
+  "name": "blocks/last",
+  "path": "/api/blocks/last"
+ },
+ {
+  "name": "blocks/last/transform-false",
+  "path": "/api/blocks/last",
+  "query": "transform=false"
+ },
+ {
+  "name": "blocks/last/transform-true",
+  "path": "/api/blocks/last",
+  "query": "transform=true"
+ },
+ {
+  "name": "blocks/last/transform-upper",
+  "path": "/api/blocks/last",
+  "query": "transform=TRUE"
+ },
+ {
+  "name": "blocks/last/transform-mixed",
+  "path": "/api/blocks/last",
+  "query": "transform=False"
+ },
+ {
+  "name": "blocks/last/transform-one",
+  "path": "/api/blocks/last",
+  "query": "transform=1"
+ },
+ {
+  "name": "blocks/last/transform-empty",
+  "path": "/api/blocks/last",
+  "query": "transform="
+ },
+ {
+  "name": "blocks/last/transform-list",
+  "path": "/api/blocks/last",
+  "query": "transform=false,true"
+ },
+ {
+  "name": "blocks/last/unknown-key",
+  "path": "/api/blocks/last",
+  "query": "foo=bar"
+ },
+ {
+  "name": "blocks/last/page-not-allowed",
+  "path": "/api/blocks/last",
+  "query": "page=1"
+ },
+ {
+  "name": "blocks/last/trailing-slash",
+  "path": "/api/blocks/last/"
+ },
+ {
+  "name": "blocks/show/genesis",
+  "path": "/api/blocks/1"
+ },
+ {
+  "name": "blocks/show/height-2",
+  "path": "/api/blocks/2"
+ },
+ {
+  "name": "blocks/show/tip",
+  "path": "/api/blocks/${tipHeight}"
+ },
+ {
+  "name": "blocks/show/tip-id",
+  "path": "/api/blocks/${tipId}"
+ },
+ {
+  "name": "blocks/show/tip-raw",
+  "path": "/api/blocks/${tipHeight}",
+  "query": "transform=false"
+ },
+ {
+  "name": "blocks/show/tip-id-raw",
+  "path": "/api/blocks/${tipId}",
+  "query": "transform=false"
+ },
+ {
+  "name": "blocks/show/with-transactions",
+  "path": "/api/blocks/${transferHeight}"
+ },
+ {
+  "name": "blocks/show/with-transactions-raw",
+  "path": "/api/blocks/${transferHeight}",
+  "query": "transform=false"
+ },
+ {
+  "name": "blocks/show/genesis-raw",
+  "path": "/api/blocks/1",
+  "query": "transform=false"
+ },
+ {
+  "name": "blocks/show/exponent",
+  "path": "/api/blocks/1e2"
+ },
+ {
+  "name": "blocks/show/leading-zeros",
+  "path": "/api/blocks/007"
+ },
+ {
+  "name": "blocks/show/spaced",
+  "path": "/api/blocks/%207"
+ },
+ {
+  "name": "blocks/show/unknown-id",
+  "path": "/api/blocks/0000000000000000000000000000000000000000000000000000000000000000"
+ },
+ {
+  "name": "blocks/show/upper-id",
+  "path": "/api/blocks/${tipId|upper}"
+ },
+ {
+  "name": "blocks/show/large-height",
+  "path": "/api/blocks/99999999999"
+ },
+ {
+  "name": "blocks/show/height-0",
+  "path": "/api/blocks/0"
+ },
+ {
+  "name": "blocks/show/negative",
+  "path": "/api/blocks/-1"
+ },
+ {
+  "name": "blocks/show/fraction",
+  "path": "/api/blocks/1.5"
+ },
+ {
+  "name": "blocks/show/text",
+  "path": "/api/blocks/abc"
+ },
+ {
+  "name": "blocks/show/id-prefix",
+  "path": "/api/blocks/${tipId|head:10}"
+ },
+ {
+  "name": "blocks/show/unsafe",
+  "path": "/api/blocks/9007199254740993"
+ },
+ {
+  "name": "blocks/show/unknown-key",
+  "path": "/api/blocks/${tipHeight}",
+  "query": "foo=1"
+ },
+ {
+  "name": "blocks/show/tip-plus-1",
+  "path": "/api/blocks/${tipHeight+1}",
+  "documented": "heightAboveTip"
+ },
+ {
+  "name": "blocks/show/tip-plus-100",
+  "path": "/api/blocks/${tipHeight+100}",
+  "documented": "heightAboveTip"
+ },
+ {
+  "name": "blocks/transactions/transfer-block",
+  "path": "/api/blocks/${transferHeight}/transactions"
+ },
+ {
+  "name": "blocks/transactions/transfer-block-id",
+  "path": "/api/blocks/${transferBlock}/transactions"
+ },
+ {
+  "name": "blocks/transactions/transfer-block-raw",
+  "path": "/api/blocks/${transferHeight}/transactions",
+  "query": "transform=false"
+ },
+ {
+  "name": "blocks/transactions/genesis-page-2",
+  "path": "/api/blocks/1/transactions",
+  "query": "page=2&limit=50"
+ },
+ {
+  "name": "blocks/transactions/unknown-id",
+  "path": "/api/blocks/0000000000000000000000000000000000000000000000000000000000000000/transactions"
+ },
+ {
+  "name": "blocks/transactions/upper-id",
+  "path": "/api/blocks/${tipId|upper}/transactions"
+ },
+ {
+  "name": "blocks/transactions/text-no-match",
+  "path": "/api/blocks/zz/transactions"
+ },
+ {
+  "name": "blocks/transactions/tip-plus-1",
+  "path": "/api/blocks/${tipHeight+1}/transactions",
+  "documented": "heightAboveTip"
+ },
+ {
+  "name": "blocks/transactions/zero",
+  "path": "/api/blocks/0/transactions",
+  "documented": "heightAboveTip"
+ },
+ {
+  "name": "blocks/transactions/letter",
+  "path": "/api/blocks/a/transactions",
+  "documented": "heightAboveTip"
+ },
+ {
+  "name": "blocks/transactions/id-prefix",
+  "path": "/api/blocks/${tipId|head:12}/transactions",
+  "documented": "heightAboveTip"
+ },
+ {
+  "name": "blocks/transactions/genesis/default",
+  "path": "/api/blocks/1/transactions"
+ },
+ {
+  "name": "blocks/transactions/genesis/transform-false",
+  "path": "/api/blocks/1/transactions",
+  "query": "transform=false"
+ },
+ {
+  "name": "blocks/transactions/genesis/limit-10",
+  "path": "/api/blocks/1/transactions",
+  "query": "limit=10"
+ },
+ {
+  "name": "blocks/transactions/genesis/page-2",
+  "path": "/api/blocks/1/transactions",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "blocks/transactions/genesis/page-3-raw",
+  "path": "/api/blocks/1/transactions",
+  "query": "page=3&limit=10&transform=false"
+ },
+ {
+  "name": "blocks/transactions/genesis/offset-5",
+  "path": "/api/blocks/1/transactions",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "blocks/transactions/genesis/offset-0-ignored",
+  "path": "/api/blocks/1/transactions",
+  "query": "offset=0&page=2&limit=10"
+ },
+ {
+  "name": "blocks/transactions/genesis/offset-over-page",
+  "path": "/api/blocks/1/transactions",
+  "query": "offset=5&page=3&limit=10"
+ },
+ {
+  "name": "blocks/transactions/genesis/page-beyond",
+  "path": "/api/blocks/1/transactions",
+  "query": "page=999"
+ },
+ {
+  "name": "blocks/transactions/genesis/limit-100",
+  "path": "/api/blocks/1/transactions",
+  "query": "limit=100"
+ },
+ {
+  "name": "blocks/transactions/genesis/spelling-kept",
+  "path": "/api/blocks/1/transactions",
+  "query": "limit=05&page=02&transform=FALSE"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/limit-0",
+  "path": "/api/blocks/1/transactions",
+  "query": "limit=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/limit-101",
+  "path": "/api/blocks/1/transactions",
+  "query": "limit=101"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/limit-negative",
+  "path": "/api/blocks/1/transactions",
+  "query": "limit=-1"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/limit-text",
+  "path": "/api/blocks/1/transactions",
+  "query": "limit=abc"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/limit-fraction",
+  "path": "/api/blocks/1/transactions",
+  "query": "limit=1.5"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/page-0",
+  "path": "/api/blocks/1/transactions",
+  "query": "page=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/page-negative",
+  "path": "/api/blocks/1/transactions",
+  "query": "page=-1"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/offset-negative",
+  "path": "/api/blocks/1/transactions",
+  "query": "offset=-1"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/offset-text",
+  "path": "/api/blocks/1/transactions",
+  "query": "offset=abc"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/limit-twice",
+  "path": "/api/blocks/1/transactions",
+  "query": "limit=5&limit=6"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/unknown-key",
+  "path": "/api/blocks/1/transactions",
+  "query": "foo=bar"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/unknown-nested",
+  "path": "/api/blocks/1/transactions",
+  "query": "a.b=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/empty-key",
+  "path": "/api/blocks/1/transactions",
+  "query": "limit=5&=x"
+ },
+ {
+  "name": "blocks/transactions/genesis/refused/limit-trailing-comma",
+  "path": "/api/blocks/1/transactions",
+  "query": "limit=1,"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/timestamp:desc,sequence:desc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=timestamp:desc,sequence:desc"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/timestamp:asc,sequence:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=timestamp:asc,sequence:asc"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/blockHeight:desc,sequence:desc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=blockHeight:desc,sequence:desc"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/id:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=id:asc"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/id:desc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=id:desc"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/fee:desc,id:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=fee:desc,id:asc"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/two-keys",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=timestamp:asc&orderBy=sequence:asc"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/page-2",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=timestamp:asc,sequence:asc&page=2&limit=5"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/timestamp:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=timestamp:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/amount:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=amount:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/amount:desc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=amount:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/fee:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=fee:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/nonce:desc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=nonce:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/type:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=type:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/typeGroup:desc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=typeGroup:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/blockHeight:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=blockHeight:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/sequence:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=sequence:asc&transform=false",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/version:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=version:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/memo:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=memo:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/memo:desc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=memo:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/senderPublicKey:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=senderPublicKey:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/burnedFee:desc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=burnedFee:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/recipientId:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=recipientId:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/senderId:asc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=senderId:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/address:desc",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=address:desc"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/refused/capital-property",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=Timestamp:desc"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/refused/capital-direction",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=timestamp:DESC"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/refused/no-direction",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=timestamp"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/refused/empty",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy="
+ },
+ {
+  "name": "blocks/transactions/genesis/order/refused/unknown",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=foo:asc"
+ },
+ {
+  "name": "blocks/transactions/genesis/order/refused/bad-direction",
+  "path": "/api/blocks/1/transactions",
+  "query": "orderBy=timestamp:up"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockHeight",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockHeight=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockId",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockId=${gBlock}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/sequence",
+  "path": "/api/blocks/1/transactions",
+  "query": "sequence=5"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/timestamp",
+  "path": "/api/blocks/1/transactions",
+  "query": "timestamp=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/nonce",
+  "path": "/api/blocks/1/transactions",
+  "query": "nonce=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderPublicKey",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderPublicKey=${gKey}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/type",
+  "path": "/api/blocks/1/transactions",
+  "query": "type=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/typeGroup",
+  "path": "/api/blocks/1/transactions",
+  "query": "typeGroup=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+senderId",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&senderId=${gSender}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+recipientId",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&recipientId=${gSender}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+id",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&id=${gTx}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+version",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&version=3"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+blockHeight",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&blockHeight=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+blockId",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&blockId=${gBlock}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+sequence",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&sequence=5"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+timestamp",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&timestamp=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+nonce",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&nonce=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+senderPublicKey",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&senderPublicKey=${gKey}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+type",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&type=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+typeGroup",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&typeGroup=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/address+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "address=${gSender}&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+recipientId",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&recipientId=${gSender}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+id",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&id=${gTx}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+version",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&version=3"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+blockHeight",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&blockHeight=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+blockId",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&blockId=${gBlock}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+sequence",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&sequence=5"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+timestamp",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&timestamp=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+nonce",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&nonce=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+senderPublicKey",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&senderPublicKey=${gKey}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+type",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&type=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+typeGroup",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&typeGroup=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderId+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderId=${gSender}&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+id",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&id=${gTx}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+version",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&version=3"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+blockHeight",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&blockHeight=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+blockId",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&blockId=${gBlock}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+sequence",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&sequence=5"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+timestamp",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&timestamp=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+nonce",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&nonce=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+senderPublicKey",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&senderPublicKey=${gKey}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+type",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&type=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+typeGroup",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&typeGroup=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/recipientId+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "recipientId=${gSender}&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+version",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&version=3"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+blockHeight",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&blockHeight=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+blockId",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&blockId=${gBlock}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+sequence",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&sequence=5"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+timestamp",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&timestamp=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+nonce",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&nonce=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+senderPublicKey",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&senderPublicKey=${gKey}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+type",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&type=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+typeGroup",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&typeGroup=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/id+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "id=${gTx}&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version+blockHeight",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3&blockHeight=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version+blockId",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3&blockId=${gBlock}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version+sequence",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3&sequence=5"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version+timestamp",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3&timestamp=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version+nonce",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3&nonce=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version+senderPublicKey",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3&senderPublicKey=${gKey}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version+type",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3&type=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version+typeGroup",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3&typeGroup=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version+memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3&memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/version+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "version=3&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockHeight+blockId",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockHeight=1&blockId=${gBlock}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockHeight+sequence",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockHeight=1&sequence=5"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockHeight+timestamp",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockHeight=1&timestamp=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockHeight+nonce",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockHeight=1&nonce=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockHeight+senderPublicKey",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockHeight=1&senderPublicKey=${gKey}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockHeight+type",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockHeight=1&type=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockHeight+typeGroup",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockHeight=1&typeGroup=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockHeight+memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockHeight=1&memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockHeight+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockHeight=1&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockHeight+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockHeight=1&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockHeight+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockHeight=1&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockHeight+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockHeight=1&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockId+sequence",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockId=${gBlock}&sequence=5"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockId+timestamp",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockId=${gBlock}&timestamp=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockId+nonce",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockId=${gBlock}&nonce=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockId+senderPublicKey",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockId=${gBlock}&senderPublicKey=${gKey}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockId+type",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockId=${gBlock}&type=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockId+typeGroup",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockId=${gBlock}&typeGroup=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockId+memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockId=${gBlock}&memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockId+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockId=${gBlock}&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockId+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockId=${gBlock}&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockId+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockId=${gBlock}&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/blockId+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "blockId=${gBlock}&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/sequence+timestamp",
+  "path": "/api/blocks/1/transactions",
+  "query": "sequence=5&timestamp=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/sequence+nonce",
+  "path": "/api/blocks/1/transactions",
+  "query": "sequence=5&nonce=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/sequence+senderPublicKey",
+  "path": "/api/blocks/1/transactions",
+  "query": "sequence=5&senderPublicKey=${gKey}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/sequence+type",
+  "path": "/api/blocks/1/transactions",
+  "query": "sequence=5&type=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/sequence+typeGroup",
+  "path": "/api/blocks/1/transactions",
+  "query": "sequence=5&typeGroup=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/sequence+memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "sequence=5&memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/sequence+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "sequence=5&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/sequence+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "sequence=5&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/sequence+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "sequence=5&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/sequence+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "sequence=5&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/timestamp+nonce",
+  "path": "/api/blocks/1/transactions",
+  "query": "timestamp=0&nonce=1"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/timestamp+senderPublicKey",
+  "path": "/api/blocks/1/transactions",
+  "query": "timestamp=0&senderPublicKey=${gKey}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/timestamp+type",
+  "path": "/api/blocks/1/transactions",
+  "query": "timestamp=0&type=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/timestamp+typeGroup",
+  "path": "/api/blocks/1/transactions",
+  "query": "timestamp=0&typeGroup=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/timestamp+memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "timestamp=0&memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/timestamp+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "timestamp=0&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/timestamp+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "timestamp=0&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/timestamp+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "timestamp=0&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/timestamp+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "timestamp=0&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/nonce+senderPublicKey",
+  "path": "/api/blocks/1/transactions",
+  "query": "nonce=1&senderPublicKey=${gKey}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/nonce+type",
+  "path": "/api/blocks/1/transactions",
+  "query": "nonce=1&type=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/nonce+typeGroup",
+  "path": "/api/blocks/1/transactions",
+  "query": "nonce=1&typeGroup=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/nonce+memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "nonce=1&memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/nonce+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "nonce=1&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/nonce+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "nonce=1&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/nonce+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "nonce=1&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/nonce+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "nonce=1&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderPublicKey+type",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderPublicKey=${gKey}&type=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderPublicKey+typeGroup",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderPublicKey=${gKey}&typeGroup=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderPublicKey+memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderPublicKey=${gKey}&memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderPublicKey+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderPublicKey=${gKey}&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderPublicKey+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderPublicKey=${gKey}&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderPublicKey+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderPublicKey=${gKey}&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/senderPublicKey+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "senderPublicKey=${gKey}&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/type+typeGroup",
+  "path": "/api/blocks/1/transactions",
+  "query": "type=2&typeGroup=2"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/type+memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "type=2&memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/type+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "type=2&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/type+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "type=2&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/type+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "type=2&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/type+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "type=2&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/typeGroup+memo",
+  "path": "/api/blocks/1/transactions",
+  "query": "typeGroup=2&memo=%25"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/typeGroup+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "typeGroup=2&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/typeGroup+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "typeGroup=2&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/typeGroup+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "typeGroup=2&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/typeGroup+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "typeGroup=2&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/memo+amount",
+  "path": "/api/blocks/1/transactions",
+  "query": "memo=%25&amount=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/memo+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "memo=%25&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/memo+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "memo=%25&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/memo+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "memo=%25&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/amount+fee",
+  "path": "/api/blocks/1/transactions",
+  "query": "amount=0&fee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/amount+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "amount=0&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/amount+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "amount=0&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/fee+burnedFee",
+  "path": "/api/blocks/1/transactions",
+  "query": "fee=0&burnedFee=0"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/fee+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "fee=0&asset.delegate.username=${gName}"
+ },
+ {
+  "name": "blocks/transactions/genesis/criteria/burnedFee+asset",
+  "path": "/api/blocks/1/transactions",
+  "query": "burnedFee=0&asset.delegate.username=${gName}"
+ }
+]

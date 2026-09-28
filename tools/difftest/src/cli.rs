@@ -29,12 +29,14 @@ Usage:
   difftest vectors diff DIR DIR   compare two oracle runs record by record (meta excluded)
   difftest run l0 DIR             compare golden vectors with Heartwood's implementations
   difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR]
-                  [--regressions DIR] [ORACLE]
-                                  random and mutated cases of the properties (P1 to P12, or
+                  [--regressions DIR] [--min-reach N] [ORACLE]
+                                  random and mutated cases of the properties (P1 to P16, or
                                   their names; all by default), one oracle call each; 256
                                   cases and seed 1 by default; DIR is a vector set with the
                                   genesis class [packages/crypto/tests/vectors]; the minimal
-                                  case of a failed property is written to --regressions
+                                  case of a failed property is written to --regressions;
+                                  --min-reach fails P13 when the reference's answers reach a
+                                  reachable result or an unchained status fewer than N times
   difftest run l2 DIR [--synthetic] [--restart] [--memory] [--to H] [ORACLE]
                                   replay the corpus DIR in Heartwood through a new store and
                                   compare every step with the oracle's digest lines, then the
@@ -44,6 +46,12 @@ Usage:
                                   --restart also replays it with the restarts of its restart
                                   plan; --memory replays without a store; --to H replays the
                                   chain cut at H, as the judge cut it
+  difftest run l2 DIR --processor [--chunks reference|1] [--synthetic] [--to H] [ORACLE]
+                                  replay the corpus DIR through the download path, the
+                                  enqueueing's jobs and the processor, committed per job, and
+                                  compare every line with the judge's; both job cuts unless
+                                  --chunks names one; --synthetic runs the synthetic processor
+                                  and fork cases instead (needs the oracle)
   difftest run l3|l4              later levels (see `difftest levels`)
   difftest corpus import ARCHIVE... --out DIR [--seed TEXT]
                                   join the devnet tooling's archives of one chain (in order)
@@ -51,31 +59,45 @@ Usage:
                                   seed, checked against the genesis block [the devnet
                                   tooling's default seed]
   difftest corpus judge DIR [--restarts every|rounds] [--restart-plan FILE] [--to H]
-                            [--dump H,...] [ORACLE]
+                            [--dump H,...] [--processor] [ORACLE]
                                   run the oracle's judge on the corpus: its digest lines and
                                   anchor results are added to the corpus; --restarts writes a
                                   restart plan of that kind into the corpus first (every
                                   height, or the round ends, the first blocks of rounds and 20
                                   seeded heights), --restart-plan copies one in; with a restart
                                   plan the judge also writes the reference's restart lines;
-                                  --to H judges the chain cut at H
+                                  --to H judges the chain cut at H; --processor also records
+                                  each block's result through the reference's job, one block
+                                  per job
   difftest store replay DIR --db PATH [--to H]
                                   continue replaying the corpus DIR through the store under
                                   PATH, one block per chunk, printing each committed height
   difftest store check DIR --db PATH
                                   restore the store under PATH by the table and the replay
                                   path and print each mode's tip and restart line
-  difftest store crash DIR [--kills N] [--seed S] [--max-delay MS]
+  difftest store crash DIR [--kills N] [--seed S] [--max-delay MS] [--runtime]
                                   the kill test: replay DIR through a store in a child process
                                   killed with SIGKILL N times (200) after up to MS ms (1500),
-                                  and check each restore
+                                  and check each restore; --runtime kills a relay that imports
+                                  DIR from a mock peer instead
   difftest corpus verify DIR      check a corpus against its manifest
+  difftest live check DIR         the comparisons of a live run's directory: the judge of its
+                                  chain, each Heartwood node's lines and store, the step
+                                  reports, the API answers, the ban scan and the invariants
+  difftest api compare --run DIR  judge the route corpus's answers that a live run recorded
+  difftest api compare --left URL --right URL [--corpus DIR] --out DIR
+                                  send the route corpus to two nodes alternately, record and
+                                  judge their answers [tools/difftest/api-corpus]
   difftest levels                 the five levels and what each one arrives with
   difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--compare DIR]
                                   write the devnet chain definition of a genesis profile for a
                                   seed and an epoch (a whole second, 2026-01-01T00:00:00.000Z);
                                   --compare checks it against the output of the devnet
                                   generator for the same inputs
+
+--strict, with any command that compares (run, oracle replay, store crash, live check, api
+compare): a case that was skipped or has no Rust implementation fails the run too, as a failed
+case does; the Makefile's gate targets pass it.
 
 ORACLE, where the reference runs (the flags win over the environment):
   --image TAG        in the oracle container                     [$DIFFTEST_IMAGE]
@@ -231,12 +253,38 @@ pub enum Command {
         seed: u64,
         /// The longest delay before a kill, in milliseconds.
         max_delay_ms: u64,
+        /// Kill a relay that imports the corpus from a mock peer.
+        runtime: bool,
     },
     /// `difftest corpus verify`: check a corpus's manifest.
     CorpusVerify {
         /// The corpus.
         dir: PathBuf,
     },
+    /// `difftest run l2 --processor`: a corpus through the processor.
+    RunL2Processor(L2ProcessorArgs),
+    /// `difftest live check`: a live run's comparisons.
+    LiveCheck {
+        /// The run directory.
+        dir: PathBuf,
+    },
+    /// `difftest api compare`: the route corpus's answers.
+    ApiCompare(crate::api::ApiCompareArgs),
+}
+
+/// The arguments of `difftest run l2 --processor`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct L2ProcessorArgs {
+    /// Where the oracle runs, when one is given on the command line.
+    pub oracle: Option<OracleArgs>,
+    /// The corpus.
+    pub dir: PathBuf,
+    /// The job cut, both when `None`.
+    pub chunks: Option<crate::levels::l2_processor::Chunks>,
+    /// Run the synthetic processor and fork cases.
+    pub synthetic: bool,
+    /// Replay the chain cut at this height.
+    pub to: Option<u32>,
 }
 
 /// The arguments of `difftest run l1`.
@@ -254,6 +302,8 @@ pub struct L1Args {
     pub vectors: Option<PathBuf>,
     /// Where minimal failing cases are written.
     pub regressions: Option<PathBuf>,
+    /// How often P13 must reach each reachable result and unchained status (0: no check).
+    pub min_reach: u32,
 }
 
 /// The arguments of `difftest run l2`.
@@ -288,6 +338,8 @@ pub struct JudgeArgs {
     pub restart_plan: Option<PathBuf>,
     /// Judge the chain cut at this height.
     pub to: Option<u32>,
+    /// Also record each block's result through the reference's job.
+    pub processor: bool,
 }
 
 /// The arguments of `difftest oracle replay`.
@@ -322,6 +374,13 @@ pub struct GenesisArgs {
     pub force: bool,
     /// A directory written by the devnet generator, to compare with.
     pub compare: Option<PathBuf>,
+}
+
+/// Remove the `--strict` switch from `args`, wherever it stands; whether it was there.
+pub fn take_strict(args: &mut Vec<String>) -> bool {
+    let before = args.len();
+    args.retain(|arg| arg != "--strict");
+    args.len() != before
 }
 
 fn usage(message: impl Into<String>) -> Error {
@@ -379,6 +438,8 @@ pub fn parse(args: &[String]) -> Result<Command> {
             })
         }
         ["corpus", "verify", dir] => Ok(Command::CorpusVerify { dir: dir.into() }),
+        ["live", "check", dir] => Ok(Command::LiveCheck { dir: dir.into() }),
+        ["api", "compare", rest @ ..] => parse_api_compare(rest),
         ["corpus", "judge", dir, rest @ ..] => {
             let mut judge = JudgeArgs {
                 oracle: OracleArgs::default(),
@@ -387,10 +448,12 @@ pub fn parse(args: &[String]) -> Result<Command> {
                 restarts: None,
                 restart_plan: None,
                 to: None,
+                processor: false,
             };
             let mut it = rest.iter();
             while let Some(&flag) = it.next() {
                 match flag {
+                    "--processor" => judge.processor = true,
                     "--dump" => judge.dump = heights(value(flag, it.next())?)?,
                     "--restarts" => judge.restarts = Some(value(flag, it.next())?.parse()?),
                     "--restart-plan" => {
@@ -427,8 +490,13 @@ pub fn parse(args: &[String]) -> Result<Command> {
         }),
         ["store", "crash", dir, rest @ ..] => {
             let (mut kills, mut seed, mut max_delay_ms) = (200, 1, 1_500);
+            let mut runtime = false;
             let mut it = rest.iter();
             while let Some(&flag) = it.next() {
+                if flag == "--runtime" {
+                    runtime = true;
+                    continue;
+                }
                 let number = |v: &str| {
                     v.parse::<u64>()
                         .map_err(|_| usage(format!("{flag} needs an unsigned integer")))
@@ -452,6 +520,7 @@ pub fn parse(args: &[String]) -> Result<Command> {
                 kills,
                 seed,
                 max_delay_ms,
+                runtime,
             })
         }
         ["oracle", "gen", rest @ ..] => {
@@ -547,6 +616,7 @@ fn parse_l1(args: &[&str]) -> Result<Command> {
         seed: 1,
         vectors: None,
         regressions: None,
+        min_reach: 0,
     };
     let mut it = args.iter();
     while let Some(&flag) = it.next() {
@@ -570,6 +640,11 @@ fn parse_l1(args: &[&str]) -> Result<Command> {
             }
             "--vectors" => l1.vectors = Some(PathBuf::from(value(flag, it.next())?)),
             "--regressions" => l1.regressions = Some(PathBuf::from(value(flag, it.next())?)),
+            "--min-reach" => {
+                l1.min_reach = value(flag, it.next())?
+                    .parse()
+                    .map_err(|_| usage("--min-reach needs an unsigned integer"))?;
+            }
             _ => oracle_flag(&mut l1.oracle, flag, it.next())?,
         }
     }
@@ -577,6 +652,9 @@ fn parse_l1(args: &[&str]) -> Result<Command> {
 }
 
 fn parse_l2(args: &[&str]) -> Result<Command> {
+    if args.contains(&"--processor") {
+        return parse_l2_processor(args);
+    }
     let Some((dir, rest)) = args.split_first() else {
         return Err(usage(
             "usage: difftest run l2 DIR [--synthetic] [--restart] [--memory] [--to H] [ORACLE]",
@@ -608,6 +686,78 @@ fn parse_l2(args: &[&str]) -> Result<Command> {
         memory,
         to,
     }))
+}
+
+fn parse_l2_processor(args: &[&str]) -> Result<Command> {
+    let Some((dir, rest)) = args.split_first() else {
+        return Err(usage(
+            "usage: difftest run l2 DIR --processor [--chunks reference|1] [--synthetic] [--to H] [ORACLE]",
+        ));
+    };
+    let mut oracle = OracleArgs::default();
+    let (mut chunks, mut synthetic, mut to) = (None, false, None);
+    let mut it = rest.iter();
+    while let Some(&flag) = it.next() {
+        match flag {
+            "--processor" => {}
+            "--synthetic" => synthetic = true,
+            "--chunks" => {
+                chunks = Some(match value(flag, it.next())? {
+                    "reference" => crate::levels::l2_processor::Chunks::Reference,
+                    "1" => crate::levels::l2_processor::Chunks::One,
+                    other => {
+                        return Err(usage(format!("--chunks takes reference or 1, not {other}")));
+                    }
+                });
+            }
+            "--to" => to = Some(height(flag, it.next())?),
+            _ => oracle_flag(&mut oracle, flag, it.next())?,
+        }
+    }
+    let given = oracle != OracleArgs::default();
+    Ok(Command::RunL2Processor(L2ProcessorArgs {
+        oracle: (given || synthetic).then_some(oracle),
+        dir: (*dir).into(),
+        chunks,
+        synthetic,
+        to,
+    }))
+}
+
+fn parse_api_compare(args: &[&str]) -> Result<Command> {
+    let (mut run, mut left, mut right, mut corpus, mut out) = (None, None, None, None, None);
+    let mut it = args.iter();
+    while let Some(&flag) = it.next() {
+        let v = value(flag, it.next())?;
+        match flag {
+            "--run" => run = Some(PathBuf::from(v)),
+            "--left" => left = Some(v.to_owned()),
+            "--right" => right = Some(v.to_owned()),
+            "--corpus" => corpus = Some(PathBuf::from(v)),
+            "--out" => out = Some(PathBuf::from(v)),
+            _ => return Err(usage(format!("unknown option {flag}"))),
+        }
+    }
+    let default_corpus =
+        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::api::CORPUS_DIR);
+    match (run, left, right, out) {
+        (Some(run), None, None, None) if corpus.is_none() => {
+            Ok(Command::ApiCompare(crate::api::ApiCompareArgs::Recorded {
+                run,
+            }))
+        }
+        (None, Some(left), Some(right), Some(out)) => {
+            Ok(Command::ApiCompare(crate::api::ApiCompareArgs::Live {
+                left,
+                right,
+                corpus: corpus.unwrap_or_else(default_corpus),
+                out,
+            }))
+        }
+        _ => Err(usage(
+            "api compare takes --run DIR, or --left URL --right URL --out DIR [--corpus DIR]",
+        )),
+    }
 }
 
 fn parse_genesis(args: &[&str]) -> Result<Command> {
@@ -704,8 +854,11 @@ mod tests {
             }
         );
         assert_eq!(
-            p("run l1 --property P7 --property digest --cases 9 --seed 20260926 --solar-dir /s")
-                .unwrap(),
+            p(
+                "run l1 --property P7 --property digest --cases 9 --seed 20260926 --solar-dir /s \
+               --min-reach 20"
+            )
+            .unwrap(),
             Command::RunL1(L1Args {
                 oracle: OracleArgs {
                     solar_dir: Some("/s".into()),
@@ -716,6 +869,7 @@ mod tests {
                 seed: 20_260_926,
                 vectors: None,
                 regressions: None,
+                min_reach: 20,
             })
         );
         assert_eq!(
@@ -763,6 +917,44 @@ mod tests {
                 restarts: Some(crate::restart::PlanKind::Rounds),
                 restart_plan: None,
                 to: Some(265),
+                processor: false,
+            })
+        );
+        assert_eq!(
+            p("corpus judge c --processor --solar-dir /s").unwrap(),
+            Command::CorpusJudge(JudgeArgs {
+                oracle: OracleArgs {
+                    solar_dir: Some("/s".into()),
+                    ..OracleArgs::default()
+                },
+                dir: "c".into(),
+                dump: Vec::new(),
+                restarts: None,
+                restart_plan: None,
+                to: None,
+                processor: true,
+            })
+        );
+        assert_eq!(
+            p("run l2 c --processor --chunks 1 --to 265").unwrap(),
+            Command::RunL2Processor(L2ProcessorArgs {
+                oracle: None,
+                dir: "c".into(),
+                chunks: Some(crate::levels::l2_processor::Chunks::One),
+                synthetic: false,
+                to: Some(265),
+            })
+        );
+        assert_eq!(
+            p("live check runs/h").unwrap(),
+            Command::LiveCheck {
+                dir: "runs/h".into()
+            }
+        );
+        assert_eq!(
+            p("api compare --run runs/h").unwrap(),
+            Command::ApiCompare(crate::api::ApiCompareArgs::Recorded {
+                run: "runs/h".into()
             })
         );
         assert_eq!(
@@ -786,9 +978,14 @@ mod tests {
                 dir: "c".into(),
                 kills: 3,
                 seed: 9,
-                max_delay_ms: 50
+                max_delay_ms: 50,
+                runtime: false,
             }
         );
+        assert!(matches!(
+            p("store crash c --runtime").unwrap(),
+            Command::StoreCrash { runtime: true, .. }
+        ));
         assert_eq!(
             p("corpus verify c").unwrap(),
             Command::CorpusVerify { dir: "c".into() }
@@ -850,12 +1047,32 @@ mod tests {
     }
 
     #[test]
+    fn the_strict_switch_is_taken_from_anywhere() {
+        let mut args: Vec<String> = ["run", "l0", "--strict", "v"].map(String::from).to_vec();
+        assert!(take_strict(&mut args));
+        assert_eq!(args, ["run", "l0", "v"]);
+        assert!(!take_strict(&mut args));
+        assert_eq!(
+            parse(&args).unwrap(),
+            Command::Run {
+                level: Level::L0,
+                dir: Some("v".into())
+            }
+        );
+    }
+
+    #[test]
     fn refuses_bad_command_lines() {
         for line in [
             "run l0",
             "run l2",
             "run l1 --cases 0",
-            "run l1 --property P13",
+            "run l1 --property P17",
+            "run l1 --min-reach x",
+            "run l2 c --processor --chunks 2",
+            "api compare --left a --right b",
+            "api compare --run r --left a",
+            "live check",
             "corpus import --out o",
             "corpus import a",
             "corpus judge c --dump x",

@@ -64,6 +64,10 @@ fn part_name(part: ReplyRefused) -> &'static str {
         ReplyRefused::Plugins => "plugins",
         ReplyRefused::PublicKeys => "publicKeys",
         ReplyRefused::Signatures => "signatures",
+        ReplyRefused::Peer => "peer",
+        ReplyRefused::Common => "common",
+        ReplyRefused::PostBlock => "postBlock",
+        ReplyRefused::Unconfirmed => "unconfirmed",
     }
 }
 
@@ -145,7 +149,7 @@ fn check_verify(record: &Value) {
     if wide(record, &decoded) {
         return;
     }
-    let mut received = match decoded {
+    let received = match decoded {
         Ok(received) => received,
         Err(error) => {
             assert_eq!(
@@ -161,14 +165,14 @@ fn check_verify(record: &Value) {
     assert!(output.is_object(), "{}: Heartwood accepted", label(record));
     let inherits =
         (received.message.config.as_ref()).is_some_and(|config| config.plugins.inherits_plugin());
-    let checked = status::check_reply(&mut received, max_delegates);
+    let checked = status::check_reply(received, max_delegates);
     if note(record, "pluginsPrototype") && output["refused"] == "plugins" {
         // The reference refuses the plugin it made the prototype; Heartwood drops that entry.
         assert!(inherits, "{}", label(record));
         assert!(
             matches!(
                 checked,
-                Ok(()) | Err(ReplyRefused::PublicKeys | ReplyRefused::Signatures)
+                Ok(_) | Err(ReplyRefused::PublicKeys | ReplyRefused::Signatures)
             ),
             "{}",
             label(record)
@@ -182,7 +186,7 @@ fn check_verify(record: &Value) {
             "{}",
             label(record)
         ),
-        Ok(()) => {
+        Ok(received) => {
             assert_eq!(output["valid"], true, "{}", label(record));
             let message = &received.message;
             for (preimage, verified, negative) in [

@@ -3,10 +3,10 @@
 
 use heartwood_crypto::utils::hex;
 use heartwood_p2p_wire::Codec;
-use heartwood_p2p_wire::codecs::transactions::{self, UnconfirmedRequest, WithTransactions};
-use heartwood_p2p_wire::messages::transactions::{
-    GetUnconfirmedTransactionsRequest, GetUnconfirmedTransactionsResponse, PostTransactionsRequest,
+use heartwood_p2p_wire::codecs::transactions::{
+    self, PostTransactionsInput, UnconfirmedRequestInput, WithTransactions,
 };
+use heartwood_p2p_wire::messages::transactions::GetUnconfirmedTransactionsResponse;
 use serde_json::{Value, json};
 
 use super::blocks::{
@@ -26,13 +26,10 @@ pub(super) fn encode(codec: Codec, value: &Value) -> Outcome<Vec<u8>> {
                     .map(|id| hex::decode_array(id.as_str()?).ok())
                     .collect()
             })?;
-            transactions::get_unconfirmed_transactions_encode_request(&UnconfirmedRequest {
-                request: GetUnconfirmedTransactionsRequest {
-                    count_only: field(value, "countOnly", Value::as_bool)?,
-                    headers: headers(value)?,
-                    ..GetUnconfirmedTransactionsRequest::default()
-                },
+            transactions::get_unconfirmed_transactions_encode_request(&UnconfirmedRequestInput {
+                count_only: field(value, "countOnly", Value::as_bool)?,
                 exclude: exclude.unwrap_or_default(),
+                headers: headers(value)?,
             })
         }
         Codec::GetUnconfirmedTransactionsResponse => {
@@ -46,12 +43,9 @@ pub(super) fn encode(codec: Codec, value: &Value) -> Outcome<Vec<u8>> {
             })
         }
         Codec::PostTransactionsRequest => {
-            transactions::post_transactions_encode_request(&WithTransactions {
-                message: PostTransactionsRequest {
-                    headers: headers(value)?,
-                    ..PostTransactionsRequest::default()
-                },
+            transactions::post_transactions_encode_request(&PostTransactionsInput {
                 transactions: listed(value)?,
+                headers: headers(value)?,
             })
         }
         Codec::PostTransactionsResponse => {

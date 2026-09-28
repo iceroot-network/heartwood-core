@@ -32,21 +32,39 @@
 //! `wire`, `config`, `text` and `pool` each list their operations in a table of their own
 //! (`OPS`), which `register` adds to this module's table.
 //!
+//! With the peer-to-peer client:
+//!
+//! - `peer_rules`: the address rules, the version gate, the subnet test and the rate limiter.
+//! - `peers`: the status attestations of a ping.
+//! - `verifier`: the common-block search and the peer verifier.
+//! - `monitor`: the network height, the fork decision, the download plan and a listed block's
+//!   path to a block.
+//!
+//! The wire's reply checks and the requests the client writes are in `wire`.
+//!
 //! Most operations run under the devnet configuration the oracle was set up with, which the
 //! [`Devnet`] context carries; a case that brings its own milestone file runs under that file.
 
+mod api;
 mod blocks;
 mod config;
+mod config_app;
 mod digest;
 mod genesis;
 mod handlers;
+mod job;
 mod kernel;
 mod keys;
+mod monitor;
+mod peer_rules;
+mod peers;
 mod pool;
+mod processor;
 mod signatures;
 mod state;
 mod text;
 mod transactions;
+mod verifier;
 mod wire;
 
 use std::borrow::Cow;
@@ -278,13 +296,22 @@ const OPS: &[(&str, Run)] = &[
     ("state.applyTransaction", handlers::apply_transaction),
 ];
 
-/// Every operation: [`OPS`], then the tables of the wire, `config`, `text` and `pool`.
+/// Every operation: [`OPS`], then the tables of the wire, `config`, `text`, `pool`, the peer
+/// network, the processor and the job, the API and the node's configuration.
 fn all_ops() -> impl Iterator<Item = &'static (&'static str, Run)> {
     OPS.iter()
         .chain(wire::OPS)
         .chain(config::OPS)
         .chain(text::OPS)
         .chain(pool::OPS)
+        .chain(peer_rules::OPS)
+        .chain(peers::OPS)
+        .chain(verifier::OPS)
+        .chain(monitor::OPS)
+        .chain(processor::OPS)
+        .chain(job::OPS)
+        .chain(api::OPS)
+        .chain(config_app::OPS)
 }
 
 /// Register every operation of [`all_ops`] in `registry`.
@@ -467,7 +494,10 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
         | Documented::RoundRowsAfterRevert
         | Documented::Locale
         | Documented::OnlineView
-        | Documented::StrictSchema => false,
+        | Documented::StrictSchema
+        | Documented::UnlinkedForkSegment
+        | Documented::MissedRowsOfRefusedBlock
+        | Documented::Api(_) => false,
     }
 }
 

@@ -1,0 +1,3 @@
+{"fault":"restart","nodes":["node4"],"start":"2026-09-27T14:00:07.668Z","recovered":"2026-09-27T14:00:10.816Z"}
+{"fault":"forger-stop","nodes":["node2"],"start":"2026-09-27T14:00:07.061Z","recovered":"2026-09-27T14:00:11.711Z"}
+{"fault":"pause","nodes":["node1","node2","node3"],"start":"2026-09-27T14:19:18.186Z","recovered":"2026-09-27T14:21:01.919Z"}

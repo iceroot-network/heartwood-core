@@ -16,11 +16,14 @@ unsafe_code = "forbid"
 unused_must_use = "deny"
 
 [workspace.dependencies]
+heartwood-api = { path = "packages/api" }
 heartwood-blockchain = { path = "packages/blockchain" }
+heartwood-core = { path = "packages/core" }
 heartwood-crypto = { path = "packages/crypto" }
 heartwood-database = { path = "packages/database" }
 heartwood-kernel = { path = "packages/kernel" }
 heartwood-logger = { path = "packages/logger" }
+heartwood-p2p = { path = "packages/p2p" }
 heartwood-p2p-wire = { path = "packages/p2p-wire" }
 heartwood-pool = { path = "packages/pool" }
 heartwood-state = { path = "packages/state" }
@@ -39,16 +42,37 @@ bs58 = { version = "0.5", default-features = false, features = ["std"] }
 zeroize = "1.9"
 getrandom = "0.4"
 
+# The peer-to-peer client (heartwood-p2p; the harness and the fuzz targets use them too): tokio on
+# its long-term-support line, each crate naming the features it needs; tokio-tungstenite 0.29 with
+# only `connect` and `handshake`, so no TLS stack; futures-util for the WebSocket's sink and stream
+# helpers; rand for the random samples of peers, seeded from the operating system (a fixed seed
+# only behind the p2p crate's `difftest` test seam).
+tokio = { version = "~1.53", default-features = false }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+rand = "0.9"
+
+# The served API (heartwood-api only): axum 0.8 on hyper 1, without its default features, so the
+# query grammar, JSON bodies, CORS and error bodies are the crate's own and match the reference's;
+# hyper-util for the accept loop's tokio glue. heartwood-core, the relay's binary, parses its
+# command line with clap.
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
+hyper = { version = "1.11.1", default-features = false, features = ["http1", "server"] }
+hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"] }
+clap = { version = "4.6.7", default-features = false, features = ["derive", "error-context", "help", "std", "usage"] }
+
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 indexmap = "2.14"
 thiserror = "2"
 
 # Storage. SQLite, compiled from the bundled source; heartwood-database and heartwood-pool are the
-# only crates that may depend on it. `cache` gives `prepare_cached`; `load_extension` must never be
-# enabled, and `backup` is left off until a command needs it. The default features are off because
-# they add a WebAssembly build of SQLite that no target here uses.
-rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache"] }
+# only crates that may depend on it. `cache` gives `prepare_cached`; `functions` lets the API's
+# read-only connections register the byte-wise LIKE and the asset containment of the reference's
+# queries, and `hooks` their progress handler, which interrupts a read after 3 s; `load_extension`
+# must never be enabled, and `backup` is left off until a command needs it. The default features
+# are off because they add a WebAssembly build of SQLite that no target here uses.
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache", "functions", "hooks"] }
 
 # Logging. The facade is tracing without its attribute macros; the subscriber, the appender and
 # gzip serve heartwood-logger only. The logger writes the reference's line format itself on the

@@ -1,5 +1,6 @@
-//! Opening a store: a new file gets schema version 1 in a new directory, a reopened file keeps its
-//! rows, and a file of another schema version or of another program is refused.
+//! Opening a store: a new file gets the current schema version in a new directory, a reopened file
+//! keeps its rows, a closed writer leaves them all in the database file, and a file of another
+//! schema version or of another program is refused.
 
 mod common;
 
@@ -7,7 +8,7 @@ use std::path::Path;
 
 use common::{chain, open, scratch};
 use heartwood_database::{
-    ChainMeta, Database, DatabaseError, SCHEMA_VERSION, Settings, TransactionRow,
+    ChainMeta, Database, DatabaseError, Readers, SCHEMA_VERSION, Settings, TransactionRow,
 };
 
 fn refused(path: &Path) -> String {
@@ -23,7 +24,7 @@ fn refused(path: &Path) -> String {
 }
 
 #[test]
-fn a_new_file_gets_its_directory_and_schema_version_1() {
+fn a_new_file_gets_its_directory_and_the_current_schema_version() {
     let data = scratch("open-new");
     let settings = Settings::in_data_dir(&data);
     assert_eq!(settings.path, data.join("database").join("blockchain.db"));
@@ -56,6 +57,7 @@ fn a_new_file_gets_its_directory_and_schema_version_1() {
             "missed_blocks",
             "rounds",
             "state",
+            "transaction_recipients",
             "transactions",
             "undo",
             "wallets"
@@ -71,6 +73,20 @@ fn a_reopened_file_keeps_its_rows() {
     let database = Database::open(&settings).unwrap();
     assert_eq!(database.blocks(1, 7).unwrap(), blocks);
     assert!(database.integrity(&common::milestones()).unwrap().is_ok());
+}
+
+#[test]
+fn a_closed_writer_leaves_every_committed_row_in_the_database_file() {
+    let (database, settings) = chain("open-checkpoint", 7);
+    let blocks = database.blocks(1, 7).unwrap();
+    // Read-only connections that outlive the writer, as a relay's may.
+    let readers = Readers::open(&settings, 2).unwrap();
+    drop(database);
+    let copy = scratch("open-checkpoint-copy").join("blockchain.db");
+    std::fs::copy(&settings.path, &copy).unwrap();
+    let database = Database::open(&Settings { path: copy }).unwrap();
+    assert_eq!(database.blocks(1, 7).unwrap(), blocks);
+    drop(readers);
 }
 
 #[test]

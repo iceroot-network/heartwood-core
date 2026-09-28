@@ -1,0 +1,43 @@
+[package]
+name = "heartwood-api"
+description = "The public API of Heartwood Core: the reference's served routes, with its envelope, query grammar, pagination, headers, error bodies, rate limit and semaphore"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# The API reads the node's published snapshots (the state, the pool, the node's status and the
+# peers) and the store through read-only connections, and submits transactions to the node's pool
+# through a trait the node implements. It is served on a runtime that the node's binary builds and
+# hands in, so it needs no multi-thread feature of tokio. A request body sent with gzip or deflate
+# is decompressed, as hapi decompresses it.
+[dependencies]
+axum.workspace = true
+flate2.workspace = true
+heartwood-crypto.workspace = true
+heartwood-database.workspace = true
+heartwood-kernel = { workspace = true, features = ["bus"] }
+heartwood-p2p.workspace = true
+heartwood-pool.workspace = true
+heartwood-state.workspace = true
+heartwood-transactions.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+indexmap.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
+
+# The tests serve the routes over snapshots of the committed devnet chain, with tokio's paused
+# clock for the rate limit and the semaphore; the peer-to-peer codec gives their peers plugins, and
+# the history routes' tests store that chain through the blockchain crate's commit.
+[dev-dependencies]
+heartwood-blockchain.workspace = true
+heartwood-crypto = { workspace = true, features = ["fixed-aux", "genesis"] }
+heartwood-kernel = { workspace = true, features = ["bus", "difftest"] }
+heartwood-p2p-wire.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "test-util", "time"] }

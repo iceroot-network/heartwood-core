@@ -7,15 +7,15 @@
 mod common;
 
 use heartwood_p2p_wire::codecs::blocks::{self, ListedBlock};
-use heartwood_p2p_wire::codecs::transactions::{self, UnconfirmedRequest, WithTransactions};
+use heartwood_p2p_wire::codecs::transactions::{
+    self, PostTransactionsInput, UnconfirmedRequestInput, WithTransactions,
+};
 use heartwood_p2p_wire::list::{
     self, MAX_BLOCK_TRANSACTIONS, MAX_BLOCKS, MAX_EXCLUSIONS, MAX_TRANSACTIONS,
 };
 use heartwood_p2p_wire::messages::blocks::{BlockHeader, PostBlockRequest, PostBlockResponse};
 use heartwood_p2p_wire::messages::shared::Headers;
-use heartwood_p2p_wire::messages::transactions::{
-    GetUnconfirmedTransactionsRequest, GetUnconfirmedTransactionsResponse, PostTransactionsRequest,
-};
+use heartwood_p2p_wire::messages::transactions::GetUnconfirmedTransactionsResponse;
 use heartwood_p2p_wire::{Amount, DecodeError, Proto};
 use serde_json::{Map, Value, json};
 
@@ -306,12 +306,9 @@ fn the_clients_requests_are_written_as_the_reference_writes_them() {
         ..Headers::default()
     };
     // The forger asks for the pool with its headers only: the exclude list is written anyway.
-    let request = UnconfirmedRequest {
-        request: GetUnconfirmedTransactionsRequest {
-            headers: Some(headers.clone()),
-            ..Default::default()
-        },
-        exclude: vec![],
+    let request = UnconfirmedRequestInput {
+        headers: Some(headers.clone()),
+        ..Default::default()
     };
     assert_eq!(
         hex::encode(transactions::get_unconfirmed_transactions_encode_request(
@@ -319,9 +316,9 @@ fn the_clients_requests_are_written_as_the_reference_writes_them() {
         )),
         "12001a090a05342e332e311000"
     );
-    let posted = WithTransactions {
-        message: PostTransactionsRequest::default(),
+    let posted = PostTransactionsInput {
         transactions: vec![vec![0xaa], vec![]],
+        headers: None,
     };
     assert_eq!(
         hex::encode(transactions::post_transactions_encode_request(&posted)),
@@ -531,12 +528,9 @@ fn encode(route: &str, direction: &str, value: &Value) -> Vec<u8> {
             ..Default::default()
         }),
         ("getUnconfirmedTransactions", "request") => {
-            transactions::get_unconfirmed_transactions_encode_request(&UnconfirmedRequest {
-                request: GetUnconfirmedTransactionsRequest {
-                    count_only: value.get("countOnly").map(|b| b.as_bool().unwrap()),
-                    headers: headers(),
-                    ..Default::default()
-                },
+            transactions::get_unconfirmed_transactions_encode_request(&UnconfirmedRequestInput {
+                count_only: value.get("countOnly").map(|b| b.as_bool().unwrap()),
+                headers: headers(),
                 exclude: value
                     .get("exclude")
                     .map(|ids| {
@@ -559,11 +553,8 @@ fn encode(route: &str, direction: &str, value: &Value) -> Vec<u8> {
             })
         }
         ("postTransactions", "request") => {
-            transactions::post_transactions_encode_request(&WithTransactions {
-                message: PostTransactionsRequest {
-                    headers: headers(),
-                    ..Default::default()
-                },
+            transactions::post_transactions_encode_request(&PostTransactionsInput {
+                headers: headers(),
                 transactions: hexes(&value["transactions"]),
             })
         }

@@ -25,6 +25,34 @@ pub struct ReceivedStatus {
     pub reward: Amount,
 }
 
+/// A getStatus reply that [`check_reply`] accepted, with the changes the check made to it: the
+/// plugin names outside 4 to 64 UTF-16 code units removed and the generator's key lowercased.
+///
+/// Only [`check_reply`] makes one, so the verifying preimage ([`verifying_preimage`]) is always
+/// built from a reply the reference would verify.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedStatus(ReceivedStatus);
+
+impl CheckedStatus {
+    /// The checked reply.
+    pub fn status(&self) -> &ReceivedStatus {
+        &self.0
+    }
+
+    /// The checked reply, taken out.
+    pub fn into_status(self) -> ReceivedStatus {
+        self.0
+    }
+}
+
+impl std::ops::Deref for CheckedStatus {
+    type Target = ReceivedStatus;
+
+    fn deref(&self) -> &ReceivedStatus {
+        &self.0
+    }
+}
+
 /// The largest plugin count of a reply.
 const MAX_PLUGINS: usize = 32;
 /// The largest amount the block header schema accepts, except the totals at height 1.
@@ -86,8 +114,11 @@ pub fn encode_response(status: &ReceivedStatus) -> Vec<u8> {
 /// The rules run in the reference's order, and the error names the part of the first rule that
 /// fails: the schema library checks a required key that has a schema of its own where it checks
 /// that key's schema, so the keys `state`, `config`, `publicKeys` and `signatures` are checked in
-/// this order, each with its presence. A refused reply may have been changed in part.
-pub fn check_reply(status: &mut ReceivedStatus, max_delegates: usize) -> Result<(), ReplyRefused> {
+/// this order, each with its presence.
+pub fn check_reply(
+    mut status: ReceivedStatus,
+    max_delegates: usize,
+) -> Result<CheckedStatus, ReplyRefused> {
     let amounts = [status.total_amount, status.total_fee, status.reward];
     let message = &mut status.message;
     let state = message.state.as_mut().ok_or(ReplyRefused::Root)?;
@@ -132,13 +163,14 @@ pub fn check_reply(status: &mut ReceivedStatus, max_delegates: usize) -> Result<
     if !listed(&message.signatures, 128) {
         return Err(ReplyRefused::Signatures);
     }
-    Ok(())
+    Ok(CheckedStatus(status))
 }
 
 /// The block header schema: the required keys, the block ids (at height 1 the previous block may
 /// be empty or read as the number 0), the amounts from 0 to 2^63 − 1 (the totals of height 1
-/// unbounded), and the hex keys, hash and signature.
-fn header_passes(header: &StatusHeader, amounts: [Amount; 3]) -> bool {
+/// unbounded), and the hex keys, hash and signature. The getBlocks reply check reads its blocks'
+/// headers with it too.
+pub(crate) fn header_passes(header: &StatusHeader, amounts: [Amount; 3]) -> bool {
     let genesis = header.height == Some(1);
     let [total_amount, total_fee, reward] = amounts.map(Amount::value);
     let total = |value: i128| value >= 0 && (genesis || value <= MAX_AMOUNT);
@@ -183,7 +215,7 @@ fn code_points(text: &Option<String>) -> usize {
 }
 
 /// At least one hex digit of either case and nothing else, `length` characters when given.
-fn is_hex(text: &str, length: Option<usize>) -> bool {
+pub(crate) fn is_hex(text: &str, length: Option<usize>) -> bool {
     !text.is_empty()
         && text.bytes().all(|b| b.is_ascii_hexdigit())
         && length.is_none_or(|length| text.len() == length)
@@ -205,9 +237,10 @@ fn reads_as_zero(text: &str) -> bool {
 /// out). When the verifier's own slot is negative and the reply's slot is not 0, the slot is read
 /// as a signed 32-bit value (`currentSlot >> 0`).
 ///
-/// `status` must be a reply that [`check_reply`] accepted: the reference verifies the reply as
-/// its check changed it (plugin names removed, the generator key lowercased).
-pub fn verifying_preimage(status: &ReceivedStatus, local_slot_negative: bool) -> Vec<u8> {
+/// The reference verifies the reply as its check changed it (plugin names removed, the generator
+/// key lowercased), which is why this takes a [`CheckedStatus`].
+pub fn verifying_preimage(status: &CheckedStatus, local_slot_negative: bool) -> Vec<u8> {
+    let status = status.status();
     let (empty_state, empty_config) = (State::default(), Config::default());
     let state = status.message.state.as_ref().unwrap_or(&empty_state);
     let config = status.message.config.as_ref().unwrap_or(&empty_config);

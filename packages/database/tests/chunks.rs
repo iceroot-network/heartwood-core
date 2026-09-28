@@ -6,11 +6,12 @@ mod common;
 
 use common::{ROUND, block_id, block_row, chain, open, round_rows, write_block};
 use heartwood_database::{
-    ChainMeta, Database, DelegateVersionRow, MilestoneEntryRow, MissedRow, RoundRow, Settings,
+    ChainMeta, Database, DelegateVersionRow, MilestoneEntryRow, MissedRow, RoundRow,
+    SCHEMA_VERSION, Settings,
 };
 
 /// Every table, in the order of [`counts`].
-const TABLES: [&str; 10] = [
+const TABLES: [&str; 11] = [
     "meta",
     "blocks",
     "transactions",
@@ -21,6 +22,7 @@ const TABLES: [&str; 10] = [
     "undo",
     "milestone_entries",
     "delegate_versions",
+    "transaction_recipients",
 ];
 
 /// The number of rows of every table.
@@ -53,7 +55,7 @@ fn a_dropped_chunk_leaves_no_row() {
         chunk.put_wallet("TA", "a").unwrap();
         chunk
             .put_meta(&ChainMeta {
-                schema_version: 1,
+                schema_version: SCHEMA_VERSION,
                 nethash: "00".repeat(32),
                 genesis_id: block_id(1),
                 state_format: 1,
@@ -280,7 +282,7 @@ fn a_reset_empties_every_table() {
     chunk.put_wallet("TA", "a").unwrap();
     chunk
         .put_meta(&ChainMeta {
-            schema_version: 1,
+            schema_version: SCHEMA_VERSION,
             nethash: "00".repeat(32),
             genesis_id: block_id(1),
             state_format: 1,
@@ -313,7 +315,7 @@ fn a_reset_empties_every_table() {
     assert_eq!(counts(&settings), empty());
     drop(database);
 
-    // The file is still a database of schema version 1, ready for a first start.
+    // The file is still a database of the current schema version, ready for a first start.
     let mut database = Database::open(&settings).unwrap();
     let mut chunk = database.begin().unwrap();
     write_block(&mut chunk, 1, 1);

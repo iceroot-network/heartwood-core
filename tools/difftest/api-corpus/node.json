@@ -1,0 +1,54 @@
+[
+ {
+  "name": "node/status",
+  "path": "/api/node/status"
+ },
+ {
+  "name": "node/status/ignored-query",
+  "path": "/api/node/status",
+  "query": "foo=bar&limit=0"
+ },
+ {
+  "name": "node/status/trailing-slash",
+  "path": "/api/node/status/"
+ },
+ {
+  "name": "node/syncing",
+  "path": "/api/node/syncing"
+ },
+ {
+  "name": "node/syncing/ignored-query",
+  "path": "/api/node/syncing",
+  "query": "foo=bar&limit=0"
+ },
+ {
+  "name": "node/syncing/trailing-slash",
+  "path": "/api/node/syncing/"
+ },
+ {
+  "name": "node/configuration",
+  "path": "/api/node/configuration"
+ },
+ {
+  "name": "node/configuration/ignored-query",
+  "path": "/api/node/configuration",
+  "query": "foo=bar&limit=0"
+ },
+ {
+  "name": "node/configuration/trailing-slash",
+  "path": "/api/node/configuration/"
+ },
+ {
+  "name": "node/configuration/crypto",
+  "path": "/api/node/configuration/crypto"
+ },
+ {
+  "name": "node/configuration/crypto/ignored-query",
+  "path": "/api/node/configuration/crypto",
+  "query": "foo=bar&limit=0"
+ },
+ {
+  "name": "node/configuration/crypto/trailing-slash",
+  "path": "/api/node/configuration/crypto/"
+ }
+]

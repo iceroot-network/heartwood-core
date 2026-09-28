@@ -1,0 +1,13 @@
+{
+ "mode": "once",
+ "run": 1,
+ "tip": 121,
+ "submissions": 86,
+ "pass": 86,
+ "fail": 0,
+ "skipped": 5,
+ "accepted": 36,
+ "rejected": 50,
+ "forged": 36,
+ "ok": true
+}

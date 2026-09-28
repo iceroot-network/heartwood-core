@@ -139,8 +139,11 @@ impl Database {
     }
 }
 
+/// The columns of `blocks`, in the order [`read_block`] reads them.
+pub(crate) const COLUMNS: &str = columns!();
+
 /// A row of `blocks`, selected with its columns in their order.
-fn read_block(row: &Row<'_>) -> Result<BlockRow, DatabaseError> {
+pub(crate) fn read_block(row: &Row<'_>) -> Result<BlockRow, DatabaseError> {
     let columns = Columns::new("blocks", row);
     Ok(BlockRow {
         height: columns.uint(0)?,
@@ -218,7 +221,7 @@ impl Chunk<'_> {
     }
 
     /// Delete what a revert to `height` takes back: the transactions of the blocks above
-    /// `height`, those blocks, their undo records, the missed rows above `height`, the milestone
+    /// `height` with their recipients, those blocks, their undo records, the missed rows above `height`, the milestone
     /// entries above `height`, and the round rows above `round`, the round of the block at
     /// `height`.
     pub fn delete_above(&mut self, height: u32, round: u64) -> Result<(), DatabaseError> {
@@ -227,6 +230,8 @@ impl Chunk<'_> {
             "DELETE FROM undo WHERE height > ?1",
             "DELETE FROM milestone_entries WHERE height > ?1",
             "DELETE FROM missed_blocks WHERE height > ?1",
+            "DELETE FROM transaction_recipients WHERE transaction_id IN \
+             (SELECT id FROM transactions WHERE block_height > ?1)",
             "DELETE FROM transactions WHERE block_id IN (SELECT id FROM blocks WHERE height > ?1)",
             "DELETE FROM blocks WHERE height > ?1",
         ] {

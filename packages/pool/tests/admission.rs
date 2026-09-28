@@ -274,6 +274,27 @@ fn a_full_pool_refuses_a_fee_not_above_the_lowest() {
 }
 
 #[test]
+fn a_transaction_evicted_later_in_its_batch_is_still_broadcast() {
+    let fixture = Fixture::new();
+    let ctx = fixture.ctx(&MILESTONES);
+    let mut harness = Harness::new("evicted-broadcast", |o| o.max_transactions_in_pool = 2);
+    let high = fixture.alice.transfer(&fixture.bob, 1, 2, 3 * FEE);
+    let low = fixture.carol.transfer(&fixture.bob, 1, 4, FEE);
+    let higher = fixture.bob.transfer(&fixture.carol, 1, 1, FEE + 1);
+    // `higher` evicts `low`, admitted before it in the same batch: the reference broadcasts the
+    // transactions as it admitted them, after the batch.
+    let entries = [&high, &low, &higher].map(bytes).to_vec();
+    let (result, broadcast) = harness
+        .processor
+        .process_to_broadcast(&mut harness.pool, &ctx, &harness.clock, entries)
+        .unwrap();
+    assert_eq!(result.accept, [id(&high), id(&low), id(&higher)]);
+    assert_eq!(result.broadcast, ids(&broadcast));
+    assert!(result.broadcast.contains(&id(&low)));
+    assert_eq!(harness.all(), [id(&high), id(&higher)]);
+}
+
+#[test]
 fn eviction_takes_the_earliest_sender_on_a_tie() {
     let fixture = Fixture::new();
     let ctx = fixture.ctx(&MILESTONES);
