@@ -94,6 +94,13 @@ jobs:
         run: cargo install tokei --version 15.0.0 --locked
       - name: make ${{ matrix.targets }}
         run: make ${{ matrix.targets }}
+      # cargo-deny holds every dependency to deny.toml: advisories, licences, sources and bans.
+      - name: Install the dependency checker
+        if: matrix.part == 'lint'
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: make deny
+        if: matrix.part == 'lint'
+        run: make deny
       - name: Verify committed golden vectors
         if: matrix.part == 'integration'
         run: cargo run --locked -p heartwood-difftest -- vectors verify packages/crypto/tests/vectors
