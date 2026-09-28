@@ -592,6 +592,18 @@ fn a_forced_init_leaves_a_devnet_alone_whose_manifest_is_unreadable_while_it_run
 }
 
 #[test]
+fn the_manifest_that_holds_the_seed_is_private_like_the_keys() {
+    let bench = Bench::new("manifest-mode");
+    bench.init(&options(1)).unwrap();
+    let mode = |path: &str| {
+        let meta = fs::metadata(bench.root.join(path)).unwrap();
+        meta.permissions().mode() & 0o777
+    };
+    assert_eq!(mode("devnet.json"), 0o600);
+    assert_eq!(mode("node1/config/delegates.json"), 0o600);
+}
+
+#[test]
 fn init_uses_a_directory_that_holds_other_files_but_no_devnet() {
     let bench = Bench::new("other-files");
     fs::write(bench.root.join("notes.txt"), "keep").unwrap();
@@ -1093,7 +1105,7 @@ fn status_compares_the_relays_at_their_lowest_common_height_and_counts_online_de
     assert_eq!(consistent.nodes[3].api, None);
     assert_eq!(
         consistent.to_string(),
-        "chain consistent at height 3; delegates with an online forger: 33 of 53 (27 needed)"
+        "chain consistent at height 3 (3 of 6 relays); delegates with an online forger: 33 of 53 (27 needed)"
     );
     bench.api.chain(6, &["genesis", "b2", "x3", "x4"]);
     bench
@@ -1103,11 +1115,9 @@ fn status_compares_the_relays_at_their_lowest_common_height_and_counts_online_de
     assert_eq!(diverged.consistency, Consistency::Diverged(3));
     assert_eq!(diverged.online_delegates, 22);
     assert!(!diverged.has_quorum());
-    assert!(
-        diverged
-            .to_string()
-            .starts_with("chain DIVERGED at 3; delegates with an online forger: 22 of 53")
-    );
+    assert!(diverged.to_string().starts_with(
+        "chain DIVERGED at 3 (4 of 6 relays); delegates with an online forger: 22 of 53"
+    ));
 }
 
 #[test]

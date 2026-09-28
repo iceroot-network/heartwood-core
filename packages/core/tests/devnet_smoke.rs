@@ -74,6 +74,12 @@ fn forge(name: &str, validators: u32, height: u32) {
     let status = devnet(&root, &["status"]);
     let text = String::from_utf8_lossy(&status.stdout);
     assert!(text.contains("chain consistent at height"), "{text}");
+    // Every relay of the devnet was compared, not only the ones that happened to answer.
+    let counts = text
+        .split_once(" (")
+        .and_then(|(_, rest)| rest.split_once(" relays)"));
+    let counts = counts.and_then(|(counts, _)| counts.split_once(" of "));
+    assert!(matches!(counts, Some((a, b)) if a == b), "{text}");
     devnet(&root, &["stop"]);
 }
 

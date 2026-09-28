@@ -61,34 +61,39 @@ pub fn status(root: &Path, tools: &Tools<'_>) -> Result<DevnetStatus> {
         )
     };
     let online_delegates = nodes.iter().filter(online).map(|node| node.delegates).sum();
-    let consistency = consistency(tools, &manifest, &nodes);
+    let (consistency, compared) = consistency(tools, &manifest, &nodes);
+    let relays = u32::try_from(nodes.len()).unwrap_or(u32::MAX);
     Ok(DevnetStatus {
         nodes,
         consistency,
+        compared,
+        relays,
         online_delegates,
     })
 }
 
-/// The relays' agreement: their block ids at the lowest height among their last blocks.
-fn consistency(tools: &Tools<'_>, manifest: &Manifest, nodes: &[NodeStatus]) -> Consistency {
+/// The relays' agreement: their block ids at the lowest height among their last blocks, and how
+/// many relays gave one (a relay whose block at that height cannot be read is not compared).
+fn consistency(tools: &Tools<'_>, manifest: &Manifest, nodes: &[NodeStatus]) -> (Consistency, u32) {
     let last = |status: &NodeStatus| Some(status.api.as_ref()?.last_block.clone());
     let pairs = manifest.nodes.iter().zip(nodes);
     let answered: Vec<_> = pairs
         .filter_map(|(n, s)| Some((n.api(), last(s)?)))
         .collect();
     let Some(height) = answered.iter().map(|(_, block)| block.height).min() else {
-        return Consistency::Unknown;
+        return (Consistency::Unknown, 0);
     };
     let id = |(address, block): &(SocketAddr, ApiBlock)| match block.height == height {
         true => Some(block.id.clone()),
         false => Some(tools.api.block_at(*address, height).ok()??.id),
     };
     let mut ids: Vec<String> = answered.iter().filter_map(id).collect();
+    let compared = u32::try_from(ids.len()).unwrap_or(u32::MAX);
     ids.sort_unstable();
     ids.dedup();
     match ids.len() {
-        0 | 1 => Consistency::Consistent(height),
-        _ => Consistency::Diverged(height),
+        0 | 1 => (Consistency::Consistent(height), compared),
+        _ => (Consistency::Diverged(height), compared),
     }
 }
 
@@ -105,13 +110,14 @@ impl DevnetStatus {
 }
 
 impl fmt::Display for DevnetStatus {
-    /// The chain line: `chain consistent at height 6; delegates with an online forger: 53 of 53
-    /// (27 needed)`.
+    /// The chain line: `chain consistent at height 6 (5 of 5 relays); delegates with an online
+    /// forger: 53 of 53 (27 needed)`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (chain, online, all) = (self.consistency, self.online_delegates, self.delegates());
+        let (compared, relays) = (self.compared, self.relays);
         write!(
             f,
-            "chain {chain}; delegates with an online forger: {online} of {all} "
+            "chain {chain} ({compared} of {relays} relays); delegates with an online forger: {online} of {all} "
         )?;
         write!(f, "({QUORUM} needed)")
     }

@@ -17,8 +17,8 @@
 //!   **[`stop`]** stops the forgers before the relays; `kill` sends SIGKILL, waits for the exit,
 //!   then records the stop.
 //! - **[`status`]** reads the supervisors and each relay's node status, last block and peers,
-//!   compares the block ids at the lowest common height (`consistent` or `DIVERGED at h`), and
-//!   counts the delegates whose forger is online against the quorum's 27.
+//!   compares the block ids at the lowest common height (`consistent` or `DIVERGED at h`, with the
+//!   number of relays compared out of the devnet's), and counts the delegates whose forger is online against the quorum's 27.
 //! - **[`reset`]** deletes a node's data, logs, temp and cache (the forger's signing record
 //!   stays); **[`wait`]** polls the relays' heights every 2 s; **[`logs`]** merges the nodes'
 //!   logs in time order with prefixes; **[`env()`]** gives a node's environment.
@@ -372,6 +372,11 @@ pub struct DevnetStatus {
     pub nodes: Vec<NodeStatus>,
     /// The chain's consistency across the relays that answered.
     pub consistency: Consistency,
+    /// How many relays the consistency was compared across: those whose block at the compared
+    /// height was read.
+    pub compared: u32,
+    /// How many relays the devnet has.
+    pub relays: u32,
     /// The delegates whose forger is online.
     pub online_delegates: u32,
 }

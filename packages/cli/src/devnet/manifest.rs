@@ -202,7 +202,7 @@ impl Manifest {
             "nodes": self.nodes.iter().map(node).collect::<Vec<_>>(),
         });
         let (temp, path) = (root.join(format!("{MANIFEST}.tmp")), root.join(MANIFEST));
-        write(&temp, pretty(&value).as_bytes())?;
+        write_private(&temp, pretty(&value).as_bytes())?;
         fs::rename(&temp, &path).map_err(io(&path))
     }
 }
