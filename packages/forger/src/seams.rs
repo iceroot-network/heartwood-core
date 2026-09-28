@@ -223,9 +223,11 @@ impl SignedOutcome {
 /// Signs a delegate's block for a slot, once: the key, the signing record's decision, the block
 /// and its signature behind one call.
 ///
-/// `own_slot` is the slot of the forger's own clock: a slot more than one away from it is refused
-/// and nothing is recorded. A slot below the key's recorded slot is refused; the recorded slot
-/// gives back its recorded block; a later slot is signed and recorded before it is returned.
+/// `slot` is the slot of the block's own timestamp (`inputs.timestamp`), by the forger's
+/// milestones, and `own_slot` the slot of the forger's own clock: a slot more than one away from
+/// it is refused and nothing is recorded. A slot below the key's recorded slot is refused; the
+/// recorded slot gives back its recorded block; a later slot is signed and recorded before it is
+/// returned.
 pub trait BlockSigner: Send {
     /// The block of `key`'s delegate for `slot`, from `inputs`.
     fn sign_or_resend(

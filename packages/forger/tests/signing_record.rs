@@ -284,9 +284,11 @@ fn a_key_the_forger_does_not_hold_and_a_block_that_cannot_be_made_are_refused() 
     assert_eq!(signer.record().last(&key), None);
 }
 
-/// The forger's loop over a relay whose answers name a slot two ahead of the forger's clock: its
-/// round, its slots and its tip. The loop checks nothing that tells it so; the signer refuses the
-/// slot, nothing is recorded and no block is posted. Needs the loop (the wave-1 integration).
+/// The forger's loop over a relay far from the forger's clock: one whose round, slots and tip are
+/// two slots ahead, and one whose slot answers name the forger's slot while its round's timestamp
+/// is 1,000 slots ahead. The loop's checks read the relay's answers and pass; the signer refuses
+/// the block's slot, which the forger computes from the block's own timestamp, so nothing is
+/// recorded and no block is posted.
 mod far_relay {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -328,13 +330,22 @@ mod far_relay {
         epoch: i64,
         key: String,
         posted: AtomicUsize,
+        /// How many slots the relay's clock is ahead of the forger's.
+        ahead: i64,
+        /// How many slots its round's timestamp is ahead of its slot answers.
+        lie: i64,
     }
 
     impl FarRelay {
-        /// The relay's slot: two ahead of the forger's.
+        /// The relay's slot.
         fn slot(&self) -> i64 {
             let now = slots::epoch_time(self.clock.now_ms(), self.epoch);
-            slots::slot_number(now, 8) + 2
+            slots::slot_number(now, 8) + self.ahead
+        }
+
+        /// Its round's timestamp.
+        fn timestamp(&self) -> i64 {
+            (self.slot() + self.lie) * BLOCK_TIME
         }
 
         fn height(&self) -> u32 {
@@ -389,7 +400,7 @@ mod far_relay {
                 last_block: self.last_block(),
                 next_forger: None,
                 reward: "0".into(),
-                timestamp: self.slot() * BLOCK_TIME,
+                timestamp: self.timestamp(),
             })
         }
 
@@ -398,7 +409,11 @@ mod far_relay {
             timestamp: Option<i64>,
             _: Deadline,
         ) -> Result<i64, RelayError> {
-            Ok(timestamp.map_or_else(|| self.slot(), |t| t.div_euclid(BLOCK_TIME)))
+            Ok(match timestamp {
+                Some(t) if t == self.timestamp() => self.slot(),
+                Some(t) => t.div_euclid(BLOCK_TIME),
+                None => self.slot(),
+            })
         }
 
         async fn get_network_state(
@@ -483,10 +498,10 @@ mod far_relay {
         fn dispose(&self) {}
     }
 
-    #[tokio::test(start_paused = true)]
-    #[ignore = "integration"]
-    async fn the_loop_does_not_sign_a_slot_its_relay_names_two_ahead() {
-        let data = Data::new("far-relay");
+    /// Run the loop for 60 s over a relay `ahead` slots ahead whose round lies by `lie` slots; the
+    /// number of blocks posted and the block recorded.
+    async fn run(name: &str, ahead: i64, lie: i64) -> (usize, Option<Signed>) {
+        let data = Data::new(name);
         let milestones = milestones();
         let epoch = slots::epoch_unix_ms(milestones.at(1).epoch()).unwrap();
         let clock = Arc::new(PausedClock {
@@ -500,6 +515,8 @@ mod far_relay {
             epoch,
             key: key.to_hex(),
             posted: AtomicUsize::new(0),
+            ahead,
+            lie,
         });
         let options = Options::from_json(&Value::Null, &|_| None).unwrap();
         let mut service = ForgerService::new(ForgerParts {
@@ -517,7 +534,17 @@ mod far_relay {
             trigger.trigger();
         };
         tokio::join!(service.run(shutdown), stop);
-        assert_eq!(relay.posted.load(Ordering::SeqCst), 0);
-        assert_eq!(data.open().unwrap().last(&key), None);
+        let recorded = data.open().unwrap().last(&key).cloned();
+        (relay.posted.load(Ordering::SeqCst), recorded)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_loop_does_not_sign_a_slot_its_relay_names_two_ahead() {
+        assert_eq!(run("far-relay", 2, 0).await, (0, None));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_loop_does_not_sign_a_timestamp_far_from_the_slot_its_relay_names() {
+        assert_eq!(run("far-timestamp", 0, 1_000).await, (0, None));
     }
 }

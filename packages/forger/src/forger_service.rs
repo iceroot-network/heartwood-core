@@ -165,7 +165,6 @@ struct Ready {
     previous_height: u32,
     timestamp: u32,
     reward: u64,
-    slot: i64,
 }
 
 /// The reference's `TypeError` where it reads a forger of a round that has none there.
@@ -590,7 +589,6 @@ where
                 previous_height: height,
                 timestamp: block.0,
                 reward: block.1,
-                slot: round_slot,
             }));
         }
         if time_left > 0 {
@@ -623,8 +621,10 @@ where
         Ok(transactions)
     }
 
-    /// Sign (or re-send) the slot's block, post it and send the events. The post is never cut
-    /// short by a shutdown: it runs to its deadline.
+    /// Sign (or re-send) the slot's block, post it and send the events. The block's slot is the
+    /// slot of its own timestamp, which the signing record is keyed by and checks against the
+    /// forger's clock, whatever slot the relay answered for it. The post is never cut short by a
+    /// shutdown: it runs to its deadline.
     async fn forge(
         &self,
         key: &(PublicKeyBytes, String),
@@ -632,6 +632,7 @@ where
     ) -> Result<AttemptEnd, Failure> {
         let now = slots::epoch_time(self.clock.now_ms(), self.epoch_ms);
         let own_slot = slots::slot_number(now, self.block_time);
+        let slot = slots::slot_number(i64::from(ready.timestamp), self.block_time);
         let inputs = ForgeInputs {
             transactions: &ready.transactions,
             previous_id: ready.previous_id,
@@ -641,7 +642,7 @@ where
         };
         let outcome = {
             let mut signer = self.signer.lock().unwrap_or_else(PoisonError::into_inner);
-            signer.sign_or_resend(&key.0, &inputs, own_slot, ready.slot)
+            signer.sign_or_resend(&key.0, &inputs, own_slot, slot)
         };
         let signed = outcome.map_err(|error| Failure::Other(error.to_string()))?;
         let signed = signed.signed();

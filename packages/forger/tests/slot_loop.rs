@@ -887,3 +887,24 @@ async fn a_sync_that_finds_no_host_checks_again_after_two_seconds() {
         "the boot, and the checks at 0 s and 2 s"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_block_is_signed_for_the_slot_of_its_own_timestamp() {
+    let relay = FakeRelay::new(in_slot(10, 0), &[1], &[]);
+    let mut forger = forger(&relay, &[1], relay.clock.clone());
+    forger.service.boot().await.unwrap();
+    // A relay whose round is 990 slots ahead of its slot answers, which name the forger's slot.
+    relay.slots.lock().unwrap().extend([10, 10, 0, 10]);
+    let far = round(8_000, 1, &[1], &[], Some(0), None);
+    let ours = key(1).public_key().to_compressed();
+    assert_eq!(
+        forger.service.forge_attempt(&ours, true, &far).await,
+        AttemptEnd::Forged
+    );
+    let calls = forger.signer.calls.lock().unwrap().clone();
+    assert_eq!(
+        calls,
+        [(hex(1), 10, 1_000)],
+        "the recording signer checks nothing"
+    );
+}

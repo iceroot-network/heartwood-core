@@ -697,7 +697,8 @@ first (the bytes a slot gets stay the reference's):
 
 - the reference signs a fresh block in every attempt of a slot, before its checks; Heartwood
   checks first, then signs a slot once per key through the signing record, and a retry or a
-  restart inside the slot sends the recorded bytes again. A slot below the recorded one is
+  restart inside the slot sends the recorded bytes again. The slot the record keeps is the slot of
+  the block's own timestamp, whatever slot the relay answers. A slot below the recorded one is
   refused, and so is a slot more than one away from the slot of the forger's own clock, so that
   one far answer from a relay cannot stop a key;
 - every relay call has a deadline, where the reference sets none: 20 s for the round, the sync
@@ -722,7 +723,7 @@ make forger-features            # only heartwood-forger enables heartwood-crypto
 make forge-replay NAME=txgen-one-node CORPUS=tools/difftest/corpus   # Heartwood rebuilds every block of a corpus
 make forger-crash KILLS=50      # the signing record under SIGKILL
 make fuzz-forger                # the two forger fuzz targets at once, FUZZ_SECONDS each
-cargo test -p heartwood-forger --all-features -- --include-ignored   # also the loop against a far relay
+cargo test -p heartwood-forger --all-features   # the crate's tests, the loop against two far relays among them
 ```
 
 The crate's tests run on tokio's paused clock, against a scripted relay over the mock peer's
@@ -732,8 +733,10 @@ quorum's reading, each call's codec, headers and deadline, host selection and fa
 that stops answering is left at its deadline, then through the session's heartbeat), the key
 file's modes, the signing record's decisions and write order (a crash between the write and the
 send, a torn temporary file), the attester against the status preimages of the signature class
-and crafted offers, and blocks against the forging records of V29. The test that runs the loop
-against a relay whose slot answers are two ahead of the forger's clock is marked `integration`.
+and crafted offers, and blocks against the forging records of V29. Two tests run the loop
+against a far relay, one whose round, slots and tip are two slots ahead of the forger's clock and
+one whose slot answers name the forger's slot while its round's timestamp is 1,000 slots ahead;
+neither gets a block signed, recorded or posted.
 
 The crash test (`difftest forger crash`) starts the `forger-child` binary (feature `difftest`),
 which runs the slot loop, the relay client and the signer with a fresh random aux for every
