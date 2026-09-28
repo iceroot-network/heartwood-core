@@ -346,8 +346,9 @@ fn by_id(body: &Value) -> Value {
 ///
 /// - `senderId` and `recipientId` are the resource's `sender` and `recipient` (the raw data's own
 ///   names otherwise);
-/// - `amount` is stored only when it is above zero, and never for a transfer, whose resource shows
-///   the sum of its transfers instead: the key is `null` for those;
+/// - `amount` is stored for a burn only (type group 2, type 0), zero included, as the store's
+///   order reads it: the key is `null` for every other type, a transfer included, whose resource
+///   shows the sum of its transfers instead;
 /// - `memo`, `recipientId`, `amount` and `timestamp` may be absent (`null`; a transaction of the
 ///   genesis block shows no timestamp); any other column must be shown, so `sequence` needs the
 ///   raw data (which in turn has no `timestamp`).
@@ -358,9 +359,8 @@ fn sort_key(item: &Value, property: &str) -> Option<Value> {
         "recipientId" => Some(shown(&["recipient", "recipientId"]).unwrap_or(Value::Null)),
         "memo" | "timestamp" => Some(shown(&[property]).unwrap_or(Value::Null)),
         "amount" => {
-            let transfer = item["typeGroup"] == 1 && item["type"] == 6;
-            let amount = shown(&["amount"]).filter(|a| !transfer && a != "0" && a != 0);
-            Some(amount.unwrap_or(Value::Null))
+            let burn = item["typeGroup"] == 2 && item["type"] == 0;
+            Some(shown(&["amount"]).filter(|_| burn).unwrap_or(Value::Null))
         }
         other => shown(&[other]),
     }
@@ -606,8 +606,8 @@ mod tests {
 
     #[test]
     fn an_amount_order_compares_the_stored_amounts() {
-        // The store keeps no amount for a transfer (its resource shows the sum of its transfers)
-        // and none for a zero amount: those rows tie, whatever their resources show.
+        // The store keeps an amount for a burn only, zero included; none for a transfer (its
+        // resource shows the sum of its transfers): those rows tie, whatever their resources show.
         let transfer = json!({"id": "t", "typeGroup": 1, "type": 6, "amount": "10000"});
         let vote = json!({"id": "v", "typeGroup": 2, "type": 2});
         let burn = json!({"id": "b", "typeGroup": 2, "type": 0, "amount": "2000000"});
@@ -629,6 +629,11 @@ mod tests {
             sort_key(&json!({"amount": "0", "type": 0}), "amount"),
             Some(Value::Null)
         );
+        // A burn of zero sorts by its zero, first from the lowest, where the rows without an
+        // amount sort last.
+        let zero = json!({"id": "z", "typeGroup": 2, "type": 0, "amount": "0"});
+        assert_eq!(sort_key(&zero, "amount"), Some(json!("0")));
+        assert!(judged(json!([zero, vote]), json!([vote, zero])).is_failure());
     }
 
     #[test]
