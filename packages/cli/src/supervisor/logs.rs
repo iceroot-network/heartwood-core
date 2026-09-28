@@ -5,7 +5,10 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+
+use nix::fcntl::OFlag;
 
 use super::at;
 use crate::errors::ProcessError;
@@ -74,6 +77,10 @@ impl Capture {
 fn append(path: &Path) -> Result<File, ProcessError> {
     at(
         path,
-        OpenOptions::new().create(true).append(true).open(path),
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .custom_flags(OFlag::O_NOFOLLOW.bits())
+            .open(path),
     )
 }

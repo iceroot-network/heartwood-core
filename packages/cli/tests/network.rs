@@ -280,6 +280,22 @@ fn a_directory_that_is_not_empty_needs_force_which_overwrites_only_the_files_wri
 }
 
 #[test]
+fn a_forced_generate_never_writes_through_a_symbolic_link() {
+    let out = scratch("links");
+    let victim = scratch("links-victim").join("victim.txt");
+    fs::write(&victim, "important").unwrap();
+    fs::set_permissions(&victim, fs::Permissions::from_mode(0o644)).unwrap();
+    std::os::unix::fs::symlink(&victim, out.join("delegates.json")).unwrap();
+    let mut options = options("solar-devnet", &out);
+    options.chain_only = true;
+    options.force = true;
+    let refused = generate(&options, &clock());
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(fs::read_to_string(&victim).unwrap(), "important");
+    assert_eq!(mode(&victim), 0o644);
+}
+
+#[test]
 fn chain_only_writes_the_chain_definition_and_the_keys_alone() {
     let out = scratch("chain-only");
     let mut options = options("solar-devnet", &out);

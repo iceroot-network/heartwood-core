@@ -105,6 +105,11 @@ pub fn reset(root: &Path, node: u32, tools: &Tools<'_>) -> Result<()> {
     let paths = manifest.node(node)?.paths();
     stop_nodes(&manifest, &[node], None, false, tools.ops)?;
     for dir in [&paths.data, &paths.log, &paths.temp, &paths.cache] {
+        // A directory that is a link would have its target emptied: refuse it.
+        if fs::symlink_metadata(dir).is_ok_and(|meta| meta.is_symlink()) {
+            let message = "is a symbolic link, not a directory";
+            return Err(io(dir)(std::io::Error::other(message)));
+        }
         let entries = match fs::read_dir(dir) {
             Err(error) if error.kind() == ErrorKind::NotFound => continue,
             entries => entries.map_err(io(dir))?,

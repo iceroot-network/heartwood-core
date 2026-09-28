@@ -1032,6 +1032,20 @@ fn reset_stops_a_node_and_deletes_its_state_but_keeps_its_config_and_signing_rec
 }
 
 #[test]
+fn reset_refuses_a_directory_that_is_a_link_and_leaves_its_target_alone() {
+    let bench = Bench::new("reset-link");
+    bench.init(&options(1)).unwrap();
+    let target = scratch("reset-link-target");
+    fs::write(target.join("keep.txt"), "mine").unwrap();
+    let log = bench.root.join("node1/log");
+    let _ = fs::remove_dir_all(&log);
+    std::os::unix::fs::symlink(&target, &log).unwrap();
+    let refused = bench.with(|tools| devnet::reset(&bench.root, 1, tools));
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(fs::read_to_string(target.join("keep.txt")).unwrap(), "mine");
+}
+
+#[test]
 fn wait_polls_every_two_seconds_until_the_answering_relays_reach_the_height() {
     let bench = Bench::new("wait");
     bench.init(&options(3)).unwrap();

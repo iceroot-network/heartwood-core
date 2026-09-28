@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use heartwood_crypto::crypto::hash::sha256;
 use heartwood_crypto::utils::hex;
+use nix::fcntl::OFlag;
 use serde_json::{Map, Value, json};
 
 use crate::devnet::{CRYPTO_FILES, MANIFEST, MAX_NODES, Manifest, ManifestNode, NETWORK};
@@ -55,6 +56,7 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> Result<()> {
 pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut options = OpenOptions::new();
     let options = options.write(true).create(true).truncate(true).mode(0o600);
+    let options = options.custom_flags(OFlag::O_NOFOLLOW.bits());
     let mut file = options.open(path).map_err(io(path))?;
     let private = file.set_permissions(fs::Permissions::from_mode(0o600));
     private

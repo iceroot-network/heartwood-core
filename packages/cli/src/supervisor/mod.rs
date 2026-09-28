@@ -147,6 +147,11 @@ pub fn run_dir(instance: &Instance) -> Result<PathBuf, ProcessError> {
     if let Some(parent) = dir.parent() {
         at(parent, fs::create_dir_all(parent))?;
     }
+    // A run directory that is a link would put the lock, state and captures elsewhere.
+    if fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_symlink()) {
+        let link = std::io::Error::other("is a symbolic link, not a directory");
+        return at(&dir, Err(link));
+    }
     // Made private as it is made, so it is never there with a wider mode.
     match DirBuilder::new().mode(0o700).create(&dir) {
         Err(e) if e.kind() == ErrorKind::AlreadyExists => at(&dir, fs::create_dir_all(&dir))?,

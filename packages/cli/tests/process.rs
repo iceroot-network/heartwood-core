@@ -279,6 +279,18 @@ fn the_run_directory_is_made_private_a_wider_one_narrowed_and_a_file_refused() {
         matches!(&refused, Err(heartwood_cli::ProcessError::Io { path, .. }) if *path == run),
         "{refused:?}"
     );
+    // A link to a directory is refused, and the directory it names is left alone.
+    fs::remove_file(&run).unwrap();
+    let target = root.join("elsewhere");
+    fs::create_dir(&target).unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+    std::os::unix::fs::symlink(&target, &run).unwrap();
+    let linked = heartwood_cli::supervisor::run_dir(&relay);
+    assert!(
+        matches!(&linked, Err(heartwood_cli::ProcessError::Io { path, .. }) if *path == run),
+        "{linked:?}"
+    );
+    assert_eq!(mode(&target), Some(0o755));
 }
 
 /// The commands over the test child (feature `test-child`), which stands for the node and, as

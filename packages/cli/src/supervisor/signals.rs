@@ -11,12 +11,13 @@
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{ErrorKind, Read};
-use std::os::unix::fs::FileExt;
+use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
 use nix::errno::Errno;
+use nix::fcntl::OFlag;
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 
@@ -39,6 +40,7 @@ pub fn take_lock(path: &Path) -> Result<Option<File>, ProcessError> {
         .create(true)
         .truncate(false)
         .write(true)
+        .custom_flags(OFlag::O_NOFOLLOW.bits())
         .open(path);
     let file = file.map_err(|e| lock_error(path, &e))?;
     for _ in 0..TAKE_ATTEMPTS {
