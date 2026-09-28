@@ -65,9 +65,22 @@ impl Transaction {
     /// `TransactionFactory.fromBytesUnsafe` does: no transaction rules, no version check and no
     /// signature check, and the transaction counts as verified.
     ///
-    /// Callers, each of which must only pass bytes verified before:
-    /// [`crate::Block::decode_trusted`]; the replay of the stored chain (`heartwood-blockchain`);
-    /// the pool's re-add of stored and previously forged transactions (`heartwood-pool`).
+    /// A caller passes bytes that this node verified before, or bytes that it verifies again
+    /// before it acts on them. Bytes verified before:
+    /// - [`crate::Block::decode_trusted`], for the stored blocks (the replay of the stored chain in
+    ///   `heartwood-blockchain`);
+    /// - the pool's re-add of stored and previously forged transactions, and its entry step, which
+    ///   reads again the bytes that [`Transaction::decode`] has just verified (`heartwood-pool`);
+    /// - the API's history routes, which read the stored rows (`heartwood-api`).
+    ///
+    /// Bytes verified again (`heartwood-p2p`):
+    /// - the download path (the communicator's getBlocks reply and `download::read_listed`): a
+    ///   peer's transactions, read as the reference's download reads them. The block is then
+    ///   rebuilt from its fields ([`crate::blocks::factory::from_data`]), which serialises each
+    ///   transaction again and decodes it under the strict rules, signature included, and the
+    ///   processor's block verification refuses a block with a transaction that does not verify;
+    /// - the monitor's fetch of unconfirmed transactions, which reads only their ids and hands the
+    ///   bytes to the pool, whose entry decodes them with every check.
     pub fn decode_trusted(bytes: &[u8], params: &Params) -> Result<Transaction, DecodeError> {
         let Deserialised { data, pending } = deserialise_raw(bytes, false)?;
         let id = transaction_id(&data, params).map_err(DecodeError::Id)?;
