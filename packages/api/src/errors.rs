@@ -45,11 +45,6 @@ impl ApiError {
         ApiError::new(404, message)
     }
 
-    /// 413 Payload Too Large.
-    pub fn payload_too_large(message: impl Into<String>) -> ApiError {
-        ApiError::new(413, message)
-    }
-
     /// 422 Unprocessable Entity.
     pub fn unprocessable(message: impl Into<String>) -> ApiError {
         ApiError::new(422, message)
@@ -80,8 +75,8 @@ impl ApiError {
     }
 }
 
-/// The reason phrase of `status`, as Boom writes it (Node 18's status texts, and Boom's own for
-/// 416).
+/// The reason phrase of `status`, as Boom's own table names it (408, 413 and 416 differ from
+/// Node's status texts).
 pub fn reason_phrase(status: u16) -> &'static str {
     match status {
         400 => "Bad Request",
@@ -89,8 +84,8 @@ pub fn reason_phrase(status: u16) -> &'static str {
         403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
-        408 => "Request Timeout",
-        413 => "Payload Too Large",
+        408 => "Request Time-out",
+        413 => "Request Entity Too Large",
         415 => "Unsupported Media Type",
         416 => "Requested Range Not Satisfiable",
         422 => "Unprocessable Entity",

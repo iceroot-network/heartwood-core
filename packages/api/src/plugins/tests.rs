@@ -476,41 +476,110 @@ async fn a_payload_is_read_as_hapi_reads_it() {
         (status, &body["data"]["payload"]),
         (200, &json!({ "transactions": [{ "a": 1 }] }))
     );
-    // No content type is JSON; an empty body is null; text is text.
-    let (_, _, body) = call(&pipeline, post(r#"{"b":2}"#, &[])).await;
-    assert_eq!(body["data"]["payload"], json!({ "b": 2 }));
-    let (_, _, body) = call(&pipeline, post("", &[json])).await;
-    assert_eq!(body["data"]["payload"], Value::Null);
-    let (_, _, body) = call(&pipeline, post("words", &[("content-type", "text/plain")])).await;
-    assert_eq!(body["data"]["payload"], "words");
-    let too_large = boom(
-        413,
-        "Payload Too Large",
-        "Payload content length greater than maximum allowed: 1048576",
-    );
+    let read = [
+        // No content type, or an empty one, is JSON, whose empty body is null.
+        (post(r#"{"b":2}"#, &[]), json!({ "b": 2 })),
+        (
+            post(r#"{"b":3}"#, &[("content-type", "")]),
+            json!({ "b": 3 }),
+        ),
+        (post("", &[json]), Value::Null),
+        // A type is read up to a space or `;`, in any case; `+json` is JSON.
+        (
+            post("[1]", &[("content-type", "Application/JSON charset")]),
+            json!([1]),
+        ),
+        (
+            post("[2]", &[("content-type", "application/vnd.api+json")]),
+            json!([2]),
+        ),
+        // Bytes that are not UTF-8 are read as U+FFFD.
+        (post(&b"[\"\xff\"]"[..], &[json]), json!(["\u{fffd}"])),
+        // Text is text, an empty one included; bytes are text, or null when empty.
+        (
+            post("words", &[("content-type", "text/plain")]),
+            json!("words"),
+        ),
+        (post("", &[("content-type", "text/csv")]), json!("")),
+        (
+            post("", &[("content-type", "application/octet-stream")]),
+            Value::Null,
+        ),
+        // A form is read as no fields.
+        (
+            post(
+                "a=b",
+                &[("content-type", "application/x-www-form-urlencoded")],
+            ),
+            json!({}),
+        ),
+    ];
+    for (request, payload) in read {
+        let (status, _, body) = call(&pipeline, request).await;
+        assert_eq!((status, &body["data"]["payload"]), (200, &payload));
+    }
+    // Every failure is the reference's 422 with hapi's message, before the rate limit.
+    let refused = |message: &str| boom(422, "Unprocessable Entity", message);
+    let too_large = refused("Payload content length greater than maximum allowed: 1048576");
+    let malformed = refused("Invalid request payload JSON format");
+    let unsupported = refused("Unsupported Media Type");
+    let invalid = refused("Invalid content-type header");
     let cases = [
-        (
-            post("{", &[json]),
-            boom(400, "Bad Request", "Invalid request payload JSON format"),
-        ),
-        (
-            post(r#"{"a":{"__proto__":{}}}"#, &[json]),
-            boom(400, "Bad Request", "Invalid request payload JSON format"),
-        ),
+        (post("{", &[json]), malformed.clone()),
+        (post(r#"{"a":{"__proto__":{}}}"#, &[json]), malformed),
         (
             post("x", &[("content-type", "image/png")]),
-            boom(415, "Unsupported Media Type", "Unsupported Media Type"),
+            unsupported.clone(),
         ),
+        (
+            post("x", &[("content-type", "multipart/form-data; boundary=x")]),
+            unsupported,
+        ),
+        (
+            post("x", &[("content-type", "multipart/mixed; charset=x")]),
+            refused("Invalid content-type header: multipart missing boundary"),
+        ),
+        (post("x", &[("content-type", "nonsense")]), invalid.clone()),
+        (post("x", &[("content-type", "text/")]), invalid),
         (
             post("x", &[json, ("content-length", "1048577")]),
             too_large.clone(),
         ),
         (post(vec![b' '; 1_048_577], &[json]), too_large),
     ];
+    let mut limited = config();
+    limited.rate_limit.points = 1;
+    let limited = pipeline_with(limited, echo);
     for (request, expected) in cases {
-        let (status, _, body) = call(&pipeline, request).await;
-        assert_eq!(status, expected["statusCode"]);
-        assert_eq!(body, expected);
+        let (status, headers, body) = call(&limited, request).await;
+        assert_eq!((status, body), (422, expected));
+        assert_eq!(header(&headers, "vary"), Some("origin"));
+    }
+    assert_eq!(call(&limited, get("/api/node/status")).await.0, 200);
+}
+
+#[tokio::test]
+async fn a_multipart_type_needs_a_boundary_parameter() {
+    let pipeline = pipeline(config());
+    for (header, read) in [
+        ("multipart/mixed; boundary=x", true),
+        ("multipart/mixed;boundary=\"a b\"", true),
+        ("Multipart/Mixed; a=1; BOUNDARY=x", true),
+        ("multipart/mixed; boundary=\"\"", false),
+        ("multipart/mixed; boundary=", false),
+        ("multipart/mixed; boundary= x", false),
+        ("multipart/mixed boundary=x", false),
+    ] {
+        let (status, _, body) = call(&pipeline, post("x", &[("content-type", header)])).await;
+        let message = match read {
+            true => "Unsupported Media Type",
+            false => "Invalid content-type header: multipart missing boundary",
+        };
+        assert_eq!(
+            (status, &body["message"]),
+            (422, &json!(message)),
+            "{header}"
+        );
     }
 }
 

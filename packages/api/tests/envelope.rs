@@ -104,7 +104,7 @@ async fn errors_are_boom_bodies_with_the_same_headers() {
     let message = "Payload content length greater than maximum allowed: 1048576";
     assert_eq!(
         (answer.status, answer.body),
-        (413, boom(413, "Payload Too Large", message))
+        (422, boom(422, "Unprocessable Entity", message))
     );
     let answer = http(
         address,

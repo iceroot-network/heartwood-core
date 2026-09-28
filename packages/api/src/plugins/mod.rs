@@ -7,17 +7,19 @@
 //!
 //! A request goes through the reference's lifecycle in its order: the whitelist; the query
 //! grammar (a query it cannot read is a 500 on any path); the route (a preflight `OPTIONS` is
-//! answered here); the payload of a `POST` (its size, type and JSON); the rate limit; the path
-//! parameters, the query and the payload against the route's schema (422); the semaphore; the
-//! handler. Every answer, errors included, gets `X-Block-Height` (the published tip),
-//! `connection: close`, `cache-control: no-cache` and, but for a preflight's, the route's CORS
-//! headers: `vary: origin` and `access-control-expose-headers` always (hapi's origin setting `*`
-//! matches a request without an `Origin` too), `access-control-allow-origin` when the request has
-//! an `Origin`. A `GET`'s 200 answer with a body offers byte ranges (`accept-ranges: bytes`) and
-//! serves one ([`ranges`]). An unmatched path, and another method on a matched path, are answered
-//! 404 before the rate limit, as the reference's router answers them.
+//! answered here); the payload of a `POST` (its size, type and JSON, [`payload`]: any failure is
+//! a 422); the rate limit; the path parameters, the query and the payload against the route's
+//! schema (422); the semaphore; the handler. Every answer, errors included, gets `X-Block-Height`
+//! (the published tip), `connection: close`, `cache-control: no-cache` and, but for a preflight's,
+//! the route's CORS headers: `vary: origin` and `access-control-expose-headers` always (hapi's
+//! origin setting `*` matches a request without an `Origin` too), `access-control-allow-origin`
+//! when the request has an `Origin`. A `GET`'s 200 answer with a body offers byte ranges
+//! (`accept-ranges: bytes`) and serves one ([`ranges`]). An unmatched path, and another method on
+//! a matched path, are answered 404 before the rate limit, as the reference's router answers
+//! them.
 
 mod limits;
+mod payload;
 mod ranges;
 #[cfg(test)]
 mod tests;
@@ -26,7 +28,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::Router;
-use axum::body::{Body, to_bytes};
+use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::header::{self, HeaderName};
 use axum::http::{HeaderMap, HeaderValue, Method as Verb, Request, Response, StatusCode};
@@ -40,9 +42,6 @@ use crate::context::{ApiContext, ApiRequest, HandlerFuture, Method, Route, Route
 use crate::errors::ApiError;
 use crate::schemas;
 use crate::server::ApiConfig;
-
-/// The largest request body, hapi's default.
-const MAX_BODY: usize = 1_048_576;
 
 /// The headers that CORS exposes, hapi's default.
 const EXPOSED: &str = "WWW-Authenticate,Server-Authorization";
@@ -242,7 +241,7 @@ impl Pipeline {
         };
         let (route, params) = self.lookup(method, path)?.ok_or_else(not_found)?;
         let payload = match method {
-            Method::Post => Some(read_payload(&parts.headers, body).await?),
+            Method::Post => Some(payload::read(&parts.headers, body).await?),
             Method::Get => None,
         };
         if config.rate_limit.enabled && !self.admit(&client) {
@@ -429,54 +428,6 @@ fn client_address(headers: &HeaderMap, peer: SocketAddr, trust_proxy: bool) -> S
     };
     let first = forwarded.to_str().unwrap_or_default().split(',').next();
     first.unwrap_or_default().trim().to_owned()
-}
-
-/// The payload of a `POST` as hapi reads it: the size limit (413), then by content type (JSON by
-/// default): JSON (400 when it does not parse, or names `__proto__`), text, bytes (read as text:
-/// the schema refuses both), a form (read as no fields, which the schema refuses too), or 415.
-/// An empty body is `null`.
-async fn read_payload(headers: &HeaderMap, body: Body) -> Result<Value, ApiError> {
-    let too_large = || {
-        let message = format!("Payload content length greater than maximum allowed: {MAX_BODY}");
-        ApiError::payload_too_large(message)
-    };
-    let text_of = |name: HeaderName| headers.get(name).and_then(|value| value.to_str().ok());
-    let declared = text_of(header::CONTENT_LENGTH).and_then(|text| text.trim().parse::<u64>().ok());
-    if declared.is_some_and(|length| length > MAX_BODY as u64) {
-        return Err(too_large());
-    }
-    let mime = text_of(header::CONTENT_TYPE).unwrap_or("application/json");
-    let mime = mime.to_ascii_lowercase();
-    let mime = mime.split(';').next().unwrap_or_default().trim();
-    // `application/json`, or `application/<type>+json`.
-    let json = mime.starts_with("application/") && mime.ends_with("json");
-    let json = json && (mime.len() == 16 || mime.len() > 17 && mime.ends_with("+json"));
-    let form = mime == "application/x-www-form-urlencoded";
-    let bytes_or_text =
-        mime == "application/octet-stream" || mime.len() > 5 && mime.starts_with("text/");
-    if !(json || form || bytes_or_text) {
-        return Err(ApiError::new(415, "Unsupported Media Type"));
-    }
-    let bytes = to_bytes(body, MAX_BODY).await.map_err(|_| too_large())?;
-    let malformed = || ApiError::bad_request("Invalid request payload JSON format");
-    match () {
-        () if form => Ok(Value::Object(Map::new())),
-        () if bytes.is_empty() => Ok(Value::Null),
-        () if !json => Ok(Value::String(String::from_utf8_lossy(&bytes).into_owned())),
-        () => match serde_json::from_slice::<Value>(&bytes) {
-            Ok(value) if !names_proto(&value) => Ok(value),
-            _ => Err(malformed()),
-        },
-    }
-}
-
-/// Whether an object in `value` has a key `__proto__`, which the reference's JSON parser refuses.
-fn names_proto(value: &Value) -> bool {
-    match value {
-        Value::Object(map) => map.contains_key("__proto__") || map.values().any(names_proto),
-        Value::Array(items) => items.iter().any(names_proto),
-        _ => false,
-    }
 }
 
 /// `text` with its `%XX` escapes decoded, as JavaScript's `decodeURIComponent` decodes them;
