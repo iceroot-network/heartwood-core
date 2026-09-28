@@ -32,6 +32,7 @@
 //! - **Shutdown.** Scheduling stops and the relay calls in flight are dropped, but a `postBlock` in
 //!   flight runs to its deadline; then the sessions close.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::future::{Future, poll_fn};
 use std::pin::pin;
@@ -703,8 +704,8 @@ where
             info!("{refusal}. Will not forge :bomb:");
             return false;
         }
-        let headers: Vec<&Value> =
-            (state.quorum_details.over_height_block_headers.values()).collect();
+        let headers = js::property_order(&state.quorum_details.over_height_block_headers);
+        let headers: Vec<&Value> = headers.into_iter().map(|(_, header)| header).collect();
         let distinct = distinct(&headers);
         if !distinct.is_empty() {
             let detected = pluralise("distinct overheight block header", len(&distinct), true);
@@ -780,22 +781,48 @@ fn and_joined(names: &[String]) -> String {
     }
 }
 
-/// The over-height headers sorted by id, a header dropped when its id is the one before it (the
-/// first one too when it has no id, as the reference's `lastSeen` starts unset).
-fn distinct(headers: &[&Value]) -> Vec<Value> {
-    let id = |header: &Value| header.get("id").and_then(Value::as_str).map(str::to_owned);
+/// The over-height headers as the reference's `removeDuplicateBlockHeaders` leaves them: sorted
+/// with its comparator, `a.id > b.id ? 1 : a.id < b.id ? -1 : 0`, as V8 sorts, then a header
+/// dropped when its id is the one before it (the first one too when it has no id, as `lastSeen`
+/// starts unset). Text ids compare by UTF-16 code units; a missing id compares as NaN, equal to
+/// any id, so it stays where the sort leaves it.
+fn distinct<'a>(headers: &[&'a Value]) -> Vec<Value> {
+    let id = |header: &'a Value| header.get("id").and_then(Value::as_str);
+    let text = |a, b| Some(id(a)?.encode_utf16().cmp(id(b)?.encode_utf16()));
     let mut sorted = headers.to_vec();
-    sorted.sort_by_key(|header| id(header));
-    let mut last_seen = None;
-    let mut kept = Vec::new();
-    for header in sorted {
-        let seen = id(header);
-        if seen != last_seen {
-            kept.push(header.clone());
-        }
-        last_seen = seen;
+    match sorted.len() {
+        ..64 => sorted = v8_sort(headers, |a, b| text(a, b).unwrap_or(Ordering::Equal)),
+        // V8 merges sorted runs here; while every id is text, any stable sort gives its order.
+        _ => sorted.sort_by(|&a, &b| text(a, b).unwrap_or(id(a).is_some().cmp(&id(b).is_some()))),
     }
-    kept
+    let mut seen = None;
+    sorted.retain(|&header| std::mem::replace(&mut seen, header.get("id")) != header.get("id"));
+    sorted.into_iter().cloned().collect()
+}
+
+/// `items` sorted as V8's `Array.prototype.sort` sorts fewer than 64 elements with `order`: the
+/// first run, reversed when it strictly descends, then each later element inserted by V8's
+/// binary search. Where `order`'s "equal" is not transitive, only this gives V8's order.
+fn v8_sort<T: Copy>(items: &[T], order: impl Fn(T, T) -> Ordering) -> Vec<T> {
+    let descending = matches!(items, [first, second, ..] if order(*second, *first).is_lt());
+    let breaks = |pair: &[T]| matches!(pair, [a, b] if order(*b, *a).is_lt() != descending);
+    let run = items.windows(2).position(breaks);
+    let run = run.map_or(items.len(), |at| at.saturating_add(1));
+    let mut sorted: Vec<T> = items.iter().take(run).copied().collect();
+    if descending {
+        sorted.reverse();
+    }
+    for &pivot in items.iter().skip(run) {
+        let (mut left, mut right) = (0, sorted.len());
+        while left < right {
+            let mid = left.midpoint(right);
+            let below = matches!(sorted.get(mid), Some(&item) if order(pivot, item).is_lt());
+            right = if below { mid } else { right };
+            left = if below { left } else { mid.saturating_add(1) };
+        }
+        sorted.insert(left, pivot);
+    }
+    sorted
 }
 
 /// The reference's `networkState.toJson()` after the distinct headers replaced the over-height
@@ -812,4 +839,58 @@ fn dump(state: &NetworkState, distinct: Vec<Value>) -> String {
         dumped.extend(std::mem::take(fields));
     }
     js::stringify(&Value::Object(dumped), 2)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// The `k` of each header `distinct` keeps, for headers `k` with the given ids (`None`: no id).
+    fn kept(ids: &[Option<&str>]) -> Vec<u64> {
+        let headers: Vec<Value> = (ids.iter().enumerate())
+            .map(|(k, id)| match id {
+                Some(id) => json!({"k": k, "id": id}),
+                None => json!({"k": k}),
+            })
+            .collect();
+        let headers: Vec<&Value> = headers.iter().collect();
+        (distinct(&headers).iter())
+            .map(|header| header["k"].as_u64().unwrap())
+            .collect()
+    }
+
+    // The expected lists are the reference's `removeDuplicateBlockHeaders` on Node 18.
+    #[test]
+    fn a_header_without_an_id_stays_where_the_sort_leaves_it() {
+        assert_eq!(kept(&[Some("b"), None, Some("a")]), [0, 1, 2]);
+        assert_eq!(
+            kept(&[Some("x"), None, Some("x")]),
+            [0, 1, 2],
+            "apart, both kept"
+        );
+        assert_eq!(
+            kept(&[None, Some("a")]),
+            [1],
+            "the first, as lastSeen starts unset"
+        );
+        assert_eq!(kept(&[None, None]), [] as [u64; 0]);
+        // A plain binary insertion would move the last one to the front.
+        assert_eq!(kept(&[Some("c"), Some("d"), None, Some("a")]), [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn text_ids_sort_by_utf16_code_units_and_a_descending_run_is_reversed() {
+        assert_eq!(
+            kept(&[Some("c"), Some("b"), Some("a"), Some("b")]),
+            [2, 1, 0]
+        );
+        assert_eq!(kept(&[Some("\u{e000}"), Some("\u{10000}")]), [1, 0]);
+        let ids: Vec<Option<String>> = (0..70u32)
+            .map(|k| char::from_digit(10 + k * 7 % 5, 36).map(String::from))
+            .collect();
+        let ids: Vec<Option<&str>> = ids.iter().map(Option::as_deref).collect();
+        assert_eq!(kept(&ids), [0, 3, 1, 4, 2], "64 or more: a stable sort");
+    }
 }

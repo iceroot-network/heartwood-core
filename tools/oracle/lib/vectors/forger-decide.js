@@ -5,7 +5,8 @@
 //                           the height line), the early stops with and without the "already forged
 //                           on another node" line (the network state's clause, which compares a key,
 //                           held by a state that names the key), each refusal with its line and
-//                           the debug dump, the distinct over-height headers, an over-height header
+//                           the debug dump, the distinct over-height headers (one without an id
+//                           among them, which the sort leaves in place), an over-height header
 //                           by the delegate's own key (empty, not empty, and not signed), the two
 //                           late lines, the same-slot answer, and each call failing, with the relay
 //                           not ready
@@ -244,6 +245,11 @@ module.exports = async function forgerDecideVectors({ solar, rec, must, shared }
     const over = (headers, quorum = {}) => state({}, { overHeight: Object.keys(headers).length, overHeightBlockHeaders: headers, ...quorum });
     await decide("over-height headers of others, one of them twice: forged", { networkState: over({ "192.0.2.1": made(2, 13), "192.0.2.2": made(2, 13), "192.0.2.3": made(3, 14) }) });
     await decide("over-height headers of others and no quorum", { networkState: over({ "192.0.2.1": made(2, 13), "192.0.2.3": made(3, 14) }, { hasQuorum: 10, noQuorum: 20 }) });
+    const idless = made(3, 14);
+    delete idless.id;
+    await decide("over-height headers, one without an id between two of the same id, and no quorum", {
+        networkState: over({ "192.0.2.1": made(2, 13), "192.0.2.2": idless, "192.0.2.3": made(2, 13) }, { hasQuorum: 10, noQuorum: 20 }),
+    });
     await decide("refused: the delegate's own empty block over the height", { networkState: over({ "192.0.2.4": made(3, 13), "192.0.2.5": made(1, 13) }) });
     await decide("the delegate's own block with a transaction over the height", { networkState: over({ "192.0.2.6": nonEmpty(1, 13) }) });
     const unsigned = { ...made(1, 13), blockSignature: "00".repeat(64) };

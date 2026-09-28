@@ -709,6 +709,11 @@ first (the bytes a slot gets stay the reference's):
 - an over-height header by the delegate's own key stops the forger when its signature verifies;
   the reference verifies it as a whole block built from the header alone, which only an empty
   block passes (the documented difference of L0 and P19 below);
+- the distinct over-height headers, which only the quorum's lines show, are sorted as the
+  reference sorts them for ids that are text or missing (with V8's own order below 64 headers);
+  an id of another JSON type compares as a missing one, a `null` header reads as a header without
+  an id where the reference throws, and 64 headers or more that mix text and missing ids are
+  sorted with the missing ones first;
 - a key file that the group or others can read is refused, and so is a non-empty `secrets` list;
   the file is never rewritten;
 - the attester signs an offer only when its text reads back as a status tree and writes back to
