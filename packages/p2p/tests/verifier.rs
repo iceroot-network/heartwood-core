@@ -1000,6 +1000,7 @@ mod through_the_communicator {
             )),
             probe: Arc::new(HttpProbe {
                 timeout: Duration::from_secs(1),
+                ..HttpProbe::default()
             }),
             repository: Arc::new(PeerRepository::new()),
             chain: ours,

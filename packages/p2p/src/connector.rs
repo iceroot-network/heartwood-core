@@ -65,6 +65,15 @@ impl Connector {
         Connector::default()
     }
 
+    /// A connector for a node with `addressing`: in mode B every session's socket binds the
+    /// node's own address before it connects, so that the peers see it as the source.
+    pub fn for_addressing(addressing: &crate::devnet::Addressing) -> Connector {
+        match addressing.bind_address() {
+            Some(local) => Connector::with_dial(transport::tcp_bound(local)),
+            None => Connector::new(),
+        }
+    }
+
     /// A connector whose sessions run on streams from `dial` (a test seam: the mock peer's
     /// in-memory connections, which tokio's paused clock can drive).
     pub fn with_dial(dial: Dial) -> Connector {

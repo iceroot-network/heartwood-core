@@ -1491,6 +1491,7 @@ async fn plugin_ports_are_probed_with_an_http_head() {
     let port = silent.local_addr().unwrap().port();
     let quick = HttpProbe {
         timeout: Duration::from_millis(200),
+        ..HttpProbe::default()
     };
     assert_eq!(quick.head(local, port).await, None);
     // The reference's probe URL of an IPv6 address names another host: never an answer.

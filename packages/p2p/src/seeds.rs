@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use heartwood_p2p_wire::replies::PeerAddress;
 use serde_json::Value;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
@@ -151,7 +151,18 @@ async fn exchange(
     wait: Duration,
     status_only: bool,
 ) -> Result<Vec<u8>, String> {
-    let mut stream = within(wait, TcpStream::connect(target)).await?;
+    let stream = within(wait, TcpStream::connect(target)).await?;
+    talk(stream, request, max, wait, status_only).await
+}
+
+/// [`exchange`] over a connected `stream`.
+async fn talk(
+    mut stream: impl AsyncRead + AsyncWrite + Unpin,
+    request: &str,
+    max: usize,
+    wait: Duration,
+    status_only: bool,
+) -> Result<Vec<u8>, String> {
     within(wait, stream.write_all(request.as_bytes())).await?;
     let (mut response, mut chunk) = (Vec::new(), [0u8; 8192]);
     loop {
@@ -185,12 +196,16 @@ fn status_code(response: &[u8]) -> Option<u16> {
 pub struct HttpProbe {
     /// How long the connection, and each read of the response, may take.
     pub timeout: Duration,
+    /// The address the probe's socket binds before it connects: a devnet node's own address in
+    /// mode B ([`crate::devnet::Addressing::bind_address`]); none otherwise.
+    pub bind: Option<IpAddr>,
 }
 
 impl Default for HttpProbe {
     fn default() -> HttpProbe {
         HttpProbe {
             timeout: HTTP_TIMEOUT,
+            bind: None,
         }
     }
 }
@@ -200,9 +215,17 @@ impl PortProbe for HttpProbe {
         if ip.is_ipv6() {
             return None;
         }
-        let target = SocketAddr::new(ip, port).to_string();
+        let address = SocketAddr::new(ip, port);
+        let target = address.to_string();
         let request = format!("HEAD / HTTP/1.0\r\nHost: {target}\r\n\r\n");
-        let response = exchange(&target, &request, MAX_PROBE_BYTES, self.timeout, true).await;
+        let (wait, max) = (self.timeout, MAX_PROBE_BYTES);
+        let response = match self.bind {
+            None => exchange(&target, &request, max, wait, true).await,
+            Some(local) => {
+                let stream = within(wait, crate::transport::tcp_bound(local)(address)).await;
+                talk(stream.ok()?, &request, max, wait, true).await
+            }
+        };
         status_code(&response.ok()?)
     }
 }
