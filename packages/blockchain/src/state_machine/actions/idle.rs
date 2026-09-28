@@ -150,6 +150,12 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
             "Downloaded new block forged by delegate {name} (#{rank}) at height {height} with {reward} reward :package:"
         );
         debug!("The id of the new block is {}", link.id);
+        let count = header.number_of_transactions.unwrap_or_default().into();
+        let contains = pluralise("transaction", count, true);
+        debug!(
+            "It contains {contains} and was downloaded from {}",
+            block.ip
+        );
         let mut incoming = IncomingBlock::downloaded(block);
         incoming.name = Some(name.to_owned());
         self.handle_incoming_block(incoming, false).await;
