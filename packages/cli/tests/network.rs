@@ -239,6 +239,18 @@ fn the_keys_are_private_and_the_single_node_instance_is_complete() {
 }
 
 #[test]
+fn the_generated_app_json_loads_for_both_roles() {
+    use heartwood_kernel::config::app::{Role, parse};
+    let out = scratch("app-json-loads");
+    generate(&options("solar-devnet", &out), &clock()).unwrap();
+    let text = fs::read_to_string(out.join("app.json")).unwrap();
+    for role in [Role::Relay, Role::Forger] {
+        let app = parse(&text, role).unwrap_or_else(|error| panic!("{role:?}: {error}"));
+        assert!(!app.plugins.is_empty(), "{role:?}");
+    }
+}
+
+#[test]
 fn a_directory_that_is_not_empty_needs_force_which_overwrites_only_the_files_written() {
     let out = scratch("force");
     fs::write(out.join("notes.txt"), "mine").unwrap();

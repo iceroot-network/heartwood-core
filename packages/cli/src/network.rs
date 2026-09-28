@@ -269,7 +269,9 @@ fn files(
             "aux": hex::encode(forger_aux),
         },
     });
+    // The reference's schema requires the three profiles, the `core` one too.
     let app = json!({
+        "core": { "plugins": [] },
         "relay": { "plugins": [
             plugin("logger"), plugin("state"), plugin("database"), plugin("transactions"),
             plugin("pool"), p2p_plugin, plugin("blockchain"), plugin("api"),
