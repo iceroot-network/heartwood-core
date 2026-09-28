@@ -189,6 +189,7 @@ fn warnings_name_what_the_relay_does_not_honour() {
     let list = plugins.as_array_mut().unwrap();
     list.push(json!({"package": "@solar-network/forger"}));
     list[5]["options"]["gossip"] = json!(true);
+    list[1]["options"] = json!({"storage": {"maxLastBlocks": 50}});
     let app = json!({"core": {"plugins": []}, "relay": {"plugins": plugins, "flags": ["x"]}, "forger": {"plugins": []}});
     setup.write("app.json", &app.to_string());
     setup.write("app.js", "module.exports = {};");
@@ -196,6 +197,9 @@ fn warnings_name_what_the_relay_does_not_honour() {
         ("CORE_SKIP_PEER_STATE_VERIFICATION", "1"),
         ("CORE_WEBHOOKS_ENABLED", "true"),
         ("CORE_SKIP_BLOCKCHAIN_STARTED_CHECK", ""),
+        ("CORE_API_CACHE", "1"),
+        ("CORE_API_LOG", ""),
+        ("CORE_WALLET_SYNC_ENABLED", "true"),
     ];
     let config = load(&setup, "--network testnet --env test", &extra).unwrap();
     let warnings = config.warnings.join("\n");
@@ -208,14 +212,16 @@ fn warnings_name_what_the_relay_does_not_honour() {
         "CORE_ENV is not honoured",
         "NODE_ENV is not honoured",
         "CORE_SKIP_PEER_STATE_VERIFICATION is not honoured",
+        "CORE_API_CACHE is not honoured",
+        "CORE_WALLET_SYNC_ENABLED is not honoured",
+        "the @solar-network/state option storage is not read by this relay",
     ] {
         assert!(warnings.contains(expected), "{expected}:\n{warnings}");
     }
-    assert!(
-        !warnings.contains("CORE_SKIP_BLOCKCHAIN_STARTED_CHECK"),
-        "{warnings}"
-    );
-    assert_eq!(config.warnings.len(), 8, "{warnings}");
+    for unset in ["CORE_SKIP_BLOCKCHAIN_STARTED_CHECK", "CORE_API_LOG"] {
+        assert!(!warnings.contains(unset), "{warnings}");
+    }
+    assert_eq!(config.warnings.len(), 11, "{warnings}");
 }
 
 #[test]
