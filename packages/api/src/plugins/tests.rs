@@ -1323,6 +1323,10 @@ async fn a_head_that_node_refuses_is_answered_as_hapi_answers_it() {
             "HTTP/1.1 200 OK\r\n",
         ),
         (
+            "GET /api/node/status HTTP/1.1\r\nTransfer-Encoding:  \r\n\r\n".to_owned(),
+            "HTTP/1.1 200 OK\r\n",
+        ),
+        (
             "GET /api/node/status?a=\"<>\" HTTP/1.1\r\n\r\n".to_owned(),
             "HTTP/1.1 200 OK\r\n",
         ),
@@ -1429,7 +1433,8 @@ async fn a_target_is_read_as_node_gives_it_to_hapi() {
     let (line, _, body) = exchange_bytes(address, request, false).await;
     assert_eq!(line, "HTTP/1.1 200 OK");
     let query = json!({
-        "A%zz\u{fffd}": "1", "b": "\"<>\"", "c": "%zz\"\u{e9}", "d": "\u{c3}\u{a9}", "A\"": "%zz\u{e9}"
+        "A%zz\u{fffd}": "1", "b": "\"<>\"", "c": "%zz\"\u{e9}", "d": "\u{c3}\u{a9}",
+        "A\"": "%zz\u{e9}",
     });
     assert_eq!(body["data"]["query"], query);
     // The catch-all's short path counts a byte as a character.

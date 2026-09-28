@@ -17,9 +17,10 @@
 //! UTF-8 of the Latin-1 character Node reads and another byte hyper refuses is percent-encoded;
 //! with the header fields Node's server passes on (the first 1,000, and after them those that
 //! frame the body), less those whose name hyper refuses (empty, or with a space: none that the
-//! API reads), and `Expect` but for `HTTP/1.1`, the only version Node reads it for; with `\r\n`
-//! line ends. [`Rewind`] then gives hyper that head, followed by the rest of the connection. The
-//! request carries the target as Node gives it to hapi (`NodeRead`), which the plugins read.
+//! API reads), an empty `Transfer-Encoding` (no coding for Node's parser), and `Expect` but for
+//! `HTTP/1.1`, the only version Node reads it for; with `\r\n` line ends. [`Rewind`] then gives
+//! hyper that head, followed by the rest of the connection. The request carries the target as
+//! Node gives it to hapi (`NodeRead`), which the plugins read.
 
 use std::io;
 use std::ops::Range;
@@ -603,7 +604,9 @@ impl Head {
         for (name, value) in &self.kept {
             let name = read.get(name.clone()).unwrap_or_default();
             let expect = name.eq_ignore_ascii_case(b"expect") && self.version != (1, 1);
-            if name.is_empty() || name.contains(&b' ') || expect {
+            // An empty `Transfer-Encoding` names no coding for Node's parser; hyper refuses it.
+            let no_coding = name.eq_ignore_ascii_case(b"transfer-encoding") && value.is_empty();
+            if name.is_empty() || name.contains(&b' ') || expect || no_coding {
                 continue;
             }
             head.extend_from_slice(name);
@@ -881,8 +884,9 @@ mod tests {
             let shown = String::from_utf8_lossy(head).into_owned();
             assert_eq!(verdict(head), Err(Progress::Ended), "{shown:?}");
         }
-        // Served, and written again as hyper reads it.
-        let served: [(&[u8], &[u8]); 16] = [
+        // Served, and written again as hyper reads it. An empty `Transfer-Encoding` names no
+        // coding for Node's parser, and hyper refuses it: it is left out.
+        let served: [(&[u8], &[u8]); 18] = [
             (b"GET / HTTP/1.1\r\n\r\nrest", b"GET / HTTP/1.1\r\n\r\nrest"),
             (
                 b"\r\r\n\nGET  /a?b=\"<x>\"`|\t\x0c#f\"g HTTP/1.1\r\n\r\n",
@@ -913,6 +917,14 @@ mod tests {
             (
                 b"POST /x HTTP/1.1\r\ntransfer-encoding: gzip\r\ntransfer-encoding:  x , Chunked \r\n\r\n",
                 b"POST /x HTTP/1.1\r\ntransfer-encoding: gzip\r\ntransfer-encoding: x , Chunked \r\n\r\n",
+            ),
+            (
+                b"POST /x HTTP/1.1\r\nTransfer-Encoding:  \r\ncontent-length: 2\r\n\r\n{}",
+                b"POST /x HTTP/1.1\r\ncontent-length: 2\r\n\r\n{}",
+            ),
+            (
+                b"POST /x HTTP/1.1\r\ntransfer-encoding: chunked\r\ntransfer-encoding:\r\n\r\n",
+                b"POST /x HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n",
             ),
             (
                 b"POST /x HTTP/1.1\r\ntransfer-encoding: chunkedx\r\ncontent-lengthx: 1\r\n\r\n",

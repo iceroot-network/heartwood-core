@@ -907,7 +907,8 @@ gives it: single spaces and `HTTP/1.1` in the request line (Node answers every v
 as `HTTP/1.1`), the target's bytes that hyper refuses rewritten (a byte beyond ASCII as the UTF-8
 of its Latin-1 character, another one percent-encoded) and its fragment dropped, the first 1,000
 header fields (Node's server passes on no more) and those that frame the body, less those whose
-name hyper refuses (an empty name, or one with a space: none that the API reads). The API reads
+name hyper refuses (an empty name, or one with a space: none that the API reads) and an empty
+`Transfer-Encoding`, which names no coding for Node's parser. The API reads
 the target itself as Node gives it to hapi: each byte a Latin-1 character, the path before the
 first `?` and the query after it, so the router, the catch-all's 20-character test and the query
 grammar see what the reference's do.
