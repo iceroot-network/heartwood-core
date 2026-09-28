@@ -75,7 +75,7 @@ target/release/heartwood relay run --network <name>
 | `tools/difftest/` | Compatibility harness and command-line tools |
 | `tools/oracle/` | Reference execution, container builds and vector generation |
 | `packages/*/tests/vectors/` | Committed vectors of each crate, with checksums and source metadata |
-| `fuzz/` | Decoder fuzz targets, the state machine's apply and revert targets, the state's records, the pool, the peer-to-peer client's session, reply checks and download path, and the forger's internal bodies and status offers |
+| `fuzz/` | Decoder fuzz targets, the state machine's apply and revert targets, the state's records, the pool, the peer-to-peer client's session, reply checks and download path, the peer-to-peer server's session, the forger's internal bodies and status offers, and the API's query grammar |
 
 The current implementation uses the retained reference cryptography and transaction formats. Proposed protocol features in the whitepaper describe a separate target; they are not all implemented here.
 
