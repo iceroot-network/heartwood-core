@@ -4,18 +4,67 @@
 //! flip, and a changed status is offered to the forger's attestation session at once; getStatus
 //! waits for the signatures at most the attestation wait, then serves the header unsigned and
 //! does not cache it.
+//!
+//! A status served without a forger's session is cached unsigned, as the reference caches it
+//! without a live forger; once a session attaches, the next getStatus of the same key waits for
+//! its signatures instead of serving that cache.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
+use heartwood_crypto::BlockId;
+use heartwood_crypto::crypto::slots::{self, SlotInfo};
 use heartwood_kernel::Clock;
+use heartwood_p2p_wire::Proto;
+use heartwood_p2p_wire::status::{self, PeerConfig, SignedState, StatusHeaderData};
 use tokio::sync::watch;
 
-use crate::attestation_session::AttestationSession;
+use crate::attestation_session::{AttestationSession, Signing};
 use crate::node_services::NodeServices;
+use crate::server::ATTESTATION_WAIT;
 use crate::server::seams::ServerRefusal;
 
+/// How often the timer looks at the tip between the slot's changes.
+pub const TIP_POLL: Duration = Duration::from_millis(100);
+
+/// The reference's cache key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Key {
+    id: BlockId,
+    forging_allowed: bool,
+    slot: i64,
+}
+
+/// A served status kept for its key.
+struct Cached {
+    key: Key,
+    bytes: Vec<u8>,
+    /// Whether a forger's session signed it (possibly with no key).
+    attested: bool,
+}
+
+/// The status of the tip at one moment.
+struct Current {
+    key: Key,
+    state: SignedState,
+    config: PeerConfig,
+    /// The canonical status text: what a delegate signs.
+    text: String,
+}
+
 /// The served status and its cache.
-pub struct StatusServer {}
+pub struct StatusServer {
+    node: Arc<dyn NodeServices>,
+    attestation: Arc<AttestationSession>,
+    clock: Arc<dyn Clock>,
+    wait: Duration,
+    cache: Mutex<Option<Cached>>,
+    offered: Mutex<Option<Key>>,
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 impl StatusServer {
     /// The status of `node`, attested through `attestation`, on `clock`.
@@ -24,23 +73,136 @@ impl StatusServer {
         attestation: Arc<AttestationSession>,
         clock: Arc<dyn Clock>,
     ) -> StatusServer {
-        let _ = (node, attestation, clock);
-        todo!("the served status")
+        StatusServer {
+            node,
+            attestation,
+            clock,
+            wait: ATTESTATION_WAIT,
+            cache: Mutex::new(None),
+            offered: Mutex::new(None),
+        }
     }
 
     /// The getStatus answer, encoded.
     pub async fn get_status(&self) -> Result<Vec<u8>, ServerRefusal> {
-        todo!("the getStatus answer")
+        let current = self.current();
+        let cached = lock(&self.cache).as_ref().and_then(|cached| {
+            let fresh = cached.attested || !self.attestation.is_attached();
+            (cached.key == current.key && fresh).then(|| cached.bytes.clone())
+        });
+        if let Some(bytes) = cached {
+            return Ok(bytes);
+        }
+        self.attestation.offer(current.text.clone());
+        let signing = self.attestation.signatures(&current.text, self.wait).await;
+        let (attestations, keep, attested) = match signing {
+            Signing::NoSession => (Vec::new(), true, false),
+            Signing::Signed(attestations) => (attestations, true, true),
+            Signing::Unsigned => (Vec::new(), false, false),
+        };
+        let bytes = status::response(&current.state, &current.config, &attestations).encode();
+        if keep {
+            let (key, bytes) = (current.key, bytes.clone());
+            *lock(&self.cache) = Some(Cached {
+                key,
+                bytes,
+                attested,
+            });
+        }
+        Ok(bytes)
     }
 
     /// Look at the cache key, and offer a changed status to the forger's session.
     pub fn refresh(&self) {
-        todo!("the status's refresh")
+        let key = self.key(&self.slot());
+        let mut offered = lock(&self.offered);
+        if *offered == Some(key) {
+            return;
+        }
+        *offered = Some(key);
+        drop(offered);
+        self.attestation.offer(self.current().text);
     }
 
     /// Refresh at each new tip, slot boundary and half-slot flip until `shutdown` turns true.
-    pub async fn run(&self, shutdown: watch::Receiver<bool>) {
-        let _ = shutdown;
-        todo!("the status's timer")
+    pub async fn run(&self, mut shutdown: watch::Receiver<bool>) {
+        let mut queue = self.node.queue_state();
+        let mut queue_open = true;
+        while !*shutdown.borrow() {
+            self.refresh();
+            let pause = self.until_next_change().min(TIP_POLL);
+            let queue_changed = async {
+                if !queue_open || queue.changed().await.is_err() {
+                    queue_open = false;
+                    std::future::pending::<()>().await;
+                }
+            };
+            tokio::select! {
+                () = tokio::time::sleep(pause) => {}
+                () = queue_changed => {}
+                changed = shutdown.changed() => if changed.is_err() { return },
+            }
+        }
+    }
+
+    /// The slot at the clock's time.
+    fn slot(&self) -> SlotInfo {
+        let chain = self.node.chain();
+        let first = chain.milestones().at(1);
+        let epoch = slots::epoch_unix_ms(first.epoch()).unwrap_or_default();
+        let now = slots::epoch_time(self.clock.now_ms(), epoch);
+        slots::slot_info(now, first.block_time())
+    }
+
+    /// The time until the next slot boundary or half-slot flip.
+    fn until_next_change(&self) -> Duration {
+        let chain = self.node.chain();
+        let first = chain.milestones().at(1);
+        let epoch = slots::epoch_unix_ms(first.epoch()).unwrap_or_default();
+        let block_ms = i64::try_from(first.block_time().max(1)).unwrap_or(i64::MAX / 1_000);
+        let (block_ms, half_ms) = (
+            block_ms.saturating_mul(1_000),
+            (block_ms / 2).saturating_mul(1_000),
+        );
+        let into = self
+            .clock
+            .now_ms()
+            .saturating_sub(epoch)
+            .rem_euclid(block_ms);
+        let next = if into < half_ms { half_ms } else { block_ms };
+        Duration::from_millis(u64::try_from(next.saturating_sub(into)).unwrap_or(1))
+    }
+
+    fn key(&self, slot: &SlotInfo) -> Key {
+        Key {
+            id: *self.node.chain().last_block().id(),
+            forging_allowed: slot.forging_status,
+            slot: slot.slot_number,
+        }
+    }
+
+    /// The tip's status now.
+    fn current(&self) -> Current {
+        let slot = self.slot();
+        let tip = self.node.chain().last_block();
+        let state = SignedState {
+            height: tip.height(),
+            forging_allowed: slot.forging_status,
+            current_slot: slot.slot_number,
+            header: StatusHeaderData::from_block(&tip),
+        };
+        let config = self.node.peer_config();
+        let text = String::from_utf8_lossy(&status::signing_preimage(&state, &config)).into_owned();
+        let key = Key {
+            id: *tip.id(),
+            forging_allowed: slot.forging_status,
+            slot: slot.slot_number,
+        };
+        Current {
+            key,
+            state,
+            config,
+            text,
+        }
     }
 }
