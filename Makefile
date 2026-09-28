@@ -47,10 +47,12 @@ VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12,V19,V22 kernel=V
                  logger=V20 pool=V21 state=V08,V09-shuffle,V15,V18 transactions=V17 p2p-wire=V13,V24 \
                  p2p=V25,V26 blockchain=V27 api=V28
 # L1: cases per property, the generator's seed, the properties (P1 to P16 or their names, comma
-# separated; all when empty).
+# separated; all when empty); L1_MIN_REACH, how often P13 must reach each reachable result of the
+# processor and each unchained status (when empty: 20 from 1,000 cases per property, else none).
 L1_CASES      ?= 256
 L1_SEED       ?= 1
 L1_PROPERTY   ?=
+L1_MIN_REACH  ?=
 # L2: the corpus directory CORPUS/NAME; ARCHIVE the devnet archives to import (in chain order);
 # CORPUS_SEED the chain's public key-derivation seed (difftest's default when empty); DUMP heights
 # whose records the judge writes.
@@ -245,10 +247,12 @@ test-oracle: ## the oracle tests of cargo test (ping, 256 L1 cases per property)
 
 e2e: vectors vectors-local vectors-diff l0 ## end to end: generate, diff, compare (needs oracle-image first)
 
-l1: build ## L1 properties against the oracle (ORACLE_ARGS): L1_CASES, L1_SEED, L1_PROPERTY
+l1: build ## L1 properties against the oracle (ORACLE_ARGS): L1_CASES, L1_SEED, L1_PROPERTY, L1_MIN_REACH
 	$(need-image)
-	$(TOOLCHAIN) && $(DIFFTEST) run l1 $(if $(L1_PROPERTY),--property $(L1_PROPERTY)) \
-	    --cases $(L1_CASES) --seed $(L1_SEED) --regressions target/l1-regressions $(ORACLE_ARGS)
+	$(TOOLCHAIN) && reach='$(L1_MIN_REACH)'; \
+	if [ -z "$$reach" ]; then if [ $(L1_CASES) -ge 1000 ]; then reach=20; else reach=0; fi; fi; \
+	$(DIFFTEST) run l1 $(if $(L1_PROPERTY),--property $(L1_PROPERTY)) --min-reach $$reach \
+	    --cases $(L1_CASES) --seed $(L1_SEED) --regressions target/l1-regressions $(STRICT) $(ORACLE_ARGS)
 
 corpus-import: build ## devnet archives (ARCHIVE='dir ...', in chain order) to the corpus CORPUS/NAME
 	$(need-name)

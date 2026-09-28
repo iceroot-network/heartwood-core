@@ -337,6 +337,7 @@ fn run_l1(args: &L1Args, env: impl Fn(&str) -> Option<String>, strict: bool) -> 
             cases: args.cases,
             seed: args.seed,
             regressions: args.regressions.clone(),
+            min_reach: args.min_reach,
         },
     )?;
     print!("{}", run.report);

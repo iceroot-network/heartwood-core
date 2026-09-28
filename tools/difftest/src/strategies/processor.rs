@@ -9,7 +9,8 @@
 //! the reference's.
 //!
 //! The corpora are the committed one-node chain, and, when they are under the workspace's
-//! `target/corpus`, `c2-faults` cut at 265 and `c4-restarts`. Each gives five prefixes: its tip,
+//! `target/corpus`, `c2-faults` cut at 265 and `c4-restarts`; [`corpora`] names those the cases
+//! draw from and those that are missing, which L1 reports. Each gives five prefixes: its tip,
 //! the block before, the last round end below the tip and the block after it, and the middle of
 //! the round before; each case carries its prefix whole (the chain form of `chain.process`), and
 //! both sides keep at most sixteen chains applied.
@@ -76,21 +77,61 @@ impl Prefix {
     }
 }
 
-static PREFIXES: LazyLock<Vec<Prefix>> = LazyLock::new(|| {
+/// The corpora of the cases: the prefixes drawn from, and which corpora gave them or not.
+struct Loaded {
+    prefixes: Vec<Prefix>,
+    corpora: Corpora,
+}
+
+/// The corpora P13's cases draw their prefixes from.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Corpora {
+    /// Each corpus the cases draw from, with its cut (`c2-faults to 265`).
+    pub used: Vec<String>,
+    /// Each corpus of the generator that gave no prefix, and why: the cases then draw from the
+    /// others only.
+    pub missing: Vec<String>,
+}
+
+static LOADED: LazyLock<Loaded> = LazyLock::new(|| {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut corpora = vec![(root.join("corpus/txgen-one-node"), None)];
+    let named = |name: &str, cut: Option<u32>| match cut {
+        Some(to) => format!("{name} to {to}"),
+        None => name.to_owned(),
+    };
+    let mut corpora = vec![("txgen-one-node", root.join("corpus/txgen-one-node"), None)];
+    let mut missing = Vec::new();
     for (name, cut) in OTHER_CORPORA {
         let dir = root.join("../../target/corpus").join(name);
         if dir.join("corpus.json").exists() {
-            corpora.push((dir, cut));
+            corpora.push((name, dir, cut));
+        } else {
+            missing.push(format!("{}: not under target/corpus", named(name, cut)));
         }
     }
-    corpora
-        .into_iter()
-        .filter_map(|(dir, cut)| prefixes(&dir, cut))
-        .flatten()
-        .collect()
+    let (mut prefixes_all, mut used) = (Vec::new(), Vec::new());
+    for (name, dir, cut) in corpora {
+        match prefixes(&dir, cut) {
+            Some(found) => {
+                prefixes_all.extend(found);
+                used.push(named(name, cut));
+            }
+            None => missing.push(format!(
+                "{}: it does not load, cut or apply",
+                named(name, cut)
+            )),
+        }
+    }
+    Loaded {
+        prefixes: prefixes_all,
+        corpora: Corpora { used, missing },
+    }
 });
+
+/// The corpora of P13's cases (loaded on first use).
+pub fn corpora() -> Corpora {
+    LOADED.corpora.clone()
+}
 
 /// The five prefixes of the corpus in `dir`, cut at `cut`; `None` when it does not load.
 fn prefixes(dir: &Path, cut: Option<u32>) -> Option<Vec<Prefix>> {
@@ -318,9 +359,10 @@ fn recipe(prefixes: usize) -> impl Strategy<Value = Recipe> {
 /// The cases of P13.
 pub fn processor_cases(context: &Arc<TxContext>) -> BoxedStrategy<OpCase> {
     let _ = context;
-    recipe(PREFIXES.len())
+    recipe(LOADED.prefixes.len())
         .prop_filter_map("the corpora have no prefix", |recipe| {
-            PREFIXES
+            LOADED
+                .prefixes
                 .get(recipe.prefix)
                 .map(|prefix| case(prefix, &recipe))
         })
