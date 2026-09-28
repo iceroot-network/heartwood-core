@@ -582,6 +582,84 @@ fn every_block_needs_a_quorum_answer_to_its_forger_in_its_slot() {
 }
 
 #[test]
+fn the_attestation_report_gives_the_latency_and_the_answers_without_a_quorum() {
+    use live::forging::{Answer, answers, attestation_report, recorded_blocks, validators};
+    let d = devnet();
+    let v = validators(&d.run).unwrap();
+    let (blocks, _) = recorded_blocks(&d.run, &d.manifest, &d.corpus.milestones).unwrap();
+    let (all, _) = answers(&d.run, &d.manifest).unwrap();
+    // The fixture answers each block's forger 300 ms into the slot.
+    let report = attestation_report(&blocks, &all, &v, slots(&d));
+    assert!(
+        report.contains("300 / 300 / 300 ms into the slot")
+            && report.contains("over 264 blocks, 0 without one"),
+        "{report}"
+    );
+    assert!(report.contains("0 of "), "{report}");
+    // An answer below the quorum is counted, and its block has no quorum answer.
+    let first = all
+        .iter()
+        .find(|a| a.node_height == Some(100))
+        .unwrap()
+        .clone();
+    let others: Vec<_> = all
+        .iter()
+        .filter(|a| **a != first)
+        .cloned()
+        .chain([Answer {
+            has_quorum: 26,
+            ..first.clone()
+        }])
+        .collect();
+    let report = attestation_report(&blocks, &others, &v, slots(&d));
+    assert!(
+        report.contains("over 263 blocks, 1 without one"),
+        "{report}"
+    );
+    assert!(report.contains("1 of "), "{report}");
+}
+
+#[test]
+fn a_failover_needs_the_relays_own_receipt_of_the_block_in_time() {
+    use live::forging::{Receipt, failover_received};
+    let receipt = |relay: &str, from: &str, id: &str, at: i64| Receipt {
+        relay: relay.into(),
+        at,
+        username: "genesis_5".into(),
+        height: 60,
+        id: id.into(),
+        from: from.into(),
+    };
+    let receipts = [receipt("node6", "127.2.0.111", "aa", 100_000)];
+    let ok = |relay, from, id, start| failover_received(&receipts, relay, from, id, start, 8_000);
+    assert!(ok("node6", "127.2.0.111", "aa", Some(90_000)));
+    assert!(
+        !ok("node7", "127.2.0.111", "aa", Some(90_000)),
+        "another relay"
+    );
+    assert!(
+        !ok("node6", "127.2.0.112", "aa", Some(90_000)),
+        "another source"
+    );
+    assert!(
+        !ok("node6", "127.2.0.111", "bb", Some(90_000)),
+        "another block"
+    );
+    assert!(
+        !ok("node6", "127.2.0.111", "aa", Some(100_001)),
+        "before the step"
+    );
+    assert!(
+        !ok("node6", "127.2.0.111", "aa", Some(-100_001)),
+        "too long after it"
+    );
+    assert!(
+        !ok("node6", "127.2.0.111", "aa", None),
+        "a step without a start"
+    );
+}
+
+#[test]
 fn network_state_lines_are_read_as_the_relay_writes_them() {
     let d = devnet();
     let path = d.run.join("nodes/node2/difftest/network-state.jsonl");

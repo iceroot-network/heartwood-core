@@ -52,6 +52,11 @@ pub fn check(vectors: &VectorSet) -> Result<Report> {
             });
         }
     }
+    if results.is_empty() {
+        return Err(Error::Fixture(format!(
+            "no {OP} record in the vector set, so nothing was compared"
+        )));
+    }
     Ok(Report {
         title: "network generate against the genesis vectors".into(),
         source: vectors.meta().map(describe_meta).unwrap_or_default(),

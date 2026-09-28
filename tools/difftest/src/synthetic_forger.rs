@@ -1,26 +1,25 @@
 //! The synthetic cases of the node's own forger's blocks on a corpus chain (`run l2
-//! --synthetic`), each run through the reference's receipt and job (`chain.job` with
-//! `fromForger` and `receive`) and Heartwood's lateness rule and job, their answers and lines
-//! compared. The case's block is the corpus's last one, on the chain before it:
+//! --synthetic`). Each runs through the reference's receipt and job (`chain.job` with
+//! `fromForger` and `receive`) and through Heartwood's blockchain service ([`ServiceRig`]): the
+//! service's own lateness rules, its job, its broadcast, its fork and its recovery. The answers,
+//! the log lines and the digest lines are compared. The case's block is the corpus's last one, on
+//! the chain before it:
 //!
 //! - `forger-received-late`: the block from the forger received with 1,000 ms left in its slot
-//!   (the reference's whole seconds read any time left of 1,000 ms or less so) is discarded:
-//!   `Discarded block <h> because it was received too late`;
+//!   (the reference reads whole seconds, so any time left of 1,000 ms or less is too little) is
+//!   discarded: `Discarded block <h> because it was received too late`;
+//! - `forger-received-in-time`: received with 1,001 ms left, which the reference reads as 2,000
+//!   ms, the block is accepted and broadcast;
 //! - `forger-processed-late`: received with 7 s left and processed with 1,000 ms left, it is
 //!   accepted, not broadcast, logged `Discarded block <h> because it was processed too late` and
-//!   marked as forked with one block to roll back; the recovery's revert of one block and the
-//!   block's return (its re-apply) give equal lines on both sides;
-//! - `forger-posted-twice`: the same bytes posted twice in time, the second job dropped as
-//!   applied already (the job's first height is not above the tip): no processing, no second
-//!   broadcast, the machine back to idle.
-//!
-//! Heartwood's side runs its job on a node at the chain's tip ([`JobRig`]), and applies to the
-//! job's end the blockchain service's lateness rule ([`forger_blocks::too_late`]) as the service
-//! applies it.
+//!   marked as forked with one block to roll back; the service's recovery reverts the block and
+//!   the block's return (its re-apply) gives equal lines on both sides;
+//! - `forger-posted-twice`: the same bytes posted twice in time; the first is accepted and
+//!   broadcast, and the second job is dropped as applied already (its first height is not above
+//!   the tip): no processing and no second broadcast.
 
-use heartwood_blockchain::forger_blocks;
 use heartwood_crypto::crypto::slots;
-use heartwood_crypto::utils::{hex, js};
+use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Block, Milestones};
 use heartwood_kernel::config::crypto::CryptoTexts;
 use heartwood_state::digest::Step;
@@ -31,19 +30,23 @@ use crate::corpus::Corpus;
 use crate::digests;
 use crate::errors::{Error, Result};
 use crate::levels::l2::{call, corpus_crypto};
-use crate::levels::l2_processor::{JobBlock, JobInputs, JobRig, RigJob, crypto_of, judge_job};
+use crate::levels::l2_processor::{JobBlock, JobRig, crypto_of};
 use crate::oracle::OracleServer;
 use crate::report::{CaseResult, Outcome};
+use crate::service_rig::{Posted, ServiceRig};
 
 /// The cases, in order.
-pub const CASES: [&str; 3] = [
+pub const CASES: [&str; 4] = [
     "forger-received-late",
+    "forger-received-in-time",
     "forger-processed-late",
     "forger-posted-twice",
 ];
 
 /// The time left in the slot that the reference reads as too little: 1,000 ms.
 const LATE_LEFT_MS: i64 = 1_000;
+/// The time left that the reference still reads as in time: 1,001 ms, which it reads as 2,000.
+const JUST_IN_TIME_LEFT_MS: i64 = 1_001;
 /// The time into the slot of a block received in time.
 const IN_TIME_MS: i64 = 1_000;
 
@@ -52,7 +55,7 @@ struct Case<'a> {
     corpus: &'a Corpus,
     name: &'static str,
     session: Value,
-    rig: JobRig,
+    rig: ServiceRig,
     block: JobBlock,
     height: u32,
     /// The block's slot, in milliseconds since the Unix epoch: its start and its end.
@@ -83,10 +86,11 @@ impl<'a> Case<'a> {
                 )));
             }
         }
-        let rig = rig(corpus, prefix)?;
         let block = Block::receive(&last.bytes, &corpus.milestones)
             .map_err(|e| Error::Oracle(format!("block {}: {e}", last.height)))?;
         let slot = slot_of(&block, &corpus.milestones);
+        let rig = ServiceRig::start(rig(corpus, prefix)?.into_parts(), slot.0)
+            .map_err(|why| Error::Oracle(format!("the service does not start: {why}")))?;
         Ok(Case {
             corpus,
             name,
@@ -118,59 +122,36 @@ impl<'a> Case<'a> {
         call(server, "chain.job", u64::from(self.height), &args)
     }
 
-    /// The block posted by the forger and processed at `now` on Heartwood's node: the job's run,
-    /// with the service's answer to a late forger's block applied (not broadcast; forked with one
-    /// block to roll back; the line).
-    fn heartwood_post(
+    /// The block posted by the forger and processed at `now` by Heartwood's service.
+    fn post(
         &mut self,
+        received_at: i64,
         now: i64,
-    ) -> std::result::Result<(RigJob, Option<String>), String> {
-        let mut incoming = self.rig.enqueue(std::slice::from_ref(&self.block))?;
-        incoming
-            .iter_mut()
-            .for_each(|block| block.from_forger = true);
-        let blocks = [self.block.clone()];
-        let ran = self
-            .rig
-            .run_enqueued(&blocks, incoming, &JobInputs::at(now), &[]);
-        let ran = ran.map_err(|problem| format!("{problem:?}"))?;
-        let RigJob::Ran {
-            outcome,
-            seen,
-            mut value,
-        } = ran
-        else {
-            return Ok((ran, None));
-        };
-        let broadcast = matches!(
-            &outcome.end,
-            heartwood_blockchain::JobEnd::Broadcast(_, true)
-        );
-        let (timestamp, milestones) = (self.slot_timestamp(), &self.corpus.milestones);
-        let mut line = None;
-        if broadcast && forger_blocks::too_late(timestamp, self.height, now, milestones) {
-            let link = json!({"height": self.height, "id": value["block"]["id"]});
-            value["end"] = json!("fork");
-            value["broadcast"] = json!(false);
-            value["forked"] = link;
-            value["rollback"] = json!(1);
-            line = Some(format!(
-                "Discarded block {} because it was processed too late :exclamation:",
-                locale(self.height)
-            ));
-        }
-        Ok((
-            RigJob::Ran {
-                outcome,
-                seen,
-                value,
-            },
-            line,
-        ))
+        step: Step,
+    ) -> std::result::Result<Posted, String> {
+        self.rig.post_forged(&self.block, received_at, now, step)
     }
 
-    fn slot_timestamp(&self) -> u32 {
-        self.block.parts().map_or(0, |(header, _)| header.timestamp)
+    /// Record the oracle's answer against the service's, lines included, and whether the service
+    /// broadcast as the oracle's answer says.
+    fn record_post(
+        &mut self,
+        what: &str,
+        oracle: &Value,
+        ours: std::result::Result<Posted, String>,
+    ) {
+        match ours {
+            Ok(posted) => {
+                let differences = compare::diff(oracle, &posted.value);
+                let outcome = if differences.is_empty() {
+                    Outcome::Pass
+                } else {
+                    Outcome::Mismatch(differences)
+                };
+                self.record(what, outcome);
+            }
+            Err(why) => self.record(what, Outcome::HarnessError(why)),
+        }
     }
 }
 
@@ -205,30 +186,23 @@ fn slot_of(block: &Block, milestones: &Milestones) -> (i64, i64) {
     (start, start.saturating_add(block_ms))
 }
 
-fn locale(height: u32) -> String {
-    js::to_locale_integer(height.into())
-}
-
-/// Whether the oracle's `lines` hold `line`.
-fn logged(oracle: &Value, line: &str) -> bool {
-    let lines = oracle["lines"].as_array().cloned().unwrap_or_default();
-    lines.iter().any(|logged| logged.as_str() == Some(line))
-}
-
-/// The oracle's job without its log lines, as the job's judge reads it.
-fn without_lines(oracle: &Value) -> Value {
-    let mut job = oracle.clone();
-    if let Value::Object(fields) = &mut job {
-        fields.shift_remove("lines");
+fn mismatch(compared: std::result::Result<Vec<compare::Difference>, String>) -> Outcome {
+    match compared {
+        Ok(differences) if differences.is_empty() => Outcome::Pass,
+        Ok(differences) => Outcome::Mismatch(differences),
+        Err(why) => Outcome::HarnessError(why),
     }
-    job
 }
 
-fn outcome(pass: bool, why: impl FnOnce() -> String) -> Outcome {
-    if pass {
-        Outcome::Pass
-    } else {
-        Outcome::HarnessError(why())
+/// Whether the service broadcast the block as many times as `expected`.
+fn broadcast_count(ours: &std::result::Result<Posted, String>, expected: usize) -> Outcome {
+    match ours {
+        Ok(posted) if posted.broadcasts.len() == expected => Outcome::Pass,
+        Ok(posted) => Outcome::HarnessError(format!(
+            "Heartwood broadcast {:?}, expected {expected} broadcasts",
+            posted.broadcasts
+        )),
+        Err(why) => Outcome::HarnessError(why.clone()),
     }
 }
 
@@ -236,29 +210,19 @@ fn outcome(pass: bool, why: impl FnOnce() -> String) -> Outcome {
 fn received_late(case: &mut Case<'_>, server: &mut OracleServer) -> Result<()> {
     let now = case.slot.1 - LATE_LEFT_MS;
     let oracle = case.oracle_post(server, now, now)?;
-    let line = format!(
-        "Discarded block {} because it was received too late :exclamation:",
-        locale(case.height)
-    );
-    let ours = forger_blocks::too_late(
-        case.slot_timestamp(),
-        case.height,
-        now,
-        &case.corpus.milestones,
-    );
-    let theirs = oracle.get("received") == Some(&Value::Bool(false));
-    case.record(
-        "the block is discarded",
-        outcome(ours && theirs, || {
-            format!("Heartwood discards it: {ours}; the reference: {oracle}")
-        }),
-    );
-    case.record(
-        "the line",
-        outcome(logged(&oracle, &line), || {
-            format!("the reference logged {}", oracle["lines"])
-        }),
-    );
+    let ours = case.post(now, now, Step::Apply);
+    case.record_post("the block is discarded, the line", &oracle, ours.clone());
+    case.record("nothing is broadcast", broadcast_count(&ours, 0));
+    Ok(())
+}
+
+/// `forger-received-in-time`.
+fn received_in_time(case: &mut Case<'_>, server: &mut OracleServer) -> Result<()> {
+    let now = case.slot.1 - JUST_IN_TIME_LEFT_MS;
+    let oracle = case.oracle_post(server, now, now)?;
+    let ours = case.post(now, now, Step::Apply);
+    case.record_post("accepted and broadcast", &oracle, ours.clone());
+    case.record("broadcast once", broadcast_count(&ours, 1));
     Ok(())
 }
 
@@ -266,69 +230,41 @@ fn received_late(case: &mut Case<'_>, server: &mut OracleServer) -> Result<()> {
 fn processed_late(case: &mut Case<'_>, server: &mut OracleServer) -> Result<()> {
     let (received_at, now) = (case.slot.0 + IN_TIME_MS, case.slot.1 - LATE_LEFT_MS);
     let oracle = case.oracle_post(server, received_at, now)?;
-    let received = !forger_blocks::too_late(
-        case.slot_timestamp(),
-        case.height,
-        received_at,
-        &case.corpus.milestones,
+    let ours = case.post(received_at, now, Step::Apply);
+    case.record_post(
+        "processed, forked with one block to roll back, the lines",
+        &oracle,
+        ours.clone(),
     );
-    case.record(
-        "received in time",
-        outcome(received && oracle.get("received").is_none(), || {
-            format!("{oracle}")
-        }),
-    );
-    match case.heartwood_post(now) {
-        Ok((ours, line)) => {
-            let judged = judge_job(
-                std::slice::from_ref(&case.block),
-                &without_lines(&oracle),
-                &ours,
-            );
-            case.record("processed, forked with one block to roll back", judged);
-            let same = line.as_deref().is_some_and(|line| logged(&oracle, line));
-            case.record(
-                "the line",
-                outcome(same, || {
-                    format!("Heartwood: {line:?}; the reference: {}", oracle["lines"])
-                }),
-            );
-        }
-        Err(why) => case.record("processed", Outcome::HarnessError(why)),
-    }
-    // The recovery removes the block, and the block comes back.
+    case.record("nothing is broadcast", broadcast_count(&ours, 0));
+    // The service's recovery removes the block; the reference's is asked to do the same.
+    let refreshes = case.rig.refreshes() + 1;
+    let settled = case.rig.settle(refreshes);
     let theirs = call(
         server,
         "chain.revert",
         u64::from(case.height),
         &json!({"session": case.session, "count": 1}),
     )?;
-    let ours = case
-        .rig
-        .revert()
-        .map(|_| case.rig.lines().last().map(digests::line_value));
-    let compared = match ours {
-        Ok(Some(line)) => Ok(compare::diff(&theirs["lines"], &json!([line]))),
-        Ok(None) => Err("Heartwood wrote no revert line".to_owned()),
+    let compared = match settled {
+        Ok(()) => {
+            let reverts = case.rig.take_reverts();
+            let lines: Vec<Value> = reverts.iter().map(digests::line_value).collect();
+            Ok(compare::diff(&theirs["lines"], &Value::Array(lines)))
+        }
         Err(why) => Err(why),
     };
     case.record("the revert of one block", mismatch(compared));
     let args =
         json!({"session": case.session, "hex": hex::encode(&case.block.bytes), "step": "reapply"});
     let theirs = call(server, "chain.apply", u64::from(case.height), &args)?;
-    let inputs = JobInputs::at(received_at);
-    let ours = case
-        .rig
-        .run(std::slice::from_ref(&case.block), &inputs, &[Step::Reapply]);
-    let compared = match ours {
-        Ok(RigJob::Ran { seen, .. }) => {
-            let line = seen.first().and_then(|seen| seen.line.as_ref());
-            let line = line.map_or(Value::Null, digests::line_value);
-            Ok(compare::diff(&theirs["line"], &line))
-        }
-        Ok(RigJob::Refused(why)) => Err(format!("Heartwood's download refused it: {why}")),
-        Err(problem) => Err(format!("{problem:?}")),
-    };
+    let compared = case
+        .post(received_at, received_at, Step::Reapply)
+        .and_then(|posted| {
+            let line = posted.seen.first().and_then(|seen| seen.line.as_ref());
+            let line = line.ok_or("Heartwood wrote no line for the block's return")?;
+            Ok(compare::diff(&theirs["line"], &digests::line_value(line)))
+        });
     case.record("the block applied again", mismatch(compared));
     Ok(())
 }
@@ -336,29 +272,19 @@ fn processed_late(case: &mut Case<'_>, server: &mut OracleServer) -> Result<()> 
 /// `forger-posted-twice`.
 fn posted_twice(case: &mut Case<'_>, server: &mut OracleServer) -> Result<()> {
     let now = case.slot.0 + IN_TIME_MS;
-    for what in ["the first post", "the second post, equal to the last block"] {
+    for (what, broadcasts) in [
+        ("the first post", 1),
+        ("the second post, equal to the last block", 0),
+    ] {
         let oracle = case.oracle_post(server, now, now)?;
-        match case.heartwood_post(now) {
-            Ok((ours, _)) => {
-                let judged = judge_job(
-                    std::slice::from_ref(&case.block),
-                    &without_lines(&oracle),
-                    &ours,
-                );
-                case.record(what, judged);
-            }
-            Err(why) => case.record(what, Outcome::HarnessError(why)),
-        }
+        let ours = case.post(now, now, Step::Apply);
+        case.record_post(what, &oracle, ours.clone());
+        case.record(
+            &format!("{what}: broadcasts"),
+            broadcast_count(&ours, broadcasts),
+        );
     }
     Ok(())
-}
-
-fn mismatch(compared: std::result::Result<Vec<compare::Difference>, String>) -> Outcome {
-    match compared {
-        Ok(differences) if differences.is_empty() => Outcome::Pass,
-        Ok(differences) => Outcome::Mismatch(differences),
-        Err(why) => Outcome::HarnessError(why),
-    }
 }
 
 /// Run every case on `corpus`'s chain.
@@ -368,11 +294,14 @@ pub fn run(corpus: &Corpus, oracle: &mut OracleServer) -> Result<Vec<CaseResult>
         let ran = Case::open(corpus, name, oracle).and_then(|mut case| {
             match name {
                 "forger-received-late" => received_late(&mut case, oracle)?,
+                "forger-received-in-time" => received_in_time(&mut case, oracle)?,
                 "forger-processed-late" => processed_late(&mut case, oracle)?,
                 _ => posted_twice(&mut case, oracle)?,
             }
             let _ = call(oracle, "chain.close", 1, &json!({"session": case.session}));
-            Ok(case.results)
+            let Case { rig, results, .. } = case;
+            rig.stop();
+            Ok(results)
         });
         match ran {
             Ok(results) => out.extend(results),
@@ -387,4 +316,65 @@ pub fn run(corpus: &Corpus, oracle: &mut OracleServer) -> Result<Vec<CaseResult>
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The committed corpus's chain up to its last block, and that block's slot.
+    fn service() -> (ServiceRig, JobBlock, (i64, i64)) {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus/txgen-one-node");
+        let corpus = Corpus::load(&dir).expect("the corpus loads");
+        let (last, prefix) = corpus.blocks.split_last().expect("the corpus has blocks");
+        let block = Block::receive(&last.bytes, &corpus.milestones).expect("a block");
+        let slot = slot_of(&block, &corpus.milestones);
+        let parts = rig(&corpus, prefix).expect("the rig starts").into_parts();
+        let service = ServiceRig::start(parts, slot.0).expect("the service starts");
+        (service, JobBlock::of(last.bytes.clone()), slot)
+    }
+
+    #[test]
+    fn a_block_received_with_one_second_left_is_discarded_and_one_with_1001_ms_is_broadcast() {
+        let (mut rig, block, slot) = service();
+        let late = slot.1 - LATE_LEFT_MS;
+        let posted = rig.post_forged(&block, late, late, Step::Apply).unwrap();
+        assert_eq!(posted.value["received"], json!(false));
+        assert_eq!(posted.value["lines"].as_array().map(Vec::len), Some(1));
+        assert!(posted.broadcasts.is_empty() && posted.seen.is_empty());
+        let early = slot.1 - JUST_IN_TIME_LEFT_MS;
+        let posted = rig.post_forged(&block, early, early, Step::Apply).unwrap();
+        assert_eq!(posted.broadcasts, [rig.tip().0]);
+        assert_eq!(posted.value["end"], json!("broadcast"));
+        rig.stop();
+    }
+
+    #[test]
+    fn a_block_processed_late_is_forked_removed_and_never_broadcast() {
+        let (mut rig, block, slot) = service();
+        let (received, now) = (slot.0 + IN_TIME_MS, slot.1 - LATE_LEFT_MS);
+        let tip = rig.tip().0;
+        let posted = rig.post_forged(&block, received, now, Step::Apply).unwrap();
+        assert!(posted.broadcasts.is_empty());
+        assert_eq!(posted.value["end"], json!("fork"));
+        assert_eq!(posted.value["rollback"], json!(1));
+        let lines = crate::service_rig::lines_of(&posted.value);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("because it was processed too late"))
+        );
+        rig.settle(1).unwrap();
+        assert_eq!(
+            rig.take_reverts().len(),
+            1,
+            "the recovery reverts the block"
+        );
+        assert_eq!(
+            rig.tip().0 + 1,
+            tip + 1,
+            "the chain is back below the block"
+        );
+        rig.stop();
+    }
 }

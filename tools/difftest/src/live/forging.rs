@@ -35,6 +35,8 @@ use crate::errors::{Error, Result};
 
 /// The delegates a forger needs counted to forge (the quorum's 27 of 53).
 pub const QUORUM: u64 = 27;
+/// The slots a failover may take before the block reaches the relay.
+const FAILOVER_SLOTS: i64 = 25;
 /// The fault whose window is every node's: the three-node outage halts the chain.
 const HALT: &str = "outage-three";
 
@@ -336,6 +338,67 @@ pub fn quorum_before_blocks(
         }
     }
     problems
+}
+
+/// What the relays' answers to the forgers show of the attestation, for the record and not a
+/// gate: how long into its slot the first answer with a quorum (at least [`QUORUM`]) reached the
+/// forger of each block, at the height below it (minimum, median and maximum in milliseconds, and
+/// the blocks that have none), and how many answers to a forger after height 10 counted fewer
+/// delegates than the quorum, so served a status the forger could not use.
+pub fn attestation_report(
+    blocks: &BTreeMap<String, Recorded>,
+    answers: &[Answer],
+    validators: &[Validator],
+    slots: Slots,
+) -> String {
+    let mut latencies: Vec<i64> = Vec::new();
+    let mut without = 0_usize;
+    for b in blocks.values() {
+        let Some(holder) = validators.iter().find(|v| v.keys.contains_key(&b.key)) else {
+            continue;
+        };
+        let first = answers
+            .iter()
+            .filter(|a| {
+                a.caller == holder.forger
+                    && slots.at(a.at) == b.slot
+                    && a.node_height == Some(u64::from(b.height) - 1)
+                    && a.has_quorum >= QUORUM
+            })
+            .map(|a| a.at)
+            .min();
+        match first {
+            Some(at) => {
+                latencies.push(at - (slots.epoch_ms + b.slot * slots.slot_ms.max(1)));
+            }
+            None => without += 1,
+        }
+    }
+    latencies.sort_unstable();
+    let latency = match (
+        latencies.first(),
+        latencies.get(latencies.len() / 2),
+        latencies.last(),
+    ) {
+        (Some(min), Some(median), Some(max)) => {
+            format!("{min} / {median} / {max} ms into the slot (min / median / max)")
+        }
+        _ => "no block with a quorum answer".to_owned(),
+    };
+    let to_forgers = |a: &&Answer| {
+        a.node_height.is_some_and(|h| h > 10) && validators.iter().any(|v| v.forger == a.caller)
+    };
+    let served = answers.iter().filter(to_forgers).count();
+    let unsigned = answers
+        .iter()
+        .filter(to_forgers)
+        .filter(|a| a.has_quorum < QUORUM)
+        .count();
+    format!(
+        "attestation: first quorum answer {latency} over {} blocks, {without} without one; \
+         {unsigned} of {served} answers to forgers after height 10 counted fewer than {QUORUM} delegates",
+        latencies.len()
+    )
 }
 
 /// A block a relay's debug log says it received: `Received new block forged by delegate NAME (#R)
@@ -782,6 +845,10 @@ pub(super) fn check(
         "attestations: a quorum answer before every block",
         problems,
     );
+    cases.record(
+        "forging",
+        attestation_report(&blocks, &answers, &validators, slots),
+    );
     let (receipts, unread) = receipts(dir, manifest);
     let direct = receipts
         .iter()
@@ -806,6 +873,26 @@ pub(super) fn check(
     Ok(())
 }
 
+/// Whether `relay`'s log shows the block `id` received from `forger` no earlier than the step's
+/// start and within `FAILOVER_SLOTS` slots of it: the failover's evidence read from the relay's
+/// own log instead of the recipe's record of it.
+pub fn failover_received(
+    receipts: &[Receipt],
+    relay: &str,
+    forger: &str,
+    id: &str,
+    start: Option<i64>,
+    slot_ms: i64,
+) -> bool {
+    let Some(start) = start else {
+        return false;
+    };
+    let until = start + FAILOVER_SLOTS * slot_ms;
+    receipts.iter().any(|r| {
+        r.relay == relay && r.from == forger && r.id == id && r.at >= start && r.at <= until
+    })
+}
+
 fn faults(
     dir: &Path,
     manifest: &Manifest,
@@ -814,7 +901,12 @@ fn faults(
     cases: &mut Cases,
 ) -> Result<()> {
     let steps = run::steps(dir)?;
-    let mut problems = Vec::new();
+    let (receipts, unread) = receipts(dir, manifest);
+    let mut problems: Vec<String> = unread
+        .into_iter()
+        .map(|u| format!("unreadable log {u}"))
+        .collect();
+    let slot_ms = i64::from(manifest.block_time) * 1_000;
     let forger_one = validators
         .iter()
         .find(|v| v.name == "node1")
@@ -834,6 +926,14 @@ fn faults(
                 || text(r, "blockId").is_empty()
                 || !text(r, "logLine").contains(forger_one)
                 || r["heldSlots"].as_u64().is_none_or(|h| h > 25)
+                || !failover_received(
+                    &receipts,
+                    relay,
+                    forger_one,
+                    text(r, "blockId"),
+                    s.start,
+                    slot_ms,
+                )
         }) {
             problems.push(format!(
                 "{name}: no block of a node-1 delegate received by {relay} from {forger_one} within 25 slots"
@@ -903,7 +1003,6 @@ fn faults(
     if availability.is_empty() {
         problems.push("no readiness samples".into());
     }
-    let slot_ms = i64::from(manifest.block_time) * 1_000;
     let first_round = u64::from(manifest.round_length);
     for m in run::read_lines(&missed_path)? {
         let node = text(&m, "node");

@@ -399,15 +399,13 @@ fn processor_outcomes(expected: &Expected, seen: &mut BTreeMap<String, usize>) {
     }
 }
 
-/// The reachable processor results and unchained statuses that `seen` counts fewer than
-/// `minimum` times, each with its count.
-pub fn under_reached(seen: &BTreeMap<String, usize>, minimum: u32) -> Vec<(String, usize)> {
+/// The classes of `wanted` that `seen` counts fewer than `minimum` times, each with its count.
+fn reached_fewer(
+    seen: &BTreeMap<String, usize>,
+    minimum: u32,
+    wanted: impl Iterator<Item = String>,
+) -> Vec<(String, usize)> {
     let minimum = usize::try_from(minimum).unwrap_or(usize::MAX);
-    let wanted = (PROCESSOR_RESULTS.iter().map(|r| format!("P13 result {r}"))).chain(
-        UNCHAINED_STATUSES
-            .iter()
-            .map(|u| format!("P13 unchained {u}")),
-    );
     wanted
         .map(|class| {
             let n = seen.get(&class).copied().unwrap_or(0);
@@ -415,6 +413,46 @@ pub fn under_reached(seen: &BTreeMap<String, usize>, minimum: u32) -> Vec<(Strin
         })
         .filter(|(_, n)| *n < minimum)
         .collect()
+}
+
+/// The reachable processor results and unchained statuses that `seen` counts fewer than
+/// `minimum` times, each with its count.
+pub fn under_reached(seen: &BTreeMap<String, usize>, minimum: u32) -> Vec<(String, usize)> {
+    let wanted = (PROCESSOR_RESULTS.iter().map(|r| format!("P13 result {r}"))).chain(
+        UNCHAINED_STATUSES
+            .iter()
+            .map(|u| format!("P13 unchained {u}")),
+    );
+    reached_fewer(seen, minimum, wanted)
+}
+
+/// The outcomes of a forging decision that P19 must reach: each action of the reference's attempt
+/// (`forger-decide.js`), and each reason it refuses for. An answer that is an error is no
+/// action and is not listed.
+pub const DECISION_CLASSES: [&str; 10] = [
+    "decide stop",
+    "decide error",
+    "decide forged",
+    "decide late",
+    "decide sameSlot",
+    "decide refused: unknown",
+    "decide refused: coldStart",
+    "decide refused: belowMinimum",
+    "decide refused: alreadyForged",
+    "decide refused: quorum",
+];
+
+/// The decision actions and refusals that `seen` counts fewer than `minimum` times, each with its
+/// count.
+pub fn decisions_under_reached(
+    seen: &BTreeMap<String, usize>,
+    minimum: u32,
+) -> Vec<(String, usize)> {
+    reached_fewer(
+        seen,
+        minimum,
+        DECISION_CLASSES.iter().map(|c| (*c).to_owned()),
+    )
 }
 
 /// The error class of a refused transaction in an oracle answer (P7).
@@ -541,6 +579,9 @@ pub fn run(
         if *property == Property::Processor {
             results.extend(processor_checks(&file, &seen, options.min_reach));
         }
+        if *property == Property::Decisions {
+            results.extend(decision_checks(&file, &seen, options.min_reach));
+        }
         if matches!(
             *property,
             Property::Handlers | Property::Pool | Property::Processor | Property::Decisions
@@ -622,6 +663,12 @@ pub fn run(
             ));
         }
     }
+    if options.properties.contains(&Property::Decisions) && options.min_reach > 0 {
+        source.push_str(&format!(
+            "; P19 each action and refusal at least {} times",
+            options.min_reach
+        ));
+    }
     let report = Report {
         title: super::Level::L1.title().to_string(),
         source,
@@ -665,6 +712,29 @@ fn processor_checks(file: &str, seen: &BTreeMap<String, usize>, min_reach: u32) 
         ));
     }
     out
+}
+
+/// P19's own check: each of the reference's actions and refusals must be reached `min_reach`
+/// times; nothing is checked without a minimum.
+fn decision_checks(file: &str, seen: &BTreeMap<String, usize>, min_reach: u32) -> Vec<CaseResult> {
+    if min_reach == 0 {
+        return Vec::new();
+    }
+    let under = decisions_under_reached(seen, min_reach);
+    let outcome = if under.is_empty() {
+        Outcome::Pass
+    } else {
+        let list: Vec<String> = under.iter().map(|(c, n)| format!("{c} {n}")).collect();
+        Outcome::HarnessError(format!("fewer: {}", list.join(", ")))
+    };
+    vec![CaseResult {
+        file: file.to_owned(),
+        line: 0,
+        op: Property::Decisions.number().to_owned(),
+        label: format!("P19 reached each action and refusal of the reference {min_reach} times"),
+        height: 0,
+        outcome,
+    }]
 }
 
 /// The wallet records where the two sides differ on `case`, by wallet and field, as extra
@@ -807,6 +877,41 @@ mod tests {
                 .iter()
                 .all(|c| !c.outcome.is_failure())
         );
+    }
+
+    #[test]
+    fn every_decision_action_and_refusal_must_reach_the_minimum() {
+        let mut seen = BTreeMap::new();
+        let output = |action: &str, reason: Option<&str>| {
+            Expected::Output(json!({"action": action, "reason": reason}))
+        };
+        for class in DECISION_CLASSES {
+            let class = class.trim_start_matches("decide ");
+            let (action, reason) = match class.split_once(": ") {
+                Some((action, reason)) => (action, Some(reason)),
+                None => (class, None),
+            };
+            decision_outcomes(&output(action, reason), &mut seen);
+        }
+        assert_eq!(DECISION_CLASSES.len(), 10);
+        let checks = decision_checks("l1/decisions", &seen, 1);
+        assert!(checks.iter().all(|c| !c.outcome.is_failure()), "{checks:?}");
+        assert_eq!(checks.len(), 1);
+        // One action reached once, in a run that asks for two.
+        let checks = decision_checks("l1/decisions", &seen, 2);
+        let Outcome::HarnessError(message) = &checks[0].outcome else {
+            panic!("{checks:?}");
+        };
+        assert!(message.contains("decide sameSlot 1"), "{message}");
+        // One refusal never reached.
+        seen.remove("decide refused: coldStart");
+        let checks = decision_checks("l1/decisions", &seen, 1);
+        let Outcome::HarnessError(message) = &checks[0].outcome else {
+            panic!("{checks:?}");
+        };
+        assert!(message.contains("decide refused: coldStart 0"), "{message}");
+        // A run without a minimum checks nothing.
+        assert!(decision_checks("l1/decisions", &seen, 0).is_empty());
     }
 
     #[test]

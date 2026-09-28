@@ -6,7 +6,9 @@
 //!   (`heartwood_crypto::genesis::derive::aux(tag, "forger", seed)`, the devnet tooling's
 //!   default); the previous block, the transactions in block order, the timestamp and the reward
 //!   go through `heartwood_forger::Delegate::forge`. A corpus whose first forged block does not
-//!   rebuild with that aux is reported as "aux unknown", never as passed.
+//!   rebuild with that aux is reported as "aux unknown", never as passed, unless that aux
+//!   reproduces the block's own signature: then the forging differs, the block is reported as a
+//!   mismatch and the replay goes on.
 //! - **Heartwood to reference** (`--oracle`): the oracle's `forger.forge` rebuilds every block of
 //!   a chain Heartwood forged, from the same inputs, under the corpus's milestone file.
 //!
@@ -16,6 +18,8 @@
 
 use std::sync::Arc;
 
+use heartwood_crypto::blocks::serialiser;
+use heartwood_crypto::crypto::sig::{self, SchemeId, SigningDomain};
 use heartwood_crypto::genesis::derive;
 use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Aux, Block, BlockId, KeyPair, PublicKeyBytes, Transaction};
@@ -115,9 +119,12 @@ pub fn run(
                 by_reference(server, &stored.bytes, &block, key, aux, text)?
             }
         };
+        // A mismatch at the first block is the corpus's forger aux only when that aux does not
+        // reproduce the stored signature over the stored header; when it does, the forging
+        // differs, and the rest of the chain is examined.
         let first = results.is_empty() && stored.height == 2;
         match outcome {
-            Outcome::Mismatch(_) if first => {
+            Outcome::Mismatch(_) if first && !signs_as_stored(&block, key, aux) => {
                 results.push(result(
                     corpus,
                     stored.height,
@@ -143,6 +150,20 @@ pub fn run(
         files: 1,
         results,
     })
+}
+
+/// Whether signing `block`'s own header with `key` and `aux` gives the signature the block
+/// stores: the aux is the one its forger used, whatever else differs in a rebuild of it.
+fn signs_as_stored(block: &Block, key: &KeyPair, aux: [u8; 32]) -> bool {
+    let header = block.header();
+    let signed = sig::sign(
+        SchemeId::Secp256k1Bip340,
+        SigningDomain::Block,
+        &serialiser::signing_hash(header),
+        key.secret_key(),
+        Aux::fixed(aux),
+    );
+    signed.is_ok_and(|signature| signature == header.block_signature)
 }
 
 fn result(corpus: &Corpus, height: u32, outcome: Outcome) -> CaseResult {
@@ -263,6 +284,8 @@ fn compare(stored: &[u8], block: &Block, bytes: &[u8], id: &str) -> Outcome {
 
 #[cfg(test)]
 mod tests {
+    use heartwood_crypto::blocks::factory;
+
     use super::*;
 
     fn committed() -> Corpus {
@@ -297,6 +320,46 @@ mod tests {
             Outcome::HarnessError(message) if message.starts_with("aux unknown")));
         corpus.meta["forgerAux"] = json!("zz");
         assert!(run(&corpus, &HEARTWOOD, None).is_err());
+    }
+
+    /// The committed corpus with block 2 replaced by a block its forger signed with the manifest's
+    /// aux over a header that states a fee the transactions do not add up to: no forging of the
+    /// same inputs gives it, and the aux is right.
+    fn with_a_miscounted_block_two() -> Corpus {
+        let mut corpus = committed();
+        let seed = corpus.meta["seed"].as_str().unwrap().to_owned();
+        let aux = derive::aux(DERIVATION_TAG, AUX_LABEL, &seed);
+        let stored = corpus.blocks[0].bytes.clone();
+        let block = Block::decode(&stored, &corpus.milestones).unwrap();
+        let generator = block.header().generator_public_key;
+        let network = corpus.network.pub_key_hash;
+        let key = roles()
+            .iter()
+            .filter_map(|role| derive::role_key(DERIVATION_TAG, role, &seed, network).ok())
+            .find(|k| k.keys.public_key().to_compressed() == generator)
+            .expect("block 2's generator is a derived key")
+            .keys;
+        let mut header = block.header().clone();
+        header.total_fee += 1;
+        header.block_signature = sig::sign(
+            SchemeId::Secp256k1Bip340,
+            SigningDomain::Block,
+            &serialiser::signing_hash(&header),
+            key.secret_key(),
+            Aux::fixed(aux),
+        )
+        .unwrap();
+        let changed = factory::from_data(header, block.transactions(), &corpus.milestones).unwrap();
+        corpus.blocks[0].bytes = changed.encode();
+        corpus
+    }
+
+    #[test]
+    fn a_forging_defect_at_block_two_is_a_mismatch_and_the_replay_goes_on() {
+        let report = run(&with_a_miscounted_block_two(), &HEARTWOOD, None).unwrap();
+        assert!(report.results.len() > 1, "the replay stopped: {report}");
+        assert!(matches!(&report.results[0].outcome, Outcome::Mismatch(_)));
+        assert_eq!((report.compared(), report.failed()), (11, 1), "{report}");
     }
 
     #[test]

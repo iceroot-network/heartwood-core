@@ -853,7 +853,8 @@ Three vector classes cover the crate (see Vector files), installed beside the cr
 difftest's `l0_wire` test compares V24 under the devnet configuration with nothing skipped;
 `heartwood-p2p` checks the peer rules against V25; difftest's `network_vectors` sends each V26
 record to the subject of its area and allows no documented difference other than the unlinked
-fork segment and the two reader refusals above. The L1 properties P14 to P16 cover the verifier,
+fork segment and the two reader refusals above; `relay_vectors` does the same for V30 and V31 and
+allows only the wallet shape of the relay's round answer (see L0). The L1 properties P14 to P16 cover the verifier,
 the exchange and the monitor (see L1).
 
 The fuzz targets, seeded by `tools/p2p-fuzz-seeds.js` from a vector run's V24 and V26 records
@@ -1281,7 +1282,14 @@ skipped), the test `l0_wire` over the wire class of `heartwood-p2p-wire` (1,179 
 documented, none skipped) and its exchange class, `pool_vectors` over the pool class (42 sessions
 compared, 8 documented), `config_vectors` over the crypto-file class (17 compared, 79 documented),
 `network_vectors` over V26 (404 compared, 5 documented), `processor_vectors` and `job_vectors` over
-V27, and `api_vectors` and `config_app_vectors` over V28.
+V27, `api_vectors` and `config_app_vectors` over V28, `forger_vectors` over V29 (102 compared, 1
+documented: the forging delegate's own key on a peer's over-height header) and `relay_vectors` over
+V30 and V31. In V30 the five `forger.round` records are documented: the reference's round answer
+holds its wallet data (the attribute map with its known attributes, and for the round's delegates
+the copies it made at the round's start), and lists `allDelegates` in the order it filled its name
+index; Heartwood answers with the API's wallet shape and lists `allDelegates` by name. The forger
+reads only each wallet's key and name, which agree, and every other field of the answer is
+compared.
 A refusal's message is compared as well as its class: the handlers' messages in V17 and every
 message of the pool.
 
@@ -1658,7 +1666,9 @@ run without `DEVNET_GENERATOR`, and then installs nothing.
 | `V26-network.jsonl` (p2p) | the status attestations of a ping, the n-ary search for the common block and the peer verification over forks of a devnet chain, the monitor's network height, fork decisions and download plans, and blocks rebuilt from getBlocks replies |
 | `V27-processor.jsonl` (blockchain) | the reference's processor on one block and a chain state (`chain.process`: every result and unchained status, the invalid generator, the reward, nonces, conflicting and stored transactions, a block refused in its apply after missed slots, a removed type) and its job on a download of one or more jobs (`chain.job`: the job's results and end, its commit, a delegate's registration and its first block in one download, as one job and as two) |
 | `V28-node.jsonl` (kernel and api) | the reference's reading of `app.json` (`config.loadApp`) and of the components' options (`config.pluginOptions`), and the API's query grammar (`api.parseQuery`, with its throws) and pagination (`api.paginate`) |
-| `V29-forging.jsonl` (not installed) | block assembly (`forger.forge`: an empty block, each kept type alone and together, burns, 256 recipients, 150 and 151 transactions, a block over `maxPayload`, totals and rewards at the 64-bit edges, three aux values, milestones that change at the next height), collation and assembly after pool sessions (`forger.collateAndForge`), one attempt of the forger's slot (`forger.decide`, with its log lines), and the internal routes' round and network-state bodies as a relay writes them and the forger reads them |
+| `V30-relay-forger.jsonl` (p2p) | the relay's forging quorum over the network state of a round (`quorum.analyze`: the peers' heights, ids and delegates, the missed and the unknown) and the round the relay answers the forger with (`forger.round`) |
+| `V31-server.jsonl` (p2p) | the server's request chain over each route (`p2p.serveRequest`: the plugins' checks, the codec, the version and network gates, the forger's exemption from the limits), the inbound limiter's sequences (`ratelimit.run`) and the status the server signs and serves (`status.serve`) |
+| `V29-forging.jsonl` (forger and p2p-wire) | block assembly (`forger.forge`: an empty block, each kept type alone and together, burns, 256 recipients, 150 and 151 transactions, a block over `maxPayload`, totals and rewards at the 64-bit edges, three aux values, milestones that change at the next height), collation and assembly after pool sessions (`forger.collateAndForge`), one attempt of the forger's slot (`forger.decide`, with its log lines), and the internal routes' round and network-state bodies as a relay writes them and the forger reads them |
 | `V20-logger.jsonl` (logger) | the log line of every level, coloured and plain, with and without emoji codes (the whole table, in slices), over times at the edges of a JavaScript date and messages with line breaks and colour codes |
 | `V21-pool.jsonl` (pool) | 50 scripted pool sessions over wallet fixtures, each step with the reference's answer and the pool's contents after it: every error code with its message (duplicates, the cooldown from 0 to 30 seconds and per channel, the size limit, another network byte, the fee floor and one below it, the static fee exact, lower and higher, a full pool with fee ties and evictions, the per-sender limit with `excess` and allowed senders, every handler refusal, the pending and offline texts, bad signatures and bytes that do not decode, the seven removed types as bytes and as JSON); JSON entries with a correct, wrong or missing id; accepted but not broadcast; a pending incoming transfer; nonce chains and gaps; re-adds after a flush and a restart of the storage; age expiry; removal cascades; forged removal; the online record's expiry; collation (fee and nonce order, ties, `exclude`, the most transactions, the byte budget, a failed sender) |
 | `V23-config.jsonl` (kernel) | `config.load` of the four crypto files: the devnet's files, accepted by both, and each refusal kind of the strict schema at each level, the keys of removed features on and off, `exceptions.json` other than `{}`, and missing files (the reference then falls back to its built-in preset) |
