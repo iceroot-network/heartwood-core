@@ -1,8 +1,16 @@
 //! The kill test through the full runtime: a child relay imports a corpus from a mock peer on
 //! this host (named with the relay's seed switch of the harness) and is killed with SIGKILL at
 //! random moments; each restart must restore a committed tip whose digest equals the continuous
-//! line, and the import must resume to the end with equal lines. In half the kills the mock peer
-//! answers its first getBlocks with nothing, so the chunk size falls to a tenth.
+//! line, and the import must resume to the end with equal lines.
+//!
+//! In half the kills the mock peer answers its first getBlocks with nothing. That request is the
+//! relay's verification of the seed (a getBlocks of headers only), as in the reference: the
+//! verification fails, the relay drops the seed, falls back to its seeds after the monitor's wait,
+//! and imports in 400-block downloads cut into jobs of 100 as in the other kills. The monitor's
+//! chunk size falls to a tenth only after an empty download of blocks, for one download, and this
+//! mock peer answers no download empty, so the kill test does not import in 40-block downloads.
+//! The report counts the stored tips off the grid of those jobs (a 40-block download would leave
+//! one), which stays 0.
 //!
 //! Each kill starts a mock peer (`mock-peer`) serving the corpus and a relay (`heartwood relay
 //! run`, both built next to this program with the harness's features) on the store of the current
@@ -118,17 +126,31 @@ pub fn crash(
     }
     let label = format!("the import resumed to the end: stored tip {:?}", judged.tip);
     results.push(case(kills.saturating_add(1), label, &judged));
+    let off_grid: u32 = (tips.iter())
+        .filter(|(tip, _)| off_the_job_grid(**tip, corpus.tip()))
+        .map(|(_, n)| *n)
+        .sum();
     Ok(Report {
         title: "L2 kill test: the relay's store after a SIGKILL".into(),
         source: format!(
-            "{kills} kills, seed {seed}, delays up to {} ms into the import, {} stores; stored tips {}",
+            "{kills} kills, seed {seed}, delays up to {} ms into the import, {} stores; stored tips \
+             {}; {} kills with an empty first getBlocks (the seed's verification); stored tips off \
+             the 100-block job grid: {off_grid}",
             max_delay.as_millis(),
             store.saturating_add(1),
-            json!(tips)
+            json!(tips),
+            kills / 2
         ),
         files: 1,
         results,
     })
+}
+
+/// Whether a stored `tip` below the corpus's `last` height lies off the grid of the jobs of 100
+/// blocks that a 400-block download from the genesis block or from an earlier tip on the grid is
+/// cut into; a download of 40 blocks leaves a tip off it.
+fn off_the_job_grid(tip: u32, last: u32) -> bool {
+    tip != last && !tip.saturating_sub(1).is_multiple_of(100)
 }
 
 /// A relay's directories and configuration, built from a corpus: `config/` with `app.json`,
@@ -535,6 +557,15 @@ mod tests {
         (1..=tip)
             .map(|h| (h, line("apply", h, &format!("state{h}"))))
             .collect()
+    }
+
+    #[test]
+    fn a_tip_of_a_short_download_is_off_the_job_grid() {
+        assert!(!off_the_job_grid(1, 265));
+        assert!(!off_the_job_grid(101, 265));
+        assert!(!off_the_job_grid(265, 265));
+        assert!(off_the_job_grid(41, 265));
+        assert!(off_the_job_grid(141, 265));
     }
 
     #[test]
