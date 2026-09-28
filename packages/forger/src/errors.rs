@@ -85,12 +85,12 @@ pub enum KeysError {
     /// Neither `keys` nor `secrets` holds an entry: the reference's `KeysNotDetected`.
     #[error("Unable to detect any private keys")]
     NoKeys,
-    /// The file can be read by its group or by others.
+    /// The file's group or others have a permission on it (to read it, to replace it).
     #[error(
-        "{} can be read by its group or by others (mode {mode:03o}); make it private (chmod 600)",
+        "{} is open to its group or to others (mode {mode:03o}); make it private (chmod 600)",
         path.display()
     )]
-    Readable {
+    TooOpen {
         /// The file.
         path: PathBuf,
         /// Its permission bits.

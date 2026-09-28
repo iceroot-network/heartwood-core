@@ -1,7 +1,8 @@
 //! The forger's key file, `delegates.json` in its configuration directory.
 //!
 //! - The file must exist (the reference's "The ... file does not exist") and hold at least one key
-//!   ("Unable to detect any private keys"); the forger refuses a file its group or others can read.
+//!   ("Unable to detect any private keys"); the forger refuses a file on which its group or others
+//!   have any permission, as SSH refuses a private key file.
 //! - `{"keys": [64 hex digits, ...]}`: each a secp256k1 secret key. An empty `secrets` array is
 //!   accepted; a non-empty one is refused, since the forger does not read passphrases. Any other
 //!   key of the object is refused, as the reference's schema refuses it. The file is never
@@ -87,11 +88,11 @@ pub fn load_keys(config_dir: &Path) -> Result<DelegateKeys, KeysError> {
     let metadata = std::fs::metadata(&path).map_err(io)?;
     #[cfg(unix)]
     let mode = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o777;
-    // Elsewhere the file has no group or others to read it.
+    // Elsewhere the file has no group or others.
     #[cfg(not(unix))]
     let mode = 0o600;
-    if mode & 0o044 != 0 {
-        return Err(KeysError::Readable { path, mode });
+    if mode & 0o077 != 0 {
+        return Err(KeysError::TooOpen { path, mode });
     }
     let text = Zeroizing::new(std::fs::read_to_string(&path).map_err(io)?);
     let invalid = |reason: &str| KeysError::Invalid {

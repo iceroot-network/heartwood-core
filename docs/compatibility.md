@@ -915,7 +915,8 @@ first (the bytes a slot gets stay the reference's):
   an id of another JSON type compares as a missing one, a `null` header reads as a header without
   an id where the reference throws, and 64 headers or more that mix text and missing ids are
   sorted with the missing ones first;
-- a key file that the group or others can read is refused, and so is a non-empty `secrets` list;
+- a key file on which the group or others have any permission (to read it, to write it) is
+  refused, as SSH refuses a private key file, and so is a non-empty `secrets` list;
   the file is never rewritten;
 - a relay hostname with a CIDR suffix (`127.0.0.1/8`), which the reference's schema accepts, and a
   `delay` that is not a whole number of milliseconds, which the reference reads as no delay, are

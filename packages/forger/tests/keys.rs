@@ -85,17 +85,19 @@ fn a_private_file_gives_its_keys_in_file_order() {
 }
 
 #[test]
-fn a_file_its_group_or_others_can_read_is_refused() {
+fn a_file_its_group_or_others_can_read_or_write_is_refused() {
     let config = Config::new("mode");
     let text = keys_file(&[secret("delegate a")]);
-    for mode in [0o600, 0o400, 0o620, 0o602] {
+    for mode in [0o600, 0o400, 0o700] {
         assert!(load_keys(config.write(&text, mode)).is_ok(), "{mode:o}");
     }
-    for mode in [0o640, 0o604, 0o644, 0o660, 0o606] {
+    for mode in [
+        0o640, 0o604, 0o644, 0o660, 0o606, 0o620, 0o602, 0o610, 0o601,
+    ] {
         let error = load_keys(config.write(&text, mode)).unwrap_err();
         assert_eq!(
             error,
-            KeysError::Readable {
+            KeysError::TooOpen {
                 path: config.0.join("delegates.json"),
                 mode,
             }
