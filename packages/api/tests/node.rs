@@ -205,3 +205,63 @@ async fn the_node_routes_over_http() {
     );
     server.stop().await;
 }
+
+/// The answer's first line, or the whole answer when it has no header.
+async fn exchange(address: std::net::SocketAddr, request: String) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).await.unwrap();
+    match answer.split_once("\r\n") {
+        Some((line, rest)) if !rest.starts_with("\r\n") => line.to_owned(),
+        _ => answer,
+    }
+}
+
+#[test]
+#[ignore = "integration"]
+fn a_hostile_query_leaves_the_server_answering() {
+    // The API's workers have tokio's default stack of 2 MiB.
+    let thread = std::thread::Builder::new().stack_size(2 << 20);
+    let answers = thread.spawn(|| {
+        let mut runtime = tokio::runtime::Builder::new_current_thread();
+        let runtime = runtime.enable_all().build().unwrap();
+        runtime.block_on(async {
+            let pool = chain().pool(Vec::new());
+            let (address, server) = snapshot::serve_chain("hostile", pool, Vec::new()).await;
+            let get = |target: String| format!("GET {target} HTTP/1.1\r\nhost: node\r\n\r\n");
+            let dots = |key: &str, levels: usize| format!("{key}{}=1", ".b".repeat(levels));
+            let gaps: String = (1..=998).map(|i| format!("&a.{}=1", i * 1000)).collect();
+            let mut answers = Vec::new();
+            for target in [
+                "/api/node/status".to_owned(),
+                format!("/api/nothing?{}", dots("a", 5_000)),
+                format!("/api/node/status?{}", dots("a", 8_000)),
+                format!("/api/node/status?{}", dots("a", 8_200)),
+                format!("/api/transactions?{}", dots("asset", 127)),
+                format!("/api/transactions?{}", dots("asset", 5_000)),
+                format!("/api/transactions?a=1,2{gaps}"),
+                "/api/node/status".to_owned(),
+            ] {
+                answers.push(exchange(address, get(target)).await);
+            }
+            server.stop().await;
+            answers
+        })
+    });
+    let answers = answers.unwrap().join().unwrap();
+    assert_eq!(
+        answers,
+        [
+            "HTTP/1.1 200 OK",
+            "HTTP/1.1 404 Not Found",
+            "HTTP/1.1 200 OK",
+            "HTTP/1.1 400 Bad Request\r\n\r\n",
+            "HTTP/1.1 200 OK",
+            "HTTP/1.1 500 Internal Server Error",
+            "HTTP/1.1 422 Unprocessable Entity",
+            "HTTP/1.1 200 OK",
+        ]
+    );
+}

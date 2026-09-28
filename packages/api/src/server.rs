@@ -8,8 +8,11 @@
 //! read are ignored.
 //!
 //! Each connection is served for at most the socket timeout (300 s when it is 0), headers
-//! included, and answers one request (`connection: close`). Stopping the server closes the
-//! listener and waits for the connections in flight, each bounded by that timeout.
+//! included, and answers one request (`connection: close`). A request whose head reaches Node's
+//! 16 KiB is answered as the reference answers it, with a bare 400. Stopping the server closes
+//! the listener and waits for the connections in flight, each bounded by that timeout.
+
+mod head;
 
 use std::convert::Infallible;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -348,9 +351,10 @@ pub(crate) async fn accept(
     while connections.join_next().await.is_some() {}
 }
 
-/// Serve one connection for at most `timeout`, headers included.
+/// Serve one connection for at most `timeout`, headers included: its head is read first, and
+/// refused as the reference refuses one of 16 KiB or more ([`head`]).
 async fn connection(
-    stream: TcpStream,
+    mut stream: TcpStream,
     peer: SocketAddr,
     pipeline: Arc<Pipeline>,
     timeout: Duration,
@@ -359,9 +363,15 @@ async fn connection(
         let pipeline = Arc::clone(&pipeline);
         async move { Ok::<_, Infallible>(pipeline.handle(request.map(Body::new), peer).await) }
     });
-    let mut builder = http1::Builder::new();
-    builder.timer(TokioTimer::new());
-    builder.header_read_timeout(timeout);
-    let served = builder.serve_connection(TokioIo::new(stream), service);
+    let served = async move {
+        let Ok(Some(read)) = head::read(&mut stream).await else {
+            return;
+        };
+        let mut builder = http1::Builder::new();
+        builder.timer(TokioTimer::new());
+        builder.header_read_timeout(timeout);
+        let stream = TokioIo::new(head::Rewind::new(read, stream));
+        let _ = builder.serve_connection(stream, service).await;
+    };
     let _ = tokio::time::timeout(timeout, served).await;
 }

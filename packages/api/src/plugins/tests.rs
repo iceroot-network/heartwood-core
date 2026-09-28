@@ -603,6 +603,48 @@ async fn a_connection_answers_one_request_then_closes() {
     assert!(tokio::net::TcpStream::connect(address).await.is_err());
 }
 
+#[tokio::test]
+async fn a_head_that_node_refuses_is_answered_as_hapi_answers_it() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address: SocketAddr = listener.local_addr().unwrap();
+    let pipeline = Arc::new(pipeline(config()));
+    let (stop, stopped) = watch::channel(false);
+    let timeout = Duration::from_secs(5);
+    let task = tokio::spawn(server::accept(listener, pipeline, stopped, timeout));
+    let exchange = |parts: Vec<String>| async move {
+        let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
+        for part in parts {
+            client.write_all(part.as_bytes()).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let mut answer = String::new();
+        client.read_to_string(&mut answer).await.unwrap();
+        answer
+    };
+    // Node counts the target's bytes (and the header names and values) up to 16 KiB.
+    let get = |length: usize| format!("GET /api/{} HTTP/1.1\r\n\r\n", "q".repeat(length - 5));
+    let refused = exchange(vec![get(16_384)]).await;
+    assert_eq!(refused, "HTTP/1.1 400 Bad Request\r\n\r\n");
+    let routed = exchange(vec![get(16_383)]).await;
+    assert!(routed.starts_with("HTTP/1.1 404 Not Found\r\n"), "{routed}");
+    // The bytes read with the head are served again, and the body that comes after them.
+    let body = r#"{"transactions":12}"#;
+    let head = format!(
+        "POST /api/transactions HTTP/1.1\r\ncontent-length: {}\r\n\r\n",
+        body.len()
+    );
+    for parts in [vec![format!("{head}{body}")], vec![head, body.to_owned()]] {
+        let answer = exchange(parts).await;
+        assert!(answer.starts_with("HTTP/1.1 200 OK\r\n"), "{answer}");
+        assert!(
+            answer.contains(r#""payload":{"transactions":12}"#),
+            "{answer}"
+        );
+    }
+    stop.send(true).unwrap();
+    task.await.unwrap();
+}
+
 #[test]
 fn the_options_are_the_reference_defaults_and_its_variables() {
     let defaults = config();
