@@ -9,7 +9,9 @@
 # of its crate's test target (with every feature of the crate, as the second pass of `make test`
 # builds it), and runs the marked ones by their exact names. A marked test that its target does not
 # list fails the run, so a test cannot drop out unseen. Tests ignored for another reason (the
-# measurements of `make pool-bench`, child-process helpers, the devnet smoke test) are not run.
+# measurements of `make pool-bench`, child-process helpers, the devnet tests) are not run; each such
+# reason must be in ALLOWED_REASONS, and a test ignored with any other reason, or with none, fails
+# the run before anything is built, so a new reason is added deliberately.
 #
 # The harness's binaries (difftest, the relay with its test seams, the mock peer) are built first,
 # as `make build` builds them: the runtime kill test runs them.
@@ -17,6 +19,37 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 MARKER='#[ignore = "integration"]'
+
+# The reasons a test may be ignored for, besides the marker: the measurements that `make
+# pool-bench` runs, the child processes their parent tests run, and the tests that need a devnet.
+ALLOWED_REASONS=(
+    'integration'
+    'a measurement: make pool-bench'
+    'a measurement, run in a release build by make pool-bench'
+    'run by the crash test in a child process'
+    'run by view_cost in a child process'
+    'devnet'
+)
+
+# Every `#[ignore` of the sources whose reason is not an allowed one, as `file:line: text`.
+unknown_ignores() {
+    local line reason ok
+    { grep -rnE --include='*.rs' '^[[:space:]]*#\[ignore' packages tools || true; } | while IFS= read -r line; do
+        reason=$(sed -nE 's/^[^:]*:[0-9]+:[[:space:]]*#\[ignore = "([^"]*)"\][[:space:]]*$/\1/p' <<<"$line")
+        for ok in "${ALLOWED_REASONS[@]}"; do
+            if [ -n "$reason" ] && [ "$reason" = "$ok" ]; then continue 2; fi
+        done
+        echo "$line"
+    done
+}
+
+unknown=$(unknown_ignores)
+if [ -n "$unknown" ]; then
+    echo "test-integration: tests ignored with a reason outside ALLOWED_REASONS, or none, which no" \
+         "gate runs (add the reason to the list deliberately, or mark the test integration):" >&2
+    echo "$unknown" >&2
+    exit 1
+fi
 
 # The package that owns FILE: the name in the nearest Cargo.toml above it.
 package_of() {
