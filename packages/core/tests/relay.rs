@@ -1,7 +1,8 @@
 //! The relay end to end (feature `difftest`, run with the integration tests): `heartwood relay
 //! run` with the harness's seed pointing at the standalone mock peer on this host imports the
 //! committed one-node corpus, serves `/api/blocks/last` at its tip, writes the judge's line for the
-//! tip to its digest file, and stops gracefully on SIGINT.
+//! tip to its digest file, and stops gracefully on SIGINT; a relay whose API cannot listen stops
+//! with an error once its blockchain has started.
 
 #![cfg(feature = "difftest")]
 
@@ -171,4 +172,46 @@ fn a_relay_imports_the_corpus_from_a_mock_peer_and_serves_its_tip() {
     };
     assert_eq!(status.code(), Some(0));
     drop(peer);
+}
+
+#[test]
+#[ignore = "integration"]
+fn a_relay_whose_api_cannot_listen_stops_with_an_error() {
+    let taken = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = taken.local_addr().unwrap().port();
+    let env = format!(
+        "CORE_API_HOST=127.0.0.1\nCORE_API_PORT={port}\nCORE_P2P_PORT={}\n",
+        free_port()
+    );
+    let setup = Setup::new("api-taken", &env);
+    let mut relay = Command::new(env!("CARGO_BIN_EXE_heartwood"));
+    relay
+        .args(["relay", "run", "--token", "solar", "--network", "testnet"])
+        .args(["--networkStart", "--skipDiscovery"])
+        .env_clear()
+        .env("HOME", setup.home())
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .envs(setup.process(&[]))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut relay = Killed(relay.spawn().unwrap());
+    // The blockchain starts at once on a new network; at most 120 s.
+    let mut waits = 0;
+    let status = loop {
+        if let Some(status) = relay.0.try_wait().unwrap() {
+            break status;
+        }
+        waits += 1;
+        assert!(waits <= 1200, "the relay did not stop within 120 s");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let mut stderr = String::new();
+    let mut pipe = relay.0.stderr.take().unwrap();
+    pipe.read_to_string(&mut stderr).unwrap();
+    assert_eq!(status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains(&format!("cannot listen on 127.0.0.1:{port}")),
+        "{stderr}"
+    );
+    drop(taken);
 }

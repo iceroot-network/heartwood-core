@@ -278,7 +278,8 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
                     crypto: relay.crypto.clone(),
                     version: VERSION.to_owned(),
                 };
-                // The API is not required: its failure is logged, and the relay goes on.
+                // A failure to serve stops the relay, as the reference's server ends its
+                // application when it cannot start.
                 match serve_api(
                     config,
                     node,
@@ -291,7 +292,7 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
                 .await
                 {
                     Ok(served) => api = served,
-                    Err(error) => heartwood_kernel::error!("{error}"),
+                    Err(error) => break Err(error),
                 }
             }
             Some(Stop::Booted(Err(error))) => break Err(component(error)),
