@@ -252,7 +252,6 @@ mod tests {
             json!([]),
             json!({"hosts": {}}),
             json!({"hosts": [{"hostname": "localhost", "port": 6002}]}),
-            json!({"hosts": [{"hostname": "127.0.0.1/8", "port": 6002}]}),
             json!({"hosts": [{"hostname": "127.0.0.1", "port": 0}]}),
             json!({"hosts": [{"hostname": "127.0.0.1", "port": 65536}]}),
             json!({"hosts": [{"hostname": "127.0.0.1", "port": 6002.5}]}),
@@ -260,6 +259,22 @@ mod tests {
             json!({"aux": "ab"}),
             json!({"aux": "zz".repeat(32)}),
             json!({"aux": 1}),
+        ] {
+            assert!(
+                Options::from_json(&value, &no_env).is_err(),
+                "{value} was accepted"
+            );
+        }
+    }
+
+    /// The reference's schema accepts these: an IP address with a CIDR suffix (its `ip()` rule
+    /// allows one), and any `delay` (it waits only for a positive number). It has no
+    /// `localAddress`.
+    #[test]
+    fn values_the_schema_accepts_but_heartwood_refuses_are_refused() {
+        for value in [
+            json!({"hosts": [{"hostname": "127.0.0.1/8", "port": 6002}]}),
+            json!({"hosts": [{"hostname": "::1/128", "port": 6002}]}),
             json!({"delay": -1}),
             json!({"delay": "soon"}),
             json!({"localAddress": "here"}),

@@ -716,6 +716,9 @@ first (the bytes a slot gets stay the reference's):
   sorted with the missing ones first;
 - a key file that the group or others can read is refused, and so is a non-empty `secrets` list;
   the file is never rewritten;
+- a relay hostname with a CIDR suffix (`127.0.0.1/8`), which the reference's schema accepts, and a
+  `delay` that is not a whole number of milliseconds, which the reference reads as no delay, are
+  refused at start; `localAddress` is Heartwood's own option;
 - the attester signs an offer only when its text reads back as a status tree and writes back to
   the same bytes, for the forger's network, with a height equal to its header's and a slot within
   one of the forger's clock, and only for the forger's own keys;
