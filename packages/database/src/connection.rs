@@ -3,12 +3,13 @@
 //! A node has one [`Database`], which owns the one writer connection to its file, opened in WAL
 //! mode with `synchronous = FULL` (a committed chunk survives a power loss), `foreign_keys = ON`,
 //! `busy_timeout = 5000`, `mmap_size = 0`, an 8 MB page cache and a 16 MB limit on the WAL file
-//! kept after a checkpoint. SQLite's defensive mode is on and the schema is not trusted, so
-//! neither a changed schema nor an SQL function can reach outside the tables; extensions are
-//! never loaded. An empty file gets schema version 2 ([`SCHEMA`], then [`SCHEMA_2`]); a file of
-//! version 1 is upgraded in place, in one transaction, by adding the recipients side table and
-//! filling it from the stored transactions ([`crate::recipients`]); a file of another version, or
-//! a file that is not a node's database, is refused.
+//! kept after a checkpoint; the writer checkpoints the log into the file when it closes, even
+//! while read-only connections stay open. SQLite's defensive mode is on and the schema is not
+//! trusted, so neither a changed schema nor an SQL function can reach outside the tables;
+//! extensions are never loaded. An empty file gets schema version 2 ([`SCHEMA`], then
+//! [`SCHEMA_2`]); a file of version 1 is upgraded in place, in one transaction, by adding the
+//! recipients side table and filling it from the stored transactions ([`crate::recipients`]); a
+//! file of another version, or a file that is not a node's database, is refused.
 //!
 //! Everything a chunk of blocks changes is written in one SQLite transaction, a [`Chunk`]: its
 //! rows are all stored, or, after a crash or when the chunk is dropped, none. Each block of the
@@ -172,6 +173,15 @@ impl Database {
              DELETE FROM milestone_entries; DELETE FROM meta; DELETE FROM delegate_versions;",
         )?;
         chunk.commit()
+    }
+}
+
+impl Drop for Database {
+    /// Copy the log's committed pages into the database file as the writer closes: SQLite does
+    /// so only when the last connection closes, and read-only connections may outlive the writer.
+    /// A passive checkpoint never waits for a reader; what it leaves, the next open replays.
+    fn drop(&mut self) {
+        let _ = (self.connection).query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
     }
 }
 

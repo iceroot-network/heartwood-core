@@ -12,7 +12,7 @@
 //! network's reads come between two blocks, and see the tip as it moves. A fatal error ([`NodeError`]) ends the thread at once: the work it was
 //! doing gets no answer and the store keeps its committed tip. A stop ends it after the work
 //! before it: the pool's storage keeps its transactions, the online record is saved, and the
-//! store is closed (SQLite checkpoints its log when its last connection closes); the running job
+//! store is closed (its writer checkpoints the log into the database file); the running job
 //! was committed or rolled back before, since the thread runs one work at a time.
 
 use std::sync::Arc;
