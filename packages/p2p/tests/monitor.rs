@@ -1509,6 +1509,7 @@ async fn peers_whose_version_no_longer_passes_are_disconnected() {
         [Call::Removed(ip(2)), Call::Removed(ip(3))]
     );
     assert_eq!(net.repository.len(), 1);
+    assert_eq!(net.monitor.peer_count(), 1);
     let listed = net.monitor.peers();
     assert_eq!(listed.len(), 1);
     assert_eq!((listed[0].ip, listed[0].port), (ip(1), 4002));

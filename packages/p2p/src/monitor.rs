@@ -836,6 +836,12 @@ where
         }
     }
 
+    /// How many peers the node knows: the repository's size, which the reference's `hasPeers`
+    /// reads.
+    pub fn peer_count(&self) -> usize {
+        self.p.repository.len()
+    }
+
     /// The peers, as the API lists them.
     pub fn peers(&self) -> Vec<PeerInfo> {
         let info = |p: &mut crate::peer::Peer| PeerInfo {
