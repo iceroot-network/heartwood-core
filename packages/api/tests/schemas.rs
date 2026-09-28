@@ -54,6 +54,18 @@ fn queries_parse_as_the_reference_server_reads_them() {
         ),
         ("a=1,2&a.4294967295=x&a.01=y", json!({"a": ["1", "2"]})),
         ("a=1,2&a.1.length=3", json!({"a": ["1", {"length": "3"}]})),
+        // Node's loop checks the key's characters after its first escape as the value's: a
+        // second escape in the key has the value decoded, where it may fail.
+        (
+            "%C3%A9=FALSE%zz\u{e9}",
+            json!({"\u{e9}": "FALSE%zz\u{fffd}"}),
+        ),
+        ("a%41=FALSE%zz\u{e9}", json!({"aA": "FALSE%zz\u{e9}"})),
+        ("%C3%A9=%u0041\u{1f600}", json!({"\u{e9}": "%u0041=\u{0}"})),
+        ("a+%41%42=%zz\u{e9}", json!({"a AB": "%zz\u{fffd}"})),
+        ("%41%4=%zz\u{e9}", json!({"A%4": "%zz\u{e9}"})),
+        ("%41x%42%=%zz\u{e9}", json!({"AxB%": "%zz\u{fffd}"})),
+        ("%41+%42=%zz\u{e9}", json!({"A B": "%zz\u{fffd}"})),
     ];
     for (raw, expected) in cases {
         assert_eq!(parse_query(raw), expected, "{raw}");

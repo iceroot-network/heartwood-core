@@ -1,0 +1,97 @@
+# cargo-deny: the advisories, licences, sources and bans every dependency is held to.
+#
+#   make deny
+#
+# The workspace and the fuzz targets (a package of their own, fuzz/Cargo.toml) are both checked
+# against this file. The check fetches the RustSec advisory database, so it needs the network.
+
+[graph]
+# Every feature of every workspace crate, so the test seams' and the tools' dependencies are in
+# the graph too; every target platform.
+all-features = true
+
+[output]
+feature-depth = 1
+
+[advisories]
+# A vulnerability is always an error. Unmaintained and unsound advisories are errors for every
+# crate in the graph, and so is a yanked version in a lockfile.
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+# An advisory is ignored only when it cannot affect Heartwood. Each entry names the advisory, the
+# reason, and a review date by which it is checked again or removed:
+#   { id = "RUSTSEC-YYYY-NNNN", reason = "why Heartwood cannot reach the affected code; review by YYYY-MM-DD" },
+# None is needed today.
+ignore = []
+
+[licenses]
+# The licences the dependencies use today, each compatible with the project's own Apache-2.0.
+# A crate offered under a choice of licences needs only one of them here.
+allow = [
+    "Apache-2.0",   # the project's own licence, and most dependencies
+    "MIT",          # most dependencies
+    "BSD-3-Clause", # subtle; matchit (MIT and BSD-3-Clause)
+    "CC0-1.0",      # secp256k1 and secp256k1-sys
+    "Unicode-3.0",  # unicode-ident ((MIT or Apache-2.0) and Unicode-3.0)
+    "Zlib",         # foldhash
+]
+exceptions = [
+    # The fuzz targets' libFuzzer bindings ((MIT or Apache-2.0) and NCSA); never in a release build.
+    { crate = "libfuzzer-sys", allow = ["NCSA"] },
+]
+confidence-threshold = 0.8
+# One list serves two graphs, so a licence or an exception that only one of them uses is not
+# reported as unused.
+unused-allowed-license = "allow"
+unused-license-exception = "allow"
+
+[licenses.private]
+# The workspace's own crates are checked too: each must declare Apache-2.0.
+ignore = false
+
+[bans]
+# Two versions of a crate are reported, not refused. Today: the digest 0.10 stack under
+# tungstenite's sha1 beside sha2's 0.11 (block-buffer, cpufeatures, crypto-common, digest),
+# rand_core 0.9 and getrandom 0.3 under rand 0.9 (tungstenite, proptest) beside 0.10 and 0.4,
+# r-efi under the two getrandom, and syn 2 under the fuzz package's derive_arbitrary.
+multiple-versions = "warn"
+# A dependency without a version requirement is refused; the workspace's own path dependencies
+# are exempt.
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+deny = [
+    # Libraries only named crates may depend on directly. The workspace crates follow the layer
+    # check (tools/check-layers.sh); the other names are the library's own users.
+    { crate = "secp256k1", wrappers = ["heartwood-crypto"], reason = "the curve stays behind heartwood-crypto" },
+    { crate = "k256", wrappers = ["heartwood-crypto"], reason = "a test-time cross-check of secp256k1, behind heartwood-crypto" },
+    { crate = "rusqlite", wrappers = ["heartwood-database", "heartwood-pool"], reason = "only the store and the pool use SQLite" },
+    { crate = "libsqlite3-sys", wrappers = ["rusqlite"], reason = "SQLite only through rusqlite" },
+    { crate = "axum", wrappers = ["heartwood-api"], reason = "the served API only" },
+    { crate = "hyper", wrappers = ["heartwood-api", "axum", "hyper-util"], reason = "the served API only" },
+    { crate = "hyper-util", wrappers = ["heartwood-api", "axum"], reason = "the served API only" },
+    { crate = "tokio-tungstenite", wrappers = ["heartwood-p2p"], reason = "the peer-to-peer client only" },
+    { crate = "clap", wrappers = ["heartwood-core"], reason = "the node binary's command line only" },
+    # Libraries no crate may use at this stage. A later stage that needs one records the decision
+    # first and turns its ban into a wrapper rule above.
+    { crate = "aws-lc-rs", reason = "not before the post-quantum signer, which makes it a wrapper rule for heartwood-crypto" },
+    { crate = "openssl-sys", reason = "no OpenSSL" },
+    { crate = "libp2p", reason = "the peer-to-peer protocol is the reference's own" },
+    { crate = "reqwest", reason = "a large HTTP client with a TLS stack of its own" },
+    { crate = "actix-web", reason = "the served API is axum's" },
+    { crate = "sqlx", reason = "storage is SQLite through rusqlite" },
+    { crate = "prost-build", reason = "no code generation or protoc at build time" },
+    { crate = "protobuf", reason = "RUSTSEC-2024-0437; the wire messages are declared by hand" },
+    { crate = "bson", reason = "the BSON dialect of the API's WebSocket is deferred" },
+    { crate = "daemonize", reason = "unmaintained (RUSTSEC-2025-0069); the supervisor is written on std::process" },
+    { crate = "dotenv", reason = "the .env parser is written by hand to match the reference's" },
+    { crate = "dotenvy", reason = "the .env parser is written by hand to match the reference's" },
+]
+
+[sources]
+# crates.io only: no other registry and no git dependency.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

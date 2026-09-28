@@ -41,3 +41,5 @@ heartwood-crypto = { workspace = true, features = ["fixed-aux", "genesis"] }
 heartwood-kernel = { workspace = true, features = ["bus", "difftest"] }
 heartwood-p2p-wire.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "test-util", "time"] }
+# The tests capture what the handlers log.
+tracing.workspace = true

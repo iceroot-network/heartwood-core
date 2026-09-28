@@ -5,6 +5,7 @@
 name = "heartwood-fuzz"
 version = "0.0.0"
 edition = "2024"
+license = "Apache-2.0"
 publish = false
 
 [package.metadata]
@@ -12,6 +13,8 @@ cargo-fuzz = true
 
 [dependencies]
 arbitrary = { version = "1.4.2", features = ["derive"] }
+# The API's query grammar and list envelope.
+heartwood-api = { path = "../packages/api" }
 # The fixed aux (a test seam) makes the signatures, and so the ids, of the state targets repeatable.
 heartwood-crypto = { path = "../packages/crypto", features = ["fixed-aux"] }
 # The forger's attester, which reads the status offers of the status_to_sign target.
@@ -134,6 +137,13 @@ bench = false
 [[bin]]
 name = "nes_server_session"
 path = "fuzz_targets/nes_server_session.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "api_query"
+path = "fuzz_targets/api_query.rs"
 test = false
 doc = false
 bench = false
