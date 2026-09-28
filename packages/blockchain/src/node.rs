@@ -178,7 +178,7 @@ impl NodeThread {
                 if !admitted.is_empty() {
                     parts.broadcast.broadcast_transactions(&admitted);
                 }
-                publish.pool.send_replace(Arc::new(parts.pool.view()));
+                publish_pool(&parts.pool, &publish.pool);
                 let _ = answer.send(result);
             }
             Work::Drain(answer, after_readd) => {
@@ -188,7 +188,7 @@ impl NodeThread {
                 }
                 saved?;
                 let readded = parts.pool.readd(&env!(parts), &[]).map(drop);
-                publish.pool.send_replace(Arc::new(parts.pool.view()));
+                publish_pool(&parts.pool, &publish.pool);
                 let readded = readded.map_err(NodeError::from);
                 if let Some(answer) = answer {
                     let _ = answer.send(readded.clone());
@@ -307,10 +307,17 @@ impl NodeThread {
         let (parts, publish) = (&self.parts, &self.publish);
         let view = parts.state.view_after(&publish.state.borrow());
         publish.state.send_replace(Arc::new(view));
-        publish.pool.send_replace(Arc::new(parts.pool.view()));
+        publish_pool(&parts.pool, &publish.pool);
         publish.chain.send_replace(Arc::new(status(&parts.chain)));
         parts.listener.committed(events);
     }
+}
+
+/// Publish the view of `pool`, sharing with the last one published the transactions it still
+/// holds (the last one's read lock ends before the new one is sent).
+fn publish_pool(pool: &PoolTask, sender: &watch::Sender<Arc<PoolView>>) {
+    let view = pool.view_after(&sender.borrow());
+    sender.send_replace(Arc::new(view));
 }
 
 /// Whether a milestone starts at `height`, as the reference's `isNewMilestone` reads it.

@@ -155,6 +155,12 @@ impl PoolTask {
         self.pool.view(&self.online)
     }
 
+    /// The view of the pool and the online record, sharing with `previous` the transactions the
+    /// pool still holds.
+    pub fn view_after(&self, previous: &PoolView) -> PoolView {
+        self.pool.view_after(&self.online, previous)
+    }
+
     /// `previous` with the online record as it is now: the view after a change of the record
     /// alone, which shares the pool's transactions with `previous`.
     pub fn view_online(&self, previous: &PoolView) -> PoolView {

@@ -4,6 +4,7 @@
 //! record: its transactions from the highest priority, the online record's entries, and the
 //! options the API shows.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use heartwood_crypto::identities::{Address, PublicKeyBytes};
@@ -94,12 +95,27 @@ impl PoolView {
 impl Pool {
     /// The view of the pool, with the online record `online`, to publish.
     pub fn view(&self, online: &DelegateVersions) -> PoolView {
+        self.view_sharing(online, &[])
+    }
+
+    /// [`Pool::view`], sharing with `previous` the transactions the pool still holds, so that a
+    /// publish copies only the transactions added since `previous`.
+    pub fn view_after(&self, online: &DelegateVersions, previous: &PoolView) -> PoolView {
+        self.view_sharing(online, &previous.by_priority)
+    }
+
+    fn view_sharing(&self, online: &DelegateVersions, shared: &[Arc<Transaction>]) -> PoolView {
+        let shared: BTreeMap<&TransactionId, &Arc<Transaction>> = shared
+            .iter()
+            .map(|transaction| (transaction.id(), transaction))
+            .collect();
+        let share = |transaction: &Transaction| match shared.get(transaction.id()) {
+            Some(shared) => Arc::clone(shared),
+            None => Arc::new(transaction.clone()),
+        };
         PoolView {
-            by_priority: self
-                .query()
-                .from_highest_priority()
-                .into_iter()
-                .map(|transaction| Arc::new(transaction.clone()))
+            by_priority: (self.query().from_highest_priority().into_iter())
+                .map(share)
                 .collect(),
             online: online.entries(),
             options: PoolViewOptions::of(self.options()),

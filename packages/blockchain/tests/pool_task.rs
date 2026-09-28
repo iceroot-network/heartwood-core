@@ -215,6 +215,25 @@ fn after_a_commit_that_starts_a_milestone_the_pool_is_re_added_with_its_checks()
 }
 
 #[test]
+fn a_view_after_another_shares_the_transactions_both_hold() {
+    let chain = Chain::load();
+    let (state, clock) = (replayed(&chain, 58), clock(&chain));
+    let mut task = task("pool-task-view-after", 2_700, &state);
+    let env = env(&chain, &state, &clock);
+    let mut later = entries(&chain, 59);
+    let earlier: Vec<_> = later.drain(..2).collect();
+    task.process(Channel::Api, &env, earlier).unwrap();
+    let before = task.view();
+    task.process(Channel::Api, &env, later).unwrap();
+    let after = task.view_after(&before);
+    assert_eq!(after, task.view());
+    let shared = (after.by_priority.iter())
+        .filter(|t| before.get(t.id()).is_some_and(|b| Arc::ptr_eq(b, t)))
+        .count();
+    assert_eq!((after.len(), shared), (4, 2));
+}
+
+#[test]
 fn a_change_of_the_online_record_alone_keeps_the_pools_transactions() {
     let chain = Chain::load();
     let (state, clock) = (replayed(&chain, 58), clock(&chain));
