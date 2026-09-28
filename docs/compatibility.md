@@ -733,9 +733,11 @@ an input that was not compared, and on a missing or empty corpus.
 `packages/p2p` is the client side of the peer-to-peer protocol: how a relay follows the network.
 It connects to peers, verifies their chains, downloads and broadcasts blocks and transactions, and
 keeps its peer list, with the reference's requests, timeouts, limits, cadences and decisions. It
-opens no listening socket, and it is not yet wired into a node: it reads the node's chain and
-tells the node about peers only through the traits of its `view` module, so it depends on no
-crate of the chain, the store or the pool. Its edges are `heartwood-crypto`, `heartwood-kernel`
+opens no listening socket. It reads the node's chain and tells the node about peers only through
+the traits of its `view` module, so it depends on no crate of the chain, the store or the pool; the
+relay (`heartwood-core`) implements them over the node's published snapshots and the store's
+read-only connections, one per worker of its runtime, so the verifier's store reads never wait for
+another worker's connection. Its edges are `heartwood-crypto`, `heartwood-kernel`
 and `heartwood-p2p-wire`, with tokio and tokio-tungstenite; `make layers` lets no other crate
 depend on tokio-tungstenite directly, and no consensus crate on tokio.
 
@@ -747,7 +749,8 @@ depend on tokio-tungstenite directly, and no consensus crate on tokio.
   one IP. The frames it writes are the reference client's, byte for byte (the client records of the
   wire class).
 - **requests and replies**: every request of the reference's client, with each route's receive
-  limit and timeout, the outgoing rate limiter (it waits instead of sending too fast), the reply
+  limit and timeout (a getBlocks without its own timeout, as the sync's downloads send it, takes
+  the configured `getBlocksTimeout`), the outgoing rate limiter (it waits instead of sending too fast), the reply
   check of each route, the error-class rule that decides whether a failed request only counts
   against the peer or disconnects it, the disconnect after three failures in a row, the per-peer
   queue of postTransactions batches, and the ping with its status attestations. The client never
@@ -782,8 +785,9 @@ configuration, except the last, which needs a transaction that no honest wallet 
 - the random samples (the discovery sources, the transaction sources, the peers a cleanse pings,
   a chunk's backup peers and the peers whose ports are probed) are drawn across subnets (/24 and
   /48) after the reference's shuffle;
-- a peer source over HTTPS is refused when the monitor starts; plain HTTP sources are read up to
-  4 MiB, and local files as JSON at each seeding;
+- a peer source over HTTPS is refused when the monitor starts, with advice to use plain HTTP;
+  plain HTTP sources are read up to 4 MiB. `peers.json` takes only URIs as sources, as the
+  reference's schema does, so no configuration names a local file on either side;
 - a version range outside the npm semver forms the client reads (hyphen ranges, operators or stars
   inside a word) satisfies no version, so a version gate made only of such ranges refuses every
   peer;
@@ -812,15 +816,15 @@ session devnet_smoke -- --ignored --nocapture` sends getStatus, getPeers and a g
 blocks from height 1, checks each reply, answers the node's pings for a minute and closes the
 session; without the variable it does nothing.
 
-Three vector classes cover the crate (see Vector files). They are not installed beside the crates
-yet: the tests read `V24-p2p-exchange` from the directory in `WIRE_VECTORS` (`heartwood-p2p-wire`),
-`V25-peer-rules` from `P2P_VECTORS` (`heartwood-p2p`) and `V26-network` from `P2P_VECTORS`
-(difftest's `network_vectors` test), each relative to the workspace root, and report a class that
-is neither installed nor named there and pass. With a local run
-(`P2P_VECTORS=target/vectors/local`), `network_vectors` sends each V26 record to the subject of
-its area and allows no documented difference other than the unlinked fork segment and the two
-reader refusals above. The L1 properties P14 to P16 cover the verifier, the exchange and the
-monitor (see L1).
+Three vector classes cover the crate (see Vector files), installed beside the crates:
+`V24-p2p-exchange` in `packages/p2p-wire/tests/vectors`, `V25-peer-rules` and `V26-network` in
+`packages/p2p/tests/vectors` (`WIRE_VECTORS` and `P2P_VECTORS` point the tests at another run).
+`heartwood-p2p-wire`'s tests check the client's requests and the reply checks against V24, and
+difftest's `l0_wire` test compares V24 under the devnet configuration with nothing skipped;
+`heartwood-p2p` checks the peer rules against V25; difftest's `network_vectors` sends each V26
+record to the subject of its area and allows no documented difference other than the unlinked
+fork segment and the two reader refusals above. The L1 properties P14 to P16 cover the verifier,
+the exchange and the monitor (see L1).
 
 The fuzz targets, seeded by `tools/p2p-fuzz-seeds.js` from a vector run's V24 and V26 records
 (`P2P_SEEDS`):
