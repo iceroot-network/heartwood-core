@@ -4,7 +4,8 @@
 //!
 //! The run's records (`tests/fixtures/live/h/`: its steps, fault windows, bans, tips, block arrivals,
 //! the rate limit's answers and txgen's summary) are recordings of a dry run of the devnet recipe,
-//! with the devnet's addresses replaced by documentation addresses. Its chain is the committed
+//! with the devnet's addresses replaced by documentation addresses, and the step of the pool
+//! transactions the recipe gained later. Its chain is the committed
 //! corpus, which the judge has judged, so no oracle runs: the fixture's node 4 is a Heartwood relay
 //! whose digest lines are the judge's (in two starts, the first ending in a torn line) and whose
 //! store is the corpus replayed through Heartwood's store. The dry runs recorded no ban at all, so

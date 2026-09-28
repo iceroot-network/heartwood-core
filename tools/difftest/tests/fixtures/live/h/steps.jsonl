@@ -8,6 +8,7 @@
 {"step":"vote-before-node4","node":"node4","start":"2026-09-27T14:00:06.811Z","end":"2026-09-27T14:00:07.045Z","ok":true,"detail":{"ok":true,"step":"vote","expect":"accepted","outcome":"accepted","id":"eda1f973d53389ac2bd04263090a19d72425a0feb2530aea938c636eb525e98b"}}
 {"step":"vote-after-node4","node":"node4","start":"2026-09-27T14:00:10.856Z","end":"2026-09-27T14:00:11.092Z","ok":true,"detail":{"ok":true,"step":"vote","expect":"accepted","outcome":"accepted","id":"e344fc7236f2a35c91e4484fe399c58539ec66927c607493b481a69ef6b9f087"}}
 {"step":"pause","node":"all","start":"2026-09-27T14:00:11.736Z","end":"2026-09-27T14:19:21.429Z","ok":true,"height":265,"stopHeight":265}
+{"step":"api-pool","node":"node4","start":"2026-09-27T14:19:21.444Z","end":"2026-09-27T14:19:21.980Z","ok":true,"detail":{"ok":true,"step":"pool","http":200,"accepted":2,"relays":{"node4":{"missing":0},"node1":{"missing":0}}}}
 {"step":"api-corpus","node":"node4","start":"2026-09-27T14:19:21.444Z","end":"2026-09-27T14:19:51.455Z","ok":true,"exit":101,"left":"node4","right":"node1","skipped":"the route corpus's runner is not built yet"}
 {"step":"api-rate-limit","node":"node4","start":"2026-09-27T14:19:51.471Z","end":"2026-09-27T14:19:52.555Z","ok":true,"left":"node4","right":"node1"}
 {"step":"check-chain","node":"node1","start":"2026-09-27T14:19:52.571Z","end":"2026-09-27T14:19:53.259Z","ok":true}
