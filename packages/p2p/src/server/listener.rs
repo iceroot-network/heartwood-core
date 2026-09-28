@@ -6,9 +6,9 @@
 //!   `headersTimeout`, which the reference checks every 30 s, so it cuts at 60 to 90 s). A request
 //!   that is no upgrade (no `Upgrade` header with a `Connection: upgrade` token) gets 404, which
 //!   bans the caller "Not a websocket connection". An upgrade to any path but `/` is destroyed; one
-//!   the WebSocket library refuses (not GET, not `websocket`, a malformed key, a version other
-//!   than 8 or 13) gets 400 and is destroyed. Otherwise the WebSocket opens (echoing the first
-//!   requested subprotocol, as the library does).
+//!   the WebSocket library refuses (not GET, an `Upgrade` header other than `websocket` alone, a
+//!   malformed key, a version other than 8 or 13) gets 400 and is destroyed. Otherwise the
+//!   WebSocket opens (echoing the first requested subprotocol, as the library does).
 //! - Frames are read as the library's server reads them, messages of at most 20 MiB: each fault
 //!   ends the connection with the library's error text, which the nes socket takes as its ban
 //!   reason ("WebSocket" written "websocket" and ":" as " -"); an invalid UTF-8 text message or
@@ -100,7 +100,8 @@ pub async fn upgrade(mut stream: Box<dyn Stream>) -> Upgrade {
         .parse::<f64>()
         .ok()
         .filter(|v| *v == 8.0 || *v == 13.0);
-    if head.method != "GET" || !token("upgrade", "websocket") || !key_valid || version.is_none() {
+    let websocket = (head.header("upgrade")).is_some_and(|u| u.eq_ignore_ascii_case("websocket"));
+    if head.method != "GET" || !websocket || !key_valid || version.is_none() {
         let answer = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Type: text/html\r\n\
                       Content-Length: 11\r\n\r\nBad Request";
         let _ = stream.write_all(answer.as_bytes()).await;
