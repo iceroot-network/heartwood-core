@@ -85,15 +85,15 @@ impl StatusServer {
 
     /// The getStatus answer, encoded.
     pub async fn get_status(&self) -> Result<Vec<u8>, ServerRefusal> {
-        let current = self.current();
+        let key = self.key(&self.slot());
         let cached = lock(&self.cache).as_ref().and_then(|cached| {
             let fresh = cached.attested || !self.attestation.is_attached();
-            (cached.key == current.key && fresh).then(|| cached.bytes.clone())
+            (cached.key == key && fresh).then(|| cached.bytes.clone())
         });
         if let Some(bytes) = cached {
             return Ok(bytes);
         }
-        self.attestation.offer(current.text.clone());
+        let current = self.offer_current();
         let signing = self.attestation.signatures(&current.text, self.wait).await;
         let (attestations, keep, attested) = match signing {
             Signing::NoSession => (Vec::new(), true, false),
@@ -115,13 +115,22 @@ impl StatusServer {
     /// Look at the cache key, and offer a changed status to the forger's session.
     pub fn refresh(&self) {
         let key = self.key(&self.slot());
-        let mut offered = lock(&self.offered);
-        if *offered == Some(key) {
-            return;
+        if *lock(&self.offered) != Some(key) {
+            self.offer_current();
         }
-        *offered = Some(key);
-        drop(offered);
-        self.attestation.offer(self.current().text);
+    }
+
+    /// The tip's status now, offered to the forger's session when its key is not the one offered
+    /// last. The status is read and offered under one lock, so an older status never replaces a
+    /// newer one.
+    fn offer_current(&self) -> Current {
+        let mut offered = lock(&self.offered);
+        let current = self.current();
+        if *offered != Some(current.key) {
+            *offered = Some(current.key);
+            self.attestation.offer(current.text.clone());
+        }
+        current
     }
 
     /// Refresh at each new tip, slot boundary and half-slot flip until `shutdown` turns true.
