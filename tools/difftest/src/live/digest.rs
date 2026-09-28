@@ -7,13 +7,15 @@
 //! minority's chain as its node archived it before the heal.
 //!
 //! - an `apply` line equals the judge's forward line of its height in every key but the running
-//!   digest (`h`, `id`, `rw`, `b`, `s`, `r`, `m`, `w`, `sd`);
+//!   digest (`h`, `id`, `rw`, `b`, `s`, `r`, `m`, `w`, `sd`); so does a `reapply` line, which the
+//!   relay writes for a block at or below a height it applied before in the same start (the blocks
+//!   of the other side after a fork switch, or blocks it applies again after a revert);
 //! - a `revert`, `restart` or `genesis` line (the state the node returned to, restored or started
 //!   from) equals it in `b`, `s`, `r` and `w`;
 //! - every start opens with the state the relay started from (a `restart` or `genesis` line),
 //!   except a first start on an empty store, which may open with the apply line of height 2;
-//! - the last `apply` line of every height of the final chain carries that chain's block, and the
-//!   node's last line is the final tip.
+//! - the last `apply` or `reapply` line of every height of the final chain carries that chain's
+//!   block, and the node's last line is the final tip.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -152,7 +154,8 @@ pub struct Judged {
     pub compared: BTreeMap<(String, String), usize>,
     /// The problems, each with the line's place.
     pub problems: Vec<String>,
-    /// The heights of the final chain whose last apply line is missing or another block's.
+    /// The heights of the final chain whose last apply (or reapply) line is missing or another
+    /// block's.
     pub uncovered: Vec<u32>,
     /// The number of starts whose first line is a restart line (every start but a first one
     /// from an empty store must begin with one).
@@ -174,7 +177,7 @@ pub fn judge(digest: &NodeDigest, chains: &[JudgedChain]) -> Judged {
         };
         let want = &chain.forward[&h];
         let keys: &[&str] = match step {
-            "apply" => &SAME_STEP,
+            "apply" | "reapply" => &SAME_STEP,
             "revert" | "restart" | "genesis" => &SAME_STATE,
             other => {
                 out.problems
@@ -214,7 +217,11 @@ pub fn judge(digest: &NodeDigest, chains: &[JudgedChain]) -> Judged {
     }
     if let Some(last) = chains.first() {
         let mut last_apply: BTreeMap<u32, &str> = BTreeMap::new();
-        for l in digest.lines.iter().filter(|l| l.step() == "apply") {
+        for l in digest
+            .lines
+            .iter()
+            .filter(|l| matches!(l.step(), "apply" | "reapply"))
+        {
             last_apply.insert(l.height(), l.id());
         }
         let first = digest.lines.first().map_or(2, |l| l.height().max(1) + 1);
@@ -348,5 +355,72 @@ mod tests {
             "{:?}",
             judged.problems
         );
+    }
+
+    #[test]
+    fn the_blocks_of_a_fork_switch_are_reapply_lines() {
+        // The relay applied the minority's 3 and 4, went back to 2 and took the majority's 3 and 4
+        // (`reapply`: it had applied those heights before), then 5.
+        let majority = chain("live", &["g", "a2", "a3", "a4", "a5"]);
+        let minority = chain("minority", &["g", "a2", "b3", "b4"]);
+        let step = |mut l: Value, step: &str| {
+            l["step"] = json!(step);
+            l
+        };
+        let lines = [
+            step(line(1, "g", "w1"), "genesis"),
+            line(2, "a2", "w2"),
+            line(3, "b3", "w3"),
+            line(4, "b4", "w4"),
+            step(line(3, "b3", "w3"), "revert"),
+            step(line(2, "a2", "w2"), "revert"),
+            step(line(3, "a3", "w3"), "reapply"),
+            step(line(4, "a4", "w4"), "reapply"),
+            line(5, "a5", "w5"),
+        ];
+        let digest = NodeDigest {
+            lines: lines
+                .iter()
+                .enumerate()
+                .map(|(i, v)| NodeLine {
+                    start: 1,
+                    line: i + 1,
+                    value: v.clone(),
+                })
+                .collect(),
+            ..NodeDigest::default()
+        };
+        let judged = judge(&digest, &[majority.clone(), minority]);
+        assert!(judged.problems.is_empty(), "{:?}", judged.problems);
+        assert!(judged.uncovered.is_empty(), "{:?}", judged.uncovered);
+        assert_eq!(
+            judged.compared.get(&("live".into(), "reapply".into())),
+            Some(&2)
+        );
+        // A reapply line is compared as an apply line is.
+        let mut bad = digest.clone();
+        bad.lines[7].value["w"] = json!("wrong");
+        let judged = judge(&bad, std::slice::from_ref(&majority));
+        assert!(
+            judged
+                .problems
+                .iter()
+                .any(|p| p.contains("the reapply line of height 4 differs from live's in w")),
+            "{:?}",
+            judged.problems
+        );
+        // Any other step is still unknown.
+        let mut odd = digest;
+        odd.lines[7].value["step"] = json!("replay");
+        let judged = judge(&odd, &[majority]);
+        assert!(
+            judged
+                .problems
+                .iter()
+                .any(|p| p.contains("unknown step \"replay\"")),
+            "{:?}",
+            judged.problems
+        );
+        assert_eq!(judged.uncovered, vec![4]);
     }
 }
