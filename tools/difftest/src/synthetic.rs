@@ -2344,6 +2344,12 @@ fn restart_round_end_revert(
     Ok(())
 }
 
+/// Whether a result's file names a synthetic case: this module's (`<corpus>/synthetic`) or the
+/// forger's lateness cases (`<corpus>/synthetic-forger`).
+pub fn is_synthetic_file(file: &str) -> bool {
+    file.ends_with("/synthetic") || file.ends_with("/synthetic-forger")
+}
+
 /// Run every synthetic case on top of `corpus` against the oracle `server`.
 pub fn run(corpus: &Corpus, server: &mut OracleServer) -> Result<Vec<CaseResult>> {
     let keys = corpus_keys(corpus)?;
@@ -2377,5 +2383,13 @@ mod tests {
         let names: std::collections::BTreeSet<&str> =
             SyntheticCase::ALL.iter().map(|c| c.name()).collect();
         assert_eq!(names.len(), SyntheticCase::ALL.len());
+    }
+
+    #[test]
+    fn the_listing_names_the_store_cases_and_the_forger_cases() {
+        assert!(is_synthetic_file("txgen-one-node/synthetic"));
+        assert!(is_synthetic_file("txgen-one-node/synthetic-forger"));
+        assert!(!is_synthetic_file("txgen-one-node/blocks"));
+        assert!(!is_synthetic_file("txgen-one-node/synthetic-pool"));
     }
 }

@@ -499,7 +499,7 @@ fn run_l2(args: &L2Args, env: impl Fn(&str) -> Option<String>, strict: bool) -> 
         for r in report
             .results
             .iter()
-            .filter(|r| r.file.ends_with("/synthetic"))
+            .filter(|r| heartwood_difftest::synthetic::is_synthetic_file(&r.file))
         {
             let verdict = match &r.outcome {
                 o if o.is_failure() => "FAIL",
