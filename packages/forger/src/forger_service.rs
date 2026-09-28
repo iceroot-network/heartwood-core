@@ -142,6 +142,8 @@ struct State {
     /// The slot's transactions, fetched by its first attempt.
     transactions: Vec<Transaction>,
     first_check: Duration,
+    /// What the first round's tip height goes to (the version floor's check).
+    first_round: Option<Box<dyn FnOnce(u32) + Send>>,
 }
 
 /// Why a check or an attempt failed: a relay's error, logged gracefully, or any other, whose
@@ -273,6 +275,12 @@ where
         end.unwrap_or(AttemptEnd::Errored)
     }
 
+    /// Hand `hook` the height of the relay's tip at the first round loaded, once, before that
+    /// round's lines: where the forger's process checks its version floor.
+    pub fn on_first_round(&self, hook: impl FnOnce(u32) + Send + 'static) {
+        self.inner.state().first_round = Some(Box::new(hook));
+    }
+
     /// The round last loaded (the reference's `getRound`).
     pub async fn round(&self) -> Option<CurrentRound> {
         self.inner.state().round.clone()
@@ -357,6 +365,7 @@ where
         let old_active = std::mem::replace(&mut state.active, active);
         let old_inactive = std::mem::replace(&mut state.inactive, inactive);
         let first = !std::mem::replace(&mut state.initialised, true);
+        let hook = first.then(|| state.first_round.take()).flatten();
         let named = |hex: &String| name(&state.usernames, hex);
         let registered = |hex: &String| {
             let known = state.all_usernames.get(hex).filter(|name| !name.is_empty());
@@ -400,6 +409,8 @@ where
             lines.extend(moved(&left, leaving, ":cry:"));
         }
         drop(state);
+        hook.into_iter()
+            .for_each(|hook| hook(round.last_block.height));
         lines.iter().for_each(|line| info!("{line}"));
         if first {
             let active_delegates = self.delegates.iter().map(|(_, hex)| hex.clone()).collect();

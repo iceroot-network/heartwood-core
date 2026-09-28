@@ -1072,3 +1072,26 @@ async fn a_slow_signing_record_leaves_the_forgers_one_thread_free() {
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn the_first_round_hands_the_relays_tip_height_to_the_version_check_once() {
+    let relay = FakeRelay::new(in_slot(10, 0), &[3, 4], &[]);
+    relay.tip.lock().unwrap().height = 41;
+    relay.fail(
+        "round",
+        1,
+        RelayError::HostNoResponse {
+            hosts: "127.10.0.1".into(),
+        },
+    );
+    let mut forger = forger(&relay, &[1], relay.clock.clone());
+    let heights = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&heights);
+    forger
+        .service
+        .on_first_round(move |height| seen.lock().unwrap().push(height));
+    forger.service.boot().await.unwrap();
+    assert!(heights.lock().unwrap().is_empty(), "no round yet");
+    run_for(&forger, 9_000).await;
+    assert!(relay.count("round") > 2);
+    assert_eq!(*heights.lock().unwrap(), [41]);
+}
