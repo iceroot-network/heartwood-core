@@ -1170,7 +1170,7 @@ mod tests {
             "run l0",
             "run l2",
             "run l1 --cases 0",
-            "run l1 --property P17",
+            "run l1 --property P18",
             "run l1 --min-reach x",
             "run l2 c --processor --chunks 2",
             "api compare --left a --right b",

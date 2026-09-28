@@ -758,7 +758,9 @@ mod tests {
             Property::Processor
         );
         assert_eq!("P16".parse::<Property>().unwrap(), Property::Monitor);
-        assert!("P17".parse::<Property>().is_err());
+        assert_eq!("P17".parse::<Property>().unwrap(), Property::Forging);
+        assert_eq!("P19".parse::<Property>().unwrap(), Property::Decisions);
+        assert!("P18".parse::<Property>().is_err());
     }
 
     #[test]
