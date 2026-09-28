@@ -190,6 +190,10 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
     // The store, the state and the version floor at the stored tip.
     let settings = Settings::in_data_dir(&relay.paths.data);
     let (store, restored) = restored(&relay)?;
+    // A signal during a long restore (a replay) stops the start here, before anything runs.
+    if stop.try_recv().is_ok() {
+        return Ok(());
+    }
     let files = &relay.crypto;
     version_floor(&relay, restored.state.height(), &p2p.minimum_versions)?;
     let pool = open_pool(&relay, pool_options)?;
