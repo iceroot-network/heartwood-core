@@ -37,7 +37,9 @@ Usage:
                                   genesis class [packages/crypto/tests/vectors]; the minimal
                                   case of a failed property is written to --regressions;
                                   --min-reach fails P13 when the reference's answers reach a
-                                  reachable result or an unchained status fewer than N times
+                                  reachable result or an unchained status fewer than N times,
+                                  and P19 when they reach an action or a refusal fewer than N
+                                  times
   difftest run l2 DIR [--synthetic] [--restart] [--memory] [--to H] [ORACLE]
                                   replay the corpus DIR in Heartwood through a new store and
                                   compare every step with the oracle's digest lines, then the
