@@ -14,7 +14,8 @@
 //! - **[`start`]** checks the crypto files' hashes and the listeners, re-stamps the epoch when no
 //!   node has a chain store, nothing of the devnet runs and the epoch is less than 10 s away or
 //!   past, starts every relay, waits for their APIs (30 s at most), then starts the forgers.
-//!   **[`stop`]** stops the forgers before the relays; `kill` records the stop and sends SIGKILL.
+//!   **[`stop`]** stops the forgers before the relays; `kill` sends SIGKILL, waits for the exit,
+//!   then records the stop.
 //! - **[`status`]** reads the supervisors and each relay's node status, last block and peers,
 //!   compares the block ids at the lowest common height (`consistent` or `DIVERGED at h`), and
 //!   counts the delegates whose forger is online against the quorum's 27.

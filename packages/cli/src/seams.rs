@@ -201,7 +201,8 @@ pub trait ProcessOps {
     /// Stop the role gracefully and wait until it has exited; refused when it does not run.
     fn stop(&self, instance: &Instance) -> Result<(), ProcessError>;
 
-    /// Record a stop, then kill the role's supervisor and node with SIGKILL, as a crash does.
+    /// Kill the role's supervisor and node with SIGKILL, as a crash does, wait for them to exit,
+    /// then record the stop.
     fn kill(&self, instance: &Instance) -> Result<(), ProcessError>;
 
     /// The role's row of the process table.
