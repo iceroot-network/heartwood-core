@@ -49,6 +49,18 @@ impl Controllers {
     }
 }
 
+/// A request body the route's reader refuses: 400 "Validation failed", as the validation plugin
+/// answers a body its schema refuses.
+fn invalid<E>(_: E) -> ServerRefusal {
+    ServerRefusal::new(400, "Validation failed")
+}
+
+/// A handler that failed: the 500 answer the reference's server gives an error that is not its
+/// own (ended with the socket, never a ban).
+fn internal<E>(_: E) -> ServerRefusal {
+    ServerRefusal::new(500, "An internal server error occurred")
+}
+
 impl RouteHandlers for Controllers {
     fn handle(
         &self,
