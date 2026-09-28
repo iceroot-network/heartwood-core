@@ -752,7 +752,10 @@ after a random hold. The harness kills the child with SIGKILL at random moments,
 while a `postBlock` answer is held, and starts it again. No slot may have two different blocks at
 the relay or in the child's reports, a block posted for a recorded slot must be the recorded one,
 and a restart inside a recorded slot that the relay has not taken sends the recorded block again
-when it sends at all (with less than 2,000 ms of the slot left it sends nothing).
+when it sends at all (with less than 2,000 ms of the slot left it sends nothing). Such a restart
+whose first status request (the forger takes the time left just before it) comes with at least
+2,000 ms of the slot left, while the relay has not taken the slot's block, and that is not killed
+within 500 ms of it, must send it again.
 
 The fuzz targets:
 

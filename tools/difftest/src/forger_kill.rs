@@ -13,8 +13,10 @@
 //! After every restart no slot may have two different blocks at the mock relay or in the child's
 //! reports, a block posted for a recorded slot must be the recorded one, and a restart inside a
 //! recorded slot whose block the relay has not taken sends the recorded bytes again when it sends
-//! at all (it sends nothing once less than 2,000 ms of the slot are left). At least one such
-//! restart must send its block again.
+//! at all (it sends nothing once less than 2,000 ms of the slot are left). Such a restart whose
+//! first status request (the forger takes the time left just before it) comes with at least
+//! 2,000 ms of the slot left, while the relay has not taken the slot's block, and that is not
+//! killed within 500 ms of it, must send its block again; and at least one restart must.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -76,6 +78,9 @@ const PATIENCE: Duration = Duration::from_secs(10);
 const SETTLE: Duration = Duration::from_millis(100);
 /// The time a forger keeps before a slot's end: it sends nothing with less left.
 const MINIMUM_MS: i64 = 2_000;
+/// How long a child may take from its status request to its signer's outcome: the slot calls
+/// and a re-send, which writes nothing.
+const SEND_MS: i64 = 500;
 
 /// SplitMix64: the kill moments and the relay's values, reproducible from the seed.
 struct Moments(u64);
@@ -109,7 +114,15 @@ enum Kill {
 enum Event {
     Line(u32, Value),
     Closed(u32),
-    Posted { slot: i64, id: String },
+    Posted {
+        slot: i64,
+        id: String,
+    },
+    /// A status request answered at `at`, and the slot of the block the relay had taken then.
+    Status {
+        at: i64,
+        taken: Option<i64>,
+    },
 }
 
 /// What the harness saw.
@@ -125,6 +138,9 @@ struct Seen {
     resent_after_restart: usize,
     /// Of those, the ones that started with less than [`MINIMUM_MS`] of the slot left.
     restarts_late: usize,
+    /// Of those, the ones whose first status request came with at least [`MINIMUM_MS`] of the
+    /// slot left and which ran [`SEND_MS`] after it, each of which must send its block again.
+    restarts_due: usize,
     /// Kills made while the relay held a `postBlock` answer.
     held_kills: usize,
     /// The longest sign-and-record call the child reported, in milliseconds.
@@ -141,6 +157,13 @@ struct Run {
     in_recorded_slot: Option<i64>,
     /// Whether the signer has reported an outcome in this run.
     signed: bool,
+    /// When it was ready (`i64::MAX` before), when it was killed, and its first status request
+    /// after it was ready, with the slot of the block the relay had taken then.
+    ready_at: i64,
+    killed_at: i64,
+    status: Option<(i64, Option<i64>)>,
+    /// Whether its first outcome was the recorded slot's block, sent again.
+    resent: bool,
 }
 
 /// Run the crash test of `options`.
@@ -186,8 +209,13 @@ pub fn run(options: &KillOptions) -> Result<Report> {
             number,
             in_recorded_slot: None,
             signed: false,
+            ready_at: i64::MAX,
+            killed_at: i64::MAX,
+            status: None,
+            resent: false,
         };
         let driven = drive(&events, kill, &relay, &mut run, &mut moments, &mut seen);
+        run.killed_at = now_ms();
         let _ = child.kill();
         let _ = child.wait();
         if let Some(reader) = reader {
@@ -196,6 +224,21 @@ pub fn run(options: &KillOptions) -> Result<Report> {
         // The killed child's last lines, and a post still on its way to the relay.
         while let Ok(event) = events.recv_timeout(SETTLE) {
             handle(event, &mut run, &mut seen);
+        }
+        if let (Some(slot), Some((at, taken))) = (run.in_recorded_slot, run.status) {
+            let due = relay.slot(at) == slot
+                && taken != Some(slot)
+                && relay.slot_end(slot).saturating_sub(at) >= MINIMUM_MS
+                && run.killed_at >= at.saturating_add(SEND_MS);
+            seen.restarts_due += usize::from(due);
+            if due && !run.resent {
+                let left = relay.slot_end(slot).saturating_sub(at);
+                let message = format!(
+                    "a restart that asked for the status with {left} ms of recorded slot {slot} \
+                     left did not send its block again"
+                );
+                seen.problems.push((slot, Outcome::HarnessError(message)));
+            }
         }
         if let Err(error) = driven {
             outcome = Err(error);
@@ -226,8 +269,9 @@ fn report(options: &KillOptions, mut seen: Seen) -> Report {
         source: format!(
             "{} kills ({} while a postBlock answer was held), seed {}; {} restarts inside a \
              recorded slot the relay had not taken: {} sent the recorded block again, {} sent \
-             nothing ({} of them started with less than {} ms of the slot left); {} slots \
-             posted, {} refused; slowest sign-and-record {} ms",
+             nothing ({} of them started with less than {} ms of the slot left); {} asked for the \
+             status with at least {} ms left and ran {} ms more, each of which must send it \
+             again; {} slots posted, {} refused; slowest sign-and-record {} ms",
             options.kills,
             seen.held_kills,
             options.seed,
@@ -236,6 +280,9 @@ fn report(options: &KillOptions, mut seen: Seen) -> Report {
             seen.restarts_in_recorded_slot - seen.resent_after_restart,
             seen.restarts_late,
             MINIMUM_MS,
+            seen.restarts_due,
+            MINIMUM_MS,
+            SEND_MS,
             seen.posted.len(),
             seen.refused,
             seen.slowest_ms
@@ -282,6 +329,7 @@ fn drive(
         }
     }
     let now = now_ms();
+    run.ready_at = now;
     let slot = relay.slot(now);
     let taken = relay.state().taken(now).map(|tip| tip.slot);
     if seen.recorded.contains_key(&slot) && taken != Some(slot) {
@@ -335,6 +383,11 @@ fn handle(event: Event, run: &mut Run, seen: &mut Seen) {
                 seen.problems.push((slot, differs("posted", recorded, &id)));
             }
         }
+        Event::Status { at, taken } => {
+            if run.status.is_none() && at >= run.ready_at {
+                run.status = Some((at, taken));
+            }
+        }
         Event::Closed(_) => {}
         Event::Line(number, line) => {
             let current = number == run.number;
@@ -357,6 +410,7 @@ fn handle(event: Event, run: &mut Run, seen: &mut Seen) {
                     }
                     Some(_) if current && !run.signed && run.in_recorded_slot == Some(slot) => {
                         seen.resent_after_restart += 1;
+                        run.resent = true;
                     }
                     _ => {}
                 }
@@ -554,6 +608,8 @@ impl Relay {
                 })
             }
             RouteId::GetStatus => {
+                let taken = state.taken(now).map(|tip| tip.slot);
+                let _ = lock(&self.posts).send(Event::Status { at: now, taken });
                 let header = match state.taken(now) {
                     Some(tip) => tip.header.clone(),
                     None => self.earlier_block(slot, height),
