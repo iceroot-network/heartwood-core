@@ -1030,12 +1030,61 @@ async fn a_head_that_node_refuses_is_answered_as_hapi_answers_it() {
         client.read_to_string(&mut answer).await.unwrap();
         answer
     };
-    // Node counts the target's bytes (and the header names and values) up to 16 KiB.
-    let get = |length: usize| format!("GET /api/{} HTTP/1.1\r\n\r\n", "q".repeat(length - 5));
-    let refused = exchange(vec![get(16_384)]).await;
-    assert_eq!(refused, "HTTP/1.1 400 Bad Request\r\n\r\n");
-    let routed = exchange(vec![get(16_383)]).await;
-    assert!(routed.starts_with("HTTP/1.1 404 Not Found\r\n"), "{routed}");
+    // Node counts the target's bytes (and the header names and values) up to 16 KiB; line ends
+    // before the request line are skipped, uncounted.
+    let bare = "HTTP/1.1 400 Bad Request\r\n\r\n";
+    for lead in ["", "\n", "\r\n\r\n"] {
+        let get = |length: usize| {
+            let target = "q".repeat(length - 5);
+            format!("{lead}GET /api/{target} HTTP/1.1\r\n\r\n")
+        };
+        assert_eq!(exchange(vec![get(16_384)]).await, bare, "{lead:?}");
+        let routed = exchange(vec![get(16_383)]).await;
+        assert!(routed.starts_with("HTTP/1.1 404 Not Found\r\n"), "{routed}");
+    }
+    // What Node's parser refuses is refused so, and what it reads is served as Node serves it.
+    let fields: String = (0..150).map(|i| format!("x{i}: v\r\n")).collect();
+    let cases = [
+        ("FOO /api/node/status HTTP/1.1\r\n\r\n".to_owned(), bare),
+        ("GET /api/node/status HTTP/1.1\nx: y\n\n".to_owned(), bare),
+        (
+            "\rGET /api/node/status HTTP/2.0\r\nx y: z\r\n\r\n".to_owned(),
+            "HTTP/1.1 200 OK\r\n",
+        ),
+        (
+            format!("GET /api/node/status HTTP/1.1\r\n{fields}\r\n"),
+            "HTTP/1.1 200 OK\r\n",
+        ),
+        (
+            "GET /api/node/status?a=\"<>\" HTTP/1.1\r\n\r\n".to_owned(),
+            "HTTP/1.1 200 OK\r\n",
+        ),
+        (
+            "GET *x HTTP/1.1\r\n\r\n".to_owned(),
+            "HTTP/1.1 400 Bad Request\r\ncontent-type",
+        ),
+        ("CONNECT a:1 HTTP/1.1\r\n\r\n".to_owned(), ""),
+    ];
+    for (request, start) in cases {
+        let answer = exchange(vec![request.clone()]).await;
+        match start {
+            "" | "HTTP/1.1 400 Bad Request\r\n\r\n" => assert_eq!(answer, start, "{request:?}"),
+            _ => assert!(answer.starts_with(start), "{request:?}: {answer}"),
+        }
+    }
+    let invalid = exchange(vec!["GET *x HTTP/1.1\r\n\r\n".to_owned()]).await;
+    assert!(
+        invalid.ends_with(r#""message":"Invalid URL"}"#),
+        "{invalid}"
+    );
+    let quoted = exchange(vec![
+        "GET /api/node/status?a=\"<>\" HTTP/1.1\r\n\r\n".to_owned(),
+    ])
+    .await;
+    assert!(
+        quoted.contains(r#""query":{"a":"%22%3C%3E%22"}"#),
+        "{quoted}"
+    );
     // The bytes read with the head are served again, and the body that comes after them.
     let body = r#"{"transactions":12}"#;
     let head = format!(

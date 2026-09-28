@@ -133,6 +133,11 @@ impl From<ApiError> for Answer {
     }
 }
 
+/// The request's target is one hapi cannot read as a URL (it starts with `*`): 400
+/// "Invalid URL", once the whitelist let the request through. The server marks such a request.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct InvalidUrl;
+
 /// What an answer's headers depend on in its request.
 struct Asked {
     /// The request's `Origin`.
@@ -215,6 +220,9 @@ impl Pipeline {
         let client = client_address(&parts.headers, peer, config.trust_proxy);
         if !ip::is_whitelisted(&config.whitelist, &client) {
             return Err(ApiError::forbidden("Forbidden"));
+        }
+        if parts.extensions.get::<InvalidUrl>().is_some() {
+            return Err(ApiError::bad_request("Invalid URL"));
         }
         // The reference's query plugins run before its router and its rate limit: a query they
         // throw on is a 500 on any path, and is not charged. The query is parsed again once the
