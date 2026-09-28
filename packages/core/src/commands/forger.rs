@@ -3,7 +3,7 @@
 use std::ffi::OsString;
 use std::process::ExitCode;
 
-use clap::{Args, Subcommand};
+use clap::{ArgAction, Args, Subcommand};
 use heartwood_cli::Role;
 use heartwood_cli::instance::InstanceFlags;
 
@@ -36,13 +36,21 @@ pub struct ForgerRun {
 }
 
 /// The flags of `forger start`: those of `forger run`, and whether to leave the terminal.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct ForgerStart {
     /// The forger's flags.
     #[command(flatten)]
     pub run: ForgerRun,
-    /// Run the supervisor as a daemon.
-    #[arg(long)]
+    /// Run the supervisor as a daemon, as the reference's command does by default;
+    /// `--daemon=false` or `--no-daemon` keeps it in the foreground until the node stops.
+    #[arg(
+        long,
+        default_value_t = true,
+        action = ArgAction::Set,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true"
+    )]
     pub daemon: bool,
 }
 

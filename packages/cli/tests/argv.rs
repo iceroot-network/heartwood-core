@@ -75,3 +75,17 @@ fn an_argument_that_is_not_utf8_is_kept() {
     let args = vec!["heartwood".into(), odd.clone(), "relay:start".into()];
     assert_eq!(rewrite(args.clone()), args);
 }
+
+#[test]
+fn no_daemon_is_daemon_false_up_to_the_end_of_the_flags() {
+    let spelled = rewrite(words("heartwood relay:start --network devnet --no-daemon"));
+    assert_eq!(
+        spelled,
+        words("heartwood relay start --network devnet --daemon=false")
+    );
+    let child = "supervise --role relay -- heartwood relay run --no-daemon";
+    assert_eq!(
+        rewrite(words(&format!("heartwood {child}"))),
+        words(&format!("heartwood {child}"))
+    );
+}
