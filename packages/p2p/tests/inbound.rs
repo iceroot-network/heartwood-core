@@ -123,6 +123,8 @@ async fn the_forger_is_exempt_from_the_limiter_and_others_are_refused_and_banned
     }
     assert_eq!(bans.reason(peer(2)).as_deref(), Some("Rate limit exceeded"));
     assert_eq!(bans.reason(FORGER), None);
+    // A refusal of the limiter bans through the hammer and is never a violation.
+    assert_eq!(fakes.peers.violations(), []);
 }
 
 #[test]
