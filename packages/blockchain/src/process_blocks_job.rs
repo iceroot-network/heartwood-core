@@ -52,7 +52,9 @@ pub struct JobContext<'a> {
     pub store: &'a mut ChainStore,
     /// The chain state, shared with the blockchain service. The job locks it for each block's
     /// processing and each change of its own, never across blocks, so the service and the
-    /// network read the tip as it moves, as the reference's readers do between two blocks.
+    /// network read the tip as it moves, as the reference's readers do between two blocks. A
+    /// round a block starts is recorded with the tip that block moves, until the commit stores
+    /// it ([`ChainState::rounds_started`]).
     pub chain: &'a Mutex<ChainState>,
     /// The pool and the online record.
     pub pool: &'a mut PoolTask,
@@ -125,12 +127,13 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
                 break;
             }
         };
+        let mut chain = lock(ctx.chain);
         let processed = ctx.processor.process(
             &mut ProcessContext {
                 state: ctx.state,
                 handlers: ctx.handlers,
                 milestones: ctx.milestones,
-                chain: &mut lock(ctx.chain),
+                chain: &mut chain,
                 forged: &forged,
                 pending: &accepted,
                 pool: ctx.pool,
@@ -139,6 +142,13 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
             &block,
             incoming.name.as_deref(),
         );
+        // A round the block started is read with the tip it moved, before the commit stores it.
+        let started = processed.applied.as_ref().map(|a| a.round_started.as_ref());
+        if let Some(start) = started.flatten() {
+            let keys = start.delegates.iter().map(|delegate| delegate.public_key);
+            chain.rounds_started.push((start.round, keys.collect()));
+        }
+        drop(chain);
         clear_queue |= processed.unchained.is_some();
         results.push((*block.id(), processed.result));
         last_result = Some(processed.result);
@@ -168,7 +178,9 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
     }
     if let Some(last) = accepted.last() {
         chunk.commit()?;
-        lock(ctx.chain).last_stored_height = last.height();
+        let mut chain = lock(ctx.chain);
+        chain.last_stored_height = last.height();
+        chain.rounds_started.clear();
     }
     if let Some(failure) = ctx.pool.take_failure() {
         return Err(NodeError::Pool(failure));

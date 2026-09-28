@@ -848,6 +848,34 @@ async fn the_semaphore_levels_follow_the_served_query_grammar() {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::disallowed_types,
+    reason = "the test times the answer against the wall clock"
+)]
+async fn a_long_asset_list_with_casts_is_answered_at_once() {
+    let host = Host {
+        config: Arc::new(config()),
+        height: Box::new(|| 265),
+        dispatch: Box::new(|_, request| {
+            Box::pin(async move {
+                let criteria = crate::controllers::transactions::criteria(&request.query)?;
+                let count = criteria.map_or(0, |criteria| criteria.asset.len());
+                Ok(ApiReply::data(json!(count)))
+            })
+        }),
+    };
+    let pipeline = Pipeline::with_parts(RouteId::ALL.to_vec(), host, Grammar::SCHEMAS);
+    // Five casts and a list of 16,384 items from a 40-byte criterion: 32 alternatives.
+    let id = "a".repeat(64);
+    let uri = format!("/api/transactions?id={id}&asset.x=1,2,3,true,false&asset.x.16383=c");
+    let started = std::time::Instant::now();
+    let (status, _, body) = call(&pipeline, get(&uri)).await;
+    let elapsed = started.elapsed();
+    assert_eq!((status, &body["data"]), (200, &json!(32)), "{body}");
+    assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+}
+
+#[tokio::test]
 async fn links_are_relative_to_the_configured_base_path() {
     let mut config = config();
     config.base_path = "/v2".to_owned();

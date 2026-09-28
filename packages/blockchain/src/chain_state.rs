@@ -11,7 +11,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use heartwood_crypto::{Block, BlockId};
+use heartwood_crypto::{Block, BlockId, PublicKeyBytes};
 use heartwood_kernel::ChainLink;
 use heartwood_p2p::view::BlockPing;
 
@@ -54,6 +54,11 @@ pub struct ChainState {
     /// When the processor last accepted a block, in milliseconds of the node's clock: the
     /// wake-up timer runs from it, as the reference restarts the timer at each accepted block.
     pub last_accepted_ms: Option<i64>,
+    /// The rounds that the running job's blocks started, with their delegates' keys in rank
+    /// order, until the job's commit stores their rows. The reference saves a round's delegates
+    /// as the round starts, so its peer verifier finds the round of any tip it reads; the store
+    /// shows them only after the commit, and the published state only after the job.
+    pub rounds_started: Vec<(u64, Vec<PublicKeyBytes>)>,
 }
 
 /// The chain state, shared by the node thread and the blockchain service.

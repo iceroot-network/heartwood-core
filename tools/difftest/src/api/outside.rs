@@ -2,7 +2,10 @@
 //! address no node whitelists and records the answers in `rate-limit.jsonl` beside `api/`, while
 //! the corpus's runner, whose requests the nodes whitelist, leaves the section's requests unsent.
 //! A recorded request of the section that was not sent is judged from those answers: the same
-//! status, the same body and the same header names on both nodes.
+//! status, the same header names and the same body where the recipe records one (a 429's) on
+//! both nodes. An answer that failed or has no status is a harness error, and so is a section in
+//! which a node never answered 429: without one, nothing shows that the requests came from
+//! outside the whitelist and reached the rate limit.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -59,6 +62,12 @@ impl OutsideAnswers {
         line.outside && line.request.is_none() && line.skipped.as_deref() == Some(&not_sent())
     }
 
+    /// Whether `node` answered 429 to a request of the section.
+    fn limited(&self, node: &str) -> bool {
+        let limited = |answer: &Value| answer.get("status").and_then(Value::as_u64) == Some(429);
+        (self.0.iter()).any(|((by, _, _), answer)| by == node && limited(answer))
+    }
+
     /// The outcome of the outside request `line`, from the answers of both nodes to it.
     pub fn judge(&self, line: &Recorded) -> Outcome {
         let i = line.repeat.map_or(1, |r| u64::from(r) + 1);
@@ -68,6 +77,24 @@ impl OutsideAnswers {
                 "{RATE_LIMIT} holds no answer of both nodes to request {i}"
             ));
         };
+        for (node, answer) in [("left", left), ("right", right)] {
+            let status = answer.get("status").and_then(Value::as_u64);
+            let failed = match (answer.get("error"), status) {
+                (Some(error), _) => Some(error.to_string()),
+                (None, None) => Some("no status".to_owned()),
+                (None, Some(_)) => None,
+            };
+            if let Some(why) = failed {
+                return Outcome::HarnessError(format!(
+                    "request {i} has no answer of the {node} node: {why}"
+                ));
+            }
+            if !self.limited(node) {
+                return Outcome::HarnessError(format!(
+                    "no answer of the {node} node in {RATE_LIMIT} is a 429"
+                ));
+            }
+        }
         let names = |a: &Value| -> Value {
             let mut names: Vec<&String> = (a.get("headers").and_then(Value::as_object))
                 .map(|headers| headers.keys().collect())
@@ -133,6 +160,8 @@ mod tests {
             answer("left", 2, 429),
             answer("right", 2, 422),
             answer("left", 3, 429),
+            answer("left", 4, 429),
+            answer("right", 4, 429),
         ];
         let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
         std::fs::write(&path, text).unwrap();
@@ -154,5 +183,37 @@ mod tests {
             answers.judge(&line("rate-limit/b", None)),
             Outcome::Skipped(_)
         ));
+    }
+
+    #[test]
+    fn a_failed_request_or_a_section_without_a_429_is_a_harness_error() {
+        let judge = |lines: &[Value], i: u32| {
+            let answers = lines.iter().map(|answer| {
+                let key = (answer["node"].as_str().unwrap().to_owned(), "c".to_owned());
+                (
+                    (key.0, key.1, answer["i"].as_u64().unwrap()),
+                    answer.clone(),
+                )
+            });
+            OutsideAnswers(answers.collect()).judge(&line("c", Some(i)))
+        };
+        let failed = |node: &str, i: u64| json!({"node": node, "case": "c", "i": i, "error": "connect ECONNREFUSED"});
+        let answered = |node: &str, i: u64, status: u16| json!({"node": node, "case": "c", "i": i, "status": status, "headers": {}});
+        let both_failed = [failed("left", 1), failed("right", 1)];
+        assert!(matches!(judge(&both_failed, 0), Outcome::HarnessError(_)));
+        let limited = [answered("left", 2, 429), answered("right", 2, 429)];
+        let mut one_failed = vec![answered("left", 1, 422), failed("right", 1)];
+        one_failed.extend(limited.clone());
+        assert!(matches!(judge(&one_failed, 0), Outcome::HarnessError(_)));
+        let no_status = json!({"node": "right", "case": "c", "i": 1, "headers": {}});
+        let mut no_status = vec![answered("left", 1, 422), no_status];
+        no_status.extend(limited.clone());
+        assert!(matches!(judge(&no_status, 0), Outcome::HarnessError(_)));
+        // Equal answers of a section that never reached the rate limit prove nothing.
+        let whitelisted = [answered("left", 1, 422), answered("right", 1, 422)];
+        assert!(matches!(judge(&whitelisted, 0), Outcome::HarnessError(_)));
+        let mut reached = whitelisted.to_vec();
+        reached.extend(limited);
+        assert_eq!(judge(&reached, 0), Outcome::Pass);
     }
 }
