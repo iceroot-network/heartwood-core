@@ -333,6 +333,25 @@ async fn a_preflight_is_answered_as_hapi_answers_it() {
             404,
             boom(404, "Not Found", "Not Found"),
         ),
+        // A GET or HEAD that no route matches finds the catch-all route, which has CORS on.
+        (
+            preflight("/nothing", &[("access-control-request-method", "HEAD")]),
+            404,
+            boom(404, "Not Found", "CORS error: Missing Origin header"),
+        ),
+        // A parameter that does not decode fails an assertion of hapi's.
+        (
+            preflight(
+                "/api/wallets/%zz",
+                &[origin, ("access-control-request-method", "GET")],
+            ),
+            500,
+            boom(
+                500,
+                "Internal Server Error",
+                "An internal server error occurred",
+            ),
+        ),
         (
             preflight(
                 "/api/transactions",
@@ -356,6 +375,13 @@ async fn a_preflight_is_answered_as_hapi_answers_it() {
         }
         assert_eq!(header(&headers, "x-block-height"), Some("265"));
     }
+    let get_method = ("access-control-request-method", "get");
+    let (status, headers, _) =
+        call(&pipeline, preflight("/api/nothing", &[origin, get_method])).await;
+    assert_eq!(
+        (status, header(&headers, "access-control-allow-methods")),
+        (204, Some("get"))
+    );
     let allowed = ("access-control-request-headers", "Content-Type, accept");
     assert_eq!(
         call(
@@ -389,6 +415,8 @@ async fn the_router_follows_the_reference_rules() {
             "/api/wallets/genesis%5F34/transactions",
             "WalletsTransactions",
         ),
+        ("/api/wallets/top/transactions", "WalletsTransactions"),
+        ("/api/blocks/first/transactions", "BlocksTransactions"),
     ];
     for (uri, expected) in cases {
         let (status, _, body) = call(&pipeline, get(uri)).await;
@@ -396,11 +424,16 @@ async fn the_router_follows_the_reference_rules() {
     }
     let (_, _, body) = call(&pipeline, get("/api/wallets/genesis%5F34")).await;
     assert_eq!(body["data"]["params"], json!({ "id": "genesis_34" }));
-    // Unknown paths, and another method on a known path, are 404 (never 405).
+    // Unknown paths, and another method on a known path, are 404 (never 405); so are the paths of
+    // the reference's routes that are not served, which a parameter would otherwise take.
     let not_found = boom(404, "Not Found", "Not Found");
     for request in [
         get("/api/node/status//"),
         get("/api/nothing"),
+        get("/api/blocks/first"),
+        get("/api/blocks/missed/"),
+        get("/api/transactions/schemas"),
+        get("/api/wallets/top"),
         get("/api"),
         get("/node/status"),
         get("/api/blocks//transactions"),
@@ -650,16 +683,24 @@ async fn a_multipart_type_needs_a_boundary_parameter() {
 #[tokio::test(start_paused = true)]
 async fn the_rate_limit_charges_every_routed_request_per_window() {
     let mut config = config();
-    config.rate_limit.points = 3;
+    config.rate_limit.points = 4;
     let pipeline = pipeline(config);
-    // An unknown path costs nothing; a request the schema refuses costs a point.
+    // Another method on any path, a POST on a path no route matches and a parameter that does not
+    // decode cost nothing; a GET or HEAD on a path no route matches costs a point (the reference's
+    // catch-all route takes it), as a request the schema refuses does.
     for _ in 0..5 {
-        assert_eq!(call(&pipeline, get("/api/nothing")).await.0, 404);
+        let put = Request::put("/api/nothing").body(Body::empty()).unwrap();
+        let unmatched = Request::post("/api/nothing").body(Body::empty()).unwrap();
+        assert_eq!(call(&pipeline, put).await.0, 404);
+        assert_eq!(call(&pipeline, unmatched).await.0, 404);
+        assert_eq!(call(&pipeline, get("/api/wallets/%zz")).await.0, 400);
     }
+    let head = Request::head("/nothing").body(Body::empty()).unwrap();
+    assert_eq!(call(&pipeline, head).await.0, 404);
+    assert_eq!(call(&pipeline, get("/api/nothing")).await.0, 404);
     assert_eq!(call(&pipeline, get("/api/node/status?bad=1")).await.0, 422);
-    for _ in 0..2 {
-        assert_eq!(call(&pipeline, get("/api/node/status")).await.0, 200);
-    }
+    assert_eq!(call(&pipeline, get("/api/node/status")).await.0, 200);
+    assert_eq!(call(&pipeline, get("/api/nothing")).await.0, 429);
     let (status, headers, body) = call(&pipeline, get("/api/node/status")).await;
     assert_eq!(
         (status, body),

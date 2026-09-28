@@ -14,9 +14,9 @@
 //! the route's CORS headers: `vary: origin` and `access-control-expose-headers` always (hapi's
 //! origin setting `*` matches a request without an `Origin` too), `access-control-allow-origin`
 //! when the request has an `Origin`. A `GET`'s 200 answer with a body offers byte ranges
-//! (`accept-ranges: bytes`) and serves one ([`ranges`]). An unmatched path, and another method on
-//! a matched path, are answered 404 before the rate limit, as the reference's router answers
-//! them.
+//! (`accept-ranges: bytes`) and serves one ([`ranges`]). A `GET` or `HEAD` that no route matches,
+//! anywhere, is charged a point and answered 404, as the reference's catch-all route answers it;
+//! another method on an unmatched path is answered 404 before the rate limit.
 
 mod limits;
 mod payload;
@@ -239,7 +239,14 @@ impl Pipeline {
             Verb::POST => Method::Post,
             _ => return Err(not_found()),
         };
-        let (route, params) = self.lookup(method, path)?.ok_or_else(not_found)?;
+        let Some((route, params)) = self.lookup(method, path)? else {
+            // The reference's catch-all route (its documentation's) takes a GET or HEAD that no
+            // route matches, anywhere: it is charged a point, and finds nothing.
+            if method == Method::Get && config.rate_limit.enabled && !self.admit(&client) {
+                return Err(ApiError::too_many_requests("Too Many Requests"));
+            }
+            return Err(not_found());
+        };
         let payload = match method {
             Method::Post => Some(payload::read(&parts.headers, body).await?),
             Method::Get => None,
@@ -267,12 +274,16 @@ impl Pipeline {
     }
 
     /// The route of `method` at `path` under the base path, and its decoded parameters: a literal
-    /// segment wins over a parameter. `Ok(None)` when none matches; 400 for a parameter that is
-    /// not percent-encoded UTF-8.
+    /// segment wins over a parameter. `Ok(None)` when none matches, or when the path is one of a
+    /// route of the reference that is not served here; 400 for a parameter that is not
+    /// percent-encoded UTF-8.
     fn lookup(&self, method: Method, path: &str) -> Result<Option<(RouteId, Params)>, ApiError> {
         let Some(rest) = path.strip_prefix(self.host.config.base_path.as_str()) else {
             return Ok(None);
         };
+        if method == Method::Get && UNSERVED.contains(&rest) {
+            return Ok(None);
+        }
         let segments: Vec<&str> = rest.split('/').collect();
         let routes = self.routes.iter().filter(|route| route.method() == method);
         let matched = routes.filter_map(|&route| Some((route, matches(route, &segments)?)));
@@ -301,8 +312,14 @@ impl Pipeline {
             "options" => return Ok(message("CORS is disabled for this route")),
             _ => return Err(not_found()),
         };
-        if !matches!(self.lookup(method, path), Ok(Some(_))) {
-            return Err(not_found());
+        // The route hapi finds for the method asked: a GET or HEAD that no route matches finds the
+        // catch-all route, which has CORS on. A parameter that does not decode fails hapi's
+        // assertion that the route it finds is not its bad-request route: a 500.
+        match self.lookup(method, path) {
+            Ok(Some(_)) => {}
+            Ok(None) if method == Method::Get => {}
+            Ok(None) => return Err(not_found()),
+            Err(_) => return Err(ApiError::internal()),
         }
         let Some(origin) = headers.get(header::ORIGIN) else {
             return Err(ApiError::not_found(missing("Origin")));
@@ -391,6 +408,16 @@ impl Pipeline {
         response
     }
 }
+
+/// The paths of the reference's routes that are not served here and that a served route with a
+/// parameter would take (`/blocks/{id}`, `/transactions/{id}`, `/wallets/{id}`): they are unmatched
+/// paths, as the paths of the other routes that are not served are.
+const UNSERVED: [&str; 4] = [
+    "/blocks/first",
+    "/blocks/missed",
+    "/transactions/schemas",
+    "/wallets/top",
+];
 
 fn not_found() -> ApiError {
     ApiError::not_found("Not Found")
