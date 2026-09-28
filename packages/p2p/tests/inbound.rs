@@ -37,6 +37,26 @@ fn ms(ms: u64) -> Duration {
 }
 
 #[test]
+fn the_server_options_keep_the_exact_forger_addresses_normalised() {
+    let p2p = heartwood_p2p::P2pOptions {
+        remote_access: ["127.0.0.1", "::ffff:127.0.0.1", "::1", "10.0.0.0/8"]
+            .map(str::to_owned)
+            .to_vec(),
+        max_transactions_per_request: 7,
+        ..heartwood_p2p::P2pOptions::default()
+    };
+    let options = ServerOptions::from_p2p(&p2p);
+    let expected: Vec<IpAddr> = ["127.0.0.1", "127.0.0.1", "::1"]
+        .iter()
+        .map(|ip| ip.parse().unwrap())
+        .collect();
+    assert_eq!(options.remote_access, expected);
+    assert_eq!((options.port, options.ban_seconds), (4002, 10));
+    assert_eq!(options.max_transactions_per_request, 7);
+    assert_eq!(options.await_block_bound, Duration::from_secs(8));
+}
+
+#[test]
 fn the_inbound_table_limits_each_route_per_address() {
     let start = Instant::now();
     let at = |ms: u64| start + Duration::from_millis(ms);

@@ -330,26 +330,3 @@ impl Shared {
         self.ban_hammer.closed(ip, id, &end, now, synced);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_forger_addresses_are_exact_and_normalised() {
-        let p2p = P2pOptions {
-            remote_access: ["127.0.0.1", "::ffff:127.0.0.1", "::1", "10.0.0.0/8"]
-                .map(str::to_owned)
-                .to_vec(),
-            ..P2pOptions::default()
-        };
-        let options = ServerOptions::from_p2p(&p2p);
-        let expected: Vec<IpAddr> = ["127.0.0.1", "127.0.0.1", "::1"]
-            .iter()
-            .map(|ip| ip.parse().unwrap())
-            .collect();
-        assert_eq!(options.remote_access, expected);
-        assert_eq!((options.port, options.ban_seconds), (4002, 10));
-        assert_eq!(options.await_block_bound, Duration::from_secs(8));
-    }
-}
