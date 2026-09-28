@@ -398,6 +398,34 @@ mod with_child {
     }
 
     #[test]
+    fn of_two_daemon_starts_at_once_only_the_one_whose_supervisor_holds_the_lock_succeeds() {
+        let root = scratch("two-starts");
+        let relay = instance(&root, Role::Relay);
+        let _cleanup = Cleanup(&relay);
+        for _ in 0..3 {
+            let barrier = std::sync::Barrier::new(2);
+            let results: Vec<_> = thread::scope(|scope| {
+                let start = || {
+                    barrier.wait();
+                    process::start(&relay, &argv(&["run"]), &env(&[]), true)
+                };
+                let starts = [scope.spawn(start), scope.spawn(start)];
+                starts.map(|start| start.join().unwrap())
+            })
+            .into();
+            let started = results.iter().filter(|result| result.is_ok()).count();
+            assert_eq!(started, 1, "{results:?}");
+            assert!(
+                (results.iter())
+                    .any(|result| matches!(result, Err(ProcessError::AlreadyRunning { .. }))),
+                "{results:?}"
+            );
+            online(&relay);
+            process::stop(&relay).unwrap();
+        }
+    }
+
+    #[test]
     fn a_foreground_start_returns_when_its_supervisor_does() {
         let root = scratch("foreground");
         let relay = instance(&root, Role::Relay);

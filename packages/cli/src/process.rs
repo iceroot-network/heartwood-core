@@ -77,12 +77,22 @@ pub fn start(
         command.stdout(Stdio::null()).stderr(Stdio::null());
     }
     let mut supervisor = command.spawn().map_err(|e| failed(e.to_string()))?;
+    let lock = instance.supervisor_lock_path();
+    // The lock is this start's once the state file names its supervisor: a start beside this one
+    // may have taken it first.
+    let ours = |id: u32| -> Result<bool, ProcessError> {
+        let state = SupervisorState::read(&instance.state_path()).ok().flatten();
+        Ok(is_locked(&lock)? && state.is_some_and(|state| state.supervisor_pid == id))
+    };
     let deadline = Instant::now() + START_WAIT;
     loop {
         match supervisor.try_wait().map_err(|e| failed(e.to_string()))? {
             Some(exit) if exit.success() && !daemon => return Ok(()),
+            Some(_) if daemon && is_locked(&lock)? => {
+                return Err(ProcessError::AlreadyRunning { name });
+            }
             Some(exit) => return Err(failed(format!("the supervisor exited: {exit}"))),
-            None if daemon && is_locked(&instance.supervisor_lock_path())? => return Ok(()),
+            None if daemon && ours(supervisor.id())? => return Ok(()),
             None if daemon && Instant::now() >= deadline => {
                 let seconds = START_WAIT.as_secs();
                 return Err(ProcessError::Timeout { name, seconds });
