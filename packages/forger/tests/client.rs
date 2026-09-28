@@ -57,10 +57,7 @@ async fn each_call_has_its_route_codec_and_headers() {
         .on(RouteId::PostStatusSignatures, text("true"));
     let relay = relay(1, script).await;
     // The second host is never reached: it only gives the events a host whose text is local.
-    let local = heartwood_forger::options::RelayHost {
-        hostname: "127.0.0.1".parse().unwrap(),
-        port: 4002,
-    };
+    let local = heartwood_forger::options::RelayHost::new("127.0.0.1", 4002).unwrap();
     let client = client(&[host(1), local], &[&relay]);
     let deadline = || Deadline::after(Duration::from_secs(4));
 
@@ -237,10 +234,7 @@ async fn every_call_gives_up_at_its_deadline() {
         ..Script::new().on(RouteId::GetSlotNumber, json(&SlotNumber(1)))
     };
     let relay = relay(1, script).await;
-    let local = heartwood_forger::options::RelayHost {
-        hostname: "127.0.0.1".parse().unwrap(),
-        port: 4002,
-    };
+    let local = heartwood_forger::options::RelayHost::new("127.0.0.1", 4002).unwrap();
     let client = client(&[host(1), local], &[&relay]);
     client
         .get_slot_number(None, Deadline::after(Duration::from_secs(1)))
@@ -315,10 +309,7 @@ async fn events_need_a_host_whose_text_names_the_loopback_but_go_to_the_selected
         .on(RouteId::EmitEvent, text("true"))
         .on(RouteId::EmitEvent, not_ready());
     let relay = relay(1, script).await;
-    let local = heartwood_forger::options::RelayHost {
-        hostname: "127.0.0.11".parse().unwrap(),
-        port: 4002,
-    };
+    let local = heartwood_forger::options::RelayHost::new("127.0.0.11", 4002).unwrap();
     let client = client(&[host(1), local], &[&relay]);
     client.get_round().await.unwrap();
     client
@@ -341,10 +332,7 @@ async fn events_need_a_host_whose_text_names_the_loopback_but_go_to_the_selected
         [r#"ERROR: Failed to emit "forger.failed" to "127.0.0.11:4002""#]
     );
 
-    let remote = heartwood_forger::options::RelayHost {
-        hostname: "127.1.0.11".parse().unwrap(),
-        port: 4002,
-    };
+    let remote = heartwood_forger::options::RelayHost::new("127.1.0.11", 4002).unwrap();
     let others = client_over(
         &[host(1), remote],
         heartwood_p2p::testing::MockPeer::dial(&[&relay]),
@@ -366,15 +354,21 @@ async fn events_need_a_host_whose_text_names_the_loopback_but_go_to_the_selected
             .count(),
         2
     );
-    let ipv6 = heartwood_forger::options::RelayHost {
-        hostname: "::1".parse().unwrap(),
-        port: 4002,
-    };
+    let ipv6 = heartwood_forger::options::RelayHost::new("::1", 4002).unwrap();
     let loopback = client_over(&[ipv6], heartwood_p2p::testing::MockPeer::dial(&[]));
     loopback
         .emit_event(ForgerEvent::Failed { error: "c".into() })
         .await;
     assert_eq!(lines.with("emitEvent").len(), 1, "::1 is a local host");
+    // The rule reads the address as configured, not as the address it names is written.
+    for spelled in ["::ffff:7f00:1", "0:0:0:0:0:0:0:1"] {
+        let host = heartwood_forger::options::RelayHost::new(spelled, 4002).unwrap();
+        let other = client_over(&[host], heartwood_p2p::testing::MockPeer::dial(&[]));
+        other
+            .emit_event(ForgerEvent::Failed { error: "d".into() })
+            .await;
+    }
+    assert_eq!(lines.with("emitEvent").len(), 3);
 }
 
 #[tokio::test(start_paused = true)]

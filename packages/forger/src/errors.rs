@@ -35,7 +35,7 @@ pub enum RelayError {
 impl RelayError {
     /// The error of a selection that found no ready host among `hosts`.
     pub fn host_no_response(hosts: &[RelayHost]) -> RelayError {
-        let hosts: Vec<String> = hosts.iter().map(|host| host.hostname.to_string()).collect();
+        let hosts: Vec<&str> = hosts.iter().map(|host| host.hostname.as_str()).collect();
         RelayError::HostNoResponse {
             hosts: hosts.join(","),
         }

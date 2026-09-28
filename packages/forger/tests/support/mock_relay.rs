@@ -53,7 +53,8 @@ pub fn ip(n: u8) -> IpAddr {
 /// Relay host `n` of the tests' loopback block, on [`PORT`].
 pub fn host(n: u8) -> RelayHost {
     RelayHost {
-        hostname: ip(n),
+        hostname: ip(n).to_string(),
+        address: ip(n),
         port: PORT,
     }
 }

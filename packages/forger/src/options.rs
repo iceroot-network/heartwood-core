@@ -22,13 +22,29 @@ use crate::errors::OptionsError;
 /// The relay port when neither `hosts` nor `CORE_P2P_PORT` gives one: the relay's default.
 pub const DEFAULT_PORT: u16 = 4002;
 
-/// A relay the forger connects to: `ws://<hostname>:<port>/`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// A relay the forger connects to: `ws://<address>:<port>/`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RelayHost {
-    /// The relay's address, an IP literal as the reference's schema requires.
-    pub hostname: IpAddr,
+    /// The relay's address as configured, an IP literal as the reference's schema requires: the
+    /// text that the log lines, the errors and `emitEvent`'s local host rule use.
+    pub hostname: String,
+    /// The address parsed from `hostname`, which the sessions connect to.
+    pub address: IpAddr,
     /// The relay's peer-to-peer port.
     pub port: u16,
+}
+
+impl RelayHost {
+    /// The relay at `hostname` and `port`; `None` when `hostname` is not an IP address.
+    pub fn new(hostname: &str, port: u16) -> Option<RelayHost> {
+        let address = hostname.parse().ok()?;
+        let hostname = hostname.to_owned();
+        Some(RelayHost {
+            hostname,
+            address,
+            port,
+        })
+    }
 }
 
 /// The forger component's options.
@@ -103,7 +119,8 @@ impl Options {
                 .ok_or_else(|| invalid("hosts[0].port", "CORE_P2P_PORT must be a port"))?,
         };
         Ok(vec![RelayHost {
-            hostname: IpAddr::from([127, 0, 0, 1]),
+            hostname: "127.0.0.1".into(),
+            address: IpAddr::from([127, 0, 0, 1]),
             port,
         }])
     }
@@ -126,15 +143,13 @@ fn relay_host(index: usize, value: &Value) -> Result<RelayHost, OptionsError> {
     let Value::Object(host) = value else {
         return Err(invalid(&format!("hosts[{index}]"), "must be an object"));
     };
-    let hostname = match host.get("hostname") {
-        Some(Value::String(text)) => text.parse().ok(),
-        _ => None,
-    }
-    .ok_or_else(|| invalid(&key("hostname"), "must be an IP address"))?;
+    let hostname = (host.get("hostname").and_then(Value::as_str))
+        .and_then(|text| RelayHost::new(text, DEFAULT_PORT))
+        .ok_or_else(|| invalid(&key("hostname"), "must be an IP address"))?;
     let port = (host.get("port"))
         .and_then(port)
         .ok_or_else(|| invalid(&key("port"), "must be a port from 1 to 65535"))?;
-    Ok(RelayHost { hostname, port })
+    Ok(RelayHost { port, ..hostname })
 }
 
 /// A port from 1 to 65535: a number, or its decimal text, as the reference's schema converts it.
@@ -182,10 +197,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
-                hosts: vec![RelayHost {
-                    hostname: "127.0.0.1".parse().unwrap(),
-                    port: 4002,
-                }],
+                hosts: vec![RelayHost::new("127.0.0.1", 4002).unwrap()],
                 aux: None,
                 delay: Duration::ZERO,
                 local_address: None,
@@ -215,16 +227,17 @@ mod tests {
         assert_eq!(
             options.hosts,
             [
-                RelayHost {
-                    hostname: "127.0.0.11".parse().unwrap(),
-                    port: 6002
-                },
-                RelayHost {
-                    hostname: "::1".parse().unwrap(),
-                    port: 6003
-                },
+                RelayHost::new("127.0.0.11", 6002).unwrap(),
+                RelayHost::new("::1", 6003).unwrap(),
             ]
         );
+        let spelled = json!({"hosts": [{"hostname": "0:0:0:0:0:0:0:1", "port": 6002}]});
+        let spelled = Options::from_json(&spelled, &no_env).unwrap();
+        assert_eq!(
+            spelled.hosts[0].hostname, "0:0:0:0:0:0:0:1",
+            "the text as configured"
+        );
+        assert_eq!(spelled.hosts[0].address, "::1".parse::<IpAddr>().unwrap());
         assert_eq!(options.aux, Some([0xab; 32]));
         assert_eq!(options.delay, Duration::from_millis(250));
         assert_eq!(options.local_address, Some("127.0.0.111".parse().unwrap()));

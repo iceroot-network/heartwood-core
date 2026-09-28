@@ -80,7 +80,8 @@ fn run() -> Result<(), String> {
         milestones.clone(),
     ));
     let hosts = vec![RelayHost {
-        hostname: relay.ip(),
+        hostname: relay.ip().to_string(),
+        address: relay.ip(),
         port: relay.port(),
     }];
     let client = Client::new(ClientOptions {

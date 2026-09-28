@@ -16,9 +16,10 @@
 //!   with the headers `{port: 0, version}`; JSON for the internal ones), has its deadline
 //!   ([`crate::deadlines`]), and fails as [`RelayError::Communication`] with the endpoint
 //!   `<hostname>:<port><<route id>>` and the nes error's message.
-//! - `emitEvent` is sent only when some host's address text contains `127.0.0.1` or `::1` (so
-//!   `127.0.0.11` does, `127.1.0.11` does not), and to the selected host; otherwise it logs
-//!   "emitEvent: unable to find any local hosts" when it is called.
+//! - `emitEvent` is sent only when some host's address text, as configured, contains `127.0.0.1`
+//!   or `::1` (so `127.0.0.11` does, `127.1.0.11` and `::ffff:7f00:1` do not), and to the
+//!   selected host; otherwise it logs "emitEvent: unable to find any local hosts" when it is
+//!   called. The log lines and errors write each host's address as configured too.
 
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
@@ -120,7 +121,7 @@ impl Client {
                     .is_some_and(|session| session.is_ready());
                 if ready {
                     self.selected.store(index, Ordering::Release);
-                    return Ok(*host);
+                    return Ok(host.clone());
                 }
                 let link = self.connect(host);
                 if let Some(old) = self.sessions().get_mut(index).and_then(|s| s.replace(link)) {
@@ -141,8 +142,9 @@ impl Client {
     /// The host last selected (the first host before any selection).
     pub fn selected(&self) -> RelayHost {
         let index = self.selected.load(Ordering::Acquire);
-        (self.options.hosts.get(index).copied()).unwrap_or(RelayHost {
-            hostname: IpAddr::from([127, 0, 0, 1]),
+        (self.options.hosts.get(index).cloned()).unwrap_or(RelayHost {
+            hostname: "127.0.0.1".into(),
+            address: IpAddr::from([127, 0, 0, 1]),
             port: DEFAULT_PORT,
         })
     }
@@ -174,7 +176,7 @@ impl Client {
             retries: u32::MAX,
             max_payload: MAX_PAYLOAD,
         };
-        let address = SocketAddr::new(host.hostname, host.port);
+        let address = SocketAddr::new(host.address, host.port);
         let (session, _) = Session::connect(address, options, on_error, self.dial.clone());
         Link { session, quiet }
     }
@@ -333,7 +335,7 @@ impl RelayLink for Client {
 
     fn emit_event(&self, event: ForgerEvent) -> impl Future<Output = ()> + Send {
         let local = (self.options.hosts.iter()).find(|host| {
-            let text = host.hostname.to_string();
+            let text = &host.hostname;
             text.contains("127.0.0.1") || text.contains("::1")
         });
         if local.is_none() {
@@ -353,7 +355,7 @@ impl RelayLink for Client {
                 .await
                 .is_err()
             {
-                let (hostname, port) = (local.hostname, local.port);
+                let (hostname, port) = (&local.hostname, local.port);
                 error!("Failed to emit \"{name}\" to \"{hostname}:{port}\" :bangbang:");
             }
         }
