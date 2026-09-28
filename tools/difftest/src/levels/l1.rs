@@ -185,6 +185,9 @@ pub struct L1Options {
     /// How often P13 must reach each reachable result of the processor and each unchained status
     /// in the reference's answers; 0 asks nothing (the counts are reported all the same).
     pub min_reach: u32,
+    /// How often P19 must reach each action and refusal of the reference's forging attempt; 0
+    /// asks nothing (the counts are reported all the same).
+    pub decision_reach: u32,
 }
 
 /// One case of a property, as the oracle takes it.
@@ -580,7 +583,7 @@ pub fn run(
             results.extend(processor_checks(&file, &seen, options.min_reach));
         }
         if *property == Property::Decisions {
-            results.extend(decision_checks(&file, &seen, options.min_reach));
+            results.extend(decision_checks(&file, &seen, options.decision_reach));
         }
         if matches!(
             *property,
@@ -663,10 +666,10 @@ pub fn run(
             ));
         }
     }
-    if options.properties.contains(&Property::Decisions) && options.min_reach > 0 {
+    if options.properties.contains(&Property::Decisions) && options.decision_reach > 0 {
         source.push_str(&format!(
             "; P19 each action and refusal at least {} times",
-            options.min_reach
+            options.decision_reach
         ));
     }
     let report = Report {

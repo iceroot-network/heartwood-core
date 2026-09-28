@@ -160,6 +160,7 @@ oracle answers, in the image and locally), `make oracle-save` (`docker save` of 
 | `VECTOR_CRATES` | every crate and its classes | which classes `make vectors-install` puts into which crate's `tests/vectors` |
 | `L1_CASES`, `L1_SEED`, `L1_PROPERTY` | `256`, `1`, all | cases per property, the generator's seed, the properties (`P1` to `P19`, or their names, comma separated) |
 | `L1_MIN_REACH` | 20 from 1,000 cases, else none | how often P13 must reach each reachable result of the processor and each unchained status |
+| `L1_DECISION_REACH` | 20 from 10,000 cases, else none | how often P19 must reach each action and refusal of the reference's forging attempt |
 | `CORPUS`, `NAME` | `target/corpus`, empty | the L2 corpus `CORPUS/NAME` |
 | `ARCHIVE`, `CORPUS_SEED`, `DUMP` | empty | the devnet archives `make corpus-import` joins (in chain order); the chain's public key-derivation seed; heights whose records the judge writes |
 | `TO` | empty | cut the corpus at this height, in `corpus-judge`, `l2`, `l2-synthetic` and `l2-restart` (the judge and the replays must use the same cut) |
@@ -1408,7 +1409,9 @@ at 1,000 cases each with the date as the seed. P17's documented cases are the po
 eviction (about one in seventy). P19's are the over-height header of the delegate's own key that
 is not an empty block and whose signature verifies (about one in seventeen), on which Heartwood
 does not forge; the report counts the reference's actions, and every action of an attempt and
-every reason of the quorum's refusal appears.
+every reason of the quorum's refusal appears. From 10,000 cases `make l1` fails the run when one
+of them appears fewer than 20 times (`--decision-reach`, `L1_DECISION_REACH`); the rarest come
+about once in fifty cases, so 1,000 cases do not reach 20 of each.
 
 P13 agrees with the reference at 10,000 and at 20,000 cases with the date as the seed. Its only
 documented case is a block refused in its apply after missed slots (34 and 59 cases). `make l1`
@@ -1709,7 +1712,7 @@ difftest oracle ping [--image TAG | --solar-dir DIR]
 difftest vectors verify DIR
 difftest vectors diff DIR DIR
 difftest run l0 DIR
-difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR] [--regressions DIR] [--min-reach N] [ORACLE]
+difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR] [--regressions DIR] [--min-reach N] [--decision-reach N] [ORACLE]
 difftest run l2 DIR [--synthetic] [--restart] [--memory] [--to H] [ORACLE]
 difftest run l2 DIR --processor [--chunks reference|1] [--synthetic] [--to H] [ORACLE]
 difftest run l3|l4              points to the live runs (see `difftest levels`)

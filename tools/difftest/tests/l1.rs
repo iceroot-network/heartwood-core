@@ -116,6 +116,7 @@ fn properties_agree_with_the_configured_oracles() {
                 seed: 1,
                 regressions: None,
                 min_reach: 0,
+                decision_reach: 0,
             },
         )
         .unwrap();

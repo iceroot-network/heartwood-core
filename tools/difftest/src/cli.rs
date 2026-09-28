@@ -30,16 +30,17 @@ Usage:
   difftest vectors diff DIR DIR   compare two oracle runs record by record (meta excluded)
   difftest run l0 DIR             compare golden vectors with Heartwood's implementations
   difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR]
-                  [--regressions DIR] [--min-reach N] [ORACLE]
+                  [--regressions DIR] [--min-reach N] [--decision-reach N]
+                  [ORACLE]
                                   random and mutated cases of the properties (P1 to P19, or
                                   their names; all by default), one oracle call each; 256
                                   cases and seed 1 by default; DIR is a vector set with the
                                   genesis class [packages/crypto/tests/vectors]; the minimal
                                   case of a failed property is written to --regressions;
                                   --min-reach fails P13 when the reference's answers reach a
-                                  reachable result or an unchained status fewer than N times,
-                                  and P19 when they reach an action or a refusal fewer than N
-                                  times
+                                  reachable result or an unchained status fewer than N times;
+                                  --decision-reach fails P19 when they reach an action or a
+                                  refusal fewer than N times
   difftest run l2 DIR [--synthetic] [--restart] [--memory] [--to H] [ORACLE]
                                   replay the corpus DIR in Heartwood through a new store and
                                   compare every step with the oracle's digest lines, then the
@@ -362,6 +363,8 @@ pub struct L1Args {
     pub regressions: Option<PathBuf>,
     /// How often P13 must reach each reachable result and unchained status (0: no check).
     pub min_reach: u32,
+    /// How often P19 must reach each action and refusal of the reference (0: no check).
+    pub decision_reach: u32,
 }
 
 /// The arguments of `difftest run l2`.
@@ -680,6 +683,7 @@ fn parse_l1(args: &[&str]) -> Result<Command> {
         vectors: None,
         regressions: None,
         min_reach: 0,
+        decision_reach: 0,
     };
     let mut it = args.iter();
     while let Some(&flag) = it.next() {
@@ -707,6 +711,11 @@ fn parse_l1(args: &[&str]) -> Result<Command> {
                 l1.min_reach = value(flag, it.next())?
                     .parse()
                     .map_err(|_| usage("--min-reach needs an unsigned integer"))?;
+            }
+            "--decision-reach" => {
+                l1.decision_reach = value(flag, it.next())?
+                    .parse()
+                    .map_err(|_| usage("--decision-reach needs an unsigned integer"))?;
             }
             _ => oracle_flag(&mut l1.oracle, flag, it.next())?,
         }
@@ -1001,7 +1010,7 @@ mod tests {
         assert_eq!(
             p(
                 "run l1 --property P7 --property digest --cases 9 --seed 20260926 --solar-dir /s \
-               --min-reach 20"
+               --min-reach 20 --decision-reach 30"
             )
             .unwrap(),
             Command::RunL1(L1Args {
@@ -1015,6 +1024,7 @@ mod tests {
                 vectors: None,
                 regressions: None,
                 min_reach: 20,
+                decision_reach: 30,
             })
         );
         assert_eq!(
@@ -1223,6 +1233,7 @@ mod tests {
             "run l1 --cases 0",
             "run l1 --property P20",
             "run l1 --min-reach x",
+            "run l1 --decision-reach x",
             "run l2 c --processor --chunks 2",
             "api compare --left a --right b",
             "api compare --run r --left a",
