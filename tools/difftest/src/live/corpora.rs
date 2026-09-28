@@ -1,7 +1,9 @@
 //! The chains of a live run as corpora: node 1's archives (and, after a partition, the minority's
-//! archive from before the heal) imported under the corpus root and judged by the oracle, as
-//! `make corpus-import corpus-judge` does. A corpus already imported from the same archives and
-//! judged is used as it is; one of an earlier run of the same name is moved aside to
+//! archive from before the heal) imported under the corpus root and judged by the oracle with its
+//! processor results, as `make corpus-import corpus-judge PROCESSOR=1` does, so that
+//! `make l2-processor` compares each block's result through the reference's job too. A corpus
+//! already imported from the same archives and judged so is used as it is; one judged without the
+//! processor results is judged again; one of an earlier run of the same name is moved aside to
 //! `<name>.replaced` and imported again. Its manifest and `corpus.json` are copied into the run's
 //! `corpus/<name>/`.
 //!
@@ -16,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::corpus::{self, Corpus, RevertPlan, TS_DIGESTS};
+use crate::corpus::{self, Corpus, RevertPlan, TS_DIGESTS, TS_PROCESSOR};
 use crate::errors::{Error, Result};
 use crate::levels::l2;
 use crate::live::digest::JudgedChain;
@@ -155,10 +157,10 @@ pub fn prepare(
         imported = true;
     }
     let mut judged = false;
-    if !dir.join(TS_DIGESTS).exists() {
+    if !dir.join(TS_DIGESTS).exists() || !dir.join(TS_PROCESSOR).exists() {
         let oracle = oracle()?;
         let work = ScratchDir::new("live-judge")?;
-        oracle.judge(&dir, work.path(), &[])?;
+        oracle.judge(&dir, work.path(), &["--processor".to_owned()])?;
         corpus::record_judge(&dir, work.path())?;
         judged = true;
     }
