@@ -3,6 +3,8 @@
 #   make check          build, clippy (warnings are errors), fmt check, tests (the integration-tagged
 #                       ones too), the release check, the crate layers, rustdoc (warnings are
 #                       errors), and the review ceilings where tokei is installed
+#   make deny           advisories, licences, sources and bans of every dependency (cargo-deny;
+#                       needs the network, so it is not part of make check)
 #   make oracle-image   build the oracle image for COMMIT from scratch (needs Docker and the network)
 #   make e2e            vectors in the container and locally, diff the two runs, run L0
 #   make vectors-install  copy the container run into each crate's tests/vectors
@@ -304,6 +306,19 @@ lines: ## code lines per crate against the review ceilings (tokei, inline tests 
 lines-if-tokei:
 	@$(TOOLCHAIN) && if command -v tokei >/dev/null 2>&1; then tools/check-lines.sh; \
 	else echo "lines: tokei is not installed, so the review ceilings are not checked (make lines)"; fi
+
+# ---- dependencies: advisories, licences, sources and bans (deny.toml) ----
+# Not a prerequisite of make check, which works offline: cargo-deny fetches the RustSec advisory
+# database. The fuzz targets are a package of their own, checked against the same deny.toml; the
+# wrapper rules for crates outside their graph (the API's, the binary's) do not apply there.
+.PHONY: deny
+
+deny: ## advisories, licences, sources and bans of every dependency (cargo-deny; needs the network)
+	@$(TOOLCHAIN) && command -v cargo-deny >/dev/null 2>&1 || \
+	    { echo "deny: cargo-deny is not installed (cargo install --locked cargo-deny)" >&2; exit 1; }
+	$(TOOLCHAIN) && cargo deny --locked --config deny.toml check
+	$(TOOLCHAIN) && cargo deny --locked --config deny.toml --manifest-path $(FUZZ_MANIFEST) check \
+	    --allow unused-wrapper
 
 # ---- heartwood-p2p-wire: the peer-to-peer wire codec ----
 # Its golden vectors (class WIRE_CLASS) live beside the crate, with their own manifest; the
