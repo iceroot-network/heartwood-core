@@ -75,6 +75,10 @@ RUNTIME       ?=
 # ORACLE_ARGS='--solar-dir $(LOCAL_SOLAR)' for a local reference.
 ORACLE_ARGS   ?= --image $(IMAGE)
 DIFFTEST      := target/debug/difftest
+# The comparing targets (l0, l1, the L2 replays, the kill test, live-check, api-compare) are gates:
+# `--strict` fails a run in which a case was skipped or had no subject, as a failed case does.
+# STRICT= runs them leniently, for a look at a partial tree.
+STRICT        ?= --strict
 # The packages whose builds are release artefacts, each built on its own (cargo build -p). None of
 # them may enable a test seam (SEAMS, crate:feature); `make release-check` checks it.
 RELEASE_PACKAGES ?= heartwood-crypto heartwood-kernel heartwood-logger heartwood-state heartwood-transactions \
@@ -208,7 +212,7 @@ vectors-install: vectors-diff ## copy the container run into each crate's tests/
 	done
 
 l0: build ## compare VECTORS/container with Heartwood's subjects
-	$(DIFFTEST) run l0 $(VECTORS)/container
+	$(DIFFTEST) run l0 $(VECTORS)/container $(STRICT)
 
 ping: build ## oracle-server.js answers, in the image and locally
 	$(need-image)
@@ -246,22 +250,23 @@ corpus-verify: build ## the manifest of CORPUS/NAME
 
 l2: build ## replay CORPUS/NAME in Heartwood through its store against the judge's lines (TO=H)
 	$(need-name)
-	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) $(if $(TO),--to $(TO))
+	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) $(if $(TO),--to $(TO)) $(STRICT)
 
 l2-synthetic: build ## L2 of CORPUS/NAME with the synthetic restart, pool and processor cases on top (needs the oracle)
 	$(need-name)
 	$(need-image)
-	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --synthetic $(if $(TO),--to $(TO)) $(ORACLE_ARGS)
-	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor --synthetic $(if $(TO),--to $(TO)) $(ORACLE_ARGS)
+	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --synthetic $(if $(TO),--to $(TO)) $(STRICT) $(ORACLE_ARGS)
+	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor --synthetic $(if $(TO),--to $(TO)) $(STRICT) \
+	    $(ORACLE_ARGS)
 
 l2-restart: build ## L2 of CORPUS/NAME with the restarts of its restart plan, by both of Heartwood's paths (TO=H)
 	$(need-name)
-	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --restart $(if $(TO),--to $(TO))
+	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --restart $(if $(TO),--to $(TO)) $(STRICT)
 
 crash-test: build ## CORPUS/NAME replayed through the store (or a relay, RUNTIME=1) in a child process killed KILLS times
 	$(need-name)
 	$(DIFFTEST) store crash $(CORPUS)/$(NAME) --kills $(KILLS) $(if $(KILL_SEED),--seed $(KILL_SEED)) \
-	    $(if $(RUNTIME),--runtime)
+	    $(if $(RUNTIME),--runtime) $(STRICT)
 
 pool-bench: ## the cost of the pool's per-sender views and of the store's commit (release build)
 	$(TOOLCHAIN) && cargo test --release --locked -p heartwood-pool --test view_cost -- --ignored --nocapture
@@ -461,7 +466,8 @@ need-results = $(if $(LIVE_RESULTS),,$(error set LIVE_RESULTS, the live runs' di
 
 l2-processor: build ## replay CORPUS/NAME through the processor and the job against the judge's lines (TO, CHUNKS)
 	$(need-name)
-	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor $(if $(CHUNKS),--chunks $(CHUNKS)) $(if $(TO),--to $(TO))
+	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor $(if $(CHUNKS),--chunks $(CHUNKS)) $(if $(TO),--to $(TO)) \
+	    $(STRICT)
 
 relay-image: ## the relay's release binary with the harness's flags, and its devnet image (RELAY_IMAGE_RECIPE)
 	$(if $(RELAY_IMAGE_RECIPE),,$(error set RELAY_IMAGE_RECIPE, the devnet tooling's image recipe, in local.mk))
@@ -476,13 +482,13 @@ live: ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2, LIVE_RECIP
 live-check: build ## the comparisons of a live run (RUN, LIVE_RESULTS)
 	$(need-run)
 	$(need-results)
-	$(TOOLCHAIN) && $(DIFFTEST) live check $(LIVE_RESULTS)/$(RUN)
+	$(TOOLCHAIN) && $(DIFFTEST) live check $(LIVE_RESULTS)/$(RUN) $(STRICT)
 
 api-compare: build ## judge the API answers a live run recorded (RUN, LIVE_RESULTS), or two nodes' (LEFT, RIGHT)
 	$(TOOLCHAIN) && if [ -n '$(LEFT)' ] && [ -n '$(RIGHT)' ]; then \
-	    $(DIFFTEST) api compare --left '$(LEFT)' --right '$(RIGHT)' --out $(API_COMPARE_OUT); \
+	    $(DIFFTEST) api compare --left '$(LEFT)' --right '$(RIGHT)' --out $(API_COMPARE_OUT) $(STRICT); \
 	else \
 	    [ -n '$(RUN)' ] && [ -n '$(LIVE_RESULTS)' ] || { echo "api-compare: set RUN and LIVE_RESULTS, or LEFT and RIGHT" >&2; exit 2; }; \
-	    $(DIFFTEST) api compare --run $(LIVE_RESULTS)/$(RUN); \
+	    $(DIFFTEST) api compare --run $(LIVE_RESULTS)/$(RUN) $(STRICT); \
 	fi
 # ---- end of the relay ----

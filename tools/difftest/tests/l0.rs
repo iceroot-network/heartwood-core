@@ -1,6 +1,5 @@
 //! L0 over the committed golden vectors of `heartwood-crypto`: every record that a subject
-//! compares must pass, and every record is compared, a documented difference, or skipped by a
-//! subject with its reason.
+//! compares must pass, and every record is compared or a documented difference; none is skipped.
 
 use std::path::Path;
 
@@ -20,17 +19,17 @@ fn the_committed_vectors_pass_l0() {
     );
     let report = l0::run(&set, &subject::heartwood(devnet));
     assert!(report.is_success(), "{report}");
-    assert!(report.without_subject().is_empty(), "{report}");
+    assert!(report.is_complete(), "{report}");
     assert_eq!(
-        report.compared() + report.documented() + report.skipped(),
+        report.compared() + report.documented(),
         set.record_count(),
         "{report}"
     );
     // The counts change only on purpose: a new subject, a new documented difference, or new
     // vectors.
     assert_eq!(
-        (report.compared(), report.documented(), report.skipped()),
-        (2212, 58, 6),
+        (report.compared(), report.documented()),
+        (2212, 64),
         "{report}"
     );
 }

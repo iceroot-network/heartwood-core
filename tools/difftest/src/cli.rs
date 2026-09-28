@@ -93,6 +93,10 @@ Usage:
                                   --compare checks it against the output of the devnet
                                   generator for the same inputs
 
+--strict, with any command that compares (run, oracle replay, store crash, live check, api
+compare): a case that was skipped or has no Rust implementation fails the run too, as a failed
+case does; the Makefile's gate targets pass it.
+
 ORACLE, where the reference runs (the flags win over the environment):
   --image TAG        in the oracle container                     [$DIFFTEST_IMAGE]
   --solar-dir DIR    locally, against a built reference checkout  [$SOLAR_DIR]
@@ -366,6 +370,13 @@ pub struct GenesisArgs {
     pub force: bool,
     /// A directory written by the devnet generator, to compare with.
     pub compare: Option<PathBuf>,
+}
+
+/// Remove the `--strict` switch from `args`, wherever it stands; whether it was there.
+pub fn take_strict(args: &mut Vec<String>) -> bool {
+    let before = args.len();
+    args.retain(|arg| arg != "--strict");
+    args.len() != before
 }
 
 fn usage(message: impl Into<String>) -> Error {
@@ -1017,6 +1028,21 @@ mod tests {
             Command::VectorsDiff {
                 a: "a".into(),
                 b: "b".into()
+            }
+        );
+    }
+
+    #[test]
+    fn the_strict_switch_is_taken_from_anywhere() {
+        let mut args: Vec<String> = ["run", "l0", "--strict", "v"].map(String::from).to_vec();
+        assert!(take_strict(&mut args));
+        assert_eq!(args, ["run", "l0", "v"]);
+        assert!(!take_strict(&mut args));
+        assert_eq!(
+            parse(&args).unwrap(),
+            Command::Run {
+                level: Level::L0,
+                dir: Some("v".into())
             }
         );
     }
