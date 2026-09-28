@@ -165,9 +165,12 @@ impl Client {
     fn connect(&self, host: &RelayHost) -> Link {
         let quiet = Arc::new(AtomicBool::new(false));
         let silenced = quiet.clone();
+        // A connection attempt that timed out is not logged either: the reference's forger gives
+        // its attempts no timeout, so a host that hangs is silent there.
         let on_error: ErrorHook = Arc::new(move |failure: SessionError| {
             let message = message(&failure);
-            if !silenced.load(Ordering::Acquire) && message != QUIET_ERROR {
+            let quiet = message == QUIET_ERROR || matches!(failure, SessionError::Timeout);
+            if !silenced.load(Ordering::Acquire) && !quiet {
                 error!("{message} :bangbang:");
             }
         });
