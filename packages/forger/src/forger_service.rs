@@ -730,10 +730,12 @@ where
             let detected = pluralise("distinct overheight block header", len(&distinct), true);
             info!("Detected {detected} :zzz:");
             for header in &headers {
+                // Only a header of this delegate's is decoded and verified, as in the reference.
                 let generator = header.get("generatorPublicKey").and_then(Value::as_str);
-                let verified = factory::from_json(header, &self.milestones)
-                    .is_ok_and(|block| block.verify_signature());
-                if generator == Some(hex) && verified {
+                let verified = generator == Some(hex)
+                    && factory::from_json(header, &self.milestones)
+                        .is_ok_and(|block| block.verify_signature());
+                if verified {
                     let username = name(&self.state().usernames, hex);
                     warning!("Delegate {username} already forged a block. Will not forge :bomb:");
                     return false;
