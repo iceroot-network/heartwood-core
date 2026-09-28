@@ -20,6 +20,7 @@ use heartwood_difftest::corpus::{self, Corpus};
 use heartwood_difftest::live::{self, LiveOptions};
 use heartwood_difftest::report::{Outcome, Report};
 use heartwood_difftest::store::{self, ScratchDir};
+use heartwood_difftest::synthetic::DEVNET_SEED;
 use heartwood_difftest::vectors::sha256_hex;
 use serde_json::{Value, json};
 
@@ -393,5 +394,81 @@ fn a_node_that_stopped_short_of_the_tip_fails() {
             .iter()
             .any(|l| l.contains("heights without an apply line of the final chain's block")),
         "{failed:#?}"
+    );
+}
+
+fn write_lines(path: &Path, rows: &[Value]) {
+    std::fs::write(
+        path,
+        rows.iter().map(|v| format!("{v}\n")).collect::<String>(),
+    )
+    .unwrap();
+}
+
+#[test]
+#[ignore = "integration"]
+fn recorded_block_files_import_with_restarts_and_refuse_gaps() {
+    let scratch = ScratchDir::new("block-files").unwrap();
+    let source = manifest_dir().join("corpus/txgen-one-node");
+    let rows = live::run::read_lines(&source.join("blocks.jsonl")).unwrap();
+    let first = scratch.path().join("blocks-0001.bin");
+    let second = scratch.path().join("blocks-0002.bin");
+    // The first start ends in a torn line; the second applies height 100 again (a switch to the
+    // same branch) and goes on.
+    write_lines(&first, &rows[..100]);
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&first)
+        .unwrap()
+        .write_all(b"{\"h\":")
+        .unwrap();
+    write_lines(&second, &rows[98..]);
+    let out = scratch.path().join("imported");
+    let import = |files: &[PathBuf], seed: &str, out: &Path| {
+        heartwood_difftest::corpus_from_blocks::from_blocks(
+            files,
+            &source.join("crypto"),
+            seed,
+            out,
+        )
+    };
+    import(&[first.clone(), second.clone()], DEVNET_SEED, &out).unwrap();
+    let c = Corpus::load(&out).unwrap();
+    assert_eq!(c.tip(), 265);
+    assert_eq!(c.meta["tornRecords"], 1);
+    assert_eq!(c.meta["anchorSource"], "heartwood-replay");
+    assert_eq!(
+        std::fs::read(out.join("blocks.jsonl")).unwrap(),
+        std::fs::read(source.join("blocks.jsonl")).unwrap()
+    );
+    // The replay's rows are the rows the reference's node wrote for the same chain.
+    for name in ["rounds.jsonl", "missed-blocks.jsonl", "meta.jsonl"] {
+        let ours = live::run::read_lines(&out.join("reference").join(name)).unwrap();
+        let theirs = live::run::read_lines(&source.join("reference").join(name)).unwrap();
+        assert_eq!(ours.len(), theirs.len(), "{name}");
+    }
+    // The output must be empty; a gap, a line that is not its bytes and another seed are refused.
+    assert!(import(std::slice::from_ref(&first), DEVNET_SEED, &out).is_err());
+    assert!(
+        import(
+            std::slice::from_ref(&second),
+            DEVNET_SEED,
+            &scratch.path().join("gap")
+        )
+        .is_err()
+    );
+    let mut malformed = rows[0].clone();
+    malformed["id"] = json!("00");
+    let bad = scratch.path().join("bad.bin");
+    write_lines(&bad, &[malformed]);
+    assert!(import(&[bad], DEVNET_SEED, &scratch.path().join("bad-id")).is_err());
+    assert!(import(&[first], "wrong-seed", &scratch.path().join("bad-seed")).is_err());
+    assert!(
+        !scratch
+            .path()
+            .join("bad-seed")
+            .join("blocks.jsonl")
+            .exists()
     );
 }
