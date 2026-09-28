@@ -905,7 +905,7 @@ inside its head get no answer, as from Node's server; a target that starts with 
 "Invalid URL". A head the parser accepts is written again for hyper with the meaning Node's server
 gives it: single spaces and `HTTP/1.1` in the request line (Node answers every version it accepts
 as `HTTP/1.1`), the target's bytes that hyper refuses rewritten (a byte beyond ASCII as the UTF-8
-of its Latin-1 character, another one percent-encoded) and its fragment dropped, the first 2,000
+of its Latin-1 character, another one percent-encoded) and its fragment dropped, the first 1,000
 header fields (Node's server passes on no more) and those that frame the body, less those whose
 name hyper refuses (an empty name, or one with a space: none that the API reads). The API reads
 the target itself as Node gives it to hapi: each byte a Latin-1 character, the path before the

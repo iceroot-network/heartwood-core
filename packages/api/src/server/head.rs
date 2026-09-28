@@ -15,7 +15,7 @@
 //! ends before the request line; with single spaces, `HTTP/1.1` (Node answers every version it
 //! accepts as `HTTP/1.1`) and a target without its fragment, in which a byte beyond ASCII is the
 //! UTF-8 of the Latin-1 character Node reads and another byte hyper refuses is percent-encoded;
-//! with the header fields Node's server passes on (the first 2,000, and after them those that
+//! with the header fields Node's server passes on (the first 1,000, and after them those that
 //! frame the body), less those whose name hyper refuses (empty, or with a space: none that the
 //! API reads), and `Expect` but for `HTTP/1.1`, the only version Node reads it for; with `\r\n`
 //! line ends. [`Rewind`] then gives hyper that head, followed by the rest of the connection. The
@@ -39,8 +39,9 @@ const MAX_HEAD: usize = 16_384;
 /// space or line ends Node does not count) is refused the same way.
 const MAX_READ: usize = 8192 + 4096 * 100;
 
-/// The header fields Node's server passes on to hapi (its `maxHeadersCount`).
-const MAX_FIELDS: usize = 2000;
+/// The header fields Node's server passes on to hapi: its parser's `maxHeaderPairs` (2,000) caps
+/// the list of names and values it gives, so 1,000 fields.
+const MAX_FIELDS: usize = 1000;
 
 /// hapi's answer to a request that Node's parser refuses.
 const BAD_REQUEST: &[u8] = b"HTTP/1.1 400 Bad Request\r\n\r\n";
@@ -948,25 +949,35 @@ mod tests {
     }
 
     #[test]
-    fn node_s_server_passes_on_its_first_2000_fields_and_those_that_frame_the_body() {
-        let mut head = b"POST / HTTP/1.1\r\n".to_vec();
-        for i in 0..2_001 {
-            head.extend_from_slice(format!("x{i}: v\r\n").as_bytes());
+    fn node_s_server_passes_on_its_first_1000_fields_and_those_that_frame_the_body() {
+        // Measured with Node 18.20.8 and hapi 20.2.1: an `Origin` that is the 1,000th field is
+        // read, one that is the 1,001st is not; a body framed by a later field is read.
+        let head = |origin_at: usize| {
+            let mut head = b"POST / HTTP/1.1\r\n".to_vec();
+            for i in 1..=1_200 {
+                let field = match i == origin_at {
+                    true => "origin: late".to_owned(),
+                    false => format!("x{i}: v"),
+                };
+                head.extend_from_slice(format!("{field}\r\n").as_bytes());
+            }
+            head.extend_from_slice(b"content-length: 2\r\n\r\n{}");
+            head
+        };
+        for (origin_at, read) in [(1_000, true), (1_001, false)] {
+            let head = head(origin_at);
+            let mut parsed = Head::new();
+            assert_eq!(parsed.feed(&head), Progress::Ended);
+            let served = parsed.outcome(&head).unwrap();
+            assert_eq!(served.fields, 1_001);
+            let text = String::from_utf8_lossy(&served.bytes).into_owned();
+            assert_eq!(text.contains("origin: late"), read, "{origin_at}");
+            assert!(!text.contains("x1001:"), "{origin_at}");
+            assert!(
+                text.ends_with("\r\ncontent-length: 2\r\n\r\n{}"),
+                "{origin_at}"
+            );
+            assert!(served.bytes.starts_with(b"POST / HTTP/1.1\r\nx1: v\r\n"));
         }
-        head.extend_from_slice(b"origin: late\r\ncontent-length: 2\r\n\r\n{}");
-        let mut parsed = Head::new();
-        assert_eq!(parsed.feed(&head), Progress::Ended);
-        let served = parsed.outcome(&head).unwrap();
-        assert_eq!(served.fields, 2_001);
-        let text = String::from_utf8_lossy(&served.bytes).into_owned();
-        assert!(
-            text.contains("x1999: v\r\ncontent-length: 2\r\n\r\n{}"),
-            "{text}"
-        );
-        assert!(
-            !text.contains("x2000") && !text.contains("origin"),
-            "{text}"
-        );
-        assert!(served.bytes.starts_with(b"POST / HTTP/1.1\r\nx0: v\r\n"));
     }
 }
