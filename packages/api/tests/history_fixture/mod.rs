@@ -37,6 +37,8 @@ pub struct Fixture {
     /// The block columns the reference stored, by height from 2: `username`, `burnedFee` and
     /// `donations`.
     pub meta: Vec<Value>,
+    /// The store's settings, for readers of its own.
+    pub settings: Settings,
 }
 
 impl Fixture {
@@ -169,6 +171,7 @@ fn build() -> Fixture {
         blocks,
         genesis,
         meta: lines("reference/meta.jsonl"),
+        settings,
     }
 }
 
