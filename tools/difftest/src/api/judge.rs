@@ -18,7 +18,8 @@
 //!
 //! A case marked with a documented difference (`heightAboveTip`, `storeFailure`, `peersIpFilter`,
 //! `tieOrder`, `decodeReason`) passes as documented when the answers differ and the node under
-//! test shows the documented behaviour.
+//! test shows the documented behaviour. For `tieOrder`, both pages must hold the same sequence of
+//! the sorted column's values, as the list's items show them.
 
 use std::collections::BTreeMap;
 
@@ -305,6 +306,31 @@ fn by_id(body: &Value) -> Value {
     Value::Object(map)
 }
 
+/// The value of the stored column that an order on `property` sorts by, as the transaction `item`
+/// of a list shows it (the resource, or the raw data with `transform=false`); `None` when the item
+/// does not show it.
+///
+/// - `senderId` and `recipientId` are the resource's `sender` and `recipient` (the raw data's own
+///   names otherwise);
+/// - `amount` is stored only when it is above zero, and never for a transfer, whose resource shows
+///   the sum of its transfers instead: the key is `null` for those;
+/// - `memo`, `recipientId` and `amount` may be absent (`null`); any other column must be shown, so
+///   `sequence` needs the raw data and `timestamp` the resource.
+fn sort_key(item: &Value, property: &str) -> Option<Value> {
+    let shown = |names: &[&str]| names.iter().find_map(|name| item.get(*name)).cloned();
+    match property {
+        "senderId" => shown(&["sender", "senderId"]),
+        "recipientId" => Some(shown(&["recipient", "recipientId"]).unwrap_or(Value::Null)),
+        "memo" => Some(shown(&["memo"]).unwrap_or(Value::Null)),
+        "amount" => {
+            let transfer = item["typeGroup"] == 1 && item["type"] == 6;
+            let amount = shown(&["amount"]).filter(|a| !transfer && a != "0" && a != 0);
+            Some(amount.unwrap_or(Value::Null))
+        }
+        other => shown(&[other]),
+    }
+}
+
 /// The documented difference's reason, when the node under test shows its behaviour.
 fn documented(
     kind: Option<&str>,
@@ -329,20 +355,19 @@ fn documented(
                 .as_str()
                 .or_else(|| query["orderBy"][0].as_str())?;
             let property = order.split(':').next()?;
-            // Ties may fall on either side of a page's end, so only the sort keys are compared.
-            let keys = |body: &Value| {
+            // Ties may fall on either side of a page's end, so only the sort keys are compared;
+            // an answer that does not show the sorted column cannot show a tie.
+            let keys = |body: &Value| -> Option<Vec<Value>> {
                 let projected = project(route, 200, body);
-                projected["data"].as_array().map(|items| {
-                    items
-                        .iter()
-                        .map(|t| t[property].clone())
-                        .collect::<Vec<_>>()
-                })
+                projected["data"]
+                    .as_array()?
+                    .iter()
+                    .map(|t| sort_key(t, property))
+                    .collect()
             };
-            (left_status == right_status
-                && left["meta"] == right["meta"]
-                && keys(left) == keys(right))
-            .then(|| ApiDifference::TieOrder.reason())
+            let (l, r) = (keys(left)?, keys(right)?);
+            (left_status == right_status && left["meta"] == right["meta"] && l == r)
+                .then(|| ApiDifference::TieOrder.reason())
         }
         "decodeReason" => {
             let reasons = |body: &Value| {
@@ -368,7 +393,132 @@ fn documented(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
+    use crate::api::http::Request;
+
+    fn answer(status: u16, body: Value) -> Reply {
+        let headers = json!({"connection": "close", "x-block-height": "265"});
+        Reply::Answer {
+            status,
+            headers: headers.as_object().cloned().unwrap_or_default(),
+            body,
+        }
+    }
+
+    /// A recorded list request of `/api/transactions` with `query`, marked `documented`.
+    fn list(query: &str, documented: &str, left: Reply, right: Reply) -> Recorded {
+        Recorded {
+            file: "transactions.json".into(),
+            name: "case".into(),
+            repeat: None,
+            request: Some(Request {
+                method: "GET".into(),
+                path: "/api/transactions".into(),
+                query: query.into(),
+                headers: Vec::new(),
+                body: None,
+            }),
+            outside: false,
+            documented: Some(documented.into()),
+            skipped: None,
+            left: Some(left),
+            right: Some(right),
+        }
+    }
+
+    fn page(items: Value) -> Value {
+        json!({"meta": {"count": 2, "totalCount": 2}, "data": items})
+    }
+
+    fn is_tie(outcome: &Outcome) -> bool {
+        matches!(outcome, Outcome::Documented(r) if r == ApiDifference::TieOrder.reason())
+    }
+
+    #[test]
+    fn a_tie_is_judged_on_the_sorted_column() {
+        // Two transactions of one sender in either order: a tie of `senderId` (the resource's
+        // `sender`).
+        let a = json!({"id": "a", "sender": "dA", "fee": "1", "typeGroup": 1, "type": 2});
+        let b = json!({"id": "b", "sender": "dA", "fee": "2", "typeGroup": 1, "type": 2});
+        let swapped = |q: &str| {
+            outcome(&list(
+                q,
+                "tieOrder",
+                answer(200, page(json!([a, b]))),
+                answer(200, page(json!([b, a]))),
+            ))
+        };
+        assert!(is_tie(&swapped("orderBy=senderId:asc")));
+        // Their fees differ, so an order on the fee is no tie.
+        assert!(swapped("orderBy=fee:asc").is_failure());
+        // The resource does not show the sequence: no tie can be seen.
+        assert!(swapped("orderBy=sequence:asc").is_failure());
+        let raw = |sequence: u32| json!({"id": sequence.to_string(), "senderId": "dA", "sequence": sequence});
+        assert!(is_tie(&outcome(&list(
+            "orderBy=sequence:asc&transform=false",
+            "tieOrder",
+            answer(
+                200,
+                page(json!([raw(0), json!({"id": "x", "sequence": 0})]))
+            ),
+            answer(
+                200,
+                page(json!([json!({"id": "x", "sequence": 0}), raw(0)]))
+            ),
+        ))));
+    }
+
+    #[test]
+    fn an_amount_order_compares_the_stored_amounts() {
+        // The store keeps no amount for a transfer (its resource shows the sum of its transfers)
+        // and none for a zero amount: those rows tie, whatever their resources show.
+        let transfer = json!({"id": "t", "typeGroup": 1, "type": 6, "amount": "10000"});
+        let vote = json!({"id": "v", "typeGroup": 2, "type": 2});
+        let burn = json!({"id": "b", "typeGroup": 2, "type": 0, "amount": "2000000"});
+        let judged = |left: Value, right: Value| {
+            outcome(&list(
+                "orderBy=amount:asc",
+                "tieOrder",
+                answer(200, page(left)),
+                answer(200, page(right)),
+            ))
+        };
+        assert!(is_tie(&judged(
+            json!([transfer, vote]),
+            json!([vote, transfer])
+        )));
+        // A burn before the rows without an amount is not the order that puts them first.
+        assert!(judged(json!([transfer, burn]), json!([burn, transfer])).is_failure());
+        assert_eq!(
+            sort_key(&json!({"amount": "0", "type": 0}), "amount"),
+            Some(Value::Null)
+        );
+    }
+
+    #[test]
+    fn a_store_failure_is_a_500_against_an_empty_page() {
+        let empty = json!({"meta": {"count": 0, "totalCount": 0}, "data": []});
+        let failed = json!({"statusCode": 500, "error": "Internal Server Error", "message": "An internal server error occurred"});
+        let judged = |left: Reply| {
+            outcome(&list(
+                "memo=%25%5C",
+                "storeFailure",
+                left,
+                answer(200, empty.clone()),
+            ))
+        };
+        assert!(matches!(
+            judged(answer(500, failed)),
+            Outcome::Documented(r) if r == ApiDifference::StoreFailure.reason()
+        ));
+        // Any other answer of the node under test is a difference.
+        let other = json!({"meta": {"count": 1, "totalCount": 1}, "data": [{"id": "x"}]});
+        assert!(judged(answer(200, other)).is_failure());
+        // Equal answers pass whatever the mark.
+        assert_eq!(judged(answer(200, empty.clone())), Outcome::Pass);
+    }
 
     #[test]
     fn routes_match_literal_segments_first() {

@@ -214,7 +214,7 @@
  {
   "name": "transactions/order/sequence:asc",
   "path": "/api/transactions",
-  "query": "orderBy=sequence:asc",
+  "query": "orderBy=sequence:asc&transform=false",
   "documented": "tieOrder"
  },
  {
@@ -257,13 +257,12 @@
   "name": "transactions/order/senderId:asc",
   "path": "/api/transactions",
   "query": "orderBy=senderId:asc",
-  "documented": "storeFailure"
+  "documented": "tieOrder"
  },
  {
   "name": "transactions/order/address:desc",
   "path": "/api/transactions",
-  "query": "orderBy=address:desc",
-  "documented": "storeFailure"
+  "query": "orderBy=address:desc"
  },
  {
   "name": "transactions/order/refused/capital-property",
@@ -1219,6 +1218,12 @@
   "name": "transactions/criteria/memo-escaped-percent",
   "path": "/api/transactions",
   "query": "memo=%5C%25%25"
+ },
+ {
+  "name": "transactions/criteria/memo-trailing-escape",
+  "path": "/api/transactions",
+  "query": "memo=%25%5C",
+  "documented": "storeFailure"
  },
  {
   "name": "transactions/criteria/memo-either",
