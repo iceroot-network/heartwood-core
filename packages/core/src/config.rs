@@ -4,8 +4,11 @@
 //! components' options, `peers.json` and the crypto files.
 //!
 //! What the relay does not honour, it names in [`RelayConfig::warnings`]: the reference's test
-//! and skip variables, a profile's `flags` and an `app.js`, the forger and snapshot components in
-//! a relay's profile, enabled webhooks, and option keys that no component knows.
+//! and skip variables, the API's cache and request log and the state's wallet table
+//! (`CORE_API_CACHE`, `CORE_API_LOG`, `CORE_WALLET_SYNC_ENABLED`), a profile's `flags` and an
+//! `app.js`, the forger and snapshot components in a relay's profile, enabled webhooks, the
+//! state's options (its saved states, caches and wallet table), and option keys that no component
+//! knows.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -122,12 +125,16 @@ pub struct RelayConfig {
     pub warnings: Vec<String>,
 }
 
-/// The variables of the reference's test and skip paths, which the relay never honours.
-const TEST_VARIABLES: [&str; 4] = [
+/// The variables of the reference's test and skip paths, and of its API cache, API request log
+/// and wallet table, which the relay never honours.
+const UNHONOURED: [&str; 7] = [
     "CORE_ENV",
     "NODE_ENV",
     "CORE_SKIP_PEER_STATE_VERIFICATION",
     "CORE_SKIP_BLOCKCHAIN_STARTED_CHECK",
+    "CORE_API_CACHE",
+    "CORE_API_LOG",
+    "CORE_WALLET_SYNC_ENABLED",
 ];
 
 impl RelayConfig {
@@ -191,18 +198,15 @@ impl RelayConfig {
                 ))
             })?;
             let known = package.describe().1;
-            let unknown = plugin
-                .options
-                .as_object()
-                .into_iter()
-                .flat_map(Map::keys)
-                .filter(|key| !known.contains(&key.as_str()));
-            warnings.extend(unknown.map(|key| {
-                format!(
-                    "the {} option {key} is not known and is not read",
-                    plugin.package
-                )
-            }));
+            for key in plugin.options.as_object().into_iter().flat_map(Map::keys) {
+                // The state's options are the reference's saved states, caches and wallet table.
+                let what = match known.contains(&key.as_str()) {
+                    false => "is not known and is not read",
+                    true if package == Package::State => "is not read by this relay",
+                    true => continue,
+                };
+                warnings.push(format!("the {} option {key} {what}", plugin.package));
+            }
             entries.insert(
                 package,
                 deep_merge(&cli_options(run, package), &plugin.options),
@@ -231,10 +235,11 @@ impl RelayConfig {
         if webhooks.is_some_and(|on| on || env.is_set("CORE_WEBHOOKS_ENABLED")) {
             warnings.push("webhooks are not served by this relay".into());
         }
-        let testing = |name: &str| {
+        // A variable is set as the reference reads it; an environment's name only when `test`.
+        let asked = |name: &str| {
             env.is_set(name) && (!name.ends_with("_ENV") || env.get(name) == Some("test"))
         };
-        for name in TEST_VARIABLES.into_iter().filter(|name| testing(name)) {
+        for name in UNHONOURED.into_iter().filter(|name| asked(name)) {
             warnings.push(format!("{name} is not honoured"));
         }
         let peers = peers::load(&paths.config).map_err(|error| config(error.to_string()))?;

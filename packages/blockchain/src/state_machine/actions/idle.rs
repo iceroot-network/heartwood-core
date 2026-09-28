@@ -103,7 +103,7 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
     async fn poll_blocks(self: Arc<Self>) {
         let tip = self.chain().last_height();
         let network = &self.parts.network;
-        let two = Duration::from_secs(2);
+        let two = Some(Duration::from_secs(2));
         let blocks = network
             .download_blocks_from_height(tip, 10, true, two, true)
             .await;
@@ -150,8 +150,15 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
             "Downloaded new block forged by delegate {name} (#{rank}) at height {height} with {reward} reward :package:"
         );
         debug!("The id of the new block is {}", link.id);
-        self.handle_incoming_block(IncomingBlock::downloaded(block), false)
-            .await;
+        let count = header.number_of_transactions.unwrap_or_default().into();
+        let contains = pluralise("transaction", count, true);
+        debug!(
+            "It contains {contains} and was downloaded from {}",
+            block.ip
+        );
+        let mut incoming = IncomingBlock::downloaded(block);
+        incoming.name = Some(name.to_owned());
+        self.handle_incoming_block(incoming, false).await;
         self.flags().last_polled = Some((link.id, tip));
     }
 

@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use heartwood_blockchain::chain_state::{ChainState, SharedChainState};
 use heartwood_blockchain::events::{CommitObserver, NodeEvent, NodeListener};
@@ -141,7 +141,12 @@ impl Scripted {
 }
 
 impl BlockProcess for Scripted {
-    fn process(&self, ctx: &mut ProcessContext<'_>, block: &Block) -> Processed {
+    fn process(
+        &self,
+        ctx: &mut ProcessContext<'_>,
+        block: &Block,
+        name: Option<&str>,
+    ) -> Processed {
         let height = block.height();
         let stored = lock(&self.reader).as_ref().map(|reader| {
             let last = reader.last_block().unwrap();
@@ -159,7 +164,7 @@ impl BlockProcess for Scripted {
         };
         lock(&self.seen).push(seen);
         if let Some(inner) = &self.inner {
-            return inner.process(ctx, block);
+            return inner.process(ctx, block, name);
         }
         let script = lock(&self.script).get(&height).copied();
         let processed = |result, unchained| Processed {
@@ -177,6 +182,7 @@ impl BlockProcess for Scripted {
                         ctx.pool.remove_forged(transaction, params);
                     }
                 }
+                ctx.chain.set_last_block(Arc::new(block.clone()));
                 ctx.chain.last_downloaded = Some(ChainLink::of(block));
                 ctx.chain.last_accepted_ms = Some(ctx.clock.now_ms());
                 if script == Some(Script::Corrupt) {
@@ -227,9 +233,15 @@ impl NodeListener for Events {
     }
 }
 
-/// What the observer was told, as `applied <h> missed <n>`, `reverted <h>` and `restarted <h>`.
+/// What the observer was told, as `applied <h> missed <n>`, `reverted <h>` and `restarted <h>`;
+/// and, at each applied block, the tip it read from the shared chain state, when that was not
+/// locked (a job keeps it locked only while it processes a block).
 #[derive(Clone, Default)]
-pub struct Observed(pub Arc<Mutex<Vec<String>>>);
+pub struct Observed(
+    pub Arc<Mutex<Vec<String>>>,
+    pub Arc<Mutex<Vec<Option<u32>>>>,
+    pub Arc<OnceLock<SharedChainState>>,
+);
 
 impl CommitObserver for Observed {
     fn applied(&mut self, _state: &State, block: &Block) {
@@ -248,6 +260,10 @@ impl CommitObserver for Observed {
         assert_eq!(state.last_block(), block);
         let line = format!("applied {} missed {}", block.height(), applied.missed.len());
         lock(&self.0).push(line);
+        if let Some(chain) = self.2.get() {
+            let tip = chain.try_lock().ok().map(|chain| chain.last_height());
+            lock(&self.1).push(tip);
+        }
     }
 
     fn reverted(&mut self, state: &State) {
@@ -307,6 +323,7 @@ impl TestNode {
         let broadcasts = Arc::new(Broadcasts::default());
         let events = Arc::new(Events::default());
         let observed = Observed::default();
+        let _ = observed.2.set(Arc::clone(&shared));
         let parts = NodeParts {
             state: restored.state,
             store,
@@ -337,9 +354,19 @@ impl TestNode {
         }
     }
 
-    /// Run the chain's blocks from `from` to `to` as one job.
+    /// Run the chain's blocks from `from` to `to` as one job, enqueued now.
     pub async fn run(&self, chain: &Chain, from: u32, to: u32) -> heartwood_blockchain::JobOutcome {
-        self.handle.job(job(chain, from, to)).await.unwrap()
+        let job = self.enqueued(job(chain, from, to));
+        self.handle.job(job).await.unwrap()
+    }
+
+    /// `job` with its blocks named from the published state, as the enqueueing names them.
+    pub fn enqueued(&self, mut job: Job) -> Job {
+        let state = self.handle.state().borrow().clone();
+        for block in &mut job.blocks {
+            block.set_username(&state.wallets);
+        }
+        job
     }
 
     /// The published state's height.

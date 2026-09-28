@@ -48,7 +48,7 @@ where
     }
 
     fn peer_count(&self) -> usize {
-        NetworkMonitor::peers(&self.0).len()
+        NetworkMonitor::peer_count(&self.0)
     }
 
     fn check_network_health(&self, fast: bool) -> impl Future<Output = NetworkStatus> + Send {
@@ -72,7 +72,7 @@ where
         from: u32,
         max_parallel: usize,
         silent: bool,
-        timeout: Duration,
+        timeout: Option<Duration>,
         check_throttle: bool,
     ) -> impl Future<Output = Vec<DownloadedBlock>> + Send {
         NetworkMonitor::download_blocks_from_height(

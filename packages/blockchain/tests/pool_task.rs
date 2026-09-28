@@ -1,7 +1,8 @@
 //! The pool on the node thread, on the committed one-node chain's transactions: each processor
 //! with its own cooldown and the admitted transactions it broadcasts, a forged transaction removed
 //! with its sender's earlier ones, a removal's transactions re-added in chain order, the online
-//! record's expiry at each round start before the clean-up, the online record's view and store.
+//! record's expiry at each round start before the clean-up, the re-add when a milestone starts,
+//! the online record's view and store.
 
 mod common;
 mod node_support;
@@ -173,7 +174,8 @@ fn after_a_commit_the_online_record_expires_at_each_round_start_then_the_pool_is
         [1, 2, 3].map(|byte| view.version(&key(byte)).is_some())
     };
     let at_54 = replayed(&chain, 54);
-    task.committed(&env(&chain, &at_54, &clock), &[2]).unwrap();
+    task.committed(&env(&chain, &at_54, &clock), &[2], false)
+        .unwrap();
     assert_eq!(
         online(&task),
         [false, true, true],
@@ -181,7 +183,8 @@ fn after_a_commit_the_online_record_expires_at_each_round_start_then_the_pool_is
     );
     assert_eq!(task.view().len(), 4, "admitted at height 50, kept at 54");
     let at_55 = replayed(&chain, 55);
-    task.committed(&env(&chain, &at_55, &clock), &[7]).unwrap();
+    task.committed(&env(&chain, &at_55, &clock), &[7], false)
+        .unwrap();
     assert_eq!(
         online(&task),
         [false, false, true],
@@ -191,6 +194,43 @@ fn after_a_commit_the_online_record_expires_at_each_round_start_then_the_pool_is
         task.view().is_empty(),
         "admitted at height 50, five blocks old at 55"
     );
+}
+
+#[test]
+fn after_a_commit_that_starts_a_milestone_the_pool_is_re_added_with_its_checks() {
+    let chain = Chain::load();
+    let clock = clock(&chain);
+    let mut task = task("pool-task-milestone", 2_700, &replayed(&chain, 50));
+    let removed = chain.block(59).transactions().to_vec();
+    task.readd(&env(&chain, &replayed(&chain, 50), &clock), &removed)
+        .unwrap();
+    // At a tip that holds them, the clean-up alone keeps them; the re-add refuses them.
+    let at_59 = replayed(&chain, 59);
+    task.committed(&env(&chain, &at_59, &clock), &[], false)
+        .unwrap();
+    assert_eq!(task.view().len(), 4);
+    task.committed(&env(&chain, &at_59, &clock), &[], true)
+        .unwrap();
+    assert!(task.view().is_empty());
+}
+
+#[test]
+fn a_view_after_another_shares_the_transactions_both_hold() {
+    let chain = Chain::load();
+    let (state, clock) = (replayed(&chain, 58), clock(&chain));
+    let mut task = task("pool-task-view-after", 2_700, &state);
+    let env = env(&chain, &state, &clock);
+    let mut later = entries(&chain, 59);
+    let earlier: Vec<_> = later.drain(..2).collect();
+    task.process(Channel::Api, &env, earlier).unwrap();
+    let before = task.view();
+    task.process(Channel::Api, &env, later).unwrap();
+    let after = task.view_after(&before);
+    assert_eq!(after, task.view());
+    let shared = (after.by_priority.iter())
+        .filter(|t| before.get(t.id()).is_some_and(|b| Arc::ptr_eq(b, t)))
+        .count();
+    assert_eq!((after.len(), shared), (4, 2));
 }
 
 #[test]

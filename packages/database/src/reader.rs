@@ -1,8 +1,9 @@
 //! The API's read-only connections.
 //!
 //! [`Readers`] opens its own connections to the node's file, read only (`query_only`), each with a
-//! progress handler that interrupts a statement running for more than [`READ_TIMEOUT`], as the
-//! reference's API connection has a statement timeout of 3 s, and with the SQL functions of the
+//! progress handler that interrupts a statement running for more than its timeout
+//! ([`READ_TIMEOUT`], or the database's `apiConnectionTimeout` through [`Readers::with_timeout`]),
+//! as the reference's API connection has that statement timeout, and with the SQL functions of the
 //! transaction criteria registered ([`crate::filters`]). The writer connection is never used for
 //! the API's reads, so a read never waits for a chunk and never sees one half written. [`Reader`]
 //! is one connection lent to one request; the history queries are its methods
@@ -24,7 +25,8 @@ use crate::filters::{contains, jsonb_order_key, like_bytes};
 
 use self::watchdog::Watchdog;
 
-/// How long one statement of a reader may run before it is interrupted.
+/// How long one statement of a reader may run before it is interrupted, unless the readers are
+/// opened with another timeout: the reference's default `apiConnectionTimeout`.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The virtual machine steps between two checks of a statement's deadline.
@@ -49,6 +51,7 @@ pub struct Readers {
 pub(crate) struct ReaderConnection {
     connection: Connection,
     watchdog: Arc<Watchdog>,
+    timeout: Duration,
 }
 
 /// One read-only connection, lent to one request until it is dropped.
@@ -61,10 +64,19 @@ impl Readers {
     /// Open `count` read-only connections (at least one) to the database of `settings`, which the
     /// node's writer has opened, created or upgraded before.
     pub fn open(settings: &Settings, count: usize) -> Result<Readers, DatabaseError> {
-        let first = Mutex::new(ReaderConnection::open(settings)?);
-        let rest = (1..count)
-            .map(|_| ReaderConnection::open(settings).map(Mutex::new))
-            .collect::<Result<Vec<_>, _>>()?;
+        Readers::with_timeout(settings, count, READ_TIMEOUT)
+    }
+
+    /// Open `count` read-only connections, as [`Readers::open`] does, whose statements are
+    /// interrupted after `timeout` instead of [`READ_TIMEOUT`].
+    pub fn with_timeout(
+        settings: &Settings,
+        count: usize,
+        timeout: Duration,
+    ) -> Result<Readers, DatabaseError> {
+        let open = || ReaderConnection::open(settings, timeout).map(Mutex::new);
+        let first = open()?;
+        let rest = (1..count).map(|_| open()).collect::<Result<Vec<_>, _>>()?;
         Ok(Readers {
             first,
             rest,
@@ -94,8 +106,8 @@ impl Readers {
 }
 
 impl ReaderConnection {
-    /// Open one reader of `settings`.
-    fn open(settings: &Settings) -> Result<ReaderConnection, DatabaseError> {
+    /// Open one reader of `settings` whose statements are interrupted after `timeout`.
+    fn open(settings: &Settings, timeout: Duration) -> Result<ReaderConnection, DatabaseError> {
         // Not SQLITE_OPEN_READ_ONLY: a read-only connection cannot recover the shared memory of
         // a WAL file after the writer's crash; `query_only` refuses every write instead.
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
@@ -120,6 +132,7 @@ impl ReaderConnection {
         Ok(ReaderConnection {
             connection,
             watchdog,
+            timeout,
         })
     }
 }
@@ -130,12 +143,12 @@ impl Reader<'_> {
         &self.connection.connection
     }
 
-    /// Run `read`, one statement or a few, and interrupt it after [`READ_TIMEOUT`].
+    /// Run `read`, one statement or a few, and interrupt it after the connection's timeout.
     pub(crate) fn timed<T>(
         &self,
         read: impl FnOnce(&Connection) -> Result<T, DatabaseError>,
     ) -> Result<T, DatabaseError> {
-        let _armed = self.connection.watchdog.arm(READ_TIMEOUT);
+        let _armed = self.connection.watchdog.arm(self.connection.timeout);
         read(&self.connection.connection)
     }
 }
@@ -301,6 +314,30 @@ mod tests {
         });
         assert_eq!(one, Ok(1));
         drop(reader);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    #[expect(
+        clippy::disallowed_types,
+        reason = "the test measures the read's timeout"
+    )]
+    fn a_configured_timeout_replaces_the_default() {
+        let (_database, settings, dir) = scratch("configured-timeout");
+        let timeout = Duration::from_millis(300);
+        let readers = Readers::with_timeout(&settings, 2, timeout).unwrap();
+        let started = std::time::Instant::now();
+        let result = readers.get().timed(|connection| {
+            Ok(connection.query_row(
+                "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n) \
+                 SELECT count(*) FROM n",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        });
+        let elapsed = started.elapsed();
+        assert!(result.unwrap_err().to_string().contains("interrupted"));
+        assert!(elapsed >= timeout && elapsed < READ_TIMEOUT, "{elapsed:?}");
         let _ = std::fs::remove_dir_all(dir);
     }
 

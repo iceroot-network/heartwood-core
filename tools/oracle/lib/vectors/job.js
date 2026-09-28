@@ -11,7 +11,11 @@
 //   - two jobs whose Heartwood side is a documented difference, each in a record of its own: a
 //     block refused in its apply after missed slots (the reference keeps the rows it recorded
 //     before the refusal) and a block with a transaction of a removed type (the reference refuses
-//     it when it applies the block, Heartwood's download refuses it).
+//     it when it applies the block, Heartwood's download refuses it);
+//   - a delegate's registration and its first block in one download, in a record of their own
+//     each way: as one job, and as two jobs of the download (sameDownload). The enqueueing names
+//     every block of the download before any of its jobs runs, so the delegate's block has no
+//     name and its generator is refused; the next download, from the new tip, names it.
 // The chain needs the devnet generator's chain definition (V10); without the generator only the
 // enqueueing's records are written.
 //
@@ -26,6 +30,10 @@ const CRYPTO_FILES = ["network", "milestones", "genesisBlock", "exceptions"];
 const PREFIX = 50;
 // A fee above every fee floor of the devnet for a small transaction.
 const FEE = "20000000";
+// The delegate a genesis wallet registers in the chain of a delegate's first block, and the fee
+// of its registration, above the devnet's dynamic floor for one.
+const NEWCOMER = "newcomer";
+const REGISTRATION_FEE = "8000000000";
 // A header field a listing states otherwise than the block: the rebuild refuses the block.
 const WRONG_COUNT = (hex, count) => ({ hex, set: { numberOfTransactions: count + 1 } });
 
@@ -188,6 +196,19 @@ async function scenarios({ solar, devnet, shared, craft }) {
             const ipfsHex = craft.signAndSerialise(ipfsData, passphrases["wallet/1"]).toString("hex");
             const ipfs = Transactions.TransactionFactory.fromBytesUnsafe(Buffer.from(ipfsHex, "hex"));
             made.removedType = await forge({ transactions: [ipfs] });
+            // On the chain's tip (the documented blocks were not applied): genesis-1 registers
+            // NEWCOMER and votes for it, the round's end puts it in the next round's list, and the
+            // blocks up to its first one are forged by the delegates scheduled for their slots.
+            const signers = { ...passphrases, [NEWCOMER]: passphrases["genesis-1"] };
+            const forgeNext = async (transactions = []) => apply(await forger(solar, b, signers)({ transactions }));
+            const signed = (builder, fee) => builder.nonce(nonce("genesis-1")).fee(fee).sign(passphrases["genesis-1"]).build();
+            const registration = Transactions.BuilderFactory.delegateRegistration().usernameAsset(NEWCOMER);
+            made.newcomer = [await forgeNext([signed(registration, REGISTRATION_FEE)])];
+            made.newcomer.push(await forgeNext([signed(Transactions.BuilderFactory.vote().votesAsset({ [NEWCOMER]: 100 }), FEE)]));
+            while (made.newcomer[made.newcomer.length - 1].scheduled !== NEWCOMER) {
+                if (made.newcomer.length > 120) throw new Error(`${NEWCOMER} was not scheduled within 120 blocks`);
+                made.newcomer.push(await forgeNext());
+            }
         },
     );
     const at = (block) => slotTime(epochMs, block);
@@ -215,18 +236,40 @@ async function scenarios({ solar, devnet, shared, craft }) {
         { name: "a block refused in its apply after missed slots", job: { hexes: [made.refusedAfterGap.hex], now: at(made.refusedAfterGap) } },
         { name: "a block with a transaction of a removed type", job: { hexes: [made.removedType.hex], now: at(made.removedType) } },
     ];
-    return { chainInput, jobs, documented };
+    // The newcomer's download: its registration, its vote and the round's end in the first job
+    // when cut in two, the rest to its first block in the second.
+    const download = made.newcomer;
+    const first = download[download.length - 1];
+    const roundEnd = download.findIndex((block) => block.data.height === 53) + 1;
+    const hexes = (blocks) => blocks.map((block) => block.hex);
+    const again = { hexes: [first.hex], now: at(first) };
+    const newcomer = [
+        { name: "one job", jobs: [{ hexes: hexes(download), now: at(first) }, again] },
+        {
+            name: "two jobs",
+            jobs: [
+                { hexes: hexes(download.slice(0, roundEnd)), now: at(first), lastDownloaded: first.hex },
+                { hexes: hexes(download.slice(roundEnd)), now: at(first), downloaded: false, sameDownload: true },
+                again,
+            ],
+        },
+    ];
+    return { chainInput, jobs, documented, newcomer };
 }
 
 module.exports = async function jobVectors(ctx) {
     const { rec, must, shared } = ctx;
     const out = await enqueueRecords(ctx);
     if (!shared.genesisDefinitions) return out;
-    const { chainInput, jobs, documented } = await scenarios(ctx);
+    const { chainInput, jobs, documented, newcomer } = await scenarios(ctx);
     const r = must(await rec("chain.job", 1, { chain: chainInput, jobs: jobs.map((j) => j.job) }));
     out.push({ ...r, name: `jobs: ${jobs.map((j) => j.name).join("; ")}` });
     for (const { name, job } of documented) {
         out.push({ ...must(await rec("chain.job", 1, { chain: chainInput, jobs: [job] })), name: `documented: ${name}` });
+    }
+    for (const { name, jobs: session } of newcomer) {
+        const record = must(await rec("chain.job", 1, { chain: chainInput, jobs: session }));
+        out.push({ ...record, name: `a delegate's registration and its first block in one download, ${name}, then that block downloaded again` });
     }
     return out;
 };

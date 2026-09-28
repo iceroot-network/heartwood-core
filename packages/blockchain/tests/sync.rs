@@ -148,6 +148,30 @@ async fn enqueueing_pushes_the_cuts_from_the_last_downloaded_height_and_resumes_
 }
 
 #[tokio::test(start_paused = true)]
+async fn enqueueing_names_each_block_from_the_published_state_before_its_jobs_run() {
+    let h = Harness::new(Setup {
+        tip: 12,
+        ..Setup::default()
+    });
+    let mut blocks = incoming(range(13, 16));
+    // A key that is no wallet's, a block of another version, and a block named before (a job's
+    // blocks enqueued again after a fork check keep their names).
+    blocks[1].block.header.header.generator_public_key = Some(format!("02{}", "00".repeat(32)));
+    blocks[2].block.header.header.version = Some(1);
+    blocks[3].name = Some("kept".into());
+    h.service.enqueue_blocks(blocks);
+    let names: Vec<_> = (h.queue.pushed().iter())
+        .flat_map(|job| job.blocks.iter().map(|block| block.name.clone()))
+        .collect();
+    let view = service::genesis_view();
+    let key = block(13).header().generator_public_key;
+    let delegate = view.wallets.find_by_public_key(&key).unwrap().delegate();
+    let name = delegate.map(|delegate| delegate.username().to_owned());
+    assert!(name.is_some());
+    assert_eq!(names, [name, None, None, Some("kept".into())]);
+}
+
+#[tokio::test(start_paused = true)]
 async fn an_incoming_block_in_idle_is_processed_broadcast_and_drained_back_to_idle() {
     let h = Harness::new(Setup {
         tip: 12,
@@ -230,7 +254,7 @@ async fn sync_from_genesis(chunk: u32, peers: u32) -> Harness {
     let first = &sync_downloads(&h)[0];
     assert_eq!(
         first,
-        "download 1 parallel=10 silent=false timeout=30000 throttle=false"
+        "download 1 parallel=10 silent=false timeout=configured throttle=false"
     );
     // Every block was committed once, in the reference's chunks of at most 100 blocks.
     let jobs: Vec<_> = h
@@ -277,7 +301,7 @@ async fn an_unchained_download_clears_the_queue_and_checks_for_a_fork_in_the_bac
     h.wait_for(MINUTE, |h| h.chain().last_height() == 17).await;
     assert_eq!(
         sync_downloads(&h)[0],
-        "download 16 parallel=10 silent=false timeout=30000 throttle=false"
+        "download 16 parallel=10 silent=false timeout=configured throttle=false"
     );
     assert_eq!(h.network.count("check_for_fork"), 1);
     assert_eq!(h.network.count("download_block_at_height 192.0.2.7 14"), 1);
@@ -428,12 +452,11 @@ async fn the_block_poll_handles_one_new_block_and_enqueues_several() {
     });
     h.network.state().minimum = true;
     let tip = downloaded(&block(12));
-    // The tip itself is left out; one block above it named by a ranked delegate is an incoming
-    // block (NEWBLOCK, then its job).
-    h.network
-        .state()
-        .downloads
-        .push_back(vec![tip, downloaded(&block(13))]);
+    // The start's sync downloads once from the tip and finds nothing. Then the poll: the tip
+    // itself is left out; one block above it named by a ranked delegate is an incoming block
+    // (NEWBLOCK, then its job).
+    let downloads = [vec![], vec![tip, downloaded(&block(13))]];
+    h.network.state().downloads.extend(downloads);
     h.service.boot().await.unwrap();
     h.wait_for(MINUTE, |h| h.chain().last_height() == 13).await;
     let jobs: Vec<_> = h.queue.pushed().iter().map(heights).collect();

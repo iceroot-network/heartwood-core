@@ -1,6 +1,6 @@
 //! L0 over the job's records of class V27 (`chain.job`: a job's results, its end and its missed rows, and the enqueueing's cuts), without an oracle.
 //!
-//! Each record is a job of blocks on a session's chain, or a list of blocks and a last downloaded height cut into jobs.
+//! Each record is a job of blocks on a session's chain (a download of one job, or of several), or a list of blocks and a last downloaded height cut into jobs.
 //!
 //! The class is read from `packages/blockchain/tests/vectors`, or from the directory that `NODE_VECTORS` names (relative
 //! to the workspace root), for example `target/vectors/local`. When the class is in neither, the
@@ -68,6 +68,17 @@ fn the_job_vectors_pass_l0() {
         file.records
             .retain(|record| OPS.contains(&record.op.as_str()));
     }
+    // The downloads that name a delegate's first block before its registration is applied: as
+    // one job, and as two jobs of one download.
+    let named_at_enqueue = (set.files.iter())
+        .flat_map(|file| &file.records)
+        .filter(|record| {
+            (record.name.as_deref()).is_some_and(|name| {
+                name.starts_with("a delegate's registration and its first block in one download")
+            })
+        })
+        .count();
+    assert_eq!(named_at_enqueue, 2, "the enqueueing's naming records");
     let report = l0::run(&set, &subject::heartwood(Some(devnet)));
     eprintln!("{CLASS} ({}):\n{report}", OPS.join(", "));
     assert!(report.is_success(), "{report}");

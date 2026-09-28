@@ -3,16 +3,16 @@
 //! Every change runs here, in the order the work arrives ([`crate::work::Work`]): jobs, pool
 //! entries, the queue's drain, block removals, the online record's changes, and the stop. After
 //! each commit the thread runs the pool's steps (the expiry of the online record at each round
-//! start, the clean-up, and a re-add when a milestone starts), publishes the new snapshots (the
+//! start, a re-add when a milestone starts, and the clean-up), publishes the new snapshots (the
 //! state, the pool, the chain status) through `watch` channels, and tells its listener, never
 //! between two blocks of a job. Network and API tasks send it work through a [`NodeHandle`] and
 //! read the snapshots; nothing else reads or writes the state or the store.
 //!
-//! The thread holds the shared chain state's lock while a job runs, so the service's actions on
-//! it come between jobs. A fatal error ([`NodeError`]) ends the thread at once: the work it was
+//! A job locks the shared chain state for one block at a time, so the service's actions and the
+//! network's reads come between two blocks, and see the tip as it moves. A fatal error ([`NodeError`]) ends the thread at once: the work it was
 //! doing gets no answer and the store keeps its committed tip. A stop ends it after the work
 //! before it: the pool's storage keeps its transactions, the online record is saved, and the
-//! store is closed (SQLite checkpoints its log when its last connection closes); the running job
+//! store is closed (its writer checkpoints the log into the database file); the running job
 //! was committed or rolled back before, since the thread runs one work at a time.
 
 use std::sync::Arc;
@@ -178,15 +178,22 @@ impl NodeThread {
                 if !admitted.is_empty() {
                     parts.broadcast.broadcast_transactions(&admitted);
                 }
-                publish.pool.send_replace(Arc::new(parts.pool.view()));
+                publish_pool(&parts.pool, &publish.pool);
                 let _ = answer.send(result);
             }
-            Work::Drain(answer) => {
-                let readded = parts.pool.readd(&env!(parts), &[]).map_err(NodeError::from);
-                publish.pool.send_replace(Arc::new(parts.pool.view()));
-                let drained = readded.and_then(|_| parts.pool.save_online(&mut parts.store));
-                let _ = answer.send(drained.clone());
-                drained?;
+            Work::Drain(answer, after_readd) => {
+                let (saved, mut answer) = (parts.pool.save_online(&mut parts.store), Some(answer));
+                if !after_readd || saved.is_err() {
+                    let _ = answer.take().map(|answer| answer.send(saved.clone()));
+                }
+                saved?;
+                let readded = parts.pool.readd(&env!(parts), &[]).map(drop);
+                publish_pool(&parts.pool, &publish.pool);
+                let readded = readded.map_err(NodeError::from);
+                if let Some(answer) = answer {
+                    let _ = answer.send(readded.clone());
+                }
+                readded?;
             }
             Work::RemoveBlocks(count, answer) => {
                 let removed = self.remove_blocks(count);
@@ -207,12 +214,11 @@ impl NodeThread {
     /// Run `job`, then the steps after its commit.
     fn job(&mut self, job: Job) -> Result<JobOutcome, NodeError> {
         let (parts, observer) = (&mut self.parts, &mut *self.observer);
-        let mut chain = lock(&parts.chain);
         let outcome = run_job(
             &mut JobContext {
                 state: &mut parts.state,
                 store: &mut parts.store,
-                chain: &mut chain,
+                chain: &parts.chain,
                 pool: &mut parts.pool,
                 processor: &*parts.processor,
                 handlers: &parts.handlers,
@@ -222,7 +228,6 @@ impl NodeThread {
             },
             job,
         )?;
-        drop(chain);
         let count = usize::try_from(outcome.committed).unwrap_or(usize::MAX);
         let (mut events, mut rounds, mut milestone) = (Vec::new(), Vec::new(), false);
         for undo in parts.state.journal().iter().rev().take(count).rev() {
@@ -241,10 +246,7 @@ impl NodeThread {
             events.push(applied);
         }
         if count > 0 {
-            parts.pool.committed(&env!(parts), &rounds)?;
-            if milestone {
-                parts.pool.readd(&env!(parts), &[])?;
-            }
+            parts.pool.committed(&env!(parts), &rounds, milestone)?;
             self.publish(&events);
         }
         Ok(outcome)
@@ -305,10 +307,17 @@ impl NodeThread {
         let (parts, publish) = (&self.parts, &self.publish);
         let view = parts.state.view_after(&publish.state.borrow());
         publish.state.send_replace(Arc::new(view));
-        publish.pool.send_replace(Arc::new(parts.pool.view()));
+        publish_pool(&parts.pool, &publish.pool);
         publish.chain.send_replace(Arc::new(status(&parts.chain)));
         parts.listener.committed(events);
     }
+}
+
+/// Publish the view of `pool`, sharing with the last one published the transactions it still
+/// holds (the last one's read lock ends before the new one is sent).
+fn publish_pool(pool: &PoolTask, sender: &watch::Sender<Arc<PoolView>>) {
+    let view = pool.view_after(&sender.borrow());
+    sender.send_replace(Arc::new(view));
 }
 
 /// Whether a milestone starts at `height`, as the reference's `isNewMilestone` reads it.

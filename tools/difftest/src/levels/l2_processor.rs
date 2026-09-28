@@ -420,7 +420,12 @@ struct RecorderLog {
 }
 
 impl BlockProcess for Recorder<'_> {
-    fn process(&self, ctx: &mut ProcessContext<'_>, block: &Block) -> Processed {
+    fn process(
+        &self,
+        ctx: &mut ProcessContext<'_>,
+        block: &Block,
+        name: Option<&str>,
+    ) -> Processed {
         let reward = ctx
             .state
             .reward_for_block_in_round(
@@ -430,7 +435,7 @@ impl BlockProcess for Recorder<'_> {
             )
             .ok()
             .map(|r| r.reward);
-        let processed = BlockProcessor.process(ctx, block);
+        let processed = BlockProcessor.process(ctx, block, name);
         let mut log = self.log.lock().unwrap_or_else(PoisonError::into_inner);
         let step = log.steps.pop_front().unwrap_or(Step::Apply);
         let line = (processed.result == BlockProcessorResult::Accepted).then(|| {
@@ -513,7 +518,10 @@ impl JobRig {
         let pool = guarded(|| Pool::open(options, None))?
             .map_err(|e| StartProblem::Failed(format!("the pool does not open: {e}")))?;
         let pool = PoolTask::new(pool, DelegateVersions::new());
-        let chain = ChainState::at(Arc::new(state.last_block().clone()));
+        // As the oracle's node, which has downloaded its chain: the last downloaded block at the
+        // tip.
+        let mut chain = ChainState::at(Arc::new(state.last_block().clone()));
+        chain.reset_last_downloaded();
         let first = digest::height_digest(&state, &milestones, Step::Genesis, &[], None, &[0; 32]);
         Ok(JobRig {
             scratch,
@@ -698,23 +706,44 @@ impl JobRig {
         Ok(reverted)
     }
 
-    /// Run `blocks` as one job with `inputs`: the download of their listing, then
-    /// [`heartwood_blockchain::run_job`] with the block processor and the rig's clock at
-    /// `inputs.now_ms`, then the blockchain service's answer to the job's end (`Fork`: the forked
-    /// block set and the last downloaded block at the tip; `Clear` and `ForkCheck`: the last
-    /// downloaded block at the tip). `steps` are the digest steps of the blocks in order (apply
-    /// for those beyond it).
+    /// Run `blocks` as one job with `inputs`, a download of its own enqueued right before it
+    /// ([`JobRig::enqueue`], then [`JobRig::run_enqueued`]).
     pub fn run(
         &mut self,
         blocks: &[JobBlock],
         inputs: &JobInputs,
         steps: &[Step],
     ) -> std::result::Result<RigJob, RigProblem> {
+        match self.enqueue(blocks) {
+            Ok(incoming) => self.run_enqueued(blocks, incoming, inputs, steps),
+            Err(why) => Ok(RigJob::Refused(why)),
+        }
+    }
+
+    /// The download of `blocks` (their listing read under the rules after the tip), each block
+    /// named as the blockchain service's enqueueing names it, on the rig's state now.
+    pub fn enqueue(&self, blocks: &[JobBlock]) -> std::result::Result<Vec<IncomingBlock>, String> {
         let params = self.milestones.at(self.state.height().saturating_add(1));
-        let incoming = match download(blocks, params) {
-            Ok(incoming) => incoming,
-            Err(why) => return Ok(RigJob::Refused(why)),
-        };
+        let mut incoming = download(blocks, params)?;
+        for block in &mut incoming {
+            block.set_username(self.state.wallets());
+        }
+        Ok(incoming)
+    }
+
+    /// Run the enqueued blocks `incoming` of `blocks` as one job with `inputs`:
+    /// [`heartwood_blockchain::run_job`] with the block processor and the rig's clock at
+    /// `inputs.now_ms`, then the blockchain service's answer to the job's end (`Fork`: the forked
+    /// block set and the last downloaded block at the tip; `Clear` and `ForkCheck`: the last
+    /// downloaded block at the tip). `steps` are the digest steps of the blocks in order (apply
+    /// for those beyond it).
+    pub fn run_enqueued(
+        &mut self,
+        blocks: &[JobBlock],
+        incoming: Vec<IncomingBlock>,
+        inputs: &JobInputs,
+        steps: &[Step],
+    ) -> std::result::Result<RigJob, RigProblem> {
         if let Some(bytes) = &inputs.last_downloaded {
             let link = JobBlock::of(bytes.clone()).link();
             self.chain.last_downloaded = Some(link.map_err(RigProblem::Failed)?);
@@ -733,12 +762,14 @@ impl JobRig {
                 chain: self.lines.last().map_or([0; 32], |l| l.chain_digest),
             }),
         };
+        // The job locks the chain state block by block, as the node's shared one.
+        let chain = Mutex::new(std::mem::take(&mut self.chain));
         let outcome = {
             let mut observer = NoObserver;
             let mut ctx = JobContext {
                 state: &mut self.state,
                 store: &mut self.store,
-                chain: &mut self.chain,
+                chain: &chain,
                 pool: &mut self.pool,
                 processor: &recorder,
                 handlers: &Handlers,
@@ -748,9 +779,11 @@ impl JobRig {
             };
             let job = Job { blocks: incoming };
             guarded(|| run_job(&mut ctx, job))
-                .map_err(|store::Unbuilt(m)| RigProblem::Unbuilt(m))?
-                .map_err(|e| RigProblem::Failed(format!("the job failed: {e}")))?
         };
+        self.chain = chain.into_inner().unwrap_or_else(PoisonError::into_inner);
+        let outcome = outcome
+            .map_err(|store::Unbuilt(m)| RigProblem::Unbuilt(m))?
+            .map_err(|e| RigProblem::Failed(format!("the job failed: {e}")))?;
         let RecorderLog { seen, .. } = recorder
             .log
             .into_inner()
@@ -1006,19 +1039,28 @@ pub fn judge_job(blocks: &[JobBlock], oracle: &Value, ours: &RigJob) -> Outcome 
 
 /// Whether `oracle` and `ours` differ only by the missed-slot rows the reference recorded for
 /// blocks that both refused in a way Heartwood records no rows for: the oracle's answer without
-/// those rows (in the block's result and in the job's list) equals Heartwood's.
+/// those rows ([`without_refused_rows`]) equals Heartwood's.
 pub fn refused_rows_only(oracle: &Value, ours: &Value, seen: &[Seen]) -> bool {
-    let Some(results) = oracle["results"].as_array() else {
-        return false;
+    let refused = |index: usize| {
+        seen.get(index)
+            .is_some_and(|s| s.processed.result == BlockProcessorResult::Rejected)
     };
+    without_refused_rows(oracle, refused)
+        .is_some_and(|adjusted| compare::diff(&adjusted, ours).is_empty())
+}
+
+/// The oracle's answer to a job, `oracle`, without the missed-slot rows it records for each block
+/// that it refused and that Heartwood refused too (`refused`, by the block's index in the job):
+/// taken out of the block's result and out of the job's list. `None` when there are none.
+pub fn without_refused_rows(oracle: &Value, refused: impl Fn(usize) -> bool) -> Option<Value> {
+    let results = oracle["results"].as_array()?;
     let mut adjusted = oracle.clone();
     let mut excluded = Vec::new();
     for (index, result) in results.iter().enumerate() {
-        let refused = result["result"] == "Rejected"
-            && seen
-                .get(index)
-                .is_some_and(|s| s.processed.result == BlockProcessorResult::Rejected);
-        if refused && let Some(rows) = result["missed"].as_array() {
+        if result["result"] == "Rejected"
+            && refused(index)
+            && let Some(rows) = result["missed"].as_array()
+        {
             excluded.extend(rows.iter().cloned());
             if let Some(entry) = adjusted["results"][index].as_object_mut() {
                 entry.shift_remove("missed");
@@ -1026,7 +1068,7 @@ pub fn refused_rows_only(oracle: &Value, ours: &Value, seen: &[Seen]) -> bool {
         }
     }
     if excluded.is_empty() {
-        return false;
+        return None;
     }
     if let Some(rows) = adjusted["missed"].as_array_mut() {
         for row in &excluded {
@@ -1035,7 +1077,7 @@ pub fn refused_rows_only(oracle: &Value, ours: &Value, seen: &[Seen]) -> bool {
             }
         }
     }
-    compare::diff(&adjusted, ours).is_empty()
+    Some(adjusted)
 }
 
 // ---- the replay ---------------------------------------------------------------------------------
@@ -1190,6 +1232,19 @@ fn run_download(
         });
         blocks.push(block);
     }
+    // A download is named once, when it is enqueued, before its first job runs; one block per
+    // job is each block's own download.
+    let mut enqueued = match chunks {
+        Chunks::One => None,
+        Chunks::Reference => match rig.enqueue(&blocks) {
+            Ok(incoming) => Some(incoming.into_iter()),
+            Err(why) => {
+                let height = queued.first().map_or(0, |q| q.height);
+                let why = format!("the download refused the listing: {why}");
+                return Ok(Some((height, why)));
+            }
+        },
+    };
     let jobs: Vec<Vec<usize>> = match chunks {
         Chunks::One => (0..blocks.len()).map(|i| vec![i]).collect(),
         Chunks::Reference => {
@@ -1226,7 +1281,14 @@ fn run_download(
             downloaded: chunks == Chunks::One,
             last_downloaded: None,
         };
-        let (outcome, seen) = match rig.run(&job_blocks, &inputs, &steps)? {
+        let ran = match enqueued.as_mut() {
+            Some(named) => {
+                let incoming = named.by_ref().take(job_blocks.len()).collect();
+                rig.run_enqueued(&job_blocks, incoming, &inputs, &steps)?
+            }
+            None => rig.run(&job_blocks, &inputs, &steps)?,
+        };
+        let (outcome, seen) = match ran {
             RigJob::Refused(why) => {
                 let height = queued.first().map_or(0, |q| q.height);
                 return Ok(Some((
@@ -1705,6 +1767,8 @@ fn refused_in_apply_after_gap(before: &State, block: &JobBlock, milestones: &Mil
 }
 
 /// A `chain.job` record's session in one call: the chain definition, its blocks, then each job.
+/// A job that starts a download names its blocks, and those of the jobs after it that continue
+/// the download (`sameDownload`), before it runs, as the blockchain service's enqueueing does.
 fn chain_case(input: &Value) -> std::result::Result<Verdict, SubjectError> {
     let unbuilt = |problem: StartProblem| match problem {
         StartProblem::Unbuilt(_) => SubjectError::NotImplemented,
@@ -1728,25 +1792,43 @@ fn chain_case(input: &Value) -> std::result::Result<Verdict, SubjectError> {
     let jobs = input["jobs"]
         .as_array()
         .ok_or_else(|| SubjectError::Failed("jobs must be a list".into()))?;
+    let same_download = |job: &Value| job.get("sameDownload") == Some(&Value::Bool(true));
+    let blocks_of = |job: &Value| job_blocks(&job["hexes"]).map_err(SubjectError::Failed);
     let mut values = Vec::new();
-    let mut documented = None;
-    for job in jobs {
-        let blocks = job_blocks(&job["hexes"]).map_err(SubjectError::Failed)?;
+    let (mut removed, mut refused_rows) = (None, false);
+    // The enqueued blocks of the later jobs of the download that runs.
+    let mut queued = VecDeque::new();
+    for (index, job) in jobs.iter().enumerate() {
+        let blocks = blocks_of(job)?;
         let inputs = JobInputs::from_json(job).map_err(SubjectError::Failed)?;
+        let enqueued = if same_download(job) {
+            queued.pop_front().ok_or_else(|| {
+                SubjectError::Failed(format!("jobs[{index}] continues no download"))
+            })?
+        } else {
+            // The job and the jobs that continue its download are named now, before it runs.
+            let later = jobs.iter().skip(index + 1).take_while(|j| same_download(j));
+            queued = later
+                .map(|j| Ok(rig.enqueue(&blocks_of(j)?)))
+                .collect::<std::result::Result<_, SubjectError>>()?;
+            rig.enqueue(&blocks)
+        };
         let before = rig.state().clone();
-        let ran = rig
-            .run(&blocks, &inputs, &[])
-            .map_err(|problem| match problem {
-                RigProblem::Unbuilt(_) => SubjectError::NotImplemented,
-                RigProblem::Failed(why) => SubjectError::Failed(why),
-            })?;
+        let ran = match enqueued {
+            Ok(incoming) => rig.run_enqueued(&blocks, incoming, &inputs, &[]),
+            Err(why) => Ok(RigJob::Refused(why)),
+        };
+        let ran = ran.map_err(|problem| match problem {
+            RigProblem::Unbuilt(_) => SubjectError::NotImplemented,
+            RigProblem::Failed(why) => SubjectError::Failed(why),
+        })?;
         match ran {
             RigJob::Refused(why) => {
-                let removed = blocks.iter().any(|b| {
+                let holds = blocks.iter().any(|b| {
                     b.parts()
                         .is_ok_and(|(_, txs)| txs.iter().any(|t| is_removed_type(t)))
                 });
-                documented.get_or_insert((Documented::RemovedType, removed));
+                removed.get_or_insert(holds);
                 values.push(json!({ "refused": why }));
             }
             RigJob::Ran { value, seen, .. } => {
@@ -1764,17 +1846,25 @@ fn chain_case(input: &Value) -> std::result::Result<Verdict, SubjectError> {
                             state.apply_block(&d, rig.milestones(), &Handlers).is_ok()
                         })
                     });
-                    if accepted && refused_in_apply_after_gap(&state, block, rig.milestones()) {
-                        documented.get_or_insert((Documented::MissedRowsOfRefusedBlock, true));
-                    }
+                    refused_rows |=
+                        accepted && refused_in_apply_after_gap(&state, block, rig.milestones());
                 }
                 values.push(value);
             }
         }
     }
-    Ok(match documented {
-        Some((difference, holds)) => Verdict::RefusedByDesign { difference, holds },
-        None => Verdict::Output(json!({ "jobs": values })),
+    let output = Verdict::Output(json!({ "jobs": values }));
+    Ok(match (removed, refused_rows) {
+        (Some(holds), _) => Verdict::RefusedByDesign {
+            difference: Documented::RemovedType,
+            holds,
+        },
+        // The rows are the only part the judge may leave out ([`Documented::masked`]).
+        (None, true) => Verdict::DiffersWhereShown {
+            difference: Documented::MissedRowsOfRefusedBlock,
+            verdict: Box::new(output),
+        },
+        (None, false) => output,
     })
 }
 

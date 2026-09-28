@@ -12,21 +12,26 @@
 //   chain.job {session, hexes, now, machineState?, started?, downloaded?}
 //       the blocks of `hexes` (full block bytes in hex, or {hex, set}: the block with header
 //       fields its listing states otherwise, of numberOfTransactions) as one job on the session's
-//       chain at the
-//       time `now` (milliseconds since the Unix epoch). Each block reaches the job as the peer
-//       communicator hands a downloaded block on (its header, its transactions read by
-//       fromBytesUnsafe with their block id, the peer's address) with its username set as the
-//       enqueueing sets it. `machineState` is the state machine's state ("newBlock" by default),
-//       `started` the state store's started flag (true by default), and `downloaded` (true by
-//       default) sets the last downloaded block to the job's last block first, as a download does
-//       before it enqueues; `lastDownloaded` (block bytes in hex) sets it to that block instead,
-//       as a download of several jobs sets it to its own last block. -> the job (below)
+//       chain at the time `now` (milliseconds since the Unix epoch): a download of one job,
+//       enqueued right before the job runs. Each block reaches the job as the peer communicator
+//       hands a downloaded block on (its header, its transactions read by fromBytesUnsafe with
+//       their block id, the peer's address) with the username that the enqueueing's
+//       setBlockUsername gives it then. `machineState` is the state machine's state ("newBlock"
+//       by default), `started` the state store's started flag (true by default), and
+//       `downloaded` (true by default) sets the last downloaded block to the job's last block
+//       first, as a download does before it enqueues; `lastDownloaded` (block bytes in hex) sets
+//       it to that block instead, as a download of several jobs sets it to its own last block.
+//       -> the job (below)
 //   chain.job {chain: {crypto, blocks}, jobs: [{hexes, now, machineState?, started?,
-//              downloaded?}, ...]}
+//              downloaded?, lastDownloaded?, sameDownload?}, ...]}
 //       a whole session in one call, for the golden vectors: the reference's first start on the
 //       chain definition `crypto` ({network, milestones, genesisBlock, exceptions}), the blocks of
 //       `blocks` (hex) applied with the last downloaded block then at the tip, as a node that
-//       downloaded them has it, then each job in turn -> {jobs: [job, ...]}
+//       downloaded them has it, then each job in turn -> {jobs: [job, ...]}. A job with
+//       `sameDownload` true is the next job of the download of the job before it: the
+//       enqueueing named its blocks with the others of that download, before the first of its
+//       jobs ran, as Blockchain.enqueueBlocks names every block of a download before it pushes
+//       the download's jobs.
 //   chain.job {enqueue: {blocks: [{height, numberOfTransactions}], lastDownloadedHeight,
 //              maxLastBlocks?}, milestones?}
 //       Blockchain.enqueueBlocks of the blocks with that last downloaded height, under the
@@ -150,6 +155,26 @@ function downloaded(solar, bytes, set = {}) {
     return data;
 }
 
+/**
+ * The downloaded blocks `given` ({bytes, set}) as Blockchain.enqueueBlocks leaves them: each named
+ * by the reference's setBlockUsername from the session's wallets now.
+ */
+function enqueued(solar, replay, given) {
+    const namer = Object.create(referenceClasses(solar).Blockchain.prototype);
+    namer.walletRepository = replay.chain.walletRepository;
+    return given.map(({ bytes, set }) => {
+        const block = downloaded(solar, bytes, set);
+        namer.setBlockUsername(block);
+        return block;
+    });
+}
+
+/** A job's blocks, checked: `hexes` as jobBlock reads each. */
+function jobBlocks(hexes) {
+    if (!Array.isArray(hexes)) throw new TypeError("hexes must be a list of blocks");
+    return hexes.map(jobBlock);
+}
+
 /** A job's block: block bytes in hex, or {hex, set} with header fields the listing states otherwise. */
 function jobBlock(item, i) {
     const given = typeof item === "string" ? { hex: item, set: {} } : item;
@@ -166,6 +191,13 @@ function jobBlock(item, i) {
  * Object.create, its collaborators the session's or stubs), a BlockProcessor, and a proxy of the
  * session's application that resolves the handlers and the job with the service, the recording
  * logger and the session's pool.
+ *
+ * It is not lib/process.js's processor world, which chain.process uses: a job also needs the
+ * service's queue, state machine, monitor and fork stubs, and a processor resolved in the job's
+ * application. Their forged-id queries differ on purpose. chain.process cases may leave blocks
+ * applied but not stored (`unstored`), so that query reads the blocks at or below the last stored
+ * height; a job saves its accepted blocks after its loop and nothing else writes the session's
+ * store meanwhile, so here every stored transaction is a forged one.
  */
 function jobWorld(solar, replay, { machineState = "newBlock" } = {}) {
     const cls = referenceClasses(solar);
@@ -282,9 +314,9 @@ function jobWorld(solar, replay, { machineState = "newBlock" } = {}) {
 }
 
 /**
- * Run the job of the downloaded blocks `blocks` (block data) in `world` as step `step` (apply or
- * reapply): each processed block is answered through the reference's processBlock action with the
- * reward read before it and the missed rows it records, and the session writes a digest line
+ * Run the job of the enqueued blocks `blocks` (block data, named) in `world` as step `step` (apply
+ * or reapply): each processed block is answered through the reference's processBlock action with
+ * the reward read before it and the missed rows it records, and the session writes a digest line
  * after each accepted one.
  */
 async function runJob(world, blocks, { step, started = true, downloaded: isDownload = true, lastDownloaded }) {
@@ -295,7 +327,6 @@ async function runJob(world, blocks, { step, started = true, downloaded: isDownl
     const stored = chain.store.height;
     const tip = stateStore.getLastBlock().data.height;
 
-    for (const block of blocks) world.blockchain.setBlockUsername(block);
     if (lastDownloaded) stateStore.setLastDownloadedBlock(lastDownloaded);
     else if (isDownload && blocks.length) stateStore.setLastDownloadedBlock(blocks[blocks.length - 1]);
     // Every block the session applied is stored.
@@ -394,18 +425,22 @@ async function runJob(world, blocks, { step, started = true, downloaded: isDownl
     return out;
 }
 
-/** Check the arguments of one job and run it on `replay`. */
-async function sessionJob(solar, replay, args, step = "apply") {
-    const { hexes, now, machineState, started, downloaded: isDownload, lastDownloaded } = args;
-    if (!Array.isArray(hexes)) throw new TypeError("hexes must be a list of blocks");
-    const given = hexes.map(jobBlock);
+/**
+ * Check the arguments of one job and run it on `replay`, with `named` its blocks as the enqueueing
+ * of its download left them; a job without them is a download of its own, enqueued now.
+ */
+async function sessionJob(solar, replay, args, step = "apply", named = undefined) {
+    const { hexes, now, machineState, started, downloaded: isDownload, lastDownloaded, sameDownload } = args;
+    const given = jobBlocks(hexes);
+    if (sameDownload !== undefined && typeof sameDownload !== "boolean") throw new TypeError("sameDownload must be a boolean");
+    if (sameDownload && !named) throw new TypeError("sameDownload needs a job before it in the chain form");
     if (!Number.isSafeInteger(now) || now < 0) throw new TypeError("now must be a time in milliseconds");
     if (machineState !== undefined && typeof machineState !== "string") throw new TypeError("machineState must be a state's name");
     if (started !== undefined && typeof started !== "boolean") throw new TypeError("started must be a boolean");
     if (isDownload !== undefined && typeof isDownload !== "boolean") throw new TypeError("downloaded must be a boolean");
     if (lastDownloaded !== undefined && (typeof lastDownloaded !== "string" || !/^([0-9a-f]{2})+$/.test(lastDownloaded))) throw new TypeError("lastDownloaded must be block bytes in lowercase hex");
     return atTime(now, async () => {
-        const blocks = given.map(({ bytes, set }) => downloaded(solar, bytes, set));
+        const blocks = named || enqueued(solar, replay, given);
         const world = jobWorld(solar, replay, { machineState });
         const last = lastDownloaded === undefined ? undefined : downloaded(solar, Buffer.from(lastDownloaded, "hex"));
         return runJob(world, blocks, { step, started, downloaded: isDownload, lastDownloaded: last });
@@ -468,8 +503,22 @@ module.exports = function jobOps(context) {
                     }
                     // As a node that downloaded these blocks: the last downloaded block is the tip.
                     s.chain.stateStore.setLastDownloadedBlock(s.chain.lastBlock().data);
+                    // A job that starts a download names its blocks and those of the jobs that
+                    // continue it (sameDownload) before it runs.
                     const jobs = [];
-                    for (const job of args.jobs) jobs.push(await sessionJob(solar, s, job));
+                    let queued = [];
+                    for (const [i, job] of args.jobs.entries()) {
+                        if (!job || typeof job !== "object") throw new TypeError(`jobs[${i}] must be a job`);
+                        if (job.sameDownload === true) {
+                            jobs.push(await sessionJob(solar, s, job, "apply", queued.shift()));
+                            continue;
+                        }
+                        let end = i + 1;
+                        while (end < args.jobs.length && args.jobs[end] && args.jobs[end].sameDownload === true) end++;
+                        const download = args.jobs.slice(i, end).map((each) => enqueued(solar, s, jobBlocks(each.hexes)));
+                        queued = download.slice(1);
+                        jobs.push(await sessionJob(solar, s, job, "apply", download[0]));
+                    }
                     return { jobs };
                 });
             }

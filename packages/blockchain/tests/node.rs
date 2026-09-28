@@ -102,6 +102,18 @@ async fn each_commit_publishes_then_tells_its_events_in_the_reference_order() {
 }
 
 #[tokio::test]
+async fn a_job_frees_the_chain_state_between_its_blocks() {
+    let chain = Chain::load();
+    let node = node_at(&chain, "node-chain-lock", 1).await;
+    node.run(&chain, 2, 6).await;
+    // After each block's apply, the service and the network can read the chain state, and see
+    // that block as the tip, as the reference's readers see each applied block.
+    let tips = lock(&node.observed.1).clone();
+    assert_eq!(tips, [2, 3, 4, 5, 6].map(Some));
+    node.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn the_pool_steps_per_batch_per_applied_block_and_per_drain() {
     let chain = Chain::load();
     let node = node_at(&chain, "node-pool-steps", 58).await;
@@ -141,8 +153,12 @@ async fn the_pool_steps_per_batch_per_applied_block_and_per_drain() {
         version,
     };
     node.handle.online(set).unwrap();
-    node.handle.drain().await.unwrap();
-    assert!(pooled(&node).is_empty());
+    // The queue's drain answers once the record is saved; its re-add follows.
+    let (answer, drained) = oneshot::channel();
+    node.handle.submit(Work::Drain(answer, false)).unwrap();
+    drained.await.unwrap().unwrap();
+    let mut pool = node.handle.pool();
+    pool.wait_for(|view| view.is_empty()).await.unwrap();
     let stored = Database::open(&settings(&node.dir)).unwrap();
     let rows = stored.delegate_versions().unwrap();
     let row = rows

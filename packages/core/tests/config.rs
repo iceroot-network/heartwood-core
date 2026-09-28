@@ -1,6 +1,7 @@
 //! The relay's configuration: the environment's precedence, `config.json`, the relay profile as
 //! compiled-in components, the command line's options under `app.json`'s, the warnings for what
-//! the relay does not honour, the components' option readers, the markers and the version floor.
+//! the relay does not honour, the components' option readers, the markers, the reset variables
+//! and the version floor.
 
 mod common;
 
@@ -8,11 +9,13 @@ use std::fs;
 
 use common::{Setup, relay_plugins, run};
 use heartwood_blockchain::{BlockchainOptions, ReplayReason, RestorePath};
-use heartwood_core::app::{RelayError, restored, version_floor};
+use heartwood_core::app::{RelayError, api_options, open_pool, restored, version_floor};
 use heartwood_core::config::{Package, RelayConfig};
 use heartwood_core::options;
+use heartwood_crypto::TransactionId;
 use heartwood_kernel::config::Env;
 use heartwood_logger::Level;
+use heartwood_pool::{Storage, StoredTransaction};
 use serde_json::{Value, json};
 
 fn load(setup: &Setup, flags: &str, extra: &[(&str, &str)]) -> Result<RelayConfig, RelayError> {
@@ -186,6 +189,7 @@ fn warnings_name_what_the_relay_does_not_honour() {
     let list = plugins.as_array_mut().unwrap();
     list.push(json!({"package": "@solar-network/forger"}));
     list[5]["options"]["gossip"] = json!(true);
+    list[1]["options"] = json!({"storage": {"maxLastBlocks": 50}});
     let app = json!({"core": {"plugins": []}, "relay": {"plugins": plugins, "flags": ["x"]}, "forger": {"plugins": []}});
     setup.write("app.json", &app.to_string());
     setup.write("app.js", "module.exports = {};");
@@ -193,6 +197,9 @@ fn warnings_name_what_the_relay_does_not_honour() {
         ("CORE_SKIP_PEER_STATE_VERIFICATION", "1"),
         ("CORE_WEBHOOKS_ENABLED", "true"),
         ("CORE_SKIP_BLOCKCHAIN_STARTED_CHECK", ""),
+        ("CORE_API_CACHE", "1"),
+        ("CORE_API_LOG", ""),
+        ("CORE_WALLET_SYNC_ENABLED", "true"),
     ];
     let config = load(&setup, "--network testnet --env test", &extra).unwrap();
     let warnings = config.warnings.join("\n");
@@ -205,14 +212,16 @@ fn warnings_name_what_the_relay_does_not_honour() {
         "CORE_ENV is not honoured",
         "NODE_ENV is not honoured",
         "CORE_SKIP_PEER_STATE_VERIFICATION is not honoured",
+        "CORE_API_CACHE is not honoured",
+        "CORE_WALLET_SYNC_ENABLED is not honoured",
+        "the @solar-network/state option storage is not read by this relay",
     ] {
         assert!(warnings.contains(expected), "{expected}:\n{warnings}");
     }
-    assert!(
-        !warnings.contains("CORE_SKIP_BLOCKCHAIN_STARTED_CHECK"),
-        "{warnings}"
-    );
-    assert_eq!(config.warnings.len(), 8, "{warnings}");
+    for unset in ["CORE_SKIP_BLOCKCHAIN_STARTED_CHECK", "CORE_API_LOG"] {
+        assert!(!warnings.contains(unset), "{warnings}");
+    }
+    assert_eq!(config.warnings.len(), 11, "{warnings}");
 }
 
 #[test]
@@ -358,8 +367,14 @@ fn the_database_logger_and_peer_options_are_read_as_the_reference_reads_them() {
         (logger.console, logger.file, logger.emojify),
         (Some(Level::Info), Some(Level::Warning), false)
     );
+    // Text that names no level turns that output off, as the reference makes no output for it;
+    // a level that is not text is refused at the start.
+    let off = options::logger(&json!({}), &env(&[("CORE_LOG_LEVEL_FILE", "loud")])).unwrap();
+    assert_eq!((off.console, off.file), (Some(Level::Info), None));
+    let off = options::logger(&json!({"levels": {"console": "off"}}), &env(&[])).unwrap();
+    assert_eq!((off.console, off.file), (None, Some(Level::Debug)));
     assert_eq!(
-        options::logger(&json!({}), &env(&[("CORE_LOG_LEVEL_FILE", "loud")]))
+        options::logger(&json!({"levels": {"file": 7}}), &env(&[]))
             .unwrap_err()
             .key,
         "levels.file"
@@ -466,6 +481,67 @@ fn a_replay_marker_restores_by_the_replay_path_and_is_removed() {
         config.pool_marker(),
         setup.root.join("temp/clear-pool.lock")
     );
+}
+
+#[test]
+fn the_reset_variables_empty_the_store_and_the_pool_at_the_start() {
+    let setup = Setup::new("resets", "");
+    let config = load(&setup, "--network testnet", &[]).unwrap();
+    fs::create_dir_all(&config.paths.temp).unwrap();
+    assert_eq!(restored(&config).unwrap().1.path, RestorePath::FirstStart);
+    assert_eq!(restored(&config).unwrap().1.path, RestorePath::Table);
+    let reset = load(&setup, "--network testnet", &[("CORE_RESET_DATABASE", "1")]).unwrap();
+    assert_eq!(restored(&reset).unwrap().1.path, RestorePath::FirstStart);
+    // The pool: a stored transaction stays unless a reset variable is set and not empty.
+    let pool_options = |config: &RelayConfig| {
+        let entry = config.entry(Package::Pool);
+        options::pool(&entry, &config.env, &config.paths.data, 1).unwrap()
+    };
+    let storage = pool_options(&config).storage;
+    let row = StoredTransaction {
+        height: 1,
+        id: TransactionId::from_array([7; 32]),
+        recipient_id: String::new(),
+        sender_id: "sender".into(),
+        serialised: vec![1, 2, 3],
+    };
+    for (variable, value, kept) in [
+        ("CORE_RESET_POOL", "", true),
+        ("CORE_RESET_POOL", "1", false),
+        ("CORE_RESET_DATABASE", "false", false),
+    ] {
+        let mut stored = Storage::open(&storage, None).unwrap();
+        stored.flush().unwrap();
+        stored.add(&row).unwrap();
+        drop(stored);
+        let config = load(&setup, "--network testnet", &[(variable, value)]).unwrap();
+        drop(open_pool(&config, pool_options(&config)).unwrap());
+        let left = Storage::open(&storage, None).unwrap().all().unwrap();
+        assert_eq!(left.len(), usize::from(kept), "{variable}={value}");
+    }
+}
+
+#[test]
+fn a_refused_api_option_leaves_the_api_out_and_https_or_an_unknown_host_stops_the_start() {
+    let setup = Setup::new("api-options", "");
+    let api = |extra: &[(&str, &str)]| api_options(&load(&setup, "--network testnet", extra)?);
+    let served = api(&[("CORE_API_PORT", "7003")]).unwrap().unwrap();
+    assert_eq!(served.address.port(), 7003);
+    // The reference's API is not a required component: its schema's refusal leaves it out.
+    assert_eq!(api(&[("CORE_API_PORT", "abc")]), Ok(None));
+    for extra in [("CORE_API_SSL", "1"), ("CORE_API_HOST", "unknown.invalid")] {
+        assert!(
+            matches!(api(&[extra]), Err(RelayError::Config(_))),
+            "{extra:?}"
+        );
+    }
+    let mut plugins = relay_plugins();
+    plugins
+        .as_array_mut()
+        .unwrap()
+        .retain(|p| p["package"] != "@solar-network/api");
+    setup.app(plugins);
+    assert_eq!(api(&[("CORE_API_PORT", "abc")]), Ok(None));
 }
 
 #[test]

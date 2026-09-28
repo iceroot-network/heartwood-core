@@ -8,7 +8,8 @@
 //! 3. Each block in turn: a block in a future slot ends the loop (the slots have one block time
 //!    from height 1, so the reference's lookup, which prefers the timestamps of the blocks accepted
 //!    in this job, gives the same slots); otherwise it is rebuilt as the reference's block factory
-//!    rebuilds it ([`heartwood_p2p::to_block`]) and processed. An accepted block joins the job's
+//!    rebuilds it ([`heartwood_p2p::to_block`]) and processed with the delegate name it got when
+//!    it was enqueued ([`crate::work::IncomingBlock::name`]). An accepted block joins the job's
 //!    accepted blocks; `Corrupted` stops the node; any other result ends the loop, and `Rollback`
 //!    also marks the block as the forked block and as the last downloaded block. A rebuild error
 //!    ends the loop with no result for the block (`Failed to process chunk of block chunk of
@@ -24,18 +25,18 @@
 //! where the reference reverts the job's blocks and goes on.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use heartwood_crypto::crypto::slots;
 use heartwood_crypto::utils::js::to_locale_integer;
-use heartwood_crypto::{Block, BlockId, Milestones, TransactionId};
+use heartwood_crypto::{BlockId, Milestones, TransactionId};
 use heartwood_kernel::{ChainLink, Clock, debug, error, is_block_chained};
 use heartwood_p2p::download::node_hex;
 use heartwood_p2p::to_block;
 use heartwood_state::State;
 use heartwood_transactions::Handlers;
 
-use crate::chain_state::ChainState;
+use crate::chain_state::{ChainState, lock};
 use crate::commit::ChainStore;
 use crate::errors::{NodeError, StoreError};
 use crate::events::CommitObserver;
@@ -49,8 +50,10 @@ pub struct JobContext<'a> {
     pub state: &'a mut State,
     /// The store.
     pub store: &'a mut ChainStore,
-    /// The chain state.
-    pub chain: &'a mut ChainState,
+    /// The chain state, shared with the blockchain service. The job locks it for each block's
+    /// processing and each change of its own, never across blocks, so the service and the
+    /// network read the tip as it moves, as the reference's readers do between two blocks.
+    pub chain: &'a Mutex<ChainState>,
     /// The pool and the online record.
     pub pool: &'a mut PoolTask,
     /// The block processor.
@@ -127,13 +130,14 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
                 state: ctx.state,
                 handlers: ctx.handlers,
                 milestones: ctx.milestones,
-                chain: ctx.chain,
+                chain: &mut lock(ctx.chain),
                 forged: &forged,
                 pending: &accepted,
                 pool: ctx.pool,
                 clock: ctx.clock,
             },
             &block,
+            incoming.name.as_deref(),
         );
         clear_queue |= processed.unchained.is_some();
         results.push((*block.id(), processed.result));
@@ -143,8 +147,7 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
             (Accepted, Some(applied)) => {
                 chunk.applied(ctx.state, &block, &applied, ctx.milestones)?;
                 ctx.observer.applied_with(ctx.state, &block, &applied);
-                accepted.push(Block::clone(&block));
-                ctx.chain.set_last_block(block);
+                accepted.push(block);
             }
             // A block accepted without its apply, or a failed revert: the state and the store
             // may no longer agree.
@@ -156,7 +159,7 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
             }
             (result, _) => {
                 if result == Rollback {
-                    ctx.chain.last_downloaded = Some(ChainLink::of(&block));
+                    lock(ctx.chain).last_downloaded = Some(ChainLink::of(&block));
                     fork = Some(block);
                 }
                 break;
@@ -165,7 +168,7 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
     }
     if let Some(last) = accepted.last() {
         chunk.commit()?;
-        ctx.chain.last_stored_height = last.height();
+        lock(ctx.chain).last_stored_height = last.height();
     }
     if let Some(failure) = ctx.pool.take_failure() {
         return Err(NodeError::Pool(failure));

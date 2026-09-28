@@ -8,7 +8,9 @@
 //!
 //! The reference's marker files are honoured at the start: `clear-saved-states.lock` in the temp
 //! directory restores the state by a replay (and is removed once it is done), and
-//! `clear-pool.lock` clears the pool's storage when the pool opens.
+//! `clear-pool.lock` clears the pool's storage when the pool opens. So are its reset variables:
+//! `CORE_RESET_DATABASE` empties the store (the start is a first start) and the pool, and
+//! `CORE_RESET_POOL` empties the pool, at every start while they are set.
 
 use std::fmt::Display;
 use std::fs;
@@ -40,7 +42,7 @@ use heartwood_p2p::{
 };
 use heartwood_p2p::{PeerProcessor, PeerRepository, PeerVerifier};
 use heartwood_p2p_wire::replies::PeerAddress;
-use heartwood_pool::Pool;
+use heartwood_pool::{Options as PoolOptions, Pool};
 use heartwood_transactions::Handlers;
 use thiserror::Error;
 use tokio::runtime::{Builder, Handle};
@@ -171,7 +173,7 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
         cpus,
     )
     .map_err(config)?;
-    options::database(&relay.entry(Package::Database)).map_err(config)?;
+    let api_timeout = options::database(&relay.entry(Package::Database)).map_err(config)?;
     let mut p2p = options::p2p(&relay.entry(Package::P2p), &relay.env).map_err(config)?;
     p2p.version = VERSION.to_owned();
     p2p.seeds = (relay.peers.list.iter())
@@ -184,22 +186,17 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
     p2p.max_transactions_per_request = pool_options.max_transactions_per_request;
     let blockchain_options = options::blockchain(&relay.entry(Package::Blockchain));
     let blockchain_options = Arc::new(blockchain_options.map_err(config)?);
-    let api_config = relay
-        .components
-        .contains(&Package::Api)
-        .then(|| ApiConfig::from_options(&relay.entry(Package::Api), &relay.env));
-    let mut api_config = api_config.transpose().map_err(config)?;
-    if api_config.as_ref().is_some_and(|api| api.https) {
-        return Err(config(
-            "CORE_API_SSL is set, but this relay serves no HTTPS: serve its API through a reverse proxy that terminates TLS",
-        ));
-    }
+    let mut api_config = api_options(&relay)?;
     // The store, the state and the version floor at the stored tip.
     let settings = Settings::in_data_dir(&relay.paths.data);
     let (store, restored) = restored(&relay)?;
+    // A signal during a long restore (a replay) stops the start here, before anything runs.
+    if stop.try_recv().is_ok() {
+        return Ok(());
+    }
     let files = &relay.crypto;
     version_floor(&relay, restored.state.height(), &p2p.minimum_versions)?;
-    let pool = Pool::open(pool_options, Some(&relay.pool_marker())).map_err(component)?;
+    let pool = open_pool(&relay, pool_options)?;
     // The node thread.
     let (milestones, network) = (
         Arc::new(files.milestones.clone()),
@@ -232,13 +229,14 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
     .map_err(component)?;
     let ended = stops.clone();
     tokio::task::spawn_blocking(move || ended.send(Stop::Node(node.join())));
-    // The peer-to-peer client and the blockchain service.
+    // The peer-to-peer client and the blockchain service. The client's store reads run on the
+    // runtime's workers, so there is a read-only connection for each worker.
     let view = Arc::new(NodeView {
         handle: handle.clone(),
         chain: Arc::clone(&chain),
         milestones: Arc::clone(&milestones),
         network,
-        history: Arc::new(Readers::open(&settings, 2).map_err(component)?),
+        history: Arc::new(Readers::open(&settings, cpus.max(2)).map_err(component)?),
         links: Arc::clone(&links),
     });
     let monitor = client(seeded(p2p, run)?, view, &bus, &clock)?;
@@ -277,20 +275,18 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
                     crypto: relay.crypto.clone(),
                     version: VERSION.to_owned(),
                 };
-                // The API is not required: its failure is logged, and the relay goes on.
-                match serve_api(
-                    config,
-                    node,
-                    &handle,
-                    &links,
-                    &status,
-                    &settings,
-                    api_runtime.clone(),
-                )
-                .await
-                {
+                let served = async {
+                    let timeout = Duration::from_millis(api_timeout);
+                    let history = Readers::with_timeout(&settings, 10, timeout);
+                    let history = history.map_err(component)?;
+                    let runtime = api_runtime.clone();
+                    serve_api(config, node, &handle, &links, &status, history, runtime).await
+                };
+                // A failure to serve stops the relay, as the reference's server ends its
+                // application when it cannot start.
+                match served.await {
                     Ok(served) => api = served,
-                    Err(error) => heartwood_kernel::error!("{error}"),
+                    Err(error) => break Err(error),
                 }
             }
             Some(Stop::Booted(Err(error))) => break Err(component(error)),
@@ -322,15 +318,39 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
     outcome
 }
 
+/// The API's options: `None` when the relay's profile leaves the API out, or when one of them is
+/// refused, which is logged and leaves the relay running without an API, as the reference's API
+/// is not a required component. A host that does not resolve to an address stops the start, as
+/// the reference's server cannot listen on it, and so does `CORE_API_SSL`: this relay serves no
+/// HTTPS.
+pub fn api_options(relay: &RelayConfig) -> Result<Option<ApiConfig>, RelayError> {
+    if !relay.components.contains(&Package::Api) {
+        return Ok(None);
+    }
+    match ApiConfig::from_options(&relay.entry(Package::Api), &relay.env) {
+        Ok(api) if api.https => Err(config(
+            "CORE_API_SSL is set, but this relay serves no HTTPS: serve its API through a reverse proxy that terminates TLS",
+        )),
+        Ok(api) => Ok(Some(api)),
+        Err(error) if error.key == "server.http.host" && error.reason.contains("listen") => {
+            Err(config(error))
+        }
+        Err(error) => {
+            heartwood_kernel::error!("{error}: the API is not started");
+            Ok(None)
+        }
+    }
+}
+
 /// The API of `config` over the node's snapshots and status, the monitor's peers and the store's
-/// read-only connections, served on `runtime` unless the configuration disables it.
+/// read-only connections `history`, served on `runtime` unless the configuration disables it.
 async fn serve_api(
     config: ApiConfig,
     node: NodeInfo,
     handle: &NodeHandle,
     links: &Arc<Links>,
     status: &watch::Receiver<NodeStatus>,
-    settings: &Settings,
+    history: Readers,
     runtime: Handle,
 ) -> Result<Option<Api>, RelayError> {
     let context = ApiContext {
@@ -338,7 +358,7 @@ async fn serve_api(
         pool: handle.pool(),
         status: status.clone(),
         peers: Arc::clone(links) as Arc<dyn PeerList>,
-        history: Arc::new(Readers::open(settings, 10).map_err(component)?),
+        history: Arc::new(history),
         submit: Arc::new(Submit(handle.clone())),
         node: Arc::new(node),
         config: Arc::new(config),
@@ -353,10 +373,17 @@ async fn serve_api(
 }
 
 /// The store of `relay` and its restored state: by a replay when the reference's
-/// `clear-saved-states.lock` asks for one, which is removed once the replay is done.
+/// `clear-saved-states.lock` asks for one, which is removed once the replay is done; from the
+/// genesis block, in an emptied store, while `CORE_RESET_DATABASE` is set.
 pub fn restored(relay: &RelayConfig) -> Result<(ChainStore, Restored), RelayError> {
     let mut store =
         ChainStore::open(&Settings::in_data_dir(&relay.paths.data)).map_err(component)?;
+    if relay.env.is_set("CORE_RESET_DATABASE") {
+        heartwood_kernel::warning!(
+            "CORE_RESET_DATABASE is set: the store starts again from the genesis block"
+        );
+        store.database_mut().reset().map_err(component)?;
+    }
     let marker = relay.replay_marker();
     let mode = if marker.exists() {
         RestoreMode::Replay
@@ -368,6 +395,20 @@ pub fn restored(relay: &RelayConfig) -> Result<(ChainStore, Restored), RelayErro
         let _ = fs::remove_file(&marker);
     }
     Ok((store, restored))
+}
+
+/// The pool of `options`, its storage cleared by the reference's `clear-pool.lock`, and emptied
+/// while `CORE_RESET_DATABASE` or `CORE_RESET_POOL` is set, as the reference's pool flushes itself
+/// at its boot.
+pub fn open_pool(relay: &RelayConfig, options: PoolOptions) -> Result<Pool, RelayError> {
+    let mut pool = Pool::open(options, Some(&relay.pool_marker())).map_err(component)?;
+    if ["CORE_RESET_DATABASE", "CORE_RESET_POOL"]
+        .iter()
+        .any(|name| relay.env.is_set(name))
+    {
+        pool.flush().map_err(component)?;
+    }
+    Ok(pool)
 }
 
 /// The version floor of `relay`'s milestones at the stored tip `height`, with the peers' version

@@ -1,10 +1,14 @@
 //! Seeds, peer sources and the plugin port probes.
 //!
-//! The seeds are `peers.json`'s `list` plus the peers of its first `sources` entry: a local file (a
-//! path starting with `/`) read as JSON, or a plain HTTP URL fetched with a hand-written `GET`.
-//! As in the reference, only the first entry is ever read, and a source that cannot be read gives
-//! no peers. No seed at all stops the node. A source over HTTPS is refused when the node starts
-//! ([`check_sources`]): the client has no TLS.
+//! The seeds are `peers.json`'s `list` plus the peers of its first `sources` entry, a plain HTTP
+//! URL fetched with a hand-written `GET`. As in the reference, only the first entry is ever read,
+//! and a source that cannot be read gives no peers. No seed at all stops the node. A source over
+//! HTTPS is refused when the node starts ([`check_sources`]): the client has no TLS.
+//!
+//! A source that is a path starting with `/` is read as a local JSON file, as the reference's
+//! branch for one does. No configuration reaches that branch on either side: `peers.json` takes
+//! only URIs for its sources, as the reference's schema does, so only a caller that builds the
+//! options itself can give a path.
 //!
 //! The port probes are a hand-written HTTP `HEAD /`; the communicator records the port on a 200 and
 //! -1 otherwise. The reference writes the probe's URL as `http://<ip>:<port>/`, which for an IPv6
@@ -38,7 +42,7 @@ pub fn check_sources(sources: &[String]) -> Result<(), SeedError> {
     match sources.iter().find(|source| is_https(source)) {
         Some(source) => Err(source_error(
             source,
-            "HTTPS sources are not supported; use a local file or plain HTTP",
+            "HTTPS sources are not supported; use plain HTTP",
         )),
         None => Ok(()),
     }
@@ -240,8 +244,11 @@ mod tests {
         assert!(check_sources(&["/etc/peers.json".into(), "http://192.0.2.1/p".into()]).is_ok());
         let refused = check_sources(&["http://a".into(), "HTTPS://b/peers".into()]);
         assert!(
-            matches!(refused, Err(SeedError::Source { source_name, .. }) if source_name == "HTTPS://b/peers")
+            matches!(&refused, Err(SeedError::Source { source_name, .. }) if source_name == "HTTPS://b/peers")
         );
+        // It advises only what `peers.json` accepts: a path is not a URI there.
+        let reason = refused.unwrap_err().to_string();
+        assert!(reason.ends_with("use plain HTTP"), "{reason}");
         assert_eq!(status_code(b"HTTP/1.0 404 Not Found\r\n"), Some(404));
         assert_eq!(status_code(b"SSH-2.0\r\n"), None);
         assert_eq!(status_code(b"HTTP/1.1 20 OK\r\n"), None);

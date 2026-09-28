@@ -431,7 +431,7 @@ fn download_plan(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         let from: u32 = integer(call, "from")?;
         let parallel: usize = integer(call, "maxParallel")?;
         let throttle = call["checkThrottle"] == json!(true);
-        let wait = Duration::from_secs(30);
+        let wait = Some(Duration::from_secs(30));
         let blocks = runtime
             .block_on(monitor.download_blocks_from_height(from, parallel, false, wait, throttle));
         let mut requests: Vec<(u32, Vec<String>)> = Vec::new();

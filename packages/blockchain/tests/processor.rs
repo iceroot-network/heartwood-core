@@ -113,7 +113,7 @@ struct Node {
     state: State,
     chain: ChainState,
     forged: Forged,
-    pending: Vec<Block>,
+    pending: Vec<Arc<Block>>,
     pool: Pool,
     clock: ManualClock,
 }
@@ -123,6 +123,7 @@ impl Node {
         let state = FIXTURE.tip.clone();
         let mut chain = ChainState::at(Arc::new(state.last_block().clone()));
         chain.started = true;
+        chain.reset_last_downloaded();
         Node {
             state,
             chain,
@@ -654,7 +655,7 @@ fn a_stored_or_pending_transaction_is_refused() {
     assert_eq!(traced.handler, refused(Refusal::AlreadyForged));
     assert_reset(&node);
     node.forged.0.clear();
-    node.pending.push(block.clone());
+    node.pending.push(Arc::new(block.clone()));
     assert_eq!(
         node.process(&block).handler,
         refused(Refusal::AlreadyForged)
