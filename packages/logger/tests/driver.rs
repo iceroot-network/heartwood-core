@@ -87,3 +87,42 @@ fn other_fields_follow_the_message_and_empty_messages_are_dropped() {
          [2026-01-01 00:00:08.123] WARNING: from elsewhere\n"
     );
 }
+
+/// A peer's error payload with forged lines, a carriage return, other control characters (C0,
+/// DEL and C1), the line and paragraph separators and bidirectional controls.
+const HOSTILE: &str = "Error: x\n[2026-01-01 00:00:09.000] ERROR: forged\r\n\
+                       cr\rtab\tbell\u{7} esc\u{1b}[31mred\u{1b}[39m del\u{7f} nel\u{85} \
+                       csi\u{9b} rlo\u{202e}evil\u{202c} lri\u{2066}x\u{2069} rlm\u{200f} \
+                       ls\u{2028}ps\u{2029} end";
+
+/// [`HOSTILE`] as the logger writes it.
+const ESCAPED: &str = "Error: x\\n[2026-01-01 00:00:09.000] ERROR: forged\\r\\n\
+                       cr\\rtab\\tbell\\u0007 esc\\u001b[31mred\\u001b[39m del\\u007f nel\\u0085 \
+                       csi\\u009b rlo\\u202eevil\\u202c lri\\u2066x\\u2069 rlm\\u200f \
+                       ls\\u2028ps\\u2029 end";
+
+#[test]
+fn outside_text_cannot_forge_lines() {
+    let (console, file) = capture(true, || {
+        heartwood_kernel::info!(
+            payload = HOSTILE,
+            "Failed to download blocks 2-3 from 10.0.0.1:4000: {HOSTILE} :bangbang:"
+        );
+    });
+    let text =
+        format!("Failed to download blocks 2-3 from 10.0.0.1:4000: {ESCAPED} ‼️ payload={ESCAPED}");
+    assert_eq!(file, format!("[2026-01-01 00:00:08.123] INFO: {text}\n"));
+    assert_eq!(
+        console,
+        format!("[2026-01-01 00:00:08.123] \u{1b}[32mINFO\u{1b}[39m: \u{1b}[36m{text}\u{1b}[39m\n")
+    );
+    // One call, one line: nothing a reader or a terminal takes for a line break or a control.
+    for output in [&console, &file] {
+        assert_eq!(output.lines().count(), 1, "{output:?}");
+        assert!(
+            !output
+                .trim_end_matches('\n')
+                .contains(['\n', '\r', '\u{85}', '\u{2028}', '\u{202e}'])
+        );
+    }
+}

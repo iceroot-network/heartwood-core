@@ -4,7 +4,8 @@
 //! reference's line: the level from the event's `severity` field (or the nearest reference level
 //! of an event from elsewhere; `trace` events are dropped), the message, then any other fields as
 //! ` name=value`. An empty message writes nothing, as in the reference; emoji codes are replaced
-//! or removed before the line is formatted. Each output shows the levels at least as severe as its
+//! or removed before the line is formatted, which escapes the whole text, fields included
+//! ([`format::escape`]). Each output shows the levels at least as severe as its
 //! own. [`init`] installs the layer for the process with the console, coloured, and the rotating
 //! log file, plain.
 

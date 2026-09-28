@@ -4,7 +4,8 @@
 //! writes them as the reference does:
 //!
 //! - [`format`](mod@format): the line format of the reference's pretty printer, with its level colours and
-//!   emoji codes. Console lines are coloured; file lines are not.
+//!   emoji codes. Console lines are coloured; file lines are not. Unlike the reference, a
+//!   message's control characters are escaped, so one call writes exactly one line.
 //! - [`rotation`]: the log files: `<stem>-current.log`, rotated daily into
 //!   `<stem>-<YYYY-MM-DD>[.<n>].log.gz`, keeping at most 10 rotated files and 100 MiB.
 //! - [`driver`]: [`LineLayer`], the `tracing` layer that writes the lines, and [`init`], which

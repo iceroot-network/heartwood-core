@@ -9,13 +9,20 @@
 //!   level's name. A message that contains the placeholder, `USERLVL`, at `info`, `error` or
 //!   `debug` has it replaced instead;
 //! - with colour (the console), `info` is green, `error` red, `debug` blue and every other level
-//!   white, and the message is cyan, closed and reopened around each line break and after each
-//!   colour reset inside it. Without colour (files), there are no escape codes. The logger's own
-//!   level styles add nothing, as in a node process without a terminal;
+//!   white, and the message is cyan. Without colour (files), there are no escape codes. The
+//!   logger's own level styles add nothing, as in a node process without a terminal;
 //! - the year is padded to four characters, a sign included (`00-1`), and a time outside the range
 //!   of a JavaScript date writes no line.
+//!
+//! One difference, on purpose: the reference writes a message's characters as they are, so a
+//! message that holds outside text (a peer's or a relay's error payload) can write lines of its
+//! own and restyle a terminal. Here the text, the message with its fields, is [`escape`]d first,
+//! so one call writes exactly one line; a text without such characters writes the reference's
+//! bytes.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 use heartwood_kernel::log::Level;
@@ -36,8 +43,9 @@ static EMOJI: LazyLock<BTreeMap<&'static str, &'static str>> = LazyLock::new(|| 
 });
 
 /// The line for `message` at `level`, logged at `unix_ms` milliseconds since the Unix epoch, with
-/// the level and message coloured when `colour` is set. The line ends with a newline. `None` when
-/// the time is outside the range of a JavaScript date, where the reference writes no line.
+/// the level and message coloured when `colour` is set. The message is [`escape`]d, and the line
+/// ends with its only newline. `None` when the time is outside the range of a JavaScript date,
+/// where the reference writes no line.
 pub fn line(level: Level, unix_ms: i64, message: &str, colour: bool) -> Option<String> {
     let time = UtcDateTime::from_unix_ms(unix_ms)?;
     let (label, code) = match level {
@@ -57,39 +65,39 @@ pub fn line(level: Level, unix_ms: i64, message: &str, colour: bool) -> Option<S
         line.push(':');
     }
     if !message.is_empty() {
-        line.push(' ');
-        if colour {
-            line.push_str(&coloured(message, CYAN));
-        } else {
-            line.push_str(message);
-        }
+        // Escaped, the message holds no line break and no escape code, which the reference's
+        // colour library would close and reopen the colour around.
+        let (open, close) = if colour { CYAN } else { ("", "") };
+        let _ = write!(line, " {open}{}{close}", escape(message));
     }
     line.push('\n');
     Some(line.replacen(PLACEHOLDER, &level.name().to_ascii_uppercase(), 1))
 }
 
-/// `text` in a colour, as the reference's colour library styles it: a reset of the colour inside
-/// the text reopens it, and the colour is closed before and reopened after each line break.
-fn coloured(text: &str, (open, close): (&str, &str)) -> String {
-    let reopened = if text.contains('\u{1b}') {
-        text.replace(close, &format!("{close}{open}"))
-    } else {
-        text.to_owned()
+/// `text` with each character that could end a line or disguise one written as an escape, in the
+/// form JSON uses: a line feed, carriage return and tab as `\n`, `\r` and `\t`, and as `\uXXXX`
+/// every other control character (C0, DEL and C1), the line and paragraph separators (U+2028,
+/// U+2029) and the bidirectional controls (Unicode's `Bidi_Control`: U+061C, U+200E, U+200F,
+/// U+202A to U+202E, U+2066 to U+2069). Backslashes are kept, so a text without such a character
+/// is returned as it is, and compact JSON inside a text stays JSON of the same value.
+pub fn escape(text: &str) -> Cow<'_, str> {
+    let escaped = |c: char| {
+        c.is_control()
+            || matches!(c, '\u{61c}' | '\u{200e}' | '\u{200f}')
+            || matches!(c, '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
     };
-    let mut out = String::from(open);
-    let mut lines = reopened.split('\n').peekable();
-    while let Some(part) = lines.next() {
-        if lines.peek().is_none() {
-            out.push_str(part);
-            break;
-        }
-        match part.strip_suffix('\r') {
-            Some(before) => out.push_str(&format!("{before}{close}\r\n{open}")),
-            None => out.push_str(&format!("{part}{close}\n{open}")),
-        }
+    if !text.contains(escaped) {
+        return Cow::Borrowed(text);
     }
-    out.push_str(close);
-    out
+    let mut out = String::with_capacity(text.len() + 16);
+    for c in text.chars() {
+        let _ = match c {
+            '\n' | '\r' | '\t' => write!(out, "{}", c.escape_default()),
+            c if escaped(c) => write!(out, "\\u{:04x}", u32::from(c)),
+            c => write!(out, "{c}"),
+        };
+    }
+    Cow::Owned(out)
 }
 
 /// `text` with every emoji code the reference knows (`:dove_of_peace:`) replaced by its emoji
