@@ -96,7 +96,7 @@ pub fn record(left: &str, right: &str, corpus: &Path, out: &Path) -> Result<()> 
                 match request(case, &vars) {
                     Err(unbound) => line.skipped = Some(format!("${{{unbound}}} is not bound")),
                     Ok(_) if line.outside && outside.is_none() => {
-                        line.skipped = Some(format!("{OUTSIDE} is not set"));
+                        line.skipped = Some(super::outside::not_sent());
                     }
                     Ok(sent) => {
                         let source = if line.outside { outside } else { None };

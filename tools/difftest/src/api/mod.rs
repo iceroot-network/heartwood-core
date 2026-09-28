@@ -9,12 +9,14 @@
 //! - [`corpus`]: the corpus files and their variables; [`http`]: the client;
 //! - [`record`]: sending the corpus and recording the answers (`answers.jsonl`, `run.json`);
 //! - [`judge`]: the projections and the outcome of each request;
+//! - [`outside`]: a live run's answers to the `outside` section, which its recipe sends itself;
 //! - [`parse_query_case`] and [`paginate_case`]: the query grammar's and the pagination's records
 //!   of class V28, answered with `heartwood_api`.
 
 pub mod corpus;
 pub mod http;
 pub mod judge;
+pub mod outside;
 pub mod record;
 
 use std::net::{IpAddr, Ipv4Addr};
@@ -30,6 +32,7 @@ use crate::report::{CaseResult, Report};
 use crate::subject::{Case, SubjectError, Verdict};
 
 pub use judge::route_of;
+use outside::OutsideAnswers;
 pub use record::{ANSWERS, OUTSIDE, Recorded};
 
 /// The committed route corpus, relative to the harness's directory.
@@ -62,7 +65,9 @@ pub enum ApiCompareArgs {
 /// Compare the answers of `args`.
 ///
 /// Recorded answers are every `answers.jsonl` under the run directory's `api/` (or under the
-/// directory itself when it has no `api/`), as `api compare --left --right --out` writes them.
+/// directory itself when it has no `api/`), as `api compare --left --right --out` writes them. A
+/// request of the `outside` section left unsent there is judged from the run's
+/// [`outside::RATE_LIMIT`] when the run has one.
 /// Live, the corpus is sent to both nodes first, and the report is also written to
 /// `report.txt` in the output directory.
 pub fn compare(args: &ApiCompareArgs) -> Result<Report> {
@@ -78,7 +83,12 @@ pub fn compare(args: &ApiCompareArgs) -> Result<Report> {
                     message: format!("no recorded {ANSWERS}"),
                 });
             }
-            judge_files(&files, format!("answers recorded under {}", root.display()))
+            let outside = OutsideAnswers::load(&run.join(outside::RATE_LIMIT))?;
+            judge_files(
+                &files,
+                format!("answers recorded under {}", root.display()),
+                outside.as_ref(),
+            )
         }
         ApiCompareArgs::Live {
             left,
@@ -90,6 +100,7 @@ pub fn compare(args: &ApiCompareArgs) -> Result<Report> {
             let report = judge_files(
                 &[out.join(ANSWERS)],
                 format!("{left} (under test) against {right} (control)"),
+                None,
             )?;
             let path = out.join("report.txt");
             std::fs::write(&path, report.to_string()).map_err(|e| Error::io(&path, e))?;
@@ -114,7 +125,11 @@ fn answer_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn judge_files(files: &[PathBuf], source: String) -> Result<Report> {
+fn judge_files(
+    files: &[PathBuf],
+    source: String,
+    outside: Option<&OutsideAnswers>,
+) -> Result<Report> {
     let mut results = Vec::new();
     for path in files {
         let text = std::fs::read_to_string(path).map_err(|e| Error::io(path, e))?;
@@ -124,7 +139,7 @@ fn judge_files(files: &[PathBuf], source: String) -> Result<Report> {
                 line: index + 1,
                 message: e.to_string(),
             })?;
-            results.push(result(path, index + 1, &recorded));
+            results.push(result(path, index + 1, &recorded, outside));
         }
     }
     Ok(Report {
@@ -135,7 +150,25 @@ fn judge_files(files: &[PathBuf], source: String) -> Result<Report> {
     })
 }
 
-fn result(path: &Path, line: usize, recorded: &Recorded) -> CaseResult {
+fn result(
+    path: &Path,
+    line: usize,
+    recorded: &Recorded,
+    outside: Option<&OutsideAnswers>,
+) -> CaseResult {
+    if let Some(answers) = outside.filter(|_| OutsideAnswers::covers(recorded)) {
+        return CaseResult {
+            file: path.display().to_string(),
+            line,
+            op: format!("outside ({})", outside::RATE_LIMIT),
+            label: match recorded.repeat {
+                Some(repeat) => format!("{} #{}", recorded.name, repeat + 1),
+                None => recorded.name.clone(),
+            },
+            height: 0,
+            outcome: answers.judge(recorded),
+        };
+    }
     let op = match &recorded.request {
         Some(request) => match route_of(&request.method, &request.path) {
             Some(route) => format!("{} {}", request.method, route.path()),
