@@ -275,7 +275,7 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
 }
 
 /// The text of the log file at `path`: a rotated file (`.log.gz`) decompressed.
-fn log_text(path: &Path) -> std::io::Result<String> {
+pub(super) fn log_text(path: &Path) -> std::io::Result<String> {
     use std::io::Read;
     let bytes = std::fs::read(path)?;
     if path.extension().and_then(|e| e.to_str()) != Some("gz") {
@@ -294,7 +294,7 @@ fn is_log(name: &str) -> bool {
 }
 
 /// Whether `name` is the relay's own file log, live or rotated, which alone holds its debug lines.
-fn is_file_log(name: &str) -> bool {
+pub(super) fn is_file_log(name: &str) -> bool {
     name.ends_with("-current.log") || name.ends_with(".log.gz")
 }
 

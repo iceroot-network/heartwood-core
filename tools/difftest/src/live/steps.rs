@@ -23,6 +23,35 @@ pub fn required(run: &str) -> Vec<String> {
         "collect",
     ];
     let own: &[&str] = match run {
+        "t" | "m" => &[
+            "txgen-fund",
+            "txgen-once",
+            "vote-before-node2",
+            "stop-forger-node2",
+            "restart-node4",
+            "vote-after-node2",
+            "peers-node5",
+            "batch-node3",
+            "restart-node2",
+            "fresh-node5",
+            "api-corpus",
+            "api-pool",
+            "api-rate-limit",
+        ],
+        "f" => &[
+            "failover-second",
+            "failover-third",
+            "failover-return",
+            "crash-forger-node2",
+            "crash-relay-node3",
+            "restart-node3",
+            "recover-node4",
+            "replay-node5",
+            "outage-two",
+            "outage-three",
+            "resume",
+            "fresh-node5",
+        ],
         "r" | "h" => &[
             "peers-node4",
             "txgen-fund",
@@ -80,6 +109,9 @@ pub fn times(run: &str, step: &str) -> usize {
 /// The problems of the steps: a failed step, a required step that did not run (often enough).
 pub fn problems(run: &str, steps: &[Step]) -> Vec<String> {
     let mut out = Vec::new();
+    if !matches!(run, "r" | "h" | "m1" | "m2" | "t" | "m" | "f") {
+        out.push(format!("unknown live run {run}"));
+    }
     let mut count: BTreeMap<&str, usize> = BTreeMap::new();
     for s in steps {
         *count.entry(s.name.as_str()).or_default() += 1;
@@ -517,6 +549,38 @@ pub fn lags(
             Some((*h, lag))
         })
         .collect()
+}
+
+/// Wallet projection for independently forged runs: delegate metadata and vote weights depend
+/// on timing; balances, nonces, votes and the remaining attributes must agree.
+pub fn compare_scenario_wallets(ours: &Value, theirs: &Value) -> Vec<String> {
+    fn project(v: &Value) -> Value {
+        let mut v = v.clone();
+        if let Some(wallets) = v["wallets"].as_array_mut() {
+            for w in wallets {
+                if let Some(o) = w.as_object_mut() {
+                    o.remove("delegate");
+                    o.remove("voteBalance");
+                    o.remove("votingBalance");
+                }
+                if let Some(o) = w["attributes"].as_object_mut() {
+                    o.retain(|k, _| {
+                        k != "delegate"
+                            && !k.starts_with("delegate.")
+                            && k != "voteBalance"
+                            && k != "votingBalance"
+                    });
+                }
+            }
+        }
+        v
+    }
+    if ours["wallets"].as_array().is_none_or(Vec::is_empty)
+        || theirs["wallets"].as_array().is_none_or(Vec::is_empty)
+    {
+        return vec!["no scenario wallets recorded".into()];
+    }
+    compare_wallets(&project(ours), &project(theirs))
 }
 
 #[cfg(test)]

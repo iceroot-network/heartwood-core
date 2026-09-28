@@ -22,12 +22,29 @@
 //!    limit's answers from an address that no node whitelists;
 //! 5. `bans`: every ban of a node under test's address ([`bans`]);
 //! 6. `invariants`: one tip at the pause, at or below the run's stop height; node 1's chain checked
-//!    by the devnet tooling (every generator the scheduled one, the supply); every block reached
+//!    by the devnet tooling (every generator the scheduled one, the supply; not in runs `m` and `f`,
+//!    whose relays do not serve the route the tooling reads); every block reached
 //!    the nodes under test within one block time (node 4 of runs `r`, `h` and `m1`), outside their fault
 //!    windows;
 //! 7. recorded, not gated (outcome `Pass`, label `recorded: ...`): block lags, the joining node's
 //!    sync time, the transaction propagation, socket-close bans inside fault windows, each node's
 //!    refused and undone blocks.
+//!
+//! The runs of a forging devnet (`t`, the reference's; `m` and `f`, Heartwood's relays and forgers
+//! on loopback addresses) have these checks too, and more:
+//!
+//! - `run`: a dry run of the recipe counts as no live evidence; runs `t` and `m` name their route
+//!   corpus's nodes and hold both txgen summaries; run `m` (and run `t` with the variable
+//!   [`COMPARE`]) compares with the other of the two beside it: complete, of the same seed and
+//!   schedule, the funding and scenario submissions answered alike, the two scripted votes answered alike,
+//!   and the scenario wallets equal but for their delegate attributes and vote weights;
+//! - `judge`: the chain of runs `m` and `f` is node 1's block files, imported through
+//!   [`crate::corpus_from_blocks`]; the reference's processor accepted every block of every chain;
+//! - `invariants`: the one tip is the stop height, and every block reached every relay but node 1
+//!   within one block time outside its fault windows;
+//! - `forging` (runs `m` and `f`, [`forging`]): one applied chain on every relay, the processes and
+//!   their listeners, the status polls, the attestations before every block, no slot with two
+//!   blocks of one key, and run `f`'s faults.
 //!
 //! Besides the report, the check writes every case with its outcome to `live-check.txt` in the run
 //! directory.
@@ -35,6 +52,7 @@
 pub mod bans;
 mod corpora;
 pub mod digest;
+pub mod forging;
 mod nodes;
 pub mod run;
 pub mod steps;
@@ -58,6 +76,10 @@ use run::{Implementation, Manifest};
 pub const CORPUS_ROOT: &str = "target/corpus";
 /// The time a block may take to reach a node under test: one block time.
 pub const LAG_LIMIT_SECONDS: f64 = 8.0;
+/// The variable naming the run a check of run `t` or `m` compares with (the other of the two), as
+/// `make live-check RUN=t COMPARE=m` gives it: make passes a variable of its command line to the
+/// environment of its recipes. Run `m`'s `run.json` names run `t` as its pair already.
+pub const COMPARE: &str = "COMPARE";
 
 /// What a live check reads besides the run directory.
 pub struct LiveOptions<'a> {
@@ -122,7 +144,41 @@ impl Cases {
 
 /// Check the live run in `run_dir` with `options`.
 pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
-    let manifest = Manifest::load(run_dir)?;
+    let mut manifest = Manifest::load(run_dir)?;
+    if let Some(pair) = std::env::var(COMPARE).ok().filter(|p| !p.is_empty()) {
+        if !matches!(
+            (manifest.run.as_str(), pair.as_str()),
+            ("t", "m") | ("m", "t")
+        ) {
+            return Err(Error::Usage(format!(
+                "{COMPARE}={pair}: run {} compares with run t or m only (T against M)",
+                manifest.run
+            )));
+        }
+        manifest.pair = Some(pair);
+    }
+    if matches!(manifest.run.as_str(), "t" | "m" | "f") {
+        let expected = if manifest.run == "f" { 7 } else { 5 };
+        let names: std::collections::BTreeSet<_> = manifest.nodes.iter().map(|n| &n.name).collect();
+        if manifest.round_length != 53
+            || manifest.block_time != 8
+            || manifest.stop_height != 265
+            || manifest.nodes.len() != expected
+            || names.len() != expected
+            || manifest.nodes.iter().filter(|n| n.forger).count() != 5
+        {
+            return Err(Error::Usage(format!(
+                "run {} is a forging devnet of five validators and {} nodes, 53 slots of 8 s a round, stopping at 265; its run.json has {} nodes ({} validators), rounds of {}, {} s slots and the stop height {}",
+                manifest.run,
+                expected,
+                manifest.nodes.len(),
+                manifest.nodes.iter().filter(|n| n.forger).count(),
+                manifest.round_length,
+                manifest.block_time,
+                manifest.stop_height
+            )));
+        }
+    }
     let mut cases = Cases {
         run: manifest.run.clone(),
         results: Vec::new(),
@@ -147,6 +203,7 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
     cases.results.extend(api_cases.results);
     check_bans(run_dir, &manifest, &windows, &mut cases)?;
     check_invariants(run_dir, &manifest, &windows, &mut cases)?;
+    forging::check(run_dir, &manifest, &windows, &mut cases)?;
     let report = Report {
         title: match (&manifest.relay_image, &manifest.relay_binary_sha256) {
             (Some(image), Some(sha)) if manifest.has_heartwood() => format!(
@@ -233,6 +290,13 @@ fn check_run(
             format!("its stop height is {}", manifest.stop_height),
         );
     }
+    if matches!(manifest.run.as_str(), "t" | "m") && manifest.api.is_none() {
+        cases.fail(
+            "run",
+            "the API corpus",
+            "the run does not name its two API nodes",
+        );
+    }
     let mut steps = run::steps(run_dir)?;
     for s in &mut steps {
         let reason = s
@@ -254,7 +318,33 @@ fn check_run(
             );
         }
     }
+    if matches!(manifest.run.as_str(), "t" | "m" | "f") && manifest.dry_run {
+        cases.fail(
+            "run",
+            "a live run",
+            "a dry run is command coverage, not live evidence",
+        );
+    }
     let txgen = run_dir.join("txgen");
+    // Runs t and m hold both txgen records: the funding's `fund/fund.json` and the scenarios'
+    // `once/summary.json` (judged below with every txgen summary).
+    if matches!(manifest.run.as_str(), "t" | "m") {
+        match run::read_json(&txgen.join("fund/fund.json")) {
+            Ok(f) if f.get("ok") == Some(&Value::Bool(true)) => cases.pass(
+                "run",
+                format!(
+                    "txgen fund: {} of {} test wallets funded",
+                    f.get("funded").unwrap_or(&Value::Null),
+                    f.get("testWallets").unwrap_or(&Value::Null)
+                ),
+            ),
+            Ok(f) => cases.fail("run", "txgen fund", format!("fund.json: {f}")),
+            Err(e) => cases.fail("run", "txgen fund", e.to_string()),
+        }
+        if !txgen.join("once/summary.json").exists() {
+            cases.fail("run", "txgen once", "no once/summary.json");
+        }
+    }
     if let Ok(entries) = std::fs::read_dir(&txgen) {
         let mut dirs: Vec<PathBuf> = entries
             .filter_map(|e| e.ok().map(|e| e.path()))
@@ -313,6 +403,11 @@ fn check_run(
     if let Some(pair) = &manifest.pair {
         let other = run_dir.parent().map(|p| p.join(pair));
         match other.filter(|d| d.join("run.json").exists()) {
+            None if matches!(manifest.run.as_str(), "t" | "m") => cases.fail(
+                "run",
+                "the paired run",
+                format!("no run {pair} beside this one"),
+            ),
             None => cases.push(
                 "run",
                 format!("the answers and wallets of run {pair}"),
@@ -320,8 +415,60 @@ fn check_run(
                 Outcome::Skipped(format!("no run {pair} beside this one")),
             ),
             Some(other) => {
-                let ours = steps::submissions(&run_dir.join("txgen/once"))?;
-                let theirs = steps::submissions(&other.join("txgen/once"))?;
+                if matches!(manifest.run.as_str(), "t" | "m") {
+                    let paired = Manifest::load(&other)?;
+                    if paired.status != "complete"
+                        || paired.dry_run
+                        || paired.seed != manifest.seed
+                        || paired.round_length != manifest.round_length
+                        || paired.stop_height != manifest.stop_height
+                    {
+                        cases.fail(
+                            "run",
+                            "the paired run",
+                            "the pair is incomplete or has a different seed or schedule",
+                        );
+                    }
+                }
+                let submissions = |dir: &Path| -> Result<Vec<(String, Value)>> {
+                    let modes: &[&str] = if matches!(manifest.run.as_str(), "t" | "m") {
+                        &["fund", "once"]
+                    } else {
+                        &["once"]
+                    };
+                    let mut all = Vec::new();
+                    for mode in modes {
+                        all.extend(
+                            steps::submissions(&dir.join("txgen").join(mode))?
+                                .into_iter()
+                                .map(|(label, v)| (format!("{mode}: {label}"), v)),
+                        );
+                    }
+                    Ok(all)
+                };
+                let ours = submissions(run_dir)?;
+                let theirs = submissions(&other)?;
+                if matches!(manifest.run.as_str(), "t" | "m") {
+                    let other_steps = run::steps(&other)?;
+                    for name in ["vote-before-node2", "vote-after-node2"] {
+                        let a = steps.iter().find(|s| s.name == name);
+                        let b = other_steps.iter().find(|s| s.name == name);
+                        if a.zip(b).is_none_or(|(a, b)| {
+                            !a.ok
+                                || !b.ok
+                                || ["outcome", "code", "message", "http"]
+                                    .iter()
+                                    .any(|k| a.record[*k] != b.record[*k])
+                                || a.record["outcome"].is_null()
+                        }) {
+                            cases.fail(
+                                "run",
+                                "scripted vote answers",
+                                format!("{name}: missing or unequal verdicts"),
+                            );
+                        }
+                    }
+                }
                 let d = steps::compare_submissions(&ours, &theirs);
                 if d.differences.is_empty() && !ours.is_empty() {
                     cases.pass(
@@ -346,6 +493,8 @@ fn check_run(
                         p.clone(),
                     );
                 }
+                // Two chains of their own: a message that names a height or a time differs in its
+                // numbers only (recorded, as for runs r and h).
                 for p in &d.timing {
                     cases.record(
                         "run",
@@ -366,7 +515,11 @@ fn check_run(
                 );
                 match w {
                     (Ok(a), Ok(b)) => {
-                        let d = steps::compare_wallets(&a, &b);
+                        let d = if matches!(manifest.run.as_str(), "t" | "m") {
+                            steps::compare_scenario_wallets(&a, &b)
+                        } else {
+                            steps::compare_wallets(&a, &b)
+                        };
                         if d.is_empty() {
                             let n = a.get("count").and_then(Value::as_u64).unwrap_or(0);
                             cases.pass(
@@ -449,6 +602,34 @@ fn check_judge(
         ) {
             Err(e) => cases.fail("judge", label, e.to_string()),
             Ok(judged) => {
+                if matches!(manifest.run.as_str(), "t" | "m" | "f") {
+                    let results = run::read_lines(&judged.dir.join(crate::corpus::TS_PROCESSOR));
+                    match results {
+                        Ok(rows) => {
+                            let accepted: std::collections::BTreeSet<_> = rows
+                                .iter()
+                                .filter(|r| r["step"] == "apply" && r["result"] == "Accepted")
+                                .filter_map(|r| r["h"].as_u64())
+                                .collect();
+                            if (2..=u64::from(judged.tip)).all(|h| accepted.contains(&h))
+                                && !rows
+                                    .iter()
+                                    .any(|r| r.get("result").is_some_and(|x| x != "Accepted"))
+                            {
+                                cases.pass("judge", "the reference processor accepted every block's schedule and economics");
+                            } else {
+                                cases.fail(
+                                    "judge",
+                                    "reference processor acceptance",
+                                    "missing or refused block results",
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            cases.fail("judge", "reference processor acceptance", e.to_string())
+                        }
+                    }
+                }
                 let how = match (judged.imported, judged.judged) {
                     (true, true) => "imported and judged now",
                     (false, true) => "judged now",
@@ -580,12 +761,21 @@ fn check_nodes(
         .map(|w| (w.fault.clone(), w.nodes.clone()))
         .collect();
     let steps = run::steps(run_dir)?;
-    let references: Vec<&str> = manifest
+    // The peers whose violations fail a relay: the reference nodes, and in a devnet of Heartwood
+    // nodes every node and forger address (no violation is recorded against a devnet node).
+    let forgers = forging::validators(run_dir).unwrap_or_default();
+    let mut references: Vec<&str> = manifest
         .nodes
         .iter()
-        .filter(|n| n.implementation == Implementation::Reference)
+        .filter(|n| {
+            matches!(manifest.run.as_str(), "m" | "f")
+                || n.implementation == Implementation::Reference
+        })
         .map(|n| n.ip.as_str())
         .collect();
+    if matches!(manifest.run.as_str(), "m" | "f") {
+        references.extend(forgers.iter().map(|v| v.forger.as_str()));
+    }
     for node in manifest.under_test() {
         let checks = match node.implementation {
             Implementation::Heartwood => {
@@ -726,14 +916,23 @@ fn check_bans(
         );
         return Ok(());
     }
-    let bans: Vec<bans::Ban> = run::read_lines(&path)?
-        .iter()
-        .filter_map(bans::Ban::from_json)
-        .collect();
+    let records = run::read_lines(&path)?;
+    let bans: Vec<bans::Ban> = records.iter().filter_map(bans::Ban::from_json).collect();
+    if bans.len() != records.len() {
+        cases.fail("bans", "the ban scan", "a malformed ban record");
+    }
+    // A node's addresses: its own, and its forger's when that is another (node 1 of run f).
+    let forgers = forging::validators(run_dir).unwrap_or_default();
+    let address_matches = |node: &run::Node, ip: &str| {
+        ip == node.ip
+            || forgers
+                .iter()
+                .any(|v| v.name == node.name && !v.forger.is_empty() && v.forger == ip)
+    };
     for node in manifest.under_test() {
         let mut inside: BTreeMap<String, usize> = BTreeMap::new();
         let mut bad = 0usize;
-        for ban in bans.iter().filter(|b| b.ip == node.ip) {
+        for ban in bans.iter().filter(|b| address_matches(node, &b.ip)) {
             match bans::classify(ban, &node.name, windows) {
                 bans::Verdict::InWindow(fault) => {
                     *inside
@@ -781,7 +980,7 @@ fn check_bans(
     }
     let others = bans
         .iter()
-        .filter(|b| !manifest.under_test().any(|n| n.ip == b.ip))
+        .filter(|b| !manifest.under_test().any(|n| address_matches(n, &b.ip)))
         .count();
     cases.record(
         "bans",
@@ -826,7 +1025,10 @@ fn check_invariants(
             match distinct.iter().next() {
                 Some((h, id)) if distinct.len() == 1 && missing.is_empty() && !id.is_empty() => {
                     let h32 = u32::try_from(*h).unwrap_or(u32::MAX);
-                    if h32 <= manifest.stop_height {
+                    if h32 <= manifest.stop_height
+                        && (!matches!(manifest.run.as_str(), "t" | "m" | "f")
+                            || h32 == manifest.stop_height)
+                    {
                         cases.push(
                             "invariants",
                             format!(
@@ -852,40 +1054,42 @@ fn check_invariants(
             }
         }
     }
-    match run::read_json(&run_dir.join("check-chain.json")) {
-        Err(e) => cases.fail(
-            "invariants",
-            "node 1's chain: the schedule and the supply",
-            e.to_string(),
-        ),
-        Ok(c) => {
-            let problems = c
-                .get("problems")
-                .and_then(Value::as_array)
-                .map_or(0, Vec::len);
-            let ok = c
-                .get("ok")
-                .and_then(Value::as_bool)
-                .unwrap_or(problems == 0);
-            let scheduled = c
-                .pointer("/stats/scheduleChecked")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            if ok && problems == 0 && scheduled > 0 {
-                cases.pass(
+    if !matches!(manifest.run.as_str(), "m" | "f") {
+        match run::read_json(&run_dir.join("check-chain.json")) {
+            Err(e) => cases.fail(
+                "invariants",
+                "node 1's chain: the schedule and the supply",
+                e.to_string(),
+            ),
+            Ok(c) => {
+                let problems = c
+                    .get("problems")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                let ok = c
+                    .get("ok")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(problems == 0);
+                let scheduled = c
+                    .pointer("/stats/scheduleChecked")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                if ok && problems == 0 && scheduled > 0 {
+                    cases.pass(
                     "invariants",
                     format!(
                         "node 1's chain: {scheduled} blocks forged by their scheduled delegate, the supply check holds"
                     ),
                 );
-            } else {
-                cases.fail(
+                } else {
+                    cases.fail(
                     "invariants",
                     "node 1's chain: the schedule and the supply",
                     format!(
                         "{problems} problems in check-chain.json, {scheduled} blocks checked against the schedule"
                     ),
                 );
+                }
             }
         }
     }
@@ -904,7 +1108,8 @@ fn check_invariants(
             .map_or(from, |t| t.max(from));
         let lags = steps::lags(&arrivals, &node.name, &manifest.control, windows, from);
         // Node 4 of runs `r`, `h` and `m1` is gated: every block within one block time.
-        let gated = node.name == "node4" && manifest.run != "m2";
+        let gated = (node.name == "node4" && manifest.run != "m2")
+            || (matches!(manifest.run.as_str(), "t" | "m" | "f") && node.name != manifest.control);
         if lags.is_empty() {
             if gated {
                 cases.fail(
