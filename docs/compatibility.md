@@ -981,8 +981,11 @@ and nix are used by this crate only (`make layers`).
 - **instances**: a token, a network and a role, named `<token>-<network>-<role>`, with the five
   directories of the `CORE_PATH_*` variables; `config.json` only fills a missing `--token` or
   `--network`.
-- **the supervisor** (`heartwood supervise`): pm2's restart rules (a child that ran for 1 second or
-  more restarts at once; after 5 shorter runs in a row the role is `errored`), a stop by SIGINT
+- **the supervisor** (`heartwood supervise`): pm2's restart rules (a child that exits restarts at
+  once; a run under 1 second counts as unstable only in the supervisor's first 5 seconds, the
+  count is never reset, and the 5th unstable run makes the role `errored`), the child leading a
+  process group of its own, `relay start` and `forger start` daemons unless `--daemon=false` or
+  `--no-daemon` says otherwise, a stop by SIGINT
   and SIGKILL 30 seconds later, a lock per role, a state file, and the child's output captured
   into `<name>-out.log` and `<name>-error.log`, rotated at 500 MB into seven numbered files.
 - **the role commands**: `start`, `stop`, `restart`, `status` (with a process table read from
@@ -994,7 +997,10 @@ and nix are used by this crate only (`make layers`).
   `logs`, `stop-node`, `start-node`, `restart-node`, `reset`, `wait` and `env` for a local devnet
   with one loopback address per node (node k on `127.0.0.(10 + k)`, P2P on port 6002 and the API
   on 6003; another prefix lets devnets run side by side), its relays and forgers started through
-  the supervisor, and the relays' APIs read with a loopback HTTP GET.
+  the supervisor, and the relays' APIs read with a loopback HTTP GET. A start refuses a node
+  whose P2P or API host, as `app.json`, the environment and the `.env` files give it, is not
+  loopback, and a relay with devnet addressing refuses to start when its API would listen outside
+  127.0.0.0/8.
 
 Where the commands differ on purpose from the reference's: the process names carry the network;
 a second supervisor of an instance's role refuses to start (its lock); a `config.json` that is not

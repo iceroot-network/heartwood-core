@@ -190,11 +190,17 @@ pub fn run(devnet: Devnet) -> ExitCode {
             },
         );
         let (clock, pause) = (&SystemClock, &std::thread::sleep);
+        let process: Vec<(String, String)> = std::env::vars().collect();
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default();
         let tools = Tools {
             ops: &ops,
             api: &api,
             clock,
             pause,
+            process: &process,
+            home: &home,
         };
         devnet_command(&devnet.dir, devnet.command, &tools).map_err(|error| error.to_string())
     }))

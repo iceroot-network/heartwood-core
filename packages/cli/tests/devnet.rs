@@ -266,6 +266,7 @@ struct Bench {
     api: Api,
     clock: ManualClock,
     pauses: RefCell<Vec<Duration>>,
+    home: PathBuf,
     _serial: MutexGuard<'static, ()>,
 }
 
@@ -278,6 +279,7 @@ impl Bench {
             api: Api::default(),
             clock: ManualClock::new(T0),
             pauses: RefCell::new(Vec::new()),
+            home: scratch(&format!("{name}-home")),
             _serial: serial,
         }
     }
@@ -289,6 +291,8 @@ impl Bench {
             api: &self.api,
             clock: &self.clock,
             pause: &pause,
+            process: &[],
+            home: &self.home,
         })
     }
 
@@ -564,6 +568,42 @@ fn init_refuses_an_existing_devnet_unless_forced_and_then_stops_it_first() {
 }
 
 #[test]
+fn a_forced_init_leaves_a_devnet_alone_whose_manifest_is_unreadable_while_it_runs() {
+    let bench = Bench::new("force-unreadable");
+    bench.init(&options(2)).unwrap();
+    let run = bench.root.join("node1/data/run");
+    fs::create_dir_all(&run).unwrap();
+    let held = heartwood_cli::supervisor::signals::take_lock(&run.join("relay.lock"));
+    let _held = held.unwrap().expect("the lock is free");
+    fs::write(bench.root.join("devnet.json"), "{ not json").unwrap();
+    let forced = InitOptions {
+        force: true,
+        ..options(1)
+    };
+    let refused = bench.init(&forced);
+    assert!(
+        matches!(&refused, Err(DevnetError::Manifest { reason, .. }) if reason.contains("node1")),
+        "{refused:?}"
+    );
+    assert!(bench.root.join("node2").exists());
+    assert!(bench.root.join("node1/config").exists());
+    drop(_held);
+    assert_eq!(bench.init(&forced).unwrap().nodes.len(), 1);
+}
+
+#[test]
+fn the_manifest_that_holds_the_seed_is_private_like_the_keys() {
+    let bench = Bench::new("manifest-mode");
+    bench.init(&options(1)).unwrap();
+    let mode = |path: &str| {
+        let meta = fs::metadata(bench.root.join(path)).unwrap();
+        meta.permissions().mode() & 0o777
+    };
+    assert_eq!(mode("devnet.json"), 0o600);
+    assert_eq!(mode("node1/config/delegates.json"), 0o600);
+}
+
+#[test]
 fn init_uses_a_directory_that_holds_other_files_but_no_devnet() {
     let bench = Bench::new("other-files");
     fs::write(bench.root.join("notes.txt"), "keep").unwrap();
@@ -803,6 +843,62 @@ fn start_refuses_changed_crypto_files_open_listeners_and_taken_addresses() {
 }
 
 #[test]
+fn start_guards_the_hosts_the_nodes_would_listen_on_not_only_their_env_file() {
+    let bench = Bench::new("effective-hosts");
+    bench.init(&options(2)).unwrap();
+    bench.api.every(2, &["genesis"]);
+    let start = || bench.with(|tools| devnet::start(&bench.root, &bench.all(), tools));
+    let app = bench.root.join("node2/config/app.json");
+    let text = bench.file("node2/config/app.json");
+    let mut json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let api = json["relay"]["plugins"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|plugin| plugin["package"] == "@solar-network/api")
+        .unwrap();
+    api["options"] = serde_json::json!({ "server": { "http": { "host": "0.0.0.0" } } });
+    fs::write(&app, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    let refused = start();
+    assert!(
+        matches!(&refused, Err(DevnetError::Guard(text)) if text.contains("node 2") && text.contains("server.http.host")),
+        "{refused:?}"
+    );
+    fs::write(&app, text).unwrap();
+    let global = bench.home.join(".node1");
+    fs::create_dir_all(&global).unwrap();
+    fs::write(global.join(".env"), "CORE_API_HOST=0.0.0.0\n").unwrap();
+    let refused = start();
+    assert!(
+        matches!(&refused, Err(DevnetError::Guard(text)) if text.contains("node 1") && text.contains("CORE_API_HOST")),
+        "{refused:?}"
+    );
+    fs::remove_dir_all(&global).unwrap();
+    assert!(bench.ops.calls().is_empty());
+    start().unwrap();
+}
+
+#[test]
+fn a_manifest_whose_address_prefix_is_not_loopback_is_refused_when_read() {
+    let bench = Bench::new("prefix-read");
+    bench.init(&options(1)).unwrap();
+    let text = bench.file("devnet.json");
+    fs::write(
+        bench.root.join("devnet.json"),
+        text.replace(
+            "\"addressPrefix\": \"127.13.0\"",
+            "\"addressPrefix\": \"10.13.0\"",
+        ),
+    )
+    .unwrap();
+    let read = Manifest::read(&bench.root);
+    assert!(
+        matches!(&read, Err(DevnetError::Manifest { reason, .. }) if reason.contains("127.0.0.0/8")),
+        "{read:?}"
+    );
+}
+
+#[test]
 fn stop_stops_the_forgers_before_the_relays_and_skips_what_does_not_run() {
     let bench = Bench::new("stop");
     bench.init(&options(3)).unwrap();
@@ -936,6 +1032,20 @@ fn reset_stops_a_node_and_deletes_its_state_but_keeps_its_config_and_signing_rec
 }
 
 #[test]
+fn reset_refuses_a_directory_that_is_a_link_and_leaves_its_target_alone() {
+    let bench = Bench::new("reset-link");
+    bench.init(&options(1)).unwrap();
+    let target = scratch("reset-link-target");
+    fs::write(target.join("keep.txt"), "mine").unwrap();
+    let log = bench.root.join("node1/log");
+    let _ = fs::remove_dir_all(&log);
+    std::os::unix::fs::symlink(&target, &log).unwrap();
+    let refused = bench.with(|tools| devnet::reset(&bench.root, 1, tools));
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(fs::read_to_string(target.join("keep.txt")).unwrap(), "mine");
+}
+
+#[test]
 fn wait_polls_every_two_seconds_until_the_answering_relays_reach_the_height() {
     let bench = Bench::new("wait");
     bench.init(&options(3)).unwrap();
@@ -1009,7 +1119,7 @@ fn status_compares_the_relays_at_their_lowest_common_height_and_counts_online_de
     assert_eq!(consistent.nodes[3].api, None);
     assert_eq!(
         consistent.to_string(),
-        "chain consistent at height 3; delegates with an online forger: 33 of 53 (27 needed)"
+        "chain consistent at height 3 (3 of 6 relays); delegates with an online forger: 33 of 53 (27 needed)"
     );
     bench.api.chain(6, &["genesis", "b2", "x3", "x4"]);
     bench
@@ -1019,11 +1129,9 @@ fn status_compares_the_relays_at_their_lowest_common_height_and_counts_online_de
     assert_eq!(diverged.consistency, Consistency::Diverged(3));
     assert_eq!(diverged.online_delegates, 22);
     assert!(!diverged.has_quorum());
-    assert!(
-        diverged
-            .to_string()
-            .starts_with("chain DIVERGED at 3; delegates with an online forger: 22 of 53")
-    );
+    assert!(diverged.to_string().starts_with(
+        "chain DIVERGED at 3 (4 of 6 relays); delegates with an online forger: 22 of 53"
+    ));
 }
 
 #[test]

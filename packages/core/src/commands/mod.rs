@@ -180,6 +180,28 @@ mod tests {
         parse(text.split_whitespace().map(OsString::from).collect())
     }
 
+    /// Whether `relay start` and `forger start` with `flags` run as a daemon.
+    fn daemon(role: &str, flags: &str) -> bool {
+        let text = format!("heartwood {role} start --network devnet {flags}");
+        match line(&text).unwrap() {
+            Command::Relay(relay::RelayCommand::Start(start)) => start.daemon,
+            Command::Forger(forger::ForgerCommand::Start(start)) => start.daemon,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn start_is_a_daemon_unless_the_reference_spellings_of_the_flag_say_otherwise() {
+        for role in ["relay", "forger"] {
+            for flags in ["", "--daemon", "--daemon=true"] {
+                assert!(daemon(role, flags), "{role} {flags}");
+            }
+            for flags in ["--daemon=false", "--no-daemon"] {
+                assert!(!daemon(role, flags), "{role} {flags}");
+            }
+        }
+    }
+
     #[test]
     fn every_family_parses_and_the_colon_spellings_are_the_same_commands() {
         let run = line("heartwood relay run --token solar --network devnet --networkStart");

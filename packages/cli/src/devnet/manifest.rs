@@ -9,12 +9,14 @@ use std::path::{Path, PathBuf};
 
 use heartwood_crypto::crypto::hash::sha256;
 use heartwood_crypto::utils::hex;
+use nix::fcntl::OFlag;
 use serde_json::{Map, Value, json};
 
 use crate::devnet::{CRYPTO_FILES, MANIFEST, MAX_NODES, Manifest, ManifestNode, NETWORK};
 use crate::devnet::{Result, plan};
 use crate::errors::DevnetError;
 use crate::seams::ProcessOps;
+use crate::supervisor::signals::is_locked;
 
 /// The manifest's format.
 const FORMAT: u64 = 1;
@@ -54,6 +56,7 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> Result<()> {
 pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut options = OpenOptions::new();
     let options = options.write(true).create(true).truncate(true).mode(0o600);
+    let options = options.custom_flags(OFlag::O_NOFOLLOW.bits());
     let mut file = options.open(path).map_err(io(path))?;
     let private = file.set_permissions(fs::Permissions::from_mode(0o600));
     private
@@ -99,11 +102,40 @@ pub(crate) fn clear(root: &Path, force: bool, ops: &dyn ProcessOps) -> Result<()
         let root = root.to_path_buf();
         return Err(DevnetError::Exists { root });
     }
-    if let Ok(old) = Manifest::read(root) {
-        let every: Vec<u32> = old.nodes.iter().map(|node| node.index).collect();
-        crate::devnet::control::stop_nodes(&old, &every, None, false, ops)?;
+    match Manifest::read(root) {
+        Ok(old) => {
+            let every: Vec<u32> = old.nodes.iter().map(|node| node.index).collect();
+            crate::devnet::control::stop_nodes(&old, &every, None, false, ops)?;
+        }
+        Err(_) => refuse_running(root)?,
     }
     existing.iter().try_for_each(|path| remove(path))
+}
+
+/// Refuse when a process of a devnet whose manifest cannot be read still runs: it holds a lock
+/// under `node<k>/data/run`, and removing its files would leave it running unseen.
+fn refuse_running(root: &Path) -> Result<()> {
+    for k in 1..=MAX_NODES {
+        let run = root.join(format!("node{k}/data/run"));
+        let Ok(files) = fs::read_dir(&run) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let path = file.path();
+            let is_lock = path
+                .extension()
+                .is_some_and(|extension| extension == "lock");
+            if is_lock && is_locked(&path)? {
+                let reason = format!(
+                    "its manifest cannot be read and node{k} still runs ({}); stop it first",
+                    file.file_name().to_string_lossy()
+                );
+                let root = root.to_path_buf();
+                return Err(DevnetError::Manifest { root, reason });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Remove the devnet's files from `root` after a failed `init`, as far as that works.
@@ -172,7 +204,7 @@ impl Manifest {
             "nodes": self.nodes.iter().map(node).collect::<Vec<_>>(),
         });
         let (temp, path) = (root.join(format!("{MANIFEST}.tmp")), root.join(MANIFEST));
-        write(&temp, pretty(&value).as_bytes())?;
+        write_private(&temp, pretty(&value).as_bytes())?;
         fs::rename(&temp, &path).map_err(io(&path))
     }
 }
@@ -197,6 +229,9 @@ fn parse(root: &Path, value: &Value) -> Result<Manifest, String> {
     let bytes: Option<Vec<u8>> = prefix.split('.').map(|part| part.parse().ok()).collect();
     let prefix = bytes.and_then(|bytes| <[u8; 3]>::try_from(bytes).ok());
     let address_prefix = prefix.ok_or_else(|| invalid("addressPrefix"))?;
+    if address_prefix[0] != 127 {
+        return Err("addressPrefix is not in 127.0.0.0/8".to_owned());
+    }
     let failover = list("failover")?
         .iter()
         .map(|entry| entry.as_str()?.parse().ok());

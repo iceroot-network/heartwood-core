@@ -260,7 +260,7 @@ fn start_refuses_a_running_role_and_stop_a_stopped_one() {
     let with = |command: &[&'static str]| [command, &instance[..]].concat();
     let stopped = node.run(&with(&["forger", "stop"]));
     assert!(!stopped.status.success(), "a stopped forger cannot stop");
-    let started = node.run(&with(&["forger", "start", "--daemon"]));
+    let started = node.run(&with(&["forger", "start"]));
     assert!(started.status.success(), "{started:?}");
     wait_until(Duration::from_secs(20), "forger's pid file", || {
         node.data().join("run/forger.pid").exists()

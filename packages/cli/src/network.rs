@@ -32,6 +32,7 @@ use heartwood_crypto::genesis::{
 use heartwood_crypto::utils::{hex, js};
 use heartwood_kernel::Clock;
 use heartwood_kernel::timestamp::UtcDateTime;
+use nix::fcntl::OFlag;
 use serde_json::{Map, Value, json};
 use zeroize::Zeroizing;
 
@@ -269,7 +270,9 @@ fn files(
             "aux": hex::encode(forger_aux),
         },
     });
+    // The reference's schema requires the three profiles, the `core` one too.
     let app = json!({
+        "core": { "plugins": [] },
         "relay": { "plugins": [
             plugin("logger"), plugin("state"), plugin("database"), plugin("transactions"),
             plugin("pool"), p2p_plugin, plugin("blockchain"), plugin("api"),
@@ -372,6 +375,7 @@ fn write_all(out: &Path, files: &[File], force: bool) -> Result<(), NetworkError
             .create(true)
             .truncate(true)
             .mode(mode)
+            .custom_flags(OFlag::O_NOFOLLOW.bits())
             .open(&path);
         let mut file = file.map_err(failed(&path))?;
         // The mode above applies only to a new file.

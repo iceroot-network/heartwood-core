@@ -27,13 +27,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use heartwood_kernel::{Clock, SystemClock};
-use nix::sys::signal::{Signal, killpg};
-use nix::unistd::{Pid, getpgid};
+use nix::sys::signal::Signal;
 
 use crate::errors::ProcessError;
 use crate::process_table;
 use crate::seams::{Env, Instance, ProcessOps, StatusRow, SupervisedStatus};
-use crate::supervisor::signals::{KILL_AFTER, is_locked, send, signal_if_locked};
+use crate::supervisor::signals::{KILL_AFTER, held_pid, is_locked, send, signal_if_locked};
 use crate::supervisor::state::SupervisorState;
 use crate::supervisor::{SuperviseArgs, VERSION, at, run_dir};
 
@@ -75,7 +74,9 @@ pub fn start(
         .envs(env.iter().cloned().chain(path_env(instance)))
         .stdin(Stdio::null());
     if daemon {
-        command.stdout(Stdio::null()).stderr(Stdio::null());
+        // The supervisor's stderr is a pipe until it has started, so that `start` can say why a
+        // supervisor that fails to start did; it then points its stderr at /dev/null.
+        command.stdout(Stdio::null()).stderr(Stdio::piped());
     }
     // A state file left by an earlier supervisor may name a pid the system has since reused.
     let earlier = SupervisorState::read(&instance.state_path()).ok().flatten();
@@ -95,7 +96,17 @@ pub fn start(
             Some(_) if daemon && is_locked(&lock)? => {
                 return Err(ProcessError::AlreadyRunning { name });
             }
-            Some(exit) => return Err(failed(format!("the supervisor exited: {exit}"))),
+            Some(exit) => {
+                let mut reason = String::new();
+                if let Some(pipe) = supervisor.stderr.take() {
+                    let _ = pipe.take(4096).read_to_string(&mut reason);
+                }
+                let reason = reason.trim();
+                let sep = if reason.is_empty() { "" } else { ": " };
+                return Err(failed(format!(
+                    "the supervisor exited: {exit}{sep}{reason}"
+                )));
+            }
             None if daemon && ours(supervisor.id())? => return Ok(()),
             None if daemon && Instant::now() >= deadline => {
                 let seconds = START_WAIT.as_secs();
@@ -113,7 +124,8 @@ pub fn stop(instance: &Instance) -> Result<(), ProcessError> {
     let (lock, pid, signal) = match row.status {
         SupervisedStatus::OnlineUnsupervised => (instance.lock_path(), row.pid, Signal::SIGINT),
         status if status.is_running() => {
-            let pid = read_state(instance)?.supervisor_pid;
+            let pid = supervisor_pid(instance)?;
+            let pid = pid.ok_or_else(|| ProcessError::NotRunning { name: name.clone() })?;
             (instance.supervisor_lock_path(), Some(pid), Signal::SIGTERM)
         }
         _ => return Err(ProcessError::NotRunning { name }),
@@ -138,27 +150,20 @@ pub fn stop(instance: &Instance) -> Result<(), ProcessError> {
 }
 
 /// Kill `instance`'s supervisor and node with SIGKILL, as a crash does, wait until they have
-/// exited, and record the stop in the state file. A daemon supervisor leads its own process group,
-/// which holds its node, so both are killed at once and the node is never restarted; otherwise the
-/// node is killed through its own lock.
+/// exited, and record the stop in the state file. The supervisor is killed first, so the node is
+/// never restarted, then the node through its own lock.
 pub fn kill(instance: &Instance) -> Result<(), ProcessError> {
     let name = instance.name();
     let (supervisor_lock, node_lock) = (instance.supervisor_lock_path(), instance.lock_path());
     let state = SupervisorState::read(&instance.state_path())?;
-    let supervised = is_locked(&supervisor_lock)?;
     let seconds = EXIT_WAIT.as_secs();
     let timeout = || ProcessError::Timeout {
         name: name.clone(),
         seconds,
     };
     let mut killed = false;
-    if let Some(state) = state.as_ref().filter(|_| supervised) {
-        let supervisor = Pid::from_raw(i32::try_from(state.supervisor_pid).unwrap_or(0));
-        let sent = if getpgid(Some(supervisor)) == Ok(supervisor) {
-            killpg(supervisor, Signal::SIGKILL).is_ok()
-        } else {
-            send(state.supervisor_pid, Signal::SIGKILL)?
-        };
+    if let Some(pid) = supervisor_pid(instance)? {
+        let sent = send(pid, Signal::SIGKILL)?;
         if sent && !wait_unlocked(&supervisor_lock, EXIT_WAIT)? {
             return Err(timeout());
         }
@@ -357,6 +362,19 @@ fn read_state(instance: &Instance) -> Result<SupervisorState, ProcessError> {
     let path = instance.state_path();
     let reason = "no state file".into();
     SupervisorState::read(&path)?.ok_or(ProcessError::State { path, reason })
+}
+
+/// The pid of the supervisor that holds `instance`'s supervisor lock, as the lock file records
+/// it; the state file's, for a supervisor that recorded none (one started by an earlier build).
+fn supervisor_pid(instance: &Instance) -> Result<Option<u32>, ProcessError> {
+    let lock = instance.supervisor_lock_path();
+    if let Some(pid) = held_pid(&lock)? {
+        return Ok(Some(pid));
+    }
+    let state = SupervisorState::read(&instance.state_path())?;
+    Ok(state
+        .filter(|_| is_locked(&lock).unwrap_or(false))
+        .map(|s| s.supervisor_pid))
 }
 
 /// The pid in the pid file at `path`, if it holds one.

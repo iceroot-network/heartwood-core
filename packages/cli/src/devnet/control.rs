@@ -1,6 +1,7 @@
 //! Starting, stopping, restarting and resetting a devnet's nodes, the epoch re-stamp, and
 //! waiting for a height.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
 use std::net::IpAddr;
@@ -9,6 +10,8 @@ use std::time::Duration;
 
 use heartwood_crypto::crypto::slots;
 use heartwood_kernel::Clock;
+use heartwood_kernel::config::app::{self, Role as AppRole};
+use heartwood_kernel::config::env;
 use serde_json::Value;
 
 use crate::devnet::manifest::{crypto_files, hashes, io, remove, write};
@@ -34,15 +37,15 @@ const START: [Role; 2] = Role::ALL;
 const STOP: [Role; 2] = [Role::Forger, Role::Relay];
 
 /// Start the selected nodes: the relays, then, once their APIs answer (30 s at most), the
-/// forgers. Refused when a crypto file differs from the manifest, a node's `.env` binds a
-/// listener outside loopback, a selected role runs, or a relay's address is taken. Before any
+/// forgers. Refused when a crypto file differs from the manifest, a node's P2P or API listener
+/// would bind outside loopback, a selected role runs, or a relay's address is taken. Before any
 /// process starts, the epoch is re-stamped `epoch_delay` seconds after the clock's time when it
 /// is less than 10 s away or past, no process of the devnet runs and no node has a chain store;
 /// the re-stamp also removes every forger's signing record.
 pub fn start(root: &Path, selection: &NodeSelection, tools: &Tools<'_>) -> Result<()> {
     let (root, mut manifest) = open(root)?;
     let (picked, role) = (manifest.select(selection)?, selection.role);
-    preflight(&root, &manifest, &picked)?;
+    preflight(&root, &manifest, &picked, tools)?;
     for (k, role) in targets(&manifest, &picked, role, START)? {
         let instance = manifest.node(k)?.instance(role);
         if tools.ops.status(&instance)?.status.is_running() {
@@ -83,7 +86,7 @@ pub fn stop_node(root: &Path, k: u32, role: Option<Role>, kill: bool, tools: &To
 pub fn restart_node(root: &Path, node: u32, role: Option<Role>, tools: &Tools<'_>) -> Result<()> {
     let (root, manifest) = open(root)?;
     let picked = [manifest.node(node)?.index];
-    preflight(&root, &manifest, &picked)?;
+    preflight(&root, &manifest, &picked, tools)?;
     for (k, role) in targets(&manifest, &picked, role, START)? {
         let instance = manifest.node(k)?.instance(role);
         if !tools.ops.status(&instance)?.status.is_running() {
@@ -102,6 +105,11 @@ pub fn reset(root: &Path, node: u32, tools: &Tools<'_>) -> Result<()> {
     let paths = manifest.node(node)?.paths();
     stop_nodes(&manifest, &[node], None, false, tools.ops)?;
     for dir in [&paths.data, &paths.log, &paths.temp, &paths.cache] {
+        // A directory that is a link would have its target emptied: refuse it.
+        if fs::symlink_metadata(dir).is_ok_and(|meta| meta.is_symlink()) {
+            let message = "is a symbolic link, not a directory";
+            return Err(io(dir)(std::io::Error::other(message)));
+        }
         let entries = match fs::read_dir(dir) {
             Err(error) if error.kind() == ErrorKind::NotFound => continue,
             entries => entries.map_err(io(dir))?,
@@ -169,8 +177,9 @@ fn targets(m: &Manifest, picked: &[u32], role: Option<Role>, order: [Role; 2]) -
 }
 
 /// The checks before a start: the chain's and every node's crypto files have the manifest's
-/// hashes, and each picked node's `.env` binds its P2P and API listeners to loopback addresses.
-fn preflight(root: &Path, manifest: &Manifest, picked: &[u32]) -> Result<()> {
+/// hashes, and each picked node's P2P and API listeners bind to loopback addresses, where the node
+/// would take those from (`app.json`, the environment, `.env` files).
+fn preflight(root: &Path, manifest: &Manifest, picked: &[u32], tools: &Tools<'_>) -> Result<()> {
     let nodes = manifest
         .nodes
         .iter()
@@ -186,20 +195,54 @@ fn preflight(root: &Path, manifest: &Manifest, picked: &[u32]) -> Result<()> {
         }
     }
     for k in picked {
-        let env = node_env(manifest.node(*k)?)?;
-        for key in ["CORE_P2P_HOST", "CORE_API_HOST"] {
-            let value = env.iter().rev().find(|(name, _)| name == key);
-            let value = value.map(|(_, value)| value.to_string_lossy());
-            let ip = value
-                .as_deref()
-                .and_then(|value| value.parse::<IpAddr>().ok());
+        let node = manifest.node(*k)?;
+        for (source, value) in listener_hosts(node, tools)? {
+            let ip = value.parse::<IpAddr>().ok();
             if !ip.is_some_and(|ip| ip.is_loopback()) {
-                let text = format!("node {k}'s .env sets {key} to {value:?}: not loopback");
+                let text = format!("node {k}'s {source} is {value:?}: not loopback");
                 return Err(DevnetError::Guard(text));
             }
         }
     }
     Ok(())
+}
+
+/// The hosts a node's listeners would take, each with where it comes from: the P2P server's and
+/// the API's, as the relay reads them. The API's is the `server.http.host` option of its entry in
+/// `app.json` when that gives one, else `CORE_API_HOST`; the environment is the process's, the
+/// node's own `.env`, and `~/.<token>/.env` over both, as the node loads it. A host that is
+/// missing reads as the empty text, which is not loopback.
+fn listener_hosts(node: &ManifestNode, tools: &Tools<'_>) -> Result<Vec<(String, String)>> {
+    let mut vars: BTreeMap<String, String> = tools.process.iter().cloned().collect();
+    for (key, value) in node_env(node)? {
+        vars.insert(
+            key.to_string_lossy().into_owned(),
+            value.to_string_lossy().into_owned(),
+        );
+    }
+    let config = node.paths().config;
+    let token = format!("node{}", node.index);
+    let env = env::load(&config, tools.home, &token, vars);
+    let env = env.map_err(|error| DevnetError::Guard(format!("node {}: {error}", node.index)))?;
+    let app = app::load(&config, AppRole::Relay);
+    let app = app.map_err(|error| DevnetError::Guard(format!("node {}: {error}", node.index)))?;
+    let option = |package: &str, pointer: &str| {
+        let entry = app.plugins.iter().find(|entry| entry.package == package);
+        let value = entry.and_then(|entry| entry.options.pointer(pointer));
+        value.and_then(Value::as_str).map(str::to_owned)
+    };
+    let hosts = [
+        ("CORE_P2P_HOST", "@solar-network/p2p", "/server/hostname"),
+        ("CORE_API_HOST", "@solar-network/api", "/server/http/host"),
+    ];
+    let host = |(name, package, pointer): (&str, &str, &str)| match option(package, pointer) {
+        Some(host) => (format!("app.json {}", pointer[1..].replace('/', ".")), host),
+        None => (
+            name.to_owned(),
+            env.get(name).unwrap_or_default().to_owned(),
+        ),
+    };
+    Ok(hosts.into_iter().map(host).collect())
 }
 
 /// Start the picked roles: the relays (their listeners test-bound first), then, once their APIs

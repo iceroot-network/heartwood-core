@@ -153,7 +153,25 @@ fn a_node_that_ran_a_second_or_more_is_restarted_at_once() {
 }
 
 #[test]
-fn five_unstable_runs_in_a_row_mark_the_role_errored() {
+fn a_run_is_timed_to_the_moment_its_node_exited_not_to_the_next_poll() {
+    let node = Node::new("uptime");
+    node.start(&["exit", "1", "970"], &[]);
+    wait_for("three exits", Duration::from_secs(15), || {
+        count(&node.out(), "supervisor: the node exited") >= 3
+    });
+    process::stop(&node.0).ok();
+    let out = node.out();
+    let uptimes: Vec<u64> = out
+        .lines()
+        .filter_map(|line| line.strip_suffix(" ms")?.rsplit(' ').next()?.parse().ok())
+        .collect();
+    assert!(uptimes.len() >= 3, "{out}");
+    assert!(uptimes[..3].iter().all(|&ms| ms < 1_000), "{uptimes:?}");
+    assert!(node.state().unstable >= 3);
+}
+
+#[test]
+fn five_unstable_runs_in_the_first_seconds_mark_the_role_errored() {
     let node = Node::new("errored");
     node.start(&["exit", "1"], &[]);
     wait_for("the supervisor's exit", Duration::from_secs(10), || {
@@ -164,7 +182,7 @@ fn five_unstable_runs_in_a_row_mark_the_role_errored() {
     assert_eq!((state.restarts, state.unstable, state.pid), (4, 5, None));
     let out = node.out();
     assert_eq!(count(&out, "test-child: exit 1"), 5);
-    assert!(out.contains("supervisor: the node exited within 1 s five times in a row"));
+    assert!(out.contains("supervisor: the node exited within 1 s five times in its first 5 s"));
     assert_eq!(transitions(&out).last(), Some(&"errored"));
     let row = process::status(&node.0).unwrap();
     assert_eq!((row.status, row.pid), (SupervisedStatus::Errored, None));
@@ -194,6 +212,66 @@ fn a_stop_sends_sigint_and_the_state_file_follows_every_change() {
         ["launching", "online", "stopping", "stopped"]
     );
     assert!(out.contains(&format!("supervisor: SIGTERM: SIGINT to the node {pid}")));
+}
+
+#[test]
+fn a_daemon_that_cannot_start_says_why() {
+    let node = Node::new("daemon-error");
+    // A directory where the capture's file should be: the supervisor cannot open it.
+    fs::create_dir_all(node.0.error_log_path()).unwrap();
+    let env = Vec::new();
+    let failed = process::start(&node.0, &argv(&["run"]), &env, true).unwrap_err();
+    let text = failed.to_string();
+    assert!(text.contains("error.log"), "{text}");
+}
+
+#[test]
+fn a_stop_signals_the_pid_the_held_lock_names_not_the_one_a_state_file_left() {
+    let node = Node::new("stale-pid");
+    node.start(&["run"], &[]);
+    node.online();
+    let real = node.state();
+    // Another process, standing where a reused pid would be.
+    let mut bystander = Command::new("sleep").arg("60").spawn().unwrap();
+    let mut stale = real.clone();
+    stale.supervisor_pid = bystander.id();
+    stale.write(&node.0.state_path()).unwrap();
+    process::stop(&node.0).unwrap();
+    let alive = bystander.try_wait().unwrap().is_none();
+    let _ = bystander.kill();
+    let _ = bystander.wait();
+    assert!(alive, "the stop signalled a process the lock does not name");
+    assert!(!is_locked(&node.0.supervisor_lock_path()).unwrap());
+}
+
+#[test]
+fn a_terminal_interrupt_reaches_the_node_once_through_the_supervisor() {
+    use heartwood_cli::supervisor::SuperviseArgs;
+    use nix::sys::signal::killpg;
+    use nix::unistd::Pid;
+    use std::os::unix::process::CommandExt;
+    let node = Node::new("foreground-interrupt");
+    fs::create_dir_all(&node.0.paths.data).unwrap();
+    // A foreground `start`: the supervisor without `--daemon`, in a process group of its own that
+    // stands for the terminal's, whose SIGINT goes to every process of the group.
+    let child = argv(&["graceful-sigint"]);
+    let mut supervisor = Command::new(CHILD)
+        .args(SuperviseArgs::command_line(&node.0, &child, false))
+        .envs(process::path_env(&node.0))
+        .stdin(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    wait_for("the node's first line", Duration::from_secs(10), || {
+        node.out().contains("test-child: graceful-sigint")
+    });
+    let group = Pid::from_raw(i32::try_from(supervisor.id()).unwrap());
+    killpg(group, Signal::SIGINT).unwrap();
+    let status = supervisor.wait().unwrap();
+    assert!(status.success(), "{status:?}");
+    let state = node.state();
+    assert_eq!(state.status, SupervisedStatus::Stopped);
+    assert_eq!(state.last_exit.as_deref(), Some("exit status: 0"));
 }
 
 #[test]

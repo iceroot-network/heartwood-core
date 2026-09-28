@@ -6,6 +6,8 @@
 //!   test-child exit CODE [AFTER_MS]      exit with CODE, after AFTER_MS milliseconds
 //!   test-child run                       run until a signal ends it
 //!   test-child ignore-sigint             run with SIGINT blocked, until SIGKILL
+//!   test-child graceful-sigint           on a first SIGINT shut down for 400 ms and exit 0; a
+//!                                        second SIGINT in that time exits 130, as the node does
 //!   test-child env NAME...               print `NAME=value` for each variable, then run
 //!   test-child relay|forger run [...]    as `run`, holding `$CORE_PATH_DATA/run/<role>.lock` and
 //!                                        writing `<role>.pid` beside it
@@ -34,7 +36,8 @@ fn main() -> ExitCode {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     let pid = std::process::id();
     let sigint: SigSet = [Signal::SIGINT].into_iter().collect();
-    if words == ["ignore-sigint"] && sigint.thread_block().is_err() {
+    let blocking = words == ["ignore-sigint"] || words == ["graceful-sigint"];
+    if blocking && sigint.thread_block().is_err() {
         return ExitCode::FAILURE;
     }
     println!("test-child: {} {pid}", words.join(" "));
@@ -50,6 +53,7 @@ fn main() -> ExitCode {
             ExitCode::from(code.parse::<u8>().unwrap_or(1))
         }
         ["run" | "ignore-sigint"] => run_forever(),
+        ["graceful-sigint"] => graceful_sigint(&sigint),
         ["env", names @ ..] => {
             for name in names {
                 let value = std::env::var(name).unwrap_or_default();
@@ -78,4 +82,16 @@ fn run_forever() -> ! {
     loop {
         thread::sleep(Duration::from_secs(3600));
     }
+}
+
+/// Take SIGINT on this thread only (`main` blocked it before any thread), and exit 0 400 ms after
+/// the first, or 130 at a second one.
+fn graceful_sigint(sigint: &SigSet) -> ! {
+    let _ = sigint.wait();
+    thread::spawn(|| {
+        thread::sleep(Duration::from_millis(400));
+        std::process::exit(0)
+    });
+    let _ = sigint.wait();
+    std::process::exit(130)
 }

@@ -8,13 +8,14 @@
 //!   instance's five `CORE_PATH_*`, from which it also takes the instance's directories), its
 //!   output captured to the `-out.log` and `-error.log` files ([`logs`]); its own lines go to
 //!   `-out.log` with the prefix `supervisor:`.
-//! - A node that exits without a stop request after running 1 s or more is restarted at once and
-//!   the unstable count reset; a run under 1 s is unstable, and after 5 unstable runs in a row the
-//!   status is `errored` and the supervisor exits ([`restart`]).
+//! - A node that exits without a stop request is restarted at once. A run under 1 s is unstable
+//!   while the supervisor is under 5 s old, and at the 5th unstable run the status is `errored`
+//!   and the supervisor exits; later short runs are restarted for good, as pm2 does ([`restart`]).
 //! - SIGTERM or SIGINT asks it to stop: it sends SIGINT to the node, SIGKILL after 30 s, and exits
-//!   when the node has ([`signals`]). SIGHUP is ignored. With `--daemon` it first leaves the
-//!   caller's session, so that a closing terminal never reaches it, and leads its own process
-//!   group, which holds its node.
+//!   when the node has ([`signals`]). SIGHUP is ignored. The node leads a process group of its
+//!   own, so that a terminal's SIGINT or hang-up never reaches it except through the supervisor.
+//!   With `--daemon` the supervisor first leaves the caller's session, so that a closing terminal
+//!   never reaches it either.
 
 pub mod logs;
 pub mod restart;
@@ -39,7 +40,7 @@ use heartwood_kernel::{Clock, SystemClock};
 use nix::spawn::{PosixSpawnAttr, PosixSpawnFileActions, PosixSpawnFlags, posix_spawnp};
 use nix::sys::signal::SigSet;
 use nix::sys::signal::Signal::{self, SIGHUP, SIGINT, SIGKILL, SIGPIPE, SIGQUIT, SIGTERM};
-use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid, waitpid};
 use nix::unistd::Pid;
 
 use self::logs::{Capture, ROTATE_AT};
@@ -105,23 +106,32 @@ impl SuperviseArgs {
         let cwd = std::env::current_dir().unwrap_or_default();
         let paths = resolve_paths(&self.token, &self.network, &env, &home, &cwd);
         let (token, network, role) = (self.token, self.network, self.role);
-        supervise(
-            Instance {
-                token,
-                network,
-                role,
-                paths,
-            },
-            self.argv,
-        )
+        let instance = Instance {
+            token,
+            network,
+            role,
+            paths,
+        };
+        serve(instance, self.argv, self.daemon)
     }
 }
 
 /// Supervise `instance`'s node, run with `argv` (the program first), until a stop; never returns.
 /// The exit status is 0 after a stop and 1 when the supervisor gave up or could not start.
 pub fn supervise(instance: Instance, argv: Vec<OsString>) -> ! {
+    serve(instance, argv, false)
+}
+
+/// [`supervise`]; a `daemon` points its stderr at `/dev/null` once it has started, as the pipe
+/// that carried its start error to `start` is closed then.
+fn serve(instance: Instance, argv: Vec<OsString>, daemon: bool) -> ! {
     let code = match Supervisor::start(instance, argv) {
-        Ok(mut supervisor) => supervisor.run(),
+        Ok(mut supervisor) => {
+            if daemon && let Ok(null) = File::options().write(true).open("/dev/null") {
+                let _ = nix::unistd::dup2_stderr(&null);
+            }
+            supervisor.run()
+        }
         Err(e) => {
             eprintln!("supervisor: {e}");
             1
@@ -136,6 +146,11 @@ pub fn run_dir(instance: &Instance) -> Result<PathBuf, ProcessError> {
     let dir = instance.run_dir();
     if let Some(parent) = dir.parent() {
         at(parent, fs::create_dir_all(parent))?;
+    }
+    // A run directory that is a link would put the lock, state and captures elsewhere.
+    if fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_symlink()) {
+        let link = std::io::Error::other("is a symbolic link, not a directory");
+        return at(&dir, Err(link));
     }
     // Made private as it is made, so it is never there with a wider mode.
     match DirBuilder::new().mode(0o700).create(&dir) {
@@ -167,6 +182,8 @@ struct Supervisor {
     err: Arc<Mutex<Capture>>,
     signals: Receiver<Signal>,
     restarts: Restarts,
+    /// When the supervisor started: the restart rule's window runs from it.
+    created: Instant,
     _lock: File,
 }
 
@@ -185,6 +202,7 @@ impl Supervisor {
         run_dir(&instance)?;
         let lock = signals::take_lock(&instance.supervisor_lock_path())?;
         let lock = lock.ok_or_else(|| ProcessError::AlreadyRunning { name: name.clone() })?;
+        signals::record_pid(&lock, &instance.supervisor_lock_path())?;
         let argv: Option<Vec<String>> = argv.into_iter().map(|a| a.into_string().ok()).collect();
         let argv = argv.ok_or_else(|| ProcessError::Spawn {
             program: name.clone(),
@@ -219,6 +237,7 @@ impl Supervisor {
             err: Arc::new(Mutex::new(err)),
             signals,
             restarts: Restarts::default(),
+            created: Instant::now(),
             _lock: lock,
         })
     }
@@ -233,7 +252,7 @@ impl Supervisor {
                 }
                 Ok(AfterExit::Stop) => (SupervisedStatus::Stopped, 0),
                 Ok(AfterExit::GiveUp) => {
-                    self.line("the node exited within 1 s five times in a row");
+                    self.line("the node exited within 1 s five times in its first 5 s");
                     (SupervisedStatus::Errored, 1)
                 }
                 Err(e) => {
@@ -257,6 +276,14 @@ impl Supervisor {
         self.line(&format!("starting {}", self.state.argv.join(" ")));
         let (node, out, err) = spawn(&self.state.argv).map_err(|e| failed(e.to_string()))?;
         let started = Instant::now();
+        // The moment the node exits, taken by a thread that waits for it without reaping it, so
+        // that the run's uptime does not include the poll below.
+        let (exits, exited) = mpsc::channel();
+        thread::spawn(move || {
+            let flags = WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT;
+            let _ = waitid(Id::Pid(node), flags);
+            let _ = exits.send(Instant::now());
+        });
         let pumps = [pump(out, &self.out), pump(err, &self.err)];
         self.state.started_at_ms = Some(SystemClock.now_ms());
         let pid = node.as_raw().unsigned_abs();
@@ -292,13 +319,17 @@ impl Supervisor {
         while pumps.iter().any(|p| !p.is_finished()) && Instant::now() < deadline {
             thread::sleep(POLL);
         }
-        let uptime = started.elapsed();
+        let ended = exited
+            .recv_timeout(DRAIN)
+            .unwrap_or_else(|_| Instant::now());
+        let uptime = ended.saturating_duration_since(started);
         self.line(&format!(
             "the node exited ({exit}) after {} ms",
             uptime.as_millis()
         ));
         self.state.last_exit = Some(exit.to_string());
-        Ok(self.restarts.after_exit(uptime, interrupted.is_some()))
+        let age = self.created.elapsed();
+        Ok(self.restarts.after_exit(uptime, age, interrupted.is_some()))
     }
 
     /// Record `status` and the node's `pid` in the state file, and say so in the capture.
@@ -320,8 +351,8 @@ impl Supervisor {
     }
 }
 
-/// Start the node with `argv`: its input `/dev/null`, its output and errors into the pipes
-/// returned, no signal blocked, and SIGHUP, SIGINT, SIGQUIT, SIGPIPE and SIGTERM at their
+/// Start the node with `argv`: in a process group of its own, its input `/dev/null`, its output
+/// and errors into the pipes returned, no signal blocked, and SIGHUP, SIGINT, SIGQUIT, SIGPIPE and SIGTERM at their
 /// defaults, whatever the supervisor (which blocks them) and its caller (a shell may ignore
 /// SIGINT) had.
 fn spawn(argv: &[String]) -> Result<(Pid, PipeReader, PipeReader), Box<dyn Error>> {
@@ -341,8 +372,14 @@ fn spawn(argv: &[String]) -> Result<(Pid, PipeReader, PipeReader), Box<dyn Error
     attributes.set_sigmask(&SigSet::empty())?;
     let defaults = [SIGHUP, SIGINT, SIGQUIT, SIGPIPE, SIGTERM];
     attributes.set_sigdefault(&defaults.into_iter().collect())?;
+    // The node leads a process group of its own, as pm2's detached children do, so that a
+    // terminal's SIGINT (the caller's foreground group) reaches the supervisor alone, which
+    // passes it on once.
+    attributes.set_pgroup(Pid::from_raw(0))?;
     attributes.set_flags(
-        PosixSpawnFlags::POSIX_SPAWN_SETSIGMASK | PosixSpawnFlags::POSIX_SPAWN_SETSIGDEF,
+        PosixSpawnFlags::POSIX_SPAWN_SETSIGMASK
+            | PosixSpawnFlags::POSIX_SPAWN_SETSIGDEF
+            | PosixSpawnFlags::POSIX_SPAWN_SETPGROUP,
     )?;
     let args: Vec<CString> = argv
         .iter()

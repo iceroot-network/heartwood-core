@@ -5,9 +5,12 @@
 //! `version`. The supervisor rewrites it whole, through a temporary file and a rename, at every
 //! change; it is trusted only while the supervisor's lock is held, except for `errored`.
 
-use std::fs;
-use std::io::ErrorKind;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
+
+use nix::fcntl::OFlag;
 
 use serde_json::{Value, json};
 
@@ -43,7 +46,7 @@ pub struct SupervisorState {
     pub started_at_ms: Option<i64>,
     /// Restarts since the supervisor started.
     pub restarts: u32,
-    /// Unstable runs in a row.
+    /// Unstable runs in the first seconds.
     pub unstable: u32,
     /// How the node last exited (`exit status: 3`, `signal: 9 (SIGKILL)`), once it has.
     pub last_exit: Option<String>,
@@ -94,7 +97,15 @@ impl SupervisorState {
             "version": self.version,
         });
         let temp = path.with_extension("json.tmp");
-        at(&temp, fs::write(&temp, format!("{value:#}\n")))?;
+        let mut file = OpenOptions::new();
+        let file = file
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .custom_flags(OFlag::O_NOFOLLOW.bits())
+            .open(&temp);
+        let file = at(&temp, file)?;
+        at(&temp, (&file).write_all(format!("{value:#}\n").as_bytes()))?;
         at(path, fs::rename(&temp, path))
     }
 }
