@@ -9,7 +9,7 @@ use heartwood_difftest::levels::l0;
 use heartwood_difftest::subject::{self, Documented};
 use heartwood_difftest::vectors::{MANIFEST, VectorSet};
 
-/// The vector class of the wire codec, the only class in its directory.
+/// The vector class of the wire codec; the directory also holds the exchange class.
 const CLASS: &str = "V13-p2p-wire";
 
 /// The pinned counts of an L0 run over the committed wire vectors: the records compared (all
@@ -36,10 +36,10 @@ fn the_committed_wire_vectors_pass_l0() {
         // Nothing is installed and nothing is pinned.
         return;
     }
-    let set = VectorSet::load(&dir).expect("the committed wire vectors load");
-    for file in &set.files {
-        assert_eq!(file.meta.class, CLASS, "{}", file.path.display());
-    }
+    let mut set = VectorSet::load(&dir).expect("the committed wire vectors load");
+    // The directory also holds the exchange class, which its own tests compare.
+    set.files.retain(|file| file.meta.class == CLASS);
+    assert_eq!(set.files.len(), 1, "{CLASS} in {}", dir.display());
     // The class is self-contained: its records carry their own configuration, so no devnet.
     let report = l0::run(&set, &subject::heartwood(None));
     let Some((compared, documented)) = PINNED else {
