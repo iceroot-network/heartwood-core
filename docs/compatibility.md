@@ -895,24 +895,31 @@ lists, which answer 500 for a deeper value; the reference answers 200 up to abou
 500 from about 4,000, when its link rendering overflows its stack.
 
 A request's head is read as Node 18's parser reads it (llhttp 6.1.1, in the loose mode Node builds
-it in), before hyper serves the connection. What that parser refuses (a head whose target and
-header names and values reach 16,384 bytes; an unknown or lowercase method; a byte it does not take
-in the target, a name or a value; a version other than 0.9, 1.0, 1.1 and 2.0; a folded line; a
-bad or repeated `Content-Length`; `Transfer-Encoding` after `chunked` or beside a length) is
-answered `HTTP/1.1 400 Bad Request` with no header, as the reference's server answers it. Line ends
-before the request line are skipped without being counted. A `CONNECT` and a stream that ends
-inside its head get no answer, as from Node's server; a target that starts with `*` is hapi's 400
-"Invalid URL"; a client that shuts its side of the connection after its request is answered, as
-Node's server allows half-open sockets. A head the parser accepts is written again for hyper with the meaning Node's server
-gives it: single spaces and `HTTP/1.1` in the request line (Node answers every version it accepts
-as `HTTP/1.1`), the target's bytes that hyper refuses rewritten (a byte beyond ASCII as the UTF-8
-of its Latin-1 character, another one percent-encoded) and its fragment dropped, the first 1,000
-header fields (Node's server passes on no more) and those that frame the body, less those whose
-name hyper refuses (an empty name, or one with a space: none that the API reads) and an empty
-`Transfer-Encoding`, which names no coding for Node's parser. The API reads
-the target itself as Node gives it to hapi: each byte a Latin-1 character, the path before the
-first `?` and the query after it, so the router, the catch-all's 20-character test and the query
-grammar see what the reference's do.
+it in), before hyper serves the connection. What that parser refuses (a head whose target and header
+names and values reach 16,384 bytes; an unknown or lowercase method; a byte it does not take in the
+target, a name or a value; a version other than 0.9, 1.0, 1.1 and 2.0; a folded line; a bad or
+repeated `Content-Length`; `Transfer-Encoding` after `chunked` or beside a length) is answered
+`HTTP/1.1 400 Bad Request` with no header, as the reference's server answers it. Line ends before
+the request line are skipped without being counted. A `CONNECT` and a stream that ends inside its
+head get no answer, as from Node's server; a target that starts with `*` is hapi's 400 "Invalid
+URL"; a client that shuts its side of the connection after its request is answered, as Node's server
+allows half-open sockets. Where the parser fails on what follows the head while hapi serves the
+request, hapi answers that request with its JSON 400, before any of its steps and without a charge,
+and so does Heartwood for what was read with the head: a `Transfer-Encoding` whose last coding is
+not `chunked`, and, on a connection llhttp keeps alive and does not upgrade, bytes after the request
+(and after its body, unless a route serves the request as a `GET` or `HEAD`, which hapi answers
+without reading its body) that start no request the parser takes. A request after it that Node's
+server closes the connection on (a `CONNECT`, or a method it does not know) leaves the first
+unanswered. A head the parser accepts is written again for hyper with the meaning Node's server
+gives it: single spaces and `HTTP/1.1` in the request line (Node answers every version it accepts as
+`HTTP/1.1`), the target's bytes that hyper refuses rewritten (a byte beyond ASCII as the UTF-8 of
+its Latin-1 character, another one percent-encoded) and its fragment dropped, the first 1,000 header
+fields (Node's server passes on no more) and those that frame the body, less those whose name hyper
+refuses (an empty name, or one with a space: none that the API reads) and an empty
+`Transfer-Encoding`, which names no coding for Node's parser. The API reads the target itself as
+Node gives it to hapi: each byte a Latin-1 character, the path before the first `?` and the query
+after it, so the router, the catch-all's 20-character test and the query grammar see what the
+reference's do.
 
 Lists have the reference's pagination: `offset=0` is ignored and another offset replaces the page,
 and the links are relative to the configured base path, with the path written as hapi's request
@@ -976,8 +983,12 @@ each case shows only with the request named:
 The server is hyper, which reads some requests otherwise than Node's server even after the head
 reader; none is sent by a common HTTP client:
 
-- a `Transfer-Encoding` whose last coding is not `chunked`: Node's parser takes the head and fails
-  on the body, and hapi answers its own 400; hyper refuses it with a 400 of its own headers;
+- what the client sends after its request's head beyond what was read with it, and a chunked body:
+  Node's parser reads them as they come, and hapi answers its 400 when the parser fails on them
+  before the answer is sent (a malformed chunk, or bytes that start no request); Heartwood judges
+  only what was read with the head, and hyper reads a chunked body itself (a malformed chunk is a
+  422 or goes unread). A submission whose JSON does not parse, followed by such bytes, is the
+  reference's 422 without its plugins' headers, and Heartwood's 400;
 - an `Expect` other than `100-continue` on HTTP/1.1: Node's server answers 417 itself and keeps the
   connection; Heartwood serves the request;
 - a body that does not arrive in full: the reference reads the body of a `POST`, of a preflight

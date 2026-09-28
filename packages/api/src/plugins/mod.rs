@@ -175,6 +175,20 @@ pub(crate) struct NodeRead {
     /// The target is one hapi cannot read as a URL (it starts with `*`): 400 "Invalid URL", once
     /// the whitelist let the request through.
     pub(crate) invalid_url: bool,
+    /// Node's parser failed on what the client sent after the request's head while hapi served
+    /// the request: hapi then answers it with its 400, before any of its steps.
+    pub(crate) client_error: Option<ClientError>,
+}
+
+/// Where Node's parser failed on what followed a request's head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClientError {
+    /// With the head: a `Transfer-Encoding` whose last coding is not `chunked`, or bytes after a
+    /// request without a body.
+    Head,
+    /// After the request's body, which hapi reads before it answers unless a route serves the
+    /// request as a `GET` or `HEAD`: it has then answered before Node's parser reads on.
+    AfterBody,
 }
 
 /// What an answer's headers depend on in its request.
@@ -295,11 +309,26 @@ impl Pipeline {
     async fn run(&self, request: Request<Body>, peer: SocketAddr) -> Result<Answer, ApiError> {
         let config = &self.host.config;
         let (parts, body) = request.into_parts();
-        let read = parts
-            .extensions
-            .get::<NodeRead>()
-            .cloned()
-            .unwrap_or_default();
+        let read = parts.extensions.get::<NodeRead>();
+        let read = read.cloned().unwrap_or_default();
+        let (full, raw) = match &read.url {
+            Some(url) => url.split_once('?').unwrap_or((url, "")),
+            None => (parts.uri.path(), parts.uri.query().unwrap_or("")),
+        };
+        let path = full.strip_suffix('/').filter(|_| full.len() > 1);
+        let path = path.unwrap_or(full);
+        if let Some(error) = read.client_error {
+            // hapi reads a request's body before it answers, unless a route serves the request
+            // as a `GET` or `HEAD`; its 400 carries the CORS headers of the route it finds, which
+            // for an `OPTIONS` has none.
+            let get = matches!(parts.method, Verb::GET | Verb::HEAD);
+            let served = get && matches!(self.lookup(Method::Get, path), Ok(Some(_)));
+            if error == ClientError::Head || !served {
+                let error = ApiError::bad_request("Bad Request");
+                let cors = parts.method != Verb::OPTIONS;
+                return Ok(Answer::new(400, Some(error.body()), Vec::new(), cors));
+            }
+        }
         let client = client_address(&parts.headers, peer, config.trust_proxy);
         if !ip::is_whitelisted(&config.whitelist, &client) {
             return Err(ApiError::forbidden("Forbidden"));
@@ -307,10 +336,6 @@ impl Pipeline {
         if read.invalid_url {
             return Err(ApiError::bad_request("Invalid URL"));
         }
-        let (full, raw) = match &read.url {
-            Some(url) => url.split_once('?').unwrap_or((url, "")),
-            None => (parts.uri.path(), parts.uri.query().unwrap_or("")),
-        };
         // The reference's query plugins run before its router and its rate limit: a query they
         // throw on is a 500 on any path, and is not charged. The query is parsed again once the
         // request is charged, so a request whose body is slow to come holds only its text.
@@ -318,8 +343,6 @@ impl Pipeline {
         if (grammar.parse)(raw).is_null() {
             return Err(ApiError::internal());
         }
-        let path = full.strip_suffix('/').filter(|_| full.len() > 1);
-        let path = path.unwrap_or(full);
         let method = match parts.method {
             // hapi's preflight route has CORS off: its refusals carry no CORS headers.
             Verb::OPTIONS => {

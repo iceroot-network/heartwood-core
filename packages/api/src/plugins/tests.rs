@@ -1476,6 +1476,45 @@ async fn a_client_that_ends_its_side_after_its_request_is_answered() {
     task.await.unwrap();
 }
 
+#[tokio::test]
+async fn a_request_whose_following_bytes_node_refuses_is_answered_with_hapi_s_400() {
+    // Node's parser fails on what follows the request while hapi serves it: hapi answers that
+    // request with its 400 before any of its steps, so without a charge, with the CORS headers of
+    // the route it finds (none for an `OPTIONS`). Measured with Node 18.20.8 and hapi 20.2.1.
+    let mut limited = config();
+    limited.rate_limit.points = 1;
+    let (address, stop, task) = listening(pipeline(limited)).await;
+    let refused: [&[u8]; 6] = [
+        b"GET /api/node/status HTTP/1.1\r\nOrigin: o\r\n\r\n\x00",
+        b"GET /x%zz HTTP/1.1\r\nOrigin: o\r\n\r\nFOO / HTTP/1.1\r\n\r\n",
+        b"GET /api/nothing HTTP/1.1\r\nOrigin: o\r\ncontent-length: 2\r\n\r\n{}\x00",
+        b"POST /api/transactions HTTP/1.1\r\nOrigin: o\r\ncontent-length: 2\r\n\r\n{}GARBAGE",
+        b"POST /api/transactions HTTP/1.1\r\nOrigin: o\r\ntransfer-encoding: gzip\r\n\r\n",
+        b"OPTIONS /api/node/status HTTP/1.1\r\nOrigin: o\r\n\r\n\x00",
+    ];
+    for request in refused {
+        let shown = String::from_utf8_lossy(request).into_owned();
+        let (line, head, body) = exchange_bytes(address, request, false).await;
+        assert_eq!(line, "HTTP/1.1 400 Bad Request", "{shown:?}");
+        assert_eq!(body, boom(400, "Bad Request", "Bad Request"), "{shown:?}");
+        let cors = !shown.starts_with("OPTIONS");
+        assert_eq!(head.contains("vary: origin"), cors, "{shown:?}");
+        let echoed = head.contains("access-control-allow-origin: o");
+        assert_eq!(echoed, cors, "{shown:?}");
+        assert!(head.contains("x-block-height: 265"), "{shown:?}");
+    }
+    // A `GET` that a route serves is answered before Node's parser reads on after its body. None
+    // of the refusals was charged: the window's one point was left for it.
+    let request = b"GET /api/node/status HTTP/1.1\r\ncontent-length: 2\r\n\r\n{}\x00";
+    let (line, _, _) = exchange_bytes(address, request, false).await;
+    assert_eq!(line, "HTTP/1.1 200 OK");
+    let request = b"GET /api/node/status HTTP/1.1\r\n\r\n";
+    let (line, _, _) = exchange_bytes(address, request, false).await;
+    assert_eq!(line, "HTTP/1.1 429 Too Many Requests");
+    stop.send(true).unwrap();
+    task.await.unwrap();
+}
+
 #[test]
 fn the_options_are_the_reference_defaults_and_its_variables() {
     let defaults = config();

@@ -20,7 +20,10 @@
 //! API reads), an empty `Transfer-Encoding` (no coding for Node's parser), and `Expect` but for
 //! `HTTP/1.1`, the only version Node reads it for; with `\r\n` line ends. [`Rewind`] then gives
 //! hyper that head, followed by the rest of the connection. The request carries the target as
-//! Node gives it to hapi (`NodeRead`), which the plugins read.
+//! Node gives it to hapi (`NodeRead`), which the plugins read, and where Node's parser fails on
+//! what was read after the head while hapi serves the request, which hapi then answers with its
+//! 400 (`ClientError`); a request after it that Node's server closes the connection on leaves
+//! the first unanswered.
 
 use std::io;
 use std::ops::Range;
@@ -30,7 +33,7 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 
-use crate::plugins::NodeRead;
+use crate::plugins::{ClientError, NodeRead};
 
 /// Node's limit on the counted bytes of a request's head.
 const MAX_HEAD: usize = 16_384;
@@ -137,17 +140,41 @@ enum Field {
     General,
     ContentLength,
     TransferEncoding,
-    /// `Connection`, `Proxy-Connection` and `Upgrade`: read as any other value here.
-    Special,
+    /// `Connection` and `Proxy-Connection`, whose tokens llhttp reads once the value is read.
+    Connection,
+    Upgrade,
 }
 
 const SPECIAL_FIELDS: [(&[u8], Field); 5] = [
-    (b"connection", Field::Special),
+    (b"connection", Field::Connection),
     (b"content-length", Field::ContentLength),
-    (b"proxy-connection", Field::Special),
+    (b"proxy-connection", Field::Connection),
     (b"transfer-encoding", Field::TransferEncoding),
-    (b"upgrade", Field::Special),
+    (b"upgrade", Field::Upgrade),
 ];
+
+/// The `Connection` tokens llhttp reads, as flags: `close`, `keep-alive` and `upgrade`.
+const CONNECTION_TOKENS: [&[u8]; 3] = [b"close", b"keep-alive", b"upgrade"];
+const CLOSE: u8 = 1;
+const KEEP_ALIVE: u8 = 2;
+const UPGRADE: u8 = 4;
+
+/// The flags of the tokens llhttp finds in a `Connection` value: each of [`CONNECTION_TOKENS`]
+/// that is a whole item between commas, in any case, with only spaces or tabs before it and
+/// spaces after it.
+fn connection_flags(value: &[u8]) -> u8 {
+    let mut flags = 0;
+    for item in value.split(|&byte| byte == b',') {
+        let start = item.iter().position(|b| !matches!(b, b' ' | b'\t'));
+        let end = item.iter().rposition(|&b| b != b' ').map_or(0, |at| at + 1);
+        let token = item.get(start.unwrap_or(end)..end).unwrap_or_default();
+        let found = CONNECTION_TOKENS
+            .iter()
+            .position(|t| token.eq_ignore_ascii_case(t));
+        flags |= found.map_or(0, |at| 1 << at);
+    }
+    flags
+}
 
 /// Where a head's reading stands: llhttp's states for a request, merged where they read alike.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,6 +220,15 @@ enum State {
     ChunkedLast,
     CodingToken,
     CodingSpace,
+}
+
+/// What Node's server makes of the bytes read after a request's head ([`Head::after`]).
+enum After {
+    Nothing,
+    /// Its parser fails while hapi serves the request.
+    Failed(ClientError),
+    /// It closes the connection before the request's answer.
+    Closed,
 }
 
 /// What a byte does to the head.
@@ -241,6 +277,10 @@ struct Head {
     has_length: bool,
     has_coding: bool,
     chunked: bool,
+    /// The `Connection` tokens read ([`connection_flags`]).
+    connection: u8,
+    /// Whether a non-empty `Upgrade` was read.
+    upgrade: bool,
 }
 
 /// Whether llhttp reads `byte` in a target's path, query or fragment (its loose `URL_CHAR`,
@@ -289,6 +329,8 @@ impl Head {
             has_length: false,
             has_coding: false,
             chunked: false,
+            connection: 0,
+            upgrade: false,
         }
     }
 
@@ -448,7 +490,7 @@ impl Head {
             S::EmptyValueEnd if self.field == Field::ContentLength => Step::Refused,
             S::EmptyValueEnd => {
                 self.value = self.at..self.at;
-                self.field_end()
+                self.field_end(read)
             }
             S::Value if is_value_byte(byte) => self.value_byte(S::Value),
             S::Value | S::ChunkedLast | S::DigitsSpace if byte == b'\r' => {
@@ -456,12 +498,12 @@ impl Head {
                 match self.field {
                     Field::ContentLength => self.has_length = true,
                     Field::TransferEncoding => self.chunked = self.state == S::ChunkedLast,
-                    Field::General | Field::Special => {}
+                    Field::General | Field::Connection | Field::Upgrade => {}
                 }
                 self.to(S::ValueCr, false)
             }
             S::ValueCr if byte == b'\n' => self.to(S::ValueEnd, false),
-            S::ValueEnd => self.field_end(),
+            S::ValueEnd => self.field_end(read),
             S::Digits if byte.is_ascii_digit() => {
                 let digit = u64::from(byte - b'0');
                 let length = self.content_length.checked_mul(10);
@@ -556,7 +598,7 @@ impl Head {
                 self.chunked = false;
                 self.again(State::Chunked(0))
             }
-            Field::General | Field::Special => self.again(State::Value),
+            Field::General | Field::Connection | Field::Upgrade => self.again(State::Value),
         }
     }
 
@@ -567,7 +609,13 @@ impl Head {
     }
 
     /// The field read ends: the byte being read starts the next line.
-    fn field_end(&mut self) -> Step {
+    fn field_end(&mut self, read: &[u8]) -> Step {
+        let value = read.get(self.value.clone()).unwrap_or_default();
+        match self.field {
+            Field::Connection => self.connection |= connection_flags(value),
+            Field::Upgrade => self.upgrade |= !value.is_empty(),
+            Field::General | Field::ContentLength | Field::TransferEncoding => {}
+        }
         let framing = matches!(self.field, Field::ContentLength | Field::TransferEncoding);
         if self.fields < MAX_FIELDS || framing {
             self.kept.push((self.name.clone(), self.value.clone()));
@@ -584,12 +632,56 @@ impl Head {
         }
     }
 
+    /// What Node's server makes of what the client sent after this request's head, as far as it
+    /// was read with it, while hapi serves the request: its parser fails on a coding without
+    /// `chunked` last, which leaves the body's length unknown, or on bytes after the request (and
+    /// its body, when they were read too) that start no request it takes; a request after it on
+    /// which it closes the connection (a `CONNECT`, or a method its server does not know) ends
+    /// the connection before the answer. llhttp reads on after a request only when the
+    /// connection is kept alive, and not after an upgrade. A chunked body is not read.
+    fn after(&self, read: &[u8]) -> After {
+        if self.upgrade && self.connection & UPGRADE != 0 {
+            return After::Nothing;
+        }
+        if self.has_coding && !self.chunked {
+            return After::Failed(ClientError::Head);
+        }
+        let kept_alive = match self.version.0 > 0 && self.version.1 > 0 {
+            true => self.connection & CLOSE == 0,
+            false => self.connection & KEEP_ALIVE != 0,
+        };
+        let body = usize::try_from(self.content_length).ok();
+        let body = body.filter(|_| kept_alive && !self.chunked);
+        let rest = read.get(self.at..).unwrap_or_default();
+        let Some(after) = body.and_then(|body| rest.get(body..)) else {
+            return After::Nothing;
+        };
+        let mut next = Head::new();
+        match (next.feed(after), body) {
+            (Progress::Refused, Some(0)) => After::Failed(ClientError::Head),
+            (Progress::Refused, _) => After::Failed(ClientError::AfterBody),
+            (Progress::Ended, Some(0)) if next.closes() => After::Closed,
+            _ => After::Nothing,
+        }
+    }
+
+    /// Whether Node's server closes the connection on this request, whose head ended: a
+    /// `CONNECT`, or a method it does not know.
+    fn closes(&self) -> bool {
+        let known = self.known.filter(|index| *index < KNOWN_METHODS);
+        known.is_none_or(|index| METHODS.get(index) == Some(&"CONNECT"))
+    }
+
     /// What Node's server does with the head that ended: serve it, or close the connection.
     fn outcome(&self, read: &[u8]) -> Option<Served> {
-        let known = self.known.filter(|index| *index < KNOWN_METHODS)?;
-        if METHODS.get(known) == Some(&"CONNECT") {
+        if self.closes() {
             return None;
         }
+        let client_error = match self.after(read) {
+            After::Closed => return None,
+            After::Failed(error) => Some(error),
+            After::Nothing => None,
+        };
         let mut head = self.method.clone();
         head.push(b' ');
         let target_end = self.fragment.unwrap_or(self.target.end);
@@ -600,13 +692,18 @@ impl Head {
             false => encode_target(target, &mut head),
         }
         head.extend_from_slice(b" HTTP/1.1\r\n");
+        // The request has no body for hyper when it is refused, or when llhttp reads none.
+        let unframed = client_error.is_some() || self.has_coding && !self.chunked;
         let mut fields = 0;
         for (name, value) in &self.kept {
             let name = read.get(name.clone()).unwrap_or_default();
             let expect = name.eq_ignore_ascii_case(b"expect") && self.version != (1, 1);
+            let coding = name.eq_ignore_ascii_case(b"transfer-encoding");
+            let framing = coding || name.eq_ignore_ascii_case(b"content-length");
             // An empty `Transfer-Encoding` names no coding for Node's parser; hyper refuses it.
-            let no_coding = name.eq_ignore_ascii_case(b"transfer-encoding") && value.is_empty();
-            if name.is_empty() || name.contains(&b' ') || expect || no_coding {
+            let no_coding = coding && value.is_empty();
+            if name.is_empty() || name.contains(&b' ') || expect || no_coding || unframed && framing
+            {
                 continue;
             }
             head.extend_from_slice(name);
@@ -616,11 +713,14 @@ impl Head {
             fields += 1;
         }
         head.extend_from_slice(b"\r\n");
-        head.extend_from_slice(read.get(self.at..).unwrap_or_default());
+        if !unframed {
+            head.extend_from_slice(read.get(self.at..).unwrap_or_default());
+        }
         let path = target.first() == Some(&b'/');
         let node = NodeRead {
             url: path.then(|| latin1(target)),
             invalid_url,
+            client_error,
         };
         Some(Served {
             bytes: head,
@@ -887,7 +987,7 @@ mod tests {
         // Served, and written again as hyper reads it. An empty `Transfer-Encoding` names no
         // coding for Node's parser, and hyper refuses it: it is left out.
         let served: [(&[u8], &[u8]); 18] = [
-            (b"GET / HTTP/1.1\r\n\r\nrest", b"GET / HTTP/1.1\r\n\r\nrest"),
+            (b"GET / HTTP/1.1\r\n\r\nGE", b"GET / HTTP/1.1\r\n\r\nGE"),
             (
                 b"\r\r\n\nGET  /a?b=\"<x>\"`|\t\x0c#f\"g HTTP/1.1\r\n\r\n",
                 b"GET /a?b=%22%3Cx%3E%22%60|%09%0C HTTP/1.1\r\n\r\n",
@@ -926,9 +1026,10 @@ mod tests {
                 b"POST /x HTTP/1.1\r\ntransfer-encoding: chunked\r\ntransfer-encoding:\r\n\r\n",
                 b"POST /x HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n",
             ),
+            // A coding without `chunked` last: no body, and hapi's 400.
             (
                 b"POST /x HTTP/1.1\r\ntransfer-encoding: chunkedx\r\ncontent-lengthx: 1\r\n\r\n",
-                b"POST /x HTTP/1.1\r\ntransfer-encoding: chunkedx\r\ncontent-lengthx: 1\r\n\r\n",
+                b"POST /x HTTP/1.1\r\ncontent-lengthx: 1\r\n\r\n",
             ),
             (b"GET *abc?x HTTP/1.1\r\n\r\n", b"GET / HTTP/1.1\r\n\r\n"),
             (
@@ -958,6 +1059,62 @@ mod tests {
         assert!(absolute.url.is_none() && !absolute.invalid_url);
         let star = node(b"GET *x HTTP/1.1\r\n\r\n").unwrap();
         assert!(star.url.is_none() && star.invalid_url);
+    }
+
+    #[test]
+    fn node_s_parser_fails_on_what_follows_a_request_as_node_s_does() {
+        // Measured with Node 18.20.8 and hapi 20.2.1: where the parser failed on the bytes sent
+        // with the request, which hapi then answers with its 400. llhttp reads on after a
+        // request only when the connection is kept alive and is not upgraded.
+        let (head, body) = (Some(ClientError::Head), Some(ClientError::AfterBody));
+        let cases: [(&[u8], Option<ClientError>); 22] = [
+            (b"GET / HTTP/1.1\r\n\r\n\x00", head),
+            (b"GET / HTTP/1.1\r\n\r\n\r\n\r\n\x00", head),
+            (b"GET / HTTP/1.1\r\n\r\n GET", head),
+            (b"GET / HTTP/1.1\r\n\r\nG", None),
+            (b"GET / HTTP/1.1\r\n\r\nGET /x HTTP/1.1\r\n\r\n\x00", None),
+            (b"GET / HTTP/1.1\r\nConnection: x, close \r\n\r\n\x00", None),
+            (b"GET / HTTP/1.1\r\nConnection: CLOSE,\r\n\r\n\x00", None),
+            (b"GET / HTTP/1.1\r\nProxy-Connection: close\r\n\r\n\x00", None),
+            (b"GET / HTTP/1.1\r\nConnection: close\t\r\n\r\n\x00", head),
+            (b"GET / HTTP/1.1\r\nConnection: xclose\r\n\r\n\x00", head),
+            (b"GET / HTTP/1.1\r\nConnection: clo\r\n\r\n\x00", head),
+            (b"GET / HTTP/1.1\r\nUpgrade: x\r\nConnection: upgrade\r\n\r\n\x00", None),
+            (b"GET / HTTP/1.0\r\n\r\n\x00", None),
+            (b"GET /\r\n\r\n\x00", None),
+            (b"GET / HTTP/1.0\r\nConnection: keep-alive, close\r\n\r\n\x00", head),
+            (b"GET / HTTP/2.0\r\nConnection: keep-alive\r\n\r\n\x00", head),
+            (b"POST / HTTP/1.1\r\ncontent-length: 2\r\n\r\n{}GARBAGE", body),
+            (b"POST / HTTP/1.1\r\ncontent-length: 2\r\n\r\n{}\r\n", None),
+            (b"POST / HTTP/1.1\r\ncontent-length: 5\r\n\r\n{}", None),
+            (b"POST / HTTP/1.1\r\ntransfer-encoding: gzip\r\n\r\n", head),
+            (b"POST / HTTP/1.1\r\ntransfer-encoding: gzip\r\nconnection: close\r\n\r\n", head),
+            (
+                b"GET / HTTP/1.1\r\nupgrade: x\r\nconnection: upgrade\r\ntransfer-encoding: gzip\r\n\r\n",
+                None,
+            ),
+        ];
+        for (bytes, error) in cases {
+            let shown = String::from_utf8_lossy(bytes).into_owned();
+            let mut parsed = Head::new();
+            assert_eq!(parsed.feed(bytes), Progress::Ended, "{shown:?}");
+            let served = parsed.outcome(bytes).unwrap();
+            assert_eq!(served.node.client_error, error, "{shown:?}");
+            // The body is not framed for hyper when the parser fails, or when it reads none.
+            let text = String::from_utf8_lossy(&served.bytes).into_owned();
+            let unframed = error.is_some() || shown.contains("gzip");
+            let framing = ["content-length", "transfer-encoding", "GARBAGE"];
+            let framed = framing.iter().any(|name| text.contains(name));
+            assert!(!(unframed && framed), "{shown:?}: {text:?}");
+        }
+        // A request after it on which Node's server closes the connection: no answer.
+        let closed: [&[u8]; 2] = [
+            b"GET / HTTP/1.1\r\n\r\nCONNECT a:1 HTTP/1.1\r\n\r\n",
+            b"GET / HTTP/1.1\r\n\r\nDESCRIBE / RTSP/1.0\r\n\r\n",
+        ];
+        for bytes in closed {
+            assert_eq!(verdict(bytes), Err(Progress::Ended));
+        }
     }
 
     #[test]
