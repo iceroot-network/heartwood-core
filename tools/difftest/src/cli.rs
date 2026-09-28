@@ -111,8 +111,8 @@ Usage:
                                   --compare checks it against the output of the devnet
                                   generator for the same inputs
 
---strict, with any command that compares (run, oracle replay, store crash, forger crash, live
-check, api compare): a case that was skipped or has no Rust implementation fails the run too, as
+--strict, with any command that compares (run, oracle replay, store crash, forger crash, network
+generate, live check, api compare): a case that was skipped or has no Rust implementation fails the run too, as
 a failed case does; the Makefile's gate targets pass it.
 
 ORACLE, where the reference runs (the flags win over the environment):

@@ -273,7 +273,7 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             let set = VectorSet::load(&vectors)?;
             let report = built(store::guarded(|| network_generate::check(&set)))?;
             print!("{report}");
-            Ok(report.is_success())
+            Ok(verdict(&report, strict))
         }
         Command::StoreReplay { dir, db, to } => {
             let loaded = Corpus::load(&dir)?;
