@@ -14,10 +14,12 @@ pub mod relay;
 pub mod supervise;
 
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 use heartwood_cli::instance::InstanceFlags;
+use heartwood_cli::{Instance, ProcessError, Role, process, process_table};
 
 /// The parsed command line.
 #[derive(Debug, Clone, PartialEq, Eq, Parser)]
@@ -42,8 +44,7 @@ pub enum Command {
     Network(network::NetworkCommand),
     /// A local devnet on this host.
     #[cfg(feature = "devnet")]
-    #[command(subcommand)]
-    Devnet(devnet::DevnetCommand),
+    Devnet(devnet::Devnet),
     /// Supervise a started role (written by `start`).
     #[command(hide = true)]
     Supervise(supervise::Supervise),
@@ -76,6 +77,83 @@ pub struct LogFlags {
 /// Parse `args` (the program first), the colon spellings rewritten.
 pub fn parse(args: Vec<OsString>) -> Result<Command, clap::Error> {
     Cli::try_parse_from(heartwood_cli::argv::rewrite(args)).map(|cli| cli.command)
+}
+
+/// This program, which a supervisor runs as the node.
+pub(crate) fn program() -> Result<PathBuf, String> {
+    std::env::current_exe().map_err(|error| format!("the program's path: {error}"))
+}
+
+/// Run `act` on the instance of `role` that `flags` name, resolved with the process's
+/// environment, home directory and working directory.
+pub(crate) fn on_instance(
+    role: Role,
+    flags: &InstanceFlags,
+    act: impl FnOnce(&Instance) -> Result<(), ProcessError>,
+) -> ExitCode {
+    let env = |name: &str| std::env::var(name).ok();
+    let (home, cwd) = (std::env::home_dir(), std::env::current_dir());
+    let (home, cwd) = (home.unwrap_or_default(), cwd.unwrap_or_default());
+    let instance = heartwood_cli::instance::resolve(role, flags, &env, &home, &cwd);
+    crate::exit(
+        instance
+            .map_err(|e| e.to_string())
+            .and_then(|instance| act(&instance).map_err(|e| e.to_string())),
+    )
+}
+
+/// Start `instance` under its supervisor, the node run as `<program> <role> run --token <token>
+/// --network <network>` and `args`, as a daemon or not.
+pub(crate) fn start(
+    instance: &Instance,
+    args: Vec<OsString>,
+    daemon: bool,
+) -> Result<(), ProcessError> {
+    let spawn = |message| ProcessError::Spawn {
+        program: "heartwood".into(),
+        message,
+    };
+    let (token, network) = (&instance.token, &instance.network);
+    let mut argv = vec![
+        program().map_err(spawn)?.into(),
+        instance.role.name().into(),
+    ];
+    argv.extend(["run", "--token", token, "--network", network].map(OsString::from));
+    argv.extend(args);
+    process::start(instance, &argv, &Vec::new(), daemon)
+}
+
+/// Print the process table's row of `instance`.
+pub(crate) fn status(instance: &Instance) -> Result<(), ProcessError> {
+    print!("{}", process_table::render(&[process::status(instance)?]));
+    Ok(())
+}
+
+/// The commands of a started role, as `relay` and `forger` share them.
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum Manage {
+    /// Stop the role.
+    Stop(ProcessFlags),
+    /// Restart the role.
+    Restart(ProcessFlags),
+    /// The role's process status.
+    Status(ProcessFlags),
+    /// The role's log.
+    Log(LogFlags),
+}
+
+/// Stop, restart, show or tail `role`'s instance as `command` asks.
+pub(crate) fn manage(role: Role, command: Manage) -> ExitCode {
+    match command {
+        Manage::Stop(flags) => on_instance(role, &flags.instance, process::stop),
+        Manage::Restart(flags) => {
+            on_instance(role, &flags.instance, |i| process::restart(i, &Vec::new()))
+        }
+        Manage::Status(flags) => on_instance(role, &flags.instance, status),
+        Manage::Log(log) => on_instance(role, &log.instance, |i| {
+            process::log(i, log.lines, log.error, true)
+        }),
+    }
 }
 
 /// Run `command`; the process's exit status.

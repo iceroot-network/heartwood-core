@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
+use heartwood_cli::{GenerateOptions, Profile};
+use heartwood_kernel::SystemClock;
 
 /// A network command.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
@@ -51,8 +53,32 @@ pub struct Generate {
     pub force: bool,
 }
 
+impl Generate {
+    /// The options of `network generate` these flags give.
+    pub fn options(self) -> GenerateOptions {
+        GenerateOptions {
+            network: self.network,
+            seed: self.seed,
+            epoch: self.epoch,
+            profile: self.profile.map_or(Profile::Devnet, Profile::File),
+            pub_key_hash: self.pub_key_hash,
+            token: self.token,
+            symbol: self.symbol,
+            explorer: self.explorer,
+            out: self.out,
+            chain_only: self.chain_only,
+            force: self.force,
+        }
+    }
+}
+
 /// Run `command`.
 pub fn run(command: NetworkCommand) -> ExitCode {
-    let _ = command;
-    todo!("network generate")
+    let NetworkCommand::Generate(generate) = command;
+    let generated = heartwood_cli::network::generate(&generate.options(), &SystemClock);
+    crate::exit(generated.map(|generated| {
+        let (out, files) = (generated.out.display(), generated.files.len());
+        let (nethash, genesis) = (&generated.nethash, &generated.genesis_id);
+        println!("Wrote {files} files to {out}: nethash {nethash}, genesis block {genesis}");
+    }))
 }

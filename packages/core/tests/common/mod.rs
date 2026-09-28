@@ -7,7 +7,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use heartwood_core::cli::{self, RelayRun};
+use heartwood_core::commands::relay::{RelayCommand, RelayRun};
+use heartwood_core::commands::{self, Command};
 use serde_json::{Value, json};
 
 /// The committed one-node corpus.
@@ -119,6 +120,9 @@ impl Drop for Setup {
 /// The flags of `heartwood relay run <flags>`.
 pub fn run(flags: &str) -> RelayRun {
     let line = format!("heartwood relay run {flags}");
-    let args: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
-    cli::parse(&args).unwrap().relay_run().clone()
+    let args = line.split_whitespace().map(Into::into).collect();
+    match commands::parse(args).unwrap() {
+        Command::Relay(RelayCommand::Run(run)) => run,
+        other => panic!("{other:?}"),
+    }
 }

@@ -1,11 +1,11 @@
-//! The `heartwood` binary: `heartwood relay run` (and its alias `relay:run`).
+//! The `heartwood` binary: the command tree of [`heartwood_core::commands`], with the reference's
+//! colon spellings (`relay:run`) rewritten first.
 
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().collect();
-    match heartwood_core::cli::parse(&args) {
-        Ok(command) => heartwood_core::run(command),
+    match heartwood_core::commands::parse(std::env::args_os().collect()) {
+        Ok(command) => heartwood_core::commands::run(command),
         Err(error) => {
             // clap writes its own help and error text, with its exit status.
             let status = u8::try_from(error.exit_code()).unwrap_or(2);

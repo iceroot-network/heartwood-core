@@ -578,8 +578,9 @@ fn write_node(
     let hosts: Vec<Value> = node.forger_hosts.iter().map(host).collect();
     let local = node.forger_address.unwrap_or(address).to_string();
     let forger = json!({ "hosts": hosts, "localAddress": local, "aux": hex::encode(aux) });
-    let app = json!({ "relay": { "plugins": relay }, "forger": { "plugins": [
-        plugin("logger"), plugin("transactions"), with("forger", forger)] } });
+    // The reference's schema requires the three profiles, the `core` one too.
+    let app = json!({ "core": { "plugins": [] }, "relay": { "plugins": relay }, "forger": {
+        "plugins": [plugin("logger"), plugin("transactions"), with("forger", forger)] } });
     let save = |name: &str, value: Value| write(&config.join(name), pretty(&value).as_bytes());
     let token = format!("node{}", node.index);
     let peer = |n: &ManifestNode| json!({ "ip": n.address.to_string(), "port": P2P_PORT });

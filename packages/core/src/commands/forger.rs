@@ -1,10 +1,13 @@
 //! `heartwood forger run|start|stop|restart|status|log`.
 
+use std::ffi::OsString;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
+use heartwood_cli::Role;
+use heartwood_cli::instance::InstanceFlags;
 
-use super::{LogFlags, ProcessFlags};
+use super::{Manage, on_instance};
 
 /// A forger's command.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
@@ -13,14 +16,9 @@ pub enum ForgerCommand {
     Run(ForgerRun),
     /// Start a forger under its supervisor.
     Start(ForgerStart),
-    /// Stop a forger.
-    Stop(ProcessFlags),
-    /// Restart a forger.
-    Restart(ProcessFlags),
-    /// A forger's process status.
-    Status(ProcessFlags),
-    /// A forger's log.
-    Log(LogFlags),
+    /// Stop, restart, show or tail a started forger.
+    #[command(flatten)]
+    Manage(Manage),
 }
 
 /// The flags of `forger run`.
@@ -50,6 +48,17 @@ pub struct ForgerStart {
 
 /// Run `command`.
 pub fn run(command: ForgerCommand) -> ExitCode {
-    let _ = command;
-    todo!("the forger's commands")
+    match command {
+        ForgerCommand::Run(run) => crate::exit(crate::app::forger::run_forger(&run)),
+        ForgerCommand::Start(start) => {
+            let (token, network) = (start.run.token, start.run.network);
+            let args = (start.run.env.into_iter()).flat_map(|env| ["--env".into(), env.into()]);
+            let args: Vec<OsString> = args.collect();
+            let flags = InstanceFlags { token, network };
+            on_instance(Role::Forger, &flags, |i| {
+                super::start(i, args, start.daemon)
+            })
+        }
+        ForgerCommand::Manage(command) => super::manage(Role::Forger, command),
+    }
 }
