@@ -1,6 +1,7 @@
 //! The role commands `start`, `stop`, `restart`, `status` and `log` with their refusals, the
 //! devnet's process operations over them (a node that holds its lock, killed as a crash is), a
-//! node without a supervisor, `log`'s tail, and the process table on Linux.
+//! node without a supervisor, `log`'s tail, `status`'s uptime from a corrupt start time, and the
+//! process table on Linux.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,7 +10,10 @@ use std::time::Duration;
 use heartwood_cli::process::{Supervisors, path_env, tail};
 use heartwood_cli::process_table::{self, render};
 use heartwood_cli::seams::{Instance, Role, StatusRow, SupervisedStatus};
+use heartwood_cli::supervisor::signals::take_lock;
+use heartwood_cli::supervisor::state::SupervisorState;
 use heartwood_kernel::paths::Paths;
+use heartwood_kernel::{Clock, SystemClock};
 
 /// A fresh directory for one test, under the target's temporary directory.
 fn scratch(test: &str) -> PathBuf {
@@ -157,6 +161,40 @@ fn the_process_table_reads_proc_on_linux() {
 }
 
 #[test]
+fn status_gives_no_uptime_for_a_start_time_it_cannot_subtract() {
+    let root = scratch("uptime");
+    let relay = instance(&root, Role::Relay);
+    heartwood_cli::supervisor::run_dir(&relay).unwrap();
+    // This test holds the supervisor's lock, and the state names its own process as the node.
+    let _lock = take_lock(&relay.supervisor_lock_path()).unwrap().unwrap();
+    let own = std::process::id();
+    let now = SystemClock.now_ms();
+    for (started, shown) in [
+        (i64::MIN, false),
+        (i64::MAX, false),
+        (now + 60_000, false),
+        (now - 5_000, true),
+    ] {
+        let state = SupervisorState {
+            name: relay.name(),
+            status: SupervisedStatus::Online,
+            supervisor_pid: own,
+            pid: Some(own),
+            argv: vec!["heartwood".into(), "relay".into(), "run".into()],
+            started_at_ms: Some(started),
+            restarts: 0,
+            unstable: 0,
+            last_exit: None,
+            version: "4.3.1-heartwood.0.1.0".into(),
+        };
+        state.write(&relay.state_path()).unwrap();
+        let row = heartwood_cli::process::status(&relay).unwrap();
+        assert_eq!((row.status, row.pid), (SupervisedStatus::Online, Some(own)));
+        assert_eq!(row.uptime.is_some(), shown, "started at {started}");
+    }
+}
+
+#[test]
 fn the_devnet_runs_each_role_as_heartwood_role_run_with_its_directories() {
     let root = scratch("node-argv");
     let forger = instance(&root, Role::Forger);
@@ -206,7 +244,6 @@ mod with_child {
     use heartwood_cli::seams::{Env, ProcessOps};
     use heartwood_cli::supervisor::VERSION;
     use heartwood_cli::supervisor::signals::is_locked;
-    use heartwood_cli::supervisor::state::SupervisorState;
     use heartwood_cli::{ProcessError, process};
 
     use super::*;
