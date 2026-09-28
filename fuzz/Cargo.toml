@@ -5,6 +5,7 @@
 name = "heartwood-fuzz"
 version = "0.0.0"
 edition = "2024"
+license = "Apache-2.0"
 publish = false
 
 [package.metadata]
