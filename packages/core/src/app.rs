@@ -232,13 +232,14 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
     .map_err(component)?;
     let ended = stops.clone();
     tokio::task::spawn_blocking(move || ended.send(Stop::Node(node.join())));
-    // The peer-to-peer client and the blockchain service.
+    // The peer-to-peer client and the blockchain service. The client's store reads run on the
+    // runtime's workers, so there is a read-only connection for each worker.
     let view = Arc::new(NodeView {
         handle: handle.clone(),
         chain: Arc::clone(&chain),
         milestones: Arc::clone(&milestones),
         network,
-        history: Arc::new(Readers::open(&settings, 2).map_err(component)?),
+        history: Arc::new(Readers::open(&settings, cpus.max(2)).map_err(component)?),
         links: Arc::clone(&links),
     });
     let monitor = client(seeded(p2p, run)?, view, &bus, &clock)?;
