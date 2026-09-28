@@ -997,7 +997,10 @@ and nix are used by this crate only (`make layers`).
   `logs`, `stop-node`, `start-node`, `restart-node`, `reset`, `wait` and `env` for a local devnet
   with one loopback address per node (node k on `127.0.0.(10 + k)`, P2P on port 6002 and the API
   on 6003; another prefix lets devnets run side by side), its relays and forgers started through
-  the supervisor, and the relays' APIs read with a loopback HTTP GET.
+  the supervisor, and the relays' APIs read with a loopback HTTP GET. A start refuses a node
+  whose P2P or API host, as `app.json`, the environment and the `.env` files give it, is not
+  loopback, and a relay with devnet addressing refuses to start when its API would listen outside
+  127.0.0.0/8.
 
 Where the commands differ on purpose from the reference's: the process names carry the network;
 a second supervisor of an instance's role refuses to start (its lock); a `config.json` that is not

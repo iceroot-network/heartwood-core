@@ -266,6 +266,7 @@ struct Bench {
     api: Api,
     clock: ManualClock,
     pauses: RefCell<Vec<Duration>>,
+    home: PathBuf,
     _serial: MutexGuard<'static, ()>,
 }
 
@@ -278,6 +279,7 @@ impl Bench {
             api: Api::default(),
             clock: ManualClock::new(T0),
             pauses: RefCell::new(Vec::new()),
+            home: scratch(&format!("{name}-home")),
             _serial: serial,
         }
     }
@@ -289,6 +291,8 @@ impl Bench {
             api: &self.api,
             clock: &self.clock,
             pause: &pause,
+            process: &[],
+            home: &self.home,
         })
     }
 
@@ -824,6 +828,62 @@ fn start_refuses_changed_crypto_files_open_listeners_and_taken_addresses() {
     drop(held);
     assert!(bench.ops.calls().is_empty());
     start().unwrap();
+}
+
+#[test]
+fn start_guards_the_hosts_the_nodes_would_listen_on_not_only_their_env_file() {
+    let bench = Bench::new("effective-hosts");
+    bench.init(&options(2)).unwrap();
+    bench.api.every(2, &["genesis"]);
+    let start = || bench.with(|tools| devnet::start(&bench.root, &bench.all(), tools));
+    let app = bench.root.join("node2/config/app.json");
+    let text = bench.file("node2/config/app.json");
+    let mut json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let api = json["relay"]["plugins"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|plugin| plugin["package"] == "@solar-network/api")
+        .unwrap();
+    api["options"] = serde_json::json!({ "server": { "http": { "host": "0.0.0.0" } } });
+    fs::write(&app, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    let refused = start();
+    assert!(
+        matches!(&refused, Err(DevnetError::Guard(text)) if text.contains("node 2") && text.contains("server.http.host")),
+        "{refused:?}"
+    );
+    fs::write(&app, text).unwrap();
+    let global = bench.home.join(".node1");
+    fs::create_dir_all(&global).unwrap();
+    fs::write(global.join(".env"), "CORE_API_HOST=0.0.0.0\n").unwrap();
+    let refused = start();
+    assert!(
+        matches!(&refused, Err(DevnetError::Guard(text)) if text.contains("node 1") && text.contains("CORE_API_HOST")),
+        "{refused:?}"
+    );
+    fs::remove_dir_all(&global).unwrap();
+    assert!(bench.ops.calls().is_empty());
+    start().unwrap();
+}
+
+#[test]
+fn a_manifest_whose_address_prefix_is_not_loopback_is_refused_when_read() {
+    let bench = Bench::new("prefix-read");
+    bench.init(&options(1)).unwrap();
+    let text = bench.file("devnet.json");
+    fs::write(
+        bench.root.join("devnet.json"),
+        text.replace(
+            "\"addressPrefix\": \"127.13.0\"",
+            "\"addressPrefix\": \"10.13.0\"",
+        ),
+    )
+    .unwrap();
+    let read = Manifest::read(&bench.root);
+    assert!(
+        matches!(&read, Err(DevnetError::Manifest { reason, .. }) if reason.contains("127.0.0.0/8")),
+        "{read:?}"
+    );
 }
 
 #[test]

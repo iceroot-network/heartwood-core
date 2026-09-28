@@ -114,6 +114,10 @@ pub struct Tools<'a> {
     pub clock: &'a dyn Clock,
     /// Waits for the given time.
     pub pause: &'a dyn Fn(Duration),
+    /// The process's environment variables, which the nodes inherit.
+    pub process: &'a [(String, String)],
+    /// The home directory, whose `.<token>/.env` files override a node's own.
+    pub home: &'a Path,
 }
 
 /// A forger that can fail over: node `node`'s forger uses the relays of the nodes `hosts`, in

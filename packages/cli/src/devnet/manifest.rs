@@ -227,6 +227,9 @@ fn parse(root: &Path, value: &Value) -> Result<Manifest, String> {
     let bytes: Option<Vec<u8>> = prefix.split('.').map(|part| part.parse().ok()).collect();
     let prefix = bytes.and_then(|bytes| <[u8; 3]>::try_from(bytes).ok());
     let address_prefix = prefix.ok_or_else(|| invalid("addressPrefix"))?;
+    if address_prefix[0] != 127 {
+        return Err("addressPrefix is not in 127.0.0.0/8".to_owned());
+    }
     let failover = list("failover")?
         .iter()
         .map(|entry| entry.as_str()?.parse().ok());
