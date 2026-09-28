@@ -1015,3 +1015,60 @@ async fn the_block_is_signed_for_the_slot_of_its_own_timestamp() {
         "the recording signer checks nothing"
     );
 }
+
+/// The recording signer, slowed down as a signing record's write and fsyncs can be on a busy disk.
+struct Slow(Recorder, Duration);
+
+impl BlockSigner for Slow {
+    fn sign_or_resend(
+        &mut self,
+        public_key: &PublicKeyBytes,
+        inputs: &ForgeInputs<'_>,
+        own_slot: i64,
+        slot: i64,
+    ) -> Result<SignedOutcome, SignError> {
+        std::thread::sleep(self.1);
+        self.0.sign_or_resend(public_key, inputs, own_slot, slot)
+    }
+}
+
+#[tokio::test]
+async fn a_slow_signing_record_leaves_the_forgers_one_thread_free() {
+    // Real time, on the current-thread runtime the forger process runs.
+    let relay = FakeRelay::new(in_slot(10, 0), &[1, 2], &[]);
+    let parts = ForgerParts {
+        link: relay.clone(),
+        signer: Slow(Recorder::default(), Duration::from_millis(600)),
+        delegates: vec![key(1).public_key().to_compressed()],
+        options: Options::from_json(&Value::Null, &|_| None).unwrap(),
+        milestones: milestones(),
+        clock: relay.clock.clone() as Arc<dyn Clock>,
+    };
+    let mut service = ForgerService::new(parts);
+    service.boot().await.unwrap();
+    let round = service.round().await.unwrap();
+    let delegate = key(1).public_key().to_compressed();
+    let (done, mut finished) = tokio::sync::watch::channel(false);
+    // A task that stands for the attester's poll and the sessions' heartbeats: the longest gap
+    // between its turns while the block is signed.
+    let mut last = Instant::now();
+    let ticker = tokio::spawn(async move {
+        let mut gap = Duration::ZERO;
+        while !*finished.borrow_and_update() {
+            let _ = tokio::time::timeout(Duration::from_millis(20), finished.changed()).await;
+            gap = gap.max(last.elapsed());
+            last = Instant::now();
+        }
+        gap
+    });
+    let end = service.forge_attempt(&delegate, true, &round).await;
+    done.send_replace(true);
+    let gap = ticker.await.unwrap();
+    assert_eq!(end, AttemptEnd::Forged);
+    assert_eq!(relay.count("post"), 1);
+    assert!(
+        gap < Duration::from_millis(300),
+        "the runtime stalled for {gap:?}"
+    );
+}
+

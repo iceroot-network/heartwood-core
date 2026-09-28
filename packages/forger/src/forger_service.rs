@@ -112,7 +112,7 @@ pub struct ForgerService<L, S> {
 
 struct Inner<L, S> {
     link: Arc<L>,
-    signer: Mutex<S>,
+    signer: Arc<Mutex<S>>,
     /// The delegates, deduplicated, with their keys in hex as the relay writes them.
     delegates: Vec<(PublicKeyBytes, String)>,
     delay: Duration,
@@ -199,7 +199,7 @@ impl<L, S> ForgerService<L, S> {
             slot_ms: i64::try_from(first.block_time().saturating_mul(1_000)).unwrap_or(i64::MAX),
             active_delegates: u32::try_from(first.active_delegates()).unwrap_or(u32::MAX),
             link: parts.link,
-            signer: Mutex::new(parts.signer),
+            signer: Arc::new(Mutex::new(parts.signer)),
             delegates,
             delay: parts.options.delay,
             milestones: parts.milestones,
@@ -652,17 +652,24 @@ where
         let now = slots::epoch_time(self.clock.now_ms(), self.epoch_ms);
         let own_slot = slots::slot_number(now, self.block_time);
         let slot = slots::slot_number(i64::from(ready.timestamp), self.block_time);
-        let inputs = ForgeInputs {
-            transactions: &ready.transactions,
-            previous_id: ready.previous_id,
-            previous_height: ready.previous_height,
-            timestamp: ready.timestamp,
-            reward: ready.reward,
-        };
-        let outcome = {
-            let mut signer = self.signer.lock().unwrap_or_else(PoisonError::into_inner);
-            signer.sign_or_resend(&key.0, &inputs, own_slot, slot)
-        };
+        // The record's write and its fsyncs run off the runtime's one thread, so the attester's
+        // poll and the sessions' heartbeats go on meanwhile; a signer that panicked errs.
+        let (signer, public_key, ready) = (Arc::clone(&self.signer), key.0, ready);
+        let signing = tokio::task::spawn_blocking(move || {
+            let inputs = ForgeInputs {
+                transactions: &ready.transactions,
+                previous_id: ready.previous_id,
+                previous_height: ready.previous_height,
+                timestamp: ready.timestamp,
+                reward: ready.reward,
+            };
+            let mut signer = signer.lock().unwrap_or_else(PoisonError::into_inner);
+            (
+                signer.sign_or_resend(&public_key, &inputs, own_slot, slot),
+                ready,
+            )
+        });
+        let (outcome, ready) = signing.await.map_err(|e| Failure::Other(e.to_string()))?;
         let outcome = outcome.map_err(|error| Failure::Other(error.to_string()))?;
         let signed = outcome.signed();
         let block = Block::decode_trusted(&signed.bytes, &self.milestones).ok();
