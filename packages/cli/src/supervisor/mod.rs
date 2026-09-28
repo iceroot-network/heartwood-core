@@ -40,7 +40,7 @@ use heartwood_kernel::{Clock, SystemClock};
 use nix::spawn::{PosixSpawnAttr, PosixSpawnFileActions, PosixSpawnFlags, posix_spawnp};
 use nix::sys::signal::SigSet;
 use nix::sys::signal::Signal::{self, SIGHUP, SIGINT, SIGKILL, SIGPIPE, SIGQUIT, SIGTERM};
-use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid, waitpid};
 use nix::unistd::Pid;
 
 use self::logs::{Capture, ROTATE_AT};
@@ -271,6 +271,14 @@ impl Supervisor {
         self.line(&format!("starting {}", self.state.argv.join(" ")));
         let (node, out, err) = spawn(&self.state.argv).map_err(|e| failed(e.to_string()))?;
         let started = Instant::now();
+        // The moment the node exits, taken by a thread that waits for it without reaping it, so
+        // that the run's uptime does not include the poll below.
+        let (exits, exited) = mpsc::channel();
+        thread::spawn(move || {
+            let flags = WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT;
+            let _ = waitid(Id::Pid(node), flags);
+            let _ = exits.send(Instant::now());
+        });
         let pumps = [pump(out, &self.out), pump(err, &self.err)];
         self.state.started_at_ms = Some(SystemClock.now_ms());
         let pid = node.as_raw().unsigned_abs();
@@ -306,7 +314,10 @@ impl Supervisor {
         while pumps.iter().any(|p| !p.is_finished()) && Instant::now() < deadline {
             thread::sleep(POLL);
         }
-        let uptime = started.elapsed();
+        let ended = exited
+            .recv_timeout(DRAIN)
+            .unwrap_or_else(|_| Instant::now());
+        let uptime = ended.saturating_duration_since(started);
         self.line(&format!(
             "the node exited ({exit}) after {} ms",
             uptime.as_millis()

@@ -153,6 +153,24 @@ fn a_node_that_ran_a_second_or_more_is_restarted_at_once() {
 }
 
 #[test]
+fn a_run_is_timed_to_the_moment_its_node_exited_not_to_the_next_poll() {
+    let node = Node::new("uptime");
+    node.start(&["exit", "1", "970"], &[]);
+    wait_for("three exits", Duration::from_secs(15), || {
+        count(&node.out(), "supervisor: the node exited") >= 3
+    });
+    process::stop(&node.0).ok();
+    let out = node.out();
+    let uptimes: Vec<u64> = out
+        .lines()
+        .filter_map(|line| line.strip_suffix(" ms")?.rsplit(' ').next()?.parse().ok())
+        .collect();
+    assert!(uptimes.len() >= 3, "{out}");
+    assert!(uptimes[..3].iter().all(|&ms| ms < 1_000), "{uptimes:?}");
+    assert!(node.state().unstable >= 3);
+}
+
+#[test]
 fn five_unstable_runs_in_the_first_seconds_mark_the_role_errored() {
     let node = Node::new("errored");
     node.start(&["exit", "1"], &[]);
