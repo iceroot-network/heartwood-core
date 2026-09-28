@@ -1,10 +1,13 @@
 //! `heartwood forger run|start|stop|restart|status|log`.
 
+use std::ffi::OsString;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
+use heartwood_cli::Role;
+use heartwood_cli::instance::InstanceFlags;
 
-use super::{LogFlags, ProcessFlags};
+use super::{LogFlags, ProcessCommand, ProcessFlags, process_command};
 
 /// A forger's command.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
@@ -50,6 +53,21 @@ pub struct ForgerStart {
 
 /// Run `command`.
 pub fn run(command: ForgerCommand) -> ExitCode {
-    let _ = command;
-    todo!("the forger's commands")
+    let process = match command {
+        ForgerCommand::Run(run) => return crate::exit(crate::app::forger::run_forger(&run)),
+        ForgerCommand::Start(start) => {
+            let flags = InstanceFlags {
+                token: start.run.token,
+                network: start.run.network,
+            };
+            let env = start.run.env.into_iter();
+            let args = env.flat_map(|env| [OsString::from("--env"), env.into()]);
+            ProcessCommand::Start(flags, args.collect(), start.daemon)
+        }
+        ForgerCommand::Stop(flags) => ProcessCommand::Stop(flags),
+        ForgerCommand::Restart(flags) => ProcessCommand::Restart(flags),
+        ForgerCommand::Status(flags) => ProcessCommand::Status(flags),
+        ForgerCommand::Log(flags) => ProcessCommand::Log(flags),
+    };
+    process_command(Role::Forger, process)
 }
