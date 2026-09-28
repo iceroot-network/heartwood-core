@@ -9,7 +9,7 @@
 //! schema refuses both), a form (read as no fields, which the schema refuses too), or any other
 //! type refused. The reference answers every failure with a 422 and hapi's message (its server's
 //! `failAction` for a payload). The headers are read as Node gives them to hapi
-//! ([`super::node_header`]): as Latin-1, the first `content-type`, and repeated
+//! (`node_header`): as Latin-1, the first `content-type`, and repeated
 //! `content-encoding` values joined, which names no decoder.
 
 use std::io::Read;

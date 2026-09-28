@@ -9,7 +9,7 @@
 //!
 //! Each connection is served for at most the socket timeout (300 s when it is 0), headers
 //! included, and answers one request (`connection: close`). Its head is read first as Node's
-//! parser reads it ([`head`]): a head that parser refuses, one of 16 KiB or more included, is
+//! parser reads it (`head`): a head that parser refuses, one of 16 KiB or more included, is
 //! answered as the reference answers it, with a bare 400. Stopping the server closes the listener
 //! and waits for the connections in flight, each bounded by that timeout.
 

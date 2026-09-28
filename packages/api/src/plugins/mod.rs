@@ -20,7 +20,7 @@
 //! path that leads above the documentation's directory); another method on an unmatched path is
 //! answered 404 before the rate limit.
 //!
-//! The request's headers are read as Node's server gives them to hapi ([`node_header`]): as
+//! The request's headers are read as Node's server gives them to hapi (`node_header`): as
 //! Latin-1, and a repeated header's values joined with `, `.
 
 mod catch_all;
