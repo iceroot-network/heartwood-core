@@ -309,8 +309,32 @@ async fn the_servers_reads_and_work_go_to_the_node_and_its_store() {
         services.slot_number(None, now),
         i64::from(last) * 1000 / block_ms + 1
     );
+    // The round's delegates and the two forgers in forging order, as getActiveDelegates gives
+    // them, and the tip's data with its forger's name, as the reference's enqueueing names it.
+    let state = handle.state().borrow().clone();
+    let forging = state.round.forging_delegates().iter();
+    let forging: Vec<String> = forging.map(|d| d.public_key.to_hex()).collect();
+    let listed = round
+        .delegates
+        .iter()
+        .map(|wallet| wallet.public_key.clone());
+    assert_eq!(listed.collect::<Vec<_>>(), forging);
+    let slot = |at: i64| forging[usize::try_from(at).unwrap() % forging.len()].clone();
+    let info = heartwood_kernel::calculate_forging_info(
+        heartwood_crypto::crypto::slots::epoch_time(now, epoch),
+        tip + 1,
+        &milestones,
+    );
+    let forger = round.current_forger.as_ref().map(|w| w.public_key.clone());
+    assert_eq!(forger, Some(slot(info.current_forger)));
+    let generator = corpus[68].header().generator_public_key;
+    let name = state.wallets.find_by_public_key(&generator).unwrap();
+    let name = name.delegate().unwrap().username();
+    assert_eq!(round.last_block.fields["username"], name);
     let active = services.active_keys_next_round().unwrap();
     assert_eq!(active.len(), 53);
+    let active_hex: Vec<String> = active.iter().map(|key| key.to_hex()).collect();
+    assert_eq!(active_hex, forging, "getActiveDelegates' order");
     let name = round.delegates[0].username.clone();
     assert!(services.delegate_rank(&name).is_some());
     assert!(services.delegate_rank("nobody").is_none());

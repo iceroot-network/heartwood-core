@@ -4,11 +4,14 @@
 //! monitor, its repository and its acceptance ([`MonitorSide`]).
 //!
 //! The round and the slots are read as the reference's internal controller reads them: the tip
-//! and the wallets of the state the node last published, the round's delegates as the client's
-//! `getActiveDelegates` reads them (the stored round, else the state's), and the block time of
-//! the tip plus one. `allDelegates` lists every registered delegate in name order, where the
-//! reference lists them in the order its username index was filled; the forger reads it only as
-//! a map from key to name.
+//! and the wallets of the state the node last published, the round's delegates in forging order
+//! as `getActiveDelegates` gives them (the state's forging list when its round is the one asked,
+//! else the stored round's delegates shuffled for the round), the tip's block data with its
+//! forger's name, and the block time of the tip plus one. `allDelegates` lists every registered
+//! delegate in name order, where the reference lists them in the order its username index was
+//! filled, and each wallet is the API's shape, where the reference writes its wallet data (for
+//! the round's delegates, the copies made at the round's start); the forger reads only each
+//! wallet's key and name.
 
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -23,10 +26,12 @@ use heartwood_blockchain::{
     Blockchain, Channel, IncomingBlock, MachineStatus, Network, NodeHandle,
 };
 use heartwood_crypto::crypto::slots;
-use heartwood_crypto::{Block, BlockHeader, BlockId, PublicKeyBytes, TransactionId};
+use heartwood_crypto::{Block, BlockHeader, BlockId, Milestones, PublicKeyBytes, TransactionId};
 use heartwood_database::{BlockRow, Readers};
 use heartwood_kernel::bus::EventBus;
-use heartwood_kernel::{ChainLink, Clock, Event, calculate_forging_info, calculate_round};
+use heartwood_kernel::{
+    ChainLink, Clock, Event, RoundInfo, calculate_forging_info, calculate_round,
+};
 use heartwood_p2p::errors::LookupError;
 use heartwood_p2p::monitor::CleanseOptions;
 use heartwood_p2p::node_services::{Collation, ForgerEvent, NodeUnavailable, QueueState};
@@ -40,8 +45,9 @@ use heartwood_p2p_wire::codecs::blocks::BlockListing;
 use heartwood_p2p_wire::internal::{CurrentRound, DelegateWallet, LastBlockData};
 use heartwood_p2p_wire::replies::PeerAddress;
 use heartwood_p2p_wire::status::PeerConfig;
-use heartwood_pool::Entry;
+use heartwood_pool::{Entry, PoolView};
 use heartwood_state::StateView;
+use heartwood_state::round_state::shuffle_delegates;
 use heartwood_state::wallets::Wallet;
 use serde_json::Value;
 use tokio::runtime::Handle;
@@ -106,13 +112,99 @@ impl<N> RelayServices<N> {
     fn state(&self) -> Arc<StateView> {
         Arc::clone(&self.handle.state().borrow())
     }
+}
 
-    /// The block time at the tip plus one, and the network's epoch, in milliseconds.
-    fn slots(&self, tip: u32) -> (u64, i64) {
-        let params = self.view.milestones.at(tip.saturating_add(1));
-        let epoch = slots::epoch_unix_ms(self.view.milestones.at(1).epoch()).unwrap_or(0);
-        (params.block_time(), epoch)
+/// The block time at the tip `tip` plus one, and the network's epoch, in milliseconds.
+fn slot_times(milestones: &Milestones, tip: u32) -> (u64, i64) {
+    let params = milestones.at(tip.saturating_add(1));
+    let epoch = slots::epoch_unix_ms(milestones.at(1).epoch()).unwrap_or(0);
+    (params.block_time(), epoch)
+}
+
+/// The delegates of `round` in forging order, as `getActiveDelegates` gives them: the forging
+/// list of the published `state` when its round is `round`, else the stored delegates that
+/// `round_keys` gives (rank order) shuffled for the round.
+pub fn forging_keys(
+    state: &StateView,
+    round: RoundInfo,
+    round_keys: impl FnOnce(RoundInfo) -> Result<Vec<PublicKeyBytes>, LookupError>,
+) -> Result<Vec<PublicKeyBytes>, LookupError> {
+    if state.round.info().round == round.round {
+        let forging = state.round.forging_delegates().iter();
+        return Ok(forging.map(|delegate| delegate.public_key).collect());
     }
+    Ok(shuffle_delegates(round.round, &round_keys(round)?))
+}
+
+/// getCurrentRound's answer at `now_ms` (milliseconds since the Unix epoch), as the internal
+/// controller gives it: over the tip, the wallets and the round of the published `state`, with
+/// `pool`'s view of the wallets, and the round of the tip plus one in forging order
+/// ([`forging_keys`], with `round_keys`).
+pub fn current_round(
+    state: &StateView,
+    pool: &PoolView,
+    milestones: &Milestones,
+    now_ms: i64,
+    round_keys: impl FnOnce(RoundInfo) -> Result<Vec<PublicKeyBytes>, LookupError>,
+) -> Result<CurrentRound, LookupError> {
+    let tip = state.height();
+    let (height, (_, epoch)) = (tip.saturating_add(1), slot_times(milestones, tip));
+    let round = calculate_round(height, milestones);
+    let wallet = |wallet: &&Wallet| {
+        let fields = delegate_wallet(wallet, state, pool);
+        lookup(DelegateWallet::new(
+            fields.as_object().cloned().unwrap_or_default(),
+        ))
+    };
+    let registered: Vec<&Wallet> = state.wallets.delegates().collect();
+    let keys = forging_keys(state, round, round_keys)?;
+    let active: Vec<&Wallet> = (keys.iter())
+        .filter_map(|key| state.wallets.find_by_public_key(key))
+        .collect();
+    let all_delegates = registered.iter().map(wallet).collect::<Result<_, _>>()?;
+    let delegates: Vec<_> = active.iter().map(wallet).collect::<Result<_, _>>()?;
+    let info = calculate_forging_info(slots::epoch_time(now_ms, epoch), height, milestones);
+    let index = |index: i64| usize::try_from(index).ok();
+    let at = |i: i64| index(i).and_then(|i| delegates.get(i)).cloned();
+    let current = index(info.current_forger).and_then(|i| active.get(i));
+    let reward = match current.and_then(|wallet| wallet.delegate()) {
+        Some(forger) => {
+            let reward = state
+                .round
+                .reward_for_block_in_round(height, forger, milestones);
+            lookup(reward)?.reward
+        }
+        None => milestones.at(tip).reward(),
+    };
+    let mut last_block = state.last_block.to_json(milestones);
+    let fields = last_block.as_object_mut().map(std::mem::take);
+    let mut fields = fields.unwrap_or_default();
+    fields.shift_remove("transactions");
+    // The name the reference gives an applied block's data when it enqueues it.
+    let generator = &state.last_block.header().generator_public_key;
+    let forger = state.wallets.find_by_public_key(generator);
+    if let Some(delegate) = forger.and_then(Wallet::delegate).filter(|_| tip > 1) {
+        fields.insert("username".into(), delegate.username().into());
+    }
+    Ok(CurrentRound {
+        can_forge: info.can_forge,
+        current: round.round,
+        current_forger: at(info.current_forger),
+        next_forger: at(info.next_forger),
+        last_block: lookup(LastBlockData::new(fields))?,
+        reward: reward.to_string(),
+        timestamp: info.block_timestamp,
+        all_delegates,
+        delegates,
+    })
+}
+
+/// getSlotNumber's answer: the slot of `timestamp` (seconds after the epoch), or of `now_ms`
+/// when there is none, at the block time of the tip `tip` plus one.
+pub fn slot_number(milestones: &Milestones, tip: u32, timestamp: Option<i64>, now_ms: i64) -> i64 {
+    let (block_time, epoch) = slot_times(milestones, tip);
+    let timestamp = timestamp.unwrap_or_else(|| slots::epoch_time(now_ms, epoch));
+    slots::slot_number(timestamp, block_time)
 }
 
 /// A delegate's wallet as the round lists it: `{...wallet.getData(), delegate}`.
@@ -218,9 +310,9 @@ impl<N: Network> NodeServices for RelayServices<N> {
     }
 
     fn active_keys_next_round(&self) -> Result<Vec<PublicKeyBytes>, LookupError> {
-        let tip = self.state().height();
-        let round = calculate_round(tip.saturating_add(1), &self.view.milestones);
-        self.view.round_delegate_keys(round)
+        let state = self.state();
+        let round = calculate_round(state.height().saturating_add(1), &self.view.milestones);
+        forging_keys(&state, round, |round| self.view.round_delegate_keys(round))
     }
 
     fn blocks_for_download(
@@ -281,56 +373,13 @@ impl<N: Network> NodeServices for RelayServices<N> {
 
     fn current_round(&self, now_ms: i64) -> Result<CurrentRound, LookupError> {
         let (state, pool) = (self.state(), Arc::clone(&self.handle.pool().borrow()));
-        let (milestones, tip) = (&*self.view.milestones, state.height());
-        let (height, (_, epoch)) = (tip.saturating_add(1), self.slots(tip));
-        let round = calculate_round(height, milestones);
-        let wallet = |wallet: &&Wallet| {
-            let fields = delegate_wallet(wallet, &state, &pool);
-            lookup(DelegateWallet::new(
-                fields.as_object().cloned().unwrap_or_default(),
-            ))
-        };
-        let registered: Vec<&Wallet> = state.wallets.delegates().collect();
-        let keys = self.view.round_delegate_keys(round)?;
-        let active: Vec<&Wallet> = (keys.iter())
-            .filter_map(|key| state.wallets.find_by_public_key(key))
-            .collect();
-        let all_delegates = registered.iter().map(wallet).collect::<Result<_, _>>()?;
-        let delegates: Vec<_> = active.iter().map(wallet).collect::<Result<_, _>>()?;
-        let info = calculate_forging_info(slots::epoch_time(now_ms, epoch), height, milestones);
-        let index = |index: i64| usize::try_from(index).ok();
-        let at = |i: i64| index(i).and_then(|i| delegates.get(i)).cloned();
-        let current = index(info.current_forger).and_then(|i| active.get(i));
-        let reward = match current.and_then(|wallet| wallet.delegate()) {
-            Some(forger) => {
-                let reward = state
-                    .round
-                    .reward_for_block_in_round(height, forger, milestones);
-                lookup(reward)?.reward
-            }
-            None => milestones.at(tip).reward(),
-        };
-        let mut last_block = state.last_block.to_json(milestones);
-        let fields = last_block.as_object_mut().map(std::mem::take);
-        let mut fields = fields.unwrap_or_default();
-        fields.shift_remove("transactions");
-        Ok(CurrentRound {
-            can_forge: info.can_forge,
-            current: round.round,
-            current_forger: at(info.current_forger),
-            next_forger: at(info.next_forger),
-            last_block: lookup(LastBlockData::new(fields))?,
-            reward: reward.to_string(),
-            timestamp: info.block_timestamp,
-            all_delegates,
-            delegates,
-        })
+        let keys = |round| self.view.round_delegate_keys(round);
+        current_round(&state, &pool, &self.view.milestones, now_ms, keys)
     }
 
     fn slot_number(&self, timestamp: Option<i64>, now_ms: i64) -> i64 {
-        let (block_time, epoch) = self.slots(self.state().height());
-        let timestamp = timestamp.unwrap_or_else(|| slots::epoch_time(now_ms, epoch));
-        slots::slot_number(timestamp, block_time)
+        let tip = self.state().height();
+        slot_number(&self.view.milestones, tip, timestamp, now_ms)
     }
 
     fn force_wakeup(&self) {
