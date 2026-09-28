@@ -5,15 +5,15 @@
 //! the online record saved to the store.
 //!
 //! Each processor broadcasts the transactions it admitted that pass the broadcast fee rule to
-//! every peer, so a follower forwards what it downloads, as a reference relay does. The processor
-//! answers only their ids, so they are read back from the pool right after the batch, with no
-//! other work between. All of it runs on the node thread, under the rules of the tip plus one.
+//! every peer, as they were admitted (one that a later entry of the batch evicts included), so a
+//! follower forwards what it downloads, as a reference relay does. All of it runs on the node
+//! thread, under the rules of the tip plus one.
 //!
 //! The reference cleans the pool up once per applied block, in a listener that runs while the job
 //! goes on; here it runs once after the job's commit, at the committed tip, which removes the
 //! same transactions: the clean-up reads only the tip and the pool.
 
-use heartwood_crypto::{Milestones, Network, Params, Transaction, TransactionId};
+use heartwood_crypto::{Milestones, Network, Params, Transaction};
 use heartwood_kernel::Clock;
 use heartwood_pool::{
     DelegateVersions, Entry, Pool, PoolContext, PoolView, Processor, ProcessorResult, Readded,
@@ -95,14 +95,7 @@ impl PoolTask {
             Channel::Download => &mut self.download,
         };
         let ctx = env.context(&self.online);
-        let result = processor.process(&mut self.pool, &ctx, env.clock, entries)?;
-        let (pooled, mut broadcast) = (self.pool.query().all(), Vec::new());
-        let parse = |id: &String| TransactionId::from_hex(id);
-        for id in result.broadcast.iter().flat_map(parse) {
-            let admitted = pooled.iter().find(|pooled| *pooled.id() == id);
-            broadcast.extend(admitted.map(|admitted| Transaction::clone(admitted)));
-        }
-        Ok((result, broadcast))
+        processor.process_to_broadcast(&mut self.pool, &ctx, env.clock, entries)
     }
 
     /// The pool steps after a job's commit: the online record's expiry at the start of each round
