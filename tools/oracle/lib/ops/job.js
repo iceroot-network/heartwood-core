@@ -191,6 +191,13 @@ function jobBlock(item, i) {
  * Object.create, its collaborators the session's or stubs), a BlockProcessor, and a proxy of the
  * session's application that resolves the handlers and the job with the service, the recording
  * logger and the session's pool.
+ *
+ * It is not lib/process.js's processor world, which chain.process uses: a job also needs the
+ * service's queue, state machine, monitor and fork stubs, and a processor resolved in the job's
+ * application. Their forged-id queries differ on purpose. chain.process cases may leave blocks
+ * applied but not stored (`unstored`), so that query reads the blocks at or below the last stored
+ * height; a job saves its accepted blocks after its loop and nothing else writes the session's
+ * store meanwhile, so here every stored transaction is a forged one.
  */
 function jobWorld(solar, replay, { machineState = "newBlock" } = {}) {
     const cls = referenceClasses(solar);
