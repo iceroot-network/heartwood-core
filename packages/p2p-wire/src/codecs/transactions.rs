@@ -102,8 +102,12 @@ pub fn get_unconfirmed_transactions_encode_response(
 /// The getUnconfirmedTransactions response as the server writes it from `listing`: the bytes
 /// that [`get_unconfirmed_transactions_encode_response`] writes for the same values.
 pub fn get_unconfirmed_transactions_encode_listing(listing: &UnconfirmedListing) -> Vec<u8> {
-    let _ = listing;
-    todo!("the getUnconfirmedTransactions response from the server's listing")
+    GetUnconfirmedTransactionsResponse {
+        pool_size: Some(listing.pool_size),
+        transactions: Some(list::encode(&listing.transactions)),
+        ..GetUnconfirmedTransactionsResponse::default()
+    }
+    .encode()
 }
 
 /// The getUnconfirmedTransactions response, with its transaction list read.

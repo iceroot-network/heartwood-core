@@ -491,7 +491,10 @@ where
     }
 
     /// The fork health check: a discovery that pings all first unless `fast`, a forced cleanse,
-    /// then [`fork_decision`] over the peers.
+    /// then [`fork_decision`] over the peers and the local peer. The local peer carries the
+    /// delegates on this node ([`MonitorParts::attested`]) with a verification at our height,
+    /// and those keys are removed from every other peer until its next attestation, as the
+    /// reference reassigns them; without such a delegate it counts nothing.
     pub async fn check_network_health(&self, fast: bool) -> NetworkStatus {
         if !fast {
             self.discover_peers(true, false, false).await;
@@ -503,12 +506,26 @@ where
         let height = chain.last_block().height();
         let active = chain.milestones().at(height).active_delegates();
         let rank_of = |key: &PublicKeyBytes| chain.delegate_by_key(key).and_then(|d| d.rank);
-        let fork_peer = |p: &mut Peer| ForkPeer {
-            active_delegates: active_count(&p.public_keys, rank_of, active),
-            height: p.height(),
-            verification: p.verification,
+        let on_this_node = self.p.attested.attested();
+        let fork_peer = |p: &mut Peer| {
+            p.public_keys.retain(|key| !on_this_node.contains(key));
+            ForkPeer {
+                active_delegates: active_count(&p.public_keys, rank_of, active),
+                height: p.height(),
+                verification: p.verification,
+            }
         };
-        let peers: Vec<ForkPeer> = self.all().iter().map(|p| p.with(fork_peer)).collect();
+        let mut peers: Vec<ForkPeer> = self.all().iter().map(|p| p.with(fork_peer)).collect();
+        let ours = Verification {
+            my_height: height,
+            their_height: height,
+            highest_common_height: height,
+        };
+        peers.push(ForkPeer {
+            active_delegates: active_count(&on_this_node, rank_of, active),
+            height: None,
+            verification: Some(ours),
+        });
         fork_decision(&peers, height, active)
     }
 

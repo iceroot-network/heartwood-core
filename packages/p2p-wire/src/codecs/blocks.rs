@@ -168,6 +168,148 @@ pub fn post_block_decode_response(bytes: &[u8]) -> Result<PostBlockResponse, Dec
 /// The getBlocks response as the server writes it from `blocks`: the bytes that
 /// [`get_blocks_encode_response`] writes for the same blocks.
 pub fn get_blocks_encode_listing(blocks: &[BlockListing]) -> Vec<u8> {
-    let _ = blocks;
-    todo!("the getBlocks response from the server's listings")
+    let headers: Vec<Vec<u8>> = blocks
+        .iter()
+        .map(|block| {
+            BlockHeader {
+                id: Some(block.id.clone()),
+                version: Some(block.version),
+                timestamp: Some(block.timestamp),
+                previous_block: block.previous_block.clone(),
+                height: Some(block.height),
+                number_of_transactions: Some(block.number_of_transactions),
+                total_amount: Some(block.total_amount.to_string()),
+                total_fee: Some(block.total_fee.to_string()),
+                reward: Some(block.reward.to_string()),
+                payload_length: Some(block.payload_length),
+                payload_hash: Some(block.payload_hash.clone()),
+                generator_public_key: Some(block.generator_public_key.clone()),
+                block_signature: Some(block.block_signature.clone()),
+                transactions: Some(list::encode(&block.transactions)),
+                ..BlockHeader::default()
+            }
+            .encode()
+        })
+        .collect();
+    list::encode(&headers)
+}
+
+#[cfg(test)]
+mod listing_tests {
+    //! The server's listings write the bytes of every V13 response record they can hold (class
+    //! V13, read from `tests/vectors` of the crate).
+
+    use serde_json::Value;
+
+    use super::{BlockListing, get_blocks_encode_listing};
+    use crate::codecs::Amount;
+    use crate::codecs::transactions::{
+        UnconfirmedListing, get_unconfirmed_transactions_encode_listing,
+    };
+    use heartwood_crypto::utils::hex;
+
+    fn records() -> Vec<Value> {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/vectors/V13-p2p-wire.jsonl"
+        );
+        let text = std::fs::read_to_string(path).unwrap();
+        let records = text.lines().map(|line| serde_json::from_str(line).unwrap());
+        records.collect()
+    }
+
+    fn text(value: &Value, key: &str) -> Option<String> {
+        Some(value.get(key)?.as_str()?.to_owned())
+    }
+
+    fn number(value: &Value, key: &str) -> Option<u32> {
+        u32::try_from(value.get(key)?.as_u64()?).ok()
+    }
+
+    fn amount(value: &Value, key: &str) -> Option<Amount> {
+        Amount::parse(value.get(key)?.as_str()?).ok()
+    }
+
+    fn transactions(value: &Value) -> Option<Vec<Vec<u8>>> {
+        let hexes = value
+            .as_array()?
+            .iter()
+            .map(|tx| hex::decode(tx.as_str()?).ok());
+        hexes.collect()
+    }
+
+    /// A block of a record's value as the store gives it: every field, the previous block
+    /// optional, the transactions absent for a headers-only block.
+    fn listing(block: &Value) -> Option<BlockListing> {
+        let keys = block
+            .as_object()?
+            .keys()
+            .filter(|key| !["previousBlock", "transactions"].contains(&key.as_str()));
+        (keys.count() == 12).then_some(())?;
+        Some(BlockListing {
+            id: text(block, "id")?,
+            version: number(block, "version")?,
+            timestamp: number(block, "timestamp")?,
+            previous_block: text(block, "previousBlock"),
+            height: number(block, "height")?,
+            number_of_transactions: number(block, "numberOfTransactions")?,
+            total_amount: amount(block, "totalAmount")?,
+            total_fee: amount(block, "totalFee")?,
+            reward: amount(block, "reward")?,
+            payload_length: number(block, "payloadLength")?,
+            payload_hash: text(block, "payloadHash")?,
+            generator_public_key: text(block, "generatorPublicKey")?,
+            block_signature: text(block, "blockSignature")?,
+            transactions: block
+                .get("transactions")
+                .map_or(Some(Vec::new()), transactions)?,
+        })
+    }
+
+    fn unconfirmed(value: &Value) -> Option<UnconfirmedListing> {
+        (value.as_object()?.len() == 2).then_some(())?;
+        Some(UnconfirmedListing {
+            pool_size: number(value, "poolSize")?,
+            transactions: transactions(value.get("transactions")?)?,
+        })
+    }
+
+    #[test]
+    fn the_listings_write_the_reference_s_response_bytes() {
+        let mut checked = [0, 0];
+        for record in records() {
+            let input = &record["input"];
+            if record["op"] != "wire.encode" || input["direction"] != "response" {
+                continue;
+            }
+            let expected = &record["output"]["hex"];
+            let value = &input["value"];
+            let bytes = match input["route"].as_str() {
+                Some("getBlocks") => {
+                    let blocks: Option<Vec<BlockListing>> =
+                        value.as_array().unwrap().iter().map(listing).collect();
+                    let Some(blocks) = blocks else {
+                        continue;
+                    };
+                    checked[0] += 1;
+                    get_blocks_encode_listing(&blocks)
+                }
+                Some("getUnconfirmedTransactions") => {
+                    let Some(listing) = unconfirmed(value) else {
+                        continue;
+                    };
+                    checked[1] += 1;
+                    get_unconfirmed_transactions_encode_listing(&listing)
+                }
+                _ => continue,
+            };
+            assert_eq!(
+                &Value::from(hex::encode(&bytes)),
+                expected,
+                "{}",
+                record["name"]
+            );
+        }
+        assert!(checked[0] >= 3 && checked[1] >= 1, "{checked:?}");
+    }
 }

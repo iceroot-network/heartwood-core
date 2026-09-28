@@ -9,12 +9,14 @@ pub mod internal;
 pub mod peer;
 pub mod transactions;
 
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use heartwood_kernel::Clock;
+use heartwood_kernel::{Clock, warning};
 use heartwood_p2p_wire::RouteId;
 
+use super::ServerOptions;
 use super::seams::{RouteHandlers, ServerRefusal, ServerRequest};
 use crate::attestation_session::AttestationSession;
 use crate::node_services::{NodeServices, PeerSide};
@@ -43,10 +45,44 @@ pub struct Controllers {
 }
 
 impl Controllers {
-    /// The controllers of `parts`.
+    /// The controllers of `parts`, with a warning for each `remoteAccess` entry that admits no
+    /// forger ([`remote_access_warnings`]).
     pub fn new(parts: ControllerParts) -> Controllers {
+        for text in remote_access_warnings(&parts.options) {
+            warning!("{text}");
+        }
         Controllers { parts }
     }
+}
+
+/// The warnings the `remoteAccess` option gives at start: an entry with a prefix length matches no
+/// source (the reference matches the source's text against it, which never holds a `/`), and a
+/// list with no address admits no forger to the internal routes.
+pub fn remote_access_warnings(options: &P2pOptions) -> Vec<String> {
+    let entries = options.remote_access.iter();
+    let mut warnings: Vec<String> = (entries.filter(|entry| entry.parse::<IpAddr>().is_err()))
+        .map(|entry| {
+            format!("The remoteAccess entry {entry} matches no address: it admits no forger")
+        })
+        .collect();
+    if ServerOptions::from_p2p(options).remote_access.is_empty() {
+        let none =
+            "remoteAccess admits no address: no forger can reach this relay's internal routes";
+        warnings.push(none.to_owned());
+    }
+    warnings
+}
+
+/// A request body the route's reader refuses: 400 "Validation failed", as the validation plugin
+/// answers a body its schema refuses.
+fn invalid<E>(_: E) -> ServerRefusal {
+    ServerRefusal::new(400, "Validation failed")
+}
+
+/// A handler that failed: the 500 answer the reference's server gives an error that is not its
+/// own (ended with the socket, never a ban).
+fn internal<E>(_: E) -> ServerRefusal {
+    ServerRefusal::new(500, "An internal server error occurred")
 }
 
 impl RouteHandlers for Controllers {
