@@ -76,6 +76,8 @@ mod pool;
 mod processor;
 mod quorum;
 mod relay_round;
+
+pub use relay_round::masked as round_wallets_masked;
 mod server;
 mod signatures;
 mod state;
@@ -522,7 +524,8 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
         | Documented::UnlinkedForkSegment
         | Documented::MissedRowsOfRefusedBlock
         | Documented::Api(_)
-        | Documented::OverHeightOwnBlock => false,
+        | Documented::OverHeightOwnBlock
+        | Documented::RoundWallets => false,
     }
 }
 

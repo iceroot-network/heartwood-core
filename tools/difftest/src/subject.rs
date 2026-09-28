@@ -105,6 +105,9 @@ pub enum Documented {
     /// whole block from its header, which only an empty block passes; Heartwood verifies its
     /// signature.
     OverHeightOwnBlock,
+    /// The wallets of a relay's getCurrentRound answer: their fields, and the order of
+    /// `allDelegates`.
+    RoundWallets,
 }
 
 /// A served route's documented difference from the reference.
@@ -240,6 +243,14 @@ impl Documented {
                  verifies the header's signature and does not forge (the same key forging on two \
                  nodes only)"
             }
+            Documented::RoundWallets => {
+                "the wallets of the relay's round answer: the reference writes its wallet data \
+                 (the attribute map with its known attributes, and for the round's delegates the \
+                 copies it made at the round's start, with the round), and lists allDelegates in \
+                 the order its name index was filled; Heartwood writes the API's wallet shape and \
+                 lists allDelegates by name; the forger reads only each wallet's key and name, \
+                 which agree, as every other field of the answer does"
+            }
         }
     }
 }
@@ -318,10 +329,17 @@ impl Documented {
 
     /// The oracle's answer `expected` without the part this difference changes, when Heartwood's
     /// verdict `ours` and the answer both have that part; the case is then the documented
-    /// difference if `ours` equals what is left. Only the missed rows of a refused block have
-    /// one: the rows the reference recorded for a block both refused, in a `chain.process`
-    /// answer refused by the accept handler, or in each job of a `chain.job` answer.
+    /// difference if `ours` equals what is left. Two differences have one: the missed rows of a
+    /// refused block (the rows the reference recorded for a block both refused, in a
+    /// `chain.process` answer refused by the accept handler, or in each job of a `chain.job`
+    /// answer), and the wallets of a round answer (the answer with Heartwood's wallets in the
+    /// places where the key and the name agree, [`crate::subjects::round_wallets_masked`]).
     pub fn masked(self, expected: &Expected, ours: &Verdict) -> Option<Expected> {
+        if let (Documented::RoundWallets, Expected::Output(theirs), Verdict::Output(ours)) =
+            (self, expected, ours)
+        {
+            return crate::subjects::round_wallets_masked(theirs, ours).map(Expected::Output);
+        }
         let (Documented::MissedRowsOfRefusedBlock, Expected::Output(theirs), Verdict::Output(ours)) =
             (self, expected, ours)
         else {

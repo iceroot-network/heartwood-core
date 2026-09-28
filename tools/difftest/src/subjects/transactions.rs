@@ -131,7 +131,8 @@ fn has_json_form(difference: Documented, json: &Value) -> bool {
         | Documented::UnlinkedForkSegment
         | Documented::MissedRowsOfRefusedBlock
         | Documented::Api(_)
-        | Documented::OverHeightOwnBlock => false,
+        | Documented::OverHeightOwnBlock
+        | Documented::RoundWallets => false,
     }
 }
 
