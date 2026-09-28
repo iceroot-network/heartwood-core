@@ -8,8 +8,8 @@
 //! between two blocks of a job. Network and API tasks send it work through a [`NodeHandle`] and
 //! read the snapshots; nothing else reads or writes the state or the store.
 //!
-//! The thread holds the shared chain state's lock while a job runs, so the service's actions on
-//! it come between jobs. A fatal error ([`NodeError`]) ends the thread at once: the work it was
+//! A job locks the shared chain state for one block at a time, so the service's actions and the
+//! network's reads come between two blocks, and see the tip as it moves. A fatal error ([`NodeError`]) ends the thread at once: the work it was
 //! doing gets no answer and the store keeps its committed tip. A stop ends it after the work
 //! before it: the pool's storage keeps its transactions, the online record is saved, and the
 //! store is closed (SQLite checkpoints its log when its last connection closes); the running job
@@ -207,12 +207,11 @@ impl NodeThread {
     /// Run `job`, then the steps after its commit.
     fn job(&mut self, job: Job) -> Result<JobOutcome, NodeError> {
         let (parts, observer) = (&mut self.parts, &mut *self.observer);
-        let mut chain = lock(&parts.chain);
         let outcome = run_job(
             &mut JobContext {
                 state: &mut parts.state,
                 store: &mut parts.store,
-                chain: &mut chain,
+                chain: &parts.chain,
                 pool: &mut parts.pool,
                 processor: &*parts.processor,
                 handlers: &parts.handlers,
@@ -222,7 +221,6 @@ impl NodeThread {
             },
             job,
         )?;
-        drop(chain);
         let count = usize::try_from(outcome.committed).unwrap_or(usize::MAX);
         let (mut events, mut rounds, mut milestone) = (Vec::new(), Vec::new(), false);
         for undo in parts.state.journal().iter().rev().take(count).rev() {

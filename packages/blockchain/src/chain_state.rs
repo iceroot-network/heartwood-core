@@ -3,8 +3,9 @@
 //! empty downloads and peer updates, and the start flags.
 //!
 //! The node thread and the blockchain service share one [`ChainState`] ([`SharedChainState`]):
-//! the processor and the job change it while a job runs, the service's actions between jobs. Each
-//! side holds the lock only for a step, never across an `.await`. The fields are plain, with the
+//! the processor and the job change it block by block while a job runs, and the service's actions
+//! come between those steps. Each side holds the lock only for a step (a job, for one block),
+//! never across an `.await`. The fields are plain, with the
 //! reference's setters where they do more than set a field.
 
 use std::collections::VecDeque;
@@ -58,7 +59,7 @@ pub struct ChainState {
 pub type SharedChainState = Arc<Mutex<ChainState>>;
 
 /// Lock `shared`; a lock poisoned by a panic still gives the state.
-pub fn lock(shared: &SharedChainState) -> MutexGuard<'_, ChainState> {
+pub fn lock(shared: &Mutex<ChainState>) -> MutexGuard<'_, ChainState> {
     shared.lock().unwrap_or_else(PoisonError::into_inner)
 }
 

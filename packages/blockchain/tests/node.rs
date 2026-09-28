@@ -102,6 +102,18 @@ async fn each_commit_publishes_then_tells_its_events_in_the_reference_order() {
 }
 
 #[tokio::test]
+async fn a_job_frees_the_chain_state_between_its_blocks() {
+    let chain = Chain::load();
+    let node = node_at(&chain, "node-chain-lock", 1).await;
+    node.run(&chain, 2, 6).await;
+    // After each block's apply, the service and the network can read the chain state, and see
+    // that block as the tip, as the reference's readers see each applied block.
+    let tips = lock(&node.observed.1).clone();
+    assert_eq!(tips, [2, 3, 4, 5, 6].map(Some));
+    node.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn the_pool_steps_per_batch_per_applied_block_and_per_drain() {
     let chain = Chain::load();
     let node = node_at(&chain, "node-pool-steps", 58).await;

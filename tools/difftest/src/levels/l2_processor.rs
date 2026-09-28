@@ -759,12 +759,14 @@ impl JobRig {
                 chain: self.lines.last().map_or([0; 32], |l| l.chain_digest),
             }),
         };
+        // The job locks the chain state block by block, as the node's shared one.
+        let chain = Mutex::new(std::mem::take(&mut self.chain));
         let outcome = {
             let mut observer = NoObserver;
             let mut ctx = JobContext {
                 state: &mut self.state,
                 store: &mut self.store,
-                chain: &mut self.chain,
+                chain: &chain,
                 pool: &mut self.pool,
                 processor: &recorder,
                 handlers: &Handlers,
@@ -774,9 +776,11 @@ impl JobRig {
             };
             let job = Job { blocks: incoming };
             guarded(|| run_job(&mut ctx, job))
-                .map_err(|store::Unbuilt(m)| RigProblem::Unbuilt(m))?
-                .map_err(|e| RigProblem::Failed(format!("the job failed: {e}")))?
         };
+        self.chain = chain.into_inner().unwrap_or_else(PoisonError::into_inner);
+        let outcome = outcome
+            .map_err(|store::Unbuilt(m)| RigProblem::Unbuilt(m))?
+            .map_err(|e| RigProblem::Failed(format!("the job failed: {e}")))?;
         let RecorderLog { seen, .. } = recorder
             .log
             .into_inner()

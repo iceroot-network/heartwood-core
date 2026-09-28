@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use heartwood_blockchain::chain_state::{ChainState, SharedChainState};
 use heartwood_blockchain::events::{CommitObserver, NodeEvent, NodeListener};
@@ -233,9 +233,15 @@ impl NodeListener for Events {
     }
 }
 
-/// What the observer was told, as `applied <h> missed <n>`, `reverted <h>` and `restarted <h>`.
+/// What the observer was told, as `applied <h> missed <n>`, `reverted <h>` and `restarted <h>`;
+/// and, at each applied block, the tip it read from the shared chain state, when that was not
+/// locked (a job keeps it locked only while it processes a block).
 #[derive(Clone, Default)]
-pub struct Observed(pub Arc<Mutex<Vec<String>>>);
+pub struct Observed(
+    pub Arc<Mutex<Vec<String>>>,
+    pub Arc<Mutex<Vec<Option<u32>>>>,
+    pub Arc<OnceLock<SharedChainState>>,
+);
 
 impl CommitObserver for Observed {
     fn applied(&mut self, _state: &State, block: &Block) {
@@ -254,6 +260,10 @@ impl CommitObserver for Observed {
         assert_eq!(state.last_block(), block);
         let line = format!("applied {} missed {}", block.height(), applied.missed.len());
         lock(&self.0).push(line);
+        if let Some(chain) = self.2.get() {
+            let tip = chain.try_lock().ok().map(|chain| chain.last_height());
+            lock(&self.1).push(tip);
+        }
     }
 
     fn reverted(&mut self, state: &State) {
@@ -313,6 +323,7 @@ impl TestNode {
         let broadcasts = Arc::new(Broadcasts::default());
         let events = Arc::new(Events::default());
         let observed = Observed::default();
+        let _ = observed.2.set(Arc::clone(&shared));
         let parts = NodeParts {
             state: restored.state,
             store,
