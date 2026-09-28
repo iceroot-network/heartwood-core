@@ -21,6 +21,7 @@ use tokio::time::Instant;
 
 use crate::context::RouteId;
 use crate::errors::ApiError;
+use crate::schemas::PARSED;
 use crate::server::{Semaphore, SemaphoreLevel};
 
 /// The windows kept before the ended ones are dropped; the bound doubles with the live ones.
@@ -160,10 +161,12 @@ fn index(property: &str) -> Option<[bool; 4]> {
 /// Whether a transaction listing asks for more than the first level: unless it gives one value of
 /// a diverse index, when its first order is not served by an index in its direction (or a second
 /// one follows an index that allows none), its page is beyond `max_offset`, or it gives a
-/// criterion that no index serves.
+/// criterion that no index serves. The query grammar's own key (the query as parsed) is none of
+/// the request's criteria.
 fn heavy_listing(query: &Value, max_offset: u64) -> bool {
     const RESERVED: [&str; 5] = ["page", "limit", "transform", "offset", "orderBy"];
-    let fields: Vec<(&String, &Value)> = query.as_object().into_iter().flatten().collect();
+    let fields = query.as_object().into_iter().flatten();
+    let fields: Vec<(&String, &Value)> = fields.filter(|(key, _)| *key != PARSED).collect();
     let single = |value: &Value| value.is_number() || value.is_string();
     let diverse = |key: &str| index(key).is_some_and(|[.., diverse]| diverse);
     if fields

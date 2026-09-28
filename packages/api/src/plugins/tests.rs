@@ -773,6 +773,39 @@ async fn the_semaphore_levels_follow_the_transaction_indexes() {
     assert_eq!(call(&off, get("/api/transactions")).await.0, 200);
 }
 
+#[tokio::test]
+async fn the_semaphore_levels_follow_the_served_query_grammar() {
+    let mut config = config();
+    let [first, second] = &mut config.semaphore.database;
+    (first.concurrency, first.queue_limit) = (0, 0);
+    (second.concurrency, second.queue_limit) = (1, 0);
+    let host = Host {
+        config: Arc::new(config),
+        height: Box::new(|| 265),
+        dispatch: Box::new(echo),
+    };
+    let pipeline = Pipeline::with_parts(RouteId::ALL.to_vec(), host, Grammar::SCHEMAS);
+    let key = "0334f21b095dbab8c1c602ff0df73371605dd9b79193eb55c89b50d86be0defdea";
+    // The first level has no place here: 429 means level one, 200 level two. The validated
+    // query's defaults (the order by timestamp, then sequence) are served by the indexes.
+    let cases = [
+        ("/api/transactions".to_owned(), 429),
+        ("/api/transactions?limit=1".to_owned(), 429),
+        ("/api/transactions?orderBy=timestamp:desc".to_owned(), 429),
+        ("/api/transactions?orderBy=nonce:desc".to_owned(), 429),
+        (format!("/api/transactions?senderPublicKey={key}"), 429),
+        ("/api/wallets/genesis_1/transactions".to_owned(), 429),
+        ("/api/blocks/5/transactions".to_owned(), 429),
+        ("/api/transactions?memo=x".to_owned(), 200),
+        ("/api/transactions?orderBy=amount:desc".to_owned(), 200),
+        ("/api/transactions?page=101&limit=100".to_owned(), 200),
+        ("/api/wallets/genesis_1/transactions?memo=x".to_owned(), 200),
+    ];
+    for (uri, expected) in cases {
+        assert_eq!(call(&pipeline, get(&uri)).await.0, expected, "{uri}");
+    }
+}
+
 /// The top-level keys of the request's query, how many values it has and how deep it is (counted
 /// without recursion), as the handler saw them.
 fn summary(_: RouteId, request: ApiRequest) -> HandlerFuture {
