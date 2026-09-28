@@ -20,6 +20,7 @@ use heartwood_crypto::crypto::hash::sha256;
 use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Block, KeyPair, PublicKeyBytes, SecretKey};
 use heartwood_kernel::ManualClock;
+use heartwood_p2p::attestation_session::DelegatesOnThisNode;
 use heartwood_p2p::node_services::AttestedKeys;
 use heartwood_p2p::server::seams::{ServerRefusal, SessionEvents, SessionId};
 use heartwood_p2p_wire::internal::{StatusSignatures, StatusToSignRequest, StatusToSignResponse};
@@ -324,6 +325,29 @@ async fn a_session_ends_with_its_socket_or_after_fifteen_seconds_without_a_poll(
     assert!(server.session.is_attached());
     advance(Duration::from_millis(1)).await;
     assert!(!server.session.is_attached());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_delegates_on_this_node_are_the_attested_keys_of_the_round() {
+    let server = tokio_server();
+    let on_node = DelegatesOnThisNode(Arc::clone(&server.session));
+    assert!(on_node.attested().is_empty());
+    server.session.offer("first".into());
+    let (status, keys) = offered(
+        server
+            .session
+            .status_to_sign(session(1), forger(), declared())
+            .await
+            .unwrap(),
+    );
+    server
+        .session
+        .post_signatures(session(1), sign(&status, &keys))
+        .unwrap();
+    // Delegate 2 is attested but not in the round of the tip plus one.
+    *server.node.active.lock().unwrap() = vec![key(0), key(1)];
+    assert_eq!(on_node.attested(), [key(1), key(1)]);
+    assert_eq!(server.session.attested(), [key(1), key(2), key(1)]);
 }
 
 // ---- the served status ------------------------------------------------------------------------
