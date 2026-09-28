@@ -200,9 +200,12 @@ pub fn status(instance: &Instance) -> Result<StatusRow, ProcessError> {
     let running = pid.filter(|_| status.is_running());
     let sample = running.and_then(|pid| process_table::sample(pid).ok());
     let started = state.as_ref().and_then(|s| s.started_at_ms);
+    // A start time in the future, or one too far in the past to subtract, gives no uptime.
     let uptime = started
         .filter(|_| supervised && running.is_some())
-        .map(|at| Duration::from_millis(u64::try_from(SystemClock.now_ms() - at).unwrap_or(0)));
+        .and_then(|at| SystemClock.now_ms().checked_sub(at))
+        .and_then(|ms| u64::try_from(ms).ok())
+        .map(Duration::from_millis);
     Ok(StatusRow {
         pid,
         name: instance.name(),
