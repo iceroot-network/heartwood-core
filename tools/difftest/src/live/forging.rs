@@ -874,7 +874,7 @@ pub(super) fn check(
 }
 
 /// Whether `relay`'s log shows the block `id` received from `forger` no earlier than the step's
-/// start and within [`FAILOVER_SLOTS`] slots of it: the failover's evidence read from the relay's
+/// start and within `FAILOVER_SLOTS` slots of it: the failover's evidence read from the relay's
 /// own log instead of the recipe's record of it.
 pub fn failover_received(
     receipts: &[Receipt],
