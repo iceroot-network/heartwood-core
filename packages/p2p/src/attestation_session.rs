@@ -11,6 +11,7 @@
 //! signatures ([`AttestationSession::signatures`]); after one wait that ran out, the same offer
 //! is served unsigned without another.
 
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -294,6 +295,14 @@ impl AttestationSession {
             .as_ref()
             .is_some_and(|s| same && s.declared == declared);
         if !stays {
+            let mut seen = HashSet::new();
+            let repeated = declared.iter().filter(|key| !seen.insert(**key)).count();
+            if repeated > 0 {
+                warning!(
+                    "The attestation session from {ip} declares {repeated} keys again; each copy \
+                     counts as a delegate on this node"
+                );
+            }
             let polls = if same {
                 inner.session.as_ref().map_or(0, |s| s.polls)
             } else {
