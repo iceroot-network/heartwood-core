@@ -7,9 +7,9 @@
 //! reads it (numbers from their text, booleans from `"true"` and `"false"`). Keys the API does not
 //! read are ignored.
 //!
-//! Each connection is served for at most the socket timeout, headers included, and answers one
-//! request (`connection: close`). Stopping the server closes the listener and waits for the
-//! connections in flight, each bounded by that timeout.
+//! Each connection is served for at most the socket timeout (300 s when it is 0), headers
+//! included, and answers one request (`connection: close`). Stopping the server closes the
+//! listener and waits for the connections in flight, each bounded by that timeout.
 
 use std::convert::Infallible;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -82,7 +82,8 @@ pub struct ApiConfig {
     pub rate_limit: RateLimit,
     /// The semaphore.
     pub semaphore: Semaphore,
-    /// The socket timeout, in milliseconds (5,000).
+    /// The socket timeout, in milliseconds (5,000); 0 turns it off
+    /// ([`ApiConfig::connection_timeout`]).
     pub socket_timeout_ms: u64,
     /// The addresses allowed to use the API (`["*"]`).
     pub whitelist: Vec<String>,
@@ -95,6 +96,16 @@ pub struct ApiConfig {
 }
 
 impl ApiConfig {
+    /// How long a connection is served, headers included: the socket timeout, or where it is 0
+    /// (no socket timeout in the reference) Node's request timeout of 300 s, which then still
+    /// bounds a request there.
+    pub fn connection_timeout(&self) -> Duration {
+        match self.socket_timeout_ms {
+            0 => Duration::from_secs(300),
+            ms => Duration::from_millis(ms),
+        }
+    }
+
     /// The reference's default options, with the variables of `env` that they read.
     pub fn defaults(env: &Env) -> Value {
         // `process.env.X || default`: a missing or empty variable takes the default.
@@ -305,7 +316,7 @@ pub fn serve(
         TcpListener::from_std(listener).map_err(bind_error)?
     };
     let pipeline = Arc::new(Pipeline::new(controllers::routes(), context));
-    let timeout = Duration::from_millis(config.socket_timeout_ms);
+    let timeout = config.connection_timeout();
     let (stop, stopped) = watch::channel(false);
     let task = runtime.spawn(accept(listener, pipeline, stopped, timeout));
     Ok(ServerHandle { task, stop })

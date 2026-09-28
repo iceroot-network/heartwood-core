@@ -617,6 +617,11 @@ fn the_options_are_the_reference_defaults_and_its_variables() {
         (defaults.socket_timeout_ms, defaults.base_path.as_str()),
         (5000, "/api")
     );
+    assert_eq!(defaults.connection_timeout(), Duration::from_secs(5));
+    // A socket timeout of 0 is none, in Node; its request timeout of 300 s still bounds a request.
+    let off = json!({ "plugins": { "socketTimeout": 0 } });
+    let off = ApiConfig::from_options(&off, &Env::default()).unwrap();
+    assert_eq!(off.connection_timeout(), Duration::from_secs(300));
     let [first, second] = defaults.semaphore.database;
     assert_eq!(
         (first.concurrency, first.queue_limit, first.max_offset),
