@@ -173,7 +173,7 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
         cpus,
     )
     .map_err(config)?;
-    options::database(&relay.entry(Package::Database)).map_err(config)?;
+    let api_timeout = options::database(&relay.entry(Package::Database)).map_err(config)?;
     let mut p2p = options::p2p(&relay.entry(Package::P2p), &relay.env).map_err(config)?;
     p2p.version = VERSION.to_owned();
     p2p.seeds = (relay.peers.list.iter())
@@ -271,19 +271,16 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
                     crypto: relay.crypto.clone(),
                     version: VERSION.to_owned(),
                 };
+                let served = async {
+                    let timeout = Duration::from_millis(api_timeout);
+                    let history = Readers::with_timeout(&settings, 10, timeout);
+                    let history = history.map_err(component)?;
+                    let runtime = api_runtime.clone();
+                    serve_api(config, node, &handle, &links, &status, history, runtime).await
+                };
                 // A failure to serve stops the relay, as the reference's server ends its
                 // application when it cannot start.
-                match serve_api(
-                    config,
-                    node,
-                    &handle,
-                    &links,
-                    &status,
-                    &settings,
-                    api_runtime.clone(),
-                )
-                .await
-                {
+                match served.await {
                     Ok(served) => api = served,
                     Err(error) => break Err(error),
                 }
@@ -342,14 +339,14 @@ pub fn api_options(relay: &RelayConfig) -> Result<Option<ApiConfig>, RelayError>
 }
 
 /// The API of `config` over the node's snapshots and status, the monitor's peers and the store's
-/// read-only connections, served on `runtime` unless the configuration disables it.
+/// read-only connections `history`, served on `runtime` unless the configuration disables it.
 async fn serve_api(
     config: ApiConfig,
     node: NodeInfo,
     handle: &NodeHandle,
     links: &Arc<Links>,
     status: &watch::Receiver<NodeStatus>,
-    settings: &Settings,
+    history: Readers,
     runtime: Handle,
 ) -> Result<Option<Api>, RelayError> {
     let context = ApiContext {
@@ -357,7 +354,7 @@ async fn serve_api(
         pool: handle.pool(),
         status: status.clone(),
         peers: Arc::clone(links) as Arc<dyn PeerList>,
-        history: Arc::new(Readers::open(settings, 10).map_err(component)?),
+        history: Arc::new(history),
         submit: Arc::new(Submit(handle.clone())),
         node: Arc::new(node),
         config: Arc::new(config),
