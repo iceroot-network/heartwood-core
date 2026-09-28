@@ -83,6 +83,8 @@ use crate::errors::{Error, Result};
 use crate::subject::{Case, Documented, Registry, Subject, SubjectError, Verdict};
 use crate::vectors::VectorSet;
 
+pub(crate) use kernel::escaped_line;
+
 /// The vector class whose chain definition holds the devnet's network and milestone files.
 const GENESIS_CLASS: &str = "V10-genesis";
 
@@ -497,6 +499,7 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
         | Documented::StrictSchema
         | Documented::UnlinkedForkSegment
         | Documented::MissedRowsOfRefusedBlock
+        | Documented::EscapedLogText
         | Documented::Api(_) => false,
     }
 }
