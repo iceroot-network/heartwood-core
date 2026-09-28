@@ -10,6 +10,9 @@
 //! failure is 422 with a message in Joi's style, whose text is not part of the contract; an unknown
 //! query key is 422 on the routes whose schema lists their keys, and ignored on the others.
 
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap};
+
 use heartwood_crypto::utils::js;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
@@ -26,28 +29,113 @@ pub const PARSED: &str = ".parsed";
 /// The most pairs Node's `querystring.parse` reads.
 const MAX_PAIRS: usize = 1000;
 
-/// A list index this far beyond a list's end is kept as one hole: the reference makes a sparse
-/// list, which every schema refuses at its first hole.
-const MAX_GAP: usize = 1000;
+/// The most levels of objects and lists below the query that a parsed query is written out with
+/// (serde_json's own nesting limit). The reference nests a value as deep as its key has segments.
+const MAX_DEPTH: usize = 128;
+
+/// The most holes of sparse lists, in all, that a parsed query is written out with. The reference
+/// keeps a list sparse at any length.
+const MAX_HOLES: usize = 16_384;
+
+/// The key under which [`parse_query`] names the keys whose value it did not write out whole. No
+/// parsed query can hold it, because the grammar nests every name that has a dot.
+const BEYOND: &str = ".beyond";
 
 /// The most transactions of one `POST /transactions` (the pool's `maxTransactionsPerRequest`).
 const MAX_TRANSACTIONS_PER_REQUEST: usize = 40;
 
-/// A value of the query as the reference's plugins build it.
-#[derive(Debug, Clone)]
-enum Item {
+/// A value of the query before the dot-nesting plugin: text, or a list of texts.
+enum Flat {
     Text(String),
-    List(Vec<Item>),
-    Map(IndexMap<String, Item>),
-    /// A hole of a sparse list (`null` in JSON).
-    Hole,
+    List(Vec<String>),
 }
 
-impl Item {
-    /// JavaScript's `typeof value === "object"`, as the dot-nesting plugin tests it.
-    fn is_object(&self) -> bool {
-        matches!(self, Item::List(_) | Item::Map(_))
+/// An object of the query as the reference's plugins build it. Nodes refer to each other by
+/// their place in a [`Tree`], as JavaScript's values refer to objects, so a later key can reach
+/// and change a value that an earlier key's snapshot still holds.
+enum Node {
+    Text(String),
+    Map(IndexMap<String, usize>),
+    List(List),
+}
+
+/// A JavaScript array: its `length`, its items by index (a missing index below the length is a
+/// hole, `null` in JSON), and its named properties, which neither JSON nor a schema sees but a
+/// later key can reach.
+#[derive(Default)]
+struct List {
+    length: u32,
+    items: BTreeMap<u32, usize>,
+    named: HashMap<String, usize>,
+}
+
+/// The query's nodes; the first is the query itself.
+#[derive(Default)]
+struct Tree {
+    nodes: Vec<Node>,
+}
+
+/// The query itself, the first node of a [`Tree`].
+const ROOT: usize = 0;
+
+impl Tree {
+    fn add(&mut self, node: Node) -> usize {
+        self.nodes.push(node);
+        self.nodes.len() - 1
     }
+
+    /// JavaScript's `typeof value === "object"`, as the dot-nesting plugin tests it.
+    fn is_object(&self, id: usize) -> bool {
+        matches!(self.nodes.get(id), Some(Node::Map(_) | Node::List(_)))
+    }
+
+    /// The property `name` of the object `at`, where the kernel's `set` reads it; a list's
+    /// `length` holds a number, to which `set` then assigns `{}`, which throws a RangeError.
+    fn get(&self, at: usize, name: &str) -> Result<Option<usize>, Throw> {
+        Ok(match self.nodes.get(at) {
+            Some(Node::Map(map)) => map.get(name).copied(),
+            Some(Node::List(_)) if name == "length" => return Err(Throw),
+            Some(Node::List(list)) => match index(name) {
+                Some(index) => list.items.get(&index).copied(),
+                None => list.named.get(name).copied(),
+            },
+            _ => None,
+        })
+    }
+
+    /// Assign the node `id` to the property `name` of the object `at`.
+    fn put(&mut self, at: usize, name: &str, id: usize) {
+        match self.nodes.get_mut(at) {
+            Some(Node::Map(map)) => {
+                map.insert(name.to_owned(), id);
+            }
+            Some(Node::List(list)) => match index(name) {
+                Some(index) => {
+                    list.items.insert(index, id);
+                    list.length = list.length.max(index.saturating_add(1));
+                }
+                None => {
+                    list.named.insert(name.to_owned(), id);
+                }
+            },
+            _ => {}
+        }
+    }
+
+    /// The query's own keys (the first node's).
+    fn keys(&mut self) -> Option<&mut IndexMap<String, usize>> {
+        match self.nodes.get_mut(ROOT) {
+            Some(Node::Map(map)) => Some(map),
+            _ => None,
+        }
+    }
+}
+
+/// `name` as an array index: canonical digits below 2^32 - 1.
+fn index(name: &str) -> Option<u32> {
+    js::is_array_index(name)
+        .then(|| name.parse().ok())
+        .flatten()
 }
 
 /// The reference's query plugins threw on the query, which its server answers with 500.
@@ -57,145 +145,195 @@ struct Throw;
 ///
 /// `Value::Null` stands for a query on which the reference's plugins throw, which its server
 /// answers with 500 on every path: a repeated key one of whose values is a lone comma, or a
-/// `length` segment below a comma list. [`validate_query`] answers it with that 500.
+/// `length` segment below a list. [`validate_query`] answers it with that 500.
+///
+/// The work and the answer are bounded whatever the query: the keys are walked without recursion,
+/// lists stay sparse while they are built, and the answer is written out at most 128 levels deep
+/// with at most 16,384 holes in all. A value beyond either bound is written out shortened (a
+/// deeper object or list empty, each run of holes past the bound as one hole), and its key is
+/// named under a reserved key: every route's schema refuses such a value but the `asset` criteria,
+/// which [`validate_query`] then answers with 500, as the reference answers a value too large for
+/// its stack or its strings.
 pub fn parse_query(raw: &str) -> Value {
-    match parse(raw) {
-        Ok(query) => to_value(&Item::Map(query)),
-        Err(Throw) => Value::Null,
+    let Ok(tree) = parse(raw) else {
+        return Value::Null;
+    };
+    let mut writer = Writer {
+        tree: &tree,
+        holes: MAX_HOLES,
+        cut: false,
+    };
+    let Some(Node::Map(keys)) = tree.nodes.get(ROOT) else {
+        return Value::Null;
+    };
+    let mut query = Map::new();
+    let mut beyond = Vec::new();
+    for key in keys_in_order(keys) {
+        let Some(&id) = keys.get(key) else {
+            continue;
+        };
+        writer.cut = false;
+        query.insert(key.clone(), writer.value(id, 1));
+        if writer.cut {
+            beyond.push(Value::String(key.clone()));
+        }
     }
+    if !beyond.is_empty() {
+        query.insert(BEYOND.to_owned(), Value::Array(beyond));
+    }
+    Value::Object(query)
 }
 
-fn parse(raw: &str) -> Result<IndexMap<String, Item>, Throw> {
-    let mut query: IndexMap<String, Item> = IndexMap::new();
+fn parse(raw: &str) -> Result<Tree, Throw> {
+    let mut query: IndexMap<String, Flat> = IndexMap::new();
     for (key, value) in pairs(raw) {
         match query.get_mut(&key) {
             None => {
-                query.insert(key, Item::Text(value));
+                query.insert(key, Flat::Text(value));
             }
-            Some(Item::List(list)) => list.push(Item::Text(value)),
-            Some(current) => {
-                let first = std::mem::replace(current, Item::Hole);
-                *current = Item::List(vec![first, Item::Text(value)]);
+            Some(Flat::List(list)) => list.push(value),
+            Some(Flat::Text(first)) => {
+                let first = std::mem::take(first);
+                query.insert(key, Flat::List(vec![first, value]));
             }
         }
     }
     // The comma-array plugin. A list (a repeated key) is left alone, but `Array.prototype.indexOf`
     // finds a lone comma in it, and the plugin then calls `split` on the list and throws.
-    for key in keys_in_order(&query) {
-        let Some(item) = query.get_mut(&key) else {
-            continue;
-        };
+    for item in query.values_mut() {
         match item {
-            Item::Text(text) if text.contains(',') => {
-                *item = Item::List(
-                    text.split(',')
-                        .map(|part| Item::Text(part.into()))
-                        .collect(),
-                );
+            Flat::Text(text) if text.contains(',') => {
+                *item = Flat::List(text.split(',').map(str::to_owned).collect());
             }
-            Item::List(list) if list.iter().any(|x| matches!(x, Item::Text(t) if t == ",")) => {
-                return Err(Throw);
-            }
+            Flat::List(list) if list.iter().any(|x| x == ",") => return Err(Throw),
             _ => {}
         }
     }
+    let mut tree = Tree::default();
+    tree.add(Node::Map(IndexMap::new()));
+    for (key, value) in query {
+        let id = match value {
+            Flat::Text(text) => tree.add(Node::Text(text)),
+            Flat::List(texts) => {
+                let mut list = List::default();
+                for (i, text) in (0..u32::MAX).zip(texts) {
+                    list.items.insert(i, tree.add(Node::Text(text)));
+                    list.length = i + 1;
+                }
+                tree.add(Node::List(list))
+            }
+        };
+        tree.put(ROOT, &key, id);
+    }
     // The dot-nesting plugin: each key of a snapshot, in order, is deleted and set again by path.
-    let entries: Vec<(String, Item)> = keys_in_order(&query)
-        .into_iter()
-        .filter_map(|key| query.get(&key).cloned().map(|value| (key, value)))
-        .collect();
-    for (key, value) in entries {
-        query.shift_remove(&key);
+    let snapshot: Vec<(String, usize)> = match tree.keys() {
+        Some(keys) => keys_in_order(keys)
+            .into_iter()
+            .filter_map(|key| Some((key.clone(), *keys.get(key)?)))
+            .collect(),
+        None => Vec::new(),
+    };
+    for (key, value) in snapshot {
+        if let Some(keys) = tree.keys() {
+            keys.shift_remove(&key);
+        }
         let segments: Vec<&str> = key.split('.').collect();
         let forbidden = ["__proto__", "prototype", "constructor"];
         if !segments.iter().any(|s| forbidden.contains(s)) {
-            set_in_map(&mut query, &segments, value)?;
+            set(&mut tree, &segments, value)?;
         }
     }
-    Ok(query)
+    Ok(tree)
 }
 
-/// The kernel's `set`: every segment that does not hold an object gets `{}`, the last the value.
-fn set_in_map(map: &mut IndexMap<String, Item>, path: &[&str], value: Item) -> Result<(), Throw> {
-    let Some((first, rest)) = path.split_first() else {
-        return Ok(());
-    };
-    let slot = map.entry((*first).to_owned()).or_insert(Item::Hole);
-    set_slot(slot, rest, value)
-}
-
-fn set_in_list(list: &mut Vec<Item>, path: &[&str], value: Item) -> Result<(), Throw> {
-    let Some((first, rest)) = path.split_first() else {
-        return Ok(());
-    };
-    if *first == "length" {
-        // `list.length = {}` throws a RangeError.
-        return Err(Throw);
+/// The kernel's `set`, a loop over the path's segments: every segment whose property does not
+/// hold an object gets `{}`, the last gets the value.
+fn set(tree: &mut Tree, path: &[&str], value: usize) -> Result<(), Throw> {
+    let mut at = ROOT;
+    for (i, name) in path.iter().enumerate() {
+        let current = tree.get(at, name)?;
+        let next = match current {
+            _ if i + 1 == path.len() => value,
+            Some(id) if tree.is_object(id) => id,
+            _ => tree.add(Node::Map(IndexMap::new())),
+        };
+        if current != Some(next) {
+            tree.put(at, name, next);
+        }
+        at = next;
     }
-    if !js::is_array_index(first) {
-        // A named property of a list: JSON and the schemas never see it.
-        return Ok(());
-    }
-    let index = first.parse::<usize>().unwrap_or(usize::MAX);
-    let index = if index > list.len().saturating_add(MAX_GAP) {
-        list.push(Item::Hole);
-        list.len()
-    } else {
-        index
-    };
-    while list.len() <= index {
-        list.push(Item::Hole);
-    }
-    match list.get_mut(index) {
-        Some(slot) => set_slot(slot, rest, value),
-        None => Ok(()),
-    }
-}
-
-fn set_slot(slot: &mut Item, rest: &[&str], value: Item) -> Result<(), Throw> {
-    if rest.is_empty() {
-        *slot = value;
-        return Ok(());
-    }
-    if !slot.is_object() {
-        *slot = Item::Map(IndexMap::new());
-    }
-    match slot {
-        Item::Map(map) => set_in_map(map, rest, value),
-        Item::List(list) => set_in_list(list, rest, value),
-        Item::Text(_) | Item::Hole => Ok(()),
-    }
+    Ok(())
 }
 
 /// The keys of `map` in the order JavaScript enumerates them: array indexes first, in numeric
 /// order, then the others in insertion order.
-fn keys_in_order(map: &IndexMap<String, Item>) -> Vec<String> {
-    let mut indexes: Vec<(u64, &String)> = map
+fn keys_in_order<V>(map: &IndexMap<String, V>) -> Vec<&String> {
+    let mut indexes: Vec<(u32, &String)> = map
         .keys()
-        .filter(|key| js::is_array_index(key))
-        .map(|key| (key.parse().unwrap_or(u64::MAX), key))
+        .filter_map(|key| Some((index(key)?, key)))
         .collect();
     indexes.sort_by_key(|(index, _)| *index);
-    let others = map.keys().filter(|key| !js::is_array_index(key));
+    let others = map.keys().filter(|key| index(key).is_none());
     indexes
         .into_iter()
         .map(|(_, key)| key)
         .chain(others)
-        .cloned()
         .collect()
 }
 
-fn to_value(item: &Item) -> Value {
-    match item {
-        Item::Text(text) => Value::String(text.clone()),
-        Item::List(list) => Value::Array(list.iter().map(to_value).collect()),
-        Item::Map(map) => Value::Object(
-            keys_in_order(map)
-                .into_iter()
-                .filter_map(|key| map.get(&key).map(|value| (key.clone(), to_value(value))))
-                .collect(),
-        ),
-        Item::Hole => Value::Null,
+/// A query's tree written out as JSON (`JSON.stringify`: holes as `null`, a list's named
+/// properties left out), within [`MAX_DEPTH`] and [`MAX_HOLES`].
+struct Writer<'t> {
+    tree: &'t Tree,
+    /// The holes left to write out.
+    holes: usize,
+    /// Whether the value being written was shortened.
+    cut: bool,
+}
+
+impl Writer<'_> {
+    /// The node `id`, `depth` levels below the query.
+    fn value(&mut self, id: usize, depth: usize) -> Value {
+        let tree = self.tree;
+        match tree.nodes.get(id) {
+            Some(Node::Text(text)) => Value::String(text.clone()),
+            Some(Node::Map(map)) if depth >= MAX_DEPTH => {
+                self.cut |= !map.is_empty();
+                Value::Object(Map::new())
+            }
+            Some(Node::Map(map)) => {
+                let keys = keys_in_order(map).into_iter();
+                let entries = keys.filter_map(|key| Some((key, *map.get(key)?)));
+                let entries = entries.map(|(key, id)| (key.clone(), self.value(id, depth + 1)));
+                Value::Object(entries.collect())
+            }
+            Some(Node::List(list)) if depth >= MAX_DEPTH => {
+                self.cut |= list.length > 0;
+                Value::Array(Vec::new())
+            }
+            Some(Node::List(list)) => {
+                let holes = (list.length as usize).saturating_sub(list.items.len());
+                let whole = holes <= self.holes;
+                match whole {
+                    true => self.holes -= holes,
+                    false => self.cut = true,
+                }
+                let mut out = Vec::with_capacity(list.items.len() + if whole { holes } else { 0 });
+                let mut next = 0;
+                let items = list.items.iter().map(|(&index, &id)| (index, Some(id)));
+                for (index, id) in items.chain([(list.length, None)]) {
+                    let gap = index.saturating_sub(next) as usize;
+                    let gap = if whole { gap } else { gap.min(1) };
+                    out.extend(std::iter::repeat_n(Value::Null, gap));
+                    if let Some(id) = id {
+                        out.push(self.value(id, depth + 1));
+                    }
+                    next = index.saturating_add(1);
+                }
+                Value::Array(out)
+            }
+            None => Value::Null,
+        }
     }
 }
 
@@ -469,17 +607,28 @@ fn query_schema(route: RouteId) -> Option<(&'static [Key], bool)> {
 ///
 /// A route without a query schema gets the query as it is. On a route that paginates, the result
 /// also holds the query as parsed under [`PARSED`]. A query on which the reference's plugins
-/// throw ([`parse_query`]'s `null`) is 500 on every route.
+/// throw ([`parse_query`]'s `null`) is 500 on every route, and so is a query that the schema
+/// accepts with a value [`parse_query`] did not write out whole.
 pub fn validate_query(route: RouteId, query: &Value) -> Result<Value, ApiError> {
     let Value::Object(input) = query else {
         return Err(ApiError::internal());
     };
+    let mut input = Cow::Borrowed(input);
+    let beyond = input.contains_key(BEYOND);
+    if beyond {
+        input.to_mut().shift_remove(BEYOND);
+    }
     let Some((schema, paginates)) = query_schema(route) else {
-        return Ok(query.clone());
+        return Ok(Value::Object(input.into_owned()));
     };
-    let mut out = validate_keys(schema, input)?;
+    let mut out = validate_keys(schema, &input)?;
+    // Only the `asset` criteria accept a value that deep or that sparse, which the grammar did not
+    // write out whole; the reference fails on it past its stack or its strings' length.
+    if beyond {
+        return Err(ApiError::internal());
+    }
     if paginates {
-        out.insert(PARSED.to_owned(), query.clone());
+        out.insert(PARSED.to_owned(), Value::Object(input.into_owned()));
     }
     Ok(Value::Object(out))
 }

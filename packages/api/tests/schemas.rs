@@ -43,6 +43,17 @@ fn queries_parse_as_the_reference_server_reads_them() {
         ("a%2Eb=1&c=%2C", json!({"a": {"b": "1"}, "c": ["", ""]})),
         ("__proto__=1&constructor.x=2&k", json!({"k": ""})),
         ("&&=x&", json!({"": "x"})),
+        // A key set before another key's snapshot value changes that value, as in JavaScript.
+        ("a.0.x=5&a=1,2", json!({"a": [{"x": "5"}, "2"]})),
+        ("b.0=x&b=1,2", json!({"b": ["x", "2"]})),
+        ("x.y=1&x=2&x.z=3", json!({"x": {"z": "3"}})),
+        // A list's holes are `null`; a name that is not an index is a property JSON leaves out.
+        (
+            "a.b=1,2&a.b.3=x&a.b.1.c=y",
+            json!({"a": {"b": ["1", {"c": "y"}, null, "x"]}}),
+        ),
+        ("a=1,2&a.4294967295=x&a.01=y", json!({"a": ["1", "2"]})),
+        ("a=1,2&a.1.length=3", json!({"a": ["1", {"length": "3"}]})),
     ];
     for (raw, expected) in cases {
         assert_eq!(parse_query(raw), expected, "{raw}");
@@ -57,7 +68,14 @@ fn queries_parse_as_the_reference_server_reads_them() {
 
 #[test]
 fn queries_on_which_the_reference_plugins_throw_are_500_everywhere() {
-    for raw in ["a=1&a=,", "limit=1,2&limit.length=1"] {
+    let throws = [
+        "a=1&a=,",
+        "limit=1,2&limit.length=1",
+        // Below a list's index far past its end, and below a list held by a list's named property.
+        "a=1,2&a.5000=3,4&a.5000.length=1",
+        "a=1,2&a.b=3,4&a.b.length=1",
+    ];
+    for raw in throws {
         assert_eq!(parse_query(raw), Value::Null, "{raw}");
         for route in [RouteId::TransactionsIndex, RouteId::NodeStatus] {
             assert_eq!(status(validate_query(route, &parse_query(raw))), 500);
@@ -71,6 +89,80 @@ fn only_a_thousand_pairs_are_read() {
     let parsed = parse_query(&raw.join("&"));
     assert_eq!(parsed.as_object().map(Map::len), Some(1000));
     assert!(parsed.get("k1000").is_none());
+}
+
+/// Runs `work` on a thread with the stack of the API's workers (tokio's default, 2 MiB).
+fn on_a_worker_stack<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    let thread = std::thread::Builder::new().stack_size(2 << 20);
+    thread.spawn(work).unwrap().join().unwrap()
+}
+
+/// The values in `value` and its depth, counted without recursion.
+fn shape(value: &Value) -> (usize, usize) {
+    let (mut values, mut depth) = (0, 0);
+    let mut stack = vec![(value, 1)];
+    while let Some((value, level)) = stack.pop() {
+        values += 1;
+        depth = depth.max(level);
+        match value {
+            Value::Array(items) => stack.extend(items.iter().map(|x| (x, level + 1))),
+            Value::Object(map) => stack.extend(map.values().map(|x| (x, level + 1))),
+            _ => {}
+        }
+    }
+    (values, depth)
+}
+
+#[test]
+fn hostile_queries_are_read_with_bounded_work() {
+    on_a_worker_stack(|| {
+        use RouteId::{NodeStatus, TransactionsIndex};
+        let dots = |key: &str| format!("{key}{}=1", ".a".repeat(32_000));
+        let gaps: String = (1..=998).map(|i| format!("&a.{}=1", i * 1000)).collect();
+        let many: String = (0..499).map(|i| format!("&k{i}=1,2&k{i}.1001=x")).collect();
+        let long = format!("a={}", ",".repeat(16_000));
+        let deep_throw = format!("{0}=1,2&{0}.length=1", format!("a{}", ".b".repeat(10_000)));
+        // (query, its status on a list that refuses unknown keys, on a route without a schema)
+        let cases = [
+            (dots("a"), 422, 200),
+            (dots("asset"), 500, 200),
+            (format!("a=1,2{gaps}"), 422, 200),
+            (format!("address=1,2{gaps}"), 422, 200),
+            ("asset.x=1,2&asset.x.4294967294=3".to_owned(), 500, 200),
+            (many.clone(), 422, 200),
+            (long.clone(), 422, 200),
+            (deep_throw, 500, 500),
+        ];
+        for (raw, listed, unlisted) in cases {
+            let parsed = parse_query(&raw);
+            let (values, depth) = shape(&parsed);
+            let label = raw.get(..40).unwrap_or(&raw);
+            assert!(depth <= 130, "{label}: {depth} levels");
+            assert!(values <= raw.len() + 16_384 + 2, "{label}: {values} values");
+            assert_eq!(status(query(TransactionsIndex, &raw)), listed, "{label}");
+            let served = query(NodeStatus, &raw);
+            assert_eq!(status(served.clone()), unlisted, "{label}");
+            if let Ok(served) = served {
+                assert!(served.get(".beyond").is_none(), "{label}");
+            }
+        }
+        // Holes are written out, as the reference's JSON has them, up to 16,384 in all.
+        let parsed = parse_query("a=1,2&a.1000=x");
+        assert_eq!(parsed["a"].as_array().map(Vec::len), Some(1001));
+        assert_eq!(parsed["a"][999], Value::Null);
+        let parsed = parse_query(&format!("a=1,2{gaps}"));
+        assert_eq!(parsed["a"].as_array().map(Vec::len), Some(2 + 2 * 998));
+        // 499 lists of 1,002 items: 16 whole, then each run of holes as one, and the 483 names.
+        let (values, _) = shape(&parse_query(&many));
+        assert_eq!(values, 1 + 499 + 16 * 1002 + 483 * 4 + 1 + 483);
+        // A comma list is written out whole, and 128 levels are written out whole.
+        assert_eq!(
+            parse_query(&long)["a"].as_array().map(Vec::len),
+            Some(16_001)
+        );
+        let nested = format!("asset{}=1", ".a".repeat(127));
+        assert_eq!(status(query(TransactionsIndex, &nested)), 200);
+    });
 }
 
 #[test]
@@ -237,6 +329,31 @@ fn links_keep_the_given_spelling_and_order_last() {
             &json!("/transactions?transform=true&page=1&limit=100")
         )
     );
+}
+
+#[test]
+fn asset_criteria_are_linked_as_the_reference_links_them() {
+    let route = RouteId::TransactionsIndex;
+    let path = "/api/transactions";
+    let meta = meta(route, path, "asset.x=a,b&asset.x.5=c&limit=1", 3);
+    assert_eq!(
+        meta["next"],
+        "/transactions?asset.x=a,b,,,,c&limit=1&transform=true&page=2"
+    );
+    let meta = self::meta(route, path, "asset.x=a,b&asset.x.3.y=c", 3);
+    assert_eq!(
+        meta["self"],
+        "/transactions?asset.x=a,b,,[object Object]&transform=true&page=1&limit=100"
+    );
+    let meta = self::meta(route, path, "asset=a,b&asset.0.x=1&asset.1.y=2", 3);
+    assert_eq!(
+        meta["self"],
+        "/transactions?asset=[object Object],[object Object]&transform=true&page=1&limit=100"
+    );
+    let key = format!("asset{}", ".a".repeat(127));
+    let meta = self::meta(route, path, &format!("{key}=1"), 3);
+    let expected = format!("/transactions?{key}=1&transform=true&page=1&limit=100");
+    assert_eq!(meta["self"], Value::String(expected));
 }
 
 #[test]

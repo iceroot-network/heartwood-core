@@ -503,6 +503,79 @@ async fn the_semaphore_levels_follow_the_transaction_indexes() {
     assert_eq!(call(&off, get("/api/transactions")).await.0, 200);
 }
 
+/// The top-level keys of the request's query, how many values it has and how deep it is (counted
+/// without recursion), as the handler saw them.
+fn summary(_: RouteId, request: ApiRequest) -> HandlerFuture {
+    Box::pin(async move {
+        let keys: Vec<&String> = request
+            .query
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|x| x.0)
+            .collect();
+        let (mut values, mut depth, mut stack) = (0, 0, vec![(&request.query, 1)]);
+        while let Some((value, level)) = stack.pop() {
+            (values, depth) = (values + 1, depth.max(level));
+            match value {
+                Value::Array(items) => stack.extend(items.iter().map(|x| (x, level + 1))),
+                Value::Object(map) => stack.extend(map.values().map(|x| (x, level + 1))),
+                _ => {}
+            }
+        }
+        Ok(ApiReply::data(
+            json!({ "keys": keys, "values": values, "depth": depth }),
+        ))
+    })
+}
+
+#[test]
+fn hostile_queries_are_answered_on_a_worker_stack() {
+    // The API's workers have tokio's default stack of 2 MiB.
+    let thread = std::thread::Builder::new().stack_size(2 << 20);
+    let answers = thread.spawn(|| {
+        let mut runtime = tokio::runtime::Builder::new_current_thread();
+        let runtime = runtime.enable_all().build().unwrap();
+        runtime.block_on(async {
+            let host = Host {
+                config: Arc::new(config()),
+                height: Box::new(|| 265),
+                dispatch: Box::new(summary),
+            };
+            let pipeline = Pipeline::with_parts(RouteId::ALL.to_vec(), host, Grammar::SCHEMAS);
+            let dots = |key: &str| format!("{key}{}=1", ".a".repeat(30_000));
+            let gaps: String = (1..=998).map(|i| format!("&a.{}=1", i * 1000)).collect();
+            let mut answers = Vec::new();
+            for uri in [
+                format!("/api/nothing?{}", dots("a")),
+                format!("/api/node/status?{}", dots("a")),
+                format!("/api/transactions?{}", dots("a")),
+                format!("/api/transactions?{}", dots("asset")),
+                format!("/api/node/status?a=1,2{gaps}"),
+                format!("/api/transactions?a=1,2{gaps}"),
+                "/api/transactions?asset.x=1,2&asset.x.4294967294=3".to_owned(),
+            ] {
+                answers.push(call(&pipeline, get(&uri)).await);
+            }
+            answers
+        })
+    });
+    let answers = answers.unwrap().join().unwrap();
+    let statuses: Vec<u16> = answers.iter().map(|answer| answer.0).collect();
+    assert_eq!(statuses, [404, 200, 422, 500, 200, 422, 500]);
+    // The handler reads the query written out within its bounds, without the grammar's own key.
+    let deep = &answers[1].2["data"];
+    assert_eq!(
+        (&deep["keys"], &deep["depth"]),
+        (&json!(["a"]), &json!(129))
+    );
+    let sparse = &answers[4].2["data"];
+    assert_eq!(
+        (&sparse["keys"], &sparse["values"]),
+        (&json!(["a"]), &json!(2 + 2 + 2 * 998))
+    );
+}
+
 #[tokio::test]
 async fn a_connection_answers_one_request_then_closes() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
