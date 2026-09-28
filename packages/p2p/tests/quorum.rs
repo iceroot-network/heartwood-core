@@ -511,7 +511,9 @@ fn peer_of(value: &Value) -> Peer {
         peer.fast_verification = Some(FastVerification {
             my_height: height("myHeight"),
             their_height: height("theirHeight"),
-            highest_common_height: fast["highestCommonHeight"].as_u64().map(|n| n as u32),
+            highest_common_height: (fast.get("highestCommonHeight"))
+                .and_then(Value::as_u64)
+                .map(|n| n as u32),
         });
     }
     peer
