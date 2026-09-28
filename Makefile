@@ -579,11 +579,12 @@ forge-replay: build ## the forge replay of CORPUS/NAME (TO=H); DIRECTION=oracle 
 	$(need-name)
 	$(if $(filter oracle,$(DIRECTION)),$(need-image))
 	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --forge $(if $(TO),--to $(TO)) \
-	    $(if $(filter oracle,$(DIRECTION)),--oracle $(ORACLE_ARGS))
+	    $(if $(filter oracle,$(DIRECTION)),--oracle $(ORACLE_ARGS)) $(STRICT)
 
 forger-crash: build ## the forger's crash test: forger-child against a mock relay, killed KILLS times (KILL_SEED)
 	$(TOOLCHAIN) && cargo build --locked -p heartwood-forger --features difftest --bin forger-child
-	$(TOOLCHAIN) && $(DIFFTEST) forger crash --kills $(KILLS) --child $(FORGER_CHILD) $(if $(KILL_SEED),--seed $(KILL_SEED))
+	$(TOOLCHAIN) && $(DIFFTEST) forger crash --kills $(KILLS) --child $(FORGER_CHILD) $(if $(KILL_SEED),--seed $(KILL_SEED)) \
+	    $(STRICT)
 
 # The two targets run at the same time, FUZZ_FORK jobs each, with the wire targets' libFuzzer
 # options, on corpora of their own (git-ignored); internal_body is seeded from the V29 records of

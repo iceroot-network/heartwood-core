@@ -262,12 +262,12 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             Ok(true)
         }
         Command::CorpusJudge(args) => judge(&args, env),
-        Command::ForgeReplay(args) => forge_replay(&args, env),
+        Command::ForgeReplay(args) => forge_replay(&args, env, strict),
         Command::ForgerCrash { kills, seed, child } => {
             let options = forger_kill::KillOptions { kills, seed, child };
             let report = built(store::guarded(|| forger_kill::run(&options)))?;
             print!("{report}");
-            Ok(report.is_success())
+            Ok(verdict(&report, strict))
         }
         Command::NetworkGenerate { vectors } => {
             let set = VectorSet::load(&vectors)?;
@@ -542,7 +542,11 @@ fn built<T>(outcome: std::result::Result<Result<T>, store::Unbuilt>) -> Result<T
 }
 
 /// The forge replay of a corpus, in the direction the arguments give.
-fn forge_replay(args: &ForgeArgs, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
+fn forge_replay(
+    args: &ForgeArgs,
+    env: impl Fn(&str) -> Option<String>,
+    strict: bool,
+) -> Result<bool> {
     let corpus = Corpus::load(&args.dir)?;
     let mut server = match &args.oracle {
         Some(oracle) => Some(oracle.resolve(env)?.server()?),
@@ -556,7 +560,7 @@ fn forge_replay(args: &ForgeArgs, env: impl Fn(&str) -> Option<String>) -> Resul
         l2_forge::run(&corpus, &options, server.as_mut())
     }))?;
     print!("{report}");
-    Ok(report.is_success())
+    Ok(verdict(&report, strict))
 }
 
 /// Write a chain definition, and compare it with the devnet generator's output when asked.
