@@ -18,7 +18,9 @@ use std::time::Duration;
 use heartwood_crypto::blocks::factory::{self, BlockDraft};
 use heartwood_crypto::blocks::serialiser;
 use heartwood_crypto::crypto::sig::{self, SchemeId, SigningDomain};
-use heartwood_crypto::{Aux, Block, BlockHeader, PublicKeyBytes};
+use heartwood_crypto::transactions::builders::TransactionBuilder;
+use heartwood_crypto::transactions::types::TransferItem;
+use heartwood_crypto::{Address, Aux, Block, BlockHeader, PublicKeyBytes};
 use heartwood_forger::errors::{RelayError, SignError};
 use heartwood_forger::forger_service::{AttemptEnd, ForgerParts, ForgerService};
 use heartwood_forger::options::Options;
@@ -56,6 +58,8 @@ struct FakeRelay {
     rounds: Mutex<VecDeque<CurrentRound>>,
     /// Slot answers that replace the chain's, in order.
     slots: Mutex<VecDeque<i64>>,
+    /// The pool's transactions, as bytes.
+    pool: Mutex<Vec<Vec<u8>>>,
     post_delay: Mutex<Duration>,
     /// The calls' deadlines, as the time left when each call was made.
     deadlines: Mutex<Vec<(&'static str, Duration)>>,
@@ -78,6 +82,7 @@ impl FakeRelay {
             status: Mutex::default(),
             rounds: Mutex::default(),
             slots: Mutex::default(),
+            pool: Mutex::default(),
             post_delay: Mutex::default(),
             deadlines: Mutex::default(),
         })
@@ -207,7 +212,12 @@ impl RelayLink for FakeRelay {
     ) -> Result<Option<ForgingTransactions>, RelayError> {
         self.deadline("pool", deadline);
         self.call("pool", String::new())?;
-        Ok(Some(ForgingTransactions::default()))
+        let transactions = self.pool.lock().unwrap().clone();
+        let pool_size = u32::try_from(transactions.len()).unwrap();
+        Ok(Some(ForgingTransactions {
+            pool_size,
+            transactions,
+        }))
     }
 
     async fn broadcast_block(&self, bytes: &[u8], deadline: Deadline) {
@@ -935,6 +945,54 @@ async fn a_block_that_cannot_be_made_errors_the_attempt_before_the_status() {
     );
     assert_eq!(relay.count("status"), 0, "the reference throws before it");
     assert!(forger.signer.calls.lock().unwrap().is_empty());
+}
+
+/// A transfer's bytes, valid on the tests' network.
+fn transfer() -> Vec<u8> {
+    let keys = key(50);
+    let recipient = Address::from_public_key(keys.public_key(), 90);
+    let item = TransferItem {
+        amount: 1,
+        recipient,
+    };
+    let builder = TransactionBuilder::transfer(vec![item]).fee(10).nonce(1);
+    let transaction = builder.build(&keys, Aux::fixed([1; 32]), milestones().at(2));
+    transaction.unwrap().bytes().to_vec()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_re_sent_block_is_announced_with_its_own_transactions() {
+    let (lines, _guard) = Lines::capture();
+    let relay = FakeRelay::new(in_slot(10, 0), &[1], &[]);
+    relay.fail("post", 1, communication("p2p.blocks.postBlock", "refused"));
+    let mut forger = forger(&relay, &[1], relay.clock.clone());
+    forger.service.boot().await.unwrap();
+    let ours = key(1).public_key().to_compressed();
+    let slot_10 = round(80, 1, &[1], &[], Some(0), None);
+    assert_eq!(
+        forger.service.forge_attempt(&ours, true, &slot_10).await,
+        AttemptEnd::Forged
+    );
+    // The pool has a transaction when the slot's block is sent again; the block has none.
+    relay.pool.lock().unwrap().push(transfer());
+    assert_eq!(
+        forger.service.forge_attempt(&ours, true, &slot_10).await,
+        AttemptEnd::Forged
+    );
+    assert_eq!(
+        lines.with("Received"),
+        [
+            "DEBUG: Received 0 transactions from the pool containing 0 transactions total",
+            "DEBUG: Received 1 transaction from the pool containing 1 transaction total",
+        ]
+    );
+    assert_eq!(
+        lines.with("forged a new block"),
+        ["INFO: Delegate genesis_1 forged a new block at height 2 with 0 transactions"; 2]
+    );
+    assert_eq!(relay.count("event block.forged"), 2);
+    assert_eq!(relay.count("event transaction.forged"), 0);
+    assert_eq!(forger.signer.signed.lock().unwrap().len(), 1);
 }
 
 #[tokio::test(start_paused = true)]

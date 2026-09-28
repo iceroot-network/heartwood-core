@@ -58,7 +58,9 @@ use crate::deadlines::{self, POLL_FLOOR};
 use crate::delegate::Delegate;
 use crate::errors::RelayError;
 use crate::options::Options;
-use crate::seams::{BlockSigner, Deadline, ForgeInputs, ForgerEvent, RelayLink, ShutdownSignal};
+use crate::seams::{
+    BlockSigner, Deadline, ForgeInputs, ForgerEvent, RelayLink, ShutdownSignal, SignedOutcome,
+};
 
 /// The margin the forger keeps before a slot's end: a block is not sent with less time left.
 pub const MINIMUM_MS: i64 = 2_000;
@@ -636,10 +638,10 @@ where
         Ok(transactions)
     }
 
-    /// Sign (or re-send) the slot's block, post it and send the events. The block's slot is the
-    /// slot of its own timestamp, which the signing record is keyed by and checks against the
-    /// forger's clock, whatever slot the relay answered for it. The post is never cut short by a
-    /// shutdown: it runs to its deadline.
+    /// Sign (or re-send) the slot's block, post it and send the events of the block posted. The
+    /// block's slot is the slot of its own timestamp, which the signing record is keyed by and
+    /// checks against the forger's clock, whatever slot the relay answered for it. The post is
+    /// never cut short by a shutdown: it runs to its deadline.
     async fn forge(
         &self,
         key: &(PublicKeyBytes, String),
@@ -659,14 +661,20 @@ where
             let mut signer = self.signer.lock().unwrap_or_else(PoisonError::into_inner);
             signer.sign_or_resend(&key.0, &inputs, own_slot, slot)
         };
-        let signed = outcome.map_err(|error| Failure::Other(error.to_string()))?;
-        let signed = signed.signed();
+        let outcome = outcome.map_err(|error| Failure::Other(error.to_string()))?;
+        let signed = outcome.signed();
+        let block = Block::decode_trusted(&signed.bytes, &self.milestones).ok();
+        // A re-sent block is the recorded one, whatever the pool holds now.
+        let transactions = match (&outcome, &block) {
+            (SignedOutcome::New(_), _) => &ready.transactions[..],
+            (_, block) => block.as_ref().map_or(&[][..], Block::transactions),
+        };
         let (pretty, height) = (&ready.pretty, locale(signed.height));
-        let count = pluralise("transaction", len(&ready.transactions), true);
+        let count = pluralise("transaction", len(transactions), true);
         info!("Delegate {pretty} forged a new block at height {height} with {count} :trident:");
         let deadline = self.deadline(RouteId::PostBlock);
         self.link.broadcast_block(&signed.bytes, deadline).await;
-        if let Ok(block) = Block::decode_trusted(&signed.bytes, &self.milestones) {
+        if let Some(block) = &block {
             let mut header = block.to_json(&self.milestones);
             if let Value::Object(fields) = &mut header {
                 fields.shift_remove("transactions");
@@ -674,7 +682,7 @@ where
             self.emit(ForgerEvent::BlockForged { header });
         }
         let params = self.milestones.at(signed.height);
-        for transaction in &ready.transactions {
+        for transaction in transactions {
             let transaction = transaction.to_json(params);
             self.emit(ForgerEvent::TransactionForged { transaction });
         }
