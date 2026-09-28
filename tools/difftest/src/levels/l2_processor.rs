@@ -1760,6 +1760,8 @@ fn refused_in_apply_after_gap(before: &State, block: &JobBlock, milestones: &Mil
 }
 
 /// A `chain.job` record's session in one call: the chain definition, its blocks, then each job.
+/// A job that starts a download names its blocks, and those of the jobs after it that continue
+/// the download (`sameDownload`), before it runs, as the blockchain service's enqueueing does.
 fn chain_case(input: &Value) -> std::result::Result<Verdict, SubjectError> {
     let unbuilt = |problem: StartProblem| match problem {
         StartProblem::Unbuilt(_) => SubjectError::NotImplemented,
@@ -1783,18 +1785,36 @@ fn chain_case(input: &Value) -> std::result::Result<Verdict, SubjectError> {
     let jobs = input["jobs"]
         .as_array()
         .ok_or_else(|| SubjectError::Failed("jobs must be a list".into()))?;
+    let same_download = |job: &Value| job.get("sameDownload") == Some(&Value::Bool(true));
+    let blocks_of = |job: &Value| job_blocks(&job["hexes"]).map_err(SubjectError::Failed);
     let mut values = Vec::new();
     let (mut removed, mut refused_rows) = (None, false);
-    for job in jobs {
-        let blocks = job_blocks(&job["hexes"]).map_err(SubjectError::Failed)?;
+    // The enqueued blocks of the later jobs of the download that runs.
+    let mut queued = VecDeque::new();
+    for (index, job) in jobs.iter().enumerate() {
+        let blocks = blocks_of(job)?;
         let inputs = JobInputs::from_json(job).map_err(SubjectError::Failed)?;
+        let enqueued = if same_download(job) {
+            queued.pop_front().ok_or_else(|| {
+                SubjectError::Failed(format!("jobs[{index}] continues no download"))
+            })?
+        } else {
+            // The job and the jobs that continue its download are named now, before it runs.
+            let later = jobs.iter().skip(index + 1).take_while(|j| same_download(j));
+            queued = later
+                .map(|j| Ok(rig.enqueue(&blocks_of(j)?)))
+                .collect::<std::result::Result<_, SubjectError>>()?;
+            rig.enqueue(&blocks)
+        };
         let before = rig.state().clone();
-        let ran = rig
-            .run(&blocks, &inputs, &[])
-            .map_err(|problem| match problem {
-                RigProblem::Unbuilt(_) => SubjectError::NotImplemented,
-                RigProblem::Failed(why) => SubjectError::Failed(why),
-            })?;
+        let ran = match enqueued {
+            Ok(incoming) => rig.run_enqueued(&blocks, incoming, &inputs, &[]),
+            Err(why) => Ok(RigJob::Refused(why)),
+        };
+        let ran = ran.map_err(|problem| match problem {
+            RigProblem::Unbuilt(_) => SubjectError::NotImplemented,
+            RigProblem::Failed(why) => SubjectError::Failed(why),
+        })?;
         match ran {
             RigJob::Refused(why) => {
                 let holds = blocks.iter().any(|b| {
