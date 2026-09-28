@@ -4,8 +4,8 @@
 #![allow(dead_code)]
 
 use std::path::PathBuf;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 
 use heartwood_crypto::identities::{Address, PublicKey};
 use heartwood_crypto::managers::{Milestones, Network};
@@ -297,6 +297,11 @@ pub fn ids<'a>(transactions: impl IntoIterator<Item = &'a Transaction>) -> Vec<S
         .into_iter()
         .map(|tx| tx.id().to_hex())
         .collect()
+}
+
+/// The ids of `transactions`, as the pool shares them.
+pub fn shared_ids(transactions: &[Arc<Transaction>]) -> Vec<String> {
+    ids(transactions.iter().map(Arc::as_ref))
 }
 
 /// The id of `transaction`.

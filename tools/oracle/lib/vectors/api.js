@@ -30,6 +30,10 @@ const QUERIES = [
 
 const TOTALS = [0, 1, 5, 101, 149];
 
+// A query that names an offset also runs at a count below its page's start (page 3 of 10 starts
+// at 20), where the page's size tells an offset the plugins ignore (0) from one they honour.
+const OFFSET_TOTALS = [25, 149];
+
 module.exports = async function apiVectors({ rec, shared }) {
     const out = [];
     const H = shared.height;
@@ -44,7 +48,7 @@ module.exports = async function apiVectors({ rec, shared }) {
         out.push({ ...(await rec("api.parseQuery", H, { query })), name: `parseQuery: ${name}` });
     for (const path of PATHS) {
         for (const query of QUERIES) {
-            for (const total of query === "" ? TOTALS : [149]) {
+            for (const total of query === "" ? TOTALS : /(^|&)offset=/.test(query) ? OFFSET_TOTALS : [149]) {
                 out.push({ ...(await rec("api.paginate", H, { path, query, total })), name: `paginate: ${path}?${query} of ${total}` });
             }
         }

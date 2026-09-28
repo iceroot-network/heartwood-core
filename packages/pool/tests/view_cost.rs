@@ -7,7 +7,10 @@
 //!   changed (median of 20): with the copy, the part of the store's commit of a block that grows
 //!   with the number of wallets, not with the number the block changed;
 //! - the time of a re-add with 1 to 15,000 senders at 10^4 and 10^5 wallets (at least one wallet
-//!   per sender), and the memory its views hold.
+//!   per sender), and the memory its views hold;
+//! - the time of a publish of the pool's view (median of 20) with 1,500 and 15,000 transactions
+//!   (the default `maxTransactionsInPool`) of 100 senders: a view of its own, and a view after
+//!   the last one, as the node thread publishes after each change of the pool.
 //!
 //! Each case runs in a child process of its own, so that no case reads memory another one freed.
 //! A case whose views could hold more than the memory budget (4 GiB; `HEARTWOOD_POOL_BENCH_MIB`
@@ -24,7 +27,7 @@ use std::process::Command;
 
 use heartwood_crypto::Transaction;
 use heartwood_crypto::identities::Address;
-use heartwood_pool::{DelegateVersions, Pool, PoolContext, Storage, StoredTransaction};
+use heartwood_pool::{DelegateVersions, Pool, PoolContext, PoolView, Storage, StoredTransaction};
 use heartwood_state::wallets::WalletRepository;
 use support::*;
 
@@ -110,6 +113,10 @@ fn view_cost() {
     for count in [1_000, 10_000, 100_000, 1_000_000] {
         println!("{}", child(&format!("copy:{count}")));
     }
+    println!("transactions   senders   view (median of 20)   view after the last (median of 20)");
+    for transactions in [1_500, 15_000] {
+        println!("{}", child(&format!("publish:{transactions}:100")));
+    }
     println!("wallets   senders   re-add          memory of the views");
     for base in [10_000, 100_000] {
         let mut per_view: Option<(f64, f64)> = None;
@@ -159,6 +166,7 @@ fn view_cost_case() {
     match (case.split(':').next(), numbers.as_slice()) {
         (Some("copy"), &[count]) => copy_case(count),
         (Some("readd"), &[count, senders]) => readd_case(count, senders),
+        (Some("publish"), &[transactions, senders]) => publish_case(transactions, senders),
         _ => panic!("unknown case {case}"),
     }
 }
@@ -193,6 +201,62 @@ fn copy_case(count: usize) {
         "RESULT {count:>9}   {:>12.3} ms   {mib:>12.2} MiB   {:>12.3} ms",
         samples[10], scans[10]
     );
+}
+
+fn publish_case(transactions: usize, senders: usize) {
+    let per_sender = transactions.div_ceil(senders);
+    let (wallets, accounts) = wallets(10_000, senders);
+    let recipient = Account::new("bench recipient");
+    let dir = tempdir("bench-publish");
+    let options = options(&dir);
+    {
+        let mut storage = Storage::open(&options.storage, None).unwrap();
+        for sender in &accounts {
+            for nonce in 2..2 + per_sender as u64 {
+                let tx: Transaction = sender.transfer(&recipient, 1, nonce, FEE);
+                storage
+                    .add(&StoredTransaction {
+                        height: TIP,
+                        id: *tx.id(),
+                        recipient_id: recipient.address.to_base58(),
+                        sender_id: sender.address.to_base58(),
+                        serialised: tx.bytes().to_vec(),
+                    })
+                    .unwrap();
+            }
+        }
+    }
+    let mut pool = Pool::open(options, None).unwrap();
+    let online = DelegateVersions::new();
+    let ctx = PoolContext {
+        wallets: &wallets,
+        tip: TIP,
+        milestones: &MILESTONES,
+        network: &NETWORK_FILE,
+        online: &online,
+    };
+    let readded = pool.readd(&ctx, &[]).unwrap();
+    assert_eq!(readded.stored.len(), senders * per_sender);
+    let median = |publish: &dyn Fn() -> PoolView| {
+        let mut samples: Vec<f64> = (0..20)
+            .map(|_| {
+                let start = now_ms();
+                black_box(publish());
+                now_ms() - start
+            })
+            .collect();
+        samples.sort_by(f64::total_cmp);
+        samples[10]
+    };
+    let own = median(&|| pool.view(&online));
+    let last = pool.view(&online);
+    let after = median(&|| pool.view_after(&online, &last));
+    println!(
+        "RESULT {:>12} {senders:>9}   {own:>16.3} ms   {after:>16.3} ms",
+        last.len()
+    );
+    drop(pool);
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 fn readd_case(count: usize, senders: usize) {

@@ -17,8 +17,9 @@
 //! - `id` is a prefix, as the reference's `LIKE 'id%'`.
 //! - `memo` is a `LIKE` pattern on the memo's bytes, with `%`, `_` and `\` escapes,
 //!   case-sensitive ([`like_bytes`]).
-//! - `asset` is a JSON containment on the stored asset ([`contains`]), after the reference's
-//!   expansion of the query's strings ([`asset_alternatives`]).
+//! - `asset` is a JSON containment on the stored asset of one of the alternatives of the
+//!   reference's expansion of the query's strings ([`asset_alternatives`]), decided without
+//!   building them ([`contains_alternative`]).
 //!
 //! [`js_number`] is JavaScript's `Number` of a string, which the expansion and the API's block
 //! lookup both follow; [`jsonb_order_key`] sorts assets as PostgreSQL's `jsonb` does.
@@ -29,9 +30,9 @@ mod jsonb;
 mod like;
 pub(crate) mod sql;
 
-pub use self::asset::{CastLimit, asset_alternatives};
+pub use self::asset::{CastLimit, Casts, asset_alternatives, check_casts};
 pub use self::js::js_number;
-pub use self::jsonb::{contains, jsonb_order_key};
+pub use self::jsonb::{contains, contains_alternative, jsonb_order_key};
 pub use self::like::{PatternError, like_bytes};
 
 use serde_json::Value;
@@ -88,8 +89,9 @@ pub struct TransactionCriteria {
     pub fee: Vec<Numeric>,
     /// `burnedFee`.
     pub burned_fee: Vec<Numeric>,
-    /// `asset`: JSON values the stored asset must contain, one of them: every alternative of
-    /// every value of the query's key ([`asset_alternatives`]).
+    /// `asset`: the values of the query's key, of which the stored asset must contain one
+    /// alternative ([`asset_alternatives`]; [`contains_alternative`]). The API refuses a value
+    /// with more than five texts that read as a number or a boolean first ([`check_casts`]).
     pub asset: Vec<Value>,
 }
 

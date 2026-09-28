@@ -6,6 +6,8 @@
 
 use serde_json::{Map, Number, Value};
 
+use crate::filters::asset::Casts;
+
 /// Whether the stored asset `asset` contains `criterion`, as PostgreSQL's `jsonb @>` decides it.
 ///
 /// An object contains an object when it has each of its keys with a value that contains the
@@ -14,24 +16,38 @@ use serde_json::{Map, Number, Value};
 /// scalar of the same type (numbers compare by value). A top-level array also contains a
 /// top-level scalar that is one of its elements.
 pub fn contains(asset: &Value, criterion: &Value) -> bool {
+    contains_alternative(asset, criterion, &Casts::default())
+}
+
+/// Whether the stored asset `asset` contains one of the alternatives of the `asset` criteria
+/// `criterion` ([`crate::filters::asset_alternatives`]), whose texts in `casts` also stand for
+/// their casts, as [`contains`] decides it for each alternative, without building them.
+///
+/// Containment holds when each key of an object and each element of an array is contained, each
+/// by its own part of the criteria, and the alternatives pick a value for each text on its own:
+/// so one alternative is contained exactly when each part is contained with one of its own
+/// choices, that is when each text of `casts` is matched by a scalar equal to it or to its cast.
+pub fn contains_alternative(asset: &Value, criterion: &Value, casts: &Casts) -> bool {
     match (asset, criterion) {
-        (Value::Array(elements), scalar) if is_scalar(scalar) => {
-            elements.iter().any(|element| scalar_eq(element, scalar))
-        }
-        _ => deep_contains(asset, criterion),
+        (Value::Array(elements), scalar) if is_scalar(scalar) => elements
+            .iter()
+            .any(|element| leaf_eq(element, scalar, casts)),
+        _ => deep_contains(asset, criterion, casts),
     }
 }
 
 /// `jsonb`'s containment below the top level, where types must match.
-fn deep_contains(value: &Value, contained: &Value) -> bool {
+fn deep_contains(value: &Value, contained: &Value, casts: &Casts) -> bool {
     match (value, contained) {
         (Value::Object(value), Value::Object(contained)) => {
             value.len() >= contained.len()
                 && contained.iter().all(|(key, inner)| {
                     value.get(key).is_some_and(|own| match (own, inner) {
-                        (own, inner) if is_scalar(own) && is_scalar(inner) => scalar_eq(own, inner),
+                        (own, inner) if is_scalar(own) && is_scalar(inner) => {
+                            leaf_eq(own, inner, casts)
+                        }
                         (own, inner) if !is_scalar(own) && !is_scalar(inner) => {
-                            deep_contains(own, inner)
+                            deep_contains(own, inner, casts)
                         }
                         _ => false,
                     })
@@ -39,18 +55,25 @@ fn deep_contains(value: &Value, contained: &Value) -> bool {
         }
         (Value::Array(value), Value::Array(contained)) => contained.iter().all(|inner| {
             if is_scalar(inner) {
-                value.iter().any(|own| scalar_eq(own, inner))
+                value.iter().any(|own| leaf_eq(own, inner, casts))
             } else {
                 value
                     .iter()
-                    .any(|own| !is_scalar(own) && deep_contains(own, inner))
+                    .any(|own| !is_scalar(own) && deep_contains(own, inner, casts))
             }
         }),
         (value, contained) if is_scalar(value) && is_scalar(contained) => {
-            scalar_eq(value, contained)
+            leaf_eq(value, contained, casts)
         }
         _ => false,
     }
+}
+
+/// Whether the scalar `own` matches the criteria's scalar `inner`: equal to it, or, for a text of
+/// `casts`, equal to its cast.
+fn leaf_eq(own: &Value, inner: &Value, casts: &Casts) -> bool {
+    scalar_eq(own, inner)
+        || matches!(inner, Value::String(text) if casts.get(text).is_some_and(|cast| scalar_eq(own, cast)))
 }
 
 /// Whether `value` is neither an array nor an object.
