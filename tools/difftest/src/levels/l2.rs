@@ -588,7 +588,8 @@ pub fn replay_through_store(
     Ok(walker)
 }
 
-/// The judge's anchor results of a corpus, and whether they hold.
+/// The judge's anchor results of a corpus, and whether they hold for it
+/// ([`crate::corpus::anchors_hold`]).
 pub fn judge_report(dir: &Path) -> Result<(bool, Value)> {
     let path = dir.join(ANCHORS);
     let text = std::fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
@@ -596,7 +597,8 @@ pub fn judge_report(dir: &Path) -> Result<(bool, Value)> {
         path: path.clone(),
         message: e.to_string(),
     })?;
-    Ok((value.get("ok") == Some(&Value::Bool(true)), value))
+    let meta = crate::corpus::read_json(&dir.join("corpus.json"))?;
+    Ok((crate::corpus::anchors_hold(&value, &meta), value))
 }
 
 fn describe_judge(judge: &Value) -> String {

@@ -37,6 +37,8 @@ pub struct Judged {
     pub anchors_ok: bool,
     /// The anchors' results, for the report.
     pub anchors: Value,
+    /// The anchors that do not apply to this corpus ([`corpus::absent_anchors`]).
+    pub absent: Vec<&'static str>,
     /// The judge's forward lines.
     pub chain: JudgedChain,
     /// The corpus's tip.
@@ -217,6 +219,7 @@ pub fn prepare(
     }
     let (anchors_ok, anchors) = l2::judge_report(&dir)?;
     let loaded = Corpus::load(&dir)?;
+    let absent = corpus::absent_anchors(&anchors, &loaded.meta);
     let forward = store::forward_lines(&loaded)?;
     let copy = run_dir.join("corpus").join(name);
     std::fs::create_dir_all(&copy).map_err(|e| Error::io(&copy, e))?;
@@ -227,6 +230,7 @@ pub fn prepare(
         dir,
         anchors_ok,
         anchors,
+        absent,
         chain: JudgedChain {
             name: name.to_owned(),
             forward,

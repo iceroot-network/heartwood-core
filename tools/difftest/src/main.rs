@@ -458,15 +458,23 @@ fn judge(args: &JudgeArgs, env: impl Fn(&str) -> Option<String>) -> Result<bool>
     if args.processor {
         extra.push("--processor".to_string());
     }
-    let ok = oracle.judge(dir, &work, &extra)?;
-    let recorded = corpus::record_judge(dir, &work)?;
+    // The judge's exit status holds the corpus to every anchor; the recorded verdict reads its
+    // report for this corpus, as the other gate targets do.
+    oracle.judge(dir, &work, &extra)?;
+    let hold = corpus::record_judge(dir, &work)?;
+    let (_, anchors) = l2::judge_report(dir)?;
+    let absent = corpus::absent_anchors(&anchors, &Corpus::load(dir)?.meta);
     println!(
         "difftest: the judge's lines and anchors are in {} (anchors {})",
         dir.display(),
-        if recorded && ok {
-            "hold"
-        } else {
-            "FAILED: see anchors.json"
+        match (hold, absent.is_empty()) {
+            (true, true) => "hold".to_owned(),
+            (true, false) => format!(
+                "hold; {} do not apply to a corpus of relay block files, which has no API \
+                 checkpoint and no archive",
+                absent.join(" and ")
+            ),
+            (false, _) => "FAILED: see anchors.json".to_owned(),
         }
     );
     if args.dump.is_empty() {
@@ -474,7 +482,7 @@ fn judge(args: &JudgeArgs, env: impl Fn(&str) -> Option<String>) -> Result<bool>
     } else {
         println!("  dumps: {}", work.display());
     }
-    Ok(ok && recorded)
+    Ok(hold)
 }
 
 fn run_l2(args: &L2Args, env: impl Fn(&str) -> Option<String>, strict: bool) -> Result<bool> {

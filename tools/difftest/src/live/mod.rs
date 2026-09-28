@@ -636,10 +636,18 @@ fn check_judge(
                     (true, false) | (false, false) => "judged before",
                 };
                 if judged.anchors_ok {
+                    let absent = if judged.absent.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "; {} do not apply to a corpus of relay block files",
+                            judged.absent.join(" and ")
+                        )
+                    };
                     cases.pass(
                         "judge",
                         format!(
-                            "{name}: tip {}, the judge's anchors hold ({how}, {})",
+                            "{name}: tip {}, the judge's anchors hold ({how}, {}){absent}",
                             judged.tip,
                             judged.dir.display()
                         ),

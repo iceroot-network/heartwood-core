@@ -278,7 +278,7 @@ fn read_text(path: &Path) -> Result<String> {
     fs::read_to_string(path).map_err(|e| Error::io(path, e))
 }
 
-fn read_json(path: &Path) -> Result<Value> {
+pub(crate) fn read_json(path: &Path) -> Result<Value> {
     serde_json::from_str(&read_text(path)?)
         .map_err(|e| corpus_error(path, format!("not JSON: {e}")))
 }
@@ -689,10 +689,77 @@ fn check_seed(dir: &Path, crypto: &[Vec<u8>], seed: &str) -> Result<()> {
     Ok(())
 }
 
+/// The anchors of the judge's report that a corpus of relay block files cannot have, each with
+/// the list the judge fills from the devnet tooling's archives: the API checkpoints (A4) and the
+/// verified archives (A5).
+const ARCHIVE_ANCHORS: [(&str, &str); 2] = [("A4", "checkpoints"), ("A5", "archives")];
+
+/// The anchors every corpus is judged by, a corpus of relay block files among them.
+const CHAIN_ANCHORS: [&str; 3] = ["A1", "A2", "A3"];
+
+fn holds(value: &Value) -> bool {
+    value.get("ok") == Some(&Value::Bool(true))
+}
+
+/// The anchors of the judge's report `anchors` that do not apply to the corpus whose
+/// `corpus.json` is `meta`: for a corpus of relay block files (`anchorSource`
+/// [`crate::corpus_from_blocks::ANCHOR_SOURCE`]), A4 and A5 where they failed with nothing to
+/// judge, since its blocks come with no API checkpoint and no archive. Empty for every other
+/// corpus.
+pub fn absent_anchors(anchors: &Value, meta: &Value) -> Vec<&'static str> {
+    if meta.get("anchorSource").and_then(Value::as_str)
+        != Some(crate::corpus_from_blocks::ANCHOR_SOURCE)
+    {
+        return Vec::new();
+    }
+    ARCHIVE_ANCHORS
+        .iter()
+        .filter(|(name, list)| {
+            anchors
+                .pointer(&format!("/anchors/{name}"))
+                .is_some_and(|a| {
+                    !holds(a)
+                        && a.get(*list)
+                            .and_then(Value::as_array)
+                            .is_some_and(Vec::is_empty)
+                })
+        })
+        .map(|(name, _)| *name)
+        .collect()
+}
+
+/// Whether the judge's report `anchors` holds for the corpus whose `corpus.json` is `meta`: the
+/// judge's own verdict, or for a corpus of relay block files the same verdict without the
+/// anchors that do not apply to it ([`absent_anchors`]), which then rests on A1 to A3, every
+/// other anchor, no failed block and the processor's result.
+pub fn anchors_hold(anchors: &Value, meta: &Value) -> bool {
+    if holds(anchors) {
+        return true;
+    }
+    let absent = absent_anchors(anchors, meta);
+    if absent.is_empty() {
+        return false;
+    }
+    let Some(each) = anchors.get("anchors").and_then(Value::as_object) else {
+        return false;
+    };
+    let no_failures = anchors
+        .get("failures")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    no_failures
+        && CHAIN_ANCHORS.iter().all(|name| each.contains_key(*name))
+        && each
+            .iter()
+            .all(|(name, a)| holds(a) || absent.contains(&name.as_str()))
+        && anchors.get("processor").is_none_or(holds)
+}
+
 /// Add the judge's output in `work` (`ts-digests.jsonl`, `anchors.json`, and `ts-restarts.jsonl`
 /// when it ran restarts) to the corpus in `dir`: copy them, remove a restart file the judge did
 /// not write again, record the judge's provenance (and the height it cut the chain at) in
-/// `corpus.json`, and write the manifest again. Returns whether the judge's anchors hold.
+/// `corpus.json`, and write the manifest again. Returns whether the judge's anchors hold, as
+/// [`anchors_hold`] reads them.
 pub fn record_judge(dir: &Path, work: &Path) -> Result<bool> {
     let mut files = Vec::new();
     let optional = [restart::TS_RESTARTS, TS_PROCESSOR];
@@ -707,7 +774,9 @@ pub fn record_judge(dir: &Path, work: &Path) -> Result<bool> {
     }
     let anchors: Value = serde_json::from_str(&files[1].1)
         .map_err(|e| corpus_error(work.join(ANCHORS), e.to_string()))?;
-    let ok = anchors.get("ok") == Some(&Value::Bool(true));
+    let meta_path = dir.join("corpus.json");
+    let mut meta = read_json(&meta_path)?;
+    let ok = anchors_hold(&anchors, &meta);
     for (name, text) in &files {
         write_file(&dir.join(name), text)?;
     }
@@ -717,8 +786,6 @@ pub fn record_judge(dir: &Path, work: &Path) -> Result<bool> {
             fs::remove_file(&stale).map_err(|e| Error::io(&stale, e))?;
         }
     }
-    let meta_path = dir.join("corpus.json");
-    let mut meta = read_json(&meta_path)?;
     meta["judge"] = json!({
         "ok": ok,
         "reference": anchors.get("reference").cloned().unwrap_or(Value::Null),
@@ -1288,5 +1355,58 @@ mod tests {
             .to_string();
         assert!(error.contains("machine path"), "{error}");
         assert!(!root.path().join("corpus").join("corpus.json").exists());
+    }
+
+    /// A judge's report of a corpus of relay block files: A1 to A3 and the processor hold, A4 and
+    /// A5 fail with empty lists.
+    fn block_file_report() -> Value {
+        json!({
+            "ok": false,
+            "failures": [],
+            "anchors": {
+                "A1": {"ok": true, "rounds": 2, "rows": 106, "differences": []},
+                "A2": {"ok": true, "rows": 0},
+                "A3": {"ok": true, "blocks": 74, "differences": []},
+                "A4": {"ok": false, "checkpoints": []},
+                "A5": {"ok": false, "archives": []},
+            },
+            "processor": {"ok": true, "blocks": 74},
+        })
+    }
+
+    #[test]
+    fn a_block_file_corpus_is_judged_without_checkpoints_or_archives() {
+        let replay = json!({"anchorSource": crate::corpus_from_blocks::ANCHOR_SOURCE});
+        let report = block_file_report();
+        assert!(anchors_hold(&report, &replay));
+        assert_eq!(absent_anchors(&report, &replay), ["A4", "A5"]);
+        // Every other corpus keeps every anchor, and a report that holds needs no exception.
+        assert!(!anchors_hold(&report, &json!({"format": FORMAT})));
+        assert!(absent_anchors(&report, &json!({})).is_empty());
+        let mut held = report.clone();
+        held["ok"] = json!(true);
+        assert!(anchors_hold(&held, &json!({})));
+        // A checkpoint or an archive that exists is judged, as is every other anchor.
+        let failing = [
+            (
+                "/anchors/A4/checkpoints",
+                json!([{"height": 9, "differences": [{}]}]),
+            ),
+            (
+                "/anchors/A5/archives",
+                json!([{"from": 1, "to": 75, "verified": false}]),
+            ),
+            ("/anchors/A3/ok", json!(false)),
+            ("/processor/ok", json!(false)),
+            ("/failures", json!([{"h": 9, "error": "refused"}])),
+        ];
+        for (pointer, value) in failing {
+            let mut changed = report.clone();
+            *changed.pointer_mut(pointer).unwrap() = value;
+            assert!(!anchors_hold(&changed, &replay), "{pointer}");
+        }
+        let mut no_anchors = report.clone();
+        no_anchors["anchors"] = json!({});
+        assert!(!anchors_hold(&no_anchors, &replay));
     }
 }
