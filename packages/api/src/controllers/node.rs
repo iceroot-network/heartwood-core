@@ -165,12 +165,39 @@ fn remove_false(value: &mut Value) {
 
 /// `/node/configuration/crypto`: what the reference's crypto configuration holds, the network as
 /// loaded, `exceptions` empty, the milestones merged cumulatively in height order and the genesis
-/// block.
+/// block as the reference holds it once it has booted ([`genesis_as_held`]).
 pub fn crypto_data(node: &NodeInfo) -> Value {
     let milestones = node.crypto.milestones.all().iter();
     let milestones = milestones.map(|params| Value::Object(params.as_json().clone()));
     json!({
         "network": node.crypto.network.to_json(), "exceptions": {},
-        "milestones": milestones.collect::<Vec<_>>(), "genesisBlock": node.crypto.genesis,
+        "milestones": milestones.collect::<Vec<_>>(),
+        "genesisBlock": genesis_as_held(&node.crypto.genesis),
     })
+}
+
+/// The genesis block `genesis` as loaded, as the reference's configuration holds it once it has
+/// booted: building the block serialises each of its transactions, and the serialiser sets on the
+/// transaction's own object, in this order, `version` to 3 and `headerType` to 0 when they are
+/// not truthy, and `typeGroup` to 1 when it is missing. A key it adds comes last; a key it sets
+/// keeps its place.
+pub fn genesis_as_held(genesis: &Value) -> Value {
+    let mut genesis = genesis.clone();
+    let transactions = genesis
+        .get_mut("transactions")
+        .and_then(Value::as_array_mut);
+    for transaction in transactions.into_iter().flatten() {
+        let Some(transaction) = transaction.as_object_mut() else {
+            continue;
+        };
+        for (key, default) in [("version", 3), ("headerType", 0)] {
+            if !transaction.get(key).is_some_and(js::is_truthy) {
+                transaction.insert(key.to_owned(), Value::from(default));
+            }
+        }
+        if !transaction.contains_key("typeGroup") {
+            transaction.insert("typeGroup".to_owned(), Value::from(1));
+        }
+    }
+    genesis
 }

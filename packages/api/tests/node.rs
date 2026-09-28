@@ -155,7 +155,17 @@ fn the_crypto_configuration_is_what_the_reference_holds() {
     .unwrap();
     assert_eq!(text(&data["network"]), text(&network));
     assert_eq!(data["exceptions"], json!({}));
-    assert_eq!(text(&data["genesisBlock"]), text(&chain.files.genesis));
+    // The genesis block as loaded, each transaction with the `headerType` the reference's
+    // serialiser gives it at boot, last; the file's transactions have a version and a type group.
+    let mut expected = chain.files.genesis.clone();
+    let transactions = expected["transactions"].as_array_mut().unwrap();
+    assert_eq!(transactions.len(), 107);
+    for transaction in transactions {
+        let transaction = transaction.as_object_mut().unwrap();
+        assert!(!transaction.contains_key("headerType"));
+        transaction.insert("headerType".into(), json!(0));
+    }
+    assert_eq!(text(&data["genesisBlock"]), text(&expected));
     // The milestones merged cumulatively, in height order: each carries the keys before it.
     let milestones = data["milestones"].as_array().unwrap();
     let merged = chain.milestones().all();
@@ -164,6 +174,31 @@ fn the_crypto_configuration_is_what_the_reference_holds() {
         assert_eq!(shown["height"], params.height());
         assert_eq!(shown["activeDelegates"], 53);
     }
+}
+
+#[test]
+fn the_genesis_transactions_carry_what_the_serialiser_sets() {
+    let genesis = json!({
+        "id": "g",
+        "transactions": [
+            {"type": 6, "version": 3, "typeGroup": 1},
+            {"type": 6, "version": 0, "headerType": null, "fee": "0"},
+            {"type": 6, "headerType": 1, "typeGroup": null, "version": 2},
+            {"version": "", "headerType": false},
+        ],
+        "height": 1,
+    });
+    let expected = json!({
+        "id": "g",
+        "transactions": [
+            {"type": 6, "version": 3, "typeGroup": 1, "headerType": 0},
+            {"type": 6, "version": 3, "headerType": 0, "fee": "0", "typeGroup": 1},
+            {"type": 6, "headerType": 1, "typeGroup": null, "version": 2},
+            {"version": 3, "headerType": 0, "typeGroup": 1},
+        ],
+        "height": 1,
+    });
+    assert_eq!(text(&node::genesis_as_held(&genesis)), text(&expected));
 }
 
 #[tokio::test]
