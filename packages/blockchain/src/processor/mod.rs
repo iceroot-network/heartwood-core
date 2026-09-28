@@ -19,11 +19,13 @@
 //! the queue to be cleared. The processor runs on the node thread and never reads the wall clock
 //! except through [`ProcessContext::clock`].
 //!
-//! The block's delegate name is the one the reference's `setBlockUsername` gives it when it
-//! enqueues the block ([`delegate_name`]). [`process`] reads it when the block is processed;
-//! [`trace_named`] takes the name the block got when it was enqueued, which differs only for the
-//! blocks of a delegate registered in a block of the same download (no name, so the generator is
-//! refused until the block is downloaded again).
+//! The block's delegate name is the one the reference's `setBlockUsername` gave it when it was
+//! enqueued ([`crate::work::IncomingBlock::set_username`]): the job passes it to
+//! [`BlockProcess::process`], and [`trace_named`] judges the generator with it. A block whose
+//! delegate registered in an earlier block of the same download has no name, so its generator is
+//! refused until the block is downloaded again. [`trace`] takes the name the block's key has in
+//! the state it is processed on ([`delegate_name`]), which is the enqueued name of every other
+//! block.
 
 pub mod handlers;
 pub mod unchained;
@@ -185,19 +187,16 @@ pub struct Traced {
     pub handler: Handler,
 }
 
-/// Process `block` (see the module documentation for the order of the checks).
-pub fn process(ctx: &mut ProcessContext<'_>, block: &Block) -> Processed {
-    trace(ctx, block).processed
-}
-
-/// Process `block` as [`process`] does, and name the handler that decided it.
+/// Process `block` with the delegate name its key has in the state (see the module
+/// documentation), and name the handler that decided it.
 pub fn trace(ctx: &mut ProcessContext<'_>, block: &Block) -> Traced {
     let name = delegate_name(ctx.state, block).map(str::to_owned);
     trace_named(ctx, block, name.as_deref())
 }
 
-/// Process `block` as [`trace`] does, with `name` as the block's delegate name: the name its
-/// generator key had when the block was enqueued, `None` when the key named no delegate then.
+/// Process `block` (see the module documentation for the order of the checks) with `name` as the
+/// block's delegate name: the name its generator key had when the block was enqueued, `None` when
+/// the key named no delegate then; and name the handler that decided it.
 pub fn trace_named(ctx: &mut ProcessContext<'_>, block: &Block, name: Option<&str>) -> Traced {
     let refused = |ctx: &mut ProcessContext<'_>, refusal| Traced {
         processed: Processed {
@@ -247,20 +246,10 @@ pub fn trace_named(ctx: &mut ProcessContext<'_>, block: &Block, name: Option<&st
 /// The processor as the job calls it: [`BlockProcessor`] in a node, a scripted fake in the
 /// runtime's tests.
 pub trait BlockProcess: Send + Sync {
-    /// Process `block`.
-    fn process(&self, ctx: &mut ProcessContext<'_>, block: &Block) -> Processed;
-
-    /// Process `block` with the delegate name it got when it was enqueued (see [`trace_named`]).
-    /// The default ignores the name.
-    fn process_named(
-        &self,
-        ctx: &mut ProcessContext<'_>,
-        block: &Block,
-        name: Option<&str>,
-    ) -> Processed {
-        let _ = name;
-        self.process(ctx, block)
-    }
+    /// Process `block`, whose delegate name is `name`: the one it got when it was enqueued (see
+    /// [`trace_named`]).
+    fn process(&self, ctx: &mut ProcessContext<'_>, block: &Block, name: Option<&str>)
+    -> Processed;
 }
 
 /// The block processor.
@@ -268,11 +257,7 @@ pub trait BlockProcess: Send + Sync {
 pub struct BlockProcessor;
 
 impl BlockProcess for BlockProcessor {
-    fn process(&self, ctx: &mut ProcessContext<'_>, block: &Block) -> Processed {
-        process(ctx, block)
-    }
-
-    fn process_named(
+    fn process(
         &self,
         ctx: &mut ProcessContext<'_>,
         block: &Block,

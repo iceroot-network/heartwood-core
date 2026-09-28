@@ -4,10 +4,14 @@
 //! - Incoming blocks ([`Blockchain::handle_incoming_block`]): a block in a future slot is
 //!   discarded; the block is pinged; when started, `NEWBLOCK` and the block enqueued; before that,
 //!   "Block disregarded because blockchain is not ready".
-//! - Enqueueing ([`Blockchain::enqueue_blocks`], [`cut_jobs`]): jobs cut after 150 transactions,
-//!   100 blocks, or at the first remaining milestone height at or above the last downloaded height
-//!   (a list that shifts only when such a cut happens, reproduced); the remaining blocks form a
-//!   last job, pushed even when empty; each push resumes the queue unless a fork recovery runs.
+//! - Enqueueing ([`Blockchain::enqueue_blocks`], [`cut_jobs`]): every block of the call is named
+//!   first ([`IncomingBlock::set_username`]) from the state the node published at its last
+//!   commit, before any of its jobs runs, so a block whose delegate registers in an earlier block
+//!   of the same download has no name and its generator is refused; jobs cut after 150
+//!   transactions, 100 blocks, or at the first remaining milestone height at or above the last
+//!   downloaded height (a list that shifts only when such a cut happens, reproduced); the
+//!   remaining blocks form a last job, pushed even when empty; each push resumes the queue unless
+//!   a fork recovery runs.
 //! - Removal ([`Blockchain::remove_blocks`]), the fork block and the job's fork check, `isSynced`,
 //!   the wake-up timer (60 s without an accepted block: back to syncing), and the job outcomes and
 //!   the queue's drain ([`crate::queue::QueueEvents`]): after the queue had the node re-add the
@@ -230,8 +234,8 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
         Ok(())
     }
 
-    /// A block from a peer or the node's own forger (see the module documentation);
-    /// `fire_event` is false for the idle poll's blocks.
+    /// A block from a peer or the node's own forger (see the module documentation), named when
+    /// it is enqueued; `fire_event` is false for the idle poll's blocks.
     pub async fn handle_incoming_block(self: &Arc<Self>, block: IncomingBlock, fire_event: bool) {
         let _ = fire_event;
         let block_time = self.parts.milestones.at(1).block_time();
@@ -254,11 +258,16 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
         }
     }
 
-    /// Cut `blocks` into jobs ([`cut_jobs`]) from the last downloaded height, and push them.
-    pub fn enqueue_blocks(self: &Arc<Self>, blocks: Vec<IncomingBlock>) {
+    /// Name each of `blocks` that has no name yet, then cut them into jobs ([`cut_jobs`]) from
+    /// the last downloaded height, and push them.
+    pub fn enqueue_blocks(self: &Arc<Self>, mut blocks: Vec<IncomingBlock>) {
         if blocks.is_empty() {
             return;
         }
+        let state = self.parts.node.state().borrow().clone();
+        blocks
+            .iter_mut()
+            .for_each(|b| b.set_username(&state.wallets));
         let chain = self.chain();
         let from = chain
             .last_downloaded

@@ -11,7 +11,7 @@ use heartwood_crypto::identities::PublicKeyBytes;
 use heartwood_crypto::{Block, BlockId};
 use heartwood_p2p::DownloadedBlock;
 use heartwood_pool::{Entry, PoolView, ProcessorResult};
-use heartwood_state::StateView;
+use heartwood_state::{StateView, WalletRepository};
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::errors::{NodeError, NodeStopped};
@@ -25,15 +25,32 @@ pub struct IncomingBlock {
     pub block: DownloadedBlock,
     /// Whether the block came from the node's own forger.
     pub from_forger: bool,
+    /// The delegate name the block got when it was enqueued ([`IncomingBlock::set_username`]),
+    /// which the processor reads; `None` before, and when its key named no delegate then.
+    pub name: Option<String>,
 }
 
 impl IncomingBlock {
-    /// A downloaded block.
+    /// A downloaded block, not named yet.
     pub fn downloaded(block: DownloadedBlock) -> IncomingBlock {
         IncomingBlock {
             block,
             from_forger: false,
+            name: None,
         }
+    }
+
+    /// Name the block as the reference's `setBlockUsername` does: a block of version 0 without a
+    /// name gets the name of the delegate whose key is its generator key in `wallets`, if any.
+    pub fn set_username(&mut self, wallets: &WalletRepository) {
+        let header = &self.block.header.header;
+        if self.name.is_some() || header.version != Some(0) {
+            return;
+        }
+        let key = header.generator_public_key.as_deref();
+        let key = key.and_then(|key| PublicKeyBytes::from_hex(key).ok());
+        let delegate = key.and_then(|key| wallets.find_by_public_key(&key)?.delegate());
+        self.name = delegate.map(|delegate| delegate.username().to_owned());
     }
 
     /// The height its header states.

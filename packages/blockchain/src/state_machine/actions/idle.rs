@@ -150,8 +150,9 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
             "Downloaded new block forged by delegate {name} (#{rank}) at height {height} with {reward} reward :package:"
         );
         debug!("The id of the new block is {}", link.id);
-        self.handle_incoming_block(IncomingBlock::downloaded(block), false)
-            .await;
+        let mut incoming = IncomingBlock::downloaded(block);
+        incoming.name = Some(name.to_owned());
+        self.handle_incoming_block(incoming, false).await;
         self.flags().last_polled = Some((link.id, tip));
     }
 

@@ -8,7 +8,8 @@
 //! 3. Each block in turn: a block in a future slot ends the loop (the slots have one block time
 //!    from height 1, so the reference's lookup, which prefers the timestamps of the blocks accepted
 //!    in this job, gives the same slots); otherwise it is rebuilt as the reference's block factory
-//!    rebuilds it ([`heartwood_p2p::to_block`]) and processed. An accepted block joins the job's
+//!    rebuilds it ([`heartwood_p2p::to_block`]) and processed with the delegate name it got when
+//!    it was enqueued ([`crate::work::IncomingBlock::name`]). An accepted block joins the job's
 //!    accepted blocks; `Corrupted` stops the node; any other result ends the loop, and `Rollback`
 //!    also marks the block as the forked block and as the last downloaded block. A rebuild error
 //!    ends the loop with no result for the block (`Failed to process chunk of block chunk of
@@ -134,6 +135,7 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
                 clock: ctx.clock,
             },
             &block,
+            incoming.name.as_deref(),
         );
         clear_queue |= processed.unchained.is_some();
         results.push((*block.id(), processed.result));

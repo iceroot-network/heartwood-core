@@ -141,7 +141,12 @@ impl Scripted {
 }
 
 impl BlockProcess for Scripted {
-    fn process(&self, ctx: &mut ProcessContext<'_>, block: &Block) -> Processed {
+    fn process(
+        &self,
+        ctx: &mut ProcessContext<'_>,
+        block: &Block,
+        name: Option<&str>,
+    ) -> Processed {
         let height = block.height();
         let stored = lock(&self.reader).as_ref().map(|reader| {
             let last = reader.last_block().unwrap();
@@ -159,7 +164,7 @@ impl BlockProcess for Scripted {
         };
         lock(&self.seen).push(seen);
         if let Some(inner) = &self.inner {
-            return inner.process(ctx, block);
+            return inner.process(ctx, block, name);
         }
         let script = lock(&self.script).get(&height).copied();
         let processed = |result, unchained| Processed {
@@ -337,9 +342,19 @@ impl TestNode {
         }
     }
 
-    /// Run the chain's blocks from `from` to `to` as one job.
+    /// Run the chain's blocks from `from` to `to` as one job, enqueued now.
     pub async fn run(&self, chain: &Chain, from: u32, to: u32) -> heartwood_blockchain::JobOutcome {
-        self.handle.job(job(chain, from, to)).await.unwrap()
+        let job = self.enqueued(job(chain, from, to));
+        self.handle.job(job).await.unwrap()
+    }
+
+    /// `job` with its blocks named from the published state, as the enqueueing names them.
+    pub fn enqueued(&self, mut job: Job) -> Job {
+        let state = self.handle.state().borrow().clone();
+        for block in &mut job.blocks {
+            block.set_username(&state.wallets);
+        }
+        job
     }
 
     /// The published state's height.

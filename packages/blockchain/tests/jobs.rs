@@ -114,7 +114,7 @@ async fn a_rebuild_failure_ends_the_loop_with_the_previous_result() {
     let node = node_at(&chain, "jobs-rebuild-middle", 1, &[]).await;
     let mut broken = job(&chain, 2, 6);
     broken.blocks[2].block.header.header.number_of_transactions = Some(5);
-    let outcome = node.handle.job(broken).await.unwrap();
+    let outcome = node.handle.job(node.enqueued(broken)).await.unwrap();
     assert_eq!(heights(&outcome, &chain), [2, 3]);
     assert_eq!(outcome.committed, 2);
     assert_eq!(
@@ -477,6 +477,32 @@ async fn the_chain_through_the_block_processor_in_the_reference_jobs() {
     );
 }
 
+/// A block processed with the name it got when it was enqueued: enqueued without one, as a block
+/// whose delegate registered earlier in the same download is, its generator is refused and the job
+/// ends there, through the block processor.
+#[tokio::test]
+#[ignore = "integration"]
+async fn a_block_enqueued_without_its_delegate_name_is_refused() {
+    let chain = Chain::load();
+    let dir = scratch("jobs-processor-unnamed");
+    let scripted = Scripted::through(Arc::new(BlockProcessor));
+    let node = TestNode::start(&chain, &dir, scripted, pool_options(&dir, 2_700));
+    let mut unnamed = node.enqueued(job(&chain, 2, 5));
+    assert!(unnamed.blocks.iter().all(|block| block.name.is_some()));
+    unnamed.blocks[2].name = None;
+    let outcome = node.handle.job(unnamed).await.unwrap();
+    let results: Vec<_> = outcome.results.iter().map(|(_, result)| *result).collect();
+    assert_eq!(
+        results,
+        [ACCEPTED, ACCEPTED, BlockProcessorResult::Rejected]
+    );
+    assert_eq!(heights(&outcome, &chain), [2, 3, 4]);
+    assert_eq!((outcome.committed, outcome.end), (2, JobEnd::Clear));
+    // Downloaded again, it is named and accepted.
+    assert_eq!(node.run(&chain, 4, 5).await.committed, 2);
+    node.stop().await.unwrap();
+}
+
 /// A rebuild failure in the middle of a job, through the block processor.
 #[tokio::test]
 #[ignore = "integration"]
@@ -487,7 +513,7 @@ async fn a_rebuild_failure_through_the_block_processor() {
     let node = TestNode::start(&chain, &dir, scripted, pool_options(&dir, 2_700));
     let mut broken = job(&chain, 2, 6);
     broken.blocks[2].block.header.header.number_of_transactions = Some(5);
-    let outcome = node.handle.job(broken).await.unwrap();
+    let outcome = node.handle.job(node.enqueued(broken)).await.unwrap();
     assert_eq!(heights(&outcome, &chain), [2, 3]);
     assert_eq!((outcome.committed, outcome.end), (2, broadcast(&chain, 3)));
     node.stop().await.unwrap();

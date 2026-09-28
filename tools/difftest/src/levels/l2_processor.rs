@@ -420,7 +420,12 @@ struct RecorderLog {
 }
 
 impl BlockProcess for Recorder<'_> {
-    fn process(&self, ctx: &mut ProcessContext<'_>, block: &Block) -> Processed {
+    fn process(
+        &self,
+        ctx: &mut ProcessContext<'_>,
+        block: &Block,
+        name: Option<&str>,
+    ) -> Processed {
         let reward = ctx
             .state
             .reward_for_block_in_round(
@@ -430,7 +435,7 @@ impl BlockProcess for Recorder<'_> {
             )
             .ok()
             .map(|r| r.reward);
-        let processed = BlockProcessor.process(ctx, block);
+        let processed = BlockProcessor.process(ctx, block, name);
         let mut log = self.log.lock().unwrap_or_else(PoisonError::into_inner);
         let step = log.steps.pop_front().unwrap_or(Step::Apply);
         let line = (processed.result == BlockProcessorResult::Accepted).then(|| {
@@ -698,23 +703,44 @@ impl JobRig {
         Ok(reverted)
     }
 
-    /// Run `blocks` as one job with `inputs`: the download of their listing, then
-    /// [`heartwood_blockchain::run_job`] with the block processor and the rig's clock at
-    /// `inputs.now_ms`, then the blockchain service's answer to the job's end (`Fork`: the forked
-    /// block set and the last downloaded block at the tip; `Clear` and `ForkCheck`: the last
-    /// downloaded block at the tip). `steps` are the digest steps of the blocks in order (apply
-    /// for those beyond it).
+    /// Run `blocks` as one job with `inputs`, a download of its own enqueued right before it
+    /// ([`JobRig::enqueue`], then [`JobRig::run_enqueued`]).
     pub fn run(
         &mut self,
         blocks: &[JobBlock],
         inputs: &JobInputs,
         steps: &[Step],
     ) -> std::result::Result<RigJob, RigProblem> {
+        match self.enqueue(blocks) {
+            Ok(incoming) => self.run_enqueued(blocks, incoming, inputs, steps),
+            Err(why) => Ok(RigJob::Refused(why)),
+        }
+    }
+
+    /// The download of `blocks` (their listing read under the rules after the tip), each block
+    /// named as the blockchain service's enqueueing names it, on the rig's state now.
+    pub fn enqueue(&self, blocks: &[JobBlock]) -> std::result::Result<Vec<IncomingBlock>, String> {
         let params = self.milestones.at(self.state.height().saturating_add(1));
-        let incoming = match download(blocks, params) {
-            Ok(incoming) => incoming,
-            Err(why) => return Ok(RigJob::Refused(why)),
-        };
+        let mut incoming = download(blocks, params)?;
+        for block in &mut incoming {
+            block.set_username(self.state.wallets());
+        }
+        Ok(incoming)
+    }
+
+    /// Run the enqueued blocks `incoming` of `blocks` as one job with `inputs`:
+    /// [`heartwood_blockchain::run_job`] with the block processor and the rig's clock at
+    /// `inputs.now_ms`, then the blockchain service's answer to the job's end (`Fork`: the forked
+    /// block set and the last downloaded block at the tip; `Clear` and `ForkCheck`: the last
+    /// downloaded block at the tip). `steps` are the digest steps of the blocks in order (apply
+    /// for those beyond it).
+    pub fn run_enqueued(
+        &mut self,
+        blocks: &[JobBlock],
+        incoming: Vec<IncomingBlock>,
+        inputs: &JobInputs,
+        steps: &[Step],
+    ) -> std::result::Result<RigJob, RigProblem> {
         if let Some(bytes) = &inputs.last_downloaded {
             let link = JobBlock::of(bytes.clone()).link();
             self.chain.last_downloaded = Some(link.map_err(RigProblem::Failed)?);
@@ -1190,6 +1216,19 @@ fn run_download(
         });
         blocks.push(block);
     }
+    // A download is named once, when it is enqueued, before its first job runs; one block per
+    // job is each block's own download.
+    let mut enqueued = match chunks {
+        Chunks::One => None,
+        Chunks::Reference => match rig.enqueue(&blocks) {
+            Ok(incoming) => Some(incoming.into_iter()),
+            Err(why) => {
+                let height = queued.first().map_or(0, |q| q.height);
+                let why = format!("the download refused the listing: {why}");
+                return Ok(Some((height, why)));
+            }
+        },
+    };
     let jobs: Vec<Vec<usize>> = match chunks {
         Chunks::One => (0..blocks.len()).map(|i| vec![i]).collect(),
         Chunks::Reference => {
@@ -1226,7 +1265,14 @@ fn run_download(
             downloaded: chunks == Chunks::One,
             last_downloaded: None,
         };
-        let (outcome, seen) = match rig.run(&job_blocks, &inputs, &steps)? {
+        let ran = match enqueued.as_mut() {
+            Some(named) => {
+                let incoming = named.by_ref().take(job_blocks.len()).collect();
+                rig.run_enqueued(&job_blocks, incoming, &inputs, &steps)?
+            }
+            None => rig.run(&job_blocks, &inputs, &steps)?,
+        };
+        let (outcome, seen) = match ran {
             RigJob::Refused(why) => {
                 let height = queued.first().map_or(0, |q| q.height);
                 return Ok(Some((
