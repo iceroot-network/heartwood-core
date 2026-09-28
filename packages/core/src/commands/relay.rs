@@ -9,7 +9,7 @@ use clap::{Args, Subcommand};
 use heartwood_cli::Role;
 use heartwood_cli::instance::InstanceFlags;
 
-use super::{LogFlags, ProcessCommand, ProcessFlags, process_command};
+use super::{Manage, on_instance};
 
 /// A relay's command.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
@@ -18,14 +18,9 @@ pub enum RelayCommand {
     Run(RelayRun),
     /// Start a relay under its supervisor.
     Start(RelayStart),
-    /// Stop a relay.
-    Stop(ProcessFlags),
-    /// Restart a relay.
-    Restart(ProcessFlags),
-    /// A relay's process status.
-    Status(ProcessFlags),
-    /// A relay's log.
-    Log(LogFlags),
+    /// Stop, restart, show or tail a started relay.
+    #[command(flatten)]
+    Manage(Manage),
 }
 
 /// The flags of `relay run`, the reference's in camelCase with kebab-case aliases.
@@ -127,15 +122,11 @@ pub struct RelayStart {
 
 /// Run `command`.
 pub fn run(command: RelayCommand) -> ExitCode {
-    let process = match command {
-        RelayCommand::Run(run) => return crate::exit(crate::app::run_relay(&run)),
-        RelayCommand::Start(start) => {
-            ProcessCommand::Start(start.run.instance(), start.run.args(), start.daemon)
-        }
-        RelayCommand::Stop(flags) => ProcessCommand::Stop(flags),
-        RelayCommand::Restart(flags) => ProcessCommand::Restart(flags),
-        RelayCommand::Status(flags) => ProcessCommand::Status(flags),
-        RelayCommand::Log(flags) => ProcessCommand::Log(flags),
-    };
-    process_command(Role::Relay, process)
+    match command {
+        RelayCommand::Run(run) => crate::exit(crate::app::run_relay(&run)),
+        RelayCommand::Start(start) => on_instance(Role::Relay, &start.run.instance(), |i| {
+            super::start(i, start.run.args(), start.daemon)
+        }),
+        RelayCommand::Manage(command) => super::manage(Role::Relay, command),
+    }
 }

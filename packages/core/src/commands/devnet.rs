@@ -1,7 +1,6 @@
 //! `heartwood devnet ...`: a local devnet on this host, mode B (one loopback address per node).
 
-use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -13,6 +12,17 @@ use heartwood_cli::process::Supervisors;
 use heartwood_cli::{DevnetError, Role, process_table};
 use heartwood_kernel::SystemClock;
 
+/// `devnet`: the devnet's directory, and a command on it.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct Devnet {
+    /// The devnet's directory.
+    #[arg(long, global = true, default_value = "devnet")]
+    pub dir: PathBuf,
+    /// The command.
+    #[command(subcommand)]
+    pub command: DevnetCommand,
+}
+
 /// A devnet command.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum DevnetCommand {
@@ -23,7 +33,7 @@ pub enum DevnetCommand {
     /// Stop the devnet's nodes.
     Stop(Stop),
     /// The devnet's processes, heights and quorum.
-    Status(Root),
+    Status,
     /// The nodes' logs, merged.
     Logs(Logs),
     /// Stop one node.
@@ -40,20 +50,9 @@ pub enum DevnetCommand {
     Env(Node),
 }
 
-/// The devnet's directory.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
-pub struct Root {
-    /// The devnet's directory.
-    #[arg(long, default_value = "devnet")]
-    pub dir: PathBuf,
-}
-
 /// The flags of `init`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
 pub struct Init {
-    /// The devnet's directory.
-    #[command(flatten)]
-    pub root: Root,
     /// The nodes with a relay and a forger.
     #[arg(long, default_value_t = 5)]
     pub validators: u32,
@@ -64,8 +63,8 @@ pub struct Init {
     #[arg(long)]
     pub seed: Option<String>,
     /// The first three bytes of every node address, such as `127.0.0`.
-    #[arg(long)]
-    pub address_prefix: Option<String>,
+    #[arg(long, value_parser = prefix)]
+    pub address_prefix: Option<[u8; 3]>,
     /// A forger that fails over, such as `1:1,6,7`.
     #[arg(long)]
     pub failover: Vec<Failover>,
@@ -86,9 +85,6 @@ pub struct Init {
 /// The nodes and the role a command acts on.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
 pub struct Nodes {
-    /// The devnet's directory.
-    #[command(flatten)]
-    pub root: Root,
     /// The nodes, by number; every node when none.
     #[arg(long)]
     pub node: Vec<u32>,
@@ -125,9 +121,6 @@ pub struct Logs {
 /// One node.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
 pub struct Node {
-    /// The devnet's directory.
-    #[command(flatten)]
-    pub root: Root,
     /// The node, by number.
     pub node: u32,
     /// One role only.
@@ -141,9 +134,6 @@ pub struct Node {
 /// The flags of `wait`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
 pub struct Wait {
-    /// The devnet's directory.
-    #[command(flatten)]
-    pub root: Root,
     /// The height to reach.
     #[arg(long)]
     pub height: u32,
@@ -160,134 +150,110 @@ const API_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl Nodes {
     fn selection(&self) -> NodeSelection {
-        NodeSelection {
-            nodes: self.node.clone(),
-            role: self.role,
-        }
+        let (nodes, role) = (self.node.clone(), self.role);
+        NodeSelection { nodes, role }
     }
 }
 
 impl Init {
     /// The options of `devnet init` these flags give, over the defaults.
-    fn options(&self) -> Result<InitOptions, String> {
+    fn options(&self) -> InitOptions {
         let defaults = InitOptions::default();
-        let address_prefix = match &self.address_prefix {
-            None => defaults.address_prefix,
-            Some(text) => prefix(text)?,
-        };
-        Ok(InitOptions {
+        InitOptions {
             validators: self.validators,
             relays: self.relays,
             seed: self.seed.clone().unwrap_or(defaults.seed),
-            address_prefix,
+            address_prefix: self.address_prefix.unwrap_or(defaults.address_prefix),
             failover: self.failover.clone(),
             epoch_delay: self.epoch_delay.unwrap_or(defaults.epoch_delay),
             min_network_reach: self.min_network_reach.unwrap_or(defaults.min_network_reach),
             log_level: self.log_level.clone().unwrap_or(defaults.log_level),
             force: self.force,
-        })
+        }
     }
 }
 
 /// The address prefix of `text`, three bytes such as `127.0.0`.
 fn prefix(text: &str) -> Result<[u8; 3], String> {
-    let invalid = || format!("{text:?} is not an address prefix such as 127.0.0");
-    let bytes: Vec<u8> = (text.split('.'))
-        .map(|part| part.parse().map_err(|_| invalid()))
-        .collect::<Result<_, _>>()?;
-    bytes.try_into().map_err(|_| invalid())
+    let bytes: Result<Vec<u8>, _> = text.split('.').map(str::parse).collect();
+    let prefix = bytes.ok().and_then(|bytes| bytes.try_into().ok());
+    prefix.ok_or_else(|| format!("{text:?} is not an address prefix such as 127.0.0"))
 }
 
 /// Run `command`.
-pub fn run(command: DevnetCommand) -> ExitCode {
-    let binary = match super::program() {
-        Ok(binary) => binary,
-        Err(error) => return crate::exit(Err(error)),
-    };
-    let ops = Supervisors { binary };
-    let api = LoopbackApi {
-        timeout: API_TIMEOUT,
-    };
-    let tools = Tools {
-        ops: &ops,
-        api: &api,
-        clock: &SystemClock,
-        pause: &std::thread::sleep,
-    };
-    crate::exit(devnet_command(command, &tools))
+pub fn run(devnet: Devnet) -> ExitCode {
+    crate::exit(super::program().and_then(|binary| {
+        let (ops, api) = (
+            Supervisors { binary },
+            LoopbackApi {
+                timeout: API_TIMEOUT,
+            },
+        );
+        let (clock, pause) = (&SystemClock, &std::thread::sleep);
+        let tools = Tools {
+            ops: &ops,
+            api: &api,
+            clock,
+            pause,
+        };
+        devnet_command(&devnet.dir, devnet.command, &tools).map_err(|error| error.to_string())
+    }))
 }
 
-fn devnet_command(command: DevnetCommand, tools: &Tools<'_>) -> Result<(), String> {
-    let text = |error: DevnetError| error.to_string();
-    let mut out = std::io::stdout().lock();
+fn devnet_command(dir: &Path, command: DevnetCommand, tools: &Tools) -> Result<(), DevnetError> {
     match command {
         DevnetCommand::Init(init) => {
-            let options = init.options()?;
-            let manifest = devnet::init(&init.root.dir, &options, &NetworkGenerator, tools);
-            let manifest = manifest.map_err(text)?;
-            let (nodes, epoch) = (manifest.nodes.len(), &manifest.epoch);
+            let options = init.options();
+            let made = devnet::init(dir, &options, &NetworkGenerator, tools)?;
+            let (dir, count) = (dir.display(), made.nodes.len());
             println!(
-                "Created a devnet of {nodes} nodes in {}",
-                init.root.dir.display()
+                "Created a devnet of {count} nodes in {dir}, nethash {}",
+                made.nethash
             );
-            println!("  nethash {}, epoch {epoch}", manifest.nethash);
-            Ok(())
         }
-        DevnetCommand::Start(nodes) => {
-            devnet::start(&nodes.root.dir, &nodes.selection(), tools).map_err(text)
+        DevnetCommand::Start(n) => devnet::start(dir, &n.selection(), tools)?,
+        DevnetCommand::Stop(s) => {
+            devnet::stop(dir, &s.nodes.selection(), s.kill, tools)?;
         }
-        DevnetCommand::Stop(stop) => {
-            let (root, selection) = (&stop.nodes.root.dir, stop.nodes.selection());
-            devnet::stop(root, &selection, stop.kill, tools).map_err(text)
-        }
-        DevnetCommand::Status(root) => {
-            let status = devnet::status(&root.dir, tools).map_err(text)?;
-            let rows = status.nodes.iter().flat_map(|node| {
-                let forger = node.forger.iter().cloned();
-                std::iter::once(node.relay.clone()).chain(forger)
-            });
-            print!("{}", process_table::render(&rows.collect::<Vec<_>>()));
+        DevnetCommand::Status => {
+            let status = devnet::status(dir, tools)?;
+            let rows =
+                (status.nodes.iter()).flat_map(|n| std::iter::once(&n.relay).chain(&n.forger));
+            print!(
+                "{}",
+                process_table::render(&rows.cloned().collect::<Vec<_>>())
+            );
             for node in &status.nodes {
                 let height = node.api.as_ref().map(|api| api.last_block.height);
-                let height = height.map_or("no answer".to_owned(), |h| format!("height {h}"));
-                let peers = node.api.as_ref().map_or(0, |api| api.peers);
-                println!("node{}: {height}, {peers} peers", node.node);
+                println!("node{}: height {height:?}", node.node);
             }
             println!("{status}");
-            Ok(())
         }
-        DevnetCommand::Logs(logs) => {
-            let stream = match logs.error {
-                true => LogStream::Error,
-                false => LogStream::File,
+        DevnetCommand::Logs(l) => {
+            let stream = if l.error {
+                LogStream::Error
+            } else {
+                LogStream::File
             };
-            let selection = logs.nodes.selection();
-            let root = &logs.nodes.root.dir;
-            devnet::logs(root, &selection, stream, logs.lines, &mut out).map_err(text)
+            let out = &mut std::io::stdout().lock();
+            devnet::logs(dir, &l.nodes.selection(), stream, l.lines, out)?;
         }
-        DevnetCommand::StopNode(node) => {
-            let (root, k) = (&node.root.dir, node.node);
-            devnet::stop_node(root, k, node.role, node.kill, tools).map_err(text)
+        DevnetCommand::StopNode(n) => devnet::stop_node(dir, n.node, n.role, n.kill, tools)?,
+        DevnetCommand::StartNode(n) => devnet::start_node(dir, n.node, n.role, tools)?,
+        DevnetCommand::RestartNode(n) => devnet::restart_node(dir, n.node, n.role, tools)?,
+        DevnetCommand::Reset(n) => devnet::reset(dir, n.node, tools)?,
+        DevnetCommand::Wait(w) => {
+            let timeout = Duration::from_secs(w.timeout);
+            println!(
+                "height {}",
+                devnet::wait(dir, w.height, w.node, timeout, tools)?
+            );
         }
-        DevnetCommand::StartNode(node) => {
-            devnet::start_node(&node.root.dir, node.node, node.role, tools).map_err(text)
-        }
-        DevnetCommand::RestartNode(node) => {
-            devnet::restart_node(&node.root.dir, node.node, node.role, tools).map_err(text)
-        }
-        DevnetCommand::Reset(node) => devnet::reset(&node.root.dir, node.node, tools).map_err(text),
-        DevnetCommand::Wait(wait) => {
-            let timeout = Duration::from_secs(wait.timeout);
-            let height = devnet::wait(&wait.root.dir, wait.height, wait.node, timeout, tools);
-            println!("height {}", height.map_err(text)?);
-            Ok(())
-        }
-        DevnetCommand::Env(node) => {
-            for (name, value) in devnet::env(&node.root.dir, node.node).map_err(text)? {
-                let line = format!("{}={}", name.to_string_lossy(), value.to_string_lossy());
-                writeln!(out, "{line}").map_err(|error| error.to_string())?;
+        DevnetCommand::Env(n) => {
+            for (name, value) in devnet::env(dir, n.node)? {
+                println!("{}={}", name.to_string_lossy(), value.to_string_lossy());
             }
-            Ok(())
         }
     }
+    Ok(())
 }

@@ -19,7 +19,9 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use heartwood_blockchain::chain_state::lock;
 use heartwood_blockchain::state_machine::MachineState;
-use heartwood_blockchain::{Blockchain, Channel, IncomingBlock, Network, NodeHandle};
+use heartwood_blockchain::{
+    Blockchain, Channel, IncomingBlock, MachineStatus, Network, NodeHandle,
+};
 use heartwood_crypto::crypto::slots;
 use heartwood_crypto::{Block, BlockHeader, BlockId, PublicKeyBytes, TransactionId};
 use heartwood_database::{BlockRow, Readers};
@@ -44,64 +46,15 @@ use heartwood_state::wallets::Wallet;
 use serde_json::Value;
 use tokio::runtime::Handle;
 use tokio::sync::watch;
+use tokio::time::timeout;
 
 use crate::views::{Links, NodeView, header};
 
 /// How often the queue's running state is looked at for AwaitBlock.
 const QUEUE_POLL: Duration = Duration::from_millis(20);
 
-/// The blockchain service as the server's node services call it.
-pub trait ServiceCalls: Send + Sync {
-    /// Whether the machine is in `newBlock` and whether the job queue runs.
-    fn queue_state(&self) -> QueueState;
-    /// Wait until the machine's status changes; `false` once the service is gone.
-    fn changed(&self) -> BoxFuture<'_, bool>;
-    /// The reference's `pingBlock` of the block `id` at `height`.
-    fn ping_block(&self, id: &BlockId, height: u32) -> bool;
-    /// The reference's `forceWakeup`.
-    fn force_wakeup(&self);
-    /// The reference's `handleIncomingBlock`, run to its end at once when it can be.
-    fn handle_incoming(&self, block: IncomingBlock);
-}
-
-impl<N: Network> ServiceCalls for Arc<Blockchain<N>> {
-    fn queue_state(&self) -> QueueState {
-        let new_block = self.status().borrow().state == MachineState::NewBlock;
-        let running = self.queue_running();
-        QueueState { new_block, running }
-    }
-
-    fn changed(&self) -> BoxFuture<'_, bool> {
-        let mut status = self.status();
-        Box::pin(async move {
-            let changed = tokio::time::timeout(QUEUE_POLL, status.changed()).await;
-            changed.is_err() || changed.is_ok_and(|changed| changed.is_ok())
-        })
-    }
-
-    fn ping_block(&self, id: &BlockId, height: u32) -> bool {
-        Blockchain::ping_block(self, id, height)
-    }
-
-    fn force_wakeup(&self) {
-        Blockchain::force_wakeup(self);
-    }
-
-    fn handle_incoming(&self, block: IncomingBlock) {
-        let service = Arc::clone(self);
-        let mut work = Box::pin(async move { service.handle_incoming_block(block, true).await });
-        // The reference enqueues the block before it answers; the service's work has no wait.
-        let mut context = Context::from_waker(Waker::noop());
-        if work.as_mut().poll(&mut context) == Poll::Pending
-            && let Ok(runtime) = Handle::try_current()
-        {
-            runtime.spawn(work);
-        }
-    }
-}
-
-/// The node's services for the server.
-pub struct RelayServices {
+/// The node's services for the server, over the blockchain service of network `N`.
+pub struct RelayServices<N> {
     /// The node thread.
     pub handle: NodeHandle,
     /// The node as the client reads it.
@@ -111,7 +64,7 @@ pub struct RelayServices {
     /// The monitor and the machine, the attestation session, the boot and the first sync.
     pub links: Arc<Links>,
     /// The blockchain service.
-    pub service: Arc<dyn ServiceCalls>,
+    pub blockchain: Arc<Blockchain<N>>,
     /// The machine's `newBlock` state and the queue's running state, kept current.
     pub queue: watch::Receiver<QueueState>,
     /// The node's peer configuration, which its status carries.
@@ -125,25 +78,33 @@ pub struct RelayServices {
     pub record: Option<crate::harness::NetworkStateRecord>,
 }
 
-/// The queue's state of `service`, kept current until the receiver is gone.
-pub fn queue_state(service: Arc<dyn ServiceCalls>) -> watch::Receiver<QueueState> {
-    let (sender, receiver) = watch::channel(service.queue_state());
+/// The machine's `newBlock` state and the queue's running state of `blockchain`, kept current
+/// (the queue is looked at every 20 ms) until the receiver is gone.
+pub fn queue_state<N: Network>(blockchain: &Arc<Blockchain<N>>) -> watch::Receiver<QueueState> {
+    let (blockchain, mut status) = (Arc::clone(blockchain), blockchain.status());
+    let now = |status: &watch::Receiver<MachineStatus>, blockchain: &Blockchain<N>| QueueState {
+        new_block: status.borrow().state == MachineState::NewBlock,
+        running: blockchain.queue_running(),
+    };
+    let (sender, receiver) = watch::channel(now(&status, &blockchain));
     tokio::spawn(async move {
-        while !sender.is_closed() && service.changed().await {
-            let state = service.queue_state();
-            sender.send_if_modified(|now| std::mem::replace(now, state) != state);
+        while !sender.is_closed()
+            && !matches!(timeout(QUEUE_POLL, status.changed()).await, Ok(Err(_)))
+        {
+            let state = now(&status, &blockchain);
+            sender.send_if_modified(|was| std::mem::replace(was, state) != state);
         }
     });
     receiver
 }
 
-impl RelayServices {
+fn lookup<T, E: std::fmt::Display>(result: Result<T, E>) -> Result<T, LookupError> {
+    result.map_err(|e| LookupError(e.to_string()))
+}
+
+impl<N> RelayServices<N> {
     fn state(&self) -> Arc<StateView> {
         Arc::clone(&self.handle.state().borrow())
-    }
-
-    fn lookup<T, E: std::fmt::Display>(result: Result<T, E>) -> Result<T, LookupError> {
-        result.map_err(|e| LookupError(e.to_string()))
     }
 
     /// The block time at the tip plus one, and the network's epoch, in milliseconds.
@@ -157,12 +118,9 @@ impl RelayServices {
 /// A delegate's wallet as the round lists it: `{...wallet.getData(), delegate}`.
 fn delegate_wallet(wallet: &Wallet, state: &StateView, pool: &heartwood_pool::PoolView) -> Value {
     let mut data = heartwood_api::resources::wallet(wallet, state, pool);
+    let delegate = data.pointer("/attributes/delegate").cloned();
     if let Value::Object(fields) = &mut data {
         fields.shift_remove("votingFor");
-        let delegate = fields
-            .get("attributes")
-            .and_then(|a| a.get("delegate"))
-            .cloned();
         fields.insert("delegate".into(), delegate.unwrap_or(Value::Null));
     }
     data
@@ -188,7 +146,7 @@ fn listing(row: BlockRow, transactions: Option<Vec<Vec<u8>>>) -> BlockListing {
     }
 }
 
-impl NodeServices for RelayServices {
+impl<N: Network> NodeServices for RelayServices<N> {
     fn is_booted(&self) -> bool {
         self.links.booted.load(Ordering::Acquire)
     }
@@ -215,31 +173,46 @@ impl NodeServices for RelayServices {
 
     fn ping_block(&self, header: &BlockHeader) -> bool {
         let id = heartwood_crypto::blocks::serialiser::block_id(header);
-        self.service.ping_block(&id, header.height)
+        self.blockchain.ping_block(&id, header.height)
     }
 
     fn handle_incoming_block(&self, block: Block, from_forger: bool, ip: IpAddr) {
-        self.service.handle_incoming(IncomingBlock {
-            block: DownloadedBlock::from_block(&block, ip),
+        let (block, service) = (
+            DownloadedBlock::from_block(&block, ip),
+            self.blockchain.clone(),
+        );
+        let (name, fire) = (None, true);
+        let incoming = IncomingBlock {
+            block,
             from_forger,
-            name: None,
-        });
+            name,
+        };
+        let mut work = Box::pin(async move { service.handle_incoming_block(incoming, fire).await });
+        // The reference enqueues the block before it answers; the service's work has no wait.
+        if work.as_mut().poll(&mut Context::from_waker(Waker::noop())) == Poll::Pending {
+            tokio::spawn(work);
+        }
     }
 
     fn delegate_rank(&self, username: &str) -> Option<u32> {
-        let state = self.state();
-        state.wallets.find_by_username(username)?.delegate()?.rank
+        self.state()
+            .wallets
+            .find_by_username(username)?
+            .delegate()?
+            .rank
     }
 
     fn already_forged(&self, height: u32, username: &str) -> Result<bool, LookupError> {
-        let state = self.state();
-        let delegate = state.wallets.find_by_username(username);
-        let delegate = delegate.and_then(Wallet::delegate);
+        let (state, milestones) = (self.state(), &self.view.milestones);
+        let delegate = state
+            .wallets
+            .find_by_username(username)
+            .and_then(Wallet::delegate);
         let delegate = delegate.ok_or_else(|| LookupError(format!("no delegate {username}")))?;
         let reward = state
             .round
-            .reward_for_block_in_round(height, delegate, &self.view.milestones);
-        Ok(Self::lookup(reward)?.already_forged)
+            .reward_for_block_in_round(height, delegate, milestones);
+        Ok(lookup(reward)?.already_forged)
     }
 
     fn active_keys_next_round(&self) -> Result<Vec<PublicKeyBytes>, LookupError> {
@@ -255,7 +228,7 @@ impl NodeServices for RelayServices {
         headers_only: bool,
     ) -> Result<Vec<BlockListing>, LookupError> {
         let reader = self.history.get();
-        let blocks = Self::lookup(reader.blocks_for_download(from, limit, headers_only))?;
+        let blocks = lookup(reader.blocks_for_download(from, limit, headers_only))?;
         let listed = blocks.into_iter();
         Ok(listed.map(|b| listing(b.row, b.transactions)).collect())
     }
@@ -270,7 +243,7 @@ impl NodeServices for RelayServices {
         if memory.len() >= ids.len() {
             return Ok(memory);
         }
-        let rows = Self::lookup(self.history.get().blocks_by_ids(ids))?;
+        let rows = lookup(self.history.get().blocks_by_ids(ids))?;
         rows.iter().map(header).collect()
     }
 
@@ -306,54 +279,45 @@ impl NodeServices for RelayServices {
 
     fn current_round(&self, now_ms: i64) -> Result<CurrentRound, LookupError> {
         let (state, pool) = (self.state(), Arc::clone(&self.handle.pool().borrow()));
-        let milestones = &self.view.milestones;
-        let tip = state.height();
-        let height = tip.saturating_add(1);
+        let (milestones, tip) = (&*self.view.milestones, state.height());
+        let (height, (_, epoch)) = (tip.saturating_add(1), self.slots(tip));
         let round = calculate_round(height, milestones);
-        let wallet = |wallet: &Wallet| {
+        let wallet = |wallet: &&Wallet| {
             let fields = delegate_wallet(wallet, &state, &pool);
-            let fields = fields.as_object().cloned().unwrap_or_default();
-            Self::lookup(DelegateWallet::new(fields))
+            lookup(DelegateWallet::new(
+                fields.as_object().cloned().unwrap_or_default(),
+            ))
         };
-        let all_delegates = (state.wallets.delegates())
-            .map(wallet)
-            .collect::<Result<Vec<_>, _>>()?;
+        let registered: Vec<&Wallet> = state.wallets.delegates().collect();
         let keys = self.view.round_delegate_keys(round)?;
         let active: Vec<&Wallet> = (keys.iter())
             .filter_map(|key| state.wallets.find_by_public_key(key))
             .collect();
-        let delegates = (active.iter().copied())
-            .map(wallet)
-            .collect::<Result<Vec<_>, _>>()?;
-        let (_, epoch) = self.slots(tip);
-        let timestamp = slots::epoch_time(now_ms, epoch);
-        let info = calculate_forging_info(timestamp, height, milestones);
+        let all_delegates = registered.iter().map(wallet).collect::<Result<_, _>>()?;
+        let delegates: Vec<_> = active.iter().map(wallet).collect::<Result<_, _>>()?;
+        let info = calculate_forging_info(slots::epoch_time(now_ms, epoch), height, milestones);
         let index = |index: i64| usize::try_from(index).ok();
-        let at = |i: i64| index(i).and_then(|i| delegates.get(i));
+        let at = |i: i64| index(i).and_then(|i| delegates.get(i)).cloned();
         let current = index(info.current_forger).and_then(|i| active.get(i));
-        let forger = current.and_then(|wallet| wallet.delegate());
-        let reward = match forger {
-            Some(delegate) => {
-                Self::lookup(
-                    state
-                        .round
-                        .reward_for_block_in_round(height, delegate, milestones),
-                )?
-                .reward
+        let reward = match current.and_then(|wallet| wallet.delegate()) {
+            Some(forger) => {
+                let reward = state
+                    .round
+                    .reward_for_block_in_round(height, forger, milestones);
+                lookup(reward)?.reward
             }
             None => milestones.at(tip).reward(),
         };
         let mut last_block = state.last_block.to_json(milestones);
-        if let Value::Object(fields) = &mut last_block {
-            fields.shift_remove("transactions");
-        }
-        let last_block = last_block.as_object().cloned().unwrap_or_default();
+        let fields = last_block.as_object_mut().map(std::mem::take);
+        let mut fields = fields.unwrap_or_default();
+        fields.shift_remove("transactions");
         Ok(CurrentRound {
             can_forge: info.can_forge,
             current: round.round,
-            current_forger: at(info.current_forger).cloned(),
-            next_forger: at(info.next_forger).cloned(),
-            last_block: Self::lookup(LastBlockData::new(last_block))?,
+            current_forger: at(info.current_forger),
+            next_forger: at(info.next_forger),
+            last_block: lookup(LastBlockData::new(fields))?,
             reward: reward.to_string(),
             timestamp: info.block_timestamp,
             all_delegates,
@@ -368,7 +332,7 @@ impl NodeServices for RelayServices {
     }
 
     fn force_wakeup(&self) {
-        self.service.force_wakeup();
+        self.blockchain.force_wakeup();
     }
 
     fn forger_event(&self, event: ForgerEvent) {
@@ -410,12 +374,6 @@ pub struct MonitorSide<C, A, R> {
     pub runtime: Handle,
 }
 
-impl<C, A, R> MonitorSide<C, A, R> {
-    fn peer(&self, ip: IpAddr) -> Option<SharedPeer> {
-        self.repository.get(ip)
-    }
-}
-
 impl<C, A, R> PeerSide for MonitorSide<C, A, R>
 where
     C: PeerClient + 'static,
@@ -423,14 +381,14 @@ where
     R: PeerRules + 'static,
 {
     fn accept(&self, ip: IpAddr, port: u16) {
-        let acceptor = Arc::clone(&self.acceptor);
-        let peer = PeerAddress {
-            ip: ip.to_string(),
-            port,
+        let (acceptor, ip) = (Arc::clone(&self.acceptor), ip.to_string());
+        let accepted = async move {
+            let options = AcceptOptions::default();
+            acceptor
+                .validate_and_accept(PeerAddress { ip, port }, options)
+                .await;
         };
-        let options = AcceptOptions::default();
-        self.runtime
-            .spawn(async move { acceptor.validate_and_accept(peer, options).await });
+        self.runtime.spawn(accepted);
     }
 
     fn is_peer(&self, ip: IpAddr) -> bool {
@@ -438,35 +396,34 @@ where
     }
 
     fn record_version(&self, ip: IpAddr, version: &str) {
-        if let Some(peer) = self.peer(ip) {
-            peer.with(|peer| peer.version = Some(version.to_owned()));
-        }
+        let peer = self.repository.get(ip);
+        peer.inspect(|peer| peer.with(|peer| peer.version = Some(version.to_owned())));
     }
 
     fn mark_stale(&self, ip: IpAddr) {
-        if let Some(peer) = self.peer(ip) {
-            peer.with(|peer| peer.stale = true);
-        }
+        let peer = self.repository.get(ip);
+        peer.inspect(|peer| peer.with(|peer| peer.stale = true));
     }
 
     fn record_violation(&self, ip: IpAddr, violation: Violation) {
-        let now = self.clock.now_ms();
-        let known = self.peer(ip).or_else(|| self.repository.get_pending(ip));
-        match known {
-            Some(peer) => scoring::record(&peer, violation, now),
-            // An address that is no peer yet keeps the violation in the repository, so it is not
-            // accepted while the violation is in its window.
-            None => {
-                let stranger = SharedPeer::new(Peer::new(ip, 0));
-                scoring::record(&stranger, violation, now);
-                self.repository.keep_violations(&stranger);
-            }
+        let known = (self.repository.get(ip)).or_else(|| self.repository.get_pending(ip));
+        let peer = known
+            .clone()
+            .unwrap_or_else(|| SharedPeer::new(Peer::new(ip, 0)));
+        scoring::record(&peer, violation, self.clock.now_ms());
+        // An address that is no peer yet keeps the violation in the repository, so it is not
+        // accepted while the violation is in its window.
+        if known.is_none() {
+            self.repository.keep_violations(&peer);
         }
     }
 
     fn peers(&self) -> Vec<Peer> {
-        let peers = self.repository.peers();
-        peers.iter().map(SharedPeer::snapshot).collect()
+        self.repository
+            .peers()
+            .iter()
+            .map(SharedPeer::snapshot)
+            .collect()
     }
 
     fn remove_keys(&self, keys: &[PublicKeyBytes]) {

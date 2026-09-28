@@ -21,6 +21,8 @@ use heartwood_kernel::config::{Env, PeersFile, Role, app, env, peers};
 use heartwood_kernel::paths::{Paths, resolve_paths};
 use serde_json::{Map, Value, json};
 
+use heartwood_forger::PACKAGE;
+
 use crate::app::RelayError;
 use crate::commands::forger::ForgerRun;
 use crate::commands::relay::RelayRun;
@@ -150,24 +152,16 @@ impl RelayConfig {
         cwd: &Path,
     ) -> Result<RelayConfig, RelayError> {
         let config = |error: String| RelayError::Config(error);
-        let (token, network, paths, env) = identity(
-            (
-                run.token.as_deref(),
-                run.network.as_deref(),
-                run.env.as_deref(),
-            ),
-            process,
-            home,
-            cwd,
-        )
-        .map_err(config)?;
-        let app =
-            app::load(&paths.config, Role::Relay).map_err(|error| config(error.to_string()))?;
-        let mut warnings: Vec<String> = app
-            .ignored
-            .iter()
-            .map(|what| format!("{what} is not read"))
-            .collect();
+        let flags = (run.token.as_deref(), run.network.as_deref());
+        let base = Base::load(Role::Relay, flags, run.env.as_deref(), (process, home, cwd));
+        let Base {
+            token,
+            network,
+            paths,
+            env,
+            app,
+            mut warnings,
+        } = base.map_err(config)?;
         let (mut components, mut entries) = (Vec::new(), BTreeMap::new());
         for plugin in &app.plugins {
             let package = Package::named(&plugin.package);
@@ -218,18 +212,11 @@ impl RelayConfig {
         if webhooks.is_some_and(|on| on || env.is_set("CORE_WEBHOOKS_ENABLED")) {
             warnings.push("webhooks are not served by this relay".into());
         }
-        // A variable is set as the reference reads it; an environment's name only when `test`.
-        let asked = |name: &str| {
-            env.is_set(name) && (!name.ends_with("_ENV") || env.get(name) == Some("test"))
-        };
-        for name in UNHONOURED.into_iter().filter(|name| asked(name)) {
-            warnings.push(format!("{name} is not honoured"));
-        }
         let peers = peers::load(&paths.config).map_err(|error| config(error.to_string()))?;
         heartwood_p2p::seeds::check_sources(&peers.sources)
             .map_err(|error| config(error.to_string()))?;
-        let crypto = crypto::load(&paths.config.join("crypto"))
-            .map_err(|error| config(error.to_string()))?;
+        let crypto = crypto::load(&paths.config.join("crypto"));
+        let crypto = crypto.map_err(|error| config(error.to_string()))?;
         Ok(RelayConfig {
             token,
             network,
@@ -263,77 +250,12 @@ impl RelayConfig {
     }
 }
 
-/// The token, the network, the directories and the environment of a process whose flags give
-/// `(token, network, env)`, over the process's variables `process`, for the user whose home
-/// directory is `home`, in the working directory `cwd`. The token and the network are the flags,
-/// each missing one from `config.json` (in `CORE_PATH_CONFIG`, else in the network's
-/// configuration directory), the token `solar` by default.
-pub fn identity(
-    (token, network, env_name): (Option<&str>, Option<&str>, Option<&str>),
-    process: &[(String, String)],
-    home: &Path,
-    cwd: &Path,
-) -> Result<(String, String, Paths, Env), String> {
-    let lookup = |name: &str| {
-        process
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.clone())
-    };
-    let (mut token, mut network) = (token.map(str::to_owned), network.map(str::to_owned));
-    if token.is_none() || network.is_none() {
-        let named = |dir: PathBuf| std::fs::read(dir.join("config.json")).ok();
-        let dir = lookup("CORE_PATH_CONFIG")
-            .filter(|dir| !dir.is_empty())
-            .map(PathBuf::from);
-        let text = dir.and_then(named).or_else(|| {
-            let token = token.as_deref().unwrap_or("solar");
-            let paths = resolve_paths(
-                token,
-                network.as_deref().unwrap_or_default(),
-                &|_| None,
-                home,
-                cwd,
-            );
-            named(paths.config)
-        });
-        let file: Value = text
-            .and_then(|text| serde_json::from_slice(&text).ok())
-            .unwrap_or_default();
-        let field = |key: &str| file.get(key).and_then(Value::as_str).map(str::to_owned);
-        token = token.or_else(|| field("token"));
-        network = network.or_else(|| field("network"));
-    }
-    let token = token.unwrap_or_else(|| "solar".into());
-    let network = network
-        .ok_or_else(|| "no network: give --network, or name it in config.json".to_owned())?;
-    let paths = resolve_paths(&token, &network, &lookup, home, cwd);
-    // The reference's process has these set when its `.env` files and its components' defaults
-    // are read.
-    let dirs = [
-        ("CONFIG", &paths.config),
-        ("DATA", &paths.data),
-        ("CACHE", &paths.cache),
-        ("LOG", &paths.log),
-        ("TEMP", &paths.temp),
-    ];
-    let mut vars: Vec<(String, String)> = process.to_vec();
-    vars.extend(dirs.map(|(kind, dir)| (format!("CORE_PATH_{kind}"), dir.display().to_string())));
-    vars.extend([
-        ("CORE_TOKEN".into(), token.clone()),
-        ("CORE_NETWORK_NAME".into(), network.clone()),
-    ]);
-    vars.push((
-        "CORE_ENV".into(),
-        env_name.unwrap_or("production").to_owned(),
-    ));
-    let env = env::load(&paths.config, home, &token, vars).map_err(|error| error.to_string())?;
-    Ok((token, network, paths, env))
-}
-
-/// The forger's configuration.
+/// What both roles read first: the token and the network (the flags, each missing one from
+/// `config.json` in `CORE_PATH_CONFIG`, else in the network's configuration directory; the token
+/// `solar` by default), the directories, the environment, the role's profile of `app.json`, the
+/// warnings of what neither role reads or honours.
 #[derive(Debug, Clone)]
-pub struct ForgerConfig {
+pub struct Base {
     /// The token of the node's directories.
     pub token: String,
     /// The network's name.
@@ -342,14 +264,101 @@ pub struct ForgerConfig {
     pub paths: Paths,
     /// The node's environment.
     pub env: Env,
+    /// The role's profile of `app.json`.
+    pub app: app::AppConfig,
+    /// What the process does not read or honour, for the start's warnings.
+    pub warnings: Vec<String>,
+}
+
+impl Base {
+    /// The base of `role` with the flags `(token, network)` and `env_name`, over the process's
+    /// variables, home directory and working directory.
+    pub fn load(
+        role: Role,
+        (token, network): (Option<&str>, Option<&str>),
+        env_name: Option<&str>,
+        (process, home, cwd): (&[(String, String)], &Path, &Path),
+    ) -> Result<Base, String> {
+        let lookup = |name: &str| process.iter().find(|(key, _)| key == name).map(|(_, v)| v);
+        let (mut token, mut network) = (token.map(str::to_owned), network.map(str::to_owned));
+        if token.is_none() || network.is_none() {
+            let named = |dir: PathBuf| std::fs::read(dir.join("config.json")).ok();
+            let dir = lookup("CORE_PATH_CONFIG").filter(|dir| !dir.is_empty());
+            let text = dir.map(PathBuf::from).and_then(named).or_else(|| {
+                let (token, network) = (token.as_deref(), network.as_deref());
+                let empty = |_: &str| None;
+                let own = resolve_paths(
+                    token.unwrap_or("solar"),
+                    network.unwrap_or(""),
+                    &empty,
+                    home,
+                    cwd,
+                );
+                named(own.config)
+            });
+            let file: Value = text
+                .and_then(|t| serde_json::from_slice(&t).ok())
+                .unwrap_or_default();
+            let field = |key: &str| file.get(key).and_then(Value::as_str).map(str::to_owned);
+            token = token.or_else(|| field("token"));
+            network = network.or_else(|| field("network"));
+        }
+        let token = token.unwrap_or_else(|| "solar".into());
+        let network = network.ok_or("no network: give --network, or name it in config.json")?;
+        let paths = resolve_paths(&token, &network, &|name| lookup(name).cloned(), home, cwd);
+        // The reference's process has these set when its `.env` files and its components'
+        // defaults are read.
+        let dirs = [
+            ("CONFIG", &paths.config),
+            ("DATA", &paths.data),
+            ("CACHE", &paths.cache),
+        ];
+        let dirs = dirs
+            .into_iter()
+            .chain([("LOG", &paths.log), ("TEMP", &paths.temp)]);
+        let mut vars: Vec<(String, String)> = process.to_vec();
+        vars.extend(
+            dirs.map(|(kind, dir)| (format!("CORE_PATH_{kind}"), dir.display().to_string())),
+        );
+        let env_name = env_name.unwrap_or("production").to_owned();
+        vars.extend([
+            ("CORE_TOKEN".into(), token.clone()),
+            ("CORE_NETWORK_NAME".into(), network.clone()),
+        ]);
+        vars.push(("CORE_ENV".into(), env_name));
+        let text = |error: &dyn std::fmt::Display| error.to_string();
+        let env = env::load(&paths.config, home, &token, vars).map_err(|e| text(&e))?;
+        let app = app::load(&paths.config, role).map_err(|e| text(&e))?;
+        let ignored = app.ignored.iter().map(|what| format!("{what} is not read"));
+        let mut warnings: Vec<String> = ignored.collect();
+        // A variable is set as the reference reads it; an environment's name only when `test`.
+        let asked = |name: &&str| {
+            env.is_set(name) && (!name.ends_with("_ENV") || env.get(name) == Some("test"))
+        };
+        let unhonoured = UNHONOURED.iter().filter(|name| asked(name));
+        warnings.extend(unhonoured.map(|name| format!("{name} is not honoured")));
+        Ok(Base {
+            token,
+            network,
+            paths,
+            env,
+            app,
+            warnings,
+        })
+    }
+}
+
+/// The forger's configuration.
+#[derive(Debug, Clone)]
+pub struct ForgerConfig {
+    /// What every role reads.
+    pub base: Base,
     /// The logger's options (`{}` when unlisted).
     pub logger: Value,
     /// The forger's options.
     pub forger: Value,
     /// The crypto files.
     pub crypto: CryptoFiles,
-    /// What the forger does not read, for the start's warnings.
-    pub warnings: Vec<String>,
 }
 
 impl ForgerConfig {
@@ -361,53 +370,40 @@ impl ForgerConfig {
         home: &Path,
         cwd: &Path,
     ) -> Result<ForgerConfig, String> {
-        let flags = (
-            run.token.as_deref(),
-            run.network.as_deref(),
+        let flags = (run.token.as_deref(), run.network.as_deref());
+        let base = Base::load(
+            Role::Forger,
+            flags,
             run.env.as_deref(),
-        );
-        let (token, network, paths, env) = identity(flags, process, home, cwd)?;
-        let app = app::load(&paths.config, Role::Forger).map_err(|error| error.to_string())?;
-        let mut warnings: Vec<String> = app
-            .ignored
-            .iter()
-            .map(|what| format!("{what} is not read"))
-            .collect();
-        let (mut logger, mut forger) = (json!({}), None);
-        for plugin in &app.plugins {
-            match plugin.package.as_str() {
-                "@solar-network/logger" => logger = plugin.options.clone(),
-                "@solar-network/transactions" => {}
-                heartwood_forger::PACKAGE => forger = Some(plugin.options.clone()),
-                other => {
-                    return Err(format!(
-                        "the forger profile of app.json lists {other:?}: a forger runs only the logger, the transactions and the forger"
-                    ));
-                }
-            }
+            (process, home, cwd),
+        )?;
+        let entry = |name: &str| {
+            let mut plugins = base.app.plugins.iter();
+            plugins
+                .find(|plugin| plugin.package == name)
+                .map(|plugin| plugin.options.clone())
+        };
+        let known = [
+            "@solar-network/logger",
+            "@solar-network/transactions",
+            PACKAGE,
+        ];
+        if let Some(other) = (base.app.plugins.iter()).find(|p| !known.contains(&&*p.package)) {
+            let other = &other.package;
+            return Err(format!(
+                "the forger profile of app.json lists {other:?}: a forger runs only the logger, the transactions and the forger"
+            ));
         }
-        let forger = forger.ok_or_else(|| {
-            format!(
-                "the forger profile of app.json has no {}",
-                heartwood_forger::PACKAGE
-            )
-        })?;
-        for name in UNHONOURED.into_iter().filter(|name| {
-            env.is_set(name) && (!name.ends_with("_ENV") || env.get(name) == Some("test"))
-        }) {
-            warnings.push(format!("{name} is not honoured"));
-        }
-        let crypto =
-            crypto::load(&paths.config.join("crypto")).map_err(|error| error.to_string())?;
+        let forger = entry(PACKAGE);
+        let forger = forger.ok_or(format!("the forger profile of app.json has no {PACKAGE}"))?;
+        let logger = entry("@solar-network/logger").unwrap_or_else(|| json!({}));
+        let crypto = crypto::load(&base.paths.config.join("crypto"));
+        let crypto = crypto.map_err(|error| error.to_string())?;
         Ok(ForgerConfig {
-            token,
-            network,
-            paths,
-            env,
+            base,
             logger,
             forger,
             crypto,
-            warnings,
         })
     }
 }

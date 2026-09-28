@@ -15,11 +15,11 @@ use std::fmt::Display;
 use std::fs;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use heartwood_cli::Role;
 use heartwood_forger::client::{Client, ClientOptions};
 use heartwood_forger::signing_record::{self, SigningRecord};
 use heartwood_forger::{
-    Attester, DelegateKeys, Forger, ForgerParts, ForgerService, Options, ShutdownSignal, Signer,
-    load_keys,
+    Attester, Forger, ForgerParts, ForgerService, Options, ShutdownSignal, Signer, load_keys,
 };
 use heartwood_kernel::lifecycle::Component;
 use heartwood_kernel::{Clock, SystemClock};
@@ -29,7 +29,7 @@ use tokio::runtime::Builder;
 
 use crate::commands::forger::ForgerRun;
 use crate::config::ForgerConfig;
-use crate::lock::ProcessLock;
+use crate::lock::{self, ProcessLock};
 use crate::{VERSION, options, signals};
 
 /// The forger could not start, or stopped on a fatal error.
@@ -59,91 +59,60 @@ pub fn run_forger(run: &ForgerRun) -> Result<(), ForgerError> {
 
 /// Run the forger of `forger`.
 pub fn start(forger: ForgerConfig) -> Result<(), ForgerError> {
-    let paths = &forger.paths;
+    let paths = &forger.base.paths;
     for dir in [&paths.data, &paths.log, &paths.temp] {
         fs::create_dir_all(dir).map_err(|error| config(format!("{}: {error}", dir.display())))?;
     }
-    let locked = ProcessLock::acquire(&paths.data, "forger");
+    let (token, network) = (&forger.base.token, &forger.base.network);
+    let locked = ProcessLock::acquire(&lock::instance(Role::Forger, token, network, paths));
     let _lock = locked.map_err(|error| ForgerError::Locked(error.to_string()))?;
-    let logger = options::logger(&forger.logger, &forger.env).map_err(config)?;
-    let stem = format!("{}-{}-forger", forger.token, forger.network);
-    let _logs = heartwood_logger::init(&logger, &paths.log, &stem)
-        .map_err(|error| ForgerError::Component(error.to_string()))?;
-    heartwood_kernel::info!(
-        "Heartwood Core {VERSION}: a forger of {} on {}",
-        forger.token,
-        forger.network
-    );
-    for warning in &forger.warnings {
-        heartwood_kernel::warning!("{warning}");
-    }
-    let result = prepare(&forger).and_then(|parts| {
-        // One thread, as the reference's forger has one: the signing record's writes go to the
-        // runtime's blocking pool.
-        let runtime = Builder::new_current_thread().enable_all().build();
-        let runtime = runtime.map_err(|error| ForgerError::Component(error.to_string()))?;
-        runtime.block_on(serve(parts))
-    });
+    let logger = options::logger(&forger.logger, &forger.base.env).map_err(config)?;
+    let stem = format!("{}-{}-forger", forger.base.token, forger.base.network);
+    let _logs = heartwood_logger::init(&logger, &paths.log, &stem).map_err(component)?;
+    heartwood_kernel::info!("Heartwood Core {VERSION}: a forger of {token} on {network}");
+    forger
+        .base
+        .warnings
+        .iter()
+        .for_each(|w| heartwood_kernel::warning!("{w}"));
+    // One thread, as the reference's forger has one; the signing record's writes go to the
+    // runtime's blocking pool.
+    let runtime = Builder::new_current_thread().enable_all().build();
+    let result = runtime
+        .map_err(component)
+        .and_then(|runtime| runtime.block_on(serve(forger)));
     if let Err(error) = &result {
         heartwood_kernel::error!("{error}");
     }
     result
 }
 
-/// What the forger runs: its keys, options, record and milestones.
-struct Parts {
-    keys: DelegateKeys,
-    options: Options,
-    record: SigningRecord,
-    forger: ForgerConfig,
+fn component(error: impl Display) -> ForgerError {
+    ForgerError::Component(error.to_string())
 }
 
-/// The key file, the options and the signing record of `forger`, each checked before anything
-/// connects.
-fn prepare(forger: &ForgerConfig) -> Result<Parts, ForgerError> {
-    let keys = load_keys(&forger.paths.config).map_err(config)?;
-    let env = |name: &str| forger.env.get(name).map(str::to_owned);
-    let options = Options::from_json(&forger.forger, &env).map_err(config)?;
-    let path = signing_record::path(&forger.paths.data);
-    let record = SigningRecord::open(&path, &forger.crypto.network.nethash);
-    let record = record.map_err(|error| ForgerError::Component(error.to_string()))?;
-    Ok(Parts {
-        keys,
-        options,
-        record,
-        forger: forger.clone(),
-    })
-}
-
-/// Boot the forger component of `parts` and run its loop and attester until a signal, or until
-/// the version floor at the first round refuses this version.
-async fn serve(parts: Parts) -> Result<(), ForgerError> {
-    let Parts {
-        keys,
-        options,
-        record,
-        forger,
-    } = parts;
-    let (milestones, network) = (forger.crypto.milestones, forger.crypto.network);
+/// Read the key file, the options and the signing record of `forger`, each checked before
+/// anything connects; boot the forger component and run its loop and attester until a signal,
+/// or until the version floor at the first round refuses this version.
+async fn serve(forger: ForgerConfig) -> Result<(), ForgerError> {
+    let (base, entry, crypto) = (forger.base, forger.forger, forger.crypto);
+    let keys = load_keys(&base.paths.config).map_err(config)?;
+    let env = |name: &str| base.env.get(name).map(str::to_owned);
+    let options = Options::from_json(&entry, &env).map_err(config)?;
+    let (milestones, network) = (crypto.milestones, crypto.network);
+    let path = signing_record::path(&base.paths.data);
+    let record = SigningRecord::open(&path, &network.nethash).map_err(component)?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let link = Arc::new(Client::new(ClientOptions {
         hosts: options.hosts.clone(),
         local_address: options.local_address,
         version: VERSION.to_owned(),
     }));
-    let signer = Signer::new(
-        keys.delegates(network.pub_key_hash),
-        record,
-        options.aux(),
-        milestones.clone(),
-    );
+    let delegates = keys.delegates(network.pub_key_hash);
+    let signer = Signer::new(delegates, record, options.aux(), milestones.clone());
     let declared = keys.declared();
-    let attester = Attester::new(
-        Arc::new(keys),
-        network.nethash.clone(),
-        milestones.clone(),
-        Arc::clone(&clock),
-    );
+    let (nethash, milestones_) = (network.nethash.clone(), milestones.clone());
+    let attester = Attester::new(Arc::new(keys), nethash, milestones_, clock.clone());
     let service = ForgerService::new(ForgerParts {
         link: Arc::clone(&link),
         signer,
@@ -153,13 +122,11 @@ async fn serve(parts: Parts) -> Result<(), ForgerError> {
         clock,
     });
     let (trigger, shutdown) = ShutdownSignal::new();
-    let trigger = Arc::new(trigger);
-    let refused: Arc<Mutex<Option<String>>> = Arc::default();
+    let (trigger, refused) = (Arc::new(trigger), Arc::new(Mutex::new(None)));
     let (stop, refusal) = (Arc::clone(&trigger), Arc::clone(&refused));
     let defaults = P2pOptions::default().minimum_versions;
     service.on_first_round(move |height| {
-        let checked = super::check_floor(&milestones, &network.name, height, &defaults);
-        if let Err(error) = checked {
+        if let Err(error) = super::check_floor(&milestones, &network.name, height, &defaults) {
             *refusal.lock().unwrap_or_else(PoisonError::into_inner) = Some(error.to_string());
             stop.trigger();
         }
@@ -170,9 +137,10 @@ async fn serve(parts: Parts) -> Result<(), ForgerError> {
         signal.trigger();
     });
     let mut component = Forger::new(service);
-    if let Err(error) = component.boot().await {
-        return Err(ForgerError::Component(error.to_string()));
-    }
+    component
+        .boot()
+        .await
+        .map_err(|error| ForgerError::Component(error.to_string()))?;
     let attesting = attester.run(&*link, shutdown.clone());
     tokio::join!(component.service().run(shutdown), attesting);
     component.dispose().await;
@@ -180,5 +148,5 @@ async fn serve(parts: Parts) -> Result<(), ForgerError> {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .take();
-    refused.map_or(Ok(()), |refusal| Err(ForgerError::Config(refusal)))
+    refused.map_or(Ok(()), |refusal: String| Err(ForgerError::Config(refusal)))
 }

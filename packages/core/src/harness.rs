@@ -278,3 +278,38 @@ impl NetworkStateRecord {
         write(&mut file, &line.to_string());
     }
 }
+
+/// The recorder and the network-state record of a relay run, when the harness asks for them.
+pub type HarnessFiles = (Option<Box<dyn CommitObserver>>, Option<NetworkStateRecord>);
+
+/// The harness's files of a relay run: the recorder of `--difftest-digest` and
+/// `--difftest-blocks`, or else of the next free pair of per-start files in the directory that
+/// [`DIR_VARIABLE`] names; and the network-state record there.
+pub fn files(
+    relay: &crate::config::RelayConfig,
+    run: &crate::commands::relay::RelayRun,
+    milestones: &Arc<Milestones>,
+    first_start: bool,
+) -> Result<HarnessFiles, String> {
+    let dir = relay.env.get(DIR_VARIABLE).filter(|dir| !dir.is_empty());
+    let dir = dir.map(PathBuf::from);
+    let (mut digests, mut blocks) = (run.difftest_digest.clone(), run.difftest_blocks.clone());
+    if let (None, None, Some(dir)) = (&digests, &blocks, &dir) {
+        let (digest, block) = next_start_files(dir)?;
+        (digests, blocks) = (Some(digest), Some(block));
+    }
+    let observer: Option<Box<dyn CommitObserver>> = match (&digests, &blocks) {
+        (None, None) => None,
+        _ => Some(Box::new(
+            Recorder::open(
+                Arc::clone(milestones),
+                digests.as_deref(),
+                blocks.as_deref(),
+                first_start,
+            )
+            .map_err(|error| error.to_string())?,
+        )),
+    };
+    let record = dir.map(|dir| NetworkStateRecord::open(&dir)).transpose()?;
+    Ok((observer, record))
+}

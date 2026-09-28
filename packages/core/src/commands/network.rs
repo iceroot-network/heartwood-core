@@ -77,14 +77,8 @@ pub fn run(command: NetworkCommand) -> ExitCode {
     let NetworkCommand::Generate(generate) = command;
     let generated = heartwood_cli::network::generate(&generate.options(), &SystemClock);
     crate::exit(generated.map(|generated| {
-        let out = generated.out.display();
-        println!("Generated the network in {out}");
-        println!("  nethash {}", generated.nethash);
-        println!("  genesis block {}", generated.genesis_id);
-        println!("  epoch {}", generated.epoch);
-        println!("  {} delegates", generated.delegates.len());
-        for file in &generated.files {
-            println!("  wrote {}", file.display());
-        }
+        let (out, files) = (generated.out.display(), generated.files.len());
+        let (nethash, genesis) = (&generated.nethash, &generated.genesis_id);
+        println!("Wrote {files} files to {out}: nethash {nethash}, genesis block {genesis}");
     }))
 }

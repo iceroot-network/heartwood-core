@@ -34,6 +34,7 @@ use heartwood_blockchain::{
     BlockProcessor, Blockchain, BlockchainParts, ChainState, ChainStore, Node, NodeError,
     NodeHandle, NodeParts, PoolTask, RestoreMode, RestorePath, Restored, RollbackDepth, restore,
 };
+use heartwood_cli::Role;
 use heartwood_database::{Readers, Settings};
 use heartwood_kernel::bus::EventBus;
 use heartwood_kernel::config::Options;
@@ -61,9 +62,9 @@ use tokio::sync::{mpsc, watch};
 
 use crate::commands::relay::RelayRun;
 use crate::config::{Package, RelayConfig};
-use crate::lock::ProcessLock;
+use crate::lock::{self, ProcessLock};
 use crate::network::Monitored;
-use crate::node_services::{MonitorSide, RelayServices, ServiceCalls, queue_state};
+use crate::node_services::{MonitorSide, RelayServices, queue_state};
 use crate::views::{BusEvents, Links, Listener, NodeView, Submit};
 use crate::{VERSION, options, signals};
 
@@ -92,7 +93,6 @@ type Rules = heartwood_p2p::utils::rules::Rules;
 type Rules = crate::harness::SeedRules;
 type Client = Communicator<Connector, PeerVerifier, Rules, HttpProbe>;
 type Acceptor = PeerProcessor<Client, Rules>;
-type Monitor = NetworkMonitor<Client, Acceptor, Rules>;
 
 /// The read-only connections of the P2P server's store reads (getBlocks, getCommonBlocks).
 const SERVER_READERS: usize = 4;
@@ -155,7 +155,8 @@ pub fn start(relay: RelayConfig, run: &RelayRun) -> Result<(), RelayError> {
     ] {
         fs::create_dir_all(dir).map_err(|error| config(format!("{}: {error}", dir.display())))?;
     }
-    let locked = ProcessLock::acquire(&paths.data, "relay");
+    let instance = lock::instance(Role::Relay, &relay.token, &relay.network, paths);
+    let locked = ProcessLock::acquire(&instance);
     let _lock = locked.map_err(|error| RelayError::Locked(error.to_string()))?;
     let logger = options::logger(&relay.entry(Package::Logger), &relay.env).map_err(config)?;
     let stem = format!("{}-{}-relay", relay.token, relay.network);
@@ -245,6 +246,11 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
         restored.state.last_block().clone(),
     ))));
     let first_start = restored.path == RestorePath::FirstStart;
+    #[cfg(feature = "difftest")]
+    let (observer, record) =
+        crate::harness::files(&relay, run, &milestones, first_start).map_err(config)?;
+    #[cfg(not(feature = "difftest"))]
+    let observer = (None, first_start).0;
     let (node, handle) = Node::spawn(NodeParts {
         state: restored.state,
         store,
@@ -260,7 +266,7 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
             bus: bus.clone(),
             links: Arc::clone(&links),
         }),
-        observer: recorder(&relay, run, &milestones, first_start)?,
+        observer,
         broadcast: links.clone(),
         own_keys: links.clone(),
         version: VERSION.to_owned(),
@@ -280,16 +286,12 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
     });
     let (p2p, seed) = seeded(p2p, run)?;
     let p2p = Arc::new(p2p);
-    let client = client(&p2p, seed, view.clone(), &bus, &links, &clock)?;
-    let _ = links.peers.set(Arc::new(Arc::clone(&client.monitor)));
+    let peers = Arc::new(client(&p2p, seed, view.clone(), &bus, &links, &clock)?);
+    let _ = links.peers.set(Arc::new(Arc::clone(&peers.monitor)));
     let blockchain = Blockchain::new(BlockchainParts {
         node: handle.clone(),
         chain,
-        network: Monitored(
-            Arc::clone(&client.monitor),
-            Arc::clone(&links),
-            Arc::clone(&clock),
-        ),
+        network: Monitored(peers.monitor.clone(), links.clone(), clock.clone()),
         options: blockchain_options,
         milestones,
         clock: Arc::clone(&clock),
@@ -306,35 +308,20 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
         }
     });
     // The peer-to-peer server, on read-only connections of its own, before the blockchain boots.
-    let service: Arc<dyn ServiceCalls> = Arc::new(Arc::clone(&blockchain));
     let services = RelayServices {
         handle: handle.clone(),
         view,
         history: Arc::new(Readers::open(&settings, SERVER_READERS).map_err(component)?),
         links: Arc::clone(&links),
-        queue: queue_state(Arc::clone(&service)),
-        service,
+        queue: queue_state(&blockchain),
+        blockchain: Arc::clone(&blockchain),
         peer_config,
         bus: bus.clone(),
         clock: Arc::clone(&clock),
         #[cfg(feature = "difftest")]
-        record: network_state_record(&relay)?,
+        record,
     };
-    let peers = Arc::new(MonitorSide {
-        monitor: Arc::clone(&client.monitor),
-        repository: client.repository,
-        acceptor: client.acceptor,
-        clock: Arc::clone(&clock),
-        runtime: Handle::current(),
-    });
-    let p2p = serve_p2p(P2pParts {
-        options: p2p,
-        node: Arc::new(services),
-        peers,
-        links: Arc::clone(&links),
-        clock,
-    })
-    .await?;
+    let p2p = serve_p2p(p2p, Arc::new(services), peers, &links, clock).await?;
     let (booted, service) = (stops, Arc::clone(&blockchain));
     tokio::spawn(async move { booted.send(Stop::Booted(service.boot().await)) });
     let status = node_status(&links);
@@ -395,20 +382,6 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
     outcome
 }
 
-/// What the relay's P2P server is made of.
-pub struct P2pParts {
-    /// The p2p options.
-    pub options: Arc<P2pOptions>,
-    /// The node's services.
-    pub node: Arc<dyn NodeServices>,
-    /// The peer side.
-    pub peers: Arc<dyn PeerSide>,
-    /// The links, which take the forger's attestation session.
-    pub links: Arc<Links>,
-    /// The wall clock.
-    pub clock: Arc<dyn Clock>,
-}
-
 /// The relay's P2P server, bound and serving, with the served status's timer.
 pub struct P2p {
     server: Arc<P2pServer>,
@@ -417,11 +390,6 @@ pub struct P2p {
 }
 
 impl P2p {
-    /// The address the listener is bound to.
-    pub fn local_addr(&self) -> std::net::SocketAddr {
-        self.server.local_addr()
-    }
-
     /// The first step of the graceful shutdown: close the forger's sessions, then stop accepting
     /// and close every socket, and wait for the server's tasks.
     pub async fn stop(self) {
@@ -433,34 +401,31 @@ impl P2p {
     }
 }
 
-/// The P2P server of `parts`: the forger's attestation session (linked in as the delegates on
-/// this node), the served status, the controllers and the listener, bound; a listener that
-/// cannot bind is the error.
-pub async fn serve_p2p(parts: P2pParts) -> Result<P2p, RelayError> {
-    let P2pParts {
-        options,
-        node,
-        peers,
-        links,
-        clock,
-    } = parts;
-    let attestation = Arc::new(AttestationSession::new(
-        Arc::clone(&node),
-        Arc::clone(&clock),
-    ));
+/// The P2P server of `options` over the node's services `node` and the peer side `peers`: the
+/// forger's attestation session (linked into `links` as the delegates on this node), the served
+/// status, the controllers and the listener, bound; a listener that cannot bind is the error.
+pub async fn serve_p2p(
+    options: Arc<P2pOptions>,
+    node: Arc<dyn NodeServices>,
+    peers: Arc<dyn PeerSide>,
+    links: &Links,
+    clock: Arc<dyn Clock>,
+) -> Result<P2p, RelayError> {
+    let attestation = Arc::new(AttestationSession::new(node.clone(), clock.clone()));
     let _ = links.attested.set(attestation.clone());
     let status = Arc::new(StatusServer::new(
-        Arc::clone(&node),
-        Arc::clone(&attestation),
-        Arc::clone(&clock),
+        node.clone(),
+        attestation.clone(),
+        clock.clone(),
     ));
+    let (attested, served, options_) = (attestation.clone(), status.clone(), options.clone());
     let handlers = Arc::new(Controllers::new(ControllerParts {
-        node: Arc::clone(&node),
-        peers: Arc::clone(&peers),
-        attestation: Arc::clone(&attestation),
-        status: Arc::clone(&status),
+        node: node.clone(),
+        peers: peers.clone(),
+        attestation: attested,
+        status: served,
         clock,
-        options: Arc::clone(&options),
+        options: options_,
     }));
     let server = P2pServer::bind(ServerParts {
         options: ServerOptions::from_p2p(&options),
@@ -501,17 +466,16 @@ pub fn peer_config(relay: &RelayConfig, api: Option<&ApiConfig>) -> PeerConfig {
     }
     if let Some(webhooks) = relay.entries.get(&Package::Webhooks) {
         let variable = |name: &str| relay.env.get(name).filter(|value| !value.is_empty());
-        let port = (webhooks.pointer("/server/http/port"))
-            .and_then(|port| match port {
-                serde_json::Value::String(text) => text.parse().ok(),
-                port => port.as_u64(),
-            })
-            .or_else(|| variable("CORE_WEBHOOKS_PORT")?.parse().ok())
-            .unwrap_or(4004);
+        let port = (webhooks
+            .pointer("/server/http/port")
+            .map(ToString::to_string))
+        .or_else(|| variable("CORE_WEBHOOKS_PORT").map(str::to_owned));
         let enabled = webhooks.get("enabled").and_then(serde_json::Value::as_bool);
         let plugin = PluginConfig {
             enabled: enabled.unwrap_or_else(|| variable("CORE_WEBHOOKS_ENABLED").is_some()),
-            port: u32::try_from(port).unwrap_or(u32::MAX),
+            port: port
+                .and_then(|port| port.trim_matches('"').parse().ok())
+                .unwrap_or(4004),
             estimate_total_count: None,
         };
         plugins.push((Package::Webhooks.name(), plugin));
@@ -636,16 +600,9 @@ pub fn version_floor(
     super::check_floor(&files.milestones, &files.network.name, height, configured).map_err(config)
 }
 
-/// The peer-to-peer client: the network monitor, the peers, and the acceptance of new ones.
-struct PeerClientParts {
-    monitor: Arc<Monitor>,
-    repository: Arc<PeerRepository>,
-    acceptor: Arc<Acceptor>,
-}
-
 /// The peer-to-peer client of `options` (with the harness's `seed`) over the node's `view`,
 /// reporting its peer events on `bus`, with the delegates on this node of `links` as the fork
-/// check's local peer.
+/// check's local peer: the server's peer side over its monitor, its peers and its acceptance.
 fn client(
     options: &Arc<P2pOptions>,
     seed: Option<IpAddr>,
@@ -653,7 +610,7 @@ fn client(
     bus: &EventBus,
     links: &Arc<Links>,
     clock: &Arc<dyn Clock>,
-) -> Result<PeerClientParts, RelayError> {
+) -> Result<MonitorSide<Client, Acceptor, Rules>, RelayError> {
     let rules = Arc::new(rules(options, seed));
     let repository = Arc::new(PeerRepository::new());
     let events: Arc<dyn heartwood_p2p::PeerEvents> = Arc::new(BusEvents(bus.clone()));
@@ -702,10 +659,14 @@ fn client(
         runtime,
         attested: links.clone(),
     };
-    Ok(PeerClientParts {
-        monitor: Arc::new(NetworkMonitor::new(parts)),
+    let (monitor, clock) = (Arc::new(NetworkMonitor::new(parts)), Arc::clone(clock));
+    let runtime = Handle::current();
+    Ok(MonitorSide {
+        monitor,
         repository,
         acceptor,
+        clock,
+        runtime,
     })
 }
 
@@ -753,104 +714,29 @@ fn interfaces() -> Vec<IpAddr> {
 }
 
 /// The client's options and the harness's seed, which `--difftest-seed` adds to the seeds.
-#[cfg(feature = "difftest")]
 fn seeded(
     mut options: P2pOptions,
     run: &RelayRun,
 ) -> Result<(P2pOptions, Option<IpAddr>), RelayError> {
-    let Some(seed) = &run.difftest_seed else {
-        return Ok((options, None));
-    };
-    let address: std::net::SocketAddr = seed
-        .parse()
-        .map_err(|_| config(format!("--difftest-seed {seed} is not ip:port")))?;
-    options.seeds.push(PeerAddress {
-        ip: address.ip().to_string(),
-        port: address.port(),
-    });
-    Ok((options, Some(address.ip())))
-}
-
-/// The client's options.
-#[cfg(not(feature = "difftest"))]
-fn seeded(
-    options: P2pOptions,
-    _run: &RelayRun,
-) -> Result<(P2pOptions, Option<IpAddr>), RelayError> {
+    #[cfg(feature = "difftest")]
+    if let Some(seed) = &run.difftest_seed {
+        let address: std::net::SocketAddr =
+            (seed.parse()).map_err(|_| config(format!("--difftest-seed {seed} is not ip:port")))?;
+        let (ip, port) = (address.ip().to_string(), address.port());
+        options.seeds.push(PeerAddress { ip, port });
+        return Ok((options, Some(address.ip())));
+    }
+    let _ = (run, &mut options);
     Ok((options, None))
 }
 
-/// The client's rules of `options`, letting `seed` through the address rules.
-#[cfg(feature = "difftest")]
+/// The client's rules of `options`, letting `seed` through the address rules in a harness build.
 fn rules(options: &P2pOptions, seed: Option<IpAddr>) -> Rules {
-    let rules = heartwood_p2p::utils::rules::Rules::new(
-        options.rate_limit,
-        options.rate_limit_post_transactions,
-    );
-    crate::harness::SeedRules::new(rules, seed)
-}
-
-/// The client's rules of `options`.
-#[cfg(not(feature = "difftest"))]
-fn rules(options: &P2pOptions, _seed: Option<IpAddr>) -> Rules {
-    Rules::new(options.rate_limit, options.rate_limit_post_transactions)
-}
-
-/// The harness's recorder of `--difftest-digest` and `--difftest-blocks`, or else of the next
-/// free pair of per-start files in the directory the harness's variable names.
-#[cfg(feature = "difftest")]
-fn recorder(
-    relay: &RelayConfig,
-    run: &RelayRun,
-    milestones: &Arc<heartwood_crypto::Milestones>,
-    first_start: bool,
-) -> Result<Option<Box<dyn heartwood_blockchain::events::CommitObserver>>, RelayError> {
-    let (mut digests, mut blocks) = (run.difftest_digest.clone(), run.difftest_blocks.clone());
-    if digests.is_none()
-        && blocks.is_none()
-        && let Some(dir) = harness_dir(relay)
-    {
-        let (digest, block) = crate::harness::next_start_files(&dir).map_err(config)?;
-        (digests, blocks) = (Some(digest), Some(block));
-    }
-    if digests.is_none() && blocks.is_none() {
-        return Ok(None);
-    }
-    let recorder = crate::harness::Recorder::open(
-        Arc::clone(milestones),
-        digests.as_deref(),
-        blocks.as_deref(),
-        first_start,
-    );
-    Ok(Some(Box::new(recorder.map_err(config)?)))
-}
-
-/// The directory the harness's variable names, if it is set.
-#[cfg(feature = "difftest")]
-fn harness_dir(relay: &RelayConfig) -> Option<std::path::PathBuf> {
-    let dir = relay.env.get(crate::harness::DIR_VARIABLE)?;
-    (!dir.is_empty()).then(|| std::path::PathBuf::from(dir))
-}
-
-/// The network-state record in the directory the harness's variable names, if it is set.
-#[cfg(feature = "difftest")]
-fn network_state_record(
-    relay: &RelayConfig,
-) -> Result<Option<crate::harness::NetworkStateRecord>, RelayError> {
-    let Some(dir) = harness_dir(relay) else {
-        return Ok(None);
-    };
-    let record = crate::harness::NetworkStateRecord::open(&dir).map_err(config)?;
-    Ok(Some(record))
-}
-
-/// No recorder without the harness.
-#[cfg(not(feature = "difftest"))]
-fn recorder(
-    _relay: &RelayConfig,
-    _run: &RelayRun,
-    _milestones: &Arc<heartwood_crypto::Milestones>,
-    _first_start: bool,
-) -> Result<Option<Box<dyn heartwood_blockchain::events::CommitObserver>>, RelayError> {
-    Ok(None)
+    let (rate, posts) = (options.rate_limit, options.rate_limit_post_transactions);
+    let rules = heartwood_p2p::utils::rules::Rules::new(rate, posts);
+    #[cfg(feature = "difftest")]
+    let rules = crate::harness::SeedRules::new(rules, seed);
+    #[cfg(not(feature = "difftest"))]
+    let _ = seed;
+    rules
 }
