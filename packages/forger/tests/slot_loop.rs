@@ -49,7 +49,8 @@ struct FakeRelay {
     registered: Vec<u32>,
     tip: Mutex<Tip>,
     calls: Mutex<Vec<String>>,
-    failures: Mutex<HashMap<&'static str, VecDeque<RelayError>>>,
+    /// Per call, the answers to come: a failure, or `None` for the usual answer.
+    failures: Mutex<HashMap<&'static str, VecDeque<Option<RelayError>>>>,
     state: Mutex<Option<NetworkState>>,
     status: Mutex<Option<ReceivedStatus>>,
     rounds: Mutex<VecDeque<CurrentRound>>,
@@ -91,7 +92,16 @@ impl FakeRelay {
         failures
             .entry(call)
             .or_default()
-            .extend(std::iter::repeat_n(error, times));
+            .extend(std::iter::repeat_n(Some(error), times));
+    }
+
+    /// Answer `call` as usual `times` times before the failures set after this.
+    fn pass(&self, call: &'static str, times: usize) {
+        let mut failures = self.failures.lock().unwrap();
+        failures
+            .entry(call)
+            .or_default()
+            .extend(std::iter::repeat_n(None, times));
     }
 
     /// Record `call`, and fail it if a failure is set for it.
@@ -102,7 +112,8 @@ impl FakeRelay {
             .lock()
             .unwrap()
             .get_mut(call)
-            .and_then(VecDeque::pop_front);
+            .and_then(VecDeque::pop_front)
+            .flatten();
         failure.map_or(Ok(()), Err)
     }
 
@@ -864,6 +875,27 @@ async fn a_retry_in_the_slot_resends_the_signed_block() {
     assert_eq!(relay.count("event block.forged"), 3);
     assert_eq!(relay.tip.lock().unwrap().height, 2);
     assert_eq!(forger.signer.signed.lock().unwrap().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_errored_attempt_and_a_failed_reload_are_both_logged() {
+    let (lines, _guard) = Lines::capture();
+    let relay = FakeRelay::new(in_slot(10, 0), &[1, 2, 3], &[]);
+    let timed_out = communication("p2p.peer.getStatus", "Request timed out");
+    relay.fail("status", 1, timed_out.clone());
+    let mut forger = forger(&relay, &[2], relay.clock.clone());
+    forger.service.boot().await.unwrap();
+    lines.clear();
+    // The slot check's round, then the reload after the errored attempt fails.
+    relay.pass("round", 1);
+    let down = communication("p2p.internal.getCurrentRound", "round down");
+    relay.fail("round", 1, down.clone());
+    run_for(&forger, 3_000).await;
+    let logged = |error: &RelayError| format!("WARNING: {error}").replace(" :bangbang:", "");
+    assert_eq!(lines.with("Request timed out"), [logged(&timed_out)]);
+    assert_eq!(lines.with("round down"), [logged(&down)]);
+    // The next attempt, on the round loaded before, forges.
+    assert_eq!(relay.count("post"), 1);
 }
 
 #[tokio::test(start_paused = true)]

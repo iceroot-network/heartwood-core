@@ -470,7 +470,9 @@ where
             let Some(reloaded) = until(&mut shutdown, self.load_round()).await else {
                 return;
             };
-            let errored = end == AttemptEnd::Errored || self.failed(&reloaded);
+            // Both failures are logged, as the reference's two catch blocks log them.
+            let reload_failed = self.failed(&reloaded);
+            let errored = end == AttemptEnd::Errored || reload_failed;
             let next = {
                 let mut state = self.state();
                 state.error_count = match errored {
