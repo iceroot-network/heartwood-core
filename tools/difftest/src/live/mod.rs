@@ -232,19 +232,6 @@ fn check_run(
             );
         }
     }
-    let problems = steps::problems(&manifest.run, &steps);
-    if problems.is_empty() {
-        cases.pass(
-            "run",
-            format!(
-                "{} steps met their expectations; the schedule is complete",
-                steps.len()
-            ),
-        );
-    }
-    for p in problems {
-        cases.fail("run", "the scripted steps", p);
-    }
     let txgen = run_dir.join("txgen");
     if let Ok(entries) = std::fs::read_dir(&txgen) {
         let mut dirs: Vec<PathBuf> = entries
@@ -257,11 +244,48 @@ fn check_run(
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            match steps::txgen(&dir)? {
-                Ok(text) => cases.pass("run", format!("txgen {name}: {text}")),
-                Err(text) => cases.fail("run", format!("txgen {name}"), text),
+            // The node txgen submitted to (its step's `submit`): a Heartwood relay names its own
+            // decoder's reason in an `ERR_BAD_DATA` refusal.
+            let heartwood = steps
+                .iter()
+                .find(|s| s.name == format!("txgen-{name}"))
+                .and_then(|s| s.record.get("submit").and_then(Value::as_str))
+                .and_then(|n| manifest.node(n))
+                .is_some_and(|n| n.implementation == Implementation::Heartwood);
+            let verdict = steps::txgen(&dir, heartwood)?;
+            // The step's own `ok` is txgen's exit status, which holds the reference's texts; the
+            // verdict judged here takes its place.
+            if let Some(s) = steps.iter_mut().find(|s| s.name == format!("txgen-{name}")) {
+                s.ok = verdict.failures.is_empty();
+            }
+            for d in &verdict.documented {
+                cases.push(
+                    "run",
+                    format!("txgen {name}: {d}"),
+                    0,
+                    Outcome::Documented(Documented::DecodeReason.reason().to_owned()),
+                );
+            }
+            if verdict.failures.is_empty() {
+                cases.pass("run", format!("txgen {name}: {}", verdict.text));
+            }
+            for f in verdict.failures.iter().take(20) {
+                cases.fail("run", format!("txgen {name} ({})", verdict.text), f.clone());
             }
         }
+    }
+    let problems = steps::problems(&manifest.run, &steps);
+    if problems.is_empty() {
+        cases.pass(
+            "run",
+            format!(
+                "{} steps met their expectations; the schedule is complete",
+                steps.len()
+            ),
+        );
+    }
+    for p in problems {
+        cases.fail("run", "the scripted steps", p);
     }
     if let Some(pair) = &manifest.pair {
         let other = run_dir.parent().map(|p| p.join(pair));
@@ -279,7 +303,11 @@ fn check_run(
                 if d.differences.is_empty() && !ours.is_empty() {
                     cases.pass(
                         "run",
-                        format!("each of {} submissions got run {pair}'s answer", ours.len()),
+                        format!(
+                            "each of {} submissions got run {pair}'s answer ({} with another reason text)",
+                            ours.len(),
+                            d.documented.len()
+                        ),
                     );
                 } else if ours.is_empty() {
                     cases.fail(
@@ -299,6 +327,14 @@ fn check_run(
                     cases.record(
                         "run",
                         format!("an answer whose message differs from run {pair}'s in its numbers only: {p}"),
+                    );
+                }
+                for p in &d.documented {
+                    cases.push(
+                        "run",
+                        format!("the submissions against run {pair}: {p}"),
+                        0,
+                        Outcome::Documented(Documented::DecodeReason.reason().to_owned()),
                     );
                 }
                 let w = (

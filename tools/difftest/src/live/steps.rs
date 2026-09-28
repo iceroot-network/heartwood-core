@@ -120,30 +120,116 @@ fn truncate(text: &str, n: usize) -> String {
     }
 }
 
-/// txgen's own verdict in `dir` (its `summary.json`): pass, fail and submission counts.
-pub fn txgen(dir: &Path) -> Result<std::result::Result<String, String>> {
-    let summary = read_json(&dir.join("summary.json"))?;
-    let n = |k: &str| summary.get(k).and_then(Value::as_u64).unwrap_or(0);
-    let text = format!(
-        "{} submissions: {} passed, {} failed, {} scenarios skipped",
-        n("submissions"),
-        n("pass"),
-        n("fail"),
-        n("skipped")
-    );
-    Ok(
-        if summary.get("ok") == Some(&Value::Bool(true)) && n("fail") == 0 {
-            Ok(text)
-        } else {
-            Err(text)
-        },
-    )
+/// The code of a refusal whose message names why a transaction does not decode or fails the schema.
+pub const BAD_DATA: &str = "ERR_BAD_DATA";
+/// The prefix of such a message in both implementations; the reason text after it differs.
+pub const BAD_DATA_PREFIX: &str = "Invalid transaction data";
+
+/// Whether `answer` (`{outcome, code, message}`) refuses a transaction that does not decode or
+/// fails the schema, with the message both implementations begin alike.
+fn bad_data(answer: &Value) -> bool {
+    answer.get("outcome").and_then(Value::as_str) == Some("rejected")
+        && answer.get("code").and_then(Value::as_str) == Some(BAD_DATA)
+        && answer
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|m| m.starts_with(BAD_DATA_PREFIX))
 }
 
-/// Each scripted submission of txgen's records in `dir`: scenario and id, and the node's answer
-/// (outcome, code, message), in submission order.
-pub fn submissions(dir: &Path) -> Result<Vec<(String, Value)>> {
-    let mut out = Vec::new();
+/// txgen's verdict in `dir`: its summary's counts, the scenarios that failed, and those whose only
+/// failure is a documented difference.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Txgen {
+    /// Submission, pass, fail and skip counts.
+    pub text: String,
+    /// The failures that stand, each `scenario: why`, and txgen's other unmet conditions.
+    pub failures: Vec<String>,
+    /// The failures that only show a documented difference, each `scenario: why`.
+    pub documented: Vec<String>,
+}
+
+/// txgen's verdict in `dir` (its `summary.json`, and the outcome records of its `txgen.jsonl`
+/// files). With `decode_documented` (its submissions went to a Heartwood relay), a failed scenario
+/// whose expected refusal came with the expected code, `ERR_BAD_DATA`, but whose message did not
+/// match the reference's reason text is documented, not failed: Heartwood names its own decoder's
+/// reason after the prefix both implementations write.
+pub fn txgen(dir: &Path, decode_documented: bool) -> Result<Txgen> {
+    let summary = read_json(&dir.join("summary.json"))?;
+    let n = |k: &str| summary.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let mut out = Txgen {
+        text: format!(
+            "{} submissions: {} passed, {} failed, {} scenarios skipped",
+            n("submissions"),
+            n("pass"),
+            n("fail"),
+            n("skipped")
+        ),
+        ..Txgen::default()
+    };
+    // The last outcome of each failed scenario, as txgen recorded it.
+    let mut outcomes: BTreeMap<String, Value> = BTreeMap::new();
+    for file in txgen_files(dir) {
+        for e in read_lines(&file)? {
+            if e.get("event").and_then(Value::as_str) == Some("outcome")
+                && e.get("verdict").and_then(Value::as_str) == Some("fail")
+                && let Some(scenario) = e.get("scenario").and_then(Value::as_str)
+            {
+                outcomes.insert(scenario.to_owned(), e);
+            }
+        }
+    }
+    let failures = summary
+        .get("failures")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for f in &failures {
+        let scenario = f.get("scenario").and_then(Value::as_str).unwrap_or("?");
+        let why = f.get("why").and_then(Value::as_str).unwrap_or("");
+        let text = format!("{scenario}: {why}");
+        let reason_only = outcomes.get(scenario).is_some_and(|e| {
+            e.get("why")
+                .and_then(Value::as_str)
+                .is_some_and(|w| w.starts_with("message does not match"))
+                && e.pointer("/expect/outcome").and_then(Value::as_str) == Some("rejected")
+                && e.pointer("/expect/code").and_then(Value::as_str) == Some(BAD_DATA)
+                && e.get("response").is_some_and(bad_data)
+        });
+        if decode_documented && reason_only {
+            out.documented.push(text);
+        } else {
+            out.failures.push(text);
+        }
+    }
+    if usize::try_from(n("fail")).unwrap_or(usize::MAX) > failures.len() {
+        out.failures.push(format!(
+            "{} failed scenarios, {} of them listed",
+            n("fail"),
+            failures.len()
+        ));
+    }
+    // txgen's own `ok` also needs every kept type forged and, for a --once run, a doubly signed
+    // transaction forged; a failed scenario alone leaves it false.
+    let ok = summary.get("ok") == Some(&Value::Bool(true));
+    let others = summary
+        .get("keptTypesMissing")
+        .and_then(Value::as_array)
+        .is_none_or(Vec::is_empty)
+        && (summary.get("mode").and_then(Value::as_str) != Some("once")
+            || n("doublySignedForged") > 0);
+    if !(ok || (n("fail") > 0 && others)) {
+        out.failures.push(format!(
+            "txgen's summary is not ok (kept types missing: {}, doubly signed forged: {})",
+            summary.get("keptTypesMissing").unwrap_or(&Value::Null),
+            n("doublySignedForged")
+        ));
+    }
+    Ok(out)
+}
+
+/// txgen's record files in `dir`, oldest first: `txgen.jsonl.4` is the oldest rotated file,
+/// `txgen.jsonl` the newest.
+fn txgen_files(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut files: Vec<_> = std::fs::read_dir(dir)
         .map(|d| {
             d.filter_map(|e| e.ok().map(|e| e.path()))
@@ -155,7 +241,6 @@ pub fn submissions(dir: &Path) -> Result<Vec<(String, Value)>> {
                 .collect()
         })
         .unwrap_or_default();
-    // txgen.jsonl.4 is the oldest rotated file, txgen.jsonl the newest.
     files.sort_by_key(|p: &std::path::PathBuf| {
         std::cmp::Reverse(
             p.extension()
@@ -164,7 +249,14 @@ pub fn submissions(dir: &Path) -> Result<Vec<(String, Value)>> {
                 .unwrap_or(0),
         )
     });
-    for file in files {
+    files
+}
+
+/// Each scripted submission of txgen's records in `dir`: scenario and id, and the node's answer
+/// (outcome, code, message), in submission order.
+pub fn submissions(dir: &Path) -> Result<Vec<(String, Value)>> {
+    let mut out = Vec::new();
+    for file in txgen_files(dir) {
         for e in read_lines(&file)? {
             if e.get("event").and_then(Value::as_str) != Some("submitted") {
                 continue;
@@ -208,13 +300,17 @@ pub fn without_numbers(message: &str) -> String {
 
 /// How two runs' submissions (`h` against `r`) compare: each scenario and id must get the same
 /// answer, in the same order. `differences` fail; `timing` lists the answers whose messages differ
-/// only in their numbers, which is recorded.
+/// only in their numbers, which is recorded; `documented` the `ERR_BAD_DATA` refusals whose
+/// messages differ only in the reason text after the prefix both implementations write.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Submissions {
     /// Differences in the submissions or their answers.
     pub differences: Vec<String>,
     /// Answers equal but for the numbers of their messages.
     pub timing: Vec<String>,
+    /// Refusals of a transaction that does not decode or fails the schema, equal but for the
+    /// reason text of their messages.
+    pub documented: Vec<String>,
 }
 
 /// Compare two runs' submissions.
@@ -249,6 +345,9 @@ pub fn compare_submissions(ours: &[(String, Value)], theirs: &[(String, Value)])
         } else if a.1 == b.1 {
         } else if masked(&a.1) == masked(&b.1) {
             out.timing
+                .push(format!("{}: {} here, {} in the pair run", a.0, a.1, b.1));
+        } else if bad_data(&a.1) && bad_data(&b.1) {
+            out.documented
                 .push(format!("{}: {} here, {} in the pair run", a.0, a.1, b.1));
         } else {
             out.differences
@@ -503,6 +602,79 @@ mod tests {
     }
 
     #[test]
+    fn txgen_s_reason_text_failures_of_a_heartwood_relay_are_documented() {
+        let dir = TestDir::new("live-txgen");
+        let outcome = |scenario: &str, code: &str, message: &str, why: &str| {
+            json!({"event": "outcome", "scenario": scenario, "verdict": "fail", "why": why,
+                   "expect": {"outcome": "rejected", "code": "ERR_BAD_DATA", "match": "/Version 2 not supported/"},
+                   "response": {"outcome": "rejected", "code": code, "message": message}})
+        };
+        let events = [
+            json!({"event": "submitted", "scenario": "invalid-version-2"}),
+            outcome(
+                "invalid-version-2",
+                "ERR_BAD_DATA",
+                "Invalid transaction data: unsupported transaction version 2",
+                "message does not match /Version 2 not supported/: Invalid transaction data: unsupported transaction version 2",
+            ),
+            outcome(
+                "invalid-other-code",
+                "ERR_APPLY",
+                "Cannot apply",
+                "expected ERR_BAD_DATA, got ERR_APPLY: Cannot apply",
+            ),
+        ];
+        std::fs::write(
+            dir.path().join("txgen.jsonl"),
+            events.iter().map(|e| format!("{e}\n")).collect::<String>(),
+        )
+        .unwrap();
+        let summary = |failures: Value| {
+            let fail = failures.as_array().map_or(0, Vec::len);
+            json!({"mode": "once", "submissions": 3, "pass": 3 - fail, "fail": fail, "skipped": 0,
+                   "keptTypesMissing": [], "doublySignedForged": 3, "ok": fail == 0,
+                   "failures": failures})
+        };
+        let write =
+            |s: Value| std::fs::write(dir.path().join("summary.json"), s.to_string()).unwrap();
+        let reason = json!({"scenario": "invalid-version-2", "why": "message does not match /Version 2 not supported/: Invalid transaction data: unsupported transaction version 2"});
+        let code = json!({"scenario": "invalid-other-code", "why": "expected ERR_BAD_DATA, got ERR_APPLY: Cannot apply"});
+
+        write(summary(json!([reason])));
+        let heartwood = txgen(dir.path(), true).unwrap();
+        assert!(heartwood.failures.is_empty(), "{heartwood:?}");
+        assert_eq!(heartwood.documented.len(), 1, "{heartwood:?}");
+        // Against a reference relay the reference's own text is expected.
+        let reference = txgen(dir.path(), false).unwrap();
+        assert_eq!(reference.failures.len(), 1, "{reference:?}");
+        assert!(reference.documented.is_empty());
+        // Another code is a failure wherever the transaction went.
+        write(summary(json!([reason, code])));
+        let both = txgen(dir.path(), true).unwrap();
+        assert_eq!(both.documented.len(), 1, "{both:?}");
+        assert_eq!(both.failures.len(), 1, "{both:?}");
+        assert!(both.failures[0].starts_with("invalid-other-code"));
+        // txgen's other conditions still count.
+        let mut s = summary(json!([reason]));
+        s["keptTypesMissing"] = json!(["2/2"]);
+        write(s);
+        let missing = txgen(dir.path(), true).unwrap();
+        assert!(
+            missing
+                .failures
+                .iter()
+                .any(|f| f.contains("kept types missing")),
+            "{missing:?}"
+        );
+        write(summary(json!([])));
+        let clean = txgen(dir.path(), false).unwrap();
+        assert!(
+            clean.failures.is_empty() && clean.documented.is_empty(),
+            "{clean:?}"
+        );
+    }
+
+    #[test]
     fn pair_runs_compare_answers_and_wallets() {
         let a = vec![("s1 x".to_owned(), json!({"outcome": "accepted"}))];
         let b = vec![(
@@ -525,6 +697,25 @@ mod tests {
         assert_eq!(
             without_numbers("dA#4 c4dc8a23: 105 more"),
             "dA## c#dc#a#: # more"
+        );
+        // Two refusals of a transaction that does not decode, each implementation with its reason.
+        let decode = |reason: &str| {
+            vec![(
+                "invalid-version-2 x".to_owned(),
+                json!({"outcome": "rejected", "code": "ERR_BAD_DATA", "message": format!("Invalid transaction data: {reason}")}),
+            )]
+        };
+        let d = compare_submissions(
+            &decode("unsupported transaction version 2"),
+            &decode("Version 2 not supported"),
+        );
+        assert!(d.differences.is_empty() && d.documented.len() == 1, "{d:?}");
+        // Another code, or another verdict, is a difference.
+        let mut other = decode("x");
+        other[0].1["code"] = json!("ERR_APPLY");
+        assert_eq!(
+            compare_submissions(&other, &decode("y")).differences.len(),
+            1
         );
         let w = json!({"wallets": [{"address": "dA", "balance": "1"}]});
         let v = json!({"wallets": [{"address": "dA", "balance": "2"}, {"address": "dB"}]});
