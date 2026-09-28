@@ -1,15 +1,17 @@
 //! The p2p options, with the reference's defaults, and the node's own facts the client needs: its
-//! version, its seeds and peer sources.
+//! version, its seeds and peer sources. The server's options are among them (its address, its
+//! bans, the forger's addresses and a devnet node's addressing).
 //!
 //! [`P2pOptions::default`] is the reference's defaults without any environment variable; the
 //! node's configuration fills the options from `app.json`, the environment and `peers.json`.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use heartwood_p2p_wire::replies::PeerAddress;
 use serde_json::Value;
 
+use crate::devnet::Addressing;
 use crate::errors::OptionsError;
 
 /// The p2p options.
@@ -19,6 +21,19 @@ pub struct P2pOptions {
     pub version: String,
     /// `server.port` (`CORE_P2P_PORT`): the port every request's headers carry; 4002.
     pub port: u16,
+    /// `server.hostname` (`CORE_P2P_HOST`): the address the server listens on; `0.0.0.0`.
+    pub host: IpAddr,
+    /// `server.banSeconds` (`CORE_P2P_BAN_SECONDS`): how long the server bans an address; 10.
+    pub ban_seconds: u32,
+    /// `remoteAccess`: the forger's addresses, as configured (an entry may carry a prefix
+    /// length, which the schema accepts); `127.0.0.1`, `::ffff:127.0.0.1` and `::1`.
+    pub remote_access: Vec<String>,
+    /// `minimumDelegateReach`, which the schema does not name: the fewest active delegates the
+    /// peers must carry for a network state other than `BelowMinimumDelegates`; half the active
+    /// delegates plus one when absent.
+    pub minimum_delegate_reach: Option<u32>,
+    /// `devnet` (feature `devnet`): how a devnet node takes its address; off.
+    pub addressing: Addressing,
     /// `minimumVersions`: the version ranges a peer must satisfy when the milestone names none;
     /// `^3.2` and `^3.2.0-next.0`.
     pub minimum_versions: Vec<String>,
@@ -70,6 +85,13 @@ impl Default for P2pOptions {
         P2pOptions {
             version: String::new(),
             port: 4002,
+            host: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            ban_seconds: 10,
+            remote_access: ["127.0.0.1", "::ffff:127.0.0.1", "::1"]
+                .map(str::to_owned)
+                .to_vec(),
+            minimum_delegate_reach: None,
+            addressing: Addressing::Off,
             minimum_versions: vec!["^3.2".to_owned(), "^3.2.0-next.0".to_owned()],
             minimum_network_reach: 20,
             verify_timeout: Duration::from_secs(60),
@@ -98,9 +120,11 @@ impl P2pOptions {
     /// `true` or `false` text, arrays replaced whole). The node's version, seeds and sources are
     /// not options and keep their defaults.
     ///
-    /// Every key the schema names is checked when present, those the client does not use too
-    /// (the server's, `remoteAccess`, `dns`, `ntp`); other keys are allowed, as the schema allows
-    /// them.
+    /// Every key the schema names is checked when present, those the node does not use too
+    /// (`server.logLevel`, `dns`, `ntp`); other keys are allowed, as the schema allows them. The
+    /// server cannot listen on an address with a prefix length, which the schema accepts, so
+    /// `server.hostname` is refused with one. With the `devnet` feature, the `devnet` key gives a
+    /// devnet node's addressing.
     pub fn from_json(options: &Value) -> Result<P2pOptions, OptionsError> {
         if !options.is_object() {
             return Err(invalid("options", "must be an object"));
@@ -113,16 +137,24 @@ impl P2pOptions {
         let list = |key: &str| get(key).map(|v| strings(v, key)).transpose();
         let flag = |key: &str| get(key).map(|v| boolean(v, key)).transpose();
         let mut o = P2pOptions::default();
-        int("server.banSeconds", 0)?;
+        let small = |n: u64| u32::try_from(n).unwrap_or(u32::MAX);
+        o.ban_seconds = int("server.banSeconds", 0)?.map_or(o.ban_seconds, small);
         int("server.logLevel", 0)?;
         if let Some(hostname) = get("server.hostname") {
-            ip(hostname.as_str().unwrap_or_default(), "server.hostname")?;
+            let text = hostname.as_str().unwrap_or_default();
+            ip(text, "server.hostname")?;
+            let listen = || {
+                invalid(
+                    "server.hostname",
+                    "cannot be listened on with a prefix length",
+                )
+            };
+            o.host = text.parse().map_err(|_| listen())?;
         }
         if let Some(port) = int("server.port", 1)? {
             o.port = u16::try_from(port).map_err(|_| invalid("server.port", "is over 65535"))?;
         }
         let count = |n: u64| usize::try_from(n).unwrap_or(usize::MAX);
-        let small = |n: u64| u32::try_from(n).unwrap_or(u32::MAX);
         o.minimum_network_reach =
             int("minimumNetworkReach", 0)?.map_or(o.minimum_network_reach, count);
         o.verify_timeout = int("verifyTimeout", 0)?.map_or(o.verify_timeout, Duration::from_millis);
@@ -139,10 +171,18 @@ impl P2pOptions {
         o.whitelist = list("whitelist")?.unwrap_or(o.whitelist);
         o.blacklist = list("blacklist")?.unwrap_or(o.blacklist);
         list("ntp")?;
-        for key in ["remoteAccess", "dns"] {
-            for entry in list(key)?.unwrap_or_default() {
-                ip(&entry, key)?;
-            }
+        o.remote_access = list("remoteAccess")?.unwrap_or(o.remote_access);
+        for entry in &o.remote_access {
+            ip(entry, "remoteAccess")?;
+        }
+        for entry in list("dns")?.unwrap_or_default() {
+            ip(&entry, "dns")?;
+        }
+        let reach = int("minimumDelegateReach", 0)?;
+        o.minimum_delegate_reach = reach.map(small).or(o.minimum_delegate_reach);
+        #[cfg(feature = "devnet")]
+        if let Some(devnet) = get("devnet") {
+            o.addressing = crate::devnet::from_options(devnet)?;
         }
         o.network_start = flag("networkStart")?.unwrap_or(o.network_start);
         o.disable_discovery = flag("disableDiscovery")?.unwrap_or(o.disable_discovery);
@@ -243,6 +283,60 @@ mod tests {
     }
 
     #[test]
+    fn the_server_options_are_read() {
+        let o = P2pOptions::from_json(&json!({
+            "server": {"hostname": "127.0.0.11", "banSeconds": "30"},
+            "remoteAccess": ["127.0.0.111", "10.0.0.0/8"],
+            "minimumDelegateReach": 27,
+        }))
+        .unwrap();
+        assert_eq!(o.host, "127.0.0.11".parse::<IpAddr>().unwrap());
+        assert_eq!(o.ban_seconds, 30);
+        assert_eq!(o.remote_access, ["127.0.0.111", "10.0.0.0/8"]);
+        assert_eq!(o.minimum_delegate_reach, Some(27));
+        let defaults = P2pOptions::default();
+        assert_eq!(defaults.host.to_string(), "0.0.0.0");
+        assert_eq!(
+            defaults.remote_access,
+            ["127.0.0.1", "::ffff:127.0.0.1", "::1"]
+        );
+        assert_eq!(
+            (defaults.ban_seconds, defaults.addressing),
+            (10, Addressing::Off)
+        );
+        let none = P2pOptions::from_json(&json!({"remoteAccess": []})).unwrap();
+        assert!(none.remote_access.is_empty());
+        let prefixed = json!({"server": {"hostname": "0.0.0.0/0"}});
+        assert_eq!(
+            P2pOptions::from_json(&prefixed).unwrap_err().key,
+            "server.hostname"
+        );
+    }
+
+    #[cfg(feature = "devnet")]
+    #[test]
+    fn a_devnet_node_reads_its_addressing() {
+        let alias = json!({"devnet": {"addressing": "alias", "address": "127.0.0.12"}});
+        let address = "127.0.0.12".parse().unwrap();
+        let o = P2pOptions::from_json(&alias).unwrap();
+        assert_eq!(o.addressing, Addressing::Alias { address });
+        assert_eq!(o.addressing.bind_address(), Some(address));
+        let off = P2pOptions::from_json(&json!({"devnet": {"addressing": "off"}})).unwrap();
+        assert_eq!(off.addressing, Addressing::Off);
+        for (devnet, key) in [
+            (json!({"addressing": "alias"}), "devnet.address"),
+            (
+                json!({"addressing": "alias", "address": "here"}),
+                "devnet.address",
+            ),
+            (json!({"addressing": "bridge"}), "devnet.addressing"),
+        ] {
+            let error = P2pOptions::from_json(&json!({ "devnet": devnet })).unwrap_err();
+            assert_eq!(error.key, key);
+        }
+    }
+
+    #[test]
     fn invalid_options_are_refused() {
         for (options, key) in [
             (json!({"server": {"port": 0}}), "server.port"),
@@ -261,6 +355,8 @@ mod tests {
             (json!({"whitelist": "*"}), "whitelist"),
             (json!({"blacklist": [""]}), "blacklist"),
             (json!({"dns": ["8.8.8.8", "dns.google"]}), "dns"),
+            (json!({"remoteAccess": ["localhost"]}), "remoteAccess"),
+            (json!({"minimumDelegateReach": -1}), "minimumDelegateReach"),
             (json!({"networkStart": "yes"}), "networkStart"),
             (
                 json!({"maxSameSubnetPeers": 9_007_199_254_740_992_u64}),

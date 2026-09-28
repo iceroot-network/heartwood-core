@@ -47,6 +47,13 @@
 //! - `forging`: a delegate's block from its inputs, and from a pool session's collation.
 //! - `forger_decide`: the forger's decisions in a slot, and the internal routes' bodies.
 //!
+//! With the peer-to-peer server:
+//!
+//! - `server`: the plugin chain's verdicts and the inbound rate limiter.
+//! - `relay_round`: the round and slot answers of the forger's internal routes.
+//! - `quorum`: the network state the forger reads.
+//! - `status_serve`: the served status.
+//!
 //! Most operations run under the devnet configuration the oracle was set up with, which the
 //! [`Devnet`] context carries; a case that brings its own milestone file runs under that file.
 
@@ -67,8 +74,12 @@ mod peer_rules;
 mod peers;
 mod pool;
 mod processor;
+mod quorum;
+mod relay_round;
+mod server;
 mod signatures;
 mod state;
+mod status_serve;
 mod text;
 mod transactions;
 mod verifier;
@@ -321,6 +332,10 @@ fn all_ops() -> impl Iterator<Item = &'static (&'static str, Run)> {
         .chain(config_app::OPS)
         .chain(forging::OPS)
         .chain(forger_decide::OPS)
+        .chain(server::OPS)
+        .chain(relay_round::OPS)
+        .chain(quorum::OPS)
+        .chain(status_serve::OPS)
 }
 
 /// Register every operation of [`all_ops`] in `registry`.

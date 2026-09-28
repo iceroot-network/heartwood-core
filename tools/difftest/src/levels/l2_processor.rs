@@ -796,7 +796,7 @@ impl JobRig {
                 self.chain.reset_last_downloaded();
             }
             JobEnd::Clear | JobEnd::ForkCheck(_) => self.chain.reset_last_downloaded(),
-            JobEnd::Broadcast(_) | JobEnd::Dropped => {}
+            JobEnd::Broadcast(..) | JobEnd::Dropped => {}
         }
         let value = job_value(&JobParts {
             blocks,
@@ -852,7 +852,7 @@ pub fn job_value(parts: &JobParts<'_>) -> Value {
     out.insert("results".into(), Value::Array(results));
     out.insert("committed".into(), json!(outcome.committed));
     let (end, block) = match &outcome.end {
-        JobEnd::Broadcast(b) => ("broadcast", Some(link(b.height(), b.id()))),
+        JobEnd::Broadcast(b, _) => ("broadcast", Some(link(b.height(), b.id()))),
         JobEnd::Fork(b) => ("fork", Some(link(b.height(), b.id()))),
         JobEnd::Clear => ("clear", None),
         JobEnd::ForkCheck(_) => ("forkCheck", None),
@@ -863,7 +863,7 @@ pub fn job_value(parts: &JobParts<'_>) -> Value {
     if let Some(block) = block {
         out.insert("block".into(), block);
     }
-    let broadcast = matches!(outcome.end, JobEnd::Broadcast(_))
+    let broadcast = matches!(outcome.end, JobEnd::Broadcast(..))
         && inputs.started
         && inputs.machine_state == "newBlock";
     out.insert("broadcast".into(), json!(broadcast));
@@ -1170,7 +1170,7 @@ fn slot_time_ms(header: &BlockHeader, milestones: &Milestones) -> i64 {
 
 fn end_name(end: &JobEnd) -> &'static str {
     match end {
-        JobEnd::Broadcast(_) => "broadcast",
+        JobEnd::Broadcast(..) => "broadcast",
         JobEnd::Fork(_) => "fork",
         JobEnd::Clear => "clear",
         JobEnd::ForkCheck(_) => "forkCheck",
@@ -2168,7 +2168,7 @@ mod tests {
             .map(|b| JobBlock::of(b.bytes.clone()))
             .collect();
         let accepted = [seen(&decoded[0], BlockProcessorResult::Accepted)];
-        let broadcast = JobEnd::Broadcast(Arc::new(decoded[0].clone()));
+        let broadcast = JobEnd::Broadcast(Arc::new(decoded[0].clone()), false);
         let at = |block: &JobBlock| slot_time_ms(&block.parts().unwrap().0, milestones);
         assert_eq!(
             stop_of(&blocks, &accepted, &broadcast, at(&blocks[0]), milestones),

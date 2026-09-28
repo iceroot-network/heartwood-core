@@ -395,6 +395,7 @@ fn download_plan(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         clock: Arc::new(ManualClock::new(0)) as Arc<dyn Clock>,
         sampler: sampler.clone(),
         runtime: runtime.handle().clone(),
+        attested: Arc::new(heartwood_p2p::NoAttestedKeys),
     }));
     let mut outputs = Vec::new();
     for call in calls {

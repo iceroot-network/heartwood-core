@@ -31,8 +31,7 @@ Usage:
   difftest run l0 DIR             compare golden vectors with Heartwood's implementations
   difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR]
                   [--regressions DIR] [--min-reach N] [ORACLE]
-                                  random and mutated cases of the properties (P1 to P17 and
-                                  P19, or
+                                  random and mutated cases of the properties (P1 to P19, or
                                   their names; all by default), one oracle call each; 256
                                   cases and seed 1 by default; DIR is a vector set with the
                                   genesis class [packages/crypto/tests/vectors]; the minimal
@@ -65,6 +64,10 @@ Usage:
                                   into a corpus; TEXT is the chain's public key-derivation
                                   seed, checked against the genesis block [the devnet
                                   tooling's default seed]
+  difftest corpus from-blocks FILE... --crypto DIR --out DIR [--seed TEXT]
+                                  join a Heartwood relay's block files (one per start, in
+                                  order) into a corpus of the chain whose crypto files are in
+                                  --crypto; TEXT is the chain's public key-derivation seed
   difftest corpus judge DIR [--restarts every|rounds] [--restart-plan FILE] [--to H]
                             [--dump H,...] [--processor] [ORACLE]
                                   run the oracle's judge on the corpus: its digest lines and
@@ -233,6 +236,17 @@ pub enum Command {
     CorpusImport {
         /// The archives, in chain order.
         archives: Vec<PathBuf>,
+        /// The corpus directory to write.
+        out: PathBuf,
+        /// The chain's public key-derivation seed.
+        seed: String,
+    },
+    /// `difftest corpus from-blocks`: a relay's block files to a corpus.
+    CorpusFromBlocks {
+        /// The block files, in start order.
+        blocks: Vec<PathBuf>,
+        /// The chain's crypto files.
+        crypto: PathBuf,
         /// The corpus directory to write.
         out: PathBuf,
         /// The chain's public key-derivation seed.
@@ -479,6 +493,7 @@ pub fn parse(args: &[String]) -> Result<Command> {
                 seed,
             })
         }
+        ["corpus", "from-blocks", rest @ ..] => parse_from_blocks(rest),
         ["corpus", "verify", dir] => Ok(Command::CorpusVerify { dir: dir.into() }),
         ["live", "check", dir] => Ok(Command::LiveCheck { dir: dir.into() }),
         ["api", "compare", rest @ ..] => parse_api_compare(rest),
@@ -838,6 +853,31 @@ fn parse_forge(args: &[&str]) -> Result<Command> {
     }))
 }
 
+/// `corpus from-blocks FILE... --crypto DIR --out DIR [--seed TEXT]`.
+fn parse_from_blocks(rest: &[&str]) -> Result<Command> {
+    let (mut blocks, mut crypto, mut out) = (Vec::new(), None, None);
+    let mut seed = crate::synthetic::DEVNET_SEED.to_string();
+    let mut it = rest.iter();
+    while let Some(&arg) = it.next() {
+        match arg {
+            "--crypto" => crypto = Some(PathBuf::from(value(arg, it.next())?)),
+            "--out" => out = Some(PathBuf::from(value(arg, it.next())?)),
+            "--seed" => seed = value(arg, it.next())?.to_string(),
+            flag if flag.starts_with("--") => return Err(usage(format!("unknown option {flag}"))),
+            file => blocks.push(PathBuf::from(file)),
+        }
+    }
+    if blocks.is_empty() {
+        return Err(usage("corpus from-blocks needs at least one block file"));
+    }
+    Ok(Command::CorpusFromBlocks {
+        blocks,
+        crypto: crypto.ok_or_else(|| usage("corpus from-blocks needs --crypto DIR"))?,
+        out: out.ok_or_else(|| usage("corpus from-blocks needs --out DIR"))?,
+        seed,
+    })
+}
+
 fn parse_forger_crash(args: &[&str]) -> Result<Command> {
     let (mut kills, mut seed) = (200, 1);
     let mut child = PathBuf::from("target/debug/forger-child");
@@ -1009,6 +1049,15 @@ mod tests {
             }
         );
         assert_eq!(
+            p("corpus from-blocks a b --crypto k --out c --seed s").unwrap(),
+            Command::CorpusFromBlocks {
+                blocks: vec!["a".into(), "b".into()],
+                crypto: "k".into(),
+                out: "c".into(),
+                seed: "s".into()
+            }
+        );
+        assert_eq!(
             p("corpus judge c --dump 5,7 --image i --restarts rounds --to 265").unwrap(),
             Command::CorpusJudge(JudgeArgs {
                 oracle: OracleArgs {
@@ -1170,7 +1219,7 @@ mod tests {
             "run l0",
             "run l2",
             "run l1 --cases 0",
-            "run l1 --property P18",
+            "run l1 --property P20",
             "run l1 --min-reach x",
             "run l2 c --processor --chunks 2",
             "api compare --left a --right b",
@@ -1178,6 +1227,8 @@ mod tests {
             "live check",
             "corpus import --out o",
             "corpus import a",
+            "corpus from-blocks a --out o",
+            "corpus from-blocks --crypto k --out o",
             "corpus judge c --dump x",
             "corpus judge c --restarts some",
             "corpus judge c --restarts every --restart-plan p",

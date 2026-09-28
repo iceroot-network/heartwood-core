@@ -36,7 +36,7 @@ fn heights(outcome: &JobOutcome, chain: &Chain) -> Vec<u32> {
 }
 
 fn broadcast(chain: &Chain, height: u32) -> JobEnd {
-    JobEnd::Broadcast(Arc::new(chain.block(height).clone()))
+    JobEnd::Broadcast(Arc::new(chain.block(height).clone()), false)
 }
 
 #[tokio::test]

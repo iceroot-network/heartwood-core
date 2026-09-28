@@ -618,10 +618,13 @@ name = "heartwood-core"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "futures-util",
  "heartwood-api",
  "heartwood-blockchain",
+ "heartwood-cli",
  "heartwood-crypto",
  "heartwood-database",
+ "heartwood-forger",
  "heartwood-kernel",
  "heartwood-logger",
  "heartwood-p2p",

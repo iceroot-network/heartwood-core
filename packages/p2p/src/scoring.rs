@@ -32,6 +32,8 @@ pub enum Violation {
     ForkHeader,
     /// A downloaded block that fails decoding, or a verification rule other than the timestamp.
     DownloadedBlock,
+    /// A request to this node's server that the route's codec refused.
+    RequestDecode,
 }
 
 impl Violation {

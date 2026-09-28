@@ -12,6 +12,9 @@
 //! `CORE_RESET_DATABASE` empties the store (the start is a first start) and the pool, and
 //! `CORE_RESET_POOL` empties the pool, at every start while they are set.
 
+pub mod forger;
+pub mod relay;
+
 use std::fmt::Display;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -225,6 +228,7 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
         }),
         observer: recorder(run, &milestones, first_start)?,
         broadcast: links.clone(),
+        own_keys: Arc::new(heartwood_p2p::NoAttestedKeys),
     })
     .map_err(component)?;
     let ended = stops.clone();
@@ -495,6 +499,7 @@ fn client(
         clock: Arc::clone(clock),
         sampler,
         runtime,
+        attested: Arc::new(heartwood_p2p::NoAttestedKeys),
     };
     Ok(Arc::new(NetworkMonitor::new(parts)))
 }

@@ -42,12 +42,28 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # TypeScript lines; the Rust reads every relay answer as typed, untrusted input and gives every
 # call a deadline), block assembly, the key file, the signing record and the attester 565 (the
 # record, the key file's permission check and the attester have no counterpart in the reference's
-# forger), and the options, seams, errors and crate root 520. With 2 lines left, further forger
-# work (the signing record's write off the runtime's thread, a fuller reproduction of the
-# reference's header sort) needs a new ceiling decision. The binaries under src/bin of
+# forger), and the options, seams, errors and crate root 520. The binaries under src/bin of
 # heartwood-forger and heartwood-cli are test seams (the crash test's child behind `difftest`, the
 # supervisor tests' child behind `test-child`), which no release build has: they are left out, as
 # tests/ is, and listed apart.
+# With the server side and the node's wiring:
+# - heartwood-forger goes from 2,100 to 2,200: its 2 lines of room cannot hold the signing record's
+#   write off the runtime's thread and the first round's height for the version floor check.
+# - heartwood-blockchain goes from 3,500 to 3,700: the node's side of its own forger (the lateness
+#   checks of a forger's block, the wake-up on request, the block ping, the queue's running state,
+#   the pool's collation and third processor, the node's own delegates) belongs to the service, as
+#   the reference keeps it in its blockchain package; the processor's ceiling is unchanged, and the
+#   forger's blocks are listed apart.
+# - heartwood-core goes from 2,000 to 3,000: the command tree of both roles, one file per command
+#   family, the forger's composition root and the server's wiring join the relay's configuration
+#   and composition root, and no line of it takes part in consensus.
+# - heartwood-p2p-wire keeps 3,200: the server's request checks are the server's plugin logic and
+#   live in heartwood-p2p's server, and the wire crate takes only the server-side inputs of the two
+#   response encoders that held values twice.
+# heartwood-p2p's server side is listed in two parts: the transport (the listener, the session, the
+# bans, the plugins, the limits, the request checks, the node's traits and a devnet node's
+# addressing) and the controllers with the forger's channel (the status, the attestation session,
+# the network state).
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"
@@ -59,16 +75,19 @@ CHECKS=(
     "heartwood-p2p-wire:packages/p2p-wire/src:3200"
     "heartwood-database:packages/database/src:3000"
     "heartwood-pool:packages/pool/src:2000"
-    "heartwood-blockchain:packages/blockchain/src:3500"
+    "heartwood-blockchain:packages/blockchain/src:3700"
     "heartwood-blockchain storage and restart:packages/blockchain/src/commit.rs packages/blockchain/src/rows.rs packages/blockchain/src/restore.rs packages/blockchain/src/milestones.rs packages/blockchain/src/online.rs:"
     "heartwood-blockchain processor:packages/blockchain/src/processor:1200"
+    "heartwood-blockchain forger's blocks:packages/blockchain/src/forger_blocks.rs:"
     "heartwood-blockchain runtime:packages/blockchain/src/node.rs packages/blockchain/src/process_blocks_job.rs packages/blockchain/src/queue.rs packages/blockchain/src/pool_task.rs packages/blockchain/src/events.rs packages/blockchain/src/options.rs packages/blockchain/src/blockchain.rs packages/blockchain/src/state_machine packages/blockchain/src/fork_recovery.rs packages/blockchain/src/chain_state.rs packages/blockchain/src/network.rs packages/blockchain/src/work.rs:"
     "heartwood-p2p:packages/p2p/src !packages/p2p/src/testing:8000"
     "heartwood-p2p client side:packages/p2p/src/nes packages/p2p/src/transport.rs packages/p2p/src/connector.rs packages/p2p/src/rate_limiter.rs packages/p2p/src/utils packages/p2p/src/peer.rs packages/p2p/src/repository.rs packages/p2p/src/communicator.rs packages/p2p/src/attestation.rs packages/p2p/src/processor.rs packages/p2p/src/scoring.rs packages/p2p/src/verifier.rs packages/p2p/src/nsect.rs packages/p2p/src/monitor.rs packages/p2p/src/chunk_cache.rs packages/p2p/src/download.rs packages/p2p/src/broadcaster.rs packages/p2p/src/seeds.rs packages/p2p/src/diversity.rs packages/p2p/src/options.rs packages/p2p/src/view.rs packages/p2p/src/seams.rs packages/p2p/src/errors.rs packages/p2p/src/lib.rs:"
+    "heartwood-p2p server transport:packages/p2p/src/server !packages/p2p/src/server/controllers packages/p2p/src/node_services.rs packages/p2p/src/devnet.rs:"
+    "heartwood-p2p server controllers and forger channel:packages/p2p/src/server/controllers packages/p2p/src/status_server.rs packages/p2p/src/attestation_session.rs packages/p2p/src/network_state.rs:"
     "heartwood-p2p test support (difftest only):packages/p2p/src/testing:"
     "heartwood-api:packages/api/src:5000"
-    "heartwood-core:packages/core/src:2000"
-    "heartwood-forger:packages/forger/src !packages/forger/src/bin:2100"
+    "heartwood-core:packages/core/src:3000"
+    "heartwood-forger:packages/forger/src !packages/forger/src/bin:2200"
     "heartwood-forger loop and relay client:packages/forger/src/forger_service.rs packages/forger/src/client.rs packages/forger/src/deadlines.rs:"
     "heartwood-forger forging, keys, record and attester:packages/forger/src/delegate.rs packages/forger/src/keys.rs packages/forger/src/signing_record.rs packages/forger/src/signer.rs packages/forger/src/attestation.rs:"
     "heartwood-forger test support (difftest only):packages/forger/src/bin:"

@@ -566,6 +566,7 @@ mod through_the_node {
             listener: Arc::new(NoListener),
             observer: None,
             broadcast: Arc::new(Silent),
+            own_keys: Arc::new(heartwood_p2p::NoAttestedKeys),
         })
         .unwrap();
         let network = FakeNetwork::default();

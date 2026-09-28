@@ -1,8 +1,9 @@
-//! The pool in the follower: two processors (the API's and the download's, each with its own
-//! cooldown), the forged transactions removed during a job, the online record expired at each
-//! round start, then the re-add when a milestone started, then the clean-up, after the job's
-//! commit; the re-add with its checks per drain, the removed blocks' transactions re-added in
-//! chain order, and the online record saved to the store.
+//! The pool in the follower: three processors (the API's, the download's and the peer-to-peer
+//! server's, each with its own cooldown), the collation for getUnconfirmedTransactions, the
+//! forged transactions removed during a job, the online record expired at each round start, then
+//! the re-add when a milestone started, then the clean-up, after the job's commit; the re-add
+//! with its checks per drain, the removed blocks' transactions re-added in chain order, and the
+//! online record saved to the store.
 //!
 //! Each processor broadcasts the transactions it admitted that pass the broadcast fee rule to
 //! every peer, as they were admitted (one that a later entry of the batch evicts included), so a
@@ -16,8 +17,9 @@
 //! rule finds nothing to remove, since every addition already keeps the pool within
 //! `maxTransactionsInPool`.
 
-use heartwood_crypto::{Milestones, Network, Params, Transaction};
+use heartwood_crypto::{Milestones, Network, Params, Transaction, TransactionId};
 use heartwood_kernel::Clock;
+use heartwood_p2p::node_services::Collation;
 use heartwood_pool::{
     DelegateVersions, Entry, Pool, PoolContext, PoolView, Processor, ProcessorResult, Readded,
     StorageError,
@@ -68,6 +70,7 @@ pub struct PoolTask {
     online: DelegateVersions,
     api: Processor,
     download: Processor,
+    p2p: Processor,
     /// A storage failure of a pool step during a job, which stops the node after it.
     failure: Option<StorageError>,
 }
@@ -75,13 +78,14 @@ pub struct PoolTask {
 impl PoolTask {
     /// The pool `pool` (opened, not yet re-added) with the restored online record `online`.
     pub fn new(pool: Pool, online: DelegateVersions) -> PoolTask {
-        let (api, download, failure) = (Processor::new(), Processor::new(), None);
+        let (api, download, p2p) = (Processor::new(), Processor::new(), Processor::new());
         PoolTask {
             pool,
             online,
             api,
             download,
-            failure,
+            p2p,
+            failure: None,
         }
     }
 
@@ -96,9 +100,23 @@ impl PoolTask {
         let processor = match channel {
             Channel::Api => &mut self.api,
             Channel::Download => &mut self.download,
+            Channel::P2p => &mut self.p2p,
         };
         let ctx = env.context(&self.online);
         processor.process_to_broadcast(&mut self.pool, &ctx, env.clock, entries)
+    }
+
+    /// The collator's candidates at the tip plus one, validated when `validate`, without the
+    /// transactions of `exclude`, with the pool's size; the transactions the collation found
+    /// invalid are removed from the pool, as the reference's collator removes them.
+    pub fn collate(
+        &mut self,
+        env: &PoolEnv<'_>,
+        validate: bool,
+        exclude: &[TransactionId],
+    ) -> Result<Collation, StorageError> {
+        let _ = (env, validate, exclude);
+        todo!("the collation on the node thread")
     }
 
     /// The pool steps after a job's commit: the online record's expiry at the start of each round

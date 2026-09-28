@@ -15,7 +15,8 @@
 //! - [`verifier`], [`exchange`] and [`monitor`]: the peer network's verifier, requests and
 //!   replies, and monitor decisions;
 //! - [`processor`]: the next block of a corpus prefix, mutated, for the block processor;
-//! - [`forging`] and [`forger_decide`]: forging from a pool session, and the forger's decisions.
+//! - [`forging`] and [`forger_decide`]: forging from a pool session, and the forger's decisions;
+//! - [`quorum`]: the network state a relay gives its forger.
 
 pub mod config;
 pub mod exchange;
@@ -25,6 +26,7 @@ pub mod kernel;
 pub mod monitor;
 pub mod pool;
 pub mod processor;
+pub mod quorum;
 pub mod state;
 pub mod text;
 pub mod transactions;

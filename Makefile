@@ -12,6 +12,8 @@
 #   make pool-bench     the cost of the pool's per-sender views and of the store's commit
 #   make l2-processor   the L2 chains through the processor and the job, as a relay imports them
 #   make relay-image live live-check api-compare   the relay on a devnet, and its comparisons
+#   make fuzz-server binary-tests devnet-smoke   the server's fuzz target, the binary's tests and
+#                       a forging devnet's smoke test
 #
 # Settings for this machine (SOLAR_REPO, LOCAL_SOLAR, TOOLCHAIN_ENV, ...) go in local.mk, which is
 # git-ignored, or on the command line: make e2e SOLAR_REPO=/path/to/solar-core-ref
@@ -45,10 +47,10 @@ GENERATOR_ARG := $(if $(DEVNET_GENERATOR),--devnet-generator '$(DEVNET_GENERATOR
 # classes, with their own MANIFEST.sha256, into packages/<crate>/tests/vectors.
 VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12,V19,V22 kernel=V09-rounds,V16,V23,V28 \
                  logger=V20 pool=V21 state=V08,V09-shuffle,V15,V18 transactions=V17 p2p-wire=V13,V24,V29 \
-                 p2p=V25,V26 blockchain=V27 api=V28 forger=V29
-# L1: cases per property, the generator's seed, the properties (P1 to P17 and P19 or their names,
-# comma separated; all when empty); L1_MIN_REACH, how often P13 must reach each reachable result of
-# the processor and each unchained status (when empty: 20 from 1,000 cases per property, else none).
+                 p2p=V25,V26,V30,V31 blockchain=V27 api=V28 forger=V29
+# L1: cases per property, the generator's seed, the properties (P1 to P19 or their names, comma
+# separated; all when empty); L1_MIN_REACH, how often P13 must reach each reachable result of the
+# processor and each unchained status (when empty: 20 from 1,000 cases per property, else none).
 L1_CASES      ?= 256
 L1_SEED       ?= 1
 L1_PROPERTY   ?=
@@ -470,11 +472,13 @@ replay-p2p: build ## the reply_check and listed_block corpora through the oracle
 # ---- the relay: the processor, the runtime, the API and the node process ----
 # The live runs are orchestrated by the maintainers' devnet tooling, a separate tool that is not
 # published: LIVE_RECIPE (run, steps, archives and the API corpus at the pause, for RUN=r, h, m1 or
-# m2), RELAY_IMAGE_RECIPE (the relay's container image from a binary) and LIVE_RESULTS (the run
-# directories) are set in local.mk. The comparisons of a run are the harness's (live check, api
+# m2), DEVNET_RECIPE (the runs of a forging devnet: t, a reference devnet, and m and f, devnets of
+# this tree's release binary on loopback addresses), RELAY_IMAGE_RECIPE (the relay's container
+# image from a binary) and LIVE_RESULTS (the run directories) are set in local.mk. The comparisons of a run are the harness's (live check, api
 # compare). CHUNKS names one job cut of l2-processor (reference or 1; both when empty); LEFT and
 # RIGHT are two nodes' API URLs for a direct api-compare.
 LIVE_RECIPE        ?=
+DEVNET_RECIPE      ?=
 RELAY_IMAGE_RECIPE ?=
 LIVE_RESULTS       ?=
 RUN                ?=
@@ -482,8 +486,11 @@ CHUNKS             ?=
 LEFT               ?=
 RIGHT              ?=
 API_COMPARE_OUT    ?= target/api-compare
-need-live = $(if $(LIVE_RECIPE),,$(error set LIVE_RECIPE, the devnet tooling's live recipe, in local.mk))
-need-run = $(if $(RUN),,$(error set RUN, the live run: r, h, m1 or m2))
+# The runs of a forging devnet, which DEVNET_RECIPE runs.
+DEVNET_RUNS        := t m f
+recipe-of-run = $(if $(filter $(DEVNET_RUNS),$(RUN)),$(DEVNET_RECIPE),$(LIVE_RECIPE))
+need-live = $(if $(recipe-of-run),,$(error set $(if $(filter $(DEVNET_RUNS),$(RUN)),DEVNET_RECIPE,LIVE_RECIPE), the devnet tooling's recipe, in local.mk))
+need-run = $(if $(RUN),,$(error set RUN, the live run: r, h, m1, m2, t, m or f))
 need-results = $(if $(LIVE_RESULTS),,$(error set LIVE_RESULTS, the live runs' directory, in local.mk))
 
 l2-processor: build ## replay CORPUS/NAME through the processor and the job against the judge's lines (TO, CHUNKS)
@@ -498,15 +505,16 @@ relay-image: relay-binary ## the relay's release binary and its devnet image (RE
 	$(if $(RELAY_IMAGE_RECIPE),,$(error set RELAY_IMAGE_RECIPE, the devnet tooling's image recipe, in local.mk))
 	$(RELAY_IMAGE_RECIPE) $(CURDIR)/target/release/heartwood
 
-# A run with a Heartwood relay (every run but r) tests this tree's release binary: live builds it
-# and its image first, and live-check and api-compare build it again (nothing to do when the tree
-# is unchanged), so that a run of another build fails their check that it is this tree's relay.
-relay-of-run = $(if $(filter-out r,$(RUN)),$(1))
+# A run with a Heartwood relay (every run but r and t) tests this tree's release binary: live
+# builds it (and, for a run in Docker, its image) first, and live-check and api-compare build it
+# again (nothing to do when the tree is unchanged), so that a run of another build fails their
+# check that it is this tree's relay.
+relay-of-run = $(if $(filter-out r t,$(RUN)),$(1))
 
-live: $(call relay-of-run,relay-image) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2, LIVE_RECIPE)
-	$(need-live)
+live: $(if $(filter m f,$(RUN)),relay-binary,$(call relay-of-run,relay-image)) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2 with LIVE_RECIPE, t|m|f with DEVNET_RECIPE)
 	$(need-run)
-	$(LIVE_RECIPE) $(RUN) $(CURDIR)
+	$(need-live)
+	$(recipe-of-run) $(RUN) $(CURDIR)
 
 live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS)
 	$(need-run)
@@ -605,3 +613,32 @@ fuzz-forger: ## the forger's fuzz targets at once, FUZZ_SECONDS each (nightly an
 	done; \
 	exit $$fail
 # ---- end of heartwood-forger and heartwood-cli ----
+
+# ---- the peer-to-peer server, the node's wiring and the forging devnet ----
+# The server's session target runs on a corpus of its own (git-ignored), with the wire targets'
+# libFuzzer options. The binary's tests start relays, forgers and supervisors as processes; the
+# devnet smoke test (marked `devnet`) runs a 1-node devnet for 20 blocks, then a 5-node one for a
+# round, on the loopback addresses of DEVNET_PREFIX.
+SERVER_FUZZ   := nes_server_session
+SERVER_LOGS   ?= target/server-fuzz
+DEVNET_PREFIX ?= 127.10.0
+
+.PHONY: fuzz-server binary-tests devnet-smoke
+
+fuzz-server: ## the server's fuzz target, FUZZ_SECONDS (nightly and cargo-fuzz); logs in SERVER_LOGS
+	$(TOOLCHAIN) && cargo +nightly fuzz build $(SERVER_FUZZ)
+	@$(TOOLCHAIN) && mkdir -p $(SERVER_LOGS) $(FUZZ_CORPUS)/$(SERVER_FUZZ) && \
+	echo "fuzz-server: $(SERVER_FUZZ) running for $(FUZZ_SECONDS) s, $(FUZZ_FORK) jobs; logs in $(SERVER_LOGS)" && \
+	fail=0; cargo +nightly fuzz run $(SERVER_FUZZ) -- $(WIRE_LIBFUZZER) > $(SERVER_LOGS)/$(SERVER_FUZZ).log 2>&1 || fail=1; \
+	last=$$(grep -E '^#[0-9]+: cov: ' $(SERVER_LOGS)/$(SERVER_FUZZ).log | tail -n 1); \
+	echo "fuzz-server: $(SERVER_FUZZ): $${last:-no status line}"; \
+	case "$$last" in *'oom/timeout/crash: 0/0/0 '*) ;; *) fail=1 ;; esac; \
+	exit $$fail
+
+binary-tests: build ## the heartwood binary's tests, the slow ones too
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-core --all-features --tests -- --include-ignored
+
+devnet-smoke: build ## a forging devnet of this tree's binary: 1 node for 20 blocks, then 5 nodes for a round
+	$(TOOLCHAIN) && HEARTWOOD_DEVNET_PREFIX=$(DEVNET_PREFIX) cargo test --locked -p heartwood-core --all-features \
+	    --test devnet_smoke -- --ignored
+# ---- end of the peer-to-peer server, the node's wiring and the forging devnet ----

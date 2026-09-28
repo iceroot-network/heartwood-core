@@ -841,6 +841,7 @@ pub fn run(
             Some(server) => {
                 results.extend(crate::synthetic::run(corpus, server)?);
                 results.extend(crate::synthetic_pool::run(corpus, server)?);
+                results.extend(crate::synthetic_forger::run(corpus, server)?);
             }
             None => return Err(Error::Usage("the synthetic cases need the oracle".into())),
         }

@@ -17,7 +17,7 @@
 //! - [`report`]: outcomes and the text report.
 //! - [`replay`]: a corpus of inputs (a fuzz corpus) through the oracle and Heartwood.
 //! - [`corpus`]: the chains that L2 replays: import from devnet archives, the corpus directory,
-//!   and revert plans.
+//!   and revert plans; [`corpus_from_blocks`]: a corpus from a Heartwood relay's block files.
 //! - [`digests`]: the state digest files of L2 replays, and their comparison.
 //! - [`synthetic`]: blocks built on top of a corpus chain for the synthetic L2 cases.
 //! - [`synthetic_pool`]: the synthetic pool cases on a corpus chain's tip.
@@ -25,6 +25,7 @@
 //! - [`store`]: a corpus replayed through Heartwood's store, its store anchors, and the kill
 //!   test.
 //! - [`synthetic_processor`]: the synthetic processor and fork cases on a corpus chain.
+//! - [`synthetic_forger`]: the synthetic cases of a node's own forger's blocks on a corpus chain.
 //! - [`runtime_kill`]: the kill test through the full runtime of a relay.
 //! - [`api`]: the route corpus, its projections and `difftest api compare`.
 //! - [`live`]: `difftest live check`, the comparisons of a live run on a devnet.
@@ -39,6 +40,7 @@ pub mod api;
 pub mod cli;
 pub mod compare;
 pub mod corpus;
+pub mod corpus_from_blocks;
 pub mod digests;
 pub mod errors;
 pub mod fixture;
@@ -57,6 +59,7 @@ pub mod strategies;
 pub mod subject;
 pub mod subjects;
 pub mod synthetic;
+pub mod synthetic_forger;
 pub mod synthetic_pool;
 pub mod synthetic_processor;
 pub mod vectors;

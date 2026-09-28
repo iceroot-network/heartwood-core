@@ -1,12 +1,13 @@
 //! The node thread: it alone holds the state, the store, the pool and the online record.
 //!
 //! Every change runs here, in the order the work arrives ([`crate::work::Work`]): jobs, pool
-//! entries, the queue's drain, block removals, the online record's changes, and the stop. After
-//! each commit the thread runs the pool's steps (the expiry of the online record at each round
-//! start, a re-add when a milestone starts, and the clean-up), publishes the new snapshots (the
-//! state, the pool, the chain status) through `watch` channels, and tells its listener, never
-//! between two blocks of a job. Network and API tasks send it work through a [`NodeHandle`] and
-//! read the snapshots; nothing else reads or writes the state or the store.
+//! entries, the pool's collations, the queue's drain, block removals, the online record's
+//! changes, and the stop. After each commit the thread runs the pool's steps (the expiry of the
+//! online record at each round start, a re-add when a milestone starts, and the clean-up),
+//! publishes the new snapshots (the state, the pool, the chain status) through `watch` channels,
+//! and tells its listener, never between two blocks of a job. Network and API tasks send it work
+//! through a [`NodeHandle`] and read the snapshots; nothing else reads or writes the state or the
+//! store.
 //!
 //! A job locks the shared chain state for one block at a time, so the service's actions and the
 //! network's reads come between two blocks, and see the tip as it moves. A fatal error ([`NodeError`]) ends the thread at once: the work it was
@@ -35,7 +36,7 @@ use crate::options::BlockchainOptions;
 use crate::pool_task::{PoolEnv, PoolTask, TransactionBroadcast};
 use crate::process_blocks_job::{JobContext, run_job};
 use crate::processor::BlockProcess;
-use crate::work::{ChainStatus, Job, JobOutcome, NodeHandle, Work};
+use crate::work::{ChainStatus, Job, JobOutcome, NodeHandle, OwnKeys, Work};
 
 /// What the node thread is made of.
 pub struct NodeParts {
@@ -67,6 +68,9 @@ pub struct NodeParts {
     pub observer: Option<Box<dyn CommitObserver>>,
     /// Where admitted transactions are broadcast.
     pub broadcast: Arc<dyn TransactionBroadcast>,
+    /// The delegates on this node, whose own version the online record takes at each round start
+    /// and at the sync's end, before each expiry.
+    pub own_keys: Arc<dyn OwnKeys>,
 }
 
 /// The node thread.
@@ -199,6 +203,15 @@ impl NodeThread {
                 let removed = self.remove_blocks(count);
                 let _ = answer.send(removed.clone());
                 removed?;
+            }
+            Work::Collate {
+                validate,
+                exclude,
+                reply,
+            } => {
+                let collation = parts.pool.collate(&env!(parts), validate, &exclude)?;
+                publish_pool(&parts.pool, &publish.pool);
+                let _ = reply.send(collation);
             }
             Work::Online(change) => {
                 parts.pool.online(change);

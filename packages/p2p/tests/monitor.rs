@@ -568,6 +568,7 @@ fn net_with(options: P2pOptions, sampler: Sampler, adds: bool, height: u32) -> N
         clock: Arc::clone(&clock) as Arc<dyn heartwood_kernel::Clock>,
         sampler,
         runtime: tokio::runtime::Handle::current(),
+        attested: Arc::new(heartwood_p2p::NoAttestedKeys),
     }));
     Net {
         monitor,
@@ -1543,6 +1544,23 @@ fn a_downloaded_block_is_rebuilt_with_the_ids_of_its_canonical_bytes() {
 }
 
 #[test]
+fn a_posted_block_is_rebuilt_from_its_downloaded_form() {
+    let milestones = milestones();
+    let params = milestones.at(3).clone();
+    let made = block(3, vec![transfer(1, &params)], &milestones);
+    let posted = DownloadedBlock::from_block(&made, ip(9));
+    assert_eq!((posted.ip, posted.height()), (ip(9), 3));
+    assert_eq!(posted.header.header.id, Some(made.id().to_hex()));
+    assert_eq!(posted.header.header.version, Some(0));
+    let rebuilt = to_block(&posted, &milestones).unwrap();
+    assert_eq!(rebuilt.id(), made.id());
+    assert_eq!(rebuilt.encode(), made.encode());
+    let empty = block(4, Vec::new(), &milestones);
+    let rebuilt = to_block(&DownloadedBlock::from_block(&empty, ip(9)), &milestones).unwrap();
+    assert_eq!(rebuilt.encode(), empty.encode());
+}
+
+#[test]
 fn the_header_is_written_as_the_reference_writes_it() {
     let milestones = milestones();
     let params = milestones.at(3).clone();
@@ -1795,6 +1813,7 @@ mod with_the_real_client {
             clock,
             sampler: Sampler::from_os().unwrap(),
             runtime: tokio::runtime::Handle::current(),
+            attested: Arc::new(heartwood_p2p::NoAttestedKeys),
         }));
         let forced = CleanseOptions {
             fast: true,

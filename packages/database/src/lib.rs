@@ -60,6 +60,7 @@ pub use crate::blocks::{BlockRow, StoredBlock};
 pub use crate::connection::{Chunk, Database, SCHEMA_VERSION, Savepoint, Settings};
 pub use crate::errors::DatabaseError;
 pub use crate::filters::{Numeric, TransactionCriteria, TransactionFilter};
+pub use crate::history::download::DownloadBlockRow;
 pub use crate::history::{BlockSelector, Direction, Listing, Order, Page, TransactionRecord};
 pub use crate::integrity::{IntegrityProblem, IntegrityReport};
 pub use crate::meta::{ChainMeta, MilestoneEntryRow};

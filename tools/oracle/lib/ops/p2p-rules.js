@@ -25,12 +25,14 @@
 //                         `configured` and the network's name
 //   peer.sameSubnet       {ip, peers} -> {same}: the addresses of `peers` that
 //                         getSameSubnetPeers (peer-repository.ts) returns for `ip`
-//   ratelimit.run         {limiter: {rateLimit, rateLimitPostTransactions}, events: [{t, ip,
-//                         route, op}]} -> {answers}: the outgoing limiter (buildRateLimiter with
-//                         isOutgoing), each event at `t` milliseconds on a clock the operation
-//                         drives, with the storage's expiry timers fired when they are due; op
-//                         is consume ("ok" or "exceeded"), wouldThrottle (a boolean) or throttle,
-//                         the communicator's step ("wait", or "sent" after consuming)
+//   ratelimit.run         {limiter: {rateLimit, rateLimitPostTransactions, inbound?,
+//                         remoteAccess?}, events: [{t, ip, route, op}]} -> {answers}: the
+//                         outgoing limiter (buildRateLimiter with isOutgoing), or with `inbound`
+//                         the server's (its rate-limit plugin's table, `remoteAccess` exempt),
+//                         each event at `t` milliseconds on a clock the operation drives, with
+//                         the storage's expiry timers fired when they are due; op is consume
+//                         ("ok" or "exceeded"), wouldThrottle (a boolean) or throttle, the
+//                         communicator's step ("wait", or "sent" after consuming)
 // Loaded by lib/ops.js.
 //
 // Payload JSON. Bytes (a block, transactions) are hex; everything else is as the client writes
@@ -307,9 +309,9 @@ module.exports = function p2pRulesOps({ solar, cm, atHeight, withConfig, hexBuff
         "ratelimit.run": async ({ limiter, events }) =>
             withClock(async (advance) => {
                 const outgoing = ref().buildRateLimiter({
-                    isOutgoing: true,
+                    isOutgoing: !limiter.inbound,
                     whitelist: [],
-                    remoteAccess: [],
+                    remoteAccess: limiter.inbound ? limiter.remoteAccess || [] : [],
                     rateLimit: limiter.rateLimit,
                     rateLimitPostTransactions: limiter.rateLimitPostTransactions,
                 });

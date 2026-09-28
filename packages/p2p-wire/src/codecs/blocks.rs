@@ -35,6 +35,40 @@ pub struct ListedBlock {
     pub transactions: Vec<Vec<u8>>,
 }
 
+/// What the server writes for one block of a getBlocks response: each value once, as the store
+/// gives the block. The genesis block has no previous block.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BlockListing {
+    /// The block id, in hex.
+    pub id: String,
+    /// The block version.
+    pub version: u32,
+    /// Seconds since the network epoch.
+    pub timestamp: u32,
+    /// The previous block's id, in hex; none for the genesis block.
+    pub previous_block: Option<String>,
+    /// The height.
+    pub height: u32,
+    /// The number of transactions.
+    pub number_of_transactions: u32,
+    /// The sum of the transactions' amounts.
+    pub total_amount: Amount,
+    /// The sum of the transactions' fees.
+    pub total_fee: Amount,
+    /// The block reward.
+    pub reward: Amount,
+    /// The payload length.
+    pub payload_length: u32,
+    /// The payload hash, in hex.
+    pub payload_hash: String,
+    /// The generator's public key, in hex.
+    pub generator_public_key: String,
+    /// The block signature, in hex.
+    pub block_signature: String,
+    /// The serialised transactions; empty for a block sent without them.
+    pub transactions: Vec<Vec<u8>>,
+}
+
 /// The getBlocks request: the message.
 pub fn get_blocks_encode_request(request: &GetBlocksRequest) -> Vec<u8> {
     request.encode()
@@ -129,4 +163,11 @@ pub fn post_block_encode_response(response: &PostBlockResponse) -> Vec<u8> {
 /// The postBlock response: the message as decoded.
 pub fn post_block_decode_response(bytes: &[u8]) -> Result<PostBlockResponse, DecodeError> {
     PostBlockResponse::decode(bytes)
+}
+
+/// The getBlocks response as the server writes it from `blocks`: the bytes that
+/// [`get_blocks_encode_response`] writes for the same blocks.
+pub fn get_blocks_encode_listing(blocks: &[BlockListing]) -> Vec<u8> {
+    let _ = blocks;
+    todo!("the getBlocks response from the server's listings")
 }

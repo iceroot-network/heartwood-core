@@ -1,17 +1,21 @@
-//! `heartwood-core`: the `heartwood` binary's library, a relay's process.
+//! `heartwood-core`: the `heartwood` binary's library, a relay's and a forger's process.
 //!
-//! - [`cli`]: the command line.
+//! - [`cli`]: the command line of `relay run`; [`commands`]: the command tree, one module per
+//!   family.
 //! - [`config`]: the relay's configuration, read before anything starts; [`options`]: the
 //!   components' options the relay reads itself.
-//! - [`app`]: the relay's composition root; [`views`]: the node as the peer-to-peer client and the
-//!   API read it; [`network`]: the network monitor as the blockchain service calls it.
+//! - [`app`]: the relay's composition root, with its P2P server ([`app::relay`]), and the
+//!   forger's ([`app::forger`]); [`views`]: the node as the peer-to-peer client and the API read
+//!   it; [`node_services`]: the node as the peer-to-peer server reads it; [`network`]: the network
+//!   monitor as the blockchain service calls it.
 //! - [`lock`]: the process lock.
 //! - [`signals`]: the signals and the graceful shutdown.
 //! - `harness` (feature `difftest`): the harness's digest and block files and its seed.
 //!
-//! Features: `difftest` adds the harness's flags of `relay run` (a digest line per state change,
-//! the applied blocks' bytes, and one seed that skips the address rules), test seams that only the
-//! harness's builds enable; a release build never has them.
+//! Features: `devnet` (on by default) adds the `devnet` commands and a devnet node's addressing.
+//! `difftest` adds the harness's flags of `relay run` (a digest line per state change, the applied
+//! blocks' bytes, and one seed that skips the address rules), test seams that only the harness's
+//! builds enable; a release build never has them.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -27,11 +31,13 @@
 
 pub mod app;
 pub mod cli;
+pub mod commands;
 pub mod config;
 #[cfg(feature = "difftest")]
 pub mod harness;
 pub mod lock;
 pub mod network;
+pub mod node_services;
 pub mod options;
 pub mod signals;
 pub mod views;
@@ -43,7 +49,12 @@ pub const VERSION: &str = concat!("4.3.1-heartwood.", env!("CARGO_PKG_VERSION"))
 
 /// Run `command`; the process's exit status.
 pub fn run(command: cli::Command) -> ExitCode {
-    match app::run_relay(command.relay_run()) {
+    exit(app::run_relay(command.relay_run()))
+}
+
+/// The exit status of a command's `result`: 0, or 1 with the error printed.
+pub fn exit<E: std::fmt::Display>(result: Result<(), E>) -> ExitCode {
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");

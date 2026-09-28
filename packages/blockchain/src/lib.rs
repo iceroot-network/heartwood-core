@@ -29,7 +29,8 @@
 //!   listeners.
 //! - [`queue`]: the serial job queue.
 //! - [`blockchain`]: the blockchain service; [`state_machine`]: the reference's machine and its
-//!   actions; [`fork_recovery`]: the recovery's depth.
+//!   actions; [`fork_recovery`]: the recovery's depth; [`forger_blocks`]: the lateness checks of
+//!   the node's own forger's blocks.
 //! - [`chain_state`]: what the reference keeps in its state store besides the state.
 //! - [`network`]: the network monitor's calls, as the [`Network`] trait.
 //! - [`options`]: the blockchain options.
@@ -64,6 +65,7 @@ pub mod chain_state;
 pub mod commit;
 pub mod errors;
 pub mod events;
+pub mod forger_blocks;
 pub mod fork_recovery;
 pub mod milestones;
 pub mod network;
@@ -96,5 +98,6 @@ pub use crate::processor::{
 pub use crate::queue::JobQueue;
 pub use crate::restore::{ReplayReason, RestoreMode, RestorePath, Restored, restore};
 pub use crate::work::{
-    ChainStatus, Channel, IncomingBlock, Job, JobEnd, JobOutcome, NodeHandle, OnlineWork, Work,
+    ChainStatus, Channel, IncomingBlock, Job, JobEnd, JobOutcome, NodeHandle, OnlineWork, OwnKeys,
+    Work,
 };

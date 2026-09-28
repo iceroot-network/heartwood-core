@@ -85,6 +85,12 @@ CLASSES.push(["V27-processor", require("./lib/vectors/chain-process")], ["V28-no
 // The forger (heartwood-forger and the wire's internal bodies); its builders return null while
 // they have no records, and the class is then not written.
 CLASSES.push(["V29-forging", require("./lib/vectors/forging")]);
+// The relay's side of its forger and the peer-to-peer server (heartwood-p2p); their builders
+// return null while they have no records, and the class is then not written.
+CLASSES.push(
+    ["V30-relay-forger", require("./lib/vectors/relay").relayForger],
+    ["V31-server", require("./lib/vectors/serving")],
+);
 
 function parseArgs(argv) {
     const opts = {

@@ -98,8 +98,12 @@ num-bigint = "0.5"
 hex = "0.4"
 proptest = "1.11"
 
+# A panic ends the process in a release build, so no task goes on in a node that is half alive: the
+# supervisor restarts it, and one SQLite transaction per job keeps the store whole. Tests and fuzzing
+# keep unwinding.
 [profile.release]
 overflow-checks = true
+panic = "abort"
 
 [profile.release.package."*"]
 overflow-checks = false

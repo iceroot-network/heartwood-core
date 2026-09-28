@@ -142,7 +142,7 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
         clear_queue |= processed.unchained.is_some();
         results.push((*block.id(), processed.result));
         last_result = Some(processed.result);
-        last_processed = Some(Arc::clone(&block));
+        last_processed = Some((Arc::clone(&block), incoming.from_forger));
         match (processed.result, processed.applied) {
             (Accepted, Some(applied)) => {
                 chunk.applied(ctx.state, &block, &applied, ctx.milestones)?;
@@ -175,7 +175,7 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
     }
     let broadcast = matches!(last_result, Some(Accepted | DiscardedButCanBeBroadcasted));
     let end = match (last_processed, fork) {
-        (Some(block), _) if broadcast => JobEnd::Broadcast(block),
+        (Some((block, from_forger)), _) if broadcast => JobEnd::Broadcast(block, from_forger),
         (_, Some(block)) => JobEnd::Fork(block),
         _ => JobEnd::Clear,
     };

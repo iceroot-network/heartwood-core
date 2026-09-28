@@ -338,6 +338,7 @@ impl TestNode {
             listener: events.clone(),
             observer: Some(Box::new(observed.clone())),
             broadcast: broadcasts.clone(),
+            own_keys: Arc::new(heartwood_p2p::NoAttestedKeys),
         };
         let (node, handle) = Node::spawn(parts).unwrap();
         *lock(&processor.published) = Some(handle.state());

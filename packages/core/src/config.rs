@@ -79,7 +79,7 @@ impl Package {
             Package::State => ("state", &["maxSavedStates", "maxSavedStateAge", "savedStatesPath", "storage", "walletSync"]),
             Package::Transactions => ("transactions", &[]),
             Package::Pool => ("pool", &["enabled", "storage", "maxTransactionsInPool", "maxTransactionsPerSender", "allowedSenders", "maxTransactionsPerRequest", "maxTransactionAge", "maxTransactionBytes", "dynamicFees", "workerPool"]),
-            Package::P2p => ("p2p", &["server", "minimumVersions", "minimumNetworkReach", "verifyTimeout", "getBlocksTimeout", "maxSameSubnetPeers", "maxPeerSequentialErrors", "whitelist", "blacklist", "remoteAccess", "dns", "ntp", "rateLimit", "rateLimitPostTransactions", "networkStart", "disableDiscovery", "skipDiscovery", "ignoreMinimumNetworkReach"]),
+            Package::P2p => ("p2p", &["server", "minimumVersions", "minimumNetworkReach", "verifyTimeout", "getBlocksTimeout", "maxSameSubnetPeers", "maxPeerSequentialErrors", "whitelist", "blacklist", "remoteAccess", "dns", "ntp", "rateLimit", "rateLimitPostTransactions", "networkStart", "disableDiscovery", "skipDiscovery", "ignoreMinimumNetworkReach", "minimumDelegateReach"]),
             Package::Blockchain => ("blockchain", &["databaseRollback", "missedBlocksLookback", "networkStart"]),
             Package::Api => ("api", &["server", "plugins", "options", "ws"]),
             Package::Logger => ("logger", &["emojify", "levels", "fileRotator"]),
@@ -198,9 +198,12 @@ impl RelayConfig {
                 ))
             })?;
             let known = package.describe().1;
+            // A devnet node's addressing is a p2p option of the devnet commands' own.
+            let devnet =
+                |key: &str| cfg!(feature = "devnet") && package == Package::P2p && key == "devnet";
             for key in plugin.options.as_object().into_iter().flat_map(Map::keys) {
                 // The state's options are the reference's saved states, caches and wallet table.
-                let what = match known.contains(&key.as_str()) {
+                let what = match known.contains(&key.as_str()) || devnet(key) {
                     false => "is not known and is not read",
                     true if package == Package::State => "is not read by this relay",
                     true => continue,

@@ -539,10 +539,10 @@ impl FakeNode {
                         chain.last_accepted_ms = Some(self.clock.now_ms());
                     }
                     chain.last_stored_height = height;
-                    end = JobEnd::Broadcast(known);
+                    end = JobEnd::Broadcast(known, false);
                 }
                 BlockProcessorResult::DiscardedButCanBeBroadcasted => {
-                    end = JobEnd::Broadcast(known);
+                    end = JobEnd::Broadcast(known, false);
                     break;
                 }
                 BlockProcessorResult::Rollback => {
@@ -605,6 +605,10 @@ impl FakeNode {
                     }
                     Work::Online(OnlineWork::Set { round, .. }) => {
                         self.record(format!("set {round}"));
+                    }
+                    Work::Collate { reply, .. } => {
+                        self.record("collate".into());
+                        let _ = reply.send(Default::default());
                     }
                     Work::Stop(answer) => {
                         self.record("stop".into());

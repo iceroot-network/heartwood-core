@@ -44,6 +44,7 @@ use crate::communicator::BlocksRequest;
 use crate::diversity::{Sampler, round_robin};
 use crate::download::DownloadedBlock;
 use crate::errors::{DownloadError, SeedError};
+use crate::node_services::AttestedKeys;
 use crate::options::P2pOptions;
 use crate::peer::{Peer, SharedPeer, Verification};
 use crate::processor::AcceptOptions;
@@ -179,6 +180,8 @@ pub struct MonitorParts<C, A, R> {
     /// The runtime the background work runs on (the network status, the cleanse's pings, the
     /// port probes, `pingAll`), so the monitor's methods can be called from any thread.
     pub runtime: tokio::runtime::Handle,
+    /// The delegates on this node, which the fork health check counts as a local peer.
+    pub attested: Arc<dyn AttestedKeys>,
 }
 
 /// How discovery accepts a candidate.

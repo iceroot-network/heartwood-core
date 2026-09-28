@@ -30,7 +30,7 @@ use crate::oracle::OracleServer;
 use crate::report::{CaseResult, Outcome, Report};
 use crate::strategies::transactions::{TxContext, fee_cases, handler_cases};
 use crate::strategies::{
-    exchange, fixtures, forger_decide, forging, kernel, monitor, state, verifier,
+    exchange, fixtures, forger_decide, forging, kernel, monitor, quorum, state, verifier,
 };
 use crate::subject::{Case, Registry};
 use crate::vectors::Expected;
@@ -72,13 +72,15 @@ pub enum Property {
     Monitor,
     /// Forging from a pool session (`forger.collateAndForge`).
     Forging,
+    /// The network state a relay gives its forger (`quorum.analyze`).
+    Quorum,
     /// The forger's decisions in a slot (`forger.decide`).
     Decisions,
 }
 
 impl Property {
     /// Every property.
-    pub const ALL: [Property; 18] = [
+    pub const ALL: [Property; 19] = [
         Property::FeeFloor,
         Property::Rounds,
         Property::Slots,
@@ -96,6 +98,7 @@ impl Property {
         Property::Exchange,
         Property::Monitor,
         Property::Forging,
+        Property::Quorum,
         Property::Decisions,
     ];
 
@@ -119,11 +122,12 @@ impl Property {
             Property::Exchange => "exchange",
             Property::Monitor => "monitor",
             Property::Forging => "forging",
+            Property::Quorum => "quorum",
             Property::Decisions => "decisions",
         }
     }
 
-    /// The property's short name (P1 to P17, P19), which the command line accepts too.
+    /// The property's short name (P1 to P19), which the command line accepts too.
     pub const fn number(self) -> &'static str {
         match self {
             Property::FeeFloor => "P1",
@@ -143,6 +147,7 @@ impl Property {
             Property::Exchange => "P15",
             Property::Monitor => "P16",
             Property::Forging => "P17",
+            Property::Quorum => "P18",
             Property::Decisions => "P19",
         }
     }
@@ -255,15 +260,15 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
         Property::Forging => forging::forging_cases(context)
             .prop_map(L1Case::plain)
             .boxed(),
+        Property::Quorum => quorum::quorum_cases(context)
+            .prop_map(L1Case::plain)
+            .boxed(),
         Property::Decisions => forger_decide::decision_cases(context)
             .prop_map(L1Case::plain)
             .boxed(),
     }
 }
 
-/// The outcomes of the reference in a pool session's answer, counted: each error code, an
-/// `ERR_APPLY` of the cold-wallet refusal apart (listed even when it never occurs, since whether
-/// the pool can reach it is a question the report answers), and every accepted entry.
 /// The reference's action in a decision case (`decide forged`, `decide stop`, ...), a refusal
 /// with its reason (`decide refused: quorum`), and an error answer by its class.
 fn decision_outcomes(expected: &Expected, seen: &mut BTreeMap<String, usize>) {
@@ -280,6 +285,9 @@ fn decision_outcomes(expected: &Expected, seen: &mut BTreeMap<String, usize>) {
     *seen.entry(key).or_insert(0) += 1;
 }
 
+/// The outcomes of the reference in a pool session's answer, counted: each error code, an
+/// `ERR_APPLY` of the cold-wallet refusal apart (listed even when it never occurs, since whether
+/// the pool can reach it is a question the report answers), and every accepted entry.
 fn pool_outcomes(expected: &Expected, seen: &mut BTreeMap<String, usize>) {
     seen.entry(COLD_WALLET_OUTCOME.to_owned()).or_insert(0);
     let Expected::Output(output) = expected else {
@@ -759,8 +767,9 @@ mod tests {
         );
         assert_eq!("P16".parse::<Property>().unwrap(), Property::Monitor);
         assert_eq!("P17".parse::<Property>().unwrap(), Property::Forging);
+        assert_eq!("P18".parse::<Property>().unwrap(), Property::Quorum);
         assert_eq!("P19".parse::<Property>().unwrap(), Property::Decisions);
-        assert!("P18".parse::<Property>().is_err());
+        assert!("P20".parse::<Property>().is_err());
     }
 
     #[test]

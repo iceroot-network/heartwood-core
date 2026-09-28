@@ -22,7 +22,8 @@ use heartwood_difftest::strategies::transactions::TxContext;
 use heartwood_difftest::subjects::Devnet;
 use heartwood_difftest::vectors::VectorSet;
 use heartwood_difftest::{
-    Error, Result, api, forger_kill, live, network_generate, replay, runtime_kill, subject,
+    Error, Result, api, corpus_from_blocks, forger_kill, live, network_generate, replay,
+    runtime_kill, subject,
 };
 
 fn main() -> ExitCode {
@@ -232,6 +233,21 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
                 out.display(),
                 loaded.tip(),
                 loaded.revert_plan.steps.len()
+            );
+            Ok(true)
+        }
+        Command::CorpusFromBlocks {
+            blocks,
+            crypto,
+            out,
+            seed,
+        } => {
+            corpus_from_blocks::from_blocks(&blocks, &crypto, &seed, &out)?;
+            let loaded = Corpus::load(&out)?;
+            println!(
+                "difftest: corpus {} written: blocks 2 to {}, manifest verified",
+                out.display(),
+                loaded.tip()
             );
             Ok(true)
         }
