@@ -267,6 +267,22 @@ async fn a_relay_that_stops_answering_is_left_through_the_deadlines_and_the_hear
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_hung_host_that_is_not_selected_reconnects_without_a_log_line() {
+    let (lines, _guard) = Lines::capture();
+    let switch = Arc::new(Switch::default());
+    switch.set(2, Mode::Hang);
+    let first = relay(1, rounds(1)).await;
+    let client = switched(&[1, 2], &[&first], &switch);
+    client.get_round().await.unwrap();
+    assert_eq!(client.selected(), host(1));
+    sleep_ms(30_000).await;
+    // The session to the second host gives up each attempt after 5 s and tries again; the
+    // reference's forger sets no such timeout, so it logs nothing for a host that hangs.
+    assert!(switch.dials(2) > 2, "{} dials", switch.dials(2));
+    assert!(lines.with("timed out").is_empty(), "{:?}", lines.all());
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_attestation_routes_follow_the_selection() {
     let switch = Arc::new(Switch::default());
     let offer = StatusToSignResponse::Offer {

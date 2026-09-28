@@ -228,8 +228,8 @@ fn a_forger_refuses_a_key_file_it_cannot_trust_with_the_references_messages() {
         String::from_utf8_lossy(&output.stderr).into_owned()
     };
     assert!(refusal(run()).contains("delegates.json file does not exist"));
-    node.keys(&[&delegate()], 0o640);
-    assert!(refusal(run()).contains("can be read by its group or by others"));
+    node.keys(&[&delegate()], 0o620);
+    assert!(refusal(run()).contains("is open to its group or to others (mode 620)"));
     node.keys(&[], 0o600);
     assert!(refusal(run()).contains("Unable to detect any private keys"));
 }

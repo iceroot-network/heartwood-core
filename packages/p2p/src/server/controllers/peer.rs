@@ -48,7 +48,7 @@ pub async fn get_common_blocks(
     let ids: Vec<BlockId> = (asked.ids.iter().filter(lowercase))
         .filter_map(|id| BlockId::from_hex(id).ok())
         .collect();
-    let headers = parts.node.common_blocks(&ids).map_err(internal)?;
+    let headers = (parts.node.common_blocks(&ids, asked.ids.len())).map_err(internal)?;
     let highest =
         (headers.iter().enumerate()).max_by_key(|(index, header)| (header.height, *index));
     let common = highest.map(|(_, header)| Common {

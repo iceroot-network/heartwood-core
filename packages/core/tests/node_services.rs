@@ -279,14 +279,24 @@ async fn the_servers_reads_and_work_go_to_the_node_and_its_store() {
     );
     // The common blocks: from memory when every id is there, else from the store.
     let id = |height: u32| *corpus[usize::try_from(height - 2).unwrap()].id();
-    let common = services.common_blocks(&[id(70), id(65)]).unwrap();
+    let common = services.common_blocks(&[id(70), id(65)], 2).unwrap();
     assert_eq!(
         common.iter().map(|h| h.height).collect::<Vec<_>>(),
         [65, 70]
     );
     let unknown = BlockId::from_array([0x42; 32]);
-    let common = services.common_blocks(&[id(3), unknown, id(60)]).unwrap();
+    let common = services
+        .common_blocks(&[id(3), unknown, id(60)], 3)
+        .unwrap();
     assert_eq!(common.iter().map(|h| h.height).collect::<Vec<_>>(), [3, 60]);
+    // A block in memory and not yet stored (applied in a running job) answers from memory only
+    // when every id asked for is there: an id in capitals, dropped before, still counts.
+    let applied = Arc::new(corpus[69].clone());
+    chain.lock().unwrap().last_blocks.push_back(applied);
+    let common = services.common_blocks(&[id(71)], 1).unwrap();
+    assert_eq!(common.iter().map(|h| h.height).collect::<Vec<_>>(), [71]);
+    assert!(services.common_blocks(&[id(71)], 2).unwrap().is_empty());
+    chain.lock().unwrap().last_blocks.pop_back();
     assert_eq!(services.last_downloaded_block().height, tip);
 
     // The round and the slots, as the forger reads them.

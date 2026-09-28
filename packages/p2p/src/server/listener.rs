@@ -1,18 +1,23 @@
 //! A connection's HTTP exchange and its WebSocket frames, as the reference's HTTP server and its
 //! WebSocket library (`ws` 7) serve them.
 //!
-//! - The request head is read with the HTTP socket timeout of 2 s between reads. A request that
-//!   is no upgrade (no `Upgrade` header with a `Connection: upgrade` token) gets 404, which bans
-//!   the caller "Not a websocket connection". An upgrade to any path but `/` is destroyed; one the
-//!   WebSocket library refuses (not GET, not `websocket`, a malformed key, a version other than 8
-//!   or 13) gets 400 and is destroyed. Otherwise the WebSocket opens (echoing the first requested
-//!   subprotocol, as the library does).
+//! - The request head is read with the HTTP socket timeout of 2 s between reads; a head still
+//!   unfinished 60 s after the connection opened gets 408 and is destroyed (the server's
+//!   `headersTimeout`, which the reference checks every 30 s, so it cuts at 60 to 90 s). A request
+//!   that is no upgrade (no `Upgrade` header with a `Connection: upgrade` token) gets 404, which
+//!   bans the caller "Not a websocket connection". An upgrade to any path but `/` is destroyed; one
+//!   the WebSocket library refuses (not GET, an `Upgrade` header other than `websocket` alone, a
+//!   malformed key, a version other than 8 or 13) gets 400 and is destroyed. Otherwise the
+//!   WebSocket opens (echoing the first requested subprotocol, as the library does).
 //! - Frames are read as the library's server reads them, messages of at most 20 MiB: each fault
 //!   ends the connection with the library's error text, which the nes socket takes as its ban
 //!   reason ("WebSocket" written "websocket" and ":" as " -"); an invalid UTF-8 text message or
 //!   close reason ends it without a reason.
-//! - Frames are written unmasked, in order, by a task of their own.
+//! - Frames are written unmasked, in order, by a task of their own, which tells the session how
+//!   far it is, for the heartbeat's liveness check.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
@@ -27,6 +32,8 @@ use crate::transport::Stream;
 pub const MAX_MESSAGE: usize = 20 * 1024 * 1024;
 /// The HTTP socket timeout before the upgrade.
 pub const SOCKET_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the whole request head may take: the HTTP server's `headersTimeout`.
+pub const HEAD_TIMEOUT: Duration = Duration::from_secs(60);
 /// The longest request head read: the HTTP parser's header limit.
 const MAX_HEAD: usize = 16 * 1024;
 /// The largest frame length the library reads (2^53 - 1).
@@ -45,12 +52,24 @@ pub enum Upgrade {
 /// Read the request head from `stream` and answer it.
 pub async fn upgrade(mut stream: Box<dyn Stream>) -> Upgrade {
     let mut buffer = Vec::new();
-    let end = loop {
-        if let Some(at) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
-            break at;
+    let head = timeout(HEAD_TIMEOUT, async {
+        loop {
+            if let Some(at) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
+                return Some(at);
+            }
+            let read = timeout(SOCKET_TIMEOUT, stream.read_buf(&mut buffer)).await;
+            if buffer.len() > MAX_HEAD || !matches!(read, Ok(Ok(1..))) {
+                return None;
+            }
         }
-        let read = timeout(SOCKET_TIMEOUT, stream.read_buf(&mut buffer)).await;
-        if buffer.len() > MAX_HEAD || !matches!(read, Ok(Ok(1..))) {
+    })
+    .await;
+    let end = match head {
+        Ok(Some(end)) => end,
+        Ok(None) => return Upgrade::Failed,
+        Err(_) => {
+            let answer = "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
+            let _ = timeout(SOCKET_TIMEOUT, stream.write_all(answer.as_bytes())).await;
             return Upgrade::Failed;
         }
     };
@@ -84,7 +103,8 @@ pub async fn upgrade(mut stream: Box<dyn Stream>) -> Upgrade {
         .parse::<f64>()
         .ok()
         .filter(|v| *v == 8.0 || *v == 13.0);
-    if head.method != "GET" || !token("upgrade", "websocket") || !key_valid || version.is_none() {
+    let websocket = (head.header("upgrade")).is_some_and(|u| u.eq_ignore_ascii_case("websocket"));
+    if head.method != "GET" || !websocket || !key_valid || version.is_none() {
         let answer = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Type: text/html\r\n\
                       Content-Length: 11\r\n\r\nBad Request";
         let _ = stream.write_all(answer.as_bytes()).await;
@@ -318,27 +338,65 @@ fn control(opcode: u8, payload: &[u8]) -> Frame {
 #[derive(Debug)]
 pub struct FrameWriter {
     queue: mpsc::UnboundedSender<Vec<u8>>,
+    progress: Arc<Progress>,
     task: AbortHandle,
+}
+
+/// How far the writes are, in frames counted from 1.
+#[derive(Debug, Default)]
+struct Progress {
+    queued: AtomicU64,
+    /// The last frame queued that counts as the socket's activity.
+    activity: AtomicU64,
+    /// The frames written; `u64::MAX` once a write failed, as nothing more is written then.
+    written: AtomicU64,
 }
 
 impl FrameWriter {
     fn spawn(mut half: WriteHalf<Box<dyn Stream>>) -> FrameWriter {
         let (queue, mut frames) = mpsc::unbounded_channel::<Vec<u8>>();
+        let progress = Arc::new(Progress::default());
+        let written = Arc::clone(&progress);
         let task = tokio::spawn(async move {
             while let Some(frame) = frames.recv().await {
                 if half.write_all(&frame).await.is_err() {
+                    written.written.store(u64::MAX, Ordering::Release);
                     return;
                 }
+                written.written.fetch_add(1, Ordering::AcqRel);
             }
             let _ = half.shutdown().await;
         });
         let task = task.abort_handle();
-        FrameWriter { queue, task }
+        FrameWriter {
+            queue,
+            progress,
+            task,
+        }
     }
 
-    /// Send `bytes` as one binary frame.
-    pub fn binary(&self, bytes: &[u8]) {
-        self.send(2, bytes);
+    /// Send `bytes` as one binary frame. A frame that is `activity` (every message but the
+    /// server's ping) marks the socket active once it is written, as the reference's `_flush`
+    /// does ([`FrameWriter::is_writing_activity`]).
+    pub fn binary(&self, bytes: &[u8], activity: bool) {
+        let number = self.send(2, bytes);
+        if activity {
+            self.progress.activity.store(number, Ordering::Release);
+        }
+    }
+
+    /// Whether a frame is queued or being written (the reference's `_sending`).
+    pub fn is_writing(&self) -> bool {
+        self.written() < self.progress.queued.load(Ordering::Acquire)
+    }
+
+    /// Whether a frame that counts as activity is queued or being written.
+    pub fn is_writing_activity(&self) -> bool {
+        self.written() < self.progress.activity.load(Ordering::Acquire)
+    }
+
+    fn written(&self) -> u64 {
+        self.progress.written.load(Ordering::Acquire)
     }
 
     /// Send a close frame, with `code` unless it is 1005, and end the writes.
@@ -356,7 +414,8 @@ impl FrameWriter {
         self.task.abort();
     }
 
-    fn send(&self, opcode: u8, payload: &[u8]) {
+    /// Queue a frame; its number.
+    fn send(&self, opcode: u8, payload: &[u8]) -> u64 {
         let mut frame = vec![0x80 | opcode];
         match (u8::try_from(payload.len()), u16::try_from(payload.len())) {
             (Ok(short @ ..=125), _) => frame.push(short),
@@ -370,6 +429,8 @@ impl FrameWriter {
             }
         }
         frame.extend_from_slice(payload);
+        let number = self.progress.queued.fetch_add(1, Ordering::AcqRel);
         let _ = self.queue.send(frame);
+        number.saturating_add(1)
     }
 }

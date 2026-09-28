@@ -255,6 +255,19 @@ impl Raw {
         self.stream.write_all(&frame).await.unwrap();
     }
 
+    /// Read at most `limit` bytes into the buffer, as a slow reader does; whether any came.
+    pub async fn read_some(&mut self, limit: usize) -> bool {
+        let mut chunk = vec![0; limit];
+        let read = self.stream.read(&mut chunk).await.unwrap_or_default();
+        self.buffer.extend_from_slice(&chunk[..read]);
+        read > 0
+    }
+
+    /// How many bytes were read and not taken as frames yet.
+    pub fn buffered(&self) -> usize {
+        self.buffer.len()
+    }
+
     /// Write raw bytes.
     pub async fn bytes(&mut self, bytes: &[u8]) {
         self.stream.write_all(bytes).await.unwrap();

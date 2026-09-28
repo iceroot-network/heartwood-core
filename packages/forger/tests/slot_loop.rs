@@ -1086,12 +1086,30 @@ async fn the_first_round_hands_the_relays_tip_height_to_the_version_check_once()
     let mut forger = forger(&relay, &[1], relay.clock.clone());
     let heights = Arc::new(Mutex::new(Vec::new()));
     let seen = Arc::clone(&heights);
-    forger
-        .service
-        .on_first_round(move |height| seen.lock().unwrap().push(height));
+    forger.service.on_first_round(move |height| {
+        seen.lock().unwrap().push(height);
+        true
+    });
     forger.service.boot().await.unwrap();
     assert!(heights.lock().unwrap().is_empty(), "no round yet");
     run_for(&forger, 9_000).await;
     assert!(relay.count("round") > 2);
     assert_eq!(*heights.lock().unwrap(), [41]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_version_refused_at_the_first_round_stops_the_forger_before_it_starts() {
+    let (lines, _guard) = Lines::capture();
+    let relay = FakeRelay::new(in_slot(10, 0), &[3, 4], &[]);
+    let mut forger = forger(&relay, &[1], relay.clock.clone());
+    let (trigger, signal) = ShutdownSignal::new();
+    forger.service.on_first_round(move |_| {
+        trigger.trigger();
+        false
+    });
+    forger.service.boot().await.unwrap();
+    forger.service.run(signal).await;
+    assert_eq!(relay.count("round"), 1, "no round after the refusal");
+    assert_eq!(relay.count("event"), 0, "no forger.started");
+    assert!(lines.with("Forger Manager started").is_empty());
 }

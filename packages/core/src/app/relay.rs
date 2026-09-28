@@ -427,11 +427,9 @@ pub async fn serve_p2p(
     let _ = links.attested.set(attestation.clone());
     let on_this_node = DelegatesOnThisNode(attestation.clone());
     let _ = links.on_this_node.set(Arc::new(on_this_node));
-    let status = Arc::new(StatusServer::new(
-        node.clone(),
-        attestation.clone(),
-        clock.clone(),
-    ));
+    let server_options = ServerOptions::from_p2p(&options);
+    let status = StatusServer::new(node.clone(), attestation.clone(), clock.clone());
+    let status = Arc::new(status.with_wait(server_options.attestation_wait));
     let (attested, served, options_) = (attestation.clone(), status.clone(), options.clone());
     let handlers = Arc::new(Controllers::new(ControllerParts {
         node: node.clone(),
@@ -442,7 +440,7 @@ pub async fn serve_p2p(
         options: options_,
     }));
     let server = P2pServer::bind(ServerParts {
-        options: ServerOptions::from_p2p(&options),
+        options: server_options,
         node,
         peers,
         handlers,

@@ -15,7 +15,7 @@
 //!   they come. A 499 is answered and the socket kept; any other refusal ends the socket.
 //! - The server pings every socket every 15 s from its start, and 5 s later closes each socket
 //!   that has neither received a message, nor been sent anything but a ping, since the check
-//!   before, nor a request in progress.
+//!   before, nor a request in progress, nor a message still being written.
 //! - A WebSocket ping or pong frame ends the socket ("Malicious ping frame received", "Malicious
 //!   pong frame received"), and so does a frame fault, with the WebSocket library's text.
 //!
@@ -194,10 +194,12 @@ impl ServerSession {
                 }
                 () = sleep_until(check_at), if check.is_some() => {
                     check = None;
-                    if !self.pinged && self.in_flight == 0 {
+                    if !self.pinged && self.in_flight == 0 && !writer.is_writing() {
                         break Stop::Close(1005);
                     }
-                    self.pinged = false;
+                    // A message still being written marks the socket active once it is, as the
+                    // reference's `_flush` marks it after each message but a ping.
+                    self.pinged = writer.is_writing_activity();
                 }
                 Some((id, answer)) = answered.recv() => {
                     self.in_flight = self.in_flight.saturating_sub(1);
@@ -375,7 +377,7 @@ fn end(reason: &str) -> Option<Stop> {
 
 fn send(writer: &FrameWriter, message: &Message) {
     if let Ok(bytes) = message.encode() {
-        writer.binary(&bytes);
+        writer.binary(&bytes, message.kind != Kind::Ping);
     }
 }
 

@@ -128,8 +128,11 @@ pub trait NodeServices: Send + Sync {
         headers_only: bool,
     ) -> Result<Vec<BlockListing>, LookupError>;
 
-    /// The headers of the stored or in-memory blocks among `ids`.
-    fn common_blocks(&self, ids: &[BlockId]) -> Result<Vec<BlockHeader>, LookupError>;
+    /// The headers of the blocks among `ids`, the ids a peer asked for that can name a block (of
+    /// the `asked` it sent; an id in capitals names none): from memory when it holds as many as
+    /// were asked, else from the store, as the reference's `getCommonBlocks` reads them.
+    fn common_blocks(&self, ids: &[BlockId], asked: usize)
+    -> Result<Vec<BlockHeader>, LookupError>;
 
     /// The number of transactions in the pool.
     fn pool_size(&self) -> usize;

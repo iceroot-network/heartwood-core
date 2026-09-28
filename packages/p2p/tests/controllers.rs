@@ -160,7 +160,9 @@ async fn get_common_blocks_answers_the_highest_known_block() {
         GetCommonBlocksResponse::decode(&answer).unwrap().common,
         None
     );
-    assert_eq!(server.node.asked_common.lock().unwrap()[1], [*unknown.id()]);
+    // The id in capitals still counts, so the node reads the store, as the reference does.
+    let asked = server.node.asked_common.lock().unwrap()[1].clone();
+    assert_eq!(asked, (vec![*unknown.id()], 2));
 }
 
 // ---- getBlocks --------------------------------------------------------------------------------

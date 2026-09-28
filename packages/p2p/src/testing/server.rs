@@ -203,7 +203,7 @@ impl NodeServices for FakeNode {
         Ok(Vec::new())
     }
 
-    fn common_blocks(&self, _ids: &[BlockId]) -> Result<Vec<BlockHeader>, LookupError> {
+    fn common_blocks(&self, _: &[BlockId], _: usize) -> Result<Vec<BlockHeader>, LookupError> {
         Ok(Vec::new())
     }
 

@@ -2,7 +2,8 @@
 //! node, on tokio's paused time: a block of the forger received with less than 2,000 ms left in
 //! its slot is discarded before anything else; one processed with less than 2,000 ms left is not
 //! broadcast but removed through the recovery of one block; one in time is processed and
-//! broadcast. The time left is read in the reference's whole seconds.
+//! broadcast, and posted again it is dropped as applied already. The time left is read in the
+//! reference's whole seconds.
 
 mod common;
 mod service;
@@ -106,4 +107,26 @@ async fn a_peers_block_is_never_checked_for_lateness() {
     assert_eq!(h.state(), "newBlock");
     h.wait_for(MINUTE, |h| h.state() == "idle").await;
     assert_eq!(h.network.state().broadcasts, [13]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_forgers_block_posted_twice_in_time_is_dropped_the_second_time() {
+    let h = idle_at(time_of(13) + 1_000).await;
+    h.service.handle_incoming_block(forged(13), true).await;
+    h.wait_for(MINUTE, |h| h.state() == "idle").await;
+    assert_eq!(h.network.state().broadcasts, [13]);
+    let log = h.node.log().len();
+    // The same block again, still in its slot: pinged again and queued, then dropped by the job
+    // as applied already; nothing is processed or broadcast, and the machine goes back to idle.
+    h.service.handle_incoming_block(forged(13), true).await;
+    assert_eq!(h.state(), "newBlock");
+    let ping = h.chain().ping.clone().unwrap();
+    assert_eq!(
+        (ping.ping.height, ping.count, ping.ping.from_forger),
+        (13, 0, true)
+    );
+    h.wait_for(MINUTE, |h| h.state() == "idle").await;
+    assert_eq!(h.node.log()[log..], ["job [13]", "drain"]);
+    assert_eq!(h.network.state().broadcasts, [13], "no second broadcast");
+    assert_eq!(h.chain().last_height(), 13);
 }

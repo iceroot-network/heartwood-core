@@ -286,3 +286,67 @@ async fn a_plain_http_request_is_answered_404_and_banned() {
     assert_eq!(quiet.server.ban_reason(peer(2)), None);
     assert!(quiet.raw(peer(2)).await.is_some());
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_request_head_still_unfinished_after_60_s_is_answered_408_and_banned() {
+    let bench = Bench::new().await;
+    bench.fakes.node.set_first_synced(Some(SYNCED));
+    let (mut client, served) = tokio::io::duplex(64 * 1024);
+    bench.server.accept(Box::new(served), peer(2));
+    let start = tokio::time::Instant::now();
+    // One byte every 1.5 s keeps each read within the 2 s socket timeout, and never ends the
+    // head.
+    let dribble = async {
+        for byte in b"GET / HTTP/1.1\r\nHost: x\r\nX-Slow: ".iter().cycle() {
+            if client.write_all(&[*byte]).await.is_err() {
+                break;
+            }
+            sleep(Duration::from_millis(1_500)).await;
+        }
+        start.elapsed()
+    };
+    let closed = tokio::time::timeout(Duration::from_secs(120), dribble).await;
+    let closed = closed.expect("the server closes the connection");
+    let window = Duration::from_secs(60)..=Duration::from_millis(61_500);
+    assert!(window.contains(&closed), "{closed:?}");
+    let mut answer = Vec::new();
+    client.read_to_end(&mut answer).await.unwrap();
+    assert_eq!(
+        answer,
+        b"HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n"
+    );
+    let reason = bench.server.ban_reason(peer(2));
+    assert_eq!(
+        reason.as_deref(),
+        Some("Failed to complete websocket handshake")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_upgrade_header_other_than_websocket_alone_is_refused_400() {
+    let bench = Bench::new().await;
+    for upgrade in ["websocket, foo", "foo, websocket", "websocket2"] {
+        let (mut client, served) = tokio::io::duplex(1024);
+        bench.server.accept(Box::new(served), peer(3));
+        let request = format!(
+            "GET / HTTP/1.1\r\nConnection: Upgrade\r\nUpgrade: {upgrade}\r\n\
+             Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+        );
+        client.write_all(request.as_bytes()).await.unwrap();
+        let mut answer = Vec::new();
+        client.read_to_end(&mut answer).await.unwrap();
+        assert!(
+            answer.starts_with(b"HTTP/1.1 400 Bad Request\r\n"),
+            "{upgrade}"
+        );
+    }
+    // The comparison ignores case, as the library's does.
+    let (mut client, served) = tokio::io::duplex(1024);
+    bench.server.accept(Box::new(served), peer(4));
+    let request = "GET / HTTP/1.1\r\nConnection: Upgrade\r\nUpgrade: WebSocket\r\n\
+                   Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+    client.write_all(request.as_bytes()).await.unwrap();
+    let mut answer = [0; 12];
+    client.read_exact(&mut answer).await.unwrap();
+    assert_eq!(&answer, b"HTTP/1.1 101");
+}

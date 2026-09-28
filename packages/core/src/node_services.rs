@@ -327,14 +327,18 @@ impl<N: Network> NodeServices for RelayServices<N> {
         Ok(listed.map(|b| listing(b.row, b.transactions)).collect())
     }
 
-    fn common_blocks(&self, ids: &[BlockId]) -> Result<Vec<BlockHeader>, LookupError> {
+    fn common_blocks(
+        &self,
+        ids: &[BlockId],
+        asked: usize,
+    ) -> Result<Vec<BlockHeader>, LookupError> {
         let memory: Vec<BlockHeader> = lock(&self.view.chain)
             .last_blocks
             .iter()
             .filter(|block| ids.contains(block.id()))
             .map(|block| block.header().clone())
             .collect();
-        if memory.len() >= ids.len() {
+        if memory.len() >= asked {
             return Ok(memory);
         }
         let rows = lookup(self.history.get().blocks_by_ids(ids))?;
@@ -457,15 +461,12 @@ where
     }
 
     fn record_violation(&self, ip: IpAddr, violation: Violation) {
-        let known = (self.repository.get(ip)).or_else(|| self.repository.get_pending(ip));
-        let peer = known
-            .clone()
-            .unwrap_or_else(|| SharedPeer::new(Peer::new(ip, 0)));
-        scoring::record(&peer, violation, self.clock.now_ms());
-        // An address that is no peer yet keeps the violation in the repository, so it is not
-        // accepted while the violation is in its window.
-        if known.is_none() {
-            self.repository.keep_violations(&peer);
+        let (repository, now) = (&self.repository, self.clock.now_ms());
+        match (repository.get(ip)).or_else(|| repository.get_pending(ip)) {
+            Some(peer) => scoring::record(&peer, violation, now),
+            // An address that is no peer yet keeps the violation in the repository, so it is not
+            // accepted while the violation is in its window.
+            None => scoring::record_address(repository, ip, violation, now),
         }
     }
 

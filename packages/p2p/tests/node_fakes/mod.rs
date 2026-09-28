@@ -66,7 +66,7 @@ pub struct Node {
     pub stored: Mutex<Vec<BlockListing>>,
     pub downloads: Mutex<Vec<(u32, u32, bool)>>,
     pub common: Mutex<Vec<BlockHeader>>,
-    pub asked_common: Mutex<Vec<Vec<BlockId>>>,
+    pub asked_common: Mutex<Vec<(Vec<BlockId>, usize)>>,
     pub pool: Mutex<Vec<Vec<u8>>>,
     pub collations: Mutex<Vec<(bool, Vec<TransactionId>)>>,
     pub posted: Mutex<Vec<Vec<Vec<u8>>>>,
@@ -182,8 +182,15 @@ impl NodeServices for Node {
         Ok(wanted.cloned().collect())
     }
 
-    fn common_blocks(&self, ids: &[BlockId]) -> Result<Vec<BlockHeader>, LookupError> {
-        self.asked_common.lock().unwrap().push(ids.to_vec());
+    fn common_blocks(
+        &self,
+        ids: &[BlockId],
+        asked: usize,
+    ) -> Result<Vec<BlockHeader>, LookupError> {
+        self.asked_common
+            .lock()
+            .unwrap()
+            .push((ids.to_vec(), asked));
         let common = self.common.lock().unwrap();
         let known = |header: &&BlockHeader| {
             ids.contains(&heartwood_crypto::blocks::serialiser::block_id(header))

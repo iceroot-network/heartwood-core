@@ -130,7 +130,7 @@ impl NodeServices for Services {
     ) -> Result<Vec<BlockListing>, LookupError> {
         Ok(Vec::new())
     }
-    fn common_blocks(&self, _: &[BlockId]) -> Result<Vec<BlockHeader>, LookupError> {
+    fn common_blocks(&self, _: &[BlockId], _: usize) -> Result<Vec<BlockHeader>, LookupError> {
         Ok(Vec::new())
     }
     fn pool_size(&self) -> usize {

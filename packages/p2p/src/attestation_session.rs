@@ -11,6 +11,7 @@
 //! signatures ([`AttestationSession::signatures`]); after one wait that ran out, the same offer
 //! is served unsigned without another.
 
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -161,32 +162,36 @@ impl AttestationSession {
 
     /// postStatusSignatures from `session`: the signatures of the offer they name, verified and
     /// attached in the offered order; signatures of another offer, or of a session that is not
-    /// the current one, are dropped.
+    /// the current one, are dropped. They are verified without the session's lock, and attached
+    /// only if their offer is still the current one then.
     pub fn post_signatures(
         &self,
         session: SessionId,
         signatures: StatusSignatures,
     ) -> Result<(), ServerRefusal> {
-        let mut inner = self.lock();
-        self.expire(&mut inner);
-        let Some(current) = inner.session.as_mut().filter(|s| s.id == session) else {
-            debug!("Dropping the status signatures of an attestation session that has ended");
-            return Ok(());
+        let named = {
+            let mut inner = self.lock();
+            self.expire(&mut inner);
+            let Some(current) = inner.session.as_ref().filter(|s| s.id == session) else {
+                debug!("Dropping the status signatures of an attestation session that has ended");
+                return Ok(());
+            };
+            let delivered = current.delivered;
+            let named =
+                |offer: &&Offer| offer.name == signatures.offer && offer.number <= delivered;
+            let offer = current.offer.as_ref().filter(named);
+            offer.map(|offer| (offer.number, offer.status.clone(), offer.keys.clone()))
         };
-        let delivered = current.delivered;
-        let named =
-            |offer: &&mut Offer| offer.name == signatures.offer && offer.number <= delivered;
-        let Some(offer) = current.offer.as_mut().filter(named) else {
+        let Some((number, status, keys)) = named else {
             debug!("Dropping status signatures for a status that is no longer offered");
             return Ok(());
         };
-        let verified = offer
-            .keys
+        let verified = keys
             .iter()
             .zip(&signatures.signatures)
             .filter_map(|(key, text)| {
                 let signature = Signature::from_hex(text).ok();
-                let valid = verify_attestation(offer.status.as_bytes(), &key.to_hex(), text);
+                let valid = verify_attestation(status.as_bytes(), &key.to_hex(), text);
                 if !valid {
                     debug!("The status signature of {} did not verify", key.to_hex());
                 }
@@ -196,8 +201,18 @@ impl AttestationSession {
                 })
             });
         let verified: Vec<Attestation> = verified.collect();
+        let mut inner = self.lock();
+        let current = inner.session.as_mut().filter(|s| s.id == session);
+        let Some(current) =
+            current.filter(|s| s.offer.as_ref().is_some_and(|o| o.number == number))
+        else {
+            debug!("Dropping status signatures for a status that is no longer offered");
+            return Ok(());
+        };
         current.attested = verified.iter().map(|a| a.public_key).collect();
-        offer.signatures = Some(verified);
+        if let Some(offer) = current.offer.as_mut() {
+            offer.signatures = Some(verified);
+        }
         drop(inner);
         self.changed();
         Ok(())
@@ -280,6 +295,14 @@ impl AttestationSession {
             .as_ref()
             .is_some_and(|s| same && s.declared == declared);
         if !stays {
+            let mut seen = HashSet::new();
+            let repeated = declared.iter().filter(|key| !seen.insert(**key)).count();
+            if repeated > 0 {
+                warning!(
+                    "The attestation session from {ip} declares {repeated} keys again; each copy \
+                     counts as a delegate on this node"
+                );
+            }
             let polls = if same {
                 inner.session.as_ref().map_or(0, |s| s.polls)
             } else {
