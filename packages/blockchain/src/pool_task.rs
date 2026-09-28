@@ -5,6 +5,11 @@
 //! with its checks per drain, the removed blocks' transactions re-added in chain order, and the
 //! online record saved to the store.
 //!
+//! The delegates on this node ([`OwnKeys`], the forger's attested keys) that are registered
+//! delegates take the node's own version in the online record at each round start and at the
+//! sync's end, before each expiry, as the reference sets `delegate.version` for the keys of its
+//! forger.
+//!
 //! Each processor broadcasts the transactions it admitted that pass the broadcast fee rule to
 //! every peer, as they were admitted (one that a later entry of the batch evicts included), so a
 //! follower forwards what it downloads, as a reference relay does. All of it runs on the node
@@ -16,6 +21,8 @@
 //! transactions: the age and expiry rules only widen as the tip rises, and the lowest-priority
 //! rule finds nothing to remove, since every addition already keeps the pool within
 //! `maxTransactionsInPool`.
+
+use std::sync::Arc;
 
 use heartwood_crypto::{Milestones, Network, Params, Transaction, TransactionId};
 use heartwood_kernel::Clock;
@@ -29,7 +36,7 @@ use heartwood_state::State;
 use crate::commit::ChainStore;
 use crate::errors::NodeError;
 use crate::processor::PoolSteps;
-use crate::work::{Channel, OnlineWork};
+use crate::work::{Channel, OnlineWork, OwnKeys};
 
 /// Where admitted transactions are broadcast: the network monitor in a node, a recorder in
 /// tests.
@@ -73,6 +80,8 @@ pub struct PoolTask {
     p2p: Processor,
     /// A storage failure of a pool step during a job, which stops the node after it.
     failure: Option<StorageError>,
+    /// The delegates on this node and the node's version.
+    own: Option<(Arc<dyn OwnKeys>, String)>,
 }
 
 impl PoolTask {
@@ -86,6 +95,29 @@ impl PoolTask {
             download,
             p2p,
             failure: None,
+            own: None,
+        }
+    }
+
+    /// Give the delegates on this node, `keys`, the node's `version` in the online record at each
+    /// round start and at the sync's end.
+    pub fn set_own_keys(&mut self, keys: Arc<dyn OwnKeys>, version: String) {
+        self.own = Some((keys, version));
+    }
+
+    /// Set the delegates on this node that are registered delegates in the state of `env` to the
+    /// node's version in `round`: before the expiry at a round start or at the sync's end.
+    pub fn set_own(&mut self, env: &PoolEnv<'_>, round: u64) {
+        if let Some((keys, version)) = &self.own {
+            let wallets = env.state.wallets();
+            let delegate = |key: &_| {
+                wallets
+                    .find_by_public_key(key)
+                    .is_some_and(|w| w.is_delegate())
+            };
+            for key in keys.attested().into_iter().filter(delegate) {
+                self.online.set(key, round, version.clone());
+            }
         }
     }
 
@@ -115,8 +147,13 @@ impl PoolTask {
         validate: bool,
         exclude: &[TransactionId],
     ) -> Result<Collation, StorageError> {
-        let _ = (env, validate, exclude);
-        todo!("the collation on the node thread")
+        let ctx = env.context(&self.online);
+        let collated = heartwood_pool::collate(&mut self.pool, &ctx, validate, exclude)?;
+        let transactions = collated.candidates.iter();
+        Ok(Collation {
+            pool_size: self.pool.size(),
+            transactions: transactions.map(|t| t.bytes().to_vec()).collect(),
+        })
     }
 
     /// The pool steps after a job's commit: the online record's expiry at the start of each round
@@ -129,6 +166,7 @@ impl PoolTask {
         milestone: bool,
     ) -> Result<(), StorageError> {
         for round in rounds {
+            self.set_own(env, *round);
             self.online.expire(*round);
         }
         if milestone {

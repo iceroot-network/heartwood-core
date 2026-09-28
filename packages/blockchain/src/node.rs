@@ -36,7 +36,7 @@ use crate::options::BlockchainOptions;
 use crate::pool_task::{PoolEnv, PoolTask, TransactionBroadcast};
 use crate::process_blocks_job::{JobContext, run_job};
 use crate::processor::BlockProcess;
-use crate::work::{ChainStatus, Job, JobOutcome, NodeHandle, OwnKeys, Work};
+use crate::work::{ChainStatus, Job, JobOutcome, NodeHandle, OnlineWork, OwnKeys, Work};
 
 /// What the node thread is made of.
 pub struct NodeParts {
@@ -71,6 +71,8 @@ pub struct NodeParts {
     /// The delegates on this node, whose own version the online record takes at each round start
     /// and at the sync's end, before each expiry.
     pub own_keys: Arc<dyn OwnKeys>,
+    /// The node's version, which the online record gives the delegates on this node.
+    pub version: String,
 }
 
 /// The node thread.
@@ -86,6 +88,8 @@ impl Node {
         let (state, state_view) = watch::channel(Arc::new(parts.state.view()));
         let (pool, pool_view) = watch::channel(Arc::new(parts.pool.view()));
         let (chain, chain_status) = watch::channel(Arc::new(status(&parts.chain)));
+        let own = Arc::clone(&parts.own_keys);
+        parts.pool.set_own_keys(own, parts.version.clone());
         let observer = parts.observer.take();
         let observer = observer.unwrap_or_else(|| Box::new(NoObserver));
         let publish = Publish { state, pool, chain };
@@ -214,6 +218,9 @@ impl NodeThread {
                 let _ = reply.send(collation);
             }
             Work::Online(change) => {
+                if let OnlineWork::Expire { round } = change {
+                    parts.pool.set_own(&env!(parts), round);
+                }
                 parts.pool.online(change);
                 let view = parts.pool.view_online(&publish.pool.borrow());
                 publish.pool.send_replace(Arc::new(view));

@@ -229,6 +229,7 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
         observer: recorder(run, &milestones, first_start)?,
         broadcast: links.clone(),
         own_keys: Arc::new(heartwood_p2p::NoAttestedKeys),
+        version: VERSION.to_owned(),
     })
     .map_err(component)?;
     let ended = stops.clone();
