@@ -29,6 +29,14 @@
 //!    sync time, the transaction propagation, socket-close bans inside fault windows, each node's
 //!    refused and undone blocks.
 //!
+//! The runs of a forging devnet (`t`, the reference's; `m` and `f`, Heartwood's relays and forgers
+//! on loopback addresses) have these checks too: a dry run of the recipe counts as no live
+//! evidence; runs `t` and `m` name their route corpus's nodes and hold both txgen summaries; run
+//! `m` (and run `t` with the variable [`COMPARE`]) compares with the other of the two beside it:
+//! complete, of the same seed and schedule, the funding and scenario submissions answered alike,
+//! the two scripted votes answered alike, and the scenario wallets equal but for their delegate
+//! attributes and vote weights.
+//!
 //! Besides the report, the check writes every case with its outcome to `live-check.txt` in the run
 //! directory.
 
@@ -58,6 +66,10 @@ use run::{Implementation, Manifest};
 pub const CORPUS_ROOT: &str = "target/corpus";
 /// The time a block may take to reach a node under test: one block time.
 pub const LAG_LIMIT_SECONDS: f64 = 8.0;
+/// The variable naming the run a check of run `t` or `m` compares with (the other of the two), as
+/// `make live-check RUN=t COMPARE=m` gives it: make passes a variable of its command line to the
+/// environment of its recipes. Run `m`'s `run.json` names run `t` as its pair already.
+pub const COMPARE: &str = "COMPARE";
 
 /// What a live check reads besides the run directory.
 pub struct LiveOptions<'a> {
@@ -122,7 +134,19 @@ impl Cases {
 
 /// Check the live run in `run_dir` with `options`.
 pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
-    let manifest = Manifest::load(run_dir)?;
+    let mut manifest = Manifest::load(run_dir)?;
+    if let Some(pair) = std::env::var(COMPARE).ok().filter(|p| !p.is_empty()) {
+        if !matches!(
+            (manifest.run.as_str(), pair.as_str()),
+            ("t", "m") | ("m", "t")
+        ) {
+            return Err(Error::Usage(format!(
+                "{COMPARE}={pair}: run {} compares with run t or m only (T against M)",
+                manifest.run
+            )));
+        }
+        manifest.pair = Some(pair);
+    }
     let mut cases = Cases {
         run: manifest.run.clone(),
         results: Vec::new(),
@@ -233,6 +257,13 @@ fn check_run(
             format!("its stop height is {}", manifest.stop_height),
         );
     }
+    if matches!(manifest.run.as_str(), "t" | "m") && manifest.api.is_none() {
+        cases.fail(
+            "run",
+            "the API corpus",
+            "the run does not name its two API nodes",
+        );
+    }
     let mut steps = run::steps(run_dir)?;
     for s in &mut steps {
         let reason = s
@@ -254,7 +285,33 @@ fn check_run(
             );
         }
     }
+    if matches!(manifest.run.as_str(), "t" | "m" | "f") && manifest.dry_run {
+        cases.fail(
+            "run",
+            "a live run",
+            "a dry run is command coverage, not live evidence",
+        );
+    }
     let txgen = run_dir.join("txgen");
+    // Runs t and m hold both txgen records: the funding's `fund/fund.json` and the scenarios'
+    // `once/summary.json` (judged below with every txgen summary).
+    if matches!(manifest.run.as_str(), "t" | "m") {
+        match run::read_json(&txgen.join("fund/fund.json")) {
+            Ok(f) if f.get("ok") == Some(&Value::Bool(true)) => cases.pass(
+                "run",
+                format!(
+                    "txgen fund: {} of {} test wallets funded",
+                    f.get("funded").unwrap_or(&Value::Null),
+                    f.get("testWallets").unwrap_or(&Value::Null)
+                ),
+            ),
+            Ok(f) => cases.fail("run", "txgen fund", format!("fund.json: {f}")),
+            Err(e) => cases.fail("run", "txgen fund", e.to_string()),
+        }
+        if !txgen.join("once/summary.json").exists() {
+            cases.fail("run", "txgen once", "no once/summary.json");
+        }
+    }
     if let Ok(entries) = std::fs::read_dir(&txgen) {
         let mut dirs: Vec<PathBuf> = entries
             .filter_map(|e| e.ok().map(|e| e.path()))
@@ -313,6 +370,11 @@ fn check_run(
     if let Some(pair) = &manifest.pair {
         let other = run_dir.parent().map(|p| p.join(pair));
         match other.filter(|d| d.join("run.json").exists()) {
+            None if matches!(manifest.run.as_str(), "t" | "m") => cases.fail(
+                "run",
+                "the paired run",
+                format!("no run {pair} beside this one"),
+            ),
             None => cases.push(
                 "run",
                 format!("the answers and wallets of run {pair}"),
@@ -320,8 +382,60 @@ fn check_run(
                 Outcome::Skipped(format!("no run {pair} beside this one")),
             ),
             Some(other) => {
-                let ours = steps::submissions(&run_dir.join("txgen/once"))?;
-                let theirs = steps::submissions(&other.join("txgen/once"))?;
+                if matches!(manifest.run.as_str(), "t" | "m") {
+                    let paired = Manifest::load(&other)?;
+                    if paired.status != "complete"
+                        || paired.dry_run
+                        || paired.seed != manifest.seed
+                        || paired.round_length != manifest.round_length
+                        || paired.stop_height != manifest.stop_height
+                    {
+                        cases.fail(
+                            "run",
+                            "the paired run",
+                            "the pair is incomplete or has a different seed or schedule",
+                        );
+                    }
+                }
+                let submissions = |dir: &Path| -> Result<Vec<(String, Value)>> {
+                    let modes: &[&str] = if matches!(manifest.run.as_str(), "t" | "m") {
+                        &["fund", "once"]
+                    } else {
+                        &["once"]
+                    };
+                    let mut all = Vec::new();
+                    for mode in modes {
+                        all.extend(
+                            steps::submissions(&dir.join("txgen").join(mode))?
+                                .into_iter()
+                                .map(|(label, v)| (format!("{mode}: {label}"), v)),
+                        );
+                    }
+                    Ok(all)
+                };
+                let ours = submissions(run_dir)?;
+                let theirs = submissions(&other)?;
+                if matches!(manifest.run.as_str(), "t" | "m") {
+                    let other_steps = run::steps(&other)?;
+                    for name in ["vote-before-node2", "vote-after-node2"] {
+                        let a = steps.iter().find(|s| s.name == name);
+                        let b = other_steps.iter().find(|s| s.name == name);
+                        if a.zip(b).is_none_or(|(a, b)| {
+                            !a.ok
+                                || !b.ok
+                                || ["outcome", "code", "message", "http"]
+                                    .iter()
+                                    .any(|k| a.record[*k] != b.record[*k])
+                                || a.record["outcome"].is_null()
+                        }) {
+                            cases.fail(
+                                "run",
+                                "scripted vote answers",
+                                format!("{name}: missing or unequal verdicts"),
+                            );
+                        }
+                    }
+                }
                 let d = steps::compare_submissions(&ours, &theirs);
                 if d.differences.is_empty() && !ours.is_empty() {
                     cases.pass(
@@ -346,6 +460,8 @@ fn check_run(
                         p.clone(),
                     );
                 }
+                // Two chains of their own: a message that names a height or a time differs in its
+                // numbers only (recorded, as for runs r and h).
                 for p in &d.timing {
                     cases.record(
                         "run",
@@ -366,7 +482,11 @@ fn check_run(
                 );
                 match w {
                     (Ok(a), Ok(b)) => {
-                        let d = steps::compare_wallets(&a, &b);
+                        let d = if matches!(manifest.run.as_str(), "t" | "m") {
+                            steps::compare_scenario_wallets(&a, &b)
+                        } else {
+                            steps::compare_wallets(&a, &b)
+                        };
                         if d.is_empty() {
                             let n = a.get("count").and_then(Value::as_u64).unwrap_or(0);
                             cases.pass(
