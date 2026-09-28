@@ -1,12 +1,14 @@
 //! A connection's HTTP exchange and its WebSocket frames, as the reference's HTTP server and its
 //! WebSocket library (`ws` 7) serve them.
 //!
-//! - The request head is read with the HTTP socket timeout of 2 s between reads. A request that
-//!   is no upgrade (no `Upgrade` header with a `Connection: upgrade` token) gets 404, which bans
-//!   the caller "Not a websocket connection". An upgrade to any path but `/` is destroyed; one the
-//!   WebSocket library refuses (not GET, not `websocket`, a malformed key, a version other than 8
-//!   or 13) gets 400 and is destroyed. Otherwise the WebSocket opens (echoing the first requested
-//!   subprotocol, as the library does).
+//! - The request head is read with the HTTP socket timeout of 2 s between reads; a head still
+//!   unfinished 60 s after the connection opened gets 408 and is destroyed (the server's
+//!   `headersTimeout`, which the reference checks every 30 s, so it cuts at 60 to 90 s). A request
+//!   that is no upgrade (no `Upgrade` header with a `Connection: upgrade` token) gets 404, which
+//!   bans the caller "Not a websocket connection". An upgrade to any path but `/` is destroyed; one
+//!   the WebSocket library refuses (not GET, not `websocket`, a malformed key, a version other
+//!   than 8 or 13) gets 400 and is destroyed. Otherwise the WebSocket opens (echoing the first
+//!   requested subprotocol, as the library does).
 //! - Frames are read as the library's server reads them, messages of at most 20 MiB: each fault
 //!   ends the connection with the library's error text, which the nes socket takes as its ban
 //!   reason ("WebSocket" written "websocket" and ":" as " -"); an invalid UTF-8 text message or
@@ -27,6 +29,8 @@ use crate::transport::Stream;
 pub const MAX_MESSAGE: usize = 20 * 1024 * 1024;
 /// The HTTP socket timeout before the upgrade.
 pub const SOCKET_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the whole request head may take: the HTTP server's `headersTimeout`.
+pub const HEAD_TIMEOUT: Duration = Duration::from_secs(60);
 /// The longest request head read: the HTTP parser's header limit.
 const MAX_HEAD: usize = 16 * 1024;
 /// The largest frame length the library reads (2^53 - 1).
@@ -45,12 +49,24 @@ pub enum Upgrade {
 /// Read the request head from `stream` and answer it.
 pub async fn upgrade(mut stream: Box<dyn Stream>) -> Upgrade {
     let mut buffer = Vec::new();
-    let end = loop {
-        if let Some(at) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
-            break at;
+    let head = timeout(HEAD_TIMEOUT, async {
+        loop {
+            if let Some(at) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
+                return Some(at);
+            }
+            let read = timeout(SOCKET_TIMEOUT, stream.read_buf(&mut buffer)).await;
+            if buffer.len() > MAX_HEAD || !matches!(read, Ok(Ok(1..))) {
+                return None;
+            }
         }
-        let read = timeout(SOCKET_TIMEOUT, stream.read_buf(&mut buffer)).await;
-        if buffer.len() > MAX_HEAD || !matches!(read, Ok(Ok(1..))) {
+    })
+    .await;
+    let end = match head {
+        Ok(Some(end)) => end,
+        Ok(None) => return Upgrade::Failed,
+        Err(_) => {
+            let answer = "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
+            let _ = timeout(SOCKET_TIMEOUT, stream.write_all(answer.as_bytes())).await;
             return Upgrade::Failed;
         }
     };
