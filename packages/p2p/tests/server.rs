@@ -113,6 +113,46 @@ async fn a_request_in_progress_keeps_a_silent_socket_open() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_response_still_being_written_keeps_a_silent_socket_open() {
+    let bench = Bench::new().await;
+    let body = vec![7; 1024 * 1024];
+    let handlers = &bench.fakes.handlers;
+    handlers.answer(RouteId::GetStatus, StubAnswer::Payload(body.clone()));
+    let (client, served) = tokio::io::duplex(64 * 1024);
+    bench.server.accept(Box::new(served), peer(2));
+    let start = Instant::now();
+    let mut raw = Raw::open(client).await.unwrap();
+    raw.hello().await;
+    raw.request(2, RouteId::GetStatus, status_request(VERSION))
+        .await;
+    // The client reads 16 KiB a second through a 64 KiB pipe: the response takes until about
+    // 60 s to write.
+    while raw.buffered() < body.len() {
+        assert!(raw.read_some(16 * 1024).await);
+        sleep(ms(1_000)).await;
+    }
+    let answer = raw.next().await;
+    assert!(matches!(answer, Sent::Binary(Message { id: 2, ref payload, .. }) if *payload == body));
+    // The checks at 35 s and 50 s find the response being written, and the one at 65 s finds it
+    // written since the check before, as the reference's `_flush` marks it once written; the one
+    // at 80 s closes the silent socket.
+    let mut pings = 0;
+    loop {
+        match raw.next().await {
+            Sent::Binary(Message {
+                kind: Kind::Ping, ..
+            }) => pings += 1,
+            Sent::Close(payload) => {
+                assert!(payload.is_empty());
+                break;
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!((pings, Instant::now() - start), (5, ms(80_000)));
+}
+
+#[tokio::test(start_paused = true)]
 async fn requests_on_one_socket_are_answered_as_they_finish() {
     let bench = Bench::new().await;
     let handlers = &bench.fakes.handlers;

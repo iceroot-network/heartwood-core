@@ -13,8 +13,11 @@
 //!   ends the connection with the library's error text, which the nes socket takes as its ban
 //!   reason ("WebSocket" written "websocket" and ":" as " -"); an invalid UTF-8 text message or
 //!   close reason ends it without a reason.
-//! - Frames are written unmasked, in order, by a task of their own.
+//! - Frames are written unmasked, in order, by a task of their own, which tells the session how
+//!   far it is, for the heartbeat's liveness check.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
@@ -335,27 +338,65 @@ fn control(opcode: u8, payload: &[u8]) -> Frame {
 #[derive(Debug)]
 pub struct FrameWriter {
     queue: mpsc::UnboundedSender<Vec<u8>>,
+    progress: Arc<Progress>,
     task: AbortHandle,
+}
+
+/// How far the writes are, in frames counted from 1.
+#[derive(Debug, Default)]
+struct Progress {
+    queued: AtomicU64,
+    /// The last frame queued that counts as the socket's activity.
+    activity: AtomicU64,
+    /// The frames written; `u64::MAX` once a write failed, as nothing more is written then.
+    written: AtomicU64,
 }
 
 impl FrameWriter {
     fn spawn(mut half: WriteHalf<Box<dyn Stream>>) -> FrameWriter {
         let (queue, mut frames) = mpsc::unbounded_channel::<Vec<u8>>();
+        let progress = Arc::new(Progress::default());
+        let written = Arc::clone(&progress);
         let task = tokio::spawn(async move {
             while let Some(frame) = frames.recv().await {
                 if half.write_all(&frame).await.is_err() {
+                    written.written.store(u64::MAX, Ordering::Release);
                     return;
                 }
+                written.written.fetch_add(1, Ordering::AcqRel);
             }
             let _ = half.shutdown().await;
         });
         let task = task.abort_handle();
-        FrameWriter { queue, task }
+        FrameWriter {
+            queue,
+            progress,
+            task,
+        }
     }
 
-    /// Send `bytes` as one binary frame.
-    pub fn binary(&self, bytes: &[u8]) {
-        self.send(2, bytes);
+    /// Send `bytes` as one binary frame. A frame that is `activity` (every message but the
+    /// server's ping) marks the socket active once it is written, as the reference's `_flush`
+    /// does ([`FrameWriter::is_writing_activity`]).
+    pub fn binary(&self, bytes: &[u8], activity: bool) {
+        let number = self.send(2, bytes);
+        if activity {
+            self.progress.activity.store(number, Ordering::Release);
+        }
+    }
+
+    /// Whether a frame is queued or being written (the reference's `_sending`).
+    pub fn is_writing(&self) -> bool {
+        self.written() < self.progress.queued.load(Ordering::Acquire)
+    }
+
+    /// Whether a frame that counts as activity is queued or being written.
+    pub fn is_writing_activity(&self) -> bool {
+        self.written() < self.progress.activity.load(Ordering::Acquire)
+    }
+
+    fn written(&self) -> u64 {
+        self.progress.written.load(Ordering::Acquire)
     }
 
     /// Send a close frame, with `code` unless it is 1005, and end the writes.
@@ -373,7 +414,8 @@ impl FrameWriter {
         self.task.abort();
     }
 
-    fn send(&self, opcode: u8, payload: &[u8]) {
+    /// Queue a frame; its number.
+    fn send(&self, opcode: u8, payload: &[u8]) -> u64 {
         let mut frame = vec![0x80 | opcode];
         match (u8::try_from(payload.len()), u16::try_from(payload.len())) {
             (Ok(short @ ..=125), _) => frame.push(short),
@@ -387,6 +429,8 @@ impl FrameWriter {
             }
         }
         frame.extend_from_slice(payload);
+        let number = self.progress.queued.fetch_add(1, Ordering::AcqRel);
         let _ = self.queue.send(frame);
+        number.saturating_add(1)
     }
 }
