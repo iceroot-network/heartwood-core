@@ -2,7 +2,7 @@
 //! asset has numbers and booleans, so each text that reads as one also stands for it.
 
 use heartwood_crypto::utils::js::number_to_string;
-use serde_json::{Map, Number, Value};
+use serde_json::{Number, Value};
 
 use crate::filters::js_number;
 
@@ -30,22 +30,16 @@ pub fn asset_alternatives(criterion: &Value) -> Result<Vec<Value>, CastLimit> {
 fn alternatives(value: &Value, left: &mut u32) -> Result<Vec<Value>, CastLimit> {
     match value {
         Value::Array(items) => {
-            let mut out: Vec<Vec<Value>> = vec![Vec::new()];
-            for item in items {
-                let choices = alternatives(item, left)?;
-                out = product(out, &choices, |prefix, choice| prefix.push(choice));
-            }
-            Ok(out.into_iter().map(Value::Array).collect())
+            let choices = items.iter().map(|item| alternatives(item, left));
+            let choices = choices.collect::<Result<Vec<_>, _>>()?;
+            Ok(combinations(&choices).map(Value::Array).collect())
         }
         Value::Object(map) => {
-            let mut out: Vec<Map<String, Value>> = vec![Map::new()];
-            for (key, inner) in map {
-                let choices = alternatives(inner, left)?;
-                out = product(out, &choices, |prefix, choice| {
-                    prefix.insert(key.clone(), choice);
-                });
-            }
-            Ok(out.into_iter().map(Value::Object).collect())
+            let choices = map.values().map(|inner| alternatives(inner, left));
+            let choices = choices.collect::<Result<Vec<_>, _>>()?;
+            let object =
+                |picked: Vec<Value>| Value::Object(map.keys().cloned().zip(picked).collect());
+            Ok(combinations(&choices).map(object).collect())
         }
         Value::String(text) => match cast(text) {
             Some(cast) => {
@@ -58,21 +52,26 @@ fn alternatives(value: &Value, left: &mut u32) -> Result<Vec<Value>, CastLimit> 
     }
 }
 
-/// Every `prefix` extended by every `choice`.
-fn product<T: Clone>(
-    prefixes: Vec<T>,
-    choices: &[Value],
-    extend: impl Fn(&mut T, Value),
-) -> Vec<T> {
-    let mut out = Vec::with_capacity(prefixes.len().saturating_mul(choices.len()));
-    for prefix in prefixes {
-        for choice in choices {
-            let mut next = prefix.clone();
-            extend(&mut next, choice.clone());
-            out.push(next);
-        }
-    }
-    out
+/// Every pick of one choice from each list of `choices`, the first list's choice varying slowest,
+/// as the reference spreads each prefix over each choice in turn. Each list holds two
+/// alternatives for each of its casts, so there are at most 32 picks, each built in one pass.
+fn combinations(choices: &[Vec<Value>]) -> impl Iterator<Item = Vec<Value>> + '_ {
+    let count = choices.iter().map(Vec::len).fold(1, usize::saturating_mul);
+    (0..count).map(move |index| {
+        let mut rest = index;
+        let mut picked: Vec<Value> = choices
+            .iter()
+            .rev()
+            .filter_map(|list| {
+                let len = list.len().max(1);
+                let choice = list.get(rest % len).cloned();
+                rest /= len;
+                choice
+            })
+            .collect();
+        picked.reverse();
+        picked
+    })
 }
 
 /// The number or boolean that `text` also stands for, if any.
@@ -134,6 +133,88 @@ mod tests {
                 json!({"a": [true, "x", 2.0]}),
             ])
         );
+    }
+
+    /// The reference's expansion as written: each prefix spread over each item's choices.
+    fn spread(value: &Value, left: &mut u32) -> Result<Vec<Value>, CastLimit> {
+        let extend = |prefixes: Vec<Vec<(String, Value)>>, key: &str, choices: Vec<Value>| {
+            let mut out = Vec::new();
+            for prefix in prefixes {
+                for choice in &choices {
+                    let mut next = prefix.clone();
+                    next.push((key.to_owned(), choice.clone()));
+                    out.push(next);
+                }
+            }
+            out
+        };
+        let entries: Vec<(String, &Value)> = match value {
+            Value::Array(items) => items.iter().map(|item| (String::new(), item)).collect(),
+            Value::Object(map) => map
+                .iter()
+                .map(|(key, inner)| (key.clone(), inner))
+                .collect(),
+            _ => return alternatives(value, left),
+        };
+        let mut out = vec![Vec::new()];
+        for (key, inner) in entries {
+            out = extend(out, &key, spread(inner, left)?);
+        }
+        let rebuild = |pairs: Vec<(String, Value)>| match value {
+            Value::Array(_) => Value::Array(pairs.into_iter().map(|(_, v)| v).collect()),
+            _ => Value::Object(pairs.into_iter().collect()),
+        };
+        Ok(out.into_iter().map(rebuild).collect())
+    }
+
+    #[test]
+    fn the_expansion_equals_the_reference_spread_in_content_and_order() {
+        let criteria = [
+            json!([]),
+            json!({}),
+            json!(["1", ["2", {"b": "true", "a": ["x", "3"]}], "y"]),
+            json!({"z": "false", "a": [null, "4", {"k": ["5"]}], "m": 7}),
+            json!({"a": ["1", "2", "3", "true", "false", null, "c"]}),
+            json!([[[["1"]]], "2", [], {}, "NaN"]),
+        ];
+        for criterion in criteria {
+            let mut left = CASTS;
+            assert_eq!(
+                asset_alternatives(&criterion),
+                spread(&criterion, &mut left),
+                "{criterion}"
+            );
+        }
+    }
+
+    #[test]
+    #[expect(
+        clippy::disallowed_types,
+        reason = "the test times the expansion against the wall clock"
+    )]
+    fn a_long_list_with_casts_expands_in_linear_time() {
+        // `asset.x=1,2,3,true,false&asset.x.16383=c`: five casts and 16,379 holes.
+        let mut items = vec![json!("1"), json!("2"), json!("3"), json!("true")];
+        items.push(json!("false"));
+        items.resize(16_383, Value::Null);
+        items.push(json!("c"));
+        let criterion = json!({"x": items});
+        let started = std::time::Instant::now();
+        let expanded = asset_alternatives(&criterion).unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(expanded.len(), 32);
+        let first = |value: &Value| value["x"].as_array().unwrap()[..6].to_vec();
+        assert_eq!(first(&expanded[0])[..5], items[..5]);
+        let cast = [
+            json!(1.0),
+            json!(2.0),
+            json!(3.0),
+            json!(true),
+            json!(false),
+        ];
+        assert_eq!(first(&expanded[31])[..5], cast);
+        assert_eq!(expanded[0]["x"][16_383], json!("c"));
+        assert!(elapsed.as_secs() < 2, "{elapsed:?}");
     }
 
     #[test]
