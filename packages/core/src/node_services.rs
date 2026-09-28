@@ -327,14 +327,18 @@ impl<N: Network> NodeServices for RelayServices<N> {
         Ok(listed.map(|b| listing(b.row, b.transactions)).collect())
     }
 
-    fn common_blocks(&self, ids: &[BlockId]) -> Result<Vec<BlockHeader>, LookupError> {
+    fn common_blocks(
+        &self,
+        ids: &[BlockId],
+        asked: usize,
+    ) -> Result<Vec<BlockHeader>, LookupError> {
         let memory: Vec<BlockHeader> = lock(&self.view.chain)
             .last_blocks
             .iter()
             .filter(|block| ids.contains(block.id()))
             .map(|block| block.header().clone())
             .collect();
-        if memory.len() >= ids.len() {
+        if memory.len() >= asked {
             return Ok(memory);
         }
         let rows = lookup(self.history.get().blocks_by_ids(ids))?;
