@@ -7,14 +7,14 @@
 //!
 //! A request goes through the reference's lifecycle in its order: the whitelist; the query
 //! grammar (a query it cannot read is a 500 on any path); the route (a preflight `OPTIONS` is
-//! answered here); the payload of a `POST` (its size, type and JSON, [`payload`]: any failure is
+//! answered here); the payload of a `POST` (its size, type and JSON, in `payload`: any failure is
 //! a 422); the rate limit; the path parameters, the query and the payload against the route's
 //! schema (422); the semaphore; the handler. Every answer, errors included, gets `X-Block-Height`
 //! (the published tip), `connection: close`, `cache-control: no-cache` and, but for a preflight's,
 //! the route's CORS headers: `vary: origin` and `access-control-expose-headers` always (hapi's
 //! origin setting `*` matches a request without an `Origin` too), `access-control-allow-origin`
 //! when the request has an `Origin`. A `GET`'s 200 answer with a body offers byte ranges
-//! (`accept-ranges: bytes`) and serves one ([`ranges`]). A `GET` or `HEAD` that no route matches,
+//! (`accept-ranges: bytes`) and serves one (in `ranges`). A `GET` or `HEAD` that no route matches,
 //! anywhere, is charged a point and answered 404, as the reference's catch-all route answers it;
 //! another method on an unmatched path is answered 404 before the rate limit.
 
