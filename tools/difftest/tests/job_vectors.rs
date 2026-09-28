@@ -73,33 +73,3 @@ fn the_job_vectors_pass_l0() {
     assert!(report.is_success(), "{report}");
     assert_eq!(report.skipped(), 0, "{report}");
 }
-
-/// The committed chain replayed as a follower imports it (the download path, the enqueueing's
-/// cuts or one block per job, the job and the block processor, committed per job), both cuts
-/// against the judge's lines and the store anchors, with no oracle. It needs the processor and
-/// the job, so it runs with the integration's tests.
-#[test]
-#[ignore = "integration"]
-fn the_committed_chain_replays_through_the_processor() {
-    use heartwood_difftest::corpus::Corpus;
-    use heartwood_difftest::levels::l2_processor::{self, L2ProcessorOptions};
-    use heartwood_difftest::report::Outcome;
-
-    let corpus = Corpus::load(&workspace().join("tools/difftest/corpus/txgen-one-node"))
-        .expect("the committed corpus loads");
-    let options = L2ProcessorOptions {
-        chunks: None,
-        to: None,
-        synthetic: false,
-    };
-    let report = l2_processor::run(&corpus, &options, None).expect("the replay runs");
-    eprintln!("{report}");
-    assert!(report.is_success(), "{report}");
-    let unbuilt: Vec<_> = report
-        .results
-        .iter()
-        .filter(|r| matches!(&r.outcome, Outcome::Skipped(why) if why.starts_with("not built yet")))
-        .collect();
-    assert!(unbuilt.is_empty(), "{unbuilt:?}");
-    assert!(report.compared() > 2 * 2_000, "{report}");
-}

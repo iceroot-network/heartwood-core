@@ -1,7 +1,8 @@
 # Heartwood Core: Rust checks and the differential-test workflow. `make help` lists the targets.
 #
-#   make check          build, clippy (warnings are errors), fmt check, tests, the release check,
-#                       the crate layers, and the review ceilings where tokei is installed
+#   make check          build, clippy (warnings are errors), fmt check, tests (the integration-tagged
+#                       ones too), the release check, the crate layers, rustdoc (warnings are
+#                       errors), and the review ceilings where tokei is installed
 #   make oracle-image   build the oracle image for COMMIT from scratch (needs Docker and the network)
 #   make e2e            vectors in the container and locally, diff the two runs, run L0
 #   make vectors-install  copy the container run into each crate's tests/vectors
@@ -103,7 +104,8 @@ need-name = $(if $(NAME),,$(error set NAME, the corpus under CORPUS=$(CORPUS)))
 .PHONY: help check build clippy fmt fmt-check test release-check oracle-context oracle-image \
         oracle-save vectors vectors-local vectors-diff vectors-install l0 ping test-oracle e2e \
         l1 corpus-import corpus-judge corpus-verify l2 l2-synthetic l2-restart crash-test pool-bench \
-        layers lines lines-if-tokei l2-processor relay-image live live-check api-compare
+        layers lines lines-if-tokei l2-processor relay-image live live-check api-compare doc \
+        test-integration
 
 help: ## this list
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | awk -F'\t' '{ printf "  make %-15s %s\n", $$1, $$2 }'
@@ -111,7 +113,7 @@ help: ## this list
 	@echo "           VECTORS=$(VECTORS) IMAGE_DIR=$(IMAGE_DIR) TOOLCHAIN_ENV=$(TOOLCHAIN_ENV)"
 	@echo "           DEVNET_GENERATOR=$(DEVNET_GENERATOR) CORPUS=$(CORPUS) ORACLE_ARGS=$(ORACLE_ARGS)"
 
-check: build clippy fmt-check test release-check layers lines-if-tokei ## build, clippy, fmt check, tests, release check, layers, ceilings
+check: build clippy fmt-check test test-integration release-check layers doc lines-if-tokei ## build, clippy, fmt check, tests, release check, layers, rustdoc, ceilings
 
 build: ## cargo build (the difftest binary)
 	$(TOOLCHAIN) && cargo build --locked
@@ -142,6 +144,17 @@ test: ## cargo test: each library crate alone, with no features and with all, th
 	    cargo test --locked -p "$$package" && cargo test --locked -p "$$package" --all-features || exit 1; \
 	done
 	$(TOOLCHAIN) && cargo test --locked -p heartwood-difftest
+
+# The tests marked `#[ignore = "integration"]` (the served API over a store, a relay importing from
+# a mock peer, the kill test through the runtime, ...): each by its exact name, with its crate's
+# features; a marked test that its target does not list fails.
+test-integration: build ## the integration-tagged tests of every crate
+	$(TOOLCHAIN) && tools/test-integration.sh
+
+# Every crate's documentation, with every feature: a warning (a link to a private item, a broken
+# link) fails.
+doc: ## rustdoc of the workspace with every feature, warnings are errors
+	$(TOOLCHAIN) && RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --locked --workspace --all-features
 
 release-check: ## each release package builds without the test seams (SEAMS)
 	@$(TOOLCHAIN) && for package in $(RELEASE_PACKAGES); do \
