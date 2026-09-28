@@ -388,8 +388,10 @@ pub fn compare_wallets(ours: &Value, theirs: &Value) -> Vec<String> {
 }
 
 /// The rate limit's answers (`rate-limit.jsonl`, sent from an address no node whitelists) of the
-/// node under test (`left`) against the control (`right`): for each case and repetition the same
-/// status, the same 429 body and the same header names. `Ok` holds a summary.
+/// node under test (`left`) against the control (`right`): for each case and repetition an
+/// answer (a request that failed, or an answer without a status, is a problem), the same status,
+/// the same 429 body and the same header names; and on each node at least one 429, without
+/// which nothing shows that the requests reached the rate limit. `Ok` holds a summary.
 pub fn rate_limit(path: &Path) -> Result<std::result::Result<String, Vec<String>>> {
     let answers = read_lines(path)?;
     type Key = (String, u64);
@@ -425,11 +427,34 @@ pub fn rate_limit(path: &Path) -> Result<std::result::Result<String, Vec<String>
             .map(|h| h.keys().cloned().collect())
             .unwrap_or_default()
     };
+    let status = |a: &Value| a.get("status").and_then(Value::as_u64);
+    let failed = |a: &Value| a.get("error").is_some() || status(a).is_none();
+    for (who, answers) in [("the node under test", &left), ("the control", &right)] {
+        for ((case, i), a) in answers.iter().filter(|(_, a)| failed(a)) {
+            let why = a
+                .get("error")
+                .map_or("no status".to_owned(), Value::to_string);
+            problems.push(format!("{case} request {i}: no answer of {who}: {why}"));
+        }
+    }
+    let limited = |answers: &BTreeMap<Key, &Value>| {
+        (answers.values())
+            .filter(|a| status(a) == Some(429))
+            .count()
+    };
+    for (who, answers) in [("the node under test", &left), ("the control", &right)] {
+        if limited(answers) == 0 {
+            problems.push(format!("no answer of {who} is a 429"));
+        }
+    }
     for ((case, i), l) in &left {
         let Some(r) = right.get(&(case.clone(), *i)) else {
             problems.push(format!("{case} request {i}: no answer of the control"));
             continue;
         };
+        if failed(l) || failed(r) {
+            continue;
+        }
         if l.get("status") != r.get("status") {
             problems.push(format!(
                 "{case} request {i}: status {} against {}",
@@ -448,14 +473,11 @@ pub fn rate_limit(path: &Path) -> Result<std::result::Result<String, Vec<String>
             ));
         }
     }
-    let limited = left
-        .values()
-        .filter(|a| a.get("status").and_then(Value::as_u64) == Some(429))
-        .count();
     Ok(if problems.is_empty() {
         Ok(format!(
-            "{} requests each, {limited} answered 429 on both",
-            left.len()
+            "{} requests each, {} answered 429 on both",
+            left.len(),
+            limited(&left)
         ))
     } else {
         Err(problems)
@@ -601,6 +623,18 @@ mod tests {
         );
         std::fs::write(&path, text.replacen("\"status\":429", "\"status\":200", 1)).unwrap();
         assert!(rate_limit(&path).unwrap().is_err());
+        // Equal answers without a 429 (a whitelisted sender), or requests that failed on both.
+        std::fs::write(&path, text.replace("\"status\":429", "\"status\":200")).unwrap();
+        let problems = rate_limit(&path).unwrap().unwrap_err();
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        let failed: String = ["left", "right"]
+            .iter()
+            .flat_map(|node| (1..=3).map(move |i| (node, i)))
+            .map(|(node, i)| format!("{}\n", json!({"node": node, "i": i, "error": "refused"})))
+            .collect();
+        std::fs::write(&path, failed).unwrap();
+        let problems = rate_limit(&path).unwrap().unwrap_err();
+        assert_eq!(problems.len(), 8, "{problems:?}");
     }
 
     #[test]
