@@ -874,7 +874,8 @@ answer but a preflight's carries `vary: origin` and `access-control-expose-heade
 `access-control-allow-origin` when the request has an `Origin`; a preflight is answered 204 with
 the reference's fixed set of headers, and its refusals carry no CORS header. A `GET`'s 200 answer with a body offers byte ranges and serves one range as hapi does
 (206, or 416 for a range it cannot serve). A `GET` or `HEAD` that no route matches is charged a
-point and answered 404, as the reference's catch-all route answers it.
+point and answered 404, as the reference's catch-all route answers it (a path that does not decode
+is one of the known gaps below).
 
 The query grammar is the reference's: Node's `querystring` (at most 1,000 pairs, a repeated key as
 a list), then its comma and dot plugins, with their throws, sparse lists, JavaScript's key order
@@ -938,6 +939,24 @@ each case shows only with the request named:
   `maxTransactionsPerRequest`; the reference takes the configured value;
 - a request head that has not ended after 417,792 bytes (possible only with bytes Node does not
   count, such as white space before a value) is 400, where Node reads on.
+
+Known gaps, not on purpose and still to be fixed; each needs a malformed or unusual request that
+common HTTP clients do not send:
+
+- an unmatched path that does not decode (`/api/nothing%zz`) is a charged 404, and its preflight
+  204; the reference answers 400 without a charge, and 500 to the preflight. A short path that
+  climbs above the root (`/..%2Fx`) is 404 here and 403 there;
+- line ends before the request line: with two, the head's 16,384-byte bound does not apply to that
+  request, and with one, the request line is counted and a head up to 13 bytes below the bound
+  is refused; Node skips them without counting;
+- hyper, the HTTP parser, refuses a head with 101 or more header fields (431), a target with `"`, `<`,
+  `>`, a backtick or bytes that are not UTF-8, and a header name with a space, all of which Node
+  accepts; an unknown method is a 404 here and Node's bare 400 there;
+- a gzip body followed by zero bytes is refused, a repeated `Content-Encoding` is read by its
+  first value, and a `Content-Type` with a byte beyond ASCII is read as absent; hapi decodes the
+  first, and refuses the second and the third with a 422;
+- a preflight with an empty `Origin` or `Access-Control-Request-Method` is not refused as hapi
+  refuses a missing one (404 with its CORS message).
 
 ```sh
 cargo test -p heartwood-api --locked                                # routes, grammar, envelope, plugins
