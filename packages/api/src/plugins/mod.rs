@@ -15,9 +15,12 @@
 //! origin setting `*` matches a request without an `Origin` too), `access-control-allow-origin`
 //! when the request has an `Origin`. A `GET`'s 200 answer with a body offers byte ranges
 //! (`accept-ranges: bytes`) and serves one (in `ranges`). A `GET` or `HEAD` that no route matches,
-//! anywhere, is charged a point and answered 404, as the reference's catch-all route answers it;
-//! another method on an unmatched path is answered 404 before the rate limit.
+//! anywhere, is answered as the reference's catch-all route answers it (in `catch_all`): 400
+//! uncharged when its path does not decode, else charged a point and answered 404 (403 for a short
+//! path that leads above the documentation's directory); another method on an unmatched path is
+//! answered 404 before the rate limit.
 
+mod catch_all;
 mod limits;
 mod payload;
 mod ranges;
@@ -37,6 +40,7 @@ use heartwood_kernel::ip;
 use serde_json::{Map, Value, json};
 use tokio::time::Instant;
 
+use self::catch_all::CatchAll;
 use self::limits::{Gates, RateLimiter};
 use crate::context::{ApiContext, ApiRequest, HandlerFuture, Method, Route, RouteId};
 use crate::errors::ApiError;
@@ -241,7 +245,9 @@ impl Pipeline {
                 let refused = |error: ApiError| {
                     Answer::new(error.status, Some(error.body()), Vec::new(), false)
                 };
-                return Ok(self.preflight(&parts.headers, path).unwrap_or_else(refused));
+                let full = parts.uri.path();
+                let answer = self.preflight(&parts.headers, path, full);
+                return Ok(answer.unwrap_or_else(refused));
             }
             Verb::GET | Verb::HEAD => Method::Get,
             Verb::POST => Method::Post,
@@ -249,11 +255,21 @@ impl Pipeline {
         };
         let Some((route, params)) = self.lookup(method, path)? else {
             // The reference's catch-all route (its documentation's) takes a GET or HEAD that no
-            // route matches, anywhere: it is charged a point, and finds nothing.
-            if method == Method::Get && config.rate_limit.enabled && !self.admit(&client) {
+            // route matches, anywhere.
+            if method == Method::Post {
+                return Err(not_found());
+            }
+            let answer = catch_all::answer(parts.uri.path());
+            if answer == CatchAll::Undecodable {
+                return Err(ApiError::bad_request("Bad Request"));
+            }
+            if config.rate_limit.enabled && !self.admit(&client) {
                 return Err(ApiError::too_many_requests("Too Many Requests"));
             }
-            return Err(not_found());
+            return Err(match answer {
+                CatchAll::Forbidden => ApiError::forbidden("Forbidden"),
+                CatchAll::Undecodable | CatchAll::NotFound => not_found(),
+            });
         };
         let payload = match method {
             Method::Post => Some(payload::read(&parts.headers, body).await?),
@@ -308,7 +324,7 @@ impl Pipeline {
     }
 
     /// A CORS preflight, as hapi answers it for a route with CORS on.
-    fn preflight(&self, headers: &HeaderMap, path: &str) -> Result<Answer, ApiError> {
+    fn preflight(&self, headers: &HeaderMap, path: &str, full: &str) -> Result<Answer, ApiError> {
         let missing = |name: &str| format!("CORS error: Missing {name} header");
         let Some(requested) = headers.get("access-control-request-method") else {
             return Err(ApiError::not_found(missing(
@@ -323,11 +339,15 @@ impl Pipeline {
             _ => return Err(not_found()),
         };
         // The route hapi finds for the method asked: a GET or HEAD that no route matches finds the
-        // catch-all route, which has CORS on. A parameter that does not decode fails hapi's
-        // assertion that the route it finds is not its bad-request route: a 500.
+        // catch-all route, which has CORS on. A path or a parameter that does not decode fails
+        // hapi's assertion that the route it finds is not its bad-request route: a 500.
         match self.lookup(method, path) {
             Ok(Some(_)) => {}
-            Ok(None) if method == Method::Get => {}
+            Ok(None) if method == Method::Get => {
+                if catch_all::answer(full) == CatchAll::Undecodable {
+                    return Err(ApiError::internal());
+                }
+            }
             Ok(None) => return Err(not_found()),
             Err(_) => return Err(ApiError::internal()),
         }

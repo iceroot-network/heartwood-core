@@ -392,6 +392,39 @@ async fn a_preflight_is_answered_as_hapi_answers_it() {
         .0,
         204
     );
+    // The path of a GET or HEAD that no route matches must decode, as a parameter must.
+    let undecodable = preflight(
+        "/x%zz",
+        &[origin, ("access-control-request-method", "HEAD")],
+    );
+    let (status, headers, _) = call(&pipeline, undecodable).await;
+    assert_eq!((status, header(&headers, "vary")), (500, None));
+    let unrouted = preflight("/x%zz", &[origin, method]);
+    assert_eq!(call(&pipeline, unrouted).await.0, 404);
+}
+
+#[tokio::test]
+async fn an_unmatched_path_is_answered_as_the_reference_catch_all_answers_it() {
+    let mut limited = config();
+    limited.rate_limit.points = 2;
+    let pipeline = pipeline(limited);
+    let head = |uri: &str| Request::head(uri).body(Body::empty()).unwrap();
+    // A path that does not decode: hapi's 400, before the rate limit.
+    let bad_request = boom(400, "Bad Request", "Bad Request");
+    for _ in 0..3 {
+        for uri in ["/api/nothing%zz", "/x%zz", "/%C3", "/api/wallets/a%2Fb/x%"] {
+            let (status, _, body) = call(&pipeline, get(uri)).await;
+            assert_eq!((status, body), (400, bad_request.clone()), "{uri}");
+        }
+        assert_eq!(call(&pipeline, head("/x%zz")).await.0, 400);
+    }
+    // A short path that leads above the documentation's directory: inert's 403, charged.
+    let (status, headers, body) = call(&pipeline, get("/..%2Fx")).await;
+    assert_eq!((status, body), (403, boom(403, "Forbidden", "Forbidden")));
+    assert_eq!(header(&headers, "vary"), Some("origin"));
+    assert_eq!(call(&pipeline, get("/api/nothing")).await.0, 404);
+    assert_eq!(call(&pipeline, get("/..%2Fx")).await.0, 429);
+    assert_eq!(call(&pipeline, get("/x%zz")).await.0, 400);
 }
 
 #[tokio::test]
