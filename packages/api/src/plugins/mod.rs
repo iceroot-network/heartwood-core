@@ -190,10 +190,11 @@ impl Pipeline {
             return Err(ApiError::forbidden("Forbidden"));
         }
         // The reference's query plugins run before its router and its rate limit: a query they
-        // throw on is a 500 on any path, and is not charged.
+        // throw on is a 500 on any path, and is not charged. The query is parsed again once the
+        // request is charged, so a request whose body is slow to come holds only its text.
         let grammar = &self.grammar;
-        let query = (grammar.parse)(parts.uri.query().unwrap_or(""));
-        if query.is_null() {
+        let raw = parts.uri.query().unwrap_or("");
+        if (grammar.parse)(raw).is_null() {
             return Err(ApiError::internal());
         }
         let path = parts.uri.path();
@@ -214,7 +215,7 @@ impl Pipeline {
             return Err(ApiError::too_many_requests("Too Many Requests"));
         }
         (grammar.params)(route, &params)?;
-        let query = (grammar.query)(route, &query)?;
+        let query = (grammar.query)(route, &(grammar.parse)(raw))?;
         let payload = payload.map(|payload| (grammar.payload)(route, &payload));
         let payload = payload.transpose()?;
         let _permit = self.gates.enter(route, &query).await?;
