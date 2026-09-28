@@ -969,24 +969,29 @@ pub fn stop_of(
 /// equal the answer, except where a documented difference explains it:
 ///
 /// - the reference refuses a block with a transaction of a removed type when it applies it,
-///   where Heartwood's download refuses the listing (the transaction bytes are checked);
+///   where Heartwood's download refuses the listing: the transaction bytes are checked, and the
+///   reference's answer must have that form (every block before the first such block accepted,
+///   that block rejected, the job ended by clearing the queue, not by a failure), or the refusal
+///   is mislabelled;
 /// - the reference keeps the missed-slot rows of a block it refused in its apply, where
 ///   Heartwood records none (the refusal must be Heartwood's too, and the rows must be the
 ///   reference's rows of that block only).
 pub fn judge_job(blocks: &[JobBlock], oracle: &Value, ours: &RigJob) -> Outcome {
     match ours {
         RigJob::Refused(why) => {
-            let removed = blocks.iter().any(|b| {
+            let removed = blocks.iter().position(|b| {
                 b.parts()
                     .is_ok_and(|(_, transactions)| transactions.iter().any(|t| is_removed_type(t)))
             });
-            if removed {
-                Outcome::Documented(Documented::RemovedType.reason().to_owned())
-            } else {
-                Outcome::VerdictMismatch {
+            match removed {
+                Some(at) if refused_at_apply(oracle, at) => {
+                    Outcome::Documented(Documented::RemovedType.reason().to_owned())
+                }
+                Some(_) => Outcome::Mislabelled(Documented::RemovedType.reason().to_owned()),
+                None => Outcome::VerdictMismatch {
                     oracle: format!("a job ending {}", oracle["end"]),
                     heartwood: format!("the download refused the listing: {why}"),
-                }
+                },
             }
         }
         RigJob::Ran { value, seen, .. } => {
@@ -1002,6 +1007,21 @@ pub fn judge_job(blocks: &[JobBlock], oracle: &Value, ours: &RigJob) -> Outcome 
             Outcome::Mismatch(differences)
         }
     }
+}
+
+/// Whether the oracle's job answer `oracle` is the reference's refusal of the block at index `at`
+/// in its apply: every block before it accepted, that block rejected and none processed after it,
+/// and the job ended by clearing the queue without a failure.
+fn refused_at_apply(oracle: &Value, at: usize) -> bool {
+    let Some(results) = oracle["results"].as_array() else {
+        return false;
+    };
+    let result = |i: usize| results.get(i).and_then(|r| r["result"].as_str());
+    results.len() == at + 1
+        && (0..at).all(|i| result(i) == Some("Accepted"))
+        && result(at) == Some("Rejected")
+        && oracle["end"] == "clear"
+        && oracle["failed"] == false
 }
 
 /// Whether `oracle` and `ours` differ only by the missed-slot rows the reference recorded for
@@ -2246,6 +2266,22 @@ mod tests {
         );
         let plain = [JobBlock::of(corpus.blocks[0].bytes.clone())];
         assert!(judge_job(&plain, &oracle, &refused).is_failure());
+        // The reference's answer must be its refusal of that block in its apply.
+        let mut accepted = oracle.clone();
+        accepted["results"][0]["result"] = json!("Accepted");
+        assert!(judge_job(&removed, &accepted, &refused).is_failure());
+        let mut failed = oracle.clone();
+        failed["failed"] = json!(true);
+        assert!(judge_job(&removed, &failed, &refused).is_failure());
+        // After an accepted block, the removed type's block is the second.
+        let two = [plain[0].clone(), removed[0].clone()];
+        let mut after = oracle.clone();
+        after["results"] = json!([{"result": "Accepted"}, {"result": "Rejected"}]);
+        assert_eq!(
+            judge_job(&two, &after, &refused),
+            Outcome::Documented(Documented::RemovedType.reason().to_owned())
+        );
+        assert!(judge_job(&two, &oracle, &refused).is_failure());
     }
 
     #[test]
