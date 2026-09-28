@@ -60,7 +60,8 @@ pub struct P2pOptions {
     pub max_transactions_per_request: usize,
     /// The seeds of `peers.json`'s `list`.
     pub seeds: Vec<PeerAddress>,
-    /// `peers.json`'s `sources`: local files (a path starting with `/`) or plain HTTP URLs.
+    /// `peers.json`'s `sources`: plain HTTP URLs (a path starting with `/`, which `peers.json`
+    /// refuses, is read as a local file; see [`crate::seeds`]).
     pub sources: Vec<String>,
 }
 
