@@ -539,10 +539,10 @@ impl FakeNode {
                         chain.last_accepted_ms = Some(self.clock.now_ms());
                     }
                     chain.last_stored_height = height;
-                    end = JobEnd::Broadcast(known, false);
+                    end = JobEnd::Broadcast(known, incoming.from_forger);
                 }
                 BlockProcessorResult::DiscardedButCanBeBroadcasted => {
-                    end = JobEnd::Broadcast(known, false);
+                    end = JobEnd::Broadcast(known, incoming.from_forger);
                     break;
                 }
                 BlockProcessorResult::Rollback => {
