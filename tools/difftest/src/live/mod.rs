@@ -13,7 +13,9 @@
 //!    Makefile's `CORPUS`) and judged (the oracle of `DIFFTEST_IMAGE` or `SOLAR_DIR` runs only when
 //!    a corpus has no judge's lines yet); the judge's anchors hold;
 //! 3. `nodes`: each node under test: a Heartwood relay's digest lines, store and logs
-//!    (`nodes`); a reference relay's archive against node 1's;
+//!    (`nodes`), its starts against the run's scripted restarts of it, and that a kill during its
+//!    initial sync ended its first start below node 1's height at its start; a reference relay's
+//!    archive against node 1's;
 //! 4. `api`: the route corpus's answers, judged by `api compare` ([`crate::api`]), and the rate
 //!    limit's answers from an address that no node whitelists;
 //! 5. `bans`: every ban of a node under test's address ([`bans`]);
@@ -129,7 +131,7 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
     let api_built = check_api(run_dir, &manifest, &mut api_cases);
     check_run(run_dir, &manifest, api_built, &mut cases)?;
     let chains = check_judge(run_dir, &manifest, options, &mut cases);
-    check_nodes(run_dir, &manifest, &chains, &mut cases);
+    check_nodes(run_dir, &manifest, &chains, &windows, &mut cases)?;
     cases.results.extend(api_cases.results);
     check_bans(run_dir, &manifest, &windows, &mut cases)?;
     check_invariants(run_dir, &manifest, &windows, &mut cases)?;
@@ -502,15 +504,26 @@ fn final_chain<'c>(manifest: &Manifest, chains: &'c Chains) -> Option<&'c corpor
         .map(|(_, j)| j)
 }
 
-fn check_nodes(run_dir: &Path, manifest: &Manifest, chains: &Chains, cases: &mut Cases) {
+fn check_nodes(
+    run_dir: &Path,
+    manifest: &Manifest,
+    chains: &Chains,
+    windows: &[run::Window],
+    cases: &mut Cases,
+) -> Result<()> {
     let Some(last) = final_chain(manifest, chains) else {
         cases.fail(
             "nodes",
             "the nodes under test",
             "the final chain was not judged, so no node can be checked",
         );
-        return;
+        return Ok(());
     };
+    let faults: Vec<(String, Vec<String>)> = windows
+        .iter()
+        .map(|w| (w.fault.clone(), w.nodes.clone()))
+        .collect();
+    let steps = run::steps(run_dir)?;
     let references: Vec<&str> = manifest
         .nodes
         .iter()
@@ -533,7 +546,11 @@ fn check_nodes(run_dir: &Path, manifest: &Manifest, chains: &Chains, cases: &mut
                         ),
                     }
                 }
-                let mut c = nodes::heartwood_digest(run_dir, node, &judged);
+                // The kill of a node that joins with an empty store, during its sync.
+                let kill = steps
+                    .iter()
+                    .find(|s| s.name == "kill-during-sync" && s.node == node.name);
+                let mut c = nodes::heartwood_digest(run_dir, node, &judged, &faults, kill);
                 c.extend(nodes::heartwood_store(
                     run_dir,
                     node,
@@ -574,6 +591,7 @@ fn check_nodes(run_dir: &Path, manifest: &Manifest, chains: &Chains, cases: &mut
             }
         }
     }
+    Ok(())
 }
 
 /// The route corpus and the rate limit; whether the route corpus's judge is built in this tree.

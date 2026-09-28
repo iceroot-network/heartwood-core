@@ -244,12 +244,148 @@ pub fn judge(digest: &NodeDigest, chains: &[JudgedChain]) -> Judged {
     out
 }
 
+/// The scripted faults after which the supervisor starts a relay again (`faults.jsonl`): a kill
+/// (`sig` and the signal's name), a stop and start, a restart with the replay marker.
+pub const RESTARTING_FAULTS: [&str; 5] =
+    ["sigint", "sigkill", "sigterm", "restart", "marker-restart"];
+
+/// The node's starts (its digest files) against the scripted restarts of it, of `faults` (each a
+/// fault's name and the nodes it concerns): one start, and one more after each of
+/// [`RESTARTING_FAULTS`]. A start more is a restart nobody scripted (the relay stopped by itself);
+/// a start less, a scripted restart that did not happen.
+pub fn starts(
+    digest: &NodeDigest,
+    node: &str,
+    faults: &[(String, Vec<String>)],
+) -> std::result::Result<String, String> {
+    let scripted = faults
+        .iter()
+        .filter(|(fault, nodes)| {
+            RESTARTING_FAULTS.contains(&fault.as_str()) && nodes.iter().any(|n| n == node)
+        })
+        .count();
+    let (want, have) = (scripted + 1, digest.files.len());
+    if want == have && scripted == 0 {
+        Ok("1 start, as scripted".to_owned())
+    } else if want == have {
+        Ok(format!(
+            "{have} starts: the first and one after each of its {scripted} scripted restarts"
+        ))
+    } else {
+        Err(format!(
+            "{have} starts (digest files), but its scripted restarts make {want}"
+        ))
+    }
+}
+
+/// A kill during the initial sync: the node's first start, on an empty store, ends (its last whole
+/// line) below `target`, the height node 1 held when the node started, so the kill landed before
+/// the node caught up with the chain; and the next start opens with the state it restored (a
+/// `restart` line).
+pub fn killed_during_sync(digest: &NodeDigest, target: u32) -> std::result::Result<String, String> {
+    let first = |start: u32| digest.lines.iter().find(|l| l.start == start);
+    let last = digest.lines.iter().rfind(|l| l.start == 1);
+    let Some(last) = last else {
+        return Err("its first start wrote no whole line".into());
+    };
+    if last.height() >= target {
+        return Err(format!(
+            "its first start reached height {} before the kill, not below node 1's height {target} at its start: the sync had ended",
+            last.height()
+        ));
+    }
+    match first(2) {
+        Some(l) if l.step() == "restart" => Ok(format!(
+            "the kill ended its first start at height {} of {target} (node 1's height at its start); the next start restored height {}",
+            last.height(),
+            l.height()
+        )),
+        Some(l) => Err(format!(
+            "the start after the kill opens with a line of step {}, not a restart line",
+            l.step()
+        )),
+        None => Err("no start after the kill".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
     use crate::vectors::testutil::TestDir;
+
+    fn digest_of(starts: &[&[Value]]) -> NodeDigest {
+        let mut out = NodeDigest::default();
+        for (s, lines) in starts.iter().enumerate() {
+            let start = u32::try_from(s + 1).unwrap();
+            out.files
+                .push(PathBuf::from(format!("digest-{start:04}.jsonl")));
+            out.lines
+                .extend(lines.iter().enumerate().map(|(i, v)| NodeLine {
+                    start,
+                    line: i + 1,
+                    value: v.clone(),
+                }));
+        }
+        out
+    }
+
+    #[test]
+    fn the_starts_follow_the_scripted_restarts() {
+        let genesis = {
+            let mut l = line(1, "g", "w1");
+            l["step"] = json!("genesis");
+            l
+        };
+        let restart = {
+            let mut l = line(2, "a2", "w2");
+            l["step"] = json!("restart");
+            l
+        };
+        let two = digest_of(&[&[genesis.clone(), line(2, "a2", "w2")], &[restart]]);
+        let fault = |name: &str, node: &str| (name.to_owned(), vec![node.to_owned()]);
+        let faults = [
+            fault("sigkill", "node5"),
+            fault("sigkill", "node4"),
+            fault("forger-stop", "node5"),
+            fault("collect-stop", "node5"),
+        ];
+        assert!(starts(&two, "node5", &faults).is_ok());
+        // Node 4's kill is not node 5's; a start without a scripted restart is a crash.
+        let err = starts(&two, "node5", &faults[1..]).unwrap_err();
+        assert!(
+            err.contains("2 starts (digest files), but its scripted restarts make 1"),
+            "{err}"
+        );
+        assert!(starts(&digest_of(&[&[genesis]]), "node5", &faults).is_err());
+    }
+
+    #[test]
+    fn a_kill_during_the_initial_sync_ends_the_first_start_below_the_tip() {
+        let mut genesis = line(1, "g", "w1");
+        genesis["step"] = json!("genesis");
+        let mut restart = line(1, "g", "w1");
+        restart["step"] = json!("restart");
+        let first: Vec<Value> = std::iter::once(genesis)
+            .chain((2..=45).map(|h| line(h, &format!("a{h}"), "w")))
+            .collect();
+        let then: Vec<Value> = std::iter::once(restart.clone())
+            .chain((2..=107).map(|h| line(h, &format!("a{h}"), "w")))
+            .collect();
+        let killed = digest_of(&[&first, &then]);
+        let ok = killed_during_sync(&killed, 107).unwrap();
+        assert!(ok.contains("at height 45 of 107"), "{ok}");
+        // A kill after the node reached node 1's height is not one during the sync.
+        let err = killed_during_sync(&killed, 45).unwrap_err();
+        assert!(err.contains("the sync had ended"), "{err}");
+        // The next start must open with the state it restored.
+        let mut apply_first = then.clone();
+        apply_first.remove(0);
+        let err = killed_during_sync(&digest_of(&[&first, &apply_first]), 107).unwrap_err();
+        assert!(err.contains("a line of step apply"), "{err}");
+        assert!(killed_during_sync(&digest_of(&[&first]), 107).is_err());
+    }
 
     fn line(h: u32, id: &str, w: &str) -> Value {
         json!({"h": h, "step": "apply", "id": id, "rw": "1", "b": "b", "s": "s", "r": "r", "m": "m", "w": w, "sd": "sd", "cd": "x"})

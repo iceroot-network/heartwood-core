@@ -191,6 +191,10 @@ fn a_recorded_run_passes() {
     );
     assert!(has("1 restart lines"), "{all:#?}");
     assert!(
+        has("node4: 2 starts: the first and one after each of its 1 scripted restarts"),
+        "{all:#?}"
+    );
+    assert!(
         has("node4: the stored tip is the final tip 265"),
         "{all:#?}"
     );
@@ -295,6 +299,28 @@ fn a_socket_close_ban_inside_a_fault_window_is_recorded() {
         )),
         "{:#?}",
         labels(&report)
+    );
+}
+
+#[test]
+fn a_start_nobody_scripted_fails() {
+    let f = fixture();
+    // The relay stopped by itself once more: a third start, which no fault of the run explains.
+    let difftest = f.run.join("nodes/node4/difftest");
+    let second = std::fs::read_to_string(difftest.join("digest-0002.jsonl")).unwrap();
+    let first_line = second.lines().next().unwrap();
+    std::fs::write(
+        difftest.join("digest-0003.jsonl"),
+        format!("{first_line}\n"),
+    )
+    .unwrap();
+    let report = check(&f);
+    let failed = failures(&report);
+    assert!(
+        failed
+            .iter()
+            .any(|l| l.contains("3 starts (digest files), but its scripted restarts make 2")),
+        "{failed:#?}"
     );
 }
 

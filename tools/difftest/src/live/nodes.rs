@@ -19,7 +19,7 @@ use serde_json::Value;
 use crate::corpus::{self, Corpus};
 use crate::errors::{Error, Result};
 use crate::live::digest::{self, JudgedChain};
-use crate::live::run::{Manifest, Node, archives, read_lines};
+use crate::live::run::{Manifest, Node, Step, archives, read_lines};
 use crate::report::Outcome;
 use crate::store::{self, ScratchDir};
 use crate::subject::Documented;
@@ -51,8 +51,16 @@ fn listed(label: &str, problems: &[String], out: &mut Vec<Check>) {
 }
 
 /// The digest lines of the Heartwood relay `node` in `run_dir` against `chains` (the final chain
-/// first).
-pub fn heartwood_digest(run_dir: &Path, node: &Node, chains: &[JudgedChain]) -> Vec<Check> {
+/// first); its starts against the run's scripted `faults` (each a fault's name and the nodes it
+/// concerns); and, when the run killed it during its initial sync (`kill`, that step), that the
+/// kill landed before the node caught up.
+pub fn heartwood_digest(
+    run_dir: &Path,
+    node: &Node,
+    chains: &[JudgedChain],
+    faults: &[(String, Vec<String>)],
+    kill: Option<&Step>,
+) -> Vec<Check> {
     let label = format!("{}: digest lines", node.name);
     let dir = run_dir.join("nodes").join(&node.name).join("difftest");
     let read = match digest::read(&dir) {
@@ -102,6 +110,28 @@ pub fn heartwood_digest(run_dir: &Path, node: &Node, chains: &[JudgedChain]) -> 
             counts.join(", "),
             judged.restarts
         )));
+    }
+    match digest::starts(&read, &node.name, faults) {
+        Ok(text) => out.push(pass(format!("{}: {text}", node.name))),
+        Err(e) => out.push(fail(format!("{}: its starts", node.name), e)),
+    }
+    if let Some(step) = kill {
+        let label = format!("{}: a kill during the initial sync", node.name);
+        let target = step
+            .record
+            .get("node1Height")
+            .and_then(Value::as_u64)
+            .and_then(|h| u32::try_from(h).ok());
+        match target {
+            None => out.push(fail(
+                &label,
+                "the step does not record node 1's height at the node's start (node1Height)",
+            )),
+            Some(target) => match digest::killed_during_sync(&read, target) {
+                Ok(text) => out.push(pass(format!("{label}: {text}"))),
+                Err(e) => out.push(fail(&label, e)),
+            },
+        }
     }
     out
 }
