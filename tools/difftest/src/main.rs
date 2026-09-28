@@ -14,7 +14,7 @@ use heartwood_difftest::levels::l2::{self, L2Options};
 use heartwood_difftest::levels::l2_processor::{self, L2ProcessorOptions};
 use heartwood_difftest::levels::{Level, l0};
 use heartwood_difftest::oracle::GenOptions;
-use heartwood_difftest::report::{CaseResult, Outcome, Report, describe_meta};
+use heartwood_difftest::report::{Report, describe_meta};
 use heartwood_difftest::restart::RestartPlan;
 use heartwood_difftest::store;
 use heartwood_difftest::strategies::transactions::TxContext;
@@ -296,24 +296,9 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             let mut report = api::compare(&args)?;
             // Recorded answers of a Heartwood relay count only for the tree whose relay answered.
             if let api::ApiCompareArgs::Recorded { run } = &args
-                && let Ok(manifest) = live::run::Manifest::load(run)
-                && let Some(binding) =
-                    live::run::relay_binding(&manifest, Path::new(live::run::RELAY_BINARY))
+                && let Some(case) = api::relay_case(run, Path::new(live::run::RELAY_BINARY))
             {
-                report.results.insert(
-                    0,
-                    CaseResult {
-                        file: run.join("run.json").display().to_string(),
-                        line: 0,
-                        op: "relay".into(),
-                        label: "the relay that answered is this tree's".into(),
-                        height: 0,
-                        outcome: match binding {
-                            Ok(_) => Outcome::Pass,
-                            Err(why) => Outcome::HarnessError(why),
-                        },
-                    },
-                );
+                report.results.insert(0, case);
             }
             print!("{report}");
             Ok(verdict(&report, strict))

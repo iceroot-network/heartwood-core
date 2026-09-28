@@ -28,7 +28,8 @@ use heartwood_api::schemas::{PARSED, parse_query, validate_params, validate_quer
 use serde_json::{Map, Value, json};
 
 use crate::errors::{Error, Result};
-use crate::report::{CaseResult, Report};
+use crate::live::run::{self as live_run, Manifest};
+use crate::report::{CaseResult, Outcome, Report};
 use crate::subject::{Case, SubjectError, Verdict};
 
 pub use judge::route_of;
@@ -107,6 +108,37 @@ pub fn compare(args: &ApiCompareArgs) -> Result<Report> {
             Ok(report)
         }
     }
+}
+
+/// The case of the relay that answered the answers a live run recorded in `run`: whether it is
+/// `binary`, the release binary of the tree being judged.
+///
+/// `None` for a directory that is not a live run's (one written by `api compare --left --right
+/// --out`), and for a run without a Heartwood relay. A live run's directory (one with an `api/`
+/// directory, or whose `run.json` names the live-run format) must have a `run.json` that loads:
+/// otherwise which relay answered is unknown, and the case is a harness error.
+pub fn relay_case(run: &Path, binary: &Path) -> Option<CaseResult> {
+    let path = run.join("run.json");
+    let named = std::fs::read_to_string(&path).is_ok_and(|text| text.contains(live_run::FORMAT));
+    let live = named || run.join(RUN_ANSWERS_DIR).is_dir();
+    let outcome = match Manifest::load(run) {
+        Ok(manifest) => match live_run::relay_binding(&manifest, binary)? {
+            Ok(_) => Outcome::Pass,
+            Err(why) => Outcome::HarnessError(why),
+        },
+        Err(error) if live => Outcome::HarnessError(format!(
+            "run.json does not load ({error}): the relay that answered is unknown"
+        )),
+        Err(_) => return None,
+    };
+    Some(CaseResult {
+        file: path.display().to_string(),
+        line: 0,
+        op: "relay".into(),
+        label: "the relay that answered is this tree's".into(),
+        height: 0,
+        outcome,
+    })
 }
 
 fn answer_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
@@ -274,4 +306,39 @@ fn params(pattern: &str, path: &str) -> Map<String, Value> {
             Some((name.to_owned(), Value::from(s)))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_live_run_without_a_manifest_that_loads_is_a_harness_error() {
+        let dir = std::env::temp_dir().join(format!("heartwood-relay-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(RUN_ANSWERS_DIR)).unwrap();
+        let binary = dir.join("heartwood");
+        let error = |case: Option<CaseResult>| match case.map(|case| case.outcome) {
+            Some(Outcome::HarnessError(why)) => why,
+            other => panic!("{other:?}"),
+        };
+        // A run's layout: `api/`, with no `run.json`, or a truncated one.
+        assert!(error(relay_case(&dir, &binary)).starts_with("run.json does not load"));
+        std::fs::write(dir.join("run.json"), r#"{"format": "heartwood-live-r"#).unwrap();
+        assert!(error(relay_case(&dir, &binary)).ends_with("the relay that answered is unknown"));
+        // `run.json` names the format though the answers lie elsewhere.
+        std::fs::remove_dir_all(dir.join(RUN_ANSWERS_DIR)).unwrap();
+        std::fs::write(dir.join("run.json"), r#"{"format": "heartwood-live-run/1""#).unwrap();
+        assert!(error(relay_case(&dir, &binary)).starts_with("run.json does not load"));
+        // A directory that `api compare --left --right --out` wrote is no run: no case.
+        std::fs::remove_file(dir.join("run.json")).unwrap();
+        assert!(relay_case(&dir, &binary).is_none());
+        // A run's manifest that loads and names no Heartwood relay: no case either.
+        let manifest = r#"{"format": "heartwood-live-run/1", "run": "r", "network": "devnet",
+            "seed": "s", "nodes": [{"name": "node1", "ip": "10.0.0.1",
+            "implementation": "reference"}]}"#;
+        std::fs::write(dir.join("run.json"), manifest).unwrap();
+        assert!(relay_case(&dir, &binary).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
