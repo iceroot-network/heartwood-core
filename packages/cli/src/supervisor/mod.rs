@@ -12,9 +12,10 @@
 //!   the unstable count reset; a run under 1 s is unstable, and after 5 unstable runs in a row the
 //!   status is `errored` and the supervisor exits ([`restart`]).
 //! - SIGTERM or SIGINT asks it to stop: it sends SIGINT to the node, SIGKILL after 30 s, and exits
-//!   when the node has ([`signals`]). SIGHUP is ignored. With `--daemon` it first leaves the
-//!   caller's session, so that a closing terminal never reaches it, and leads its own process
-//!   group, which holds its node.
+//!   when the node has ([`signals`]). SIGHUP is ignored. The node leads a process group of its
+//!   own, so that a terminal's SIGINT or hang-up never reaches it except through the supervisor.
+//!   With `--daemon` the supervisor first leaves the caller's session, so that a closing terminal
+//!   never reaches it either.
 
 pub mod logs;
 pub mod restart;
@@ -320,8 +321,8 @@ impl Supervisor {
     }
 }
 
-/// Start the node with `argv`: its input `/dev/null`, its output and errors into the pipes
-/// returned, no signal blocked, and SIGHUP, SIGINT, SIGQUIT, SIGPIPE and SIGTERM at their
+/// Start the node with `argv`: in a process group of its own, its input `/dev/null`, its output
+/// and errors into the pipes returned, no signal blocked, and SIGHUP, SIGINT, SIGQUIT, SIGPIPE and SIGTERM at their
 /// defaults, whatever the supervisor (which blocks them) and its caller (a shell may ignore
 /// SIGINT) had.
 fn spawn(argv: &[String]) -> Result<(Pid, PipeReader, PipeReader), Box<dyn Error>> {
@@ -341,8 +342,14 @@ fn spawn(argv: &[String]) -> Result<(Pid, PipeReader, PipeReader), Box<dyn Error
     attributes.set_sigmask(&SigSet::empty())?;
     let defaults = [SIGHUP, SIGINT, SIGQUIT, SIGPIPE, SIGTERM];
     attributes.set_sigdefault(&defaults.into_iter().collect())?;
+    // The node leads a process group of its own, as pm2's detached children do, so that a
+    // terminal's SIGINT (the caller's foreground group) reaches the supervisor alone, which
+    // passes it on once.
+    attributes.set_pgroup(Pid::from_raw(0))?;
     attributes.set_flags(
-        PosixSpawnFlags::POSIX_SPAWN_SETSIGMASK | PosixSpawnFlags::POSIX_SPAWN_SETSIGDEF,
+        PosixSpawnFlags::POSIX_SPAWN_SETSIGMASK
+            | PosixSpawnFlags::POSIX_SPAWN_SETSIGDEF
+            | PosixSpawnFlags::POSIX_SPAWN_SETPGROUP,
     )?;
     let args: Vec<CString> = argv
         .iter()

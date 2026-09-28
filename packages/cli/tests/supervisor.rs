@@ -197,6 +197,36 @@ fn a_stop_sends_sigint_and_the_state_file_follows_every_change() {
 }
 
 #[test]
+fn a_terminal_interrupt_reaches_the_node_once_through_the_supervisor() {
+    use heartwood_cli::supervisor::SuperviseArgs;
+    use nix::sys::signal::killpg;
+    use nix::unistd::Pid;
+    use std::os::unix::process::CommandExt;
+    let node = Node::new("foreground-interrupt");
+    fs::create_dir_all(&node.0.paths.data).unwrap();
+    // A foreground `start`: the supervisor without `--daemon`, in a process group of its own that
+    // stands for the terminal's, whose SIGINT goes to every process of the group.
+    let child = argv(&["graceful-sigint"]);
+    let mut supervisor = Command::new(CHILD)
+        .args(SuperviseArgs::command_line(&node.0, &child, false))
+        .envs(process::path_env(&node.0))
+        .stdin(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    wait_for("the node's first line", Duration::from_secs(10), || {
+        node.out().contains("test-child: graceful-sigint")
+    });
+    let group = Pid::from_raw(i32::try_from(supervisor.id()).unwrap());
+    killpg(group, Signal::SIGINT).unwrap();
+    let status = supervisor.wait().unwrap();
+    assert!(status.success(), "{status:?}");
+    let state = node.state();
+    assert_eq!(state.status, SupervisedStatus::Stopped);
+    assert_eq!(state.last_exit.as_deref(), Some("exit status: 0"));
+}
+
+#[test]
 fn the_node_runs_with_the_callers_environment_and_the_instance_directories() {
     let node = Node::new("environment");
     node.start(

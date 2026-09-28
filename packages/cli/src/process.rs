@@ -27,8 +27,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use heartwood_kernel::{Clock, SystemClock};
-use nix::sys::signal::{Signal, killpg};
-use nix::unistd::{Pid, getpgid};
+use nix::sys::signal::Signal;
 
 use crate::errors::ProcessError;
 use crate::process_table;
@@ -138,9 +137,8 @@ pub fn stop(instance: &Instance) -> Result<(), ProcessError> {
 }
 
 /// Kill `instance`'s supervisor and node with SIGKILL, as a crash does, wait until they have
-/// exited, and record the stop in the state file. A daemon supervisor leads its own process group,
-/// which holds its node, so both are killed at once and the node is never restarted; otherwise the
-/// node is killed through its own lock.
+/// exited, and record the stop in the state file. The supervisor is killed first, so the node is
+/// never restarted, then the node through its own lock.
 pub fn kill(instance: &Instance) -> Result<(), ProcessError> {
     let name = instance.name();
     let (supervisor_lock, node_lock) = (instance.supervisor_lock_path(), instance.lock_path());
@@ -153,12 +151,7 @@ pub fn kill(instance: &Instance) -> Result<(), ProcessError> {
     };
     let mut killed = false;
     if let Some(state) = state.as_ref().filter(|_| supervised) {
-        let supervisor = Pid::from_raw(i32::try_from(state.supervisor_pid).unwrap_or(0));
-        let sent = if getpgid(Some(supervisor)) == Ok(supervisor) {
-            killpg(supervisor, Signal::SIGKILL).is_ok()
-        } else {
-            send(state.supervisor_pid, Signal::SIGKILL)?
-        };
+        let sent = send(state.supervisor_pid, Signal::SIGKILL)?;
         if sent && !wait_unlocked(&supervisor_lock, EXIT_WAIT)? {
             return Err(timeout());
         }
