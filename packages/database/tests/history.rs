@@ -322,13 +322,30 @@ fn the_memo_is_a_case_sensitive_pattern_on_its_bytes() {
 #[test]
 fn the_asset_is_a_containment_with_the_query_texts_expanded() {
     let (_database, _settings, readers) = store("history-asset");
-    let asset = |value: serde_json::Value| TransactionCriteria {
-        asset: asset_alternatives(&value).unwrap(),
-        ..criteria()
+    // The store reads the query's value with its casts; its alternatives match the same rows.
+    let asset = |value: serde_json::Value| {
+        let expanded = TransactionCriteria {
+            asset: asset_alternatives(&value).unwrap(),
+            ..criteria()
+        };
+        let read = matching(&readers, expanded);
+        let value = TransactionCriteria {
+            asset: vec![value],
+            ..criteria()
+        };
+        assert_eq!(matching(&readers, value.clone()), read, "{value:?}");
+        value
     };
     assert_eq!(
         matching(&readers, asset(json!({"votes": {"alice": "60.5"}}))),
         [(2, 1)]
+    );
+    assert_eq!(
+        matching(
+            &readers,
+            asset(json!({"votes": {"alice": "60.5", "bob": "x"}}))
+        ),
+        []
     );
     assert_eq!(
         matching(
