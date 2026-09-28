@@ -883,8 +883,10 @@ repeated header's values joined with `, ` (the first one kept for `Content-Type`
 `Content-Length` and the others Node does not join), so two `Range` headers do not read and two
 `Content-Encoding` values name no decoder. A preflight's empty `Origin` or
 `Access-Control-Request-Method` is a missing one, and an echoed `Origin` is written back in the
-bytes Node writes (UTF-8 when the answer has a body, Latin-1 otherwise). A gzip body is read member
-by member, and a zero byte where a member would start ends it, as Node's gunzip reads it.
+bytes Node writes (UTF-8 when the answer has a body that hapi would not compress, Latin-1
+otherwise, the encoding chosen from `Accept-Encoding` as `@hapi/accept` chooses it). A gzip body
+is read member by member, and a zero byte where a member would start ends it, as Node's gunzip
+reads it.
 
 The query grammar is the reference's: Node's `querystring` (at most 1,000 pairs, a repeated key as
 a list), then its comma and dot plugins, with their throws, sparse lists, JavaScript's key order
@@ -948,9 +950,10 @@ each case shows only with the request named:
 - ties of a requested order are broken by the block height and the sequence;
 - pagination links drop the configured base path, where the reference drops the first four
   characters of the path whatever the base path is;
-- no response is compressed: the reference gzips a JSON answer of 1,024 bytes or more for a client
-  that accepts gzip, and such an answer carries no `accept-ranges` and is never cut to a range;
-  Heartwood answers identity, with the reference's `vary`;
+- no response is compressed: the reference compresses a JSON answer of 1,024 bytes or more with
+  the gzip or deflate its client's `Accept-Encoding` chooses, and such an answer carries no
+  `accept-ranges` and is never cut to a range; Heartwood answers identity, with the reference's
+  `vary` and the echoed `Origin` in the bytes the reference writes it in;
 - the 5 s socket timeout bounds the whole connection, headers included, where the reference's is
   5 s without activity; with a socket timeout of 0 a connection is bounded by 300 s, where the
   reference bounds only the request's reception by that time;

@@ -545,6 +545,27 @@ async fn request_headers_are_read_as_node_gives_them_to_hapi() {
     }
     let unmatched = raw_header(&pipeline, with("GET", "/api/nothing", &latin1), origin).await;
     assert_eq!(unmatched, (404, b"\xc3\xa9".to_vec()));
+    // hapi writes the head of an answer it compresses (1 KiB or more, for an `Accept-Encoding`
+    // from which `@hapi/accept` picks gzip or deflate) in Latin-1.
+    let large = format!("{status}?a={}", "x".repeat(1_200));
+    for (encoding, bytes) in [
+        ("gzip", &b"\xe9"[..]),
+        ("deflate, gzip", b"\xe9"),
+        ("x-gzip", b"\xe9"),
+        ("gzip;q=0.5, identity;q=0.4", b"\xe9"),
+        ("identity", b"\xc3\xa9"),
+        ("gzip;q=0", b"\xc3\xa9"),
+        ("gzip, identity", b"\xc3\xa9"),
+        ("*", b"\xc3\xa9"),
+        ("gzip;v=1", b"\xc3\xa9"),
+    ] {
+        let headers = [latin1[0], ("accept-encoding", encoding.as_bytes())];
+        let echoed = raw_header(&pipeline, with("GET", &large, &headers), origin).await;
+        assert_eq!(echoed, (200, bytes.to_vec()), "{encoding}");
+    }
+    let small = [latin1[0], ("accept-encoding", &b"gzip"[..])];
+    let echoed = raw_header(&pipeline, with("GET", status, &small), origin).await;
+    assert_eq!(echoed, (200, b"\xc3\xa9".to_vec()));
     // The first entry of the joined `X-Forwarded-For`.
     let mut trusting = config();
     trusting.trust_proxy = true;

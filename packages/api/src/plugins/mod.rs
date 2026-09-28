@@ -26,6 +26,7 @@
 //! and the query after it, each read as it is.
 
 mod catch_all;
+mod encoding;
 mod limits;
 mod payload;
 mod ranges;
@@ -202,6 +203,8 @@ struct Asked {
     /// Its `Range`, unless an `If-Range` makes hapi ignore it (no answer has an entity tag); an
     /// empty one is none.
     range: Option<String>,
+    /// Whether hapi would compress an answer of 1 KiB or more to it (its `Accept-Encoding`).
+    compressed: bool,
 }
 
 impl Asked {
@@ -209,11 +212,13 @@ impl Asked {
         let headers = request.headers();
         let given = |name: HeaderName| node_header(headers, &name).filter(|v| !v.is_empty());
         let conditional = given(header::IF_RANGE).is_some();
+        let accepted = node_header(headers, &header::ACCEPT_ENCODING);
         Asked {
             origin: node_header(headers, &header::ORIGIN),
             get: request.method() == Verb::GET,
             head: request.method() == Verb::HEAD,
             range: given(header::RANGE).filter(|_| !conditional),
+            compressed: encoding::compresses(accepted.as_deref()),
         }
     }
 }
@@ -513,6 +518,8 @@ impl Pipeline {
             (status, body) = (served, Some(part));
             fixed.extend(headers);
         }
+        // Node writes the head of an answer hapi compresses in Latin-1.
+        with_text &= !(large && asked.compressed);
         let mut response = Response::new(body.map_or_else(Body::empty, Body::from));
         *response.status_mut() =
             StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
