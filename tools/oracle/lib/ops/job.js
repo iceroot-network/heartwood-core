@@ -9,7 +9,8 @@
 // (the session's in-memory chain), time (a fixed clock), the queue, the state machine, the wake-up
 // timer and the peer transport are stubbed, and the logger records what it is given.
 //
-//   chain.job {session, hexes, now, machineState?, started?, downloaded?}
+//   chain.job {session, hexes, now, machineState?, started?, downloaded?, fromForger?, receive?,
+//              receivedAt?}
 //       the blocks of `hexes` (full block bytes in hex, or {hex, set}: the block with header
 //       fields its listing states otherwise, of numberOfTransactions) as one job on the session's
 //       chain at the time `now` (milliseconds since the Unix epoch): a download of one job,
@@ -21,7 +22,13 @@
 //       `downloaded` (true by default) sets the last downloaded block to the job's last block
 //       first, as a download does before it enqueues; `lastDownloaded` (block bytes in hex) sets
 //       it to that block instead, as a download of several jobs sets it to its own last block.
-//       -> the job (below)
+//       `fromForger` (false by default) marks each block as the node's own forger's, as
+//       Blockchain.handleIncomingBlock marks it; `receive` (false by default) first hands each
+//       block to the reference's Blockchain.handleIncomingBlock at `receivedAt` (milliseconds since
+//       the Unix epoch; `now` by default) from the forger's address, and the job runs the blocks it
+//       enqueued: none, when it discarded them ({received: false, lines}).
+//       -> the job (below), with `lines` (every log line of the receipt and the job, as the
+//       reference gives it to its logger) when `fromForger` or `receive` is set
 //   chain.job {chain: {crypto, blocks}, jobs: [{hexes, now, machineState?, started?,
 //              downloaded?, lastDownloaded?, sameDownload?}, ...]}
 //       a whole session in one call, for the golden vectors: the reference's first start on the
@@ -426,11 +433,33 @@ async function runJob(world, blocks, { step, started = true, downloaded: isDownl
 }
 
 /**
+ * The blocks `blocks` (block data) handed to the reference's handleIncomingBlock in `world`, from
+ * the forger (`fromForger`) at the forger's address: the blocks it enqueued, which the world's
+ * enqueueing captures instead of pushing a job.
+ */
+async function received(world, blocks, fromForger) {
+    const { blockchain, chain } = world;
+    const captured = [];
+    const enqueue = blockchain.enqueueBlocks;
+    blockchain.enqueueBlocks = (enqueued) => captured.push(...enqueued);
+    const wasStarted = chain.stateStore.isStarted();
+    chain.stateStore.setStarted(true);
+    try {
+        for (const block of blocks) await blockchain.handleIncomingBlock(block, fromForger, "127.0.0.1");
+    } finally {
+        blockchain.enqueueBlocks = enqueue;
+        chain.stateStore.setStarted(wasStarted);
+    }
+    return captured;
+}
+
+/**
  * Check the arguments of one job and run it on `replay`, with `named` its blocks as the enqueueing
  * of its download left them; a job without them is a download of its own, enqueued now.
  */
 async function sessionJob(solar, replay, args, step = "apply", named = undefined) {
     const { hexes, now, machineState, started, downloaded: isDownload, lastDownloaded, sameDownload } = args;
+    const { fromForger = false, receive = false, receivedAt = now } = args;
     const given = jobBlocks(hexes);
     if (sameDownload !== undefined && typeof sameDownload !== "boolean") throw new TypeError("sameDownload must be a boolean");
     if (sameDownload && !named) throw new TypeError("sameDownload needs a job before it in the chain form");
@@ -439,12 +468,21 @@ async function sessionJob(solar, replay, args, step = "apply", named = undefined
     if (started !== undefined && typeof started !== "boolean") throw new TypeError("started must be a boolean");
     if (isDownload !== undefined && typeof isDownload !== "boolean") throw new TypeError("downloaded must be a boolean");
     if (lastDownloaded !== undefined && (typeof lastDownloaded !== "string" || !/^([0-9a-f]{2})+$/.test(lastDownloaded))) throw new TypeError("lastDownloaded must be block bytes in lowercase hex");
-    return atTime(now, async () => {
-        const blocks = named || enqueued(solar, replay, given);
-        const world = jobWorld(solar, replay, { machineState });
+    if (typeof fromForger !== "boolean" || typeof receive !== "boolean") throw new TypeError("fromForger and receive must be booleans");
+    if (!Number.isSafeInteger(receivedAt) || receivedAt < 0) throw new TypeError("receivedAt must be a time in milliseconds");
+    const world = jobWorld(solar, replay, { machineState });
+    const lines = () => world.logger.lines.map((line) => line.message);
+    let blocks = await atTime(now, async () => named || enqueued(solar, replay, given));
+    if (fromForger) for (const block of blocks) block.fromForger = true;
+    if (receive) {
+        blocks = await atTime(receivedAt, () => received(world, blocks, fromForger));
+        if (!blocks.length) return { received: false, lines: lines() };
+    }
+    const job = await atTime(now, async () => {
         const last = lastDownloaded === undefined ? undefined : downloaded(solar, Buffer.from(lastDownloaded, "hex"));
         return runJob(world, blocks, { step, started, downloaded: isDownload, lastDownloaded: last });
     });
+    return fromForger || receive ? { ...job, lines: lines() } : job;
 }
 
 /**
