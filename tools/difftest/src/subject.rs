@@ -40,9 +40,11 @@ pub enum Verdict {
         holds: bool,
     },
     /// Heartwood took the path of a documented difference whose reference side only the oracle's
-    /// answer shows (a JavaScript prototype, the depth of the Node stack, an integer of any size).
-    /// When the oracle's answer shows it ([`Documented::shown_by`]), the case is a documented
-    /// difference; otherwise `verdict` is judged as usual.
+    /// answer shows (a JavaScript prototype, the depth of the Node stack, an integer of any size,
+    /// the missed rows of a refused block). When the oracle's answer shows it
+    /// ([`Documented::shown_by`]), or equals `verdict` once the part the difference changes is
+    /// left out ([`Documented::masked`]), the case is a documented difference; otherwise
+    /// `verdict` is judged as usual.
     DiffersWhereShown {
         /// The documented difference.
         difference: Documented,
@@ -301,6 +303,42 @@ impl Documented {
             Documented::Locale => note("locale"),
             _ => false,
         }
+    }
+
+    /// The oracle's answer `expected` without the part this difference changes, when Heartwood's
+    /// verdict `ours` and the answer both have that part; the case is then the documented
+    /// difference if `ours` equals what is left. Only the missed rows of a refused block have
+    /// one: the rows the reference recorded for a block both refused, in a `chain.process`
+    /// answer refused by the accept handler, or in each job of a `chain.job` answer.
+    pub fn masked(self, expected: &Expected, ours: &Verdict) -> Option<Expected> {
+        let (Documented::MissedRowsOfRefusedBlock, Expected::Output(theirs), Verdict::Output(ours)) =
+            (self, expected, ours)
+        else {
+            return None;
+        };
+        let rejected = |answer: &Value| answer["result"] == "Rejected";
+        if let (Some(jobs), Some(our_jobs)) = (theirs["jobs"].as_array(), ours["jobs"].as_array()) {
+            let mut adjusted = theirs.clone();
+            let mut changed = false;
+            for (index, (job, our_job)) in jobs.iter().zip(our_jobs).enumerate() {
+                let refused = |at: usize| rejected(&our_job["results"][at]);
+                let without = crate::levels::l2_processor::without_refused_rows(job, refused);
+                if let Some(without) = without {
+                    adjusted["jobs"][index] = without;
+                    changed = true;
+                }
+            }
+            return changed.then_some(Expected::Output(adjusted));
+        }
+        let accept = |answer: &Value| rejected(answer) && answer["handler"] == "AcceptBlockHandler";
+        let rows = theirs["missed"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty());
+        (accept(theirs) && accept(ours) && rows).then(|| {
+            let mut adjusted = theirs.clone();
+            adjusted["missed"] = Value::Array(Vec::new());
+            Expected::Output(adjusted)
+        })
     }
 }
 

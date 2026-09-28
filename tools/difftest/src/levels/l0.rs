@@ -82,6 +82,11 @@ fn judge_result(result: Result<Verdict, SubjectError>, expected: &Expected) -> O
         ) => {
             if difference.shown_by(expected) {
                 Outcome::Documented(difference.reason().to_owned())
+            } else if let Some(masked) = difference.masked(expected, &verdict) {
+                match judge_result(Ok(*verdict), &masked) {
+                    Outcome::Pass => Outcome::Documented(difference.reason().to_owned()),
+                    other => other,
+                }
             } else {
                 judge_result(Ok(*verdict), expected)
             }
@@ -410,6 +415,56 @@ mod tests {
             ),
             "{text}"
         );
+    }
+
+    #[test]
+    fn missed_rows_of_a_refused_block_are_documented_only_when_the_rest_is_equal() {
+        let rows = json!([{"timestamp": 48, "height": 6, "username": "genesis_1"}]);
+        let judge = |ours: &Value, theirs: &Value| {
+            let verdict = Verdict::DiffersWhereShown {
+                difference: Documented::MissedRowsOfRefusedBlock,
+                verdict: Box::new(Verdict::Output(ours.clone())),
+            };
+            judge_result(Ok(verdict), &Expected::Output(theirs.clone()))
+        };
+        // A chain.process answer: both refused the block at its apply.
+        let ours = json!({"result": "Rejected", "handler": "AcceptBlockHandler", "missed": [],
+                          "lastDownloaded": {"height": 5, "id": "aa"}, "clearQueue": false});
+        let mut theirs = ours.clone();
+        theirs["missed"] = rows.clone();
+        assert!(matches!(judge(&ours, &theirs), Outcome::Documented(_)));
+        assert_eq!(
+            judge(&ours, &ours),
+            Outcome::Pass,
+            "no rows: judged as it is"
+        );
+        let changed = |key: &str, value: Value| {
+            let mut changed = theirs.clone();
+            changed[key] = value;
+            judge(&ours, &changed)
+        };
+        // The reference accepted the block, or another handler refused it, or the answer differs
+        // beside the rows: each is a failure, not the documented difference.
+        assert!(changed("result", json!("Accepted")).is_failure());
+        assert!(changed("handler", json!("InvalidRewardHandler")).is_failure());
+        assert!(changed("lastDownloaded", json!({"height": 6, "id": "bb"})).is_failure());
+        // A chain.job answer: the rows of each block both refused leave its result and the job's
+        // list.
+        let job = |result: &str, rows: &Value, end: &str| {
+            let mut entry = json!({"height": 6, "id": "bb", "result": result});
+            if rows.as_array().is_some_and(|rows| !rows.is_empty()) {
+                entry["missed"] = rows.clone();
+            }
+            json!({"jobs": [{"results": [entry], "missed": rows, "end": end}]})
+        };
+        let ours = job("Rejected", &json!([]), "clear");
+        let judged = |result: &str, end: &str| judge(&ours, &job(result, &rows, end));
+        assert!(matches!(
+            judged("Rejected", "clear"),
+            Outcome::Documented(_)
+        ));
+        assert!(judged("Rejected", "broadcast").is_failure());
+        assert!(judged("Accepted", "clear").is_failure());
     }
 
     #[test]

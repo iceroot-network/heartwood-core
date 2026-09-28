@@ -10,9 +10,10 @@
 //!
 //! Two documented differences: a block whose bytes Heartwood refuses to rebuild where the
 //! reference rebuilds it (a removed type, for example) is the decoder's documented difference;
-//! and a block refused in its apply after missed slots is `Documented::MissedRowsOfRefusedBlock`,
-//! which holds when Heartwood's processor refused the block at its apply and the state detects
-//! missed slots before it (the reference has written their rows by then).
+//! and a block that Heartwood's processor refused at its apply, with missed slots before it, is
+//! answered as `Documented::MissedRowsOfRefusedBlock` where shown: the case is that difference
+//! only when the reference refused the block at its apply too and its answer, less the rows it
+//! wrote, equals Heartwood's ([`crate::subject::Documented::masked`]).
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -311,15 +312,9 @@ fn process(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         processor::trace_named(&mut ctx, &block, name.as_deref())
     };
     let processed = traced.processed;
-    if traced.handler == Handler::Accept
+    let refused_after_gap = traced.handler == Handler::Accept
         && processed.result == BlockProcessorResult::Rejected
-        && !gap.is_empty()
-    {
-        return Ok(Verdict::RefusedByDesign {
-            difference: Documented::MissedRowsOfRefusedBlock,
-            holds: true,
-        });
-    }
+        && !gap.is_empty();
     let missed = processed
         .applied
         .as_ref()
@@ -365,5 +360,13 @@ fn process(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         }
         out.insert("line".into(), line);
     }
-    Ok(Verdict::Output(Value::Object(out)))
+    let output = Verdict::Output(Value::Object(out));
+    Ok(if refused_after_gap {
+        Verdict::DiffersWhereShown {
+            difference: Documented::MissedRowsOfRefusedBlock,
+            verdict: Box::new(output),
+        }
+    } else {
+        output
+    })
 }

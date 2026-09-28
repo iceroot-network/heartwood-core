@@ -1032,19 +1032,28 @@ pub fn judge_job(blocks: &[JobBlock], oracle: &Value, ours: &RigJob) -> Outcome 
 
 /// Whether `oracle` and `ours` differ only by the missed-slot rows the reference recorded for
 /// blocks that both refused in a way Heartwood records no rows for: the oracle's answer without
-/// those rows (in the block's result and in the job's list) equals Heartwood's.
+/// those rows ([`without_refused_rows`]) equals Heartwood's.
 pub fn refused_rows_only(oracle: &Value, ours: &Value, seen: &[Seen]) -> bool {
-    let Some(results) = oracle["results"].as_array() else {
-        return false;
+    let refused = |index: usize| {
+        seen.get(index)
+            .is_some_and(|s| s.processed.result == BlockProcessorResult::Rejected)
     };
+    without_refused_rows(oracle, refused)
+        .is_some_and(|adjusted| compare::diff(&adjusted, ours).is_empty())
+}
+
+/// The oracle's answer to a job, `oracle`, without the missed-slot rows it records for each block
+/// that it refused and that Heartwood refused too (`refused`, by the block's index in the job):
+/// taken out of the block's result and out of the job's list. `None` when there are none.
+pub fn without_refused_rows(oracle: &Value, refused: impl Fn(usize) -> bool) -> Option<Value> {
+    let results = oracle["results"].as_array()?;
     let mut adjusted = oracle.clone();
     let mut excluded = Vec::new();
     for (index, result) in results.iter().enumerate() {
-        let refused = result["result"] == "Rejected"
-            && seen
-                .get(index)
-                .is_some_and(|s| s.processed.result == BlockProcessorResult::Rejected);
-        if refused && let Some(rows) = result["missed"].as_array() {
+        if result["result"] == "Rejected"
+            && refused(index)
+            && let Some(rows) = result["missed"].as_array()
+        {
             excluded.extend(rows.iter().cloned());
             if let Some(entry) = adjusted["results"][index].as_object_mut() {
                 entry.shift_remove("missed");
@@ -1052,7 +1061,7 @@ pub fn refused_rows_only(oracle: &Value, ours: &Value, seen: &[Seen]) -> bool {
         }
     }
     if excluded.is_empty() {
-        return false;
+        return None;
     }
     if let Some(rows) = adjusted["missed"].as_array_mut() {
         for row in &excluded {
@@ -1061,7 +1070,7 @@ pub fn refused_rows_only(oracle: &Value, ours: &Value, seen: &[Seen]) -> bool {
             }
         }
     }
-    compare::diff(&adjusted, ours).is_empty()
+    Some(adjusted)
 }
 
 // ---- the replay ---------------------------------------------------------------------------------
@@ -1775,7 +1784,7 @@ fn chain_case(input: &Value) -> std::result::Result<Verdict, SubjectError> {
         .as_array()
         .ok_or_else(|| SubjectError::Failed("jobs must be a list".into()))?;
     let mut values = Vec::new();
-    let mut documented = None;
+    let (mut removed, mut refused_rows) = (None, false);
     for job in jobs {
         let blocks = job_blocks(&job["hexes"]).map_err(SubjectError::Failed)?;
         let inputs = JobInputs::from_json(job).map_err(SubjectError::Failed)?;
@@ -1788,11 +1797,11 @@ fn chain_case(input: &Value) -> std::result::Result<Verdict, SubjectError> {
             })?;
         match ran {
             RigJob::Refused(why) => {
-                let removed = blocks.iter().any(|b| {
+                let holds = blocks.iter().any(|b| {
                     b.parts()
                         .is_ok_and(|(_, txs)| txs.iter().any(|t| is_removed_type(t)))
                 });
-                documented.get_or_insert((Documented::RemovedType, removed));
+                removed.get_or_insert(holds);
                 values.push(json!({ "refused": why }));
             }
             RigJob::Ran { value, seen, .. } => {
@@ -1810,17 +1819,25 @@ fn chain_case(input: &Value) -> std::result::Result<Verdict, SubjectError> {
                             state.apply_block(&d, rig.milestones(), &Handlers).is_ok()
                         })
                     });
-                    if accepted && refused_in_apply_after_gap(&state, block, rig.milestones()) {
-                        documented.get_or_insert((Documented::MissedRowsOfRefusedBlock, true));
-                    }
+                    refused_rows |=
+                        accepted && refused_in_apply_after_gap(&state, block, rig.milestones());
                 }
                 values.push(value);
             }
         }
     }
-    Ok(match documented {
-        Some((difference, holds)) => Verdict::RefusedByDesign { difference, holds },
-        None => Verdict::Output(json!({ "jobs": values })),
+    let output = Verdict::Output(json!({ "jobs": values }));
+    Ok(match (removed, refused_rows) {
+        (Some(holds), _) => Verdict::RefusedByDesign {
+            difference: Documented::RemovedType,
+            holds,
+        },
+        // The rows are the only part the judge may leave out ([`Documented::masked`]).
+        (None, true) => Verdict::DiffersWhereShown {
+            difference: Documented::MissedRowsOfRefusedBlock,
+            verdict: Box::new(output),
+        },
+        (None, false) => output,
     })
 }
 
