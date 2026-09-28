@@ -126,10 +126,13 @@ async fn serve(forger: ForgerConfig) -> Result<(), ForgerError> {
     let (stop, refusal) = (Arc::clone(&trigger), Arc::clone(&refused));
     let defaults = P2pOptions::default().minimum_versions;
     service.on_first_round(move |height| {
-        if let Err(error) = super::check_floor(&milestones, &network.name, height, &defaults) {
-            *refusal.lock().unwrap_or_else(PoisonError::into_inner) = Some(error.to_string());
-            stop.trigger();
-        }
+        let checked = super::check_floor(&milestones, &network.name, height, &defaults);
+        checked
+            .map_err(|error| {
+                *refusal.lock().unwrap_or_else(PoisonError::into_inner) = Some(error.to_string());
+                stop.trigger();
+            })
+            .is_ok()
     });
     let signal = Arc::clone(&trigger);
     tokio::spawn(async move {

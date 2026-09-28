@@ -142,8 +142,9 @@ struct State {
     /// The slot's transactions, fetched by its first attempt.
     transactions: Vec<Transaction>,
     first_check: Duration,
-    /// What the first round's tip height goes to (the version floor's check).
-    first_round: Option<Box<dyn FnOnce(u32) + Send>>,
+    /// What the first round's tip height goes to (the version floor's check), which says whether
+    /// the forger goes on.
+    first_round: Option<Box<dyn FnOnce(u32) -> bool + Send>>,
 }
 
 /// Why a check or an attempt failed: a relay's error, logged gracefully, or any other, whose
@@ -241,7 +242,8 @@ where
     pub async fn run(&self, shutdown: ShutdownSignal) {
         let (mut signal, mut attempts) = (shutdown.clone(), JoinSet::new());
         let mut wait = self.inner.state().first_check;
-        while until(&mut signal, tokio::time::sleep(wait)).await.is_some() {
+        while until(&mut signal, tokio::time::sleep(wait)).await.is_some() && !signal.is_requested()
+        {
             while attempts.try_join_next().is_some() {}
             let check = self.inner.check_slot(&mut attempts, &shutdown);
             match until(&mut signal, check).await {
@@ -276,8 +278,10 @@ where
     }
 
     /// Hand `hook` the height of the relay's tip at the first round loaded, once, before that
-    /// round's lines: where the forger's process checks its version floor.
-    pub fn on_first_round(&self, hook: impl FnOnce(u32) + Send + 'static) {
+    /// round's lines: where the forger's process checks its version floor. When the hook says
+    /// the forger does not go on (and asks for the shutdown), the forger neither announces its
+    /// start nor checks a slot.
+    pub fn on_first_round(&self, hook: impl FnOnce(u32) -> bool + Send + 'static) {
         self.inner.state().first_round = Some(Box::new(hook));
     }
 
@@ -409,10 +413,9 @@ where
             lines.extend(moved(&left, leaving, ":cry:"));
         }
         drop(state);
-        hook.into_iter()
-            .for_each(|hook| hook(round.last_block.height));
+        let goes_on = hook.is_none_or(|hook| hook(round.last_block.height));
         lines.iter().for_each(|line| info!("{line}"));
-        if first {
+        if first && goes_on {
             let active_delegates = self.delegates.iter().map(|(_, hex)| hex.clone()).collect();
             self.emit(ForgerEvent::Started { active_delegates });
             info!("Forger Manager started :hammer:");
