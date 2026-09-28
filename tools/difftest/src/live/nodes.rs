@@ -274,8 +274,34 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The lines of the Heartwood relay's logs that record a reply refused at its schema, or a
-/// protocol violation, naming one of `peers` (the reference nodes' addresses).
+/// The text of the log file at `path`: a rotated file (`.log.gz`) decompressed.
+fn log_text(path: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let bytes = std::fs::read(path)?;
+    if path.extension().and_then(|e| e.to_str()) != Some("gz") {
+        return Ok(String::from_utf8_lossy(&bytes).into_owned());
+    }
+    let mut text = Vec::new();
+    flate2::read::MultiGzDecoder::new(bytes.as_slice()).read_to_end(&mut text)?;
+    Ok(String::from_utf8_lossy(&text).into_owned())
+}
+
+/// Whether `name` is a log file of the relay: a stream the supervisor keeps (`relay.out.log`), the
+/// relay's own file log (`<stem>-current.log`), or one the file log rotated at midnight UTC
+/// (`<stem>-<date>.log.gz`).
+fn is_log(name: &str) -> bool {
+    name.ends_with(".log") || name.ends_with(".log.gz")
+}
+
+/// Whether `name` is the relay's own file log, live or rotated, which alone holds its debug lines.
+fn is_file_log(name: &str) -> bool {
+    name.ends_with("-current.log") || name.ends_with(".log.gz")
+}
+
+/// The lines of the Heartwood relay's logs (rotated files included) that record a reply refused at
+/// its schema, or a protocol violation, naming one of `peers` (the reference nodes' addresses);
+/// and, recorded from its file log, the peers its cleanse removed (by failure) and the times it
+/// fell back to its seeds for want of peers.
 pub fn heartwood_logs(run_dir: &Path, node: &Node, peers: &[&str]) -> Vec<Check> {
     let dir = run_dir.join("nodes").join(&node.name).join("log");
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -285,16 +311,32 @@ pub fn heartwood_logs(run_dir: &Path, node: &Node, peers: &[&str]) -> Vec<Check>
         )];
     };
     let mut counts: BTreeMap<(String, &str), usize> = BTreeMap::new();
+    let mut removed: BTreeMap<String, u64> = BTreeMap::new();
+    let mut fallbacks = 0usize;
     let mut lines = 0usize;
-    for entry in entries.filter_map(std::result::Result::ok) {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("log") {
+    let mut unread = Vec::new();
+    let mut paths: Vec<_> = entries
+        .filter_map(std::result::Result::ok)
+        .map(|e| e.path())
+        .collect();
+    paths.sort();
+    for path in paths {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if !is_log(&name) {
             continue;
         }
-        let Ok(bytes) = std::fs::read(&path) else {
-            continue;
+        let text = match log_text(&path) {
+            Ok(text) => text,
+            Err(e) => {
+                unread.push(format!("{name}: {e}"));
+                continue;
+            }
         };
-        for line in String::from_utf8_lossy(&bytes).lines() {
+        let file_log = is_file_log(&name);
+        for line in text.lines() {
             lines += 1;
             for (marker, kind) in [
                 ("Protocol violation by peer ", "protocol violation"),
@@ -310,20 +352,58 @@ pub fn heartwood_logs(run_dir: &Path, node: &Node, peers: &[&str]) -> Vec<Check>
                     }
                 }
             }
+            if !file_log {
+                continue;
+            }
+            // "Removed 2 peers because of \"<failure>\"": the cleanse's removals.
+            if let Some(rest) = line.split("Removed ").nth(1)
+                && let Some((count, failure)) = rest.split_once(" because of \"")
+            {
+                let n = count
+                    .split(' ')
+                    .next()
+                    .and_then(|n| n.parse::<u64>().ok())
+                    .unwrap_or(0);
+                let failure = failure.split('"').next().unwrap_or("").to_owned();
+                *removed.entry(failure).or_default() += n;
+            }
+            if line.contains("Couldn't find enough peers. Falling back to seed peers") {
+                fallbacks += 1;
+            }
         }
     }
     let label = format!(
         "{}: no reply refusal and no violation against a reference peer",
         node.name
     );
-    if counts.is_empty() {
+    let mut out: Vec<Check> = if counts.is_empty() {
         vec![pass(format!("{label} ({lines} log lines read)"))]
     } else {
         counts
             .into_iter()
             .map(|((ip, kind), n)| fail(&label, format!("{n} lines: {kind} of {ip}")))
             .collect()
+    };
+    for why in unread {
+        out.push(fail(
+            format!("{}: logs", node.name),
+            format!("unreadable: {why}"),
+        ));
     }
+    let removals: Vec<String> = removed
+        .iter()
+        .map(|(failure, n)| format!("{n} for \"{failure}\""))
+        .collect();
+    out.push(pass(format!(
+        "recorded: {}: its cleanse removed peers {}; it fell back to its seeds {fallbacks} times",
+        node.name,
+        if removals.is_empty() {
+            "never".to_owned()
+        } else {
+            removals.join(", ")
+        }
+    )));
+    out
 }
 
 /// A corpus's rows keyed for comparison: blocks by height, block columns by height, round rows by
@@ -445,4 +525,63 @@ pub fn reference(
         listed(&label, &problems, &mut out);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use super::*;
+    use crate::live::run::Implementation;
+    use crate::vectors::testutil::TestDir;
+
+    #[test]
+    fn the_log_scan_reads_rotated_files_and_records_the_cleanse() {
+        let dir = TestDir::new("live-logs");
+        let log = dir.path().join("nodes/node4/log");
+        std::fs::create_dir_all(&log).unwrap();
+        // The day before midnight, rotated: a violation and a removal, only in the file log.
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(
+            b"[2026-09-27 23:59:01.000] DEBUG: Protocol violation by peer 198.51.100.11: Protocol :warning:\n\
+              [2026-09-27 23:59:02.000] DEBUG: Removed 2 peers because of \"Request timed out\" :wastebasket:\n",
+        )
+        .unwrap();
+        std::fs::write(
+            log.join("solar-testnet-relay-2026-09-28.log.gz"),
+            gz.finish().unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            log.join("solar-testnet-relay-current.log"),
+            "[2026-09-28 00:00:03.000] DEBUG: Removed 1 peer because of \"Request timed out\" :wastebasket:\n\
+             [2026-09-28 00:00:04.000] INFO: Couldn't find enough peers. Falling back to seed peers :fire:\n",
+        )
+        .unwrap();
+        // The supervisor's copy of the console: its info lines are not counted twice.
+        std::fs::write(
+            log.join("relay.out.log"),
+            "[2026-09-28 00:00:04.000] INFO: Couldn't find enough peers. Falling back to seed peers :fire:\n",
+        )
+        .unwrap();
+        let node = Node {
+            name: "node4".into(),
+            ip: "198.51.100.14".into(),
+            implementation: Implementation::Heartwood,
+            forger: false,
+            under_test: true,
+        };
+        let checks = heartwood_logs(dir.path(), &node, &["198.51.100.11"]);
+        let failed: Vec<&Check> = checks.iter().filter(|c| c.2.is_failure()).collect();
+        assert_eq!(failed.len(), 1, "{checks:?}");
+        assert!(
+            matches!(&failed[0].2, Outcome::HarnessError(m) if m.contains("protocol violation of 198.51.100.11")),
+            "{checks:?}"
+        );
+        assert!(
+            checks.iter().any(|c| c.0
+                == "recorded: node4: its cleanse removed peers 3 for \"Request timed out\"; it fell back to its seeds 1 times"),
+            "{checks:?}"
+        );
+    }
 }
