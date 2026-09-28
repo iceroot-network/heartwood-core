@@ -402,7 +402,7 @@ fn node3_app() -> String {
     let relay = [before, vec![p2p.to_owned()], after].concat().join(",\n");
     let forger = [plugin("logger"), plugin("transactions"), forger].join(",\n");
     format!(
-        "{{\n    \"relay\": {{\n        \"plugins\": [\n{relay}\n        ]\n    }},\n    \"forger\": {{\n        \"plugins\": [\n{forger}\n        ]\n    }}\n}}\n"
+        "{{\n    \"core\": {{\n        \"plugins\": []\n    }},\n    \"relay\": {{\n        \"plugins\": [\n{relay}\n        ]\n    }},\n    \"forger\": {{\n        \"plugins\": [\n{forger}\n        ]\n    }}\n}}\n"
     )
 }
 
