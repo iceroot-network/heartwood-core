@@ -198,7 +198,7 @@ pub fn integer(value: &Value, min: i64, max: i64) -> Option<i64> {
 /// The number Joi's `number()` reads from `text`: an optional sign, digits with an optional
 /// fraction (or a fraction alone) and an optional exponent, with white space around (the forms
 /// Rust's reader takes, infinity and NaN aside), `-0` read as 0, at most 2^53 − 1 in size; refused
-/// as unsafe unless it prints back as the text ([`normalised`]), or, in an exponent form, unless
+/// as unsafe unless it prints back as the text (`normalised`), or, in an exponent form, unless
 /// the number over ten to the exponent prints back as the mantissa.
 pub fn joi_number(text: &str) -> Option<f64> {
     let text = text.trim();

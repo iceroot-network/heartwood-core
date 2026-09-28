@@ -13,7 +13,7 @@
 //!    Makefile's `CORPUS`) and judged (the oracle of `DIFFTEST_IMAGE` or `SOLAR_DIR` runs only when
 //!    a corpus has no judge's lines yet); the judge's anchors hold;
 //! 3. `nodes`: each node under test: a Heartwood relay's digest lines, store and logs
-//!    ([`nodes`]); a reference relay's archive against node 1's;
+//!    (`nodes`); a reference relay's archive against node 1's;
 //! 4. `api`: the route corpus's answers, judged by `api compare` ([`crate::api`]), and the rate
 //!    limit's answers from an address that no node whitelists;
 //! 5. `bans`: every ban of a node under test's address ([`bans`]);
