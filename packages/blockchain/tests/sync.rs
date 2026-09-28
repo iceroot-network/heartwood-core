@@ -452,12 +452,11 @@ async fn the_block_poll_handles_one_new_block_and_enqueues_several() {
     });
     h.network.state().minimum = true;
     let tip = downloaded(&block(12));
-    // The tip itself is left out; one block above it named by a ranked delegate is an incoming
-    // block (NEWBLOCK, then its job).
-    h.network
-        .state()
-        .downloads
-        .push_back(vec![tip, downloaded(&block(13))]);
+    // The start's sync downloads once from the tip and finds nothing. Then the poll: the tip
+    // itself is left out; one block above it named by a ranked delegate is an incoming block
+    // (NEWBLOCK, then its job).
+    let downloads = [vec![], vec![tip, downloaded(&block(13))]];
+    h.network.state().downloads.extend(downloads);
     h.service.boot().await.unwrap();
     h.wait_for(MINUTE, |h| h.chain().last_height() == 13).await;
     let jobs: Vec<_> = h.queue.pushed().iter().map(heights).collect();

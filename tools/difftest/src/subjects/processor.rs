@@ -164,6 +164,8 @@ fn case_state(input: &Value, kept: &Kept) -> Outcome<CaseState> {
     let tip = kept.state.last_block();
     let mut chain = ChainState::at(Arc::new(tip.clone()));
     chain.started = true;
+    // Without the key, the oracle sets the last downloaded block to the tip.
+    chain.reset_last_downloaded();
     if let Some(link) = state.get("lastDownloaded") {
         chain.last_downloaded = match link {
             Value::Null => None,

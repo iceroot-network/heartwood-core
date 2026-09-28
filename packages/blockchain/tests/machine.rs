@@ -260,6 +260,26 @@ async fn the_start_restores_the_pool_boots_the_network_and_syncs_to_idle() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn the_first_sync_after_a_start_downloads_once_even_on_a_fresh_tip() {
+    // A start has no last downloaded block, so its first sync is not synced yet: one download
+    // from the tip, which finds nothing, then synced (a peer sees one getBlocks).
+    let mut h = Harness::new(Setup::default());
+    assert_eq!(h.chain().last_downloaded, None);
+    h.service.boot().await.unwrap();
+    h.until("idle", Duration::from_secs(1)).await;
+    let calls = h.network.calls();
+    let synced = calls.iter().position(|call| call == "synced").unwrap();
+    let syncs: Vec<_> = (calls[..synced].iter())
+        .filter(|call| call.contains("silent=false"))
+        .collect();
+    assert_eq!(syncs.len(), 1, "{calls:?}");
+    assert!(syncs[0].starts_with("download 1 parallel=10 "));
+    let chain = h.chain();
+    assert_eq!(chain.last_downloaded.map(|link| link.height), Some(1));
+    assert_eq!(chain.no_block_counter, 0);
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_failed_start_exits_and_fails_the_boot() {
     let mut h = Harness::new(Setup::default());
     h.network.state().boot_fails = true;

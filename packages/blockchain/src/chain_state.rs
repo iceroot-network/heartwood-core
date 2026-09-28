@@ -32,7 +32,8 @@ pub struct Ping {
 pub struct ChainState {
     /// The last blocks, at most [`MAX_LAST_BLOCKS`], in height order; the last is the tip.
     pub last_blocks: VecDeque<Arc<Block>>,
-    /// The last downloaded block: the tip of what the node has downloaded or accepted.
+    /// The last downloaded block: the tip of what the node has downloaded or accepted; none
+    /// after a start until the first download sets it.
     pub last_downloaded: Option<ChainLink>,
     /// The last block ping.
     pub ping: Option<Ping>,
@@ -64,11 +65,12 @@ pub fn lock(shared: &Mutex<ChainState>) -> MutexGuard<'_, ChainState> {
 }
 
 impl ChainState {
-    /// A chain state whose tip is `tip`, as a start leaves it: the tip in memory, and the last
-    /// downloaded and stored block at the tip.
+    /// A chain state whose tip is `tip`, as a start leaves it: the tip in memory and stored, and
+    /// no last downloaded block, as the reference's state store has none before its first
+    /// download. So the first sync after a start downloads once from the tip, even on a fresh
+    /// tip, before it can be synced.
     pub fn at(tip: Arc<Block>) -> ChainState {
         let mut chain = ChainState {
-            last_downloaded: Some(ChainLink::of(&tip)),
             last_stored_height: tip.height(),
             ..ChainState::default()
         };

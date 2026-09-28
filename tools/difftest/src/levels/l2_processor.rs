@@ -518,7 +518,10 @@ impl JobRig {
         let pool = guarded(|| Pool::open(options, None))?
             .map_err(|e| StartProblem::Failed(format!("the pool does not open: {e}")))?;
         let pool = PoolTask::new(pool, DelegateVersions::new());
-        let chain = ChainState::at(Arc::new(state.last_block().clone()));
+        // As the oracle's node, which has downloaded its chain: the last downloaded block at the
+        // tip.
+        let mut chain = ChainState::at(Arc::new(state.last_block().clone()));
+        chain.reset_last_downloaded();
         let first = digest::height_digest(&state, &milestones, Step::Genesis, &[], None, &[0; 32]);
         Ok(JobRig {
             scratch,

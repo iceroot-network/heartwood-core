@@ -123,6 +123,7 @@ impl Node {
         let state = FIXTURE.tip.clone();
         let mut chain = ChainState::at(Arc::new(state.last_block().clone()));
         chain.started = true;
+        chain.reset_last_downloaded();
         Node {
             state,
             chain,
