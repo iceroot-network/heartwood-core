@@ -35,26 +35,70 @@ jobs:
   verify:
     needs: production-merge
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        # Together the parts run every prerequisite of `make check`; the lint part fails if one is
+        # missing. Each part runs on its own runner, so each has the runner's whole disk.
+        include:
+          - part: lint
+            targets: fmt-check clippy layers lines-if-tokei
+          - part: docs
+            targets: build doc release-check wire-features
+          - part: unit
+            targets: test
+          - part: integration
+            targets: test-integration test-wire test-p2p
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+    name: verify (${{ matrix.part }})
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The hosted image ships toolchains these checks never use; the build needs their space.
+      - name: Free the runner's disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h /
+      - name: Every prerequisite of make check is in a part
+        if: matrix.part == 'lint'
+        run: |
+          set -euo pipefail
+          wanted=$({ make -p -n -q check 2>/dev/null || true; } | awk '/^check:/ { sub(/^check:[ ]*/, ""); print }' \
+            | tr ' ' '\n' | grep -v '^$' | sort -u)
+          covered=$(grep -E '^ +targets:' .github/workflows/ci.yml | sed 's/.*targets://' | tr ' ' '\n' \
+            | grep -v '^$' | sort -u)
+          missing=$(comm -23 <(echo "$wanted") <(echo "$covered"))
+          if [ -n "$missing" ]; then
+            echo "::error::make check needs targets no part runs: $(echo $missing)"
+            exit 1
+          fi
+          echo "The parts cover: $(echo $wanted)"
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: '1.98.0'
           components: rustfmt,clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
+          key: ${{ matrix.part }}
           workspaces: |
             . -> target
             fuzz -> target
       # tokei counts the code lines that make check holds against each crate's review ceiling.
       - name: Install the line counter
+        if: matrix.part == 'lint'
         run: cargo install tokei --version 15.0.0 --locked
-      - name: Check workspace, isolated crypto features, and release feature boundaries
-        run: make check
+      - name: make ${{ matrix.targets }}
+        run: make ${{ matrix.targets }}
       - name: Verify committed golden vectors
+        if: matrix.part == 'integration'
         run: cargo run --locked -p heartwood-difftest -- vectors verify packages/crypto/tests/vectors
       - name: Compare Rust subjects against committed reference vectors
+        if: matrix.part == 'integration'
         run: cargo run --locked -p heartwood-difftest -- run l0 packages/crypto/tests/vectors --strict
       # Oracle regeneration remains an explicit reproducibility operation: it needs
       # the pinned reference build and external genesis generator. CI never replaces vectors.
