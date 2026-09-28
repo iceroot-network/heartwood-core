@@ -106,7 +106,7 @@ need-name = $(if $(NAME),,$(error set NAME, the corpus under CORPUS=$(CORPUS)))
 .PHONY: help check build clippy fmt fmt-check test release-check oracle-context oracle-image \
         oracle-save vectors vectors-local vectors-diff vectors-install l0 ping test-oracle e2e \
         l1 corpus-import corpus-judge corpus-verify l2 l2-synthetic l2-restart crash-test pool-bench \
-        layers lines lines-if-tokei l2-processor relay-image live live-check api-compare doc \
+        layers lines lines-if-tokei l2-processor relay-binary relay-image live live-check api-compare doc \
         test-integration
 
 help: ## this list
@@ -491,22 +491,29 @@ l2-processor: build ## replay CORPUS/NAME through the processor and the job agai
 	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor $(if $(CHUNKS),--chunks $(CHUNKS)) $(if $(TO),--to $(TO)) \
 	    $(STRICT)
 
-relay-image: ## the relay's release binary with the harness's flags, and its devnet image (RELAY_IMAGE_RECIPE)
-	$(if $(RELAY_IMAGE_RECIPE),,$(error set RELAY_IMAGE_RECIPE, the devnet tooling's image recipe, in local.mk))
+relay-binary: ## the relay's release binary with the harness's flags (target/release/heartwood)
 	$(TOOLCHAIN) && cargo build --release --locked -p heartwood-core --features difftest
+
+relay-image: relay-binary ## the relay's release binary and its devnet image (RELAY_IMAGE_RECIPE)
+	$(if $(RELAY_IMAGE_RECIPE),,$(error set RELAY_IMAGE_RECIPE, the devnet tooling's image recipe, in local.mk))
 	$(RELAY_IMAGE_RECIPE) $(CURDIR)/target/release/heartwood
 
-live: ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2, LIVE_RECIPE)
+# A run with a Heartwood relay (every run but r) tests this tree's release binary: live builds it
+# and its image first, and live-check and api-compare build it again (nothing to do when the tree
+# is unchanged), so that a run of another build fails their check that it is this tree's relay.
+relay-of-run = $(if $(filter-out r,$(RUN)),$(1))
+
+live: $(call relay-of-run,relay-image) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2, LIVE_RECIPE)
 	$(need-live)
 	$(need-run)
 	$(LIVE_RECIPE) $(RUN) $(CURDIR)
 
-live-check: build ## the comparisons of a live run (RUN, LIVE_RESULTS)
+live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS)
 	$(need-run)
 	$(need-results)
 	$(TOOLCHAIN) && $(DIFFTEST) live check $(LIVE_RESULTS)/$(RUN) $(STRICT)
 
-api-compare: build ## judge the API answers a live run recorded (RUN, LIVE_RESULTS), or two nodes' (LEFT, RIGHT)
+api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the API answers a live run recorded (RUN, LIVE_RESULTS), or two nodes' (LEFT, RIGHT)
 	$(TOOLCHAIN) && if [ -n '$(LEFT)' ] && [ -n '$(RIGHT)' ]; then \
 	    $(DIFFTEST) api compare --left '$(LEFT)' --right '$(RIGHT)' --out $(API_COMPARE_OUT) $(STRICT); \
 	else \

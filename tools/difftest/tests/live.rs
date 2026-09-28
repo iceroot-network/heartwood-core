@@ -19,6 +19,7 @@ use heartwood_difftest::corpus::{self, Corpus};
 use heartwood_difftest::live::{self, LiveOptions};
 use heartwood_difftest::report::{Outcome, Report};
 use heartwood_difftest::store::{self, ScratchDir};
+use heartwood_difftest::vectors::sha256_hex;
 use serde_json::{Value, json};
 
 #[test]
@@ -66,11 +67,13 @@ fn replayed_store() -> &'static Path {
     data
 }
 
-/// A run directory `results/h` and a corpus root holding the judged chain `live-h`.
+/// A run directory `results/h`, a corpus root holding the judged chain `live-h`, and the release
+/// binary of the tree (a stand-in file whose SHA-256 the run records).
 struct Fixture {
     _scratch: ScratchDir,
     run: PathBuf,
     root: PathBuf,
+    relay: PathBuf,
     /// The judge's forward lines of the chain, by height.
     forward: Vec<Value>,
 }
@@ -83,6 +86,16 @@ fn fixture() -> Fixture {
     let run = scratch.path().join("results/h");
     let root = scratch.path().join("corpus");
     copy_dir(&manifest_dir().join("tests/fixtures/live/h"), &run);
+    // The relay the run tested: the tree's release binary, as run.json records it.
+    let relay = scratch.path().join("heartwood");
+    std::fs::write(&relay, b"the release binary").unwrap();
+    let mut manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(run.join("run.json")).unwrap()).unwrap();
+    manifest["relayImage"] = json!("heartwood-relay:fixture");
+    manifest["relayBinarySha256"] = json!(sha256_hex(b"the release binary"));
+    manifest["worktreeCommit"] = json!("0123456789abcdef0123456789abcdef01234567");
+    manifest["worktreeClean"] = json!(true);
+    std::fs::write(run.join("run.json"), manifest.to_string()).unwrap();
     let committed = manifest_dir().join("corpus/txgen-one-node");
     copy_dir(&committed, &root.join("live-h"));
     let loaded = Corpus::load(&root.join("live-h")).unwrap();
@@ -138,6 +151,7 @@ fn fixture() -> Fixture {
         _scratch: scratch,
         run,
         root,
+        relay,
         forward,
     }
 }
@@ -153,6 +167,7 @@ fn check(f: &Fixture) -> Report {
         &LiveOptions {
             corpus_root: f.root.clone(),
             oracle: &no_oracle,
+            relay_binary: f.relay.clone(),
         },
     )
     .expect("the live check runs")
@@ -190,6 +205,7 @@ fn a_recorded_run_passes() {
         "{all:#?}"
     );
     assert!(has("1 restart lines"), "{all:#?}");
+    assert!(has("is this tree's release binary"), "{all:#?}");
     assert!(
         has("node4: 2 starts: the first and one after each of its 1 scripted restarts"),
         "{all:#?}"
@@ -299,6 +315,38 @@ fn a_socket_close_ban_inside_a_fault_window_is_recorded() {
         )),
         "{:#?}",
         labels(&report)
+    );
+}
+
+#[test]
+fn a_run_of_another_relay_binary_fails() {
+    let f = fixture();
+    // The tree was built again after the run: its release binary is not the one the run tested.
+    std::fs::write(&f.relay, b"a later build").unwrap();
+    let report = check(&f);
+    let failed = failures(&report);
+    assert!(
+        failed
+            .iter()
+            .any(|l| l.contains("the relay the run tested is this tree's")
+                && l.contains("repeat the run")),
+        "{failed:#?}"
+    );
+    // A run that does not record its relay binary cannot count either.
+    let path = f.run.join("run.json");
+    let mut manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    manifest
+        .as_object_mut()
+        .unwrap()
+        .remove("relayBinarySha256");
+    std::fs::write(&path, manifest.to_string()).unwrap();
+    let failed = failures(&check(&f));
+    assert!(
+        failed
+            .iter()
+            .any(|l| l.contains("records no relayBinarySha256")),
+        "{failed:#?}"
     );
 }
 

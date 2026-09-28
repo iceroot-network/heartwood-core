@@ -5,7 +5,9 @@
 //!
 //! The run directory's layout is [`run`]'s. The checks, in the report's order:
 //!
-//! 1. `run`: the run finished, and every scripted step of its schedule ran and met its expectation
+//! 1. `run`: the relay the run tested is the release binary of the tree being judged (the SHA-256
+//!    `run.json` records for the image it started); the run finished, and every scripted step of
+//!    its schedule ran and met its expectation
 //!    ([`steps::required`]); txgen's own checks passed; for run `h`, each submission got the answer it
 //!    got in run `r` and the scenario wallets at the pause equal run `r`'s (the run beside it, `../r`);
 //! 2. `judge`: every chain of the run (node 1's archive, and the minority's archive from before a
@@ -63,10 +65,13 @@ pub struct LiveOptions<'a> {
     pub corpus_root: PathBuf,
     /// The oracle, asked for only when a corpus has not been judged yet.
     pub oracle: &'a dyn Fn() -> Result<Oracle>,
+    /// The release binary of the tree being judged, which must be the relay the run tested.
+    pub relay_binary: PathBuf,
 }
 
-/// Check the live run in `run_dir`, with the corpora under [`CORPUS_ROOT`] and the oracle of the
-/// environment (`DIFFTEST_IMAGE` or `SOLAR_DIR`).
+/// Check the live run in `run_dir`, with the corpora under [`CORPUS_ROOT`], the oracle of the
+/// environment (`DIFFTEST_IMAGE` or `SOLAR_DIR`) and the tree's release binary at
+/// [`run::RELAY_BINARY`].
 pub fn check(run_dir: &Path) -> Result<Report> {
     let oracle = || OracleArgs::default().resolve(|name: &str| std::env::var(name).ok());
     check_with(
@@ -74,6 +79,7 @@ pub fn check(run_dir: &Path) -> Result<Report> {
         &LiveOptions {
             corpus_root: PathBuf::from(CORPUS_ROOT),
             oracle: &oracle,
+            relay_binary: PathBuf::from(run::RELAY_BINARY),
         },
     )
 }
@@ -129,6 +135,12 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
         results: Vec::new(),
     };
     let api_built = check_api(run_dir, &manifest, &mut api_cases);
+    // The relay the run tested must be this tree's: a run of an older build judges nothing here.
+    match run::relay_binding(&manifest, &options.relay_binary) {
+        Some(Ok(text)) => cases.pass("run", text),
+        Some(Err(why)) => cases.fail("run", "the relay the run tested is this tree's", why),
+        None => {}
+    }
     check_run(run_dir, &manifest, api_built, &mut cases)?;
     let chains = check_judge(run_dir, &manifest, options, &mut cases);
     check_nodes(run_dir, &manifest, &chains, &windows, &mut cases)?;
@@ -136,7 +148,15 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
     check_bans(run_dir, &manifest, &windows, &mut cases)?;
     check_invariants(run_dir, &manifest, &windows, &mut cases)?;
     let report = Report {
-        title: format!("Live check of run {} ({})", manifest.run, manifest.network),
+        title: match (&manifest.relay_image, &manifest.relay_binary_sha256) {
+            (Some(image), Some(sha)) if manifest.has_heartwood() => format!(
+                "Live check of run {} ({}; relay {image}, binary sha256 {})",
+                manifest.run,
+                manifest.network,
+                sha.get(..12).unwrap_or(sha)
+            ),
+            _ => format!("Live check of run {} ({})", manifest.run, manifest.network),
+        },
         source: format!(
             "{}{}; every case in {}",
             run_dir.display(),
