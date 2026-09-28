@@ -1,15 +1,19 @@
 //! The payload of a `POST`, read as hapi reads it, in its order: a declared length over the limit;
 //! the content type (JSON when none is given, or an empty one), which must read as
 //! `type/subtype`, with a boundary for a multipart type; a multipart form, which hapi does not
-//! parse; the body, up to the limit; then by type: JSON (`null` when empty; refused when it does
+//! parse; the body, decompressed when its `content-encoding` is `gzip` or `deflate`, up to the
+//! limit; then by type: JSON (`null` when empty; refused when it does
 //! not parse or names `__proto__`), text, bytes (`null` when empty, else read as text: the
 //! schema refuses both), a form (read as no fields, which the schema refuses too), or any other
 //! type refused. The reference answers every failure with a 422 and hapi's message (its server's
 //! `failAction` for a payload).
 
+use std::io::Read;
+
 use axum::body::{Body, to_bytes};
-use axum::http::HeaderMap;
 use axum::http::header::{self, HeaderName};
+use axum::http::{HeaderMap, HeaderValue};
+use flate2::read::{MultiGzDecoder, ZlibDecoder};
 use serde_json::{Map, Value};
 
 use crate::errors::ApiError;
@@ -20,10 +24,6 @@ const MAX_BODY: usize = 1_048_576;
 /// The payload of a request with `headers` and `body`.
 pub(super) async fn read(headers: &HeaderMap, body: Body) -> Result<Value, ApiError> {
     let refused = |message: &str| ApiError::unprocessable(message);
-    let too_large = || {
-        let message = format!("Payload content length greater than maximum allowed: {MAX_BODY}");
-        ApiError::unprocessable(message)
-    };
     let text_of = |name: HeaderName| headers.get(name).and_then(|value| value.to_str().ok());
     let declared = text_of(header::CONTENT_LENGTH).and_then(|text| text.trim().parse::<u64>().ok());
     if declared.is_some_and(|length| length > MAX_BODY as u64) {
@@ -36,6 +36,14 @@ pub(super) async fn read(headers: &HeaderMap, body: Body) -> Result<Value, ApiEr
         return Err(unsupported());
     }
     let bytes = to_bytes(body, MAX_BODY).await.map_err(|_| too_large())?;
+    let bytes = match headers
+        .get(header::CONTENT_ENCODING)
+        .map(HeaderValue::as_bytes)
+    {
+        Some(b"gzip") => inflate(MultiGzDecoder::new(&bytes[..]))?,
+        Some(b"deflate") => inflate(ZlibDecoder::new(&bytes[..]))?,
+        _ => bytes.to_vec(),
+    };
     // The body is read as UTF-8 text, a sequence that is not UTF-8 becoming U+FFFD.
     let text = String::from_utf8_lossy(&bytes);
     // `application/json`, or `application/<type>+json`.
@@ -54,6 +62,24 @@ pub(super) async fn read(headers: &HeaderMap, body: Body) -> Result<Value, ApiEr
         mime if mime.len() > 5 && mime.starts_with("text/") => Ok(Value::String(text.into_owned())),
         _ => Err(unsupported()),
     }
+}
+
+/// The bytes `decoder` gives, up to the limit.
+fn inflate(decoder: impl Read) -> Result<Vec<u8>, ApiError> {
+    let mut bytes = Vec::new();
+    let mut limited = decoder.take(MAX_BODY as u64 + 1);
+    let read = limited.read_to_end(&mut bytes);
+    read.map_err(|_| ApiError::unprocessable("Invalid compressed payload"))?;
+    if bytes.len() > MAX_BODY {
+        return Err(too_large());
+    }
+    Ok(bytes)
+}
+
+/// The refusal of a body over the limit.
+fn too_large() -> ApiError {
+    let message = format!("Payload content length greater than maximum allowed: {MAX_BODY}");
+    ApiError::unprocessable(message)
 }
 
 /// The media type of a `content-type` header as hapi's parser reads it, lowercase: a type (no

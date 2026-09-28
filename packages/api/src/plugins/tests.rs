@@ -559,6 +559,70 @@ async fn a_payload_is_read_as_hapi_reads_it() {
 }
 
 #[tokio::test]
+async fn a_compressed_payload_is_read_as_hapi_decompresses_it() {
+    use std::io::Write;
+    let compress = |encoding: &str, bytes: &[u8]| {
+        let level = flate2::Compression::default();
+        match encoding {
+            "gzip" => {
+                let mut encoder = flate2::write::GzEncoder::new(Vec::new(), level);
+                encoder.write_all(bytes).unwrap();
+                encoder.finish().unwrap()
+            }
+            _ => {
+                let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), level);
+                encoder.write_all(bytes).unwrap();
+                encoder.finish().unwrap()
+            }
+        }
+    };
+    let pipeline = pipeline(config());
+    let refused = |message: &str| json!({"statusCode": 422, "error": "Unprocessable Entity", "message": message});
+    let cases = [
+        (
+            compress("gzip", br#"{"a":1}"#),
+            "gzip",
+            200,
+            json!({ "a": 1 }),
+        ),
+        (
+            compress("deflate", br#"{"b":2}"#),
+            "deflate",
+            200,
+            json!({ "b": 2 }),
+        ),
+        // Other encodings, and other spellings, are read as they are.
+        (br#"{"c":3}"#.to_vec(), "br", 200, json!({ "c": 3 })),
+        (br#"{"d":4}"#.to_vec(), "GZIP", 200, json!({ "d": 4 })),
+        (
+            b"abc".to_vec(),
+            "gzip",
+            422,
+            refused("Invalid compressed payload"),
+        ),
+        // The limit holds for the decompressed body.
+        (
+            compress("gzip", &vec![b' '; 1_048_577]),
+            "gzip",
+            422,
+            refused("Payload content length greater than maximum allowed: 1048576"),
+        ),
+    ];
+    for (body, encoding, status, expected) in cases {
+        let headers = [
+            ("content-type", "application/json"),
+            ("content-encoding", encoding),
+        ];
+        let (answered, _, answer) = call(&pipeline, post(body, &headers)).await;
+        let answer = match answered {
+            200 => answer["data"]["payload"].clone(),
+            _ => answer,
+        };
+        assert_eq!((answered, answer), (status, expected), "{encoding}");
+    }
+}
+
+#[tokio::test]
 async fn a_multipart_type_needs_a_boundary_parameter() {
     let pipeline = pipeline(config());
     for (header, read) in [

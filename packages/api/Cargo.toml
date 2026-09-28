@@ -13,9 +13,11 @@ workspace = true
 # The API reads the node's published snapshots (the state, the pool, the node's status and the
 # peers) and the store through read-only connections, and submits transactions to the node's pool
 # through a trait the node implements. It is served on a runtime that the node's binary builds and
-# hands in, so it needs no multi-thread feature of tokio.
+# hands in, so it needs no multi-thread feature of tokio. A request body sent with gzip or deflate
+# is decompressed, as hapi decompresses it.
 [dependencies]
 axum.workspace = true
+flate2.workspace = true
 heartwood-crypto.workspace = true
 heartwood-database.workspace = true
 heartwood-kernel = { workspace = true, features = ["bus"] }

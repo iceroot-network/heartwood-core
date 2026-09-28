@@ -557,6 +557,7 @@ name = "heartwood-api"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "flate2",
  "heartwood-blockchain",
  "heartwood-crypto",
  "heartwood-database",
