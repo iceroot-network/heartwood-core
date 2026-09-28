@@ -10,9 +10,10 @@
 //! fork segment and, in a listed block, a transaction of a removed type or with a memo that is
 //! not UTF-8.
 //!
-//! The class is read from `packages/p2p/tests/vectors`, or from the directory that `P2P_VECTORS`
-//! names (relative to the workspace root), for example `target/vectors/local`. When the class is
-//! in neither, the test says so and passes.
+//! The class is read from `packages/p2p/tests/vectors`, where `make vectors-install` puts it and
+//! where it must be: a class that is not installed there fails the test. The directory that
+//! `P2P_VECTORS` names (relative to the workspace root), for example `target/vectors/local`, is
+//! read instead when it is set; it may lack the class, and the test then says so and passes.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -20,7 +21,7 @@ use std::path::{Path, PathBuf};
 use heartwood_difftest::levels::l0;
 use heartwood_difftest::subject::{self, Documented};
 use heartwood_difftest::subjects::Devnet;
-use heartwood_difftest::vectors::{MANIFEST, VectorSet};
+use heartwood_difftest::vectors::{ClassDir, VectorSet};
 
 /// The class of the peer network's vectors.
 const CLASS: &str = "V26-network";
@@ -41,11 +42,8 @@ fn workspace() -> PathBuf {
 }
 
 /// The directory the class is read from.
-fn vector_dir() -> PathBuf {
-    match std::env::var_os("P2P_VECTORS") {
-        Some(dir) if !dir.is_empty() => workspace().join(dir),
-        _ => workspace().join("packages/p2p/tests/vectors"),
-    }
+fn vector_dir() -> ClassDir {
+    ClassDir::from_env(&workspace(), "P2P_VECTORS", "packages/p2p/tests/vectors")
 }
 
 /// The devnet configuration: from the directory's genesis class when it has one (a whole run),
@@ -64,23 +62,15 @@ fn devnet(set: &VectorSet) -> Devnet {
 #[test]
 fn the_network_vectors_pass_l0() {
     let dir = vector_dir();
-    if !dir.join(MANIFEST).exists() {
+    let Some(mut set) = dir.load(CLASS).expect("the class is installed") else {
         eprintln!(
-            "the_network_vectors_pass_l0: no vector set in {}",
-            dir.display()
+            "the_network_vectors_pass_l0: {CLASS} is not in {}, which P2P_VECTORS names",
+            dir.path().display()
         );
         return;
-    }
-    let mut set = VectorSet::load(&dir).expect("the vector set loads");
+    };
     let devnet = devnet(&set);
     set.files.retain(|file| file.meta.class == CLASS);
-    if set.files.is_empty() {
-        eprintln!(
-            "the_network_vectors_pass_l0: {CLASS} is not installed in {}",
-            dir.display()
-        );
-        return;
-    }
     let areas: BTreeMap<&str, &str> = AREAS.into_iter().collect();
     let mut per_area: BTreeMap<&str, usize> = BTreeMap::new();
     for record in set.files.iter().flat_map(|file| &file.records) {

@@ -191,12 +191,16 @@ vectors-local: build ## L0 vectors from LOCAL_SOLAR into VECTORS/local
 vectors-diff: build ## the container and local runs must agree on every record
 	$(DIFFTEST) vectors diff $(VECTORS)/container $(VECTORS)/local
 
-# Each crate gets its classes (VECTOR_CRATES) and a manifest of them. A run that lacks a class a
-# committed manifest lists is refused, and the committed files are kept: the genesis class (V10)
-# and the genesis-state class (V18) are written only with DEVNET_GENERATOR.
+# Each crate gets its classes (VECTOR_CRATES) and a manifest of them. A run that lacks a class
+# VECTOR_CRATES routes, or a file a committed manifest lists, is refused, and the committed files
+# are kept: the genesis class (V10) and the genesis-state class (V18) are written only with
+# DEVNET_GENERATOR.
 vectors-install: vectors-diff ## copy the container run into each crate's tests/vectors, with a manifest per crate
 	@missing=; \
 	for spec in $(VECTOR_CRATES); do \
+	    for class in $$(echo $${spec#*=} | tr ',' ' '); do \
+	        ls $(VECTORS)/container/$$class*.jsonl >/dev/null 2>&1 || missing="$$missing $$class*.jsonl"; \
+	    done; \
 	    dir=packages/$${spec%%=*}/tests/vectors; \
 	    [ -f $$dir/MANIFEST.sha256 ] || continue; \
 	    for file in $$(awk '{ print $$2 }' $$dir/MANIFEST.sha256); do \
@@ -204,8 +208,9 @@ vectors-install: vectors-diff ## copy the container run into each crate's tests/
 	    done; \
 	done; \
 	if [ -n "$$missing" ]; then \
-	    echo "vectors-install: the run in $(VECTORS)/container lacks$$missing, which a committed" \
-	         "manifest lists (V10 and V18 need DEVNET_GENERATOR); nothing was installed" >&2; \
+	    echo "vectors-install: the run in $(VECTORS)/container lacks$$missing, which VECTOR_CRATES" \
+	         "routes or a committed manifest lists (V10 and V18 need DEVNET_GENERATOR); nothing was" \
+	         "installed" >&2; \
 	    exit 1; \
 	fi
 	@for spec in $(VECTOR_CRATES); do \
