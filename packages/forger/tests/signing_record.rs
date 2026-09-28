@@ -286,9 +286,9 @@ fn a_key_the_forger_does_not_hold_and_a_block_that_cannot_be_made_are_refused() 
 
 /// The forger's loop over a relay far from the forger's clock: one whose round, slots and tip are
 /// two slots ahead, and one whose slot answers name the forger's slot while its round's timestamp
-/// is 1,000 slots ahead. The loop's checks read the relay's answers and pass; the signer refuses
-/// the block's slot, which the forger computes from the block's own timestamp, so nothing is
-/// recorded and no block is posted.
+/// is 1,000 slots ahead. The loop's checks read the relay's answers and pass, so the attempts reach
+/// the signer; the signer refuses the block's slot, which the forger computes from the block's own
+/// timestamp, as out of its window, so nothing is recorded and no block is posted.
 mod far_relay {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -311,6 +311,41 @@ mod far_relay {
     use super::*;
 
     const BLOCK_TIME: i64 = 8;
+
+    /// The signer, counting its refusals of a slot out of its window and its other outcomes.
+    struct Counting {
+        signer: Signer,
+        out_of_window: Arc<AtomicUsize>,
+        other: Arc<AtomicUsize>,
+    }
+
+    impl BlockSigner for Counting {
+        fn sign_or_resend(
+            &mut self,
+            key: &PublicKeyBytes,
+            inputs: &ForgeInputs<'_>,
+            own_slot: i64,
+            slot: i64,
+        ) -> Result<SignedOutcome, SignError> {
+            let outcome = self.signer.sign_or_resend(key, inputs, own_slot, slot);
+            let counter = match outcome {
+                Err(SignError::OutOfWindow { .. }) => &self.out_of_window,
+                _ => &self.other,
+            };
+            counter.fetch_add(1, Ordering::SeqCst);
+            outcome
+        }
+    }
+
+    /// What a run gave: the blocks posted, the block recorded, and the signer's refusals of a
+    /// slot out of its window and its other outcomes.
+    #[derive(Debug, PartialEq)]
+    struct Ran {
+        posted: usize,
+        recorded: Option<Signed>,
+        out_of_window: usize,
+        other: usize,
+    }
 
     /// The wall clock of the test: `start` plus tokio's paused time.
     struct PausedClock {
@@ -498,9 +533,8 @@ mod far_relay {
         fn dispose(&self) {}
     }
 
-    /// Run the loop for 60 s over a relay `ahead` slots ahead whose round lies by `lie` slots; the
-    /// number of blocks posted and the block recorded.
-    async fn run(name: &str, ahead: i64, lie: i64) -> (usize, Option<Signed>) {
+    /// Run the loop for 60 s over a relay `ahead` slots ahead whose round lies by `lie` slots.
+    async fn run(name: &str, ahead: i64, lie: i64) -> Ran {
         let data = Data::new(name);
         let milestones = milestones();
         let epoch = slots::epoch_unix_ms(milestones.at(1).epoch()).unwrap();
@@ -519,9 +553,15 @@ mod far_relay {
             lie,
         });
         let options = Options::from_json(&Value::Null, &|_| None).unwrap();
+        let (out_of_window, other) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let signer = Counting {
+            signer: signer(&data, &[keys]),
+            out_of_window: out_of_window.clone(),
+            other: other.clone(),
+        };
         let mut service = ForgerService::new(ForgerParts {
             link: relay.clone(),
-            signer: signer(&data, &[keys]),
+            signer,
             delegates: vec![key],
             options,
             milestones,
@@ -534,17 +574,28 @@ mod far_relay {
             trigger.trigger();
         };
         tokio::join!(service.run(shutdown), stop);
-        let recorded = data.open().unwrap().last(&key).cloned();
-        (relay.posted.load(Ordering::SeqCst), recorded)
+        Ran {
+            posted: relay.posted.load(Ordering::SeqCst),
+            recorded: data.open().unwrap().last(&key).cloned(),
+            out_of_window: out_of_window.load(Ordering::SeqCst),
+            other: other.load(Ordering::SeqCst),
+        }
+    }
+
+    /// Every attempt reached the signer and was refused as out of its window; nothing else.
+    fn refused_by_the_window(ran: &Ran) -> bool {
+        ran.out_of_window > 0 && (ran.posted, &ran.recorded, ran.other) == (0, &None, 0)
     }
 
     #[tokio::test(start_paused = true)]
     async fn the_loop_does_not_sign_a_slot_its_relay_names_two_ahead() {
-        assert_eq!(run("far-relay", 2, 0).await, (0, None));
+        let ran = run("far-relay", 2, 0).await;
+        assert!(refused_by_the_window(&ran), "{ran:?}");
     }
 
     #[tokio::test(start_paused = true)]
     async fn the_loop_does_not_sign_a_timestamp_far_from_the_slot_its_relay_names() {
-        assert_eq!(run("far-timestamp", 0, 1_000).await, (0, None));
+        let ran = run("far-timestamp", 0, 1_000).await;
+        assert!(refused_by_the_window(&ran), "{ran:?}");
     }
 }
