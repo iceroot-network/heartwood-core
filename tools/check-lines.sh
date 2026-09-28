@@ -56,7 +56,10 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 #   forger's blocks are listed apart.
 # - heartwood-core goes from 2,000 to 3,000: the command tree of both roles, one file per command
 #   family, the forger's composition root and the server's wiring join the relay's configuration
-#   and composition root, and no line of it takes part in consensus.
+#   and composition root, and no line of it takes part in consensus. Its `harness` module (the
+#   digest, block and network-state files of a relay run, and the seed rule of a mock peer, behind
+#   the `difftest` feature, which no release build enables) is test support: it is left out, as
+#   tests/ is, and listed apart, as heartwood-p2p's `testing` module and the forger's src/bin are.
 # - heartwood-p2p-wire keeps 3,200: the server's request checks are the server's plugin logic and
 #   live in heartwood-p2p's server, and the wire crate takes only the server-side inputs of the two
 #   response encoders that held values twice.
@@ -86,7 +89,8 @@ CHECKS=(
     "heartwood-p2p server controllers and forger channel:packages/p2p/src/server/controllers packages/p2p/src/status_server.rs packages/p2p/src/attestation_session.rs packages/p2p/src/network_state.rs:"
     "heartwood-p2p test support (difftest only):packages/p2p/src/testing:"
     "heartwood-api:packages/api/src:5000"
-    "heartwood-core:packages/core/src:3000"
+    "heartwood-core:packages/core/src !packages/core/src/harness.rs:3000"
+    "heartwood-core test support (difftest only):packages/core/src/harness.rs:"
     "heartwood-forger:packages/forger/src !packages/forger/src/bin:2200"
     "heartwood-forger loop and relay client:packages/forger/src/forger_service.rs packages/forger/src/client.rs packages/forger/src/deadlines.rs:"
     "heartwood-forger forging, keys, record and attester:packages/forger/src/delegate.rs packages/forger/src/keys.rs packages/forger/src/signing_record.rs packages/forger/src/signer.rs packages/forger/src/attestation.rs:"
