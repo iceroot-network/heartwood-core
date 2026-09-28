@@ -72,7 +72,7 @@ deny = [
     { crate = "hyper", wrappers = ["heartwood-api", "axum", "hyper-util"], reason = "the served API only" },
     { crate = "hyper-util", wrappers = ["heartwood-api", "axum"], reason = "the served API only" },
     { crate = "tokio-tungstenite", wrappers = ["heartwood-p2p"], reason = "the peer-to-peer client only" },
-    { crate = "clap", wrappers = ["heartwood-core"], reason = "the node binary's command line only" },
+    { crate = "clap", wrappers = ["heartwood-cli", "heartwood-core"], reason = "the commands and the node binary's command line only" },
     # Libraries no crate may use at this stage. A later stage that needs one records the decision
     # first and turns its ban into a wrapper rule above.
     { crate = "aws-lc-rs", reason = "not before the post-quantum signer, which makes it a wrapper rule for heartwood-crypto" },
