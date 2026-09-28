@@ -19,8 +19,12 @@
 //!
 //! A case marked with a documented difference (`heightAboveTip`, `storeFailure`, `peersIpFilter`,
 //! `tieOrder`, `decodeReason`) passes as documented when the answers differ and the node under
-//! test shows the documented behaviour. For `tieOrder`, both pages must hold the same sequence of
-//! the sorted column's values, as the list's items show them.
+//! test shows the documented behaviour. A mark excuses the status and the body only: the headers
+//! are judged as for any case, apart from those that follow the status ([`STATUS_HEADERS`]) when
+//! the statuses differ. For `tieOrder`, both pages must hold the same sequence of the sorted
+//! column's values, as the list's items show them; a transaction both pages hold must be the same
+//! on both, and one that only one page holds must have the sorted value of the page's first or
+//! last item (a tie that the page's start or end cuts).
 
 use std::collections::BTreeMap;
 
@@ -44,6 +48,9 @@ const UNCOMPARED: [&str; 6] = [
     "connection",
     "x-block-height",
 ];
+
+/// Headers that follow the status: hapi offers byte ranges only in a successful answer.
+const STATUS_HEADERS: [&str; 1] = ["accept-ranges"];
 
 /// The served route of `method` and `path`: a literal segment wins over a parameter, as in the
 /// reference's router.
@@ -100,12 +107,23 @@ pub fn outcome(line: &Recorded) -> Outcome {
     if ls != rs {
         differences.push(value("status", Value::from(*rs), Value::from(*ls)));
     }
-    headers(lh, rh, route, &mut differences);
+    let mut header_differences = Vec::new();
+    headers(lh, rh, route, &mut header_differences);
+    // A documented difference never excuses a header, apart from one that follows a status that
+    // differs.
+    let follows_status = |d: &Difference| {
+        ls != rs && (STATUS_HEADERS.iter()).any(|name| d.path() == format!("headers.{name}"))
+    };
+    let headers_differ = !header_differences.iter().all(follows_status);
+    differences.extend(header_differences);
     if ls == rs {
         differences.extend(bodies(route, *rs, lb, rb));
     }
     if differences.is_empty() {
         return Outcome::Pass;
+    }
+    if headers_differ {
+        return Outcome::Mismatch(differences);
     }
     let query = request
         .map(|r| parse_query(&r.query))
@@ -372,18 +390,30 @@ fn documented(
                 .as_str()
                 .or_else(|| query["orderBy"][0].as_str())?;
             let property = order.split(':').next()?;
-            // Ties may fall on either side of a page's end, so only the sort keys are compared;
-            // an answer that does not show the sorted column cannot show a tie.
-            let keys = |body: &Value| -> Option<Vec<Value>> {
-                let projected = project(route, 200, body);
-                projected["data"]
-                    .as_array()?
-                    .iter()
-                    .map(|t| sort_key(t, property))
-                    .collect()
+            // Ties may fall in any order, and on either side of a page's end: the pages must
+            // hold the same sort keys, the same transaction alike, and a transaction on one page
+            // only must belong to a tie that the page's start or end cuts. An answer that does
+            // not show the sorted column cannot show a tie.
+            let items = |body: &Value| project(route, 200, body)["data"].as_array().cloned();
+            let (left_items, right_items) = (items(left)?, items(right)?);
+            let keys = |items: &[Value]| -> Option<Vec<Value>> {
+                items.iter().map(|t| sort_key(t, property)).collect()
             };
-            let (l, r) = (keys(left)?, keys(right)?);
-            (left_status == right_status && left["meta"] == right["meta"] && l == r)
+            let (l, r) = (keys(&left_items)?, keys(&right_items)?);
+            let by_id = |items: &[Value]| -> Option<BTreeMap<String, Value>> {
+                let id = |t: &Value| Some((t["id"].as_str()?.to_owned(), t.clone()));
+                items.iter().map(id).collect()
+            };
+            let (left_ids, right_ids) = (by_id(&left_items)?, by_id(&right_items)?);
+            let cut = [l.first(), l.last()];
+            let alike = |one: &BTreeMap<String, Value>, other: &BTreeMap<String, Value>| {
+                one.iter().all(|(id, item)| match other.get(id) {
+                    Some(same) => same == item,
+                    None => cut.contains(&sort_key(item, property).as_ref()),
+                })
+            };
+            let same = alike(&left_ids, &right_ids) && alike(&right_ids, &left_ids);
+            (left_status == right_status && left["meta"] == right["meta"] && l == r && same)
                 .then(|| ApiDifference::TieOrder.reason())
         }
         "decodeReason" => {
@@ -487,6 +517,85 @@ mod tests {
                 page(json!([json!({"id": "x", "sequence": 0}), raw(0)]))
             ),
         ))));
+    }
+
+    /// `reply` with the header `name` set to `text`.
+    fn with_header(reply: Reply, name: &str, text: &str) -> Reply {
+        match reply {
+            Reply::Answer {
+                status,
+                mut headers,
+                body,
+            } => {
+                headers.insert(name.into(), json!(text));
+                Reply::Answer {
+                    status,
+                    headers,
+                    body,
+                }
+            }
+            other => other,
+        }
+    }
+
+    #[test]
+    fn a_tie_excuses_the_order_of_the_same_transactions_only() {
+        let tx = |id: &str, sender: &str| json!({"id": id, "sender": sender, "fee": "1"});
+        let (a, b, c) = (tx("a", "dA"), tx("b", "dA"), tx("c", "dB"));
+        let judged = |left: Value, right: Value| {
+            let page = |items: Value| json!({"meta": {"count": 3, "totalCount": 9}, "data": items});
+            let (left, right) = (answer(200, page(left)), answer(200, page(right)));
+            outcome(&list("orderBy=senderId:asc", "tieOrder", left, right))
+        };
+        assert!(is_tie(&judged(json!([b, a, c]), json!([a, b, c]))));
+        // A field other than the sorted column differs on a transaction both pages hold.
+        let mut changed = b.clone();
+        changed["fee"] = json!("999");
+        assert!(judged(json!([changed, a, c]), json!([a, b, c])).is_failure());
+        // Another member of a tie that the page's end or start cuts.
+        let (d, e) = (tx("d", "dB"), tx("e", "dA"));
+        assert!(is_tie(&judged(json!([b, a, d]), json!([a, b, c]))));
+        assert!(is_tie(&judged(json!([e, a, c]), json!([a, b, c]))));
+        // A transaction that only one page holds, inside the page: no tie explains it.
+        let (f, g) = (tx("f", "dB"), tx("g", "dB"));
+        let (h, k) = (tx("h", "dC"), tx("k", "dC"));
+        assert!(judged(json!([a, f, h]), json!([a, g, k])).is_failure());
+        // A header that differs.
+        let page = page(json!([b, a]));
+        let left = with_header(answer(200, page.clone()), "cache-control", "no-store");
+        let right = answer(200, json!({"meta": page["meta"], "data": [a, b]}));
+        let right = with_header(right, "cache-control", "no-cache");
+        assert!(outcome(&list("orderBy=senderId:asc", "tieOrder", left, right)).is_failure());
+    }
+
+    #[test]
+    fn a_mark_excuses_only_the_headers_that_follow_a_status_that_differs() {
+        let found = json!({"data": {"id": "x", "height": 300}});
+        let missing =
+            json!({"statusCode": 404, "error": "Not Found", "message": "Block not found"});
+        let judged = |left: Reply, right: Reply| {
+            let mut line = list("", "heightAboveTip", left, right);
+            if let Some(request) = &mut line.request {
+                request.path = "/api/blocks/300".into();
+            }
+            outcome(&line)
+        };
+        let ranged = |reply: Reply| with_header(reply, "accept-ranges", "bytes");
+        let left = || answer(404, missing.clone());
+        let right = || ranged(answer(200, found.clone()));
+        assert!(matches!(
+            judged(left(), right()),
+            Outcome::Documented(r) if r == ApiDifference::HeightAboveTip.reason()
+        ));
+        for (name, text) in [("content-type", "text/html"), ("connection", "keep-alive")] {
+            let left = with_header(left(), name, text);
+            assert!(judged(left, right()).is_failure(), "{name}");
+        }
+        let left = with_header(left(), "x-block-height", "1");
+        assert!(judged(left, right()).is_failure());
+        // Equal statuses: the byte ranges must agree too.
+        let equal = answer(404, missing.clone());
+        assert!(judged(equal.clone(), ranged(equal)).is_failure());
     }
 
     #[test]
