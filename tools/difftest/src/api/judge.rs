@@ -2,8 +2,9 @@
 //!
 //! For each request: equal status codes; `connection: close` on both answers; `X-Block-Height`
 //! on both, and equal (both nodes are at the paused tip); every other header equal, apart from
-//! `date`, `content-length`, `transfer-encoding` and `keep-alive`; and bodies equal after the
-//! projections:
+//! `date`, `content-length`, `transfer-encoding` and `keep-alive` (and, on the peer list, the
+//! `accept-encoding` of `vary`, which follows the length of a body that holds each node's own
+//! peers); and bodies equal after the projections:
 //!
 //! - `confirmations` is left out everywhere, `/node/status`'s `timestamp` and `blocksCount`,
 //!   `/node/syncing`'s `blocks`, `/node/configuration`'s `core.version` and a wallet's
@@ -99,7 +100,7 @@ pub fn outcome(line: &Recorded) -> Outcome {
     if ls != rs {
         differences.push(value("status", Value::from(*rs), Value::from(*ls)));
     }
-    headers(lh, rh, &mut differences);
+    headers(lh, rh, route, &mut differences);
     if ls == rs {
         differences.extend(bodies(route, *rs, lb, rb));
     }
@@ -132,6 +133,7 @@ fn value(path: &str, expected: Value, actual: Value) -> Difference {
 fn headers(
     left: &serde_json::Map<String, Value>,
     right: &serde_json::Map<String, Value>,
+    route: Option<RouteId>,
     out: &mut Vec<Difference>,
 ) {
     for (side, headers) in [("left", left), ("right", right)] {
@@ -156,8 +158,22 @@ fn headers(
         ));
     }
     let names: std::collections::BTreeSet<&String> = left.keys().chain(right.keys()).collect();
+    // The peer list's body holds each node's own peers, of which only those both list are
+    // compared; its length decides whether the answer may be compressed (1,024 bytes or more), and
+    // with it whether `vary` names `accept-encoding`.
+    let own_length = matches!(route, Some(RouteId::PeersIndex));
+    let header = |headers: &serde_json::Map<String, Value>, name: &str| match headers.get(name) {
+        Some(Value::String(vary)) if own_length && name == "vary" => Some(Value::from(
+            vary.split(',')
+                .map(str::trim)
+                .filter(|v| !v.eq_ignore_ascii_case("accept-encoding"))
+                .collect::<Vec<_>>()
+                .join(","),
+        )),
+        other => other.cloned(),
+    };
     for name in names {
-        if !UNCOMPARED.contains(&name.as_str()) && left.get(name) != right.get(name) {
+        if !UNCOMPARED.contains(&name.as_str()) && header(left, name) != header(right, name) {
             out.push(value(
                 &format!("headers.{name}"),
                 right.get(name).cloned().unwrap_or(Value::Null),
@@ -518,6 +534,38 @@ mod tests {
         assert!(judged(answer(200, other)).is_failure());
         // Equal answers pass whatever the mark.
         assert_eq!(judged(answer(200, empty.clone())), Outcome::Pass);
+    }
+
+    #[test]
+    fn the_peer_list_s_vary_leaves_its_compression_out() {
+        let peers = |left_vary: &str| {
+            let with = |vary: &str| {
+                let mut headers = serde_json::Map::new();
+                headers.insert("connection".into(), json!("close"));
+                headers.insert("x-block-height".into(), json!("265"));
+                headers.insert("vary".into(), json!(vary));
+                headers
+            };
+            let mut differences = Vec::new();
+            headers(
+                &with(left_vary),
+                &with("origin"),
+                Some(RouteId::PeersIndex),
+                &mut differences,
+            );
+            let mut others = Vec::new();
+            headers(
+                &with(left_vary),
+                &with("origin"),
+                Some(RouteId::BlocksLast),
+                &mut others,
+            );
+            (differences.len(), others.len())
+        };
+        // A longer list of the node's own peers is compressed: only there is it no difference.
+        assert_eq!(peers("origin,accept-encoding"), (0, 1));
+        assert_eq!(peers("origin"), (0, 0));
+        assert_eq!(peers("accept-encoding"), (1, 1));
     }
 
     #[test]
