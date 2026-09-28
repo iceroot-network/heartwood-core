@@ -21,9 +21,10 @@
 //!   then, with at least 2,000 ms left in the round's slot and the delegate still its forger, the
 //!   block from the signer ([`BlockSigner`], which signs a slot once and re-sends it after),
 //!   "Delegate ... forged a new block ...", `postBlock` and the events; else the two "Failed to
-//!   forge new block" lines. Any error marks the attempt errored. After 1,000 ms the round is loaded again, and while fewer
-//!   than `blockTime - 1` attempts in a row errored the next attempt runs. The reference signs
-//!   before its checks; Heartwood signs the same bytes after them, through the signing record.
+//!   forge new block" lines. Any error marks the attempt errored. After 1,000 ms the round is
+//!   loaded again, and while fewer than `blockTime - 1` attempts in a row errored the next attempt
+//!   runs. The reference signs before its checks; Heartwood signs the same bytes after them,
+//!   through the signing record.
 //! - **The quorum's reading** (`isForgingAllowed`): unknown, cold start and below the minimum
 //!   refuse with the reference's lines; the distinct over-height headers are counted; an
 //!   over-height header by the delegate's own key whose signature verifies refuses ("already forged

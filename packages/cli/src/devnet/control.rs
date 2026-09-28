@@ -62,9 +62,9 @@ pub fn start_node(root: &Path, node: u32, role: Option<Role>, tools: &Tools<'_>)
     start(root, &NodeSelection { nodes, role }, tools)
 }
 
-/// Stop the selected nodes, forgers before relays; with `kill`, by SIGKILL after recording the
-/// stop. A role that does not run is skipped. Every targeted role is tried; the first failure is
-/// the error.
+/// Stop the selected nodes, forgers before relays; with `kill`, by SIGKILL, waiting for the exit,
+/// then recording the stop. A role that does not run is skipped. Every targeted role is tried;
+/// the first failure is the error.
 pub fn stop(root: &Path, selection: &NodeSelection, kill: bool, tools: &Tools<'_>) -> Result<()> {
     let (_, manifest) = open(root)?;
     let picked = manifest.select(selection)?;
