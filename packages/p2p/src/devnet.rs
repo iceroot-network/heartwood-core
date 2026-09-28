@@ -62,18 +62,62 @@ pub fn from_options(value: &serde_json::Value) -> Result<Addressing, crate::erro
     }
 }
 
-/// The runtime guards of mode B at a node's start: the network is a devnet (its name is
-/// `devnet`), the node's address is a loopback address in 127.0.0.0/8, and the server listens on
-/// that address (`host`).
-pub fn guard(addressing: &Addressing, network_name: &str, host: IpAddr) -> Result<(), GuardError> {
-    let _ = (addressing, network_name, host);
-    todo!("the devnet guards")
+/// The runtime guards of mode B at a node's start, with the node's `options` on the network named
+/// `network_name`: the network is a devnet (named `devnet` or `devnet-...`), the node's address is
+/// a loopback address in 127.0.0.0/8, the server listens on that address (`server.hostname`),
+/// and `remoteAccess` is not empty and holds only loopback addresses. Without devnet addressing
+/// there is nothing to guard. A node that passes logs a warning naming the mode.
+pub fn guard(options: &crate::options::P2pOptions, network_name: &str) -> Result<(), GuardError> {
+    let Addressing::Alias { address } = options.addressing else {
+        return Ok(());
+    };
+    let refuse = |reason: String| Err(GuardError(reason));
+    let devnet = network_name == "devnet" || network_name.starts_with("devnet-");
+    if !devnet {
+        return refuse(format!("the network {network_name} is not a devnet"));
+    }
+    if !is_loopback_v4(address) {
+        return refuse(format!(
+            "the node's address {address} is not in 127.0.0.0/8"
+        ));
+    }
+    if options.host != address {
+        let host = options.host;
+        return refuse(format!(
+            "the server listens on {host}, not on the node's address {address}"
+        ));
+    }
+    let loopback = |entry: &String| {
+        entry
+            .parse::<IpAddr>()
+            .is_ok_and(|ip| ip.to_canonical().is_loopback())
+    };
+    if options.remote_access.is_empty() || !options.remote_access.iter().all(loopback) {
+        return refuse(
+            "remoteAccess must list loopback addresses only, and at least one".to_owned(),
+        );
+    }
+    heartwood_kernel::warning!(
+        "Devnet addressing: this node is {address} and accepts peers in 127.0.0.0/8 only"
+    );
+    Ok(())
+}
+
+fn is_loopback_v4(ip: IpAddr) -> bool {
+    matches!(ip.to_canonical(), IpAddr::V4(v4) if v4.is_loopback())
 }
 
 /// Whether `candidate` may become a peer in mode B: a loopback address in 127.0.0.0/8 other than
 /// the node's own and the `remoteAccess` addresses. Every candidate may without devnet
 /// addressing.
 pub fn is_candidate(addressing: &Addressing, candidate: IpAddr, remote_access: &[IpAddr]) -> bool {
-    let _ = (addressing, candidate, remote_access);
-    todo!("the devnet candidate rule")
+    let candidate = candidate.to_canonical();
+    match addressing {
+        Addressing::Off => true,
+        Addressing::Alias { address } => {
+            is_loopback_v4(candidate)
+                && candidate != *address
+                && !remote_access.contains(&candidate)
+        }
+    }
 }
