@@ -56,6 +56,10 @@ module.exports = function forgerDecideOps({ solar, cm, withConfig, hexBuffer, sa
         const stubDelay = Object.assign((ms, ...rest) => (pause.hook ? pause.hook(ms) : realDelay(ms, ...rest)), realDelay);
         require.cache[delayPath].exports = stubDelay;
         const dist = (pkg, file) => require(path.join(packages, pkg, "dist", file));
+        // An operation that loaded the forger's package before (the app.json reader requires each
+        // plugin's service provider) left a service that holds the real `delay`: it is loaded
+        // again, so that it takes the stub.
+        delete require.cache[require.resolve(path.join(forgerDir, "dist", "forger-service"))];
         for (const pkg of ["forger", "p2p", "state"]) {
             const shared = require(require.resolve("@solar-network/crypto", { paths: [path.join(packages, pkg)] }));
             if (shared !== solar.lib) throw new Error(`@solar-network/${pkg} loaded a second copy of @solar-network/crypto`);
