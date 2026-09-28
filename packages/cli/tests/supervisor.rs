@@ -119,10 +119,16 @@ fn a_node_that_ran_a_second_or_more_is_restarted_at_once() {
     let node = Node::new("restart");
     let began = Instant::now();
     node.start(&["exit", "3", "1100"], &[]);
-    // The third run is up: its status is recorded as online with its pid.
+    // The third run is up: its status is recorded as online with its pid, and its first lines
+    // have reached both captures (the status is written before the node prints anything).
+    let errors = || fs::read_to_string(node.0.error_log_path()).unwrap_or_default();
     wait_for("two restarts", Duration::from_secs(10), || {
         let state = node.state();
-        state.restarts >= 2 && state.status == SupervisedStatus::Online && state.pid.is_some()
+        state.restarts >= 2
+            && state.status == SupervisedStatus::Online
+            && state.pid.is_some()
+            && count(&node.out(), "test-child: exit 3 1100") >= 3
+            && count(&errors(), "test-child: error line") >= 3
     });
     // Two runs of 1.1 s each and the start of the third: no back-off between them.
     assert!(
@@ -139,7 +145,7 @@ fn a_node_that_ran_a_second_or_more_is_restarted_at_once() {
         count(&node.out(), "supervisor: restarting the node"),
         state.restarts as usize
     );
-    let errors = fs::read_to_string(node.0.error_log_path()).unwrap();
+    let errors = errors();
     assert!(count(&errors, "test-child: error line") >= 3);
     assert!(!errors.contains("supervisor:"));
     process::stop(&node.0).unwrap();
