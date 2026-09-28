@@ -23,7 +23,10 @@
 //! The request's headers are read as Node's server gives them to hapi (`node_header`): as
 //! Latin-1, and a repeated header's values joined with `, `. So is its target, when the server
 //! read the request (`NodeRead`): its bytes as Latin-1 characters, the path before its first `?`
-//! and the query after it, each read as it is.
+//! and the query after it, each read as it is. A request on which Node's parser failed while hapi
+//! served it (`ClientError`) is answered with hapi's 400 before any step. The echoed `Origin` is
+//! written in the bytes Node writes it in: UTF-8 with a body given as text, Latin-1 otherwise,
+//! as for an answer hapi compresses (in `encoding`).
 
 mod catch_all;
 mod encoding;
