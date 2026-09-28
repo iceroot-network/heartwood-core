@@ -309,6 +309,7 @@ fn check_run(
     for p in problems {
         cases.fail("run", "the scripted steps", p);
     }
+    check_reconnect(manifest, &steps, cases);
     if let Some(pair) = &manifest.pair {
         let other = run_dir.parent().map(|p| p.join(pair));
         match other.filter(|d| d.join("run.json").exists()) {
@@ -389,6 +390,41 @@ fn check_run(
         }
     }
     Ok(())
+}
+
+/// How the minority of a partition rejoined after the heal. The recipe restarts node 3's relay
+/// when there is no single tip 120 s after the heal (`reconnect-minority`): node 3 keeps its side
+/// of the fork while it holds a peer, which a reference relay as node 4 is (a dry run). A Heartwood
+/// node 4 has no listener, so it is no peer of node 3, which then falls back to its seeds by
+/// itself; a run with a Heartwood relay in the minority must converge without that restart.
+fn check_reconnect(manifest: &Manifest, steps: &[run::Step], cases: &mut Cases) {
+    if !steps.iter().any(|s| s.name == "converged") {
+        return;
+    }
+    let restarted = steps.iter().any(|s| s.name == "reconnect-minority");
+    let heartwood = !manifest.dry_run
+        && manifest.minority.as_ref().is_some_and(|(members, _)| {
+            members.iter().any(|m| {
+                manifest
+                    .node(m)
+                    .is_some_and(|n| n.implementation == Implementation::Heartwood)
+            })
+        });
+    match (restarted, heartwood) {
+        (false, _) => cases.record(
+            "run",
+            "the minority rejoined the majority after the heal by itself",
+        ),
+        (true, false) => cases.record(
+            "run",
+            "the minority rejoined the majority after the scripted restart of node 3's relay (a reference relay in the minority keeps node 3 on its side)",
+        ),
+        (true, true) => cases.fail(
+            "run",
+            "the minority rejoined the majority after the heal by itself",
+            "it rejoined only after the scripted restart of node 3's relay, 120 s after the heal: with a Heartwood relay in the minority, node 3 holds no peer and falls back to its seeds by itself",
+        ),
+    }
 }
 
 /// The judged chains by corpus name.
@@ -962,4 +998,88 @@ fn check_invariants(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::live::run::{Node, Step};
+
+    fn manifest(node4: Implementation, dry_run: bool) -> Manifest {
+        let node = |name: &str, implementation| Node {
+            name: name.into(),
+            ip: String::new(),
+            implementation,
+            forger: false,
+            under_test: name == "node4",
+        };
+        Manifest {
+            run: "m2".into(),
+            network: "b5-m2".into(),
+            dry_run,
+            seed: "solar-devnet".into(),
+            round_length: 53,
+            block_time: 8,
+            stop_height: 265,
+            control: "node1".into(),
+            nodes: vec![
+                node("node3", Implementation::Reference),
+                node("node4", node4),
+            ],
+            corpora: BTreeMap::new(),
+            pair: None,
+            minority: Some((vec!["node3".into(), "node4".into()], "minority".into())),
+            api: None,
+            window_seconds: 30,
+            status: "complete".into(),
+            relay_image: None,
+            relay_binary_sha256: None,
+            worktree: None,
+        }
+    }
+
+    fn step(name: &str) -> Step {
+        Step {
+            name: name.into(),
+            node: "node3".into(),
+            ok: true,
+            start: None,
+            record: json!({"step": name}),
+        }
+    }
+
+    #[test]
+    fn a_heartwood_minority_rejoins_without_the_restart() {
+        let judged = |node4, dry_run, steps: &[Step]| {
+            let mut cases = Cases {
+                run: "m2".into(),
+                results: Vec::new(),
+            };
+            check_reconnect(&manifest(node4, dry_run), steps, &mut cases);
+            cases.results
+        };
+        let restarted = [step("reconnect-minority"), step("converged")];
+        let failed = judged(Implementation::Heartwood, false, &restarted);
+        assert!(
+            failed.len() == 1 && failed[0].outcome.is_failure(),
+            "{failed:?}"
+        );
+        // A dry run's reference relay keeps node 3 on its side: the restart is recorded.
+        let dry = judged(Implementation::Heartwood, true, &restarted);
+        assert!(
+            dry.len() == 1 && dry[0].label.starts_with("recorded:"),
+            "{dry:?}"
+        );
+        let reference = judged(Implementation::Reference, false, &restarted);
+        assert!(!reference[0].outcome.is_failure(), "{reference:?}");
+        let by_itself = judged(Implementation::Heartwood, false, &[step("converged")]);
+        assert!(
+            by_itself.len() == 1 && by_itself[0].label.contains("by itself"),
+            "{by_itself:?}"
+        );
+        // A run without a partition has nothing to record.
+        assert!(judged(Implementation::Heartwood, false, &[]).is_empty());
+    }
 }
