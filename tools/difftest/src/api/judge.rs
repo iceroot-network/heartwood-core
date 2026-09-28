@@ -20,8 +20,8 @@
 //! A case marked with a documented difference (`heightAboveTip`, `storeFailure`, `peersIpFilter`,
 //! `tieOrder`, `decodeReason`) passes as documented when the answers differ and the node under
 //! test shows the documented behaviour. A mark excuses the status and the body only: the headers
-//! are judged as for any case, apart from those that follow the status ([`STATUS_HEADERS`]) when
-//! the statuses differ. For `tieOrder`, both pages must hold the same sequence of the sorted
+//! are judged as for any case, apart from those that follow the status (`accept-ranges`) when the
+//! statuses differ. For `tieOrder`, both pages must hold the same sequence of the sorted
 //! column's values, as the list's items show them; a transaction both pages hold must be the same
 //! on both, and one that only one page holds must have the sorted value of the page's first or
 //! last item (a tie that the page's start or end cuts).
