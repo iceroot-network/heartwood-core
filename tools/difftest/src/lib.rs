@@ -54,6 +54,7 @@ pub mod replay;
 pub mod report;
 pub mod restart;
 pub mod runtime_kill;
+pub mod service_rig;
 pub mod store;
 pub mod strategies;
 pub mod subject;
