@@ -37,14 +37,17 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # requests and reply checks, gains the internal routes' bodies, the status reader and the server's
 # request checks (about 550). heartwood-forger and heartwood-cli start at their planned ceilings;
 # the parts of each are listed on their own. heartwood-forger was re-baselined from 1,500 to 2,100
-# once its parts were built: it measures 2,028 lines. The slot loop and the relay client take 979
-# (the reference's forger service and client are 600 TypeScript lines; the Rust reads every relay
-# answer as typed, untrusted input and gives every call a deadline), block assembly, the key file,
-# the signing record and the attester 540 (the record, the key file's permission check and the
-# attester have no counterpart in the reference's forger), and the options, seams, errors and crate
-# root 509. The binaries under src/bin of heartwood-forger and heartwood-cli are test seams (the
-# crash test's child behind `difftest`, the supervisor tests' child behind `test-child`), which no
-# release build has: they are left out, as tests/ is, and listed apart.
+# once its parts were built: it measured 2,028 lines then, and 2,098 after fixes to those parts. The
+# slot loop and the relay client take 1,013 (the reference's forger service and client are 600
+# TypeScript lines; the Rust reads every relay answer as typed, untrusted input and gives every
+# call a deadline), block assembly, the key file, the signing record and the attester 565 (the
+# record, the key file's permission check and the attester have no counterpart in the reference's
+# forger), and the options, seams, errors and crate root 520. With 2 lines left, further forger
+# work (the signing record's write off the runtime's thread, a fuller reproduction of the
+# reference's header sort) needs a new ceiling decision. The binaries under src/bin of
+# heartwood-forger and heartwood-cli are test seams (the crash test's child behind `difftest`, the
+# supervisor tests' child behind `test-child`), which no release build has: they are left out, as
+# tests/ is, and listed apart.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"
