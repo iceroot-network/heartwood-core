@@ -232,6 +232,55 @@ fn the_devnet_runs_each_role_as_heartwood_role_run_with_its_directories() {
     );
 }
 
+#[test]
+fn the_run_directory_is_made_private_a_wider_one_narrowed_and_a_file_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Barrier;
+    use std::time::Instant;
+
+    let root = scratch("run-dir");
+    let relay = instance(&root, Role::Relay);
+    let run = relay.run_dir();
+    let mode = |path: &Path| {
+        let metadata = fs::symlink_metadata(path);
+        metadata.map(|m| m.permissions().mode() & 0o777).ok()
+    };
+    // A watcher that reads the directory's mode as soon as it is there sees 0700 only: the
+    // directory is never there with a wider mode, which a creation then a change could show.
+    for _ in 0..100 {
+        let _ = fs::remove_dir(&run);
+        let started = Barrier::new(2);
+        let seen = std::thread::scope(|scope| {
+            let watcher = scope.spawn(|| {
+                started.wait();
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while Instant::now() < deadline {
+                    if let Some(seen) = mode(&run) {
+                        return Some(seen);
+                    }
+                    std::hint::spin_loop();
+                }
+                None
+            });
+            started.wait();
+            let made = heartwood_cli::supervisor::run_dir(&relay);
+            (made, watcher.join().unwrap())
+        });
+        assert_eq!(seen.0.unwrap(), run);
+        assert_eq!(seen.1, Some(0o700));
+    }
+    fs::set_permissions(&run, fs::Permissions::from_mode(0o755)).unwrap();
+    heartwood_cli::supervisor::run_dir(&relay).unwrap();
+    assert_eq!(mode(&run), Some(0o700));
+    fs::remove_dir(&run).unwrap();
+    fs::write(&run, "").unwrap();
+    let refused = heartwood_cli::supervisor::run_dir(&relay);
+    assert!(
+        matches!(&refused, Err(heartwood_cli::ProcessError::Io { path, .. }) if *path == run),
+        "{refused:?}"
+    );
+}
+
 /// The commands over the test child (feature `test-child`), which stands for the node and, as
 /// `test-child supervise`, for `heartwood supervise`.
 #[cfg(feature = "test-child")]

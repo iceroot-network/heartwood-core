@@ -23,11 +23,11 @@ pub mod state;
 
 use std::error::Error;
 use std::ffi::{CString, OsString};
-use std::fs::{self, File, Permissions};
-use std::io::{BufRead, BufReader, PipeReader, Read};
+use std::fs::{self, DirBuilder, File, Permissions};
+use std::io::{BufRead, BufReader, ErrorKind, PipeReader, Read};
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -130,10 +130,18 @@ pub fn supervise(instance: Instance, argv: Vec<OsString>) -> ! {
     std::process::exit(code)
 }
 
-/// Create `instance`'s run directory, mode 0700; refused when another user owns it.
+/// Create `instance`'s run directory with mode 0700 (its parents with the default mode), or
+/// narrow an existing one to 0700; refused when another user owns it.
 pub fn run_dir(instance: &Instance) -> Result<PathBuf, ProcessError> {
     let dir = instance.run_dir();
-    at(&dir, fs::create_dir_all(&dir))?;
+    if let Some(parent) = dir.parent() {
+        at(parent, fs::create_dir_all(parent))?;
+    }
+    // Made private as it is made, so it is never there with a wider mode.
+    match DirBuilder::new().mode(0o700).create(&dir) {
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => at(&dir, fs::create_dir_all(&dir))?,
+        made => at(&dir, made)?,
+    }
     // Only the user a directory belongs to may change its mode, so this also refuses one of
     // another user.
     at(
