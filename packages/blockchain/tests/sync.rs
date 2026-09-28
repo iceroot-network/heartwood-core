@@ -254,7 +254,7 @@ async fn sync_from_genesis(chunk: u32, peers: u32) -> Harness {
     let first = &sync_downloads(&h)[0];
     assert_eq!(
         first,
-        "download 1 parallel=10 silent=false timeout=30000 throttle=false"
+        "download 1 parallel=10 silent=false timeout=configured throttle=false"
     );
     // Every block was committed once, in the reference's chunks of at most 100 blocks.
     let jobs: Vec<_> = h
@@ -301,7 +301,7 @@ async fn an_unchained_download_clears_the_queue_and_checks_for_a_fork_in_the_bac
     h.wait_for(MINUTE, |h| h.chain().last_height() == 17).await;
     assert_eq!(
         sync_downloads(&h)[0],
-        "download 16 parallel=10 silent=false timeout=30000 throttle=false"
+        "download 16 parallel=10 silent=false timeout=configured throttle=false"
     );
     assert_eq!(h.network.count("check_for_fork"), 1);
     assert_eq!(h.network.count("download_block_at_height 192.0.2.7 14"), 1);

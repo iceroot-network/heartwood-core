@@ -18,7 +18,7 @@ use heartwood_kernel::Event;
 use heartwood_p2p::communicator::BlocksRequest;
 use heartwood_p2p::errors::{PingError, VerificationStopped};
 use heartwood_p2p::seams::{PeerClient, VerifierLink};
-use heartwood_p2p::{ChainView, DownloadedBlock, SessionError, Verification};
+use heartwood_p2p::{ChainView, DownloadedBlock, P2pOptions, SessionError, Verification};
 use heartwood_p2p_wire::RouteId;
 use heartwood_p2p_wire::codecs::blocks::{self, ListedBlock};
 use heartwood_p2p_wire::codecs::transactions::{self, WithTransactions};
@@ -104,6 +104,38 @@ fn stored(fixture: &Fixture, last: u8) -> heartwood_p2p::SharedPeer {
 
 fn ids(count: u8) -> Vec<BlockId> {
     (1..=count).map(|i| BlockId::from_array([i; 32])).collect()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_getblocks_without_its_own_timeout_takes_the_configured_one() {
+    // The sync's download has no timeout of its own, as the reference's; a zero is none too.
+    let options = P2pOptions {
+        get_blocks_timeout: Duration::from_secs(20),
+        ..options()
+    };
+    let fixture = Fixture::with(Chain::at(10), options);
+    let peer = stored(&fixture, 1);
+    let timeouts = [None, Some(Duration::ZERO), Some(Duration::from_secs(2))];
+    for timeout in timeouts {
+        let reply = blocks_reply(&[listed(6, vec![])]);
+        fixture
+            .transport
+            .answer(RouteId::GetBlocks, Answer::Bytes(reply));
+        let request = BlocksRequest {
+            timeout,
+            ..BlocksRequest::after(5)
+        };
+        fixture
+            .communicator
+            .get_peer_blocks(&peer, request)
+            .await
+            .unwrap();
+    }
+    let sent: Vec<Duration> = (fixture.transport.sent().iter())
+        .map(|sent| sent.timeout)
+        .collect();
+    let seconds = Duration::from_secs;
+    assert_eq!(sent, [seconds(20), seconds(20), seconds(2)]);
 }
 
 #[tokio::test(start_paused = true)]

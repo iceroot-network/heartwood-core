@@ -103,7 +103,7 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
     async fn poll_blocks(self: Arc<Self>) {
         let tip = self.chain().last_height();
         let network = &self.parts.network;
-        let two = Duration::from_secs(2);
+        let two = Some(Duration::from_secs(2));
         let blocks = network
             .download_blocks_from_height(tip, 10, true, two, true)
             .await;

@@ -264,10 +264,10 @@ impl Network for FakeNetwork {
         from: u32,
         max_parallel: usize,
         silent: bool,
-        timeout: Duration,
+        timeout: Option<Duration>,
         check_throttle: bool,
     ) -> Vec<DownloadedBlock> {
-        let ms = timeout.as_millis();
+        let ms = timeout.map_or("configured".to_owned(), |t| t.as_millis().to_string());
         self.call(format!(
             "download {from} parallel={max_parallel} silent={silent} timeout={ms} throttle={check_throttle}"
         ));

@@ -552,13 +552,14 @@ where
     /// size (400, or a tenth of the last size after a download that returned nothing); chunk `i`
     /// is asked of the repository's peer `i` first, then of the peers after the first chunks'
     /// peers in a sampled order (of every other peer when there are none). A cached chunk is used
-    /// and removed; chunks above a missing one are cached. The last chunk may be empty.
+    /// and removed; chunks above a missing one are cached. The last chunk may be empty. Each
+    /// getBlocks has `timeout`, or the configured `getBlocksTimeout` when `None`.
     pub async fn download_blocks_from_height(
         &self,
         from: u32,
         max_parallel: usize,
         silent: bool,
-        timeout: Duration,
+        timeout: Option<Duration>,
         check_throttle: bool,
     ) -> Vec<DownloadedBlock> {
         let all = self.all();
@@ -595,7 +596,7 @@ where
             let request = BlocksRequest {
                 block_limit: size,
                 silent,
-                timeout: Some(timeout),
+                timeout,
                 ..BlocksRequest::after(u32::try_from(start(i)).unwrap_or(u32::MAX))
             };
             jobs.push(self.download_chunk(cached, key, to_try, request, last, &failed));

@@ -72,7 +72,7 @@ where
         from: u32,
         max_parallel: usize,
         silent: bool,
-        timeout: Duration,
+        timeout: Option<Duration>,
         check_throttle: bool,
     ) -> impl Future<Output = Vec<DownloadedBlock>> + Send {
         NetworkMonitor::download_blocks_from_height(

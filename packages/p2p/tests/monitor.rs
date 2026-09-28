@@ -962,10 +962,10 @@ fn heights(blocks: &[DownloadedBlock]) -> Vec<u32> {
     blocks.iter().map(DownloadedBlock::height).collect()
 }
 
+/// A download as the sync's: no timeout of its own, so the configured `getBlocksTimeout`.
 async fn download(net: &Net, from: u32) -> Vec<DownloadedBlock> {
-    let timeout = Duration::from_secs(30);
     net.monitor
-        .download_blocks_from_height(from, 10, false, timeout, false)
+        .download_blocks_from_height(from, 10, false, None, false)
         .await
 }
 
@@ -979,17 +979,14 @@ async fn chunk_i_is_asked_of_peer_i_and_the_chunks_are_joined() {
         [(ip(1), 0, 400), (ip(2), 400, 400), (ip(3), 800, 400)]
     );
     assert_eq!(net.monitor.chunk_size(), 400);
-    let request = BlocksRequest {
-        timeout: Some(Duration::from_secs(30)),
-        ..BlocksRequest::after(0)
-    };
+    let request = BlocksRequest::after(0);
     assert_eq!(net.client.calls()[0], Call::Blocks(ip(1), request));
     // The number of chunks is bounded by the network height, the peers and the parallel limit.
     let net = serving(5, 1_000);
     let limit = Duration::from_secs(2);
     let blocks = net
         .monitor
-        .download_blocks_from_height(0, 2, true, limit, true)
+        .download_blocks_from_height(0, 2, true, Some(limit), true)
         .await;
     assert_eq!(heights(&blocks).len(), 800);
     assert_eq!(net.client.blocks_calls().len(), 2);
@@ -1107,7 +1104,7 @@ async fn throttled_peers_and_peers_with_a_violation_are_no_download_source() {
     let limit = Duration::from_secs(2);
     let blocks = net
         .monitor
-        .download_blocks_from_height(0, 10, true, limit, true)
+        .download_blocks_from_height(0, 10, true, Some(limit), true)
         .await;
     assert_eq!(heights(&blocks).len(), 400);
     assert_eq!(net.client.blocks_calls(), [(ip(3), 0, 400)]);
@@ -1119,7 +1116,7 @@ async fn throttled_peers_and_peers_with_a_violation_are_no_download_source() {
     net.answers().throttled.push((ip(3), RouteId::GetBlocks));
     let blocks = net
         .monitor
-        .download_blocks_from_height(0, 10, true, limit, true)
+        .download_blocks_from_height(0, 10, true, Some(limit), true)
         .await;
     assert!(blocks.is_empty());
     assert_eq!(net.monitor.chunk_size(), 40);
@@ -1191,7 +1188,7 @@ async fn backup_peers_are_tried_in_the_sampled_order() {
     let limit = Duration::from_secs(30);
     let blocks = net
         .monitor
-        .download_blocks_from_height(0, 2, false, limit, false)
+        .download_blocks_from_height(0, 2, false, Some(limit), false)
         .await;
     assert_eq!(heights(&blocks).len(), 800);
     let first: Vec<IpAddr> = (net.client.blocks_calls().iter())
@@ -1816,7 +1813,7 @@ mod with_the_real_client {
         assert_eq!(monitor.network_height(), 12);
         let timeout = Duration::from_secs(30);
         let blocks = monitor
-            .download_blocks_from_height(6, 10, false, timeout, false)
+            .download_blocks_from_height(6, 10, false, Some(timeout), false)
             .await;
         assert_eq!(heights(&blocks), (7..=12).collect::<Vec<_>>());
         for (downloaded, expected) in blocks.iter().zip(served.iter().skip(6)) {

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use heartwood_kernel::utils::pluralise::pluralise;
 use heartwood_kernel::{calculate_round, debug, info, is_block_chained, warning};
 
-use crate::blockchain::{Blockchain, GET_BLOCKS_TIMEOUT as TIMEOUT, Queue, link, locale};
+use crate::blockchain::{Blockchain, Queue, link, locale};
 use crate::network::Network;
 use crate::state_machine::MachineEvent;
 use crate::work::{IncomingBlock, OnlineWork};
@@ -65,7 +65,8 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
         self.dispatch(event);
     }
 
-    /// `downloadBlocks`: download from the last downloaded block; blocks that chain to it are
+    /// `downloadBlocks`: download from the last downloaded block (with the configured
+    /// `getBlocksTimeout`, as the reference passes no timeout); blocks that chain to it are
     /// enqueued (`DOWNLOADED`); nothing, or blocks that do not chain (the queue cleared and a fork
     /// check in the background), is `NOBLOCK`, counted as an empty download when the queue is
     /// empty, with the last downloaded block back at the tip.
@@ -75,7 +76,7 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
             return;
         };
         let network = &self.parts.network;
-        let blocks = network.download_blocks_from_height(last.height, 10, false, TIMEOUT, false);
+        let blocks = network.download_blocks_from_height(last.height, 10, false, None, false);
         let blocks = blocks.await;
         if self.flags().stopped {
             return;

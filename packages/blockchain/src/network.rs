@@ -49,13 +49,14 @@ pub trait Network: Send + Sync + 'static {
         height: u32,
     ) -> impl Future<Output = Result<Option<DownloadedBlock>, DownloadError>> + Send;
 
-    /// The blocks after `from`, in parallel chunks.
+    /// The blocks after `from`, in parallel chunks, each getBlocks with `timeout`, or with the
+    /// configured `getBlocksTimeout` when `None` (the reference's call without a timeout).
     fn download_blocks_from_height(
         &self,
         from: u32,
         max_parallel: usize,
         silent: bool,
-        timeout: Duration,
+        timeout: Option<Duration>,
         check_throttle: bool,
     ) -> impl Future<Output = Vec<DownloadedBlock>> + Send;
 

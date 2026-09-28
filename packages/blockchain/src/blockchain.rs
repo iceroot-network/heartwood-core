@@ -52,8 +52,6 @@ use crate::work::{IncomingBlock, Job, JobEnd, JobOutcome, NodeHandle};
 const WAKE_UP_MS: i64 = 60_000;
 /// How often the wake-up timer looks at the chain while it is not set.
 const WAKE_UP_POLL: Duration = Duration::from_secs(1);
-/// The sync's download timeout: the reference's default `getBlocksTimeout`.
-pub(crate) const GET_BLOCKS_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The job queue as the service drives it: [`JobQueue`] in a node; a test may give its own.
 pub trait Queue: Send + Sync + 'static {
