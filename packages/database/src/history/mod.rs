@@ -14,7 +14,7 @@ use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use crate::blocks::{self, BlockRow};
 use crate::errors::DatabaseError;
 use crate::filters::TransactionFilter;
-use crate::filters::sql::Condition;
+use crate::filters::sql::{AMOUNT, Condition};
 use crate::reader::Reader;
 use crate::rounds::RoundRow;
 use crate::transactions::{self, TransactionRow};
@@ -134,7 +134,8 @@ impl Reader<'_> {
     /// (lowest first without one).
     ///
     /// Texts order by their bytes and `asset` by `jsonb`'s order; `NULL` comes last from the
-    /// lowest and first from the highest, as in PostgreSQL. An order on a property that is no
+    /// lowest and first from the highest, as in PostgreSQL, and the amount of a type without one
+    /// is `NULL`, as in the reference's table. An order on a property that is no
     /// column (`address`) finds nothing, as the reference's repository answers an empty page
     /// when it cannot find the column.
     pub fn transactions(
@@ -286,7 +287,7 @@ fn sort_column(property: &str) -> Option<&'static str> {
         "type" => "type",
         "typeGroup" => "type_group",
         "memo" => "memo",
-        "amount" => "amount",
+        "amount" => AMOUNT,
         "fee" => "fee",
         "burnedFee" => "burned_fee",
         "serialised" => "serialised",

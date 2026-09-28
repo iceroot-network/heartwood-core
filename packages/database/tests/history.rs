@@ -406,6 +406,77 @@ fn ids_are_prefixes_and_numbers_are_values_or_ranges() {
 }
 
 #[test]
+fn only_a_burn_has_an_amount_as_in_the_reference_table() {
+    let (mut database, _settings, readers) = store("history-amount");
+    // A burn of 0 at height 7: its amount is 0, where the other types have none.
+    let burn = Spec {
+        height: 7,
+        sequence: 0,
+        sender: "TB",
+        kind: (2, 0),
+        amount: 0,
+        fee: 100,
+        memo: None,
+        asset: None,
+        recipients: &[],
+    };
+    let mut chunk = database.begin().unwrap();
+    chunk.save_block(&block_row(7, 1), &[row(&burn)]).unwrap();
+    chunk.commit().unwrap();
+    let amount = |values: Vec<Numeric>| TransactionCriteria {
+        amount: values,
+        ..criteria()
+    };
+    let range = |from, to| Numeric::Range { from, to };
+    assert_eq!(
+        matching(&readers, amount(vec![Numeric::Equal(0)])),
+        [(7, 0)]
+    );
+    assert_eq!(
+        matching(&readers, amount(vec![range(None, Some(1000))])),
+        [(7, 0), (4, 0)]
+    );
+    assert_eq!(
+        matching(&readers, amount(vec![range(Some(1), None)])),
+        [(4, 0)]
+    );
+    let both = TransactionCriteria {
+        sender_id: vec!["TA".to_owned()],
+        amount: vec![Numeric::Equal(0)],
+        ..criteria()
+    };
+    assert_eq!(matching(&readers, both), []);
+    let all = TransactionFilter::default();
+    let by = |direction| listed(&readers, &all, &[order("amount", direction)], ALL);
+    assert_eq!(
+        by(Direction::Asc),
+        [
+            (7, 0),
+            (4, 0),
+            (2, 0),
+            (2, 1),
+            (3, 0),
+            (4, 1),
+            (5, 0),
+            (6, 0)
+        ]
+    );
+    assert_eq!(
+        by(Direction::Desc),
+        [
+            (6, 0),
+            (5, 0),
+            (4, 1),
+            (3, 0),
+            (2, 1),
+            (2, 0),
+            (4, 0),
+            (7, 0)
+        ]
+    );
+}
+
+#[test]
 fn groups_are_all_of_their_criteria_one_of() {
     let (_database, _settings, readers) = store("history-groups");
     let sender = |value: &str| TransactionCriteria {
@@ -460,9 +531,10 @@ fn orders_break_ties_by_the_unique_key_and_put_null_where_postgresql_does() {
         by(&[("asset", Direction::Asc)]),
         [(3, 0), (6, 0), (2, 0), (4, 1), (2, 1), (4, 0), (5, 0)]
     );
+    // Only a burn has an amount: the others' is NULL, first from the highest.
     assert_eq!(
         by(&[("typeGroup", Direction::Asc), ("amount", Direction::Desc)]),
-        [(6, 0), (5, 0), (4, 1), (3, 0), (2, 0), (4, 0), (2, 1)]
+        [(6, 0), (5, 0), (4, 1), (3, 0), (2, 0), (2, 1), (4, 0)]
     );
     // An order on a property that is no column finds nothing, as the reference answers.
     let listing = readers

@@ -13,6 +13,11 @@ use crate::values::int;
 /// The type group and type of a transfer, whose recipients are in the side table.
 const TRANSFER: (u64, u64) = (1, 6);
 
+/// The top-level amount as the reference's table holds it: a burn's (type group 2, type 0), and
+/// `NULL` for every other type, whose data carries no amount (the table here holds 0 for those).
+/// `NULL` matches no criterion and sorts as PostgreSQL sorts it.
+pub(crate) const AMOUNT: &str = "(CASE WHEN type_group = 2 AND type = 0 THEN amount END)";
+
 /// An SQL condition and the parameters it binds, in order.
 #[derive(Debug, Default)]
 pub(crate) struct Condition {
@@ -96,7 +101,7 @@ impl Condition {
                 "heartwood_like(?, memo)".to_owned()
             })
             .collect());
-        key(self.numerics("amount", amount)?);
+        key(self.numerics(AMOUNT, amount)?);
         key(self.numerics("fee", fee)?);
         key(self.numerics("burned_fee", burned_fee)?);
         key(asset

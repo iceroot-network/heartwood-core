@@ -291,6 +291,23 @@ async fn the_criteria_select_as_the_reference_selects() {
     // An order on the address, which is no column: the reference's empty page.
     let (ids, total) = index(query(json!({"orderBy": ["address:asc"]}))).await;
     assert_eq!((ids.len(), total), (0, 0));
+    // Only a burn has an amount, as in the reference's table: no other type matches an amount,
+    // and theirs sort after the burns from the lowest.
+    let burn = |t: &Transaction| match t.data().asset {
+        Asset::Burn { amount } => Some(amount),
+        _ => None,
+    };
+    let burns = newest_first(fixture, |_, t| burn(t).is_some_and(|amount| amount > 0));
+    assert!(!burns.is_empty());
+    assert_eq!(index(query(json!({"amount": 0}))).await.1, 0);
+    let (ids, total) = index(query(json!({"amount": {"from": 1}}))).await;
+    assert_eq!((ids, total), (burns.clone(), burns.len() as u64));
+    let (ids, _) = index(query(json!({"orderBy": ["amount:asc"]}))).await;
+    let mut lowest: Vec<String> = ids[..burns.len()].to_vec();
+    lowest.sort();
+    let mut expected = burns.clone();
+    expected.sort();
+    assert_eq!(lowest, expected);
 }
 
 #[tokio::test]
