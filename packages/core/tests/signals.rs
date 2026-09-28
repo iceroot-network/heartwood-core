@@ -21,7 +21,7 @@ fn signal_child() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let shutdown = tokio::spawn(heartwood_core::signals::shutdown_requested());
+        let shutdown = tokio::spawn(heartwood_core::signals::shutdown_requested("relay"));
         tokio::time::sleep(Duration::from_millis(200)).await;
         println!("ready");
         shutdown.await.unwrap();

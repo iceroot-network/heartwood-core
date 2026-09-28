@@ -9,6 +9,7 @@
 //! which needs to reach them, so they are linked in once made ([`Links`]); until then the node
 //! reads as not synced and not idle, and nothing is broadcast.
 
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock};
 
 use heartwood_api::context::{SubmitError, SubmitFuture};
@@ -29,7 +30,7 @@ use heartwood_p2p::errors::LookupError;
 use heartwood_p2p::monitor::PeerInfo;
 use heartwood_p2p::seams::{PeerAcceptor, PeerClient, PeerRules};
 use heartwood_p2p::view::{BlockPing, DelegateInfo};
-use heartwood_p2p::{BlockLookup, ChainView, NetworkMonitor, OnlineSink, PeerEvents};
+use heartwood_p2p::{AttestedKeys, BlockLookup, ChainView, NetworkMonitor, OnlineSink, PeerEvents};
 use heartwood_pool::Entry;
 
 /// What the node reads of the network monitor.
@@ -86,13 +87,30 @@ impl<N: NetworkCalls> Machine for Arc<Blockchain<N>> {
     }
 }
 
-/// The network monitor and the machine, linked in once made.
+/// The network monitor, the machine and the forger's attestation session, linked in once made,
+/// and what the server reads of the node's start: its boot and its first sync.
 #[derive(Default)]
 pub struct Links {
     /// The network monitor.
     pub peers: OnceLock<Arc<dyn Peers>>,
     /// The blockchain service's machine.
     pub machine: OnceLock<Arc<dyn Machine>>,
+    /// The forger's attestation session: the delegates on this node.
+    pub attested: OnceLock<Arc<dyn AttestedKeys>>,
+    /// When the node first reported itself synced, in milliseconds since the Unix epoch.
+    pub first_synced: OnceLock<i64>,
+    /// Whether the blockchain has booted.
+    pub booted: AtomicBool,
+}
+
+/// The delegates on this node: the attestation session's, none before the server is made.
+impl AttestedKeys for Links {
+    fn attested(&self) -> Vec<PublicKeyBytes> {
+        let session = self.attested.get();
+        session
+            .map(|session| session.attested())
+            .unwrap_or_default()
+    }
 }
 
 impl Links {
@@ -233,7 +251,7 @@ impl BlockLookup for NodeView {
 }
 
 /// The header of a stored block's row.
-fn header(row: &BlockRow) -> Result<BlockHeader, LookupError> {
+pub(crate) fn header(row: &BlockRow) -> Result<BlockHeader, LookupError> {
     let fail = |detail: String| {
         LookupError(format!(
             "the stored block at height {}: {detail}",

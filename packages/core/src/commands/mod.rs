@@ -14,10 +14,12 @@ pub mod relay;
 pub mod supervise;
 
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 use heartwood_cli::instance::InstanceFlags;
+use heartwood_cli::{Instance, Role, process, process_table};
 
 /// The parsed command line.
 #[derive(Debug, Clone, PartialEq, Eq, Parser)]
@@ -76,6 +78,72 @@ pub struct LogFlags {
 /// Parse `args` (the program first), the colon spellings rewritten.
 pub fn parse(args: Vec<OsString>) -> Result<Command, clap::Error> {
     Cli::try_parse_from(heartwood_cli::argv::rewrite(args)).map(|cli| cli.command)
+}
+
+/// This program, which a supervisor runs as the node.
+pub(crate) fn program() -> Result<PathBuf, String> {
+    std::env::current_exe().map_err(|error| format!("the program's path: {error}"))
+}
+
+/// The instance of `role` that `flags` name, with the process's environment, home directory and
+/// working directory.
+pub(crate) fn instance(role: Role, flags: &InstanceFlags) -> Result<Instance, String> {
+    let env = |name: &str| std::env::var(name).ok();
+    let home = std::env::home_dir().ok_or("HOME is not set")?;
+    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    let resolved = heartwood_cli::instance::resolve(role, flags, &env, &home, &cwd);
+    resolved.map_err(|error| error.to_string())
+}
+
+/// A role's process command, as `relay` and `forger` share them.
+pub(crate) enum ProcessCommand {
+    /// Start under a supervisor, the node run with the flags `args` after `<role> run --token
+    /// <token> --network <network>`, as a daemon or not.
+    Start(InstanceFlags, Vec<OsString>, bool),
+    /// Stop.
+    Stop(ProcessFlags),
+    /// Restart.
+    Restart(ProcessFlags),
+    /// The process table's row.
+    Status(ProcessFlags),
+    /// The log.
+    Log(LogFlags),
+}
+
+/// Run `command` on `role`'s instance.
+pub(crate) fn process_command(role: Role, command: ProcessCommand) -> ExitCode {
+    let flags = match &command {
+        ProcessCommand::Start(flags, ..) => flags,
+        ProcessCommand::Stop(flags)
+        | ProcessCommand::Restart(flags)
+        | ProcessCommand::Status(flags) => &flags.instance,
+        ProcessCommand::Log(flags) => &flags.instance,
+    };
+    let instance = match instance(role, flags) {
+        Ok(instance) => instance,
+        Err(error) => return crate::exit(Err(error)),
+    };
+    let done = match command {
+        ProcessCommand::Start(_, args, daemon) => program().and_then(|program| {
+            let mut argv: Vec<OsString> = vec![program.into(), role.name().into(), "run".into()];
+            argv.extend(
+                ["--token", &instance.token, "--network", &instance.network].map(Into::into),
+            );
+            argv.extend(args);
+            process::start(&instance, &argv, &Vec::new(), daemon).map_err(|e| e.to_string())
+        }),
+        ProcessCommand::Stop(_) => process::stop(&instance).map_err(|e| e.to_string()),
+        ProcessCommand::Restart(_) => {
+            process::restart(&instance, &Vec::new()).map_err(|e| e.to_string())
+        }
+        ProcessCommand::Status(_) => process::status(&instance)
+            .map(|row| print!("{}", process_table::render(&[row])))
+            .map_err(|e| e.to_string()),
+        ProcessCommand::Log(log) => {
+            process::log(&instance, log.lines, log.error, true).map_err(|e| e.to_string())
+        }
+    };
+    crate::exit(done)
 }
 
 /// Run `command`; the process's exit status.

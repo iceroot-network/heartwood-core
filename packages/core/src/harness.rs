@@ -11,24 +11,31 @@
 //! - [`SeedRules`]: `--difftest-seed ip:port` names one seed that the address rules let through
 //!   (loopback and the host's own addresses included), for a mock peer on the same host; every
 //!   other rule is the client's.
+//! - [`DIR_VARIABLE`]: a directory for a devnet relay's files, which its supervisor passes on (a
+//!   devnet's argv carries no harness flag). Each start of the relay without the two flags writes
+//!   the next free pair `digest-NNNN.jsonl` and `blocks-NNNN.bin` there, and every start appends
+//!   to `network-state.jsonl` one line per getNetworkState answer the relay gives
+//!   ([`NetworkStateRecord`]).
 
 use std::cmp::Ordering;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::net::IpAddr;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use heartwood_blockchain::events::CommitObserver;
 use heartwood_crypto::blocks::serialiser;
 use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Block, BlockHeader, Milestones, Params};
+use heartwood_kernel::timestamp::UtcDateTime;
 use heartwood_p2p::seams::PeerRules;
 use heartwood_p2p::utils::rules::Rules;
 use heartwood_p2p_wire::RouteId;
 use heartwood_p2p_wire::codecs::blocks::ListedBlock;
 use heartwood_p2p_wire::errors::ReplyRefused;
+use heartwood_p2p_wire::internal::NetworkState;
 use heartwood_p2p_wire::messages::blocks::PostBlockResponse;
 use heartwood_p2p_wire::messages::peer::{GetCommonBlocksResponse, Peer as ListedPeer};
 use heartwood_p2p_wire::replies::{CommonBlock, PeerAddress, UnconfirmedReply};
@@ -206,5 +213,68 @@ impl PeerRules for SeedRules {
     }
     fn compare_versions(&self, a: &str, b: &str) -> Option<Ordering> {
         self.rules.compare_versions(a, b)
+    }
+}
+
+/// The variable that names a relay's directory of harness files.
+pub const DIR_VARIABLE: &str = "HEARTWOOD_DIFFTEST_DIR";
+
+/// The next free pair of a start's files in `dir` (made when missing): `digest-NNNN.jsonl` and
+/// `blocks-NNNN.bin`, `NNNN` one more than the highest number of a file there, from 0001.
+pub fn next_start_files(dir: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let failed = |error: std::io::Error| format!("{}: {error}", dir.display());
+    std::fs::create_dir_all(dir).map_err(failed)?;
+    let number = |name: &str| {
+        let name = name
+            .strip_prefix("digest-")
+            .or(name.strip_prefix("blocks-"))?;
+        let digits = name.strip_suffix(".jsonl").or(name.strip_suffix(".bin"))?;
+        digits.parse::<u32>().ok()
+    };
+    let entries = std::fs::read_dir(dir).map_err(failed)?;
+    let names = entries.filter_map(|entry| entry.ok()?.file_name().into_string().ok());
+    let highest = names.filter_map(|name| number(&name)).max().unwrap_or(0);
+    let next = highest.saturating_add(1);
+    Ok((
+        dir.join(format!("digest-{next:04}.jsonl")),
+        dir.join(format!("blocks-{next:04}.bin")),
+    ))
+}
+
+/// The network-state record of a relay: one JSON line per getNetworkState answer, `{t, caller,
+/// status, nodeHeight, hasQuorum, noQuorum, delegates: {hasQuorum, noQuorum, noResponse}}`, `t`
+/// the UTC time, appended to `network-state.jsonl` and flushed line by line.
+pub struct NetworkStateRecord {
+    file: Mutex<Option<File>>,
+}
+
+impl NetworkStateRecord {
+    /// The record in `dir` (made when missing).
+    pub fn open(dir: &Path) -> Result<NetworkStateRecord, String> {
+        let failed = |error: std::io::Error| format!("{}: {error}", dir.display());
+        std::fs::create_dir_all(dir).map_err(failed)?;
+        let path = dir.join("network-state.jsonl");
+        let file = OpenOptions::new().create(true).append(true).open(&path);
+        let file = file.map_err(failed)?;
+        Ok(NetworkStateRecord {
+            file: Mutex::new(Some(file)),
+        })
+    }
+
+    /// Record `state`, served to `caller` at `now_ms`.
+    pub fn write(&self, now_ms: i64, caller: IpAddr, state: &NetworkState) {
+        let t = UtcDateTime::from_unix_ms(now_ms).map(|time| time.to_iso_string());
+        let (details, lists) = (&state.quorum_details, &state.quorum_details.delegates);
+        let line = json!({
+            "t": t, "caller": caller.to_string(), "status": state.status as u8,
+            "nodeHeight": state.node_height, "hasQuorum": details.has_quorum,
+            "noQuorum": details.no_quorum,
+            "delegates": {
+                "hasQuorum": lists.has_quorum, "noQuorum": lists.no_quorum,
+                "noResponse": lists.no_response,
+            },
+        });
+        let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
+        write(&mut file, &line.to_string());
     }
 }
