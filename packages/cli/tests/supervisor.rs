@@ -119,8 +119,10 @@ fn a_node_that_ran_a_second_or_more_is_restarted_at_once() {
     let node = Node::new("restart");
     let began = Instant::now();
     node.start(&["exit", "3", "1100"], &[]);
+    // The third run is up: its status is recorded as online with its pid.
     wait_for("two restarts", Duration::from_secs(10), || {
-        node.state().restarts >= 2
+        let state = node.state();
+        state.restarts >= 2 && state.status == SupervisedStatus::Online && state.pid.is_some()
     });
     // Two runs of 1.1 s each and the start of the third: no back-off between them.
     assert!(
