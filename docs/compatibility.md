@@ -504,9 +504,13 @@ wallets and 75 ms at 1,000,000, which the committed chain's few dozen wallets do
 
 ## heartwood-blockchain
 
-`packages/blockchain` holds, so far, the part of the blockchain component that stores the chain and
-restores the state from it; the block processor, the queue and the state machine that drive it come
-later. A chunk writer commits each applied or reverted block in the chunk's one transaction: the
+`packages/blockchain` is the blockchain component: it stores the chain and restores the state from
+it, processes blocks as the reference's processor does, and runs a relay's follower: the node
+thread, the job queue, the state machine and the blockchain service around them.
+
+### Storage and the start
+
+A chunk writer commits each applied or reverted block in the chunk's one transaction: the
 block and transaction rows with the columns the reference derives (the generator's username, the
 burned fee, the donations), the wallets that changed since the last commit, the block's undo
 record, the state row, the round rows at a round start and the block's missed slots. A revert
@@ -537,9 +541,96 @@ the one place where a Heartwood restart and the reference's differ.
 - Every start also returns the pool's online record from the store (`Restored::online`);
   `ChainStore::save_online` replaces the stored record, outside any chunk.
 
+### The processor and the jobs
+
+The processor judges a block in the reference's order: its verification at the current time (its
+transactions strictly decoded when the block is rebuilt), the senders' nonces, the generator (the
+delegate of the block's key, registered, ranked, and the slot's delegate in the round's list),
+the chaining to the tip (the unchained statuses: not ready for the next height, already in the
+chain, equal to the last block, a generator mismatch, double forging, an invalid timestamp), the
+reward of the round, two transactions of one unique type from one sender, a transaction id already
+stored or in an earlier block of the job, and the apply. The outcomes are the reference's
+(`Accepted`, `DiscardedButCanBeBroadcasted`, `Rejected`, `Rollback`), each with the reference's
+side effects on the chain state: every refusal resets the last downloaded block, and an unchained
+block also clears the queue.
+
+A job is the reference's `ProcessBlocksJob`, run on the node thread. A job that starts at or below
+the tip does nothing; one whose first block does not chain to the tip ends with a fork check. Each
+block is rebuilt as the reference's block factory rebuilds a downloaded block and processed with
+the delegate name it was given when it was enqueued; the accepted blocks are committed in one
+SQLite transaction, each block's rows written right after its apply, and the job ends as the
+reference's does (broadcast, fork, or a cleared queue). After the commit the node publishes its
+snapshots (the state, the pool, the chain status) and its events, never between two blocks.
+
+The blockchain service enqueues as the reference does: every block of a download, and every
+incoming block, is named first (`setBlockUsername`) from the state the node published at its last
+commit, then the download is cut into jobs after 150 transactions, 100 blocks, or at a milestone
+height. So a block whose delegate registered in an earlier block of the same download has no name:
+its generator is refused (`Rejected`), the queue is cleared, and the block is accepted when it is
+downloaded again, as in the reference.
+
+### The node thread and the state machine
+
+The node thread alone holds the state, the store, the pool and the online record, and runs their
+work in the order it arrives: jobs, pool batches, the queue's drain, block removals, changes of the
+online record and the stop. After each commit it runs the pool's steps (the online record's expiry
+at a round start, the re-add when a milestone starts, the clean-up), in the reference's order. The
+network and the API read the published snapshots and never wait for the thread, except for a
+submission's answer. A job locks the chain state it shares with the service for one block at a
+time, so the peer client sees each applied block as the tip.
+
+The state machine has the reference's states, events and thirteen entry actions: the start
+(`initialise`: the pool re-added from its storage, the online record loaded, the network monitor
+booted), the sync (`checkLastDownloadedBlockSynced`, `downloadBlocks` and the rest), the idle loops
+(a download from the tip every 500 ms, the peers' pool transactions every 4 s, the seeds again
+below the minimum network reach every second, discovery every 30 s), the wake-up after 60 s without
+an accepted block, and fork recovery (the queue stopped, the forked blocks removed, a random depth
+of 4 to 102 blocks when the fork sets none, the queue resumed and the peers refreshed). A start
+has no last downloaded block, so the first sync after every start downloads once from the tip, as
+the reference's does. The sync's downloads take the configured `getBlocksTimeout`; the idle
+download keeps its 2 seconds.
+
+### Where the runtime differs
+
+Each of these shows only with a storage failure, a crash or a crafted block, or only in the timing
+of a step; none changes a verdict or a digest on an honest chain:
+
+- a job is one SQLite transaction: a failed write or commit stops the node, and its next start
+  restores the committed tip. The reference reverts the job's accepted blocks, adds their
+  transactions back to the pool and goes on. A pool storage failure while the forged transactions
+  are removed stops the node after the job's commit, where the reference reverts that block;
+- a block refused in its apply leaves no missed-slot rows: they are written only with an applied
+  block, in its commit. The reference writes them before it validates the block;
+- apply and revert read only the state and its undo records, never the store, so no result
+  depends on how far the store lags a multi-block job;
+- the reference names blocks from its live wallets, which a running job changes block by block;
+  Heartwood names them from the state of the last commit. When a download ends while a job that
+  applies a delegate's registration runs, the reference may name that delegate's blocks, and
+  Heartwood names them once the job has committed;
+- an unchained block's clear of the queue takes effect when the job ends, not inside the handler,
+  so a block enqueued during that job is cleared with the rest; the reference keeps it when the job
+  ends discarded;
+- the pool is cleaned up once per job at the committed tip, where the reference cleans up after
+  each applied block. The same transactions leave, since every addition already keeps the pool
+  within its limit; only the removal log lines come at the job's end;
+- a SIGINT or SIGTERM finishes or rolls back the current job, flushes the pool, saves the online
+  record and closes the store before the process exits with 0; the reference exits at once;
+- a fork check whose first unchained block is at height 2 asks no peer for the block at height 1
+  (a request a reference server refuses with a ban); the chain's outcome is the same;
+- the events the reference also puts on its bus for plugins (`block.received`,
+  `block.disregarded`, `state.started`) have no listener in a relay, and two log lines of the idle
+  loop are not written: the launch countdown is logged once instead of every slot, and the line
+  that says a delegate's reward was reduced.
+
 ```sh
-cargo test -p heartwood-blockchain --locked   # commit and restart at every height of the committed chain, the start's refusals, the milestone check
+cargo test -p heartwood-blockchain --locked   # commit and restart at every height of the committed chain, the start's refusals,
+                                              # the milestone check, the processor, jobs, the node thread, the machine, sync and fork recovery
 ```
+
+The class V27, installed beside the crate, holds the reference's processor (`chain.process`, one
+block on a chain state) and its job (`chain.job`, a download of one or more jobs); difftest's
+`processor_vectors` and `job_vectors` tests compare them, including two records that put a
+delegate's registration and its first block in one download.
 
 ## heartwood-p2p-wire
 
