@@ -760,8 +760,9 @@ an input that was not compared, and on a missing or empty corpus.
 
 `packages/p2p` is the client side of the peer-to-peer protocol: how a relay follows the network.
 It connects to peers, verifies their chains, downloads and broadcasts blocks and transactions, and
-keeps its peer list, with the reference's requests, timeouts, limits, cadences and decisions. It
-opens no listening socket. It reads the node's chain and tells the node about peers only through
+keeps its peer list, with the reference's requests, timeouts, limits, cadences and decisions. The
+client opens no listening socket; the server, behind the crate's `node` feature, is the relay's
+listener. It reads the node's chain and tells the node about peers only through
 the traits of its `view` module, so it depends on no crate of the chain, the store or the pool; the
 relay (`heartwood-core`) implements them over the node's published snapshots and the store's
 read-only connections, one per worker of its runtime, so the verifier's store reads never wait for
@@ -870,7 +871,7 @@ blocks, driven by its relays as the reference's forger is. It opens no listening
 store and no API. Its edges are `heartwood-crypto`, `heartwood-kernel`, `heartwood-p2p-wire` and
 `heartwood-p2p` built without its `node` feature, so it links only the nes client session and the
 transport; `make layers` checks that its tree holds no crate of the state, the transactions, the
-pool, the store, the chain or the API. It is not yet wired into a process.
+pool, the store, the chain or the API. `heartwood forger run` runs it (see heartwood-core).
 
 - **the slot loop**: at every slot, the round from the selected relay; when one of the forger's
   delegates is the slot's forger, attempts one second apart with the reference's checks and log
