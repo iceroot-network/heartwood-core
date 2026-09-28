@@ -546,10 +546,11 @@ the one place where a Heartwood restart and the reference's differ.
 The processor judges a block in the reference's order: its verification at the current time (its
 transactions strictly decoded when the block is rebuilt), the senders' nonces, the generator (the
 delegate of the block's key, registered, ranked, and the slot's delegate in the round's list),
-the chaining to the tip (the unchained statuses: not ready for the next height, already in the
-chain, equal to the last block, a generator mismatch, double forging, an invalid timestamp), the
-reward of the round, two transactions of one unique type from one sender, a transaction id already
-stored or in an earlier block of the job, and the apply. The outcomes are the reference's
+then the chaining to the tip (the unchained statuses: not ready for the next height, already in
+the chain, equal to the last block, a generator mismatch, double forging, an invalid timestamp),
+and only then the refusal of an invalid generator, the reward of the round, two transactions of
+one unique type from one sender, a transaction id already stored or in an earlier block of the
+job, and the apply. The outcomes are the reference's
 (`Accepted`, `DiscardedButCanBeBroadcasted`, `Rejected`, `Rollback`), each with the reference's
 side effects on the chain state: every refusal resets the last downloaded block, and an unchained
 block also clears the queue.
@@ -862,9 +863,9 @@ limit (100 points per 60 s per address, charged before validation, 429 without `
 path, query and payload against the route's schema (422 in Joi's style; the text of a 422 message is
 not part of the contract); the semaphore; the handler. Every answer, errors included, carries
 `X-Block-Height` (the published tip), `connection: close` and `cache-control: no-cache`; every
-answer of a route but a preflight's refusal carries `vary: origin` and
-`access-control-expose-headers`, and `access-control-allow-origin` when the request has an
-`Origin`. A `GET`'s 200 answer with a body offers byte ranges and serves one range as hapi does
+answer but a preflight's carries `vary: origin` and `access-control-expose-headers`, and
+`access-control-allow-origin` when the request has an `Origin`; a preflight is answered 204 with
+the reference's fixed set of headers, and its refusals carry no CORS header. A `GET`'s 200 answer with a body offers byte ranges and serves one range as hapi does
 (206, or 416 for a range it cannot serve). A `GET` or `HEAD` that no route matches is charged a
 point and answered 404, as the reference's catch-all route answers it.
 
