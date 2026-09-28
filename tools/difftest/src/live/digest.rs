@@ -244,10 +244,23 @@ pub fn judge(digest: &NodeDigest, chains: &[JudgedChain]) -> Judged {
     out
 }
 
-/// The scripted faults after which the supervisor starts a relay again (`faults.jsonl`): a kill
-/// (`sig` and the signal's name), a stop and start, a restart with the replay marker.
-pub const RESTARTING_FAULTS: [&str; 5] =
-    ["sigint", "sigkill", "sigterm", "restart", "marker-restart"];
+/// The scripted faults after which a relay starts again (`faults.jsonl`): a kill (`sig` and the
+/// signal's name), a stop and start, a restart with the replay marker; and in a forging devnet the
+/// fresh sync after a reset, the relay stopped or killed for a failover, the supervised relay
+/// crash, and the relays stopped for the two outages (`outage-three` names the one node it stops).
+pub const RESTARTING_FAULTS: [&str; 11] = [
+    "sigint",
+    "sigkill",
+    "sigterm",
+    "restart",
+    "marker-restart",
+    "fresh-sync",
+    "relay-stop",
+    "relay-kill",
+    "supervised-relay",
+    "outage-two",
+    "outage-three",
+];
 
 /// The node's starts (its digest files) against the scripted restarts of it, of `faults` (each a
 /// fault's name and the nodes it concerns): one start, and one more after each of
