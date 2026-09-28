@@ -8,8 +8,8 @@ mod common;
 use heartwood_crypto::{BlockId, TransactionId};
 use heartwood_database::filters::asset_alternatives;
 use heartwood_database::{
-    BlockSelector, Database, Direction, Numeric, Order, Page, Readers, SCHEMA_VERSION, Settings,
-    TransactionCriteria, TransactionFilter, TransactionRow,
+    BlockSelector, Database, Direction, Numeric, Order, Page, READ_TIMEOUT, Readers,
+    SCHEMA_VERSION, Settings, TransactionCriteria, TransactionFilter, TransactionRow,
 };
 use serde_json::json;
 
@@ -366,6 +366,63 @@ fn the_asset_is_a_containment_with_the_query_texts_expanded() {
         matching(&readers, asset(json!({"votes": {"carol": "1"}}))),
         []
     );
+}
+
+#[test]
+#[expect(
+    clippy::disallowed_types,
+    reason = "the test times the store's read against the wall clock"
+)]
+fn a_long_asset_list_with_casts_is_read_once_per_row() {
+    let (mut database, _settings, readers) = store("history-asset-long");
+    // Two rows whose array ends with a `null` after 1,500 other items, so that each of the
+    // criteria's holes scans it to the end: one holds the casts, then "c"; the other each text
+    // and its cast, as every alternative of the criteria finds them, but no "c".
+    let texts = ["1", "2", "3", "true", "false"];
+    let casts = [json!(1), json!(2.0), json!(3), json!(true), json!(false)];
+    let padding = (0..1_500).map(|n| json!(format!("p{n}")));
+    let mut cast = casts.to_vec();
+    cast.extend(padding.clone());
+    cast.extend([json!("c"), serde_json::Value::Null]);
+    let mut both: Vec<_> = texts
+        .iter()
+        .zip(casts)
+        .flat_map(|(text, value)| [json!(text), value])
+        .collect();
+    both.extend(padding);
+    both.push(serde_json::Value::Null);
+    let spec = |sequence, asset: Vec<serde_json::Value>| Spec {
+        height: 7,
+        sequence,
+        sender: "TB",
+        kind: (1, 0),
+        amount: 0,
+        fee: 100,
+        memo: None,
+        asset: Some(json!({ "x": asset })),
+        recipients: &[],
+    };
+    let mut chunk = database.begin().unwrap();
+    let rows = [row(&spec(0, cast)), row(&spec(1, both))];
+    chunk.save_block(&block_row(7, 2), &rows).unwrap();
+    chunk.commit().unwrap();
+    // The API's longest criteria with casts, `asset.x=1,2,3,true,false&asset.x.16383=c`: the
+    // five texts, 16,378 holes (`null`) and "c".
+    let mut items: Vec<_> = texts.iter().map(|text| json!(text)).collect();
+    items.resize(16_383, serde_json::Value::Null);
+    items.push(json!("c"));
+    let criteria = TransactionCriteria {
+        asset: vec![json!({ "x": items })],
+        ..criteria()
+    };
+    let started = std::time::Instant::now();
+    let found = matching(&readers, criteria);
+    let elapsed = started.elapsed();
+    assert_eq!(found, [(7, 0)]);
+    // The count and the page read each row once, well within the API's timeout of a read. The
+    // store read each of the expansion's 32 alternatives in turn before, which took about 12
+    // times as long in a debug build, beyond that timeout.
+    assert!(elapsed < READ_TIMEOUT, "{elapsed:?}");
 }
 
 #[test]
