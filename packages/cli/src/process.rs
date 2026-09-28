@@ -74,7 +74,9 @@ pub fn start(
         .envs(env.iter().cloned().chain(path_env(instance)))
         .stdin(Stdio::null());
     if daemon {
-        command.stdout(Stdio::null()).stderr(Stdio::null());
+        // The supervisor's stderr is a pipe until it has started, so that `start` can say why a
+        // supervisor that fails to start did; it then points its stderr at /dev/null.
+        command.stdout(Stdio::null()).stderr(Stdio::piped());
     }
     // A state file left by an earlier supervisor may name a pid the system has since reused.
     let earlier = SupervisorState::read(&instance.state_path()).ok().flatten();
@@ -94,7 +96,17 @@ pub fn start(
             Some(_) if daemon && is_locked(&lock)? => {
                 return Err(ProcessError::AlreadyRunning { name });
             }
-            Some(exit) => return Err(failed(format!("the supervisor exited: {exit}"))),
+            Some(exit) => {
+                let mut reason = String::new();
+                if let Some(pipe) = supervisor.stderr.take() {
+                    let _ = pipe.take(4096).read_to_string(&mut reason);
+                }
+                let reason = reason.trim();
+                let sep = if reason.is_empty() { "" } else { ": " };
+                return Err(failed(format!(
+                    "the supervisor exited: {exit}{sep}{reason}"
+                )));
+            }
             None if daemon && ours(supervisor.id())? => return Ok(()),
             None if daemon && Instant::now() >= deadline => {
                 let seconds = START_WAIT.as_secs();

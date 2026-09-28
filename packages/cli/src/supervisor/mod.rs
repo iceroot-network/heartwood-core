@@ -106,23 +106,32 @@ impl SuperviseArgs {
         let cwd = std::env::current_dir().unwrap_or_default();
         let paths = resolve_paths(&self.token, &self.network, &env, &home, &cwd);
         let (token, network, role) = (self.token, self.network, self.role);
-        supervise(
-            Instance {
-                token,
-                network,
-                role,
-                paths,
-            },
-            self.argv,
-        )
+        let instance = Instance {
+            token,
+            network,
+            role,
+            paths,
+        };
+        serve(instance, self.argv, self.daemon)
     }
 }
 
 /// Supervise `instance`'s node, run with `argv` (the program first), until a stop; never returns.
 /// The exit status is 0 after a stop and 1 when the supervisor gave up or could not start.
 pub fn supervise(instance: Instance, argv: Vec<OsString>) -> ! {
+    serve(instance, argv, false)
+}
+
+/// [`supervise`]; a `daemon` points its stderr at `/dev/null` once it has started, as the pipe
+/// that carried its start error to `start` is closed then.
+fn serve(instance: Instance, argv: Vec<OsString>, daemon: bool) -> ! {
     let code = match Supervisor::start(instance, argv) {
-        Ok(mut supervisor) => supervisor.run(),
+        Ok(mut supervisor) => {
+            if daemon && let Ok(null) = File::options().write(true).open("/dev/null") {
+                let _ = nix::unistd::dup2_stderr(&null);
+            }
+            supervisor.run()
+        }
         Err(e) => {
             eprintln!("supervisor: {e}");
             1

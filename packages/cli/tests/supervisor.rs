@@ -197,6 +197,17 @@ fn a_stop_sends_sigint_and_the_state_file_follows_every_change() {
 }
 
 #[test]
+fn a_daemon_that_cannot_start_says_why() {
+    let node = Node::new("daemon-error");
+    // A directory where the capture's file should be: the supervisor cannot open it.
+    fs::create_dir_all(node.0.error_log_path()).unwrap();
+    let env = Vec::new();
+    let failed = process::start(&node.0, &argv(&["run"]), &env, true).unwrap_err();
+    let text = failed.to_string();
+    assert!(text.contains("error.log"), "{text}");
+}
+
+#[test]
 fn a_terminal_interrupt_reaches_the_node_once_through_the_supervisor() {
     use heartwood_cli::supervisor::SuperviseArgs;
     use nix::sys::signal::killpg;
