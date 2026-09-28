@@ -80,13 +80,6 @@ fn get(port: u16, path: &str) -> Option<(String, Value)> {
 #[test]
 #[ignore = "integration"]
 fn a_relay_imports_the_corpus_from_a_mock_peer_and_serves_its_tip() {
-    let api = free_port();
-    let env = format!(
-        "CORE_API_PORT={api}\nCORE_P2P_PORT={}\nCORE_P2P_MIN_NETWORK_REACH=1\nCORE_LOG_LEVEL=info\n",
-        free_port()
-    );
-    let setup = Setup::new("relay", &env);
-    setup.write("peers.json", r#"{"list": []}"#);
     let mut peer = Command::new(mock_peer())
         .args(["--listen", "127.0.0.1:0", "--chain"])
         .arg(corpus())
@@ -97,6 +90,14 @@ fn a_relay_imports_the_corpus_from_a_mock_peer_and_serves_its_tip() {
     let peer = Killed(peer);
     let listening = lines.next().unwrap().unwrap();
     let address = listening.rsplit(' ').next().unwrap().to_owned();
+    // The relay's ports are taken once the mock peer listens, so that neither is the peer's.
+    let api = free_port();
+    let env = format!(
+        "CORE_API_PORT={api}\nCORE_P2P_PORT={}\nCORE_P2P_MIN_NETWORK_REACH=1\nCORE_LOG_LEVEL=info\n",
+        free_port()
+    );
+    let setup = Setup::new("relay", &env);
+    setup.write("peers.json", r#"{"list": []}"#);
     let digests = setup.root.join("digests.jsonl");
     let mut relay = Command::new(env!("CARGO_BIN_EXE_heartwood"));
     relay
