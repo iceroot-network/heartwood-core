@@ -212,7 +212,7 @@ pub struct ApiRequest {
     pub route: RouteId,
     /// The path parameters, by name (`id`, `ip`).
     pub params: Map<String, Value>,
-    /// The path as requested, without the query, for the pagination links.
+    /// The path as requested under the base path, without the query, for the pagination links.
     pub path: String,
     /// The query, parsed and validated (defaults added, values coerced) for the route.
     pub query: Value,

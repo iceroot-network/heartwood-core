@@ -2,8 +2,9 @@
 //! `previous`, `self`, `first`, `last`, in that order) and `data`, with the reference's link
 //! strings. `offset=0` is ignored, as the reference ignores it; another offset replaces the page.
 //!
-//! A link is the list's path under the base path, `?`, and the query the reference renders: the
-//! validated query without `orderBy`, overlaid with the query as parsed (so a given `orderBy` is
+//! A link is the list's path under the base path, as hapi's request URL writes it (the escapes of
+//! unreserved characters decoded, escapes in upper case, the characters a URL's path cannot hold
+//! escaped), `?`, and the query the reference renders: the validated query without `orderBy`, overlaid with the query as parsed (so a given `orderBy` is
 //! kept and comes last, and a given value keeps its spelling, while `page`, `limit` and
 //! `transform` appear with their defaults when they were not given), with the link's page, written
 //! as `qs.stringify` writes it with dots for nesting, commas for lists and no escaping.
@@ -14,7 +15,7 @@ use serde_json::{Map, Value};
 use crate::context::ApiRequest;
 use crate::schemas::PARSED;
 
-/// The base path the links are relative to.
+/// The default base path, which a path given by a caller outside the server may still carry.
 const BASE_PATH: &str = "/api";
 
 /// A page of a list route.
@@ -41,8 +42,8 @@ impl Pagination {
 /// The list envelope of `data`, the page `pagination` of `total_count` matches of `request`.
 ///
 /// The page numbers come from the query's `page` even when an offset chose the matches, as in
-/// the reference. `request.path` is the path as requested; a leading `/api` is taken off, so a
-/// path given under the base path already is used as it is.
+/// the reference. `request.path` is the path under the base path, as the server gives it; a path
+/// that starts with the default base path `/api` has it taken off.
 pub fn envelope(
     request: &ApiRequest,
     pagination: Pagination,
@@ -105,9 +106,10 @@ impl Links {
             .path
             .strip_prefix(BASE_PATH)
             .unwrap_or(&request.path);
+        let path = url_path(path);
         let path = match path.strip_suffix('/') {
             Some(stripped) if !stripped.is_empty() => stripped,
-            _ => path,
+            _ => &path,
         };
         let mut query = request.query.as_object().cloned().unwrap_or_default();
         let parsed = query.shift_remove(PARSED);
@@ -135,6 +137,42 @@ impl Links {
     }
 }
 
+/// `path` as hapi's request URL writes it: a byte a URL's path cannot hold (a space, `"`, `<`,
+/// `>`, a backquote, a brace, a control or a byte beyond ASCII) escaped, then every escape in upper
+/// case and those of unreserved characters (letters, digits and `!$&'()*+,-.:;=@_~`) decoded.
+fn url_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut out = String::with_capacity(path.len());
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        let hex = bytes.get(index + 1..index + 3).filter(|_| byte == b'%');
+        let hex = hex.filter(|hex| hex.iter().all(u8::is_ascii_hexdigit));
+        let escaped =
+            hex.and_then(|hex| u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok());
+        match escaped {
+            Some(value)
+                if value.is_ascii_alphanumeric() || b"!$&'()*+,-.:;=@_~".contains(&value) =>
+            {
+                out.push(char::from(value));
+                index += 3;
+            }
+            Some(value) => {
+                out.push_str(&format!("%{value:02X}"));
+                index += 3;
+            }
+            None if byte <= b' ' || byte >= 0x7f || b"\"<>`{}".contains(&byte) => {
+                out.push_str(&format!("%{byte:02X}"));
+                index += 1;
+            }
+            None => {
+                out.push(char::from(byte));
+                index += 1;
+            }
+        }
+    }
+    out
+}
+
 /// The pairs `qs.stringify` writes for `value` at `prefix`.
 fn push_pairs(pairs: &mut Vec<String>, prefix: &str, value: &Value) {
     match value {
@@ -158,5 +196,32 @@ fn text(value: &Value) -> String {
         Value::String(text) => text.clone(),
         Value::Array(items) => items.iter().map(text).collect::<Vec<_>>().join(","),
         Value::Object(_) => "[object Object]".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::url_path;
+
+    #[test]
+    fn a_link_path_is_written_as_hapi_writes_its_request_url() {
+        for (path, written) in [
+            ("/transactions", "/transactions"),
+            (
+                "/wallets/a%5fb%2A%7e/transactions",
+                "/wallets/a_b*~/transactions",
+            ),
+            (
+                "/blocks/%2f%7c%25%zz%4/transactions",
+                "/blocks/%2F%7C%25%zz%4/transactions",
+            ),
+            (
+                "/blocks/a{b}\"`<>/transactions",
+                "/blocks/a%7Bb%7D%22%60%3C%3E/transactions",
+            ),
+            ("/blocks/%+1/transactions", "/blocks/%+1/transactions"),
+        ] {
+            assert_eq!(url_path(path), written, "{path}");
+        }
     }
 }

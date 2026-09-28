@@ -110,7 +110,7 @@ async fn an_answer_has_the_reference_headers() {
     assert_eq!(status, 200);
     assert_eq!(body["data"]["route"], "NodeStatus");
     assert_eq!(body["data"]["query"], json!({ "a": "1" }));
-    assert_eq!(body["data"]["path"], "/api/node/status");
+    assert_eq!(body["data"]["path"], "/node/status");
     assert_eq!(body["data"]["client"], "127.0.0.1");
     let expected = [
         ("content-type", "application/json; charset=utf-8"),
@@ -845,6 +845,43 @@ async fn the_semaphore_levels_follow_the_served_query_grammar() {
     for (uri, expected) in cases {
         assert_eq!(call(&pipeline, get(&uri)).await.0, expected, "{uri}");
     }
+}
+
+#[tokio::test]
+async fn links_are_relative_to_the_configured_base_path() {
+    let mut config = config();
+    config.base_path = "/v2".to_owned();
+    let host = Host {
+        config: Arc::new(config),
+        height: Box::new(|| 265),
+        dispatch: Box::new(|_, request| {
+            Box::pin(async move {
+                let pagination = crate::pagination::Pagination::of(&request.query);
+                let body =
+                    crate::pagination::envelope(&request, pagination, 250, false, Vec::new());
+                Ok(ApiReply::ok(body))
+            })
+        }),
+    };
+    let pipeline = Pipeline::with_parts(RouteId::ALL.to_vec(), host, Grammar::SCHEMAS);
+    for (uri, link) in [
+        ("/v2/transactions?limit=10", "/transactions?"),
+        ("/v2/transactions/?limit=10", "/transactions?"),
+        (
+            "/v2/wallets/genesis%5f1/transactions",
+            "/wallets/genesis_1/transactions?",
+        ),
+        (
+            "/v2/blocks/%31%7c%7C/transactions",
+            "/blocks/1%7C%7C/transactions?",
+        ),
+    ] {
+        let (status, _, body) = call(&pipeline, get(uri)).await;
+        assert_eq!(status, 200, "{uri}");
+        let first = body["meta"]["first"].as_str().unwrap();
+        assert!(first.starts_with(link), "{uri}: {first}");
+    }
+    assert_eq!(call(&pipeline, get("/api/transactions")).await.0, 404);
 }
 
 /// The top-level keys of the request's query, how many values it has and how deep it is (counted

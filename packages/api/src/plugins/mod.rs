@@ -259,6 +259,8 @@ impl Pipeline {
         let payload = payload.map(|payload| (grammar.payload)(route, &payload));
         let payload = payload.transpose()?;
         let _permit = self.gates.enter(route, &query).await?;
+        // The pagination links are relative to the base path.
+        let path = path.strip_prefix(config.base_path.as_str()).unwrap_or(path);
         let path = path.to_owned();
         let client = client.parse::<IpAddr>().unwrap_or(peer.ip());
         let request = ApiRequest {
