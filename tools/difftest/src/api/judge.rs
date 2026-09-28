@@ -377,8 +377,14 @@ fn documented(
     match kind? {
         "heightAboveTip" => (left_status == 404 && left["message"] == "Block not found")
             .then(|| ApiDifference::HeightAboveTip.reason()),
-        "storeFailure" => (left_status == 500 && left["error"] == "Internal Server Error")
-            .then(|| ApiDifference::StoreFailure.reason()),
+        "storeFailure" => {
+            // The reference's repository catches the store's error: an empty page.
+            let empty = right_status == 200
+                && right["meta"]["totalCount"] == 0
+                && right["data"].as_array().is_some_and(Vec::is_empty);
+            (left_status == 500 && left["error"] == "Internal Server Error" && empty)
+                .then(|| ApiDifference::StoreFailure.reason())
+        }
         "peersIpFilter" => {
             let ip = query["ip"].as_str()?;
             let filtered = left["data"].as_array()?.iter().all(|peer| peer["ip"] == ip);
@@ -638,12 +644,32 @@ mod tests {
             ))
         };
         assert!(matches!(
-            judged(answer(500, failed)),
+            judged(answer(500, failed.clone())),
             Outcome::Documented(r) if r == ApiDifference::StoreFailure.reason()
         ));
         // Any other answer of the node under test is a difference.
         let other = json!({"meta": {"count": 1, "totalCount": 1}, "data": [{"id": "x"}]});
-        assert!(judged(answer(200, other)).is_failure());
+        assert!(judged(answer(200, other.clone())).is_failure());
+        // So is a 500 against any answer of the reference but the empty page.
+        let against = |right: Reply| {
+            outcome(&list(
+                "memo=%25%5C",
+                "storeFailure",
+                answer(500, failed.clone()),
+                right,
+            ))
+        };
+        let two =
+            json!({"meta": {"count": 2, "totalCount": 2}, "data": [{"id": "x"}, {"id": "y"}]});
+        assert!(against(answer(200, two)).is_failure());
+        assert!(
+            against(answer(
+                200,
+                json!({"meta": {"totalCount": 0}, "data": [{}]})
+            ))
+            .is_failure()
+        );
+        assert!(against(answer(422, empty.clone())).is_failure());
         // Equal answers pass whatever the mark.
         assert_eq!(judged(answer(200, empty.clone())), Outcome::Pass);
     }
