@@ -4,7 +4,9 @@
 //!
 //! The V29 file is read from `tests/vectors`, or from the directory in `WIRE_VECTORS` (a relative
 //! path is taken from the workspace root), such as a local oracle run in `target/vectors/local`.
-//! A class that is not installed is reported and the test passes.
+//! The crate's directory must hold the class, where `make vectors-install` puts it, so a missing
+//! class fails the test; a directory named in the environment may lack it, and the test then says
+//! so and passes.
 
 use std::path::Path;
 
@@ -329,14 +331,22 @@ fn the_small_bodies_round_trip_in_the_reference_forms() {
     assert_eq!(parse(b" true ").unwrap(), Value::Bool(true));
 }
 
-/// The V29 records of the internal bodies, or `None` when the class is not installed.
+/// The V29 records of the internal bodies, or `None` when the directory `WIRE_VECTORS` names lacks
+/// the class. The crate's own directory must hold it.
 fn records() -> Option<Vec<Value>> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dir = std::env::var_os("WIRE_VECTORS").map_or_else(
+    let named = std::env::var_os("WIRE_VECTORS").filter(|dir| !dir.is_empty());
+    let dir = named.as_ref().map_or_else(
         || manifest.join("tests/vectors"),
         |dir| manifest.join("../..").join(dir),
     );
-    let text = std::fs::read_to_string(dir.join("V29-forging.jsonl")).ok()?;
+    let file = dir.join("V29-forging.jsonl");
+    let text = match std::fs::read_to_string(&file) {
+        Ok(text) => text,
+        // A directory named in the environment may lack the class; the crate's own must hold it.
+        Err(_) if named.is_some() => return None,
+        Err(error) => panic!("{}: {error} (make vectors-install)", file.display()),
+    };
     let records = text
         .lines()
         .skip(1)
@@ -358,9 +368,7 @@ fn records() -> Option<Vec<Value>> {
 #[test]
 fn the_internal_bodies_agree_with_the_reference_records() {
     let Some(records) = records() else {
-        eprintln!(
-            "V29-forging is not installed (make vectors-install, or WIRE_VECTORS=<a vector run>)"
-        );
+        eprintln!("V29-forging is not in the directory WIRE_VECTORS names");
         return;
     };
     assert!(records.iter().any(|r| r["op"] == "internal.networkState"));

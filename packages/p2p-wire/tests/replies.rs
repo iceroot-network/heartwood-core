@@ -12,7 +12,9 @@
 //!
 //! The class is read from `tests/vectors`, or from the directory in `WIRE_VECTORS` (a relative
 //! path is taken from the workspace root), such as a local oracle run in `target/vectors/local`.
-//! A class that is not installed is reported and the test passes.
+//! The crate's directory must hold the class, where `make vectors-install` puts it, so a missing
+//! class fails the test; a directory named in the environment may lack it, and the test then says
+//! so and passes.
 
 use std::num::NonZeroU32;
 use std::path::Path;
@@ -27,14 +29,22 @@ use serde_json::{Value, json};
 
 const CLASS: &str = "V24-p2p-exchange";
 
-/// The class's records without its meta record, or `None` when it is not installed.
+/// The class's records without its meta record, or `None` when the directory `WIRE_VECTORS` names
+/// lacks it. The crate's own directory must hold it.
 fn records() -> Option<Vec<Value>> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dir = std::env::var_os("WIRE_VECTORS").map_or_else(
+    let named = std::env::var_os("WIRE_VECTORS").filter(|dir| !dir.is_empty());
+    let dir = named.as_ref().map_or_else(
         || manifest.join("tests/vectors"),
         |dir| manifest.join("../..").join(dir),
     );
-    let text = std::fs::read_to_string(dir.join(format!("{CLASS}.jsonl"))).ok()?;
+    let file = dir.join(format!("{CLASS}.jsonl"));
+    let text = match std::fs::read_to_string(&file) {
+        Ok(text) => text,
+        // A directory named in the environment may lack the class; the crate's own must hold it.
+        Err(_) if named.is_some() => return None,
+        Err(error) => panic!("{}: {error} (make vectors-install)", file.display()),
+    };
     let mut lines = text
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap());
@@ -269,9 +279,7 @@ fn check(record: &Value) {
 #[test]
 fn the_requests_and_replies_match_the_reference() {
     let Some(records) = records() else {
-        eprintln!(
-            "{CLASS} is not installed (make vectors-install, or WIRE_VECTORS=<a vector run>)"
-        );
+        eprintln!("{CLASS} is not in the directory WIRE_VECTORS names");
         return;
     };
     assert!(records.iter().any(|r| r["op"] == "wire.checkReply"));

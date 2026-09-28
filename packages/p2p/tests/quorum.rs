@@ -2,8 +2,9 @@
 //! attested keys intersected with the round's active set, duplicates kept, taken from the other
 //! peers), the cold start, the minimum delegate reach and each count; and the fork health check's
 //! local peer with and without attested keys, over a network monitor with a scripted client.
-//! The network state is also compared with the reference's in class V30 (`quorum.analyze`), when
-//! installed.
+//! The network state is also compared with the reference's in class V30 (`quorum.analyze`), read
+//! from `tests/vectors` of the crate, which must hold it (`make vectors-install`), or from the
+//! directory in `P2P_VECTORS`, which may lack it (the test then says so and passes).
 
 #![cfg(feature = "node")]
 
@@ -393,14 +394,22 @@ async fn the_fork_health_check_counts_the_delegates_on_this_node_at_our_height()
 
 const CLASS: &str = "V30-relay-forger";
 
-/// The class's `quorum.analyze` records, or `None` when the class is not installed.
+/// The class's `quorum.analyze` records, or `None` when the directory `P2P_VECTORS` names lacks
+/// the class. The crate's own directory must hold it.
 fn records() -> Option<Vec<Value>> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dir = std::env::var_os("P2P_VECTORS").map_or_else(
+    let named = std::env::var_os("P2P_VECTORS").filter(|dir| !dir.is_empty());
+    let dir = named.as_ref().map_or_else(
         || manifest.join("tests/vectors"),
         |dir| manifest.join("../..").join(dir),
     );
-    let text = std::fs::read_to_string(dir.join(format!("{CLASS}.jsonl"))).ok()?;
+    let file = dir.join(format!("{CLASS}.jsonl"));
+    let text = match std::fs::read_to_string(&file) {
+        Ok(text) => text,
+        // A directory named in the environment may lack the class; the crate's own must hold it.
+        Err(_) if named.is_some() => return None,
+        Err(error) => panic!("{}: {error} (make vectors-install)", file.display()),
+    };
     let records = text
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap());
@@ -414,7 +423,7 @@ fn records() -> Option<Vec<Value>> {
 #[test]
 fn the_network_state_matches_the_reference() {
     let Some(records) = records() else {
-        eprintln!("{CLASS} is not installed (make vectors-install, or P2P_VECTORS=<a vector run>)");
+        eprintln!("{CLASS} is not in the directory P2P_VECTORS names");
         return;
     };
     assert!(!records.is_empty(), "{CLASS} has no quorum.analyze record");

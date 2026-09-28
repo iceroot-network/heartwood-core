@@ -4,7 +4,9 @@
 //! it names, stale signatures dropped, the end after the socket closes or 15 s without a poll, the
 //! attested set), the status cache and the 500 ms wait, and the offers the status's timer makes at
 //! a new tip, the slot boundary and the half-slot flip without a getStatus. The served status's
-//! bytes are also compared with the reference's in class V31 (`status.serve`), when installed.
+//! bytes are also compared with the reference's in class V31 (`status.serve`), read from
+//! `tests/vectors` of the crate, which must hold it (`make vectors-install`), or from the directory
+//! in `P2P_VECTORS`, which may lack it (the test then says so and passes).
 
 #![cfg(feature = "node")]
 
@@ -533,14 +535,22 @@ async fn the_timer_offers_each_new_tip_slot_and_half_slot_flip_without_a_get_sta
 
 const CLASS: &str = "V31-server";
 
-/// The class's `status.serve` records, or `None` when the class is not installed.
+/// The class's `status.serve` records, or `None` when the directory `P2P_VECTORS` names lacks
+/// the class. The crate's own directory must hold it.
 fn records() -> Option<Vec<Value>> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dir = std::env::var_os("P2P_VECTORS").map_or_else(
+    let named = std::env::var_os("P2P_VECTORS").filter(|dir| !dir.is_empty());
+    let dir = named.as_ref().map_or_else(
         || manifest.join("tests/vectors"),
         |dir| manifest.join("../..").join(dir),
     );
-    let text = std::fs::read_to_string(dir.join(format!("{CLASS}.jsonl"))).ok()?;
+    let file = dir.join(format!("{CLASS}.jsonl"));
+    let text = match std::fs::read_to_string(&file) {
+        Ok(text) => text,
+        // A directory named in the environment may lack the class; the crate's own must hold it.
+        Err(_) if named.is_some() => return None,
+        Err(error) => panic!("{}: {error} (make vectors-install)", file.display()),
+    };
     let records = text
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap());
@@ -658,7 +668,7 @@ async fn serve(input: &Value) -> Value {
 #[tokio::test]
 async fn the_served_status_matches_the_reference() {
     let Some(records) = records() else {
-        eprintln!("{CLASS} is not installed (make vectors-install, or P2P_VECTORS=<a vector run>)");
+        eprintln!("{CLASS} is not in the directory P2P_VECTORS names");
         return;
     };
     assert!(!records.is_empty(), "{CLASS} has no status.serve record");

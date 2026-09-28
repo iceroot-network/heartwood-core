@@ -3,7 +3,9 @@
 //!
 //! The class is read from `tests/vectors` of the crate, or from the directory in `FORGER_VECTORS`
 //! (a relative path is taken from the workspace root), such as a local oracle run in
-//! `target/vectors/local`. A class that is not installed is reported and the test passes. The
+//! `target/vectors/local`. The crate's directory must hold the class, where `make vectors-install`
+//! puts it, so a missing class fails the test; a directory named in the environment may lack it,
+//! and the test then says so and passes. The
 //! devnet's network and milestones are the committed chain definitions of `heartwood-crypto`.
 
 use std::path::{Path, PathBuf};
@@ -32,13 +34,23 @@ fn lines(path: &Path) -> Option<Vec<Value>> {
     )
 }
 
-/// The class's meta record and records, or `None` when it is not installed.
+/// The class's meta record and records, or `None` when the directory `FORGER_VECTORS` names
+/// lacks it. The crate's own directory must hold it.
 fn class() -> Option<(Value, Vec<Value>)> {
-    let dir = std::env::var_os("FORGER_VECTORS").map_or_else(
+    let named = std::env::var_os("FORGER_VECTORS").filter(|dir| !dir.is_empty());
+    let dir = named.as_ref().map_or_else(
         || Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors"),
         |dir| workspace().join(dir),
     );
-    let mut records = lines(&dir.join(format!("{CLASS}.jsonl")))?;
+    let file = dir.join(format!("{CLASS}.jsonl"));
+    let Some(mut records) = lines(&file) else {
+        assert!(
+            named.is_some(),
+            "{}: {CLASS} is not installed (make vectors-install)",
+            file.display()
+        );
+        return None;
+    };
     let meta = records.remove(0);
     assert_eq!(meta["class"], CLASS);
     Some((meta, records))
@@ -84,7 +96,7 @@ fn inputs(transactions: &[Transaction]) -> ForgeInputs<'_> {
 #[test]
 fn v29_blocks_are_the_references() {
     let Some((meta, records)) = class() else {
-        eprintln!("{CLASS} is not installed: set FORGER_VECTORS to a local oracle run");
+        eprintln!("{CLASS} is not in the directory FORGER_VECTORS names");
         return;
     };
     let (network, devnet) = devnet(meta["network"]["milestonesSha256"].as_str().unwrap());

@@ -3,9 +3,9 @@
 //! stub controller, and class V31's records (the plugin chain's verdicts and the inbound limiter
 //! against the oracle).
 //!
-//! V31 is read from `tests/vectors` of the crate, or from the directory in `P2P_VECTORS` (a
-//! relative path is taken from the workspace root); a class that is not installed is reported and
-//! the test passes.
+//! V31 is read from `tests/vectors` of the crate, which must hold it (`make vectors-install`), or
+//! from the directory in `P2P_VECTORS` (a relative path is taken from the workspace root), which
+//! may lack it: the test then says so and passes.
 
 #![cfg(all(feature = "node", feature = "difftest"))]
 
@@ -353,14 +353,22 @@ async fn the_plugins_run_in_the_reference_order() {
     );
 }
 
-/// V31's records without its meta record, or `None` when the class is not installed.
+/// V31's records without its meta record, or `None` when the directory `P2P_VECTORS` names lacks
+/// the class. The crate's own directory must hold it.
 fn records() -> Option<Vec<Value>> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dir = std::env::var_os("P2P_VECTORS").map_or_else(
+    let named = std::env::var_os("P2P_VECTORS").filter(|dir| !dir.is_empty());
+    let dir = named.as_ref().map_or_else(
         || manifest.join("tests/vectors"),
         |dir| manifest.join("../..").join(dir),
     );
-    let text = std::fs::read_to_string(dir.join("V31-server.jsonl")).ok()?;
+    let file = dir.join("V31-server.jsonl");
+    let text = match std::fs::read_to_string(&file) {
+        Ok(text) => text,
+        // A directory named in the environment may lack the class; the crate's own must hold it.
+        Err(_) if named.is_some() => return None,
+        Err(error) => panic!("{}: {error} (make vectors-install)", file.display()),
+    };
     let mut lines = text
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap());
@@ -375,9 +383,7 @@ fn records() -> Option<Vec<Value>> {
 #[tokio::test]
 async fn v31_the_plugin_chain_and_the_inbound_limiter_agree_with_the_oracle() {
     let Some(records) = records() else {
-        eprintln!(
-            "V31-server is not installed (make vectors-install, or P2P_VECTORS=<a vector run>)"
-        );
+        eprintln!("V31-server is not in the directory P2P_VECTORS names");
         return;
     };
     let network = devnet().1;
