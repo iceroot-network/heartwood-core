@@ -113,7 +113,7 @@ struct Node {
     state: State,
     chain: ChainState,
     forged: Forged,
-    pending: Vec<Block>,
+    pending: Vec<Arc<Block>>,
     pool: Pool,
     clock: ManualClock,
 }
@@ -654,7 +654,7 @@ fn a_stored_or_pending_transaction_is_refused() {
     assert_eq!(traced.handler, refused(Refusal::AlreadyForged));
     assert_reset(&node);
     node.forged.0.clear();
-    node.pending.push(block.clone());
+    node.pending.push(Arc::new(block.clone()));
     assert_eq!(
         node.process(&block).handler,
         refused(Refusal::AlreadyForged)

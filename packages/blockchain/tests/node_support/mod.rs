@@ -182,6 +182,7 @@ impl BlockProcess for Scripted {
                         ctx.pool.remove_forged(transaction, params);
                     }
                 }
+                ctx.chain.set_last_block(Arc::new(block.clone()));
                 ctx.chain.last_downloaded = Some(ChainLink::of(block));
                 ctx.chain.last_accepted_ms = Some(ctx.clock.now_ms());
                 if script == Some(Script::Corrupt) {

@@ -279,12 +279,15 @@ fn process(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         forged,
         unnamed,
     } = case_state(input, &kept)?;
-    let pending: Vec<Block> = kept.blocks[kept.blocks.len() - unstored..].to_vec();
+    let pending: Vec<Arc<Block>> = kept.blocks[kept.blocks.len() - unstored..]
+        .iter()
+        .map(|block| Arc::new(block.clone()))
+        .collect();
     let stored = Stored {
         chain: &kept.ids,
         unstored: pending
             .iter()
-            .flat_map(Block::transaction_ids)
+            .flat_map(|block| block.transaction_ids())
             .copied()
             .collect(),
         extra: forged,

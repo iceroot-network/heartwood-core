@@ -31,6 +31,7 @@ pub mod handlers;
 pub mod unchained;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use heartwood_crypto::TransactionType;
 use heartwood_crypto::blocks::Verification;
@@ -138,7 +139,7 @@ pub struct ProcessContext<'a> {
     /// The stored transaction ids.
     pub forged: &'a dyn ForgedIds,
     /// The blocks accepted earlier in this job, not committed yet, in height order.
-    pub pending: &'a [Block],
+    pub pending: &'a [Arc<Block>],
     /// The pool.
     pub pool: &'a mut dyn PoolSteps,
     /// The clock of the block's verification and of the accept step.

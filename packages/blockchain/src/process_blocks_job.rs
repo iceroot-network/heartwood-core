@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use heartwood_crypto::crypto::slots;
 use heartwood_crypto::utils::js::to_locale_integer;
-use heartwood_crypto::{Block, BlockId, Milestones, TransactionId};
+use heartwood_crypto::{BlockId, Milestones, TransactionId};
 use heartwood_kernel::{ChainLink, Clock, debug, error, is_block_chained};
 use heartwood_p2p::download::node_hex;
 use heartwood_p2p::to_block;
@@ -145,8 +145,7 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
             (Accepted, Some(applied)) => {
                 chunk.applied(ctx.state, &block, &applied, ctx.milestones)?;
                 ctx.observer.applied_with(ctx.state, &block, &applied);
-                accepted.push(Block::clone(&block));
-                ctx.chain.set_last_block(block);
+                accepted.push(block);
             }
             // A block accepted without its apply, or a failed revert: the state and the store
             // may no longer agree.
