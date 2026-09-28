@@ -3,7 +3,7 @@
 //! Every change runs here, in the order the work arrives ([`crate::work::Work`]): jobs, pool
 //! entries, the queue's drain, block removals, the online record's changes, and the stop. After
 //! each commit the thread runs the pool's steps (the expiry of the online record at each round
-//! start, the clean-up, and a re-add when a milestone starts), publishes the new snapshots (the
+//! start, a re-add when a milestone starts, and the clean-up), publishes the new snapshots (the
 //! state, the pool, the chain status) through `watch` channels, and tells its listener, never
 //! between two blocks of a job. Network and API tasks send it work through a [`NodeHandle`] and
 //! read the snapshots; nothing else reads or writes the state or the store.
@@ -239,10 +239,7 @@ impl NodeThread {
             events.push(applied);
         }
         if count > 0 {
-            parts.pool.committed(&env!(parts), &rounds)?;
-            if milestone {
-                parts.pool.readd(&env!(parts), &[])?;
-            }
+            parts.pool.committed(&env!(parts), &rounds, milestone)?;
             self.publish(&events);
         }
         Ok(outcome)

@@ -1,17 +1,20 @@
 //! The pool in the follower: two processors (the API's and the download's, each with its own
 //! cooldown), the forged transactions removed during a job, the online record expired at each
-//! round start and the pool cleaned up after the job's commit, the re-add with its checks per
-//! drain and per milestone change, the removed blocks' transactions re-added in chain order, and
-//! the online record saved to the store.
+//! round start, then the re-add when a milestone started, then the clean-up, after the job's
+//! commit; the re-add with its checks per drain, the removed blocks' transactions re-added in
+//! chain order, and the online record saved to the store.
 //!
 //! Each processor broadcasts the transactions it admitted that pass the broadcast fee rule to
 //! every peer, as they were admitted (one that a later entry of the batch evicts included), so a
 //! follower forwards what it downloads, as a reference relay does. All of it runs on the node
 //! thread, under the rules of the tip plus one.
 //!
-//! The reference cleans the pool up once per applied block, in a listener that runs while the job
-//! goes on; here it runs once after the job's commit, at the committed tip, which removes the
-//! same transactions: the clean-up reads only the tip and the pool.
+//! The reference cleans the pool up after each applied block, in a listener that runs while the
+//! job goes on, and at a milestone re-adds the pool before that block's clean-up; here the steps
+//! run once after the job's commit, at the committed tip, in that order. That removes the same
+//! transactions: the age and expiry rules only widen as the tip rises, and the lowest-priority
+//! rule finds nothing to remove, since every addition already keeps the pool within
+//! `maxTransactionsInPool`.
 
 use heartwood_crypto::{Milestones, Network, Params, Transaction};
 use heartwood_kernel::Clock;
@@ -99,18 +102,27 @@ impl PoolTask {
     }
 
     /// The pool steps after a job's commit: the online record's expiry at the start of each round
-    /// in `rounds`, in order, then the clean-up.
-    pub fn committed(&mut self, env: &PoolEnv<'_>, rounds: &[u64]) -> Result<(), StorageError> {
+    /// in `rounds`, in order, the re-add with its checks when a `milestone` started, then the
+    /// clean-up.
+    pub fn committed(
+        &mut self,
+        env: &PoolEnv<'_>,
+        rounds: &[u64],
+        milestone: bool,
+    ) -> Result<(), StorageError> {
         for round in rounds {
             self.online.expire(*round);
+        }
+        if milestone {
+            self.pool.readd(&env.context(&self.online), &[])?;
         }
         self.pool.clean_up(&env.context(&self.online))?;
         Ok(())
     }
 
     /// Re-add every pool transaction with its checks, first the previously `forged` ones (a
-    /// removal's transactions, in chain order): at the queue's drain, after a removal, and when a
-    /// milestone starts.
+    /// removal's transactions, in chain order): at the queue's drain and after a removal (and
+    /// when a milestone starts, [`PoolTask::committed`]).
     pub fn readd(
         &mut self,
         env: &PoolEnv<'_>,
