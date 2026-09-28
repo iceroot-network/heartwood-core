@@ -638,7 +638,7 @@ delegate's registration and its first block in one download.
 nodes exchange exactly as the reference does, including how the reference reads malformed bytes,
 so that both implementations accept the same payloads and decode them to the same values. It has
 no I/O and no clock: the nes sessions (hello, pings, heartbeats, request ids) and the WebSocket
-transport arrive with the crate that uses the codec.
+transport are in `heartwood-p2p`, which uses the codec.
 
 - **nes frames**: the frames of the port (hello, ping, request, response and error), parsed and
   written with the reference's defaults and limits; the other nes types are refused, as the
@@ -657,12 +657,18 @@ transport arrive with the crate that uses the codec.
   exclude list of 32-byte ids. The route table holds the twelve routes with their ids, paths,
   payload limits and codec kinds; the JSON bodies of the five internal routes are not in the
   crate yet.
+- **requests and replies**: the requests a node's client writes (`ClientRequest`), whose typed
+  inputs cannot take a shape a reference server refuses or bans for (headers without a version, a
+  field the encoder would ignore for a sibling), and the reply schemas of the six routes other than
+  getStatus, with the block-header rules they share with the getStatus reply check.
 - **signed peer status**: the tree a relay signs over its last block and its configuration, its
   canonical JSON, the slot before the network epoch (negative in the signed text, wrapped on the
   wire), the attestations (legacy Schnorr over the text, one per key; a key listed twice is signed
   twice), and what a node does with a status it receives: the reply check with the changes it
   makes to the value (plugin names outside 4 to 64 characters removed, the generator key
-  lowercased), the text the sender signed, and the signature checks.
+  lowercased), the text the sender signed, and the signature checks. Only the reply check makes a
+  `CheckedStatus`, the one input the signed text is rebuilt from, so an unchecked reply cannot
+  reach the signature checks.
 
 The crate depends on `heartwood-crypto`, with `legacy-schnorr`, and on `thiserror` only. It is the
 one production crate that enables `legacy-schnorr`, which only peer status messages use, and
