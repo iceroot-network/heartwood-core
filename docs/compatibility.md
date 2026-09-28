@@ -1017,19 +1017,23 @@ models the reference's class. On a run of every class (reference tag `s1-ref-v2`
 
 | Outcome | Records |
 |---|---|
-| compared, equal to the reference | 6,220 |
-| documented differences, each with its form checked on the input or shown by the oracle's answer | 161 |
-| skipped: builders of types or headers that Heartwood does not build | 6 |
+| compared, equal to the reference | 8,643 |
+| documented differences, each with its form checked on the input or shown by the oracle's answer | 177 |
+| skipped | 0 |
 
-A local run that adds the three classes of the peer-to-peer client (V24 to V26, 1,955 records)
-compares 1,952 more records, all equal, and documents 6 more: 3 fork segments whose headers do not
-chain, and 1 each of a removed type, a memo that is not valid UTF-8 and an amount beyond 128 bits.
+That is 8,820 records in 28 files, and a run of the image and a local run agree on every one. The
+gate runs with `--strict` (`make l0`), which fails a record that is skipped or has no Rust subject
+as it fails a difference. The builders of the removed types and of the extended header, which
+Heartwood does not have, are documented refusals (checked on the builder's input), so nothing is
+skipped.
 
 `cargo test` checks the classes of each crate in that crate; the difftest test `l0` runs the
-comparison over the committed vectors of `heartwood-crypto` (2,212 compared, 58 documented, 6
+comparison over the committed vectors of `heartwood-crypto` (2,212 compared, 64 documented, none
 skipped), the test `l0_wire` over the wire class of `heartwood-p2p-wire` (1,179 compared, 14
-documented, none skipped), `pool_vectors` over the pool class (42 sessions compared, 8
-documented) and `config_vectors` over the crypto-file class (17 compared, 79 documented).
+documented, none skipped) and its exchange class, `pool_vectors` over the pool class (42 sessions
+compared, 8 documented), `config_vectors` over the crypto-file class (17 compared, 79 documented),
+`network_vectors` over V26 (404 compared, 5 documented), `processor_vectors` and `job_vectors` over
+V27, and `api_vectors` and `config_app_vectors` over V28.
 A refusal's message is compared as well as its class: the handlers' messages in V17 and every
 message of the pool.
 
@@ -1060,7 +1064,15 @@ refuses and the reference accepts:
   out and compares everything else;
 - crypto files that the strict schema refuses (see heartwood-kernel above): the reference loads
   them, or falls back to its built-in preset when a file is missing. Each refusal kind has its own
-  predicate on the input, and a file that the reference refuses must be refused by Heartwood.
+  predicate on the input, and a file that the reference refuses must be refused by Heartwood;
+- a block refused in its apply after missed slots: the reference keeps the missed-slot rows it
+  wrote before it validated the block. The case is documented only when the reference also refused
+  the block in its apply and its answer, less those rows, equals Heartwood's whole answer (two V27
+  records assert it);
+- a block with a transaction of a removed type in a download: Heartwood's reader refuses the whole
+  getBlocks reply, where the reference's job applies the blocks before it and rejects that block in
+  its apply. The case is documented only when the reference's answer is that refusal (every earlier
+  block accepted, that block rejected, the queue cleared).
 
 In the pool's sessions, a step is compared in full (the lists in order, the errors with their codes
 and messages in order, the pool's contents after the step), with these documented cases, each
@@ -1110,6 +1122,7 @@ minimal case, which is written to `--regressions`.
 | P14 verifier | a chain of 70 headers signed by the delegates of their rounds, our height, a peer on our chain or forked from a random height with a branch of its own, bogus and short common-block replies, a failing or unlinked header, a deadline | `verifier.checkState`: the result and every request |
 | P15 exchange | the client's requests with random versions, ports and fields; replies of the six routes other than getStatus around the schemas' edges, a quarter of them with a byte changed, cut or added | `p2p.validateRequest`, `wire.checkReply` |
 | P16 monitor | peer sets with attested keys, ranks, heights and verification results around the fork threshold, with common heights of different digit counts; lists of heights | `monitor.forkDecision`, `monitor.networkHeight` |
+| P13 processor | on five prefixes of each corpus chain (the committed one, and `c2-faults` cut at 265 and `c4-restarts` when they are under `target/corpus`), the next block built as the slot's delegate builds it and then mutated (timestamp, height, previous id, generator, reward, transactions, version, payload length, signature, or a block of the chain itself), with a chain state around it (the last downloaded and forked blocks, whether the blockchain has started, blocks of the job not stored yet, a stored id, no delegate name at enqueue) | `chain.process`: the result, the handler, the unchained status, the chain state after it and the digest line after an accepted block |
 
 With the date as the seed and 10,000 cases per property (50,000 for P7), every property agrees
 with the reference. The only documented difference that appears is the one of a refused
@@ -1133,6 +1146,16 @@ the reference binds a sender's key before its checks run, so the pool cannot rea
 P14 to P16 agree with the reference at 10,000 cases each with the date as the seed. The only
 documented difference among them is P14's fork segment whose headers do not chain (about one case
 in twenty-four), which Heartwood refuses (see heartwood-p2p).
+
+P13 agrees with the reference at 10,000 and at 20,000 cases with the date as the seed. Its only
+documented case is a block refused in its apply after missed slots (34 and 59 cases). `make l1`
+prints the reference's results, unchained statuses and handlers for P13 and, from 1,000 cases,
+fails the run when a reachable result or an unchained status appears fewer than 20 times
+(`--min-reach`, `L1_MIN_REACH`); at 20,000 cases the reference answered 11,251 `Rejected`, 4,590
+`Accepted`, 2,619 `DiscardedButCanBeBroadcasted` and 1,540 `Rollback`, and every unchained status
+at least 671 times. `Reverted` and `Corrupted` cannot come from one processed block. The report
+names the corpora the cases drew from; a missing one is a skipped part, which fails a strict
+run.
 
 ## L2: chains, corpora and the state digest
 
