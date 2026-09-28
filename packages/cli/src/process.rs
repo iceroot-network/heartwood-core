@@ -32,7 +32,7 @@ use nix::sys::signal::Signal;
 use crate::errors::ProcessError;
 use crate::process_table;
 use crate::seams::{Env, Instance, ProcessOps, StatusRow, SupervisedStatus};
-use crate::supervisor::signals::{KILL_AFTER, is_locked, send, signal_if_locked};
+use crate::supervisor::signals::{KILL_AFTER, held_pid, is_locked, send, signal_if_locked};
 use crate::supervisor::state::SupervisorState;
 use crate::supervisor::{SuperviseArgs, VERSION, at, run_dir};
 
@@ -124,7 +124,8 @@ pub fn stop(instance: &Instance) -> Result<(), ProcessError> {
     let (lock, pid, signal) = match row.status {
         SupervisedStatus::OnlineUnsupervised => (instance.lock_path(), row.pid, Signal::SIGINT),
         status if status.is_running() => {
-            let pid = read_state(instance)?.supervisor_pid;
+            let pid = supervisor_pid(instance)?;
+            let pid = pid.ok_or_else(|| ProcessError::NotRunning { name: name.clone() })?;
             (instance.supervisor_lock_path(), Some(pid), Signal::SIGTERM)
         }
         _ => return Err(ProcessError::NotRunning { name }),
@@ -155,15 +156,14 @@ pub fn kill(instance: &Instance) -> Result<(), ProcessError> {
     let name = instance.name();
     let (supervisor_lock, node_lock) = (instance.supervisor_lock_path(), instance.lock_path());
     let state = SupervisorState::read(&instance.state_path())?;
-    let supervised = is_locked(&supervisor_lock)?;
     let seconds = EXIT_WAIT.as_secs();
     let timeout = || ProcessError::Timeout {
         name: name.clone(),
         seconds,
     };
     let mut killed = false;
-    if let Some(state) = state.as_ref().filter(|_| supervised) {
-        let sent = send(state.supervisor_pid, Signal::SIGKILL)?;
+    if let Some(pid) = supervisor_pid(instance)? {
+        let sent = send(pid, Signal::SIGKILL)?;
         if sent && !wait_unlocked(&supervisor_lock, EXIT_WAIT)? {
             return Err(timeout());
         }
@@ -362,6 +362,19 @@ fn read_state(instance: &Instance) -> Result<SupervisorState, ProcessError> {
     let path = instance.state_path();
     let reason = "no state file".into();
     SupervisorState::read(&path)?.ok_or(ProcessError::State { path, reason })
+}
+
+/// The pid of the supervisor that holds `instance`'s supervisor lock, as the lock file records
+/// it; the state file's, for a supervisor that recorded none (one started by an earlier build).
+fn supervisor_pid(instance: &Instance) -> Result<Option<u32>, ProcessError> {
+    let lock = instance.supervisor_lock_path();
+    if let Some(pid) = held_pid(&lock)? {
+        return Ok(Some(pid));
+    }
+    let state = SupervisorState::read(&instance.state_path())?;
+    Ok(state
+        .filter(|_| is_locked(&lock).unwrap_or(false))
+        .map(|s| s.supervisor_pid))
 }
 
 /// The pid in the pid file at `path`, if it holds one.

@@ -208,6 +208,25 @@ fn a_daemon_that_cannot_start_says_why() {
 }
 
 #[test]
+fn a_stop_signals_the_pid_the_held_lock_names_not_the_one_a_state_file_left() {
+    let node = Node::new("stale-pid");
+    node.start(&["run"], &[]);
+    node.online();
+    let real = node.state();
+    // Another process, standing where a reused pid would be.
+    let mut bystander = Command::new("sleep").arg("60").spawn().unwrap();
+    let mut stale = real.clone();
+    stale.supervisor_pid = bystander.id();
+    stale.write(&node.0.state_path()).unwrap();
+    process::stop(&node.0).unwrap();
+    let alive = bystander.try_wait().unwrap().is_none();
+    let _ = bystander.kill();
+    let _ = bystander.wait();
+    assert!(alive, "the stop signalled a process the lock does not name");
+    assert!(!is_locked(&node.0.supervisor_lock_path()).unwrap());
+}
+
+#[test]
 fn a_terminal_interrupt_reaches_the_node_once_through_the_supervisor() {
     use heartwood_cli::supervisor::SuperviseArgs;
     use nix::sys::signal::killpg;

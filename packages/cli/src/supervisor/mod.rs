@@ -197,6 +197,7 @@ impl Supervisor {
         run_dir(&instance)?;
         let lock = signals::take_lock(&instance.supervisor_lock_path())?;
         let lock = lock.ok_or_else(|| ProcessError::AlreadyRunning { name: name.clone() })?;
+        signals::record_pid(&lock, &instance.supervisor_lock_path())?;
         let argv: Option<Vec<String>> = argv.into_iter().map(|a| a.into_string().ok()).collect();
         let argv = argv.ok_or_else(|| ProcessError::Spawn {
             program: name.clone(),
