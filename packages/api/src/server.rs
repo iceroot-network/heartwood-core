@@ -374,6 +374,9 @@ async fn connection(
         let mut builder = http1::Builder::new();
         builder.timer(TokioTimer::new());
         builder.header_read_timeout(timeout);
+        // Node's server allows half-open sockets: a client that shut its side after its request
+        // still gets the answer.
+        builder.half_close(true);
         // hyper's default is 100 fields; Node's server takes any number.
         if head.fields > 100 {
             builder.max_headers(head.fields);

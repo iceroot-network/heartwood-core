@@ -1455,6 +1455,27 @@ async fn a_target_is_read_as_node_gives_it_to_hapi() {
     task.await.unwrap();
 }
 
+#[tokio::test]
+async fn a_client_that_ends_its_side_after_its_request_is_answered() {
+    // Node's server allows half-open sockets: it answers a request whose client shut its side,
+    // and gives no answer when that side ends before the head does.
+    let (address, stop, task) = listening(pipeline(config())).await;
+    let body = r#"{"transactions":12}"#;
+    let post = format!(
+        "POST /api/transactions HTTP/1.1\r\ncontent-length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    for request in ["GET /api/node/status HTTP/1.1\r\n\r\n", &post] {
+        let (line, _, answer) = exchange_bytes(address, request.as_bytes(), true).await;
+        assert_eq!(line, "HTTP/1.1 200 OK", "{request:?}");
+        assert!(answer["data"]["route"].is_string(), "{request:?}");
+    }
+    let unended = exchange_bytes(address, b"GET /api/node/status HTTP/1.1\r\n", true).await;
+    assert_eq!(unended.0, "");
+    stop.send(true).unwrap();
+    task.await.unwrap();
+}
+
 #[test]
 fn the_options_are_the_reference_defaults_and_its_variables() {
     let defaults = config();

@@ -902,7 +902,8 @@ bad or repeated `Content-Length`; `Transfer-Encoding` after `chunked` or beside 
 answered `HTTP/1.1 400 Bad Request` with no header, as the reference's server answers it. Line ends
 before the request line are skipped without being counted. A `CONNECT` and a stream that ends
 inside its head get no answer, as from Node's server; a target that starts with `*` is hapi's 400
-"Invalid URL". A head the parser accepts is written again for hyper with the meaning Node's server
+"Invalid URL"; a client that shuts its side of the connection after its request is answered, as
+Node's server allows half-open sockets. A head the parser accepts is written again for hyper with the meaning Node's server
 gives it: single spaces and `HTTP/1.1` in the request line (Node answers every version it accepts
 as `HTTP/1.1`), the target's bytes that hyper refuses rewritten (a byte beyond ASCII as the UTF-8
 of its Latin-1 character, another one percent-encoded) and its fragment dropped, the first 1,000
