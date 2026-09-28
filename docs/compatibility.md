@@ -10,7 +10,7 @@ equal byte for byte, including which inputs each side rejects.
 
 | Level | What is compared | Status |
 |---|---|---|
-| L0 | golden vectors written by the reference, against Heartwood | runs against the ten crates with vector classes: 8,643 of 8,820 records compared, all equal, the other 177 documented differences (see below) |
+| L0 | golden vectors written by the reference, against Heartwood | runs against the ten crates with vector classes: 8,583 of 8,820 records compared, all equal, the other 237 documented differences (see below) |
 | L1 | random and mutated cases, one oracle call each | runs: sixteen properties, from the fee floor to the pool, the crypto files, the peer-to-peer client and the block processor (see below) |
 | L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets through Heartwood's store and through its block processor and jobs, with seeded reverts, restarts at every height, synthetic blocks, pool sessions and kills of a running relay (see below) |
 | L3 | one scenario, observed through the node under test | runs: a scenario on a reference devnet whose observer is a reference relay, then the same with a Heartwood relay in its place; a devnet of Heartwood nodes only joins with the forger (see below) |
@@ -344,6 +344,18 @@ file lines are not; the file rotates daily into gzip files and keeps at most 10 
 100 MiB. The relay calls `init` with its log options (`CORE_LOG_LEVEL`, `CORE_LOG_LEVEL_FILE`); a
 level name that is not one of the reference's eight turns that output off, as the reference drops
 it.
+
+One difference is on purpose. The reference writes a message's characters as they are, so text
+from outside the node inside a message (a peer's error payload in "Failed to download blocks ...",
+up to 512 bytes) can write whole lines of its own, with any time and level, and restyle a
+terminal. Heartwood's logger escapes the message and its fields before it writes the line: a line
+feed, carriage return and tab as `\n`, `\r` and `\t`, and as `\uXXXX` every other control
+character (C0, DEL and C1), the line and paragraph separators (U+2028, U+2029) and the
+bidirectional controls (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069). One call
+writes exactly one line. Backslashes are kept, so the line of a message without such a character
+is byte for byte the reference's, and compact JSON inside a message stays JSON of the same value.
+A tool that reads the logs should still match a line from the start of its message: text from
+outside can hold a whole known message inside one line.
 
 ```sh
 cargo test -p heartwood-logger --locked   # the V20 class, rotation, retention and gzip
@@ -1095,8 +1107,8 @@ models the reference's class. On a run of every class (reference tag `s1-ref-v2`
 
 | Outcome | Records |
 |---|---|
-| compared, equal to the reference | 8,643 |
-| documented differences, each with its form checked on the input or shown by the oracle's answer | 177 |
+| compared, equal to the reference | 8,583 |
+| documented differences, each with its form checked on the input or shown by the oracle's answer | 237 |
 | skipped | 0 |
 
 That is 8,820 records in 28 files, and a run of the image and a local run agree on every one. The
@@ -1111,7 +1123,8 @@ skipped), the test `l0_wire` over the wire class of `heartwood-p2p-wire` (1,179 
 documented, none skipped) and its exchange class, `pool_vectors` over the pool class (42 sessions
 compared, 8 documented), `config_vectors` over the crypto-file class (17 compared, 79 documented),
 `network_vectors` over V26 (404 compared, 5 documented), `processor_vectors` and `job_vectors` over
-V27, and `api_vectors` and `config_app_vectors` over V28.
+V27, `api_vectors` and `config_app_vectors` over V28, and `logger_vectors` over the logger class
+(318 compared, 60 documented).
 A refusal's message is compared as well as its class: the handlers' messages in V17 and every
 message of the pool.
 
@@ -1175,7 +1188,10 @@ The wire class counts 14 documented differences, each shown by the oracle's answ
 plugin named `__proto__`, 2 payloads with groups nested 50,000 deep and 11 amounts beyond 128 bits
 (see heartwood-p2p-wire above). The pool class counts 8: 5 decode reasons, 2 full-pool evictions
 and 1 JSON vote with indices. The crypto-file class counts 79: 75 strict-schema refusals and 4
-fee-table values of the wrong type.
+fee-table values of the wrong type. The logger class counts 60: messages with line breaks, colour
+codes or a line separator, which the reference writes as they are and Heartwood's logger escapes
+(see heartwood-logger above). Each is documented only when Heartwood's line equals the reference's
+line with its message read back and escaped.
 
 ## L1: properties
 
