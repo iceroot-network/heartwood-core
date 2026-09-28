@@ -358,8 +358,14 @@ fn the_database_logger_and_peer_options_are_read_as_the_reference_reads_them() {
         (logger.console, logger.file, logger.emojify),
         (Some(Level::Info), Some(Level::Warning), false)
     );
+    // Text that names no level turns that output off, as the reference makes no output for it;
+    // a level that is not text is refused at the start.
+    let off = options::logger(&json!({}), &env(&[("CORE_LOG_LEVEL_FILE", "loud")])).unwrap();
+    assert_eq!((off.console, off.file), (Some(Level::Info), None));
+    let off = options::logger(&json!({"levels": {"console": "off"}}), &env(&[])).unwrap();
+    assert_eq!((off.console, off.file), (None, Some(Level::Debug)));
     assert_eq!(
-        options::logger(&json!({}), &env(&[("CORE_LOG_LEVEL_FILE", "loud")]))
+        options::logger(&json!({"levels": {"file": 7}}), &env(&[]))
             .unwrap_err()
             .key,
         "levels.file"

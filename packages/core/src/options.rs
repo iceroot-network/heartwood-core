@@ -293,7 +293,9 @@ pub fn blockchain(entry: &Value) -> Result<BlockchainOptions, OptionsError> {
 }
 
 /// The logger's options: its levels (`CORE_LOG_LEVEL`, `CORE_LOG_LEVEL_FILE`, `info` and `debug`
-/// by default, by the reference's level names) and whether emoji codes become emoji.
+/// by default, by the reference's level names; text that names no level turns that output off,
+/// as the reference makes an output only for a level it knows) and whether emoji codes become
+/// emoji.
 pub fn logger(entry: &Value, env: &Env) -> Result<LoggerOptions, OptionsError> {
     let variables = [
         ("CORE_LOG_LEVEL", "levels.console"),
@@ -302,9 +304,7 @@ pub fn logger(entry: &Value, env: &Env) -> Result<LoggerOptions, OptionsError> {
     let value = deep_merge(&from_env(env, &variables), entry);
     let read = Reader::new(LOGGER, &value);
     let level = |key: &str, default: Level| match read.text(key)? {
-        Some(name) => Level::from_name(&name)
-            .map(Some)
-            .ok_or_else(|| read.refuse(key, "is not a log level")),
+        Some(name) => Ok(Level::from_name(&name)),
         None => Ok(Some(default)),
     };
     // The reference reads `emojify` as JavaScript's truthiness.
