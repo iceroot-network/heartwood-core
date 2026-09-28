@@ -17,8 +17,8 @@
 //! first status request (the forger takes the time left just before it) comes with at least
 //! 2,000 ms of the slot left, while the relay has not taken the slot's block, is due: it is not
 //! killed before the mock relay has received the recorded block from it, and it fails the test
-//! when that does not happen within [`PATIENCE`]. At least one restart must post its recorded block
-//! again, and a test of 50 kills or more must have a due restart.
+//! when that does not happen within 10 s. At least one restart must post its recorded block again,
+//! and a test of 50 kills or more must have a due restart.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
