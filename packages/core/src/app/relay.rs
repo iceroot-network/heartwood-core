@@ -221,11 +221,10 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
             "remoteAccess is empty: no forger can reach this relay's internal routes"
         );
     }
-    let devnet = heartwood_p2p::devnet::guard(&p2p, &relay.crypto.network.name);
-    devnet.map_err(|error| config(error.to_string()))?;
     let blockchain_options = options::blockchain(&relay.entry(Package::Blockchain));
     let blockchain_options = Arc::new(blockchain_options.map_err(config)?);
     let mut api_config = api_options(&relay)?;
+    devnet_guard(&p2p, &relay.crypto.network.name, api_config.as_ref())?;
     let peer_config = peer_config(&relay, api_config.as_ref());
     // The store, the state and the version floor at the stored tip.
     let settings = Settings::in_data_dir(&relay.paths.data);
@@ -462,6 +461,24 @@ pub async fn serve_p2p(
         shutdown,
         tasks,
     })
+}
+
+/// The runtime guards of a devnet node (see [`heartwood_p2p::devnet::guard`]): the peer server's,
+/// and, with devnet addressing, that the API, when it is served, listens on loopback.
+fn devnet_guard(
+    p2p: &P2pOptions,
+    network: &str,
+    api: Option<&ApiConfig>,
+) -> Result<(), RelayError> {
+    heartwood_p2p::devnet::guard(p2p, network).map_err(config)?;
+    match api.filter(|api| api.enabled) {
+        Some(api) => {
+            let api =
+                heartwood_p2p::devnet::guard_listener(&p2p.addressing, "the API", api.address.ip());
+            api.map_err(config)
+        }
+        None => Ok(()),
+    }
 }
 
 /// The peer configuration a relay's status carries (the reference's `getPeerConfig`): the node's
@@ -757,4 +774,49 @@ fn rules(options: &P2pOptions, seed: Option<IpAddr>) -> Rules {
     #[cfg(not(feature = "difftest"))]
     let _ = seed;
     rules
+}
+
+#[cfg(test)]
+mod tests {
+    use heartwood_kernel::config::Env;
+    use heartwood_p2p::devnet::Addressing;
+    use serde_json::json;
+
+    use super::*;
+
+    fn node() -> P2pOptions {
+        let address: IpAddr = "127.16.0.11".parse().unwrap();
+        P2pOptions {
+            host: address,
+            addressing: Addressing::Alias { address },
+            remote_access: vec!["127.16.0.11".to_owned()],
+            ..P2pOptions::default()
+        }
+    }
+
+    fn api(host: &str, enabled: bool) -> ApiConfig {
+        let options = json!({ "server": { "http": { "host": host, "enabled": enabled } } });
+        ApiConfig::from_options(&options, &Env::default()).unwrap()
+    }
+
+    #[test]
+    fn a_devnet_node_serves_its_api_on_loopback_only() {
+        let guard = |api: &ApiConfig| devnet_guard(&node(), "devnet", Some(api));
+        assert!(guard(&api("127.16.0.11", true)).is_ok());
+        assert!(guard(&api("127.0.0.1", true)).is_ok());
+        for host in ["0.0.0.0", "10.0.0.5"] {
+            let refused = guard(&api(host, true)).unwrap_err().to_string();
+            assert!(
+                refused.contains("the API") && refused.contains(host),
+                "{refused}"
+            );
+        }
+        assert!(
+            guard(&api("0.0.0.0", false)).is_ok(),
+            "an API that is off listens on nothing"
+        );
+        assert!(devnet_guard(&node(), "devnet", None).is_ok());
+        let elsewhere = P2pOptions::default();
+        assert!(devnet_guard(&elsewhere, "testnet", Some(&api("0.0.0.0", true))).is_ok());
+    }
 }

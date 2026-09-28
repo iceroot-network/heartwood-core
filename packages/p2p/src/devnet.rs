@@ -103,6 +103,18 @@ pub fn guard(options: &crate::options::P2pOptions, network_name: &str) -> Result
     Ok(())
 }
 
+/// The runtime guard of a listener other than the peer server (`what`, on `host`) in mode B: it
+/// must listen on a loopback address in 127.0.0.0/8, never on a wildcard or a routable address.
+/// Without devnet addressing there is nothing to guard.
+pub fn guard_listener(addressing: &Addressing, what: &str, host: IpAddr) -> Result<(), GuardError> {
+    match addressing {
+        Addressing::Alias { .. } if !is_loopback_v4(host) => Err(GuardError(format!(
+            "{what} listens on {host}, which is not in 127.0.0.0/8"
+        ))),
+        _ => Ok(()),
+    }
+}
+
 fn is_loopback_v4(ip: IpAddr) -> bool {
     matches!(ip.to_canonical(), IpAddr::V4(v4) if v4.is_loopback())
 }

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use heartwood_p2p::connector::Connector;
-use heartwood_p2p::devnet::{Addressing, guard, is_candidate};
+use heartwood_p2p::devnet::{Addressing, guard, guard_listener, is_candidate};
 use heartwood_p2p::seams::{PeerRules, PortProbe};
 use heartwood_p2p::seeds::HttpProbe;
 use heartwood_p2p::server::ServerOptions;
@@ -131,6 +131,30 @@ fn the_guards_hold_a_node_to_a_loopback_devnet() {
         ..P2pOptions::default()
     };
     assert_eq!(guard(&off, "testnet"), Ok(()));
+}
+
+#[test]
+fn a_listener_besides_the_peer_server_is_held_to_loopback_too() {
+    let alias = alias("127.11.0.11");
+    for host in [
+        "127.11.0.11",
+        "127.0.0.1",
+        "127.11.0.200",
+        "::ffff:127.0.0.1",
+    ] {
+        assert_eq!(
+            guard_listener(&alias, "the API", ip(host)),
+            Ok(()),
+            "{host}"
+        );
+    }
+    for host in ["0.0.0.0", "::", "10.0.0.11", "8.8.8.8", "::1"] {
+        let refused = guard_listener(&alias, "the API", ip(host));
+        let text = refused.expect_err(host).to_string();
+        assert!(text.contains("the API") && text.contains(host), "{text}");
+    }
+    let off = Addressing::Off;
+    assert_eq!(guard_listener(&off, "the API", ip("0.0.0.0")), Ok(()));
 }
 
 /// A listener on `at` that answers each connection with `answer` and reports its source.
