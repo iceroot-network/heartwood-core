@@ -11,7 +11,9 @@
 # list fails the run, so a test cannot drop out unseen. Tests ignored for another reason (the
 # measurements of `make pool-bench`, child-process helpers, the devnet tests) are not run; each such
 # reason must be in ALLOWED_REASONS, and a test ignored with any other reason, or with none, fails
-# the run before anything is built, so a new reason is added deliberately.
+# the run before anything is built, so a new reason is added deliberately. The only form accepted
+# is `#[ignore = "<reason>"]` alone on its line: a `cfg_attr` that ignores, or an ignore after
+# another attribute on the same line, fails the run as well.
 #
 # The harness's binaries (difftest, the relay with its test seams, the mock peer) are built first,
 # as `make build` builds them: the runtime kill test runs them.
@@ -31,11 +33,56 @@ ALLOWED_REASONS=(
     'devnet'
 )
 
-# Every `#[ignore` of the sources whose reason is not an allowed one, as `file:line: text`.
+# The attributes of the Rust sources under the directories given that name `ignore` outside a
+# string, as `file:line: text`, where line is the attribute's first and text its lines joined: a
+# line that starts with `#[` or `#![`, with the next lines while a bracket is open. So the scan
+# sees `#[ignore]` and `#[ignore = "..."]` alone or after another attribute on the line, and
+# `#[cfg_attr(..., ignore)]` on one line or several; not a comment's or a string's `ignore`.
+ignore_attributes() {
+    find "$@" -type f -name '*.rs' -print0 | sort -z | xargs -0 -r awk '
+        # Read s into the open attribute: its text; outside strings its brackets and its words,
+        # up to the first character after the attributes (code on the same line).
+        function feed(s,   i, c) {
+            for (i = 1; i <= length(s); i++) {
+                c = substr(s, i, 1)
+                if (quoted) {
+                    if (escaped) escaped = 0
+                    else if (c == "\\") escaped = 1
+                    else if (c == "\"") quoted = 0
+                    continue
+                }
+                if (depth == 0 && index(" \t#![", c) == 0) return
+                if (c == "\"") { quoted = 1; continue }
+                if (c == "[") depth++
+                else if (c == "]") depth--
+                words = words c
+            }
+        }
+        function close_attribute() {
+            if (open && words ~ /(^|[^A-Za-z0-9_])ignore([^A-Za-z0-9_]|$)/)
+                print name ":" start ": " text
+            open = 0
+        }
+        FNR == 1 { close_attribute() }
+        !open && /^[ \t]*#!?\[/ {
+            open = 1; name = FILENAME; start = FNR; text = ""; words = ""
+            depth = 0; quoted = 0; escaped = 0
+        }
+        open {
+            text = text (FNR == start ? "" : " ") $0
+            feed($0)
+            if (depth <= 0) close_attribute()
+        }
+        END { close_attribute() }
+    '
+}
+
+# Every attribute of the sources under the directories given that ignores a test, unless it is
+# exactly `#[ignore = "<reason>"]` on its own line with a reason in ALLOWED_REASONS.
 unknown_ignores() {
     local line reason ok
-    { grep -rnE --include='*.rs' '^[[:space:]]*#\[ignore' packages tools || true; } | while IFS= read -r line; do
-        reason=$(sed -nE 's/^[^:]*:[0-9]+:[[:space:]]*#\[ignore = "([^"]*)"\][[:space:]]*$/\1/p' <<<"$line")
+    ignore_attributes "$@" | while IFS= read -r line; do
+        reason=$(sed -nE 's/^[^:]*:[0-9]+: [[:space:]]*#\[ignore = "([^"]*)"\][[:space:]]*$/\1/p' <<<"$line")
         for ok in "${ALLOWED_REASONS[@]}"; do
             if [ -n "$reason" ] && [ "$reason" = "$ok" ]; then continue 2; fi
         done
@@ -43,7 +90,47 @@ unknown_ignores() {
     done
 }
 
-unknown=$(unknown_ignores)
+# The scan's own test, before it is trusted: on a file of each form, it must report exactly the
+# lines listed in `want`.
+check_scan() {
+    local dir found want='7 8 9 10 11 12 13 14 22'
+    dir=$(mktemp -d)
+    cat >"$dir/cases.rs" <<'EOF'
+#[test]
+#[ignore = "integration"]
+fn marked() {}
+#[test]
+#[ignore = "devnet"]
+fn devnet() {}
+    #[ignore]
+#[ignore = "slow"]
+#[ignore = "integration" ]
+#[cfg_attr(not(feature = "nope"), ignore = "slow")]
+#[cfg_attr(not(feature = "nope"), ignore)]
+#[test] #[ignore = "slow"]
+#[test] #[ignore = "integration"]
+#[cfg_attr(
+    not(feature = "nope"),
+    ignore = "integration"
+)]
+/// #[ignore = "slow"] in a comment
+// #[ignore]
+#[doc = "ignore this, and #[ignore] too"]
+#[allow(clippy::ignored_unit_patterns)]
+#[ignore = "integration"] // a comment
+fn f() {}
+EOF
+    found=$(unknown_ignores "$dir" | sed -E 's/^[^:]*:([0-9]+):.*/\1/' | paste -sd ' ' -)
+    rm -r "$dir"
+    if [ "$found" != "$want" ]; then
+        echo "test-integration: the scan of ignored tests reports the lines '$found' of its" \
+             "test file, not '$want'" >&2
+        exit 1
+    fi
+}
+
+check_scan
+unknown=$(unknown_ignores packages tools)
 if [ -n "$unknown" ]; then
     echo "test-integration: tests ignored with a reason outside ALLOWED_REASONS, or none, which no" \
          "gate runs (add the reason to the list deliberately, or mark the test integration):" >&2
