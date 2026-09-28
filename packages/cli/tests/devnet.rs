@@ -564,6 +564,30 @@ fn init_refuses_an_existing_devnet_unless_forced_and_then_stops_it_first() {
 }
 
 #[test]
+fn a_forced_init_leaves_a_devnet_alone_whose_manifest_is_unreadable_while_it_runs() {
+    let bench = Bench::new("force-unreadable");
+    bench.init(&options(2)).unwrap();
+    let run = bench.root.join("node1/data/run");
+    fs::create_dir_all(&run).unwrap();
+    let held = heartwood_cli::supervisor::signals::take_lock(&run.join("relay.lock"));
+    let _held = held.unwrap().expect("the lock is free");
+    fs::write(bench.root.join("devnet.json"), "{ not json").unwrap();
+    let forced = InitOptions {
+        force: true,
+        ..options(1)
+    };
+    let refused = bench.init(&forced);
+    assert!(
+        matches!(&refused, Err(DevnetError::Manifest { reason, .. }) if reason.contains("node1")),
+        "{refused:?}"
+    );
+    assert!(bench.root.join("node2").exists());
+    assert!(bench.root.join("node1/config").exists());
+    drop(_held);
+    assert_eq!(bench.init(&forced).unwrap().nodes.len(), 1);
+}
+
+#[test]
 fn init_uses_a_directory_that_holds_other_files_but_no_devnet() {
     let bench = Bench::new("other-files");
     fs::write(bench.root.join("notes.txt"), "keep").unwrap();

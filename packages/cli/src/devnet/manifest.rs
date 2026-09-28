@@ -15,6 +15,7 @@ use crate::devnet::{CRYPTO_FILES, MANIFEST, MAX_NODES, Manifest, ManifestNode, N
 use crate::devnet::{Result, plan};
 use crate::errors::DevnetError;
 use crate::seams::ProcessOps;
+use crate::supervisor::signals::is_locked;
 
 /// The manifest's format.
 const FORMAT: u64 = 1;
@@ -99,11 +100,40 @@ pub(crate) fn clear(root: &Path, force: bool, ops: &dyn ProcessOps) -> Result<()
         let root = root.to_path_buf();
         return Err(DevnetError::Exists { root });
     }
-    if let Ok(old) = Manifest::read(root) {
-        let every: Vec<u32> = old.nodes.iter().map(|node| node.index).collect();
-        crate::devnet::control::stop_nodes(&old, &every, None, false, ops)?;
+    match Manifest::read(root) {
+        Ok(old) => {
+            let every: Vec<u32> = old.nodes.iter().map(|node| node.index).collect();
+            crate::devnet::control::stop_nodes(&old, &every, None, false, ops)?;
+        }
+        Err(_) => refuse_running(root)?,
     }
     existing.iter().try_for_each(|path| remove(path))
+}
+
+/// Refuse when a process of a devnet whose manifest cannot be read still runs: it holds a lock
+/// under `node<k>/data/run`, and removing its files would leave it running unseen.
+fn refuse_running(root: &Path) -> Result<()> {
+    for k in 1..=MAX_NODES {
+        let run = root.join(format!("node{k}/data/run"));
+        let Ok(files) = fs::read_dir(&run) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let path = file.path();
+            let is_lock = path
+                .extension()
+                .is_some_and(|extension| extension == "lock");
+            if is_lock && is_locked(&path)? {
+                let reason = format!(
+                    "its manifest cannot be read and node{k} still runs ({}); stop it first",
+                    file.file_name().to_string_lossy()
+                );
+                let root = root.to_path_buf();
+                return Err(DevnetError::Manifest { root, reason });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Remove the devnet's files from `root` after a failed `init`, as far as that works.
