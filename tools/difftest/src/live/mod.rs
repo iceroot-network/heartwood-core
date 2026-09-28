@@ -5,7 +5,9 @@
 //!
 //! The run directory's layout is [`run`]'s. The checks, in the report's order:
 //!
-//! 1. `run`: the run finished, and every scripted step of its schedule ran and met its expectation
+//! 1. `run`: the relay the run tested is the release binary of the tree being judged (the SHA-256
+//!    `run.json` records for the image it started); the run finished, and every scripted step of
+//!    its schedule ran and met its expectation
 //!    ([`steps::required`]); txgen's own checks passed; for run `h`, each submission got the answer it
 //!    got in run `r` and the scenario wallets at the pause equal run `r`'s (the run beside it, `../r`);
 //! 2. `judge`: every chain of the run (node 1's archive, and the minority's archive from before a
@@ -13,7 +15,9 @@
 //!    Makefile's `CORPUS`) and judged (the oracle of `DIFFTEST_IMAGE` or `SOLAR_DIR` runs only when
 //!    a corpus has no judge's lines yet); the judge's anchors hold;
 //! 3. `nodes`: each node under test: a Heartwood relay's digest lines, store and logs
-//!    (`nodes`); a reference relay's archive against node 1's;
+//!    (`nodes`), its starts against the run's scripted restarts of it, and that a kill during its
+//!    initial sync ended its first start below node 1's height at its start; a reference relay's
+//!    archive against node 1's;
 //! 4. `api`: the route corpus's answers, judged by `api compare` ([`crate::api`]), and the rate
 //!    limit's answers from an address that no node whitelists;
 //! 5. `bans`: every ban of a node under test's address ([`bans`]);
@@ -61,10 +65,13 @@ pub struct LiveOptions<'a> {
     pub corpus_root: PathBuf,
     /// The oracle, asked for only when a corpus has not been judged yet.
     pub oracle: &'a dyn Fn() -> Result<Oracle>,
+    /// The release binary of the tree being judged, which must be the relay the run tested.
+    pub relay_binary: PathBuf,
 }
 
-/// Check the live run in `run_dir`, with the corpora under [`CORPUS_ROOT`] and the oracle of the
-/// environment (`DIFFTEST_IMAGE` or `SOLAR_DIR`).
+/// Check the live run in `run_dir`, with the corpora under [`CORPUS_ROOT`], the oracle of the
+/// environment (`DIFFTEST_IMAGE` or `SOLAR_DIR`) and the tree's release binary at
+/// [`run::RELAY_BINARY`].
 pub fn check(run_dir: &Path) -> Result<Report> {
     let oracle = || OracleArgs::default().resolve(|name: &str| std::env::var(name).ok());
     check_with(
@@ -72,6 +79,7 @@ pub fn check(run_dir: &Path) -> Result<Report> {
         &LiveOptions {
             corpus_root: PathBuf::from(CORPUS_ROOT),
             oracle: &oracle,
+            relay_binary: PathBuf::from(run::RELAY_BINARY),
         },
     )
 }
@@ -127,14 +135,28 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
         results: Vec::new(),
     };
     let api_built = check_api(run_dir, &manifest, &mut api_cases);
+    // The relay the run tested must be this tree's: a run of an older build judges nothing here.
+    match run::relay_binding(&manifest, &options.relay_binary) {
+        Some(Ok(text)) => cases.pass("run", text),
+        Some(Err(why)) => cases.fail("run", "the relay the run tested is this tree's", why),
+        None => {}
+    }
     check_run(run_dir, &manifest, api_built, &mut cases)?;
     let chains = check_judge(run_dir, &manifest, options, &mut cases);
-    check_nodes(run_dir, &manifest, &chains, &mut cases);
+    check_nodes(run_dir, &manifest, &chains, &windows, &mut cases)?;
     cases.results.extend(api_cases.results);
     check_bans(run_dir, &manifest, &windows, &mut cases)?;
     check_invariants(run_dir, &manifest, &windows, &mut cases)?;
     let report = Report {
-        title: format!("Live check of run {} ({})", manifest.run, manifest.network),
+        title: match (&manifest.relay_image, &manifest.relay_binary_sha256) {
+            (Some(image), Some(sha)) if manifest.has_heartwood() => format!(
+                "Live check of run {} ({}; relay {image}, binary sha256 {})",
+                manifest.run,
+                manifest.network,
+                sha.get(..12).unwrap_or(sha)
+            ),
+            _ => format!("Live check of run {} ({})", manifest.run, manifest.network),
+        },
         source: format!(
             "{}{}; every case in {}",
             run_dir.display(),
@@ -232,6 +254,48 @@ fn check_run(
             );
         }
     }
+    let txgen = run_dir.join("txgen");
+    if let Ok(entries) = std::fs::read_dir(&txgen) {
+        let mut dirs: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.join("summary.json").exists())
+            .collect();
+        dirs.sort();
+        for dir in dirs {
+            let name = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            // The node txgen submitted to (its step's `submit`): a Heartwood relay names its own
+            // decoder's reason in an `ERR_BAD_DATA` refusal.
+            let heartwood = steps
+                .iter()
+                .find(|s| s.name == format!("txgen-{name}"))
+                .and_then(|s| s.record.get("submit").and_then(Value::as_str))
+                .and_then(|n| manifest.node(n))
+                .is_some_and(|n| n.implementation == Implementation::Heartwood);
+            let verdict = steps::txgen(&dir, heartwood)?;
+            // The step's own `ok` is txgen's exit status, which holds the reference's texts; the
+            // verdict judged here takes its place.
+            if let Some(s) = steps.iter_mut().find(|s| s.name == format!("txgen-{name}")) {
+                s.ok = verdict.failures.is_empty();
+            }
+            for d in &verdict.documented {
+                cases.push(
+                    "run",
+                    format!("txgen {name}: {d}"),
+                    0,
+                    Outcome::Documented(Documented::DecodeReason.reason().to_owned()),
+                );
+            }
+            if verdict.failures.is_empty() {
+                cases.pass("run", format!("txgen {name}: {}", verdict.text));
+            }
+            for f in verdict.failures.iter().take(20) {
+                cases.fail("run", format!("txgen {name} ({})", verdict.text), f.clone());
+            }
+        }
+    }
     let problems = steps::problems(&manifest.run, &steps);
     if problems.is_empty() {
         cases.pass(
@@ -245,24 +309,7 @@ fn check_run(
     for p in problems {
         cases.fail("run", "the scripted steps", p);
     }
-    let txgen = run_dir.join("txgen");
-    if let Ok(entries) = std::fs::read_dir(&txgen) {
-        let mut dirs: Vec<PathBuf> = entries
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.join("summary.json").exists())
-            .collect();
-        dirs.sort();
-        for dir in dirs {
-            let name = dir
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            match steps::txgen(&dir)? {
-                Ok(text) => cases.pass("run", format!("txgen {name}: {text}")),
-                Err(text) => cases.fail("run", format!("txgen {name}"), text),
-            }
-        }
-    }
+    check_reconnect(manifest, &steps, cases);
     if let Some(pair) = &manifest.pair {
         let other = run_dir.parent().map(|p| p.join(pair));
         match other.filter(|d| d.join("run.json").exists()) {
@@ -279,7 +326,11 @@ fn check_run(
                 if d.differences.is_empty() && !ours.is_empty() {
                     cases.pass(
                         "run",
-                        format!("each of {} submissions got run {pair}'s answer", ours.len()),
+                        format!(
+                            "each of {} submissions got run {pair}'s answer ({} with another reason text)",
+                            ours.len(),
+                            d.documented.len()
+                        ),
                     );
                 } else if ours.is_empty() {
                     cases.fail(
@@ -299,6 +350,14 @@ fn check_run(
                     cases.record(
                         "run",
                         format!("an answer whose message differs from run {pair}'s in its numbers only: {p}"),
+                    );
+                }
+                for p in &d.documented {
+                    cases.push(
+                        "run",
+                        format!("the submissions against run {pair}: {p}"),
+                        0,
+                        Outcome::Documented(Documented::DecodeReason.reason().to_owned()),
                     );
                 }
                 let w = (
@@ -331,6 +390,41 @@ fn check_run(
         }
     }
     Ok(())
+}
+
+/// How the minority of a partition rejoined after the heal. The recipe restarts node 3's relay
+/// when there is no single tip 120 s after the heal (`reconnect-minority`): node 3 keeps its side
+/// of the fork while it holds a peer, which a reference relay as node 4 is (a dry run). A Heartwood
+/// node 4 has no listener, so it is no peer of node 3, which then falls back to its seeds by
+/// itself; a run with a Heartwood relay in the minority must converge without that restart.
+fn check_reconnect(manifest: &Manifest, steps: &[run::Step], cases: &mut Cases) {
+    if !steps.iter().any(|s| s.name == "converged") {
+        return;
+    }
+    let restarted = steps.iter().any(|s| s.name == "reconnect-minority");
+    let heartwood = !manifest.dry_run
+        && manifest.minority.as_ref().is_some_and(|(members, _)| {
+            members.iter().any(|m| {
+                manifest
+                    .node(m)
+                    .is_some_and(|n| n.implementation == Implementation::Heartwood)
+            })
+        });
+    match (restarted, heartwood) {
+        (false, _) => cases.record(
+            "run",
+            "the minority rejoined the majority after the heal by itself",
+        ),
+        (true, false) => cases.record(
+            "run",
+            "the minority rejoined the majority after the scripted restart of node 3's relay (a reference relay in the minority keeps node 3 on its side)",
+        ),
+        (true, true) => cases.fail(
+            "run",
+            "the minority rejoined the majority after the heal by itself",
+            "it rejoined only after the scripted restart of node 3's relay, 120 s after the heal: with a Heartwood relay in the minority, node 3 holds no peer and falls back to its seeds by itself",
+        ),
+    }
 }
 
 /// The judged chains by corpus name.
@@ -466,15 +560,26 @@ fn final_chain<'c>(manifest: &Manifest, chains: &'c Chains) -> Option<&'c corpor
         .map(|(_, j)| j)
 }
 
-fn check_nodes(run_dir: &Path, manifest: &Manifest, chains: &Chains, cases: &mut Cases) {
+fn check_nodes(
+    run_dir: &Path,
+    manifest: &Manifest,
+    chains: &Chains,
+    windows: &[run::Window],
+    cases: &mut Cases,
+) -> Result<()> {
     let Some(last) = final_chain(manifest, chains) else {
         cases.fail(
             "nodes",
             "the nodes under test",
             "the final chain was not judged, so no node can be checked",
         );
-        return;
+        return Ok(());
     };
+    let faults: Vec<(String, Vec<String>)> = windows
+        .iter()
+        .map(|w| (w.fault.clone(), w.nodes.clone()))
+        .collect();
+    let steps = run::steps(run_dir)?;
     let references: Vec<&str> = manifest
         .nodes
         .iter()
@@ -497,7 +602,11 @@ fn check_nodes(run_dir: &Path, manifest: &Manifest, chains: &Chains, cases: &mut
                         ),
                     }
                 }
-                let mut c = nodes::heartwood_digest(run_dir, node, &judged);
+                // The kill of a node that joins with an empty store, during its sync.
+                let kill = steps
+                    .iter()
+                    .find(|s| s.name == "kill-during-sync" && s.node == node.name);
+                let mut c = nodes::heartwood_digest(run_dir, node, &judged, &faults, kill);
                 c.extend(nodes::heartwood_store(
                     run_dir,
                     node,
@@ -538,6 +647,7 @@ fn check_nodes(run_dir: &Path, manifest: &Manifest, chains: &Chains, cases: &mut
             }
         }
     }
+    Ok(())
 }
 
 /// The route corpus and the rate limit; whether the route corpus's judge is built in this tree.
@@ -888,4 +998,88 @@ fn check_invariants(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::live::run::{Node, Step};
+
+    fn manifest(node4: Implementation, dry_run: bool) -> Manifest {
+        let node = |name: &str, implementation| Node {
+            name: name.into(),
+            ip: String::new(),
+            implementation,
+            forger: false,
+            under_test: name == "node4",
+        };
+        Manifest {
+            run: "m2".into(),
+            network: "b5-m2".into(),
+            dry_run,
+            seed: "solar-devnet".into(),
+            round_length: 53,
+            block_time: 8,
+            stop_height: 265,
+            control: "node1".into(),
+            nodes: vec![
+                node("node3", Implementation::Reference),
+                node("node4", node4),
+            ],
+            corpora: BTreeMap::new(),
+            pair: None,
+            minority: Some((vec!["node3".into(), "node4".into()], "minority".into())),
+            api: None,
+            window_seconds: 30,
+            status: "complete".into(),
+            relay_image: None,
+            relay_binary_sha256: None,
+            worktree: None,
+        }
+    }
+
+    fn step(name: &str) -> Step {
+        Step {
+            name: name.into(),
+            node: "node3".into(),
+            ok: true,
+            start: None,
+            record: json!({"step": name}),
+        }
+    }
+
+    #[test]
+    fn a_heartwood_minority_rejoins_without_the_restart() {
+        let judged = |node4, dry_run, steps: &[Step]| {
+            let mut cases = Cases {
+                run: "m2".into(),
+                results: Vec::new(),
+            };
+            check_reconnect(&manifest(node4, dry_run), steps, &mut cases);
+            cases.results
+        };
+        let restarted = [step("reconnect-minority"), step("converged")];
+        let failed = judged(Implementation::Heartwood, false, &restarted);
+        assert!(
+            failed.len() == 1 && failed[0].outcome.is_failure(),
+            "{failed:?}"
+        );
+        // A dry run's reference relay keeps node 3 on its side: the restart is recorded.
+        let dry = judged(Implementation::Heartwood, true, &restarted);
+        assert!(
+            dry.len() == 1 && dry[0].label.starts_with("recorded:"),
+            "{dry:?}"
+        );
+        let reference = judged(Implementation::Reference, false, &restarted);
+        assert!(!reference[0].outcome.is_failure(), "{reference:?}");
+        let by_itself = judged(Implementation::Heartwood, false, &[step("converged")]);
+        assert!(
+            by_itself.len() == 1 && by_itself[0].label.contains("by itself"),
+            "{by_itself:?}"
+        );
+        // A run without a partition has nothing to record.
+        assert!(judged(Implementation::Heartwood, false, &[]).is_empty());
+    }
 }

@@ -320,7 +320,7 @@
  {
   "name": "wallets/transactions/sender/order/sequence:asc",
   "path": "/api/wallets/${txSender}/transactions",
-  "query": "orderBy=sequence:asc",
+  "query": "orderBy=sequence:asc&transform=false",
   "documented": "tieOrder"
  },
  {
@@ -363,13 +363,12 @@
   "name": "wallets/transactions/sender/order/senderId:asc",
   "path": "/api/wallets/${txSender}/transactions",
   "query": "orderBy=senderId:asc",
-  "documented": "storeFailure"
+  "documented": "tieOrder"
  },
  {
   "name": "wallets/transactions/sender/order/address:desc",
   "path": "/api/wallets/${txSender}/transactions",
-  "query": "orderBy=address:desc",
-  "documented": "storeFailure"
+  "query": "orderBy=address:desc"
  },
  {
   "name": "wallets/transactions/sender/order/refused/capital-property",

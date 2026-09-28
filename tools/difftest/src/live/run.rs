@@ -3,7 +3,10 @@
 //! - `run.json`: the run's name, network, seed, round length and stop height, the nodes (address,
 //!   implementation, role, whether it is under test), the chains to judge (`corpora`: a corpus name
 //!   and the directory of the archives it is imported from), the pair run (`pair`, for `h`: `r`), the
-//!   minority of a partition (`minority`) and the route corpus's nodes (`api`);
+//!   minority of a partition (`minority`) and the route corpus's nodes (`api`); for a run with a
+//!   Heartwood node, the relay image it started (`relayImage`), the SHA-256 of the binary in it
+//!   (`relayBinarySha256`, the image's label) and the commit of the tree it was built from
+//!   (`worktreeCommit`, `worktreeClean`);
 //! - `steps.jsonl`: one line per scripted step, `{step, node, start, end, ok, ...}`;
 //! - `faults.jsonl`: one line per scripted fault, `{fault, nodes, start, recovered}`; its window runs
 //!   from `start` to `faultWindowSeconds` (30) after `recovered`, when the node answered its API
@@ -90,6 +93,12 @@ pub struct Manifest {
     pub window_seconds: i64,
     /// `running`, `complete` or `failed`.
     pub status: String,
+    /// The relay image the run started for its Heartwood nodes.
+    pub relay_image: Option<String>,
+    /// The SHA-256 (lowercase hex) of the relay binary in that image.
+    pub relay_binary_sha256: Option<String>,
+    /// The commit of the tree the relay was built from, and whether that tree had no change.
+    pub worktree: Option<(String, bool)>,
 }
 
 impl Manifest {
@@ -224,8 +233,98 @@ impl Manifest {
                 .and_then(Value::as_i64)
                 .unwrap_or(30),
             status: text(&v, "status").unwrap_or_default(),
+            relay_image: text(&v, "relayImage").filter(|t| !t.is_empty()),
+            relay_binary_sha256: text(&v, "relayBinarySha256").filter(|t| !t.is_empty()),
+            worktree: text(&v, "worktreeCommit").map(|commit| {
+                let clean = v.get("worktreeClean").and_then(Value::as_bool);
+                (commit, clean.unwrap_or(false))
+            }),
         })
     }
+
+    /// Whether the run started a Heartwood relay (a dry run starts none).
+    pub fn has_heartwood(&self) -> bool {
+        !self.dry_run
+            && self
+                .nodes
+                .iter()
+                .any(|n| n.implementation == Implementation::Heartwood)
+    }
+}
+
+/// The release binary of the tree a check runs in, relative to its directory: the relay that the
+/// tree's `make relay-image` builds and packs into the image a live run starts.
+pub const RELAY_BINARY: &str = "target/release/heartwood";
+
+/// The SHA-256 (lowercase hex) of the file at `path`, read in pieces.
+fn file_sha256(path: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).map_err(|e| Error::io(path, e))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 1 << 20];
+    loop {
+        let n = file.read(&mut buffer).map_err(|e| Error::io(path, e))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}
+
+/// Whether the relay the run tested is `binary`, the release binary of the tree being judged: the
+/// run's `relayBinarySha256` against the file's. `Ok` holds what matched; `Err` why the run cannot
+/// count for this tree (another binary, no record of one, no binary to compare). `None` for a run
+/// without a Heartwood relay.
+pub fn relay_binding(
+    manifest: &Manifest,
+    binary: &Path,
+) -> Option<std::result::Result<String, String>> {
+    if !manifest.has_heartwood() {
+        return None;
+    }
+    let image = manifest
+        .relay_image
+        .as_deref()
+        .unwrap_or("an unnamed image");
+    let Some(tested) = &manifest.relay_binary_sha256 else {
+        return Some(Err(format!(
+            "run.json records no relayBinarySha256: which relay {image} held is unknown"
+        )));
+    };
+    let ours = match file_sha256(binary) {
+        Ok(sha) => sha,
+        Err(e) => {
+            return Some(Err(format!(
+                "no release binary of this tree to compare ({e}): build it with make relay-image"
+            )));
+        }
+    };
+    let built = manifest
+        .worktree
+        .as_ref()
+        .map(|(commit, clean)| {
+            format!(
+                ", built from {commit}{}",
+                if *clean { "" } else { " with changes" }
+            )
+        })
+        .unwrap_or_default();
+    Some(if &ours == tested {
+        Ok(format!(
+            "the relay the run tested ({image}, binary sha256 {tested}{built}) is this tree's release binary"
+        ))
+    } else {
+        Err(format!(
+            "the run tested the relay binary {tested} ({image}{built}); this tree's {} is {ours}: repeat the run with this tree's image (make relay-image, then make live)",
+            binary.display()
+        ))
+    })
 }
 
 /// A scripted step of `steps.jsonl`.

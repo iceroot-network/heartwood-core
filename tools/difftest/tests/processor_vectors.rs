@@ -5,10 +5,11 @@
 //! Each record is a block processed on a chain given whole; the missed rows of a block refused in
 //! its apply are the documented difference its record asserts.
 //!
-//! The class is read from `packages/blockchain/tests/vectors`, or from the directory that
-//! `NODE_VECTORS` names (relative to the workspace root), for example `target/vectors/local`. When
-//! the class is in neither, the test says so and passes. Records of other operations of the class
-//! are left to their own test.
+//! The class is read from `packages/blockchain/tests/vectors`, where `make vectors-install` puts it
+//! and where it must be: a class that is not installed there fails the test. The directory that
+//! `NODE_VECTORS` names (relative to the workspace root), for example `target/vectors/local`, is
+//! read instead when it is set; it may lack the class, and the test then says so and passes.
+//! Records of other operations of the class are left to their own test.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -22,9 +23,10 @@ use proptest::strategy::{Strategy, ValueTree};
 use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 
 use heartwood_difftest::levels::l0;
+use heartwood_difftest::levels::l1::{PROCESSOR_RESULTS, UNCHAINED_STATUSES};
 use heartwood_difftest::subject;
 use heartwood_difftest::subjects::Devnet;
-use heartwood_difftest::vectors::{MANIFEST, VectorSet};
+use heartwood_difftest::vectors::{ClassDir, VectorSet};
 
 /// The class.
 const CLASS: &str = "V27-processor";
@@ -37,11 +39,12 @@ fn workspace() -> PathBuf {
 }
 
 /// The directory the class is read from.
-fn vector_dir() -> PathBuf {
-    match std::env::var_os("NODE_VECTORS") {
-        Some(dir) if !dir.is_empty() => workspace().join(dir),
-        _ => workspace().join("packages/blockchain/tests/vectors"),
-    }
+fn vector_dir() -> ClassDir {
+    ClassDir::from_env(
+        &workspace(),
+        "NODE_VECTORS",
+        "packages/blockchain/tests/vectors",
+    )
 }
 
 /// The devnet configuration: from the directory's genesis class when it has one (a whole run),
@@ -60,23 +63,15 @@ fn devnet(set: &VectorSet) -> Devnet {
 #[test]
 fn the_processor_vectors_pass_l0() {
     let dir = vector_dir();
-    if !dir.join(MANIFEST).exists() {
+    let Some(mut set) = dir.load(CLASS).expect("the class is installed") else {
         eprintln!(
-            "the_processor_vectors_pass_l0: no vector set in {}",
-            dir.display()
+            "the_processor_vectors_pass_l0: {CLASS} is not in {}, which NODE_VECTORS names",
+            dir.path().display()
         );
         return;
-    }
-    let mut set = VectorSet::load(&dir).expect("the vector set loads");
+    };
     let devnet = devnet(&set);
     set.files.retain(|file| file.meta.class == CLASS);
-    if set.files.is_empty() {
-        eprintln!(
-            "the_processor_vectors_pass_l0: {CLASS} is not installed in {}",
-            dir.display()
-        );
-        return;
-    }
     for file in &mut set.files {
         file.records
             .retain(|record| OPS.contains(&record.op.as_str()));
@@ -89,7 +84,8 @@ fn the_processor_vectors_pass_l0() {
 
 /// P13's cases reach every result the reference's processor can reach and every unchained status,
 /// counted on Heartwood's side (L1 then requires the reference's answer to be the same, case by
-/// case). `P13_CASES` sets the number of cases [400].
+/// case, and counts the reference's answers). `P13_CASES` sets the number of cases [400]; from
+/// 1,000 cases each must be reached 20 times, as `make l1` asks of the reference's answers.
 #[test]
 fn the_processor_cases_reach_every_result() {
     let cases: usize = std::env::var("P13_CASES")
@@ -135,22 +131,16 @@ fn the_processor_cases_reach_every_result() {
     for (key, n) in &seen {
         eprintln!("  {n:>6}  {key}");
     }
-    let wanted = [
-        "result Accepted",
-        "result DiscardedButCanBeBroadcasted",
-        "result Rejected",
-        "result Rollback",
-        "unchained NotReadyToAcceptNewHeight",
-        "unchained AlreadyInBlockchain",
-        "unchained EqualToLastBlock",
-        "unchained GeneratorMismatch",
-        "unchained DoubleForging",
-        "unchained InvalidTimestamp",
-    ];
+    // The reach L1 asks of the reference's answers from 1,000 cases on (the rarest status comes
+    // in about 1 case of 30); fewer cases need only reach each once.
+    let minimum = if cases >= 1_000 { 20 } else { 1 };
+    let wanted = (PROCESSOR_RESULTS.iter().map(|r| format!("result {r}")))
+        .chain(UNCHAINED_STATUSES.iter().map(|u| format!("unchained {u}")));
     for key in wanted {
+        let n = seen.get(&key).copied().unwrap_or(0);
         assert!(
-            seen.get(key).copied().unwrap_or(0) > 0,
-            "no case reached {key}"
+            n >= minimum,
+            "{key} reached {n} times, fewer than {minimum}"
         );
     }
 }

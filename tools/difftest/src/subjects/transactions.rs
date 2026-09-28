@@ -29,6 +29,16 @@ const BUILDERS: [&str; 6] = [
     "vote",
 ];
 
+/// The reference's builders of the removed types (multi-signature registration, IPFS and the three
+/// HTLC types), which Heartwood does not have.
+const REMOVED_BUILDERS: [&str; 5] = [
+    "multiSignature",
+    "ipfs",
+    "htlcLock",
+    "htlcClaim",
+    "htlcRefund",
+];
+
 /// `{id, hex, json, isVerified}` of a transaction, as the oracle writes it.
 fn output(tx: &Transaction, params: &Params) -> Value {
     json!({
@@ -133,9 +143,16 @@ pub(super) fn build(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let aux = Aux::fixed(devnet.aux);
     let input = case.input;
     let builder = text(input, "builder")?;
+    if REMOVED_BUILDERS.contains(&builder) {
+        // Heartwood has no builder for a type it refuses at decode.
+        return Ok(Verdict::RefusedByDesign {
+            difference: Documented::RemovedType,
+            holds: true,
+        });
+    }
     if !BUILDERS.contains(&builder) {
         return Err(SubjectError::Unsupported(format!(
-            "no builder for the removed type of the reference's {builder} builder"
+            "the reference's {builder} builder is not translated"
         )));
     }
     let calls = input["calls"]
@@ -235,12 +252,13 @@ pub(super) fn build(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
                     votes: builder_votes(argument)?,
                 });
             }
+            // The builders write the standard header only: the extended header, which carries
+            // the sender's address, is refused at decode.
             "senderId" => {
-                return Err(SubjectError::Unsupported(
-                    "the builders write the standard header only; the extended header is \
-                     refused at decode"
-                        .into(),
-                ));
+                return Ok(Verdict::RefusedByDesign {
+                    difference: Documented::ExtendedHeader,
+                    holds: true,
+                });
             }
             other => {
                 return Err(SubjectError::Unsupported(format!(

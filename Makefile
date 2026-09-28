@@ -1,7 +1,8 @@
 # Heartwood Core: Rust checks and the differential-test workflow. `make help` lists the targets.
 #
-#   make check          build, clippy (warnings are errors), fmt check, tests, the release check,
-#                       the crate layers, and the review ceilings where tokei is installed
+#   make check          build, clippy (warnings are errors), fmt check, tests (the integration-tagged
+#                       ones too), the release check, the crate layers, rustdoc (warnings are
+#                       errors), and the review ceilings where tokei is installed
 #   make oracle-image   build the oracle image for COMMIT from scratch (needs Docker and the network)
 #   make e2e            vectors in the container and locally, diff the two runs, run L0
 #   make vectors-install  copy the container run into each crate's tests/vectors
@@ -46,10 +47,12 @@ VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12,V19,V22 kernel=V
                  logger=V20 pool=V21 state=V08,V09-shuffle,V15,V18 transactions=V17 p2p-wire=V13,V24 \
                  p2p=V25,V26 blockchain=V27 api=V28
 # L1: cases per property, the generator's seed, the properties (P1 to P16 or their names, comma
-# separated; all when empty).
+# separated; all when empty); L1_MIN_REACH, how often P13 must reach each reachable result of the
+# processor and each unchained status (when empty: 20 from 1,000 cases per property, else none).
 L1_CASES      ?= 256
 L1_SEED       ?= 1
 L1_PROPERTY   ?=
+L1_MIN_REACH  ?=
 # L2: the corpus directory CORPUS/NAME; ARCHIVE the devnet archives to import (in chain order);
 # CORPUS_SEED the chain's public key-derivation seed (difftest's default when empty); DUMP heights
 # whose records the judge writes.
@@ -75,6 +78,10 @@ RUNTIME       ?=
 # ORACLE_ARGS='--solar-dir $(LOCAL_SOLAR)' for a local reference.
 ORACLE_ARGS   ?= --image $(IMAGE)
 DIFFTEST      := target/debug/difftest
+# The comparing targets (l0, l1, the L2 replays, the kill test, live-check, api-compare) are gates:
+# `--strict` fails a run in which a case was skipped or had no subject, as a failed case does.
+# STRICT= runs them leniently, for a look at a partial tree.
+STRICT        ?= --strict
 # The packages whose builds are release artefacts, each built on its own (cargo build -p). None of
 # them may enable a test seam (SEAMS, crate:feature); `make release-check` checks it.
 RELEASE_PACKAGES ?= heartwood-crypto heartwood-kernel heartwood-logger heartwood-state heartwood-transactions \
@@ -99,7 +106,8 @@ need-name = $(if $(NAME),,$(error set NAME, the corpus under CORPUS=$(CORPUS)))
 .PHONY: help check build clippy fmt fmt-check test release-check oracle-context oracle-image \
         oracle-save vectors vectors-local vectors-diff vectors-install l0 ping test-oracle e2e \
         l1 corpus-import corpus-judge corpus-verify l2 l2-synthetic l2-restart crash-test pool-bench \
-        layers lines lines-if-tokei l2-processor relay-image live live-check api-compare
+        layers lines lines-if-tokei l2-processor relay-binary relay-image live live-check api-compare doc \
+        test-integration
 
 help: ## this list
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | awk -F'\t' '{ printf "  make %-15s %s\n", $$1, $$2 }'
@@ -107,7 +115,7 @@ help: ## this list
 	@echo "           VECTORS=$(VECTORS) IMAGE_DIR=$(IMAGE_DIR) TOOLCHAIN_ENV=$(TOOLCHAIN_ENV)"
 	@echo "           DEVNET_GENERATOR=$(DEVNET_GENERATOR) CORPUS=$(CORPUS) ORACLE_ARGS=$(ORACLE_ARGS)"
 
-check: build clippy fmt-check test release-check layers lines-if-tokei ## build, clippy, fmt check, tests, release check, layers, ceilings
+check: build clippy fmt-check test test-integration release-check layers doc lines-if-tokei ## build, clippy, fmt check, tests, release check, layers, rustdoc, ceilings
 
 build: ## cargo build (the difftest binary)
 	$(TOOLCHAIN) && cargo build --locked
@@ -138,6 +146,17 @@ test: ## cargo test: each library crate alone, with no features and with all, th
 	    cargo test --locked -p "$$package" && cargo test --locked -p "$$package" --all-features || exit 1; \
 	done
 	$(TOOLCHAIN) && cargo test --locked -p heartwood-difftest
+
+# The tests marked `#[ignore = "integration"]` (the served API over a store, a relay importing from
+# a mock peer, the kill test through the runtime, ...): each by its exact name, with its crate's
+# features; a marked test that its target does not list fails.
+test-integration: build ## the integration-tagged tests of every crate
+	$(TOOLCHAIN) && tools/test-integration.sh
+
+# Every crate's documentation, with every feature: a warning (a link to a private item, a broken
+# link) fails.
+doc: ## rustdoc of the workspace with every feature, warnings are errors
+	$(TOOLCHAIN) && RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --locked --workspace --all-features
 
 release-check: ## each release package builds without the test seams (SEAMS)
 	@$(TOOLCHAIN) && for package in $(RELEASE_PACKAGES); do \
@@ -174,12 +193,16 @@ vectors-local: build ## L0 vectors from LOCAL_SOLAR into VECTORS/local
 vectors-diff: build ## the container and local runs must agree on every record
 	$(DIFFTEST) vectors diff $(VECTORS)/container $(VECTORS)/local
 
-# Each crate gets its classes (VECTOR_CRATES) and a manifest of them. A run that lacks a class a
-# committed manifest lists is refused, and the committed files are kept: the genesis class (V10)
-# and the genesis-state class (V18) are written only with DEVNET_GENERATOR.
+# Each crate gets its classes (VECTOR_CRATES) and a manifest of them. A run that lacks a class
+# VECTOR_CRATES routes, or a file a committed manifest lists, is refused, and the committed files
+# are kept: the genesis class (V10) and the genesis-state class (V18) are written only with
+# DEVNET_GENERATOR.
 vectors-install: vectors-diff ## copy the container run into each crate's tests/vectors, with a manifest per crate
 	@missing=; \
 	for spec in $(VECTOR_CRATES); do \
+	    for class in $$(echo $${spec#*=} | tr ',' ' '); do \
+	        ls $(VECTORS)/container/$$class*.jsonl >/dev/null 2>&1 || missing="$$missing $$class*.jsonl"; \
+	    done; \
 	    dir=packages/$${spec%%=*}/tests/vectors; \
 	    [ -f $$dir/MANIFEST.sha256 ] || continue; \
 	    for file in $$(awk '{ print $$2 }' $$dir/MANIFEST.sha256); do \
@@ -187,8 +210,9 @@ vectors-install: vectors-diff ## copy the container run into each crate's tests/
 	    done; \
 	done; \
 	if [ -n "$$missing" ]; then \
-	    echo "vectors-install: the run in $(VECTORS)/container lacks$$missing, which a committed" \
-	         "manifest lists (V10 and V18 need DEVNET_GENERATOR); nothing was installed" >&2; \
+	    echo "vectors-install: the run in $(VECTORS)/container lacks$$missing, which VECTOR_CRATES" \
+	         "routes or a committed manifest lists (V10 and V18 need DEVNET_GENERATOR); nothing was" \
+	         "installed" >&2; \
 	    exit 1; \
 	fi
 	@for spec in $(VECTOR_CRATES); do \
@@ -208,7 +232,7 @@ vectors-install: vectors-diff ## copy the container run into each crate's tests/
 	done
 
 l0: build ## compare VECTORS/container with Heartwood's subjects
-	$(DIFFTEST) run l0 $(VECTORS)/container
+	$(DIFFTEST) run l0 $(VECTORS)/container $(STRICT)
 
 ping: build ## oracle-server.js answers, in the image and locally
 	$(need-image)
@@ -223,10 +247,12 @@ test-oracle: ## the oracle tests of cargo test (ping, 256 L1 cases per property)
 
 e2e: vectors vectors-local vectors-diff l0 ## end to end: generate, diff, compare (needs oracle-image first)
 
-l1: build ## L1 properties against the oracle (ORACLE_ARGS): L1_CASES, L1_SEED, L1_PROPERTY
+l1: build ## L1 properties against the oracle (ORACLE_ARGS): L1_CASES, L1_SEED, L1_PROPERTY, L1_MIN_REACH
 	$(need-image)
-	$(TOOLCHAIN) && $(DIFFTEST) run l1 $(if $(L1_PROPERTY),--property $(L1_PROPERTY)) \
-	    --cases $(L1_CASES) --seed $(L1_SEED) --regressions target/l1-regressions $(ORACLE_ARGS)
+	$(TOOLCHAIN) && reach='$(L1_MIN_REACH)'; \
+	if [ -z "$$reach" ]; then if [ $(L1_CASES) -ge 1000 ]; then reach=20; else reach=0; fi; fi; \
+	$(DIFFTEST) run l1 $(if $(L1_PROPERTY),--property $(L1_PROPERTY)) --min-reach $$reach \
+	    --cases $(L1_CASES) --seed $(L1_SEED) --regressions target/l1-regressions $(STRICT) $(ORACLE_ARGS)
 
 corpus-import: build ## devnet archives (ARCHIVE='dir ...', in chain order) to the corpus CORPUS/NAME
 	$(need-name)
@@ -246,22 +272,23 @@ corpus-verify: build ## the manifest of CORPUS/NAME
 
 l2: build ## replay CORPUS/NAME in Heartwood through its store against the judge's lines (TO=H)
 	$(need-name)
-	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) $(if $(TO),--to $(TO))
+	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) $(if $(TO),--to $(TO)) $(STRICT)
 
 l2-synthetic: build ## L2 of CORPUS/NAME with the synthetic restart, pool and processor cases on top (needs the oracle)
 	$(need-name)
 	$(need-image)
-	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --synthetic $(if $(TO),--to $(TO)) $(ORACLE_ARGS)
-	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor --synthetic $(if $(TO),--to $(TO)) $(ORACLE_ARGS)
+	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --synthetic $(if $(TO),--to $(TO)) $(STRICT) $(ORACLE_ARGS)
+	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor --synthetic $(if $(TO),--to $(TO)) $(STRICT) \
+	    $(ORACLE_ARGS)
 
 l2-restart: build ## L2 of CORPUS/NAME with the restarts of its restart plan, by both of Heartwood's paths (TO=H)
 	$(need-name)
-	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --restart $(if $(TO),--to $(TO))
+	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --restart $(if $(TO),--to $(TO)) $(STRICT)
 
 crash-test: build ## CORPUS/NAME replayed through the store (or a relay, RUNTIME=1) in a child process killed KILLS times
 	$(need-name)
 	$(DIFFTEST) store crash $(CORPUS)/$(NAME) --kills $(KILLS) $(if $(KILL_SEED),--seed $(KILL_SEED)) \
-	    $(if $(RUNTIME),--runtime)
+	    $(if $(RUNTIME),--runtime) $(STRICT)
 
 pool-bench: ## the cost of the pool's per-sender views and of the store's commit (release build)
 	$(TOOLCHAIN) && cargo test --release --locked -p heartwood-pool --test view_cost -- --ignored --nocapture
@@ -461,28 +488,36 @@ need-results = $(if $(LIVE_RESULTS),,$(error set LIVE_RESULTS, the live runs' di
 
 l2-processor: build ## replay CORPUS/NAME through the processor and the job against the judge's lines (TO, CHUNKS)
 	$(need-name)
-	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor $(if $(CHUNKS),--chunks $(CHUNKS)) $(if $(TO),--to $(TO))
+	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor $(if $(CHUNKS),--chunks $(CHUNKS)) $(if $(TO),--to $(TO)) \
+	    $(STRICT)
 
-relay-image: ## the relay's release binary with the harness's flags, and its devnet image (RELAY_IMAGE_RECIPE)
-	$(if $(RELAY_IMAGE_RECIPE),,$(error set RELAY_IMAGE_RECIPE, the devnet tooling's image recipe, in local.mk))
+relay-binary: ## the relay's release binary with the harness's flags (target/release/heartwood)
 	$(TOOLCHAIN) && cargo build --release --locked -p heartwood-core --features difftest
+
+relay-image: relay-binary ## the relay's release binary and its devnet image (RELAY_IMAGE_RECIPE)
+	$(if $(RELAY_IMAGE_RECIPE),,$(error set RELAY_IMAGE_RECIPE, the devnet tooling's image recipe, in local.mk))
 	$(RELAY_IMAGE_RECIPE) $(CURDIR)/target/release/heartwood
 
-live: ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2, LIVE_RECIPE)
+# A run with a Heartwood relay (every run but r) tests this tree's release binary: live builds it
+# and its image first, and live-check and api-compare build it again (nothing to do when the tree
+# is unchanged), so that a run of another build fails their check that it is this tree's relay.
+relay-of-run = $(if $(filter-out r,$(RUN)),$(1))
+
+live: $(call relay-of-run,relay-image) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2, LIVE_RECIPE)
 	$(need-live)
 	$(need-run)
 	$(LIVE_RECIPE) $(RUN) $(CURDIR)
 
-live-check: build ## the comparisons of a live run (RUN, LIVE_RESULTS)
+live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS)
 	$(need-run)
 	$(need-results)
-	$(TOOLCHAIN) && $(DIFFTEST) live check $(LIVE_RESULTS)/$(RUN)
+	$(TOOLCHAIN) && $(DIFFTEST) live check $(LIVE_RESULTS)/$(RUN) $(STRICT)
 
-api-compare: build ## judge the API answers a live run recorded (RUN, LIVE_RESULTS), or two nodes' (LEFT, RIGHT)
+api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the API answers a live run recorded (RUN, LIVE_RESULTS), or two nodes' (LEFT, RIGHT)
 	$(TOOLCHAIN) && if [ -n '$(LEFT)' ] && [ -n '$(RIGHT)' ]; then \
-	    $(DIFFTEST) api compare --left '$(LEFT)' --right '$(RIGHT)' --out $(API_COMPARE_OUT); \
+	    $(DIFFTEST) api compare --left '$(LEFT)' --right '$(RIGHT)' --out $(API_COMPARE_OUT) $(STRICT); \
 	else \
 	    [ -n '$(RUN)' ] && [ -n '$(LIVE_RESULTS)' ] || { echo "api-compare: set RUN and LIVE_RESULTS, or LEFT and RIGHT" >&2; exit 2; }; \
-	    $(DIFFTEST) api compare --run $(LIVE_RESULTS)/$(RUN); \
+	    $(DIFFTEST) api compare --run $(LIVE_RESULTS)/$(RUN) $(STRICT); \
 	fi
 # ---- end of the relay ----

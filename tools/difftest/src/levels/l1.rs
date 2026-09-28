@@ -165,6 +165,9 @@ pub struct L1Options {
     /// Where the minimal failing case of each failed property is written, one JSON line per
     /// property file.
     pub regressions: Option<PathBuf>,
+    /// How often P13 must reach each reachable result of the processor and each unchained status
+    /// in the reference's answers; 0 asks nothing (the counts are reported all the same).
+    pub min_reach: u32,
 }
 
 /// One case of a property, as the oracle takes it.
@@ -315,6 +318,63 @@ pub fn without_bound_key(section: &str, address: &Address) -> String {
     out
 }
 
+/// The results of the reference's processor that `process` can reach; `Reverted` and `Corrupted`
+/// are not reachable from it.
+pub const PROCESSOR_RESULTS: [&str; 4] = [
+    "Accepted",
+    "DiscardedButCanBeBroadcasted",
+    "Rejected",
+    "Rollback",
+];
+
+/// The unchained statuses of the reference's unchained handler.
+pub const UNCHAINED_STATUSES: [&str; 6] = [
+    "NotReadyToAcceptNewHeight",
+    "AlreadyInBlockchain",
+    "EqualToLastBlock",
+    "GeneratorMismatch",
+    "DoubleForging",
+    "InvalidTimestamp",
+];
+
+/// The outcome classes of a processor answer (P13): its result, its unchained status and its
+/// handler, or the error class of an answer that failed.
+fn processor_outcomes(expected: &Expected, seen: &mut BTreeMap<String, usize>) {
+    let mut count = |class: String| *seen.entry(class).or_insert(0) += 1;
+    match expected {
+        Expected::Output(o) => {
+            for (key, name) in [
+                ("result", "result"),
+                ("unchained", "unchained"),
+                ("handler", "handler"),
+            ] {
+                if let Some(value) = o.get(key).and_then(Value::as_str) {
+                    count(format!("P13 {name} {value}"));
+                }
+            }
+        }
+        Expected::Error(e) => count(format!("P13 error: {}", e.class)),
+    }
+}
+
+/// The reachable processor results and unchained statuses that `seen` counts fewer than
+/// `minimum` times, each with its count.
+pub fn under_reached(seen: &BTreeMap<String, usize>, minimum: u32) -> Vec<(String, usize)> {
+    let minimum = usize::try_from(minimum).unwrap_or(usize::MAX);
+    let wanted = (PROCESSOR_RESULTS.iter().map(|r| format!("P13 result {r}"))).chain(
+        UNCHAINED_STATUSES
+            .iter()
+            .map(|u| format!("P13 unchained {u}")),
+    );
+    wanted
+        .map(|class| {
+            let n = seen.get(&class).copied().unwrap_or(0);
+            (class, n)
+        })
+        .filter(|(_, n)| *n < minimum)
+        .collect()
+}
+
 /// The error class of a refused transaction in an oracle answer (P7).
 fn refusal_class(expected: &Expected) -> Option<String> {
     match expected {
@@ -334,7 +394,8 @@ pub struct L1Run {
     pub report: Report,
     /// For the handler property: how often each outcome occurred (`applied` or an error class);
     /// for the pool property, each error code of the reference's answers (`pool ERR_...`), the
-    /// accepted entries and the full-pool evictions.
+    /// accepted entries and the full-pool evictions; for the processor property, each result,
+    /// unchained status and handler of the reference's answers (`P13 result ...`).
     pub classes: BTreeMap<String, usize>,
 }
 
@@ -412,6 +473,9 @@ pub fn run(
             if *property == Property::Pool {
                 pool_outcomes(&answer, &mut seen.borrow_mut());
             }
+            if *property == Property::Processor {
+                processor_outcomes(&answer, &mut seen.borrow_mut());
+            }
             let judged = super::judge_documented(&request, &answer, registry);
             let failed = judged.is_failure();
             let message = format!("{judged:?}");
@@ -425,13 +489,20 @@ pub fn run(
         if let Some(e) = harness.into_inner() {
             return Err(e);
         }
-        if matches!(*property, Property::Handlers | Property::Pool) {
-            for (class, n) in seen.into_inner() {
+        let seen = seen.into_inner();
+        let file = format!("l1/{}", property.name());
+        if *property == Property::Processor {
+            results.extend(processor_checks(&file, &seen, options.min_reach));
+        }
+        if matches!(
+            *property,
+            Property::Handlers | Property::Pool | Property::Processor
+        ) {
+            for (class, n) in seen {
                 *classes.entry(class).or_insert(0) += n;
             }
         }
         let recorded = recorded.into_inner();
-        let file = format!("l1/{}", property.name());
         for (i, (case, judged)) in recorded.iter().enumerate() {
             if judged.is_failure() {
                 continue;
@@ -483,23 +554,70 @@ pub fn run(
             }),
         }
     }
+    let mut source = format!(
+        "{} cases per property, seed {}, properties {}",
+        options.cases,
+        options.seed,
+        options
+            .properties
+            .iter()
+            .map(|p| p.number())
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    if options.properties.contains(&Property::Processor) {
+        let corpora = crate::strategies::processor::corpora();
+        source.push_str(&format!("; P13 on {}", corpora.used.join(", ")));
+        if options.min_reach > 0 {
+            source.push_str(&format!(
+                ", each reachable result and unchained status at least {} times",
+                options.min_reach
+            ));
+        }
+    }
     let report = Report {
         title: super::Level::L1.title().to_string(),
-        source: format!(
-            "{} cases per property, seed {}, properties {}",
-            options.cases,
-            options.seed,
-            options
-                .properties
-                .iter()
-                .map(|p| p.number())
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
+        source,
         files: options.properties.len(),
         results,
     };
     Ok(L1Run { report, classes })
+}
+
+/// P13's own checks: a corpus of its generator that is missing is a skipped part (a strict run
+/// fails on it), and each reachable result and unchained status must be reached `min_reach` times.
+fn processor_checks(file: &str, seen: &BTreeMap<String, usize>, min_reach: u32) -> Vec<CaseResult> {
+    let check = |label: String, outcome: Outcome| CaseResult {
+        file: file.to_owned(),
+        line: 0,
+        op: Property::Processor.number().to_owned(),
+        label,
+        height: 0,
+        outcome,
+    };
+    let mut out: Vec<CaseResult> = (crate::strategies::processor::corpora().missing.into_iter())
+        .map(|why| {
+            check(
+                "P13 corpus".into(),
+                Outcome::Skipped(format!("the cases drew on the other corpora: {why}")),
+            )
+        })
+        .collect();
+    if min_reach > 0 {
+        let under = under_reached(seen, min_reach);
+        let label =
+            format!("P13 reached each reachable result and unchained status {min_reach} times");
+        out.push(check(
+            label,
+            if under.is_empty() {
+                Outcome::Pass
+            } else {
+                let list: Vec<String> = under.iter().map(|(c, n)| format!("{c} {n}")).collect();
+                Outcome::HarnessError(format!("fewer: {}", list.join(", ")))
+            },
+        ));
+    }
+    out
 }
 
 /// The wallet records where the two sides differ on `case`, by wallet and field, as extra
@@ -602,6 +720,43 @@ mod tests {
         );
         assert_eq!("P16".parse::<Property>().unwrap(), Property::Monitor);
         assert!("P17".parse::<Property>().is_err());
+    }
+
+    #[test]
+    fn processor_answers_are_counted_and_their_reach_checked() {
+        let mut seen = BTreeMap::new();
+        let answer = |o: Value| Expected::Output(o);
+        for status in UNCHAINED_STATUSES {
+            let o =
+                json!({"result": "Rejected", "handler": "UnchainedHandler", "unchained": status});
+            processor_outcomes(&answer(o), &mut seen);
+        }
+        for result in PROCESSOR_RESULTS {
+            processor_outcomes(
+                &answer(json!({"result": result, "handler": "H"})),
+                &mut seen,
+            );
+        }
+        assert_eq!(seen["P13 result Rejected"], 7);
+        assert_eq!(seen["P13 unchained DoubleForging"], 1);
+        assert_eq!(seen["P13 handler UnchainedHandler"], 6);
+        assert!(under_reached(&seen, 1).is_empty());
+        let under = under_reached(&seen, 2);
+        assert_eq!(under.len(), 9, "{under:?}");
+        assert!(!under.iter().any(|(c, _)| c == "P13 result Rejected"));
+        seen.remove("P13 unchained InvalidTimestamp");
+        assert_eq!(
+            under_reached(&seen, 1),
+            [("P13 unchained InvalidTimestamp".to_owned(), 0)]
+        );
+        let checks = processor_checks("l1/processor", &seen, 1);
+        let reach = checks.last().unwrap();
+        assert!(reach.outcome.is_failure(), "{reach:?}");
+        assert!(
+            processor_checks("l1/processor", &seen, 0)
+                .iter()
+                .all(|c| !c.outcome.is_failure())
+        );
     }
 
     #[test]

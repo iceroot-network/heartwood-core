@@ -30,6 +30,8 @@ heartwood-p2p-wire.workspace = true
 heartwood-pool.workspace = true
 heartwood-state.workspace = true
 heartwood-transactions.workspace = true
+# A relay's rotated log files (`.log.gz`), which live check reads with the live ones.
+flate2.workspace = true
 proptest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

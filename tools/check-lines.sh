@@ -28,7 +28,9 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # floor) and the event bus live in the kernel, which loads configuration in the reference too, and
 # the kernel was at its ceiling before them. heartwood-blockchain's processor has a ceiling of its
 # own; its runtime (the node thread, the job, the queue, the pool on the node thread, the service,
-# the state machine and the fork recovery) is listed on its own.
+# the state machine and the fork recovery) is listed on its own. The parts listed without a ceiling
+# (the blockchain's runtime and storage, heartwood-p2p's client side, ...) are informational: the
+# crate's ceiling bounds them. CI installs tokei, so make check holds every ceiling there too.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"

@@ -648,6 +648,7 @@ dependencies = [
 name = "heartwood-difftest"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "heartwood-api",
  "heartwood-blockchain",
  "heartwood-core",

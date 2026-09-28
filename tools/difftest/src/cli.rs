@@ -29,12 +29,14 @@ Usage:
   difftest vectors diff DIR DIR   compare two oracle runs record by record (meta excluded)
   difftest run l0 DIR             compare golden vectors with Heartwood's implementations
   difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR]
-                  [--regressions DIR] [ORACLE]
+                  [--regressions DIR] [--min-reach N] [ORACLE]
                                   random and mutated cases of the properties (P1 to P16, or
                                   their names; all by default), one oracle call each; 256
                                   cases and seed 1 by default; DIR is a vector set with the
                                   genesis class [packages/crypto/tests/vectors]; the minimal
-                                  case of a failed property is written to --regressions
+                                  case of a failed property is written to --regressions;
+                                  --min-reach fails P13 when the reference's answers reach a
+                                  reachable result or an unchained status fewer than N times
   difftest run l2 DIR [--synthetic] [--restart] [--memory] [--to H] [ORACLE]
                                   replay the corpus DIR in Heartwood through a new store and
                                   compare every step with the oracle's digest lines, then the
@@ -92,6 +94,10 @@ Usage:
                                   seed and an epoch (a whole second, 2026-01-01T00:00:00.000Z);
                                   --compare checks it against the output of the devnet
                                   generator for the same inputs
+
+--strict, with any command that compares (run, oracle replay, store crash, live check, api
+compare): a case that was skipped or has no Rust implementation fails the run too, as a failed
+case does; the Makefile's gate targets pass it.
 
 ORACLE, where the reference runs (the flags win over the environment):
   --image TAG        in the oracle container                     [$DIFFTEST_IMAGE]
@@ -296,6 +302,8 @@ pub struct L1Args {
     pub vectors: Option<PathBuf>,
     /// Where minimal failing cases are written.
     pub regressions: Option<PathBuf>,
+    /// How often P13 must reach each reachable result and unchained status (0: no check).
+    pub min_reach: u32,
 }
 
 /// The arguments of `difftest run l2`.
@@ -366,6 +374,13 @@ pub struct GenesisArgs {
     pub force: bool,
     /// A directory written by the devnet generator, to compare with.
     pub compare: Option<PathBuf>,
+}
+
+/// Remove the `--strict` switch from `args`, wherever it stands; whether it was there.
+pub fn take_strict(args: &mut Vec<String>) -> bool {
+    let before = args.len();
+    args.retain(|arg| arg != "--strict");
+    args.len() != before
 }
 
 fn usage(message: impl Into<String>) -> Error {
@@ -601,6 +616,7 @@ fn parse_l1(args: &[&str]) -> Result<Command> {
         seed: 1,
         vectors: None,
         regressions: None,
+        min_reach: 0,
     };
     let mut it = args.iter();
     while let Some(&flag) = it.next() {
@@ -624,6 +640,11 @@ fn parse_l1(args: &[&str]) -> Result<Command> {
             }
             "--vectors" => l1.vectors = Some(PathBuf::from(value(flag, it.next())?)),
             "--regressions" => l1.regressions = Some(PathBuf::from(value(flag, it.next())?)),
+            "--min-reach" => {
+                l1.min_reach = value(flag, it.next())?
+                    .parse()
+                    .map_err(|_| usage("--min-reach needs an unsigned integer"))?;
+            }
             _ => oracle_flag(&mut l1.oracle, flag, it.next())?,
         }
     }
@@ -833,8 +854,11 @@ mod tests {
             }
         );
         assert_eq!(
-            p("run l1 --property P7 --property digest --cases 9 --seed 20260926 --solar-dir /s")
-                .unwrap(),
+            p(
+                "run l1 --property P7 --property digest --cases 9 --seed 20260926 --solar-dir /s \
+               --min-reach 20"
+            )
+            .unwrap(),
             Command::RunL1(L1Args {
                 oracle: OracleArgs {
                     solar_dir: Some("/s".into()),
@@ -845,6 +869,7 @@ mod tests {
                 seed: 20_260_926,
                 vectors: None,
                 regressions: None,
+                min_reach: 20,
             })
         );
         assert_eq!(
@@ -1022,12 +1047,28 @@ mod tests {
     }
 
     #[test]
+    fn the_strict_switch_is_taken_from_anywhere() {
+        let mut args: Vec<String> = ["run", "l0", "--strict", "v"].map(String::from).to_vec();
+        assert!(take_strict(&mut args));
+        assert_eq!(args, ["run", "l0", "v"]);
+        assert!(!take_strict(&mut args));
+        assert_eq!(
+            parse(&args).unwrap(),
+            Command::Run {
+                level: Level::L0,
+                dir: Some("v".into())
+            }
+        );
+    }
+
+    #[test]
     fn refuses_bad_command_lines() {
         for line in [
             "run l0",
             "run l2",
             "run l1 --cases 0",
             "run l1 --property P17",
+            "run l1 --min-reach x",
             "run l2 c --processor --chunks 2",
             "api compare --left a --right b",
             "api compare --run r --left a",

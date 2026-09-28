@@ -8,7 +8,7 @@ use std::path::Path;
 use heartwood_difftest::levels::l0;
 use heartwood_difftest::subject;
 use heartwood_difftest::subjects::Devnet;
-use heartwood_difftest::vectors::VectorSet;
+use heartwood_difftest::vectors::{ClassDir, VectorSet};
 
 fn vectors(crate_name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -19,12 +19,10 @@ fn vectors(crate_name: &str) -> std::path::PathBuf {
 
 #[test]
 fn the_pool_vectors_pass_l0() {
-    let dir = vectors("pool");
-    if !dir.join("MANIFEST.sha256").exists() {
-        eprintln!("no pool vectors installed yet (make vectors-install)");
-        return;
-    }
-    let set = VectorSet::load(&dir).expect("the pool vectors load");
+    let set = ClassDir::Installed(vectors("pool"))
+        .load("V21-pool")
+        .expect("the pool vectors are installed")
+        .expect("an installed directory holds its class");
     let crypto = VectorSet::load(&vectors("crypto")).expect("the crypto vectors load");
     let devnet = Devnet::from_vectors(&crypto)
         .expect("one devnet configuration")

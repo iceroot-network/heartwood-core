@@ -267,4 +267,61 @@ mod tests {
         );
         assert_eq!(bind("data.5.ip", &right, &left), None);
     }
+
+    #[test]
+    fn the_committed_corpus_marks_what_its_answers_can_show() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::api::CORPUS_DIR);
+        let files = load(&dir).unwrap();
+        let cases: Vec<&Case> = files.iter().flat_map(|f| &f.cases).collect();
+        let marked = |kind: &str| -> Vec<&Case> {
+            cases
+                .iter()
+                .copied()
+                .filter(|c| c.documented.as_deref() == Some(kind))
+                .collect()
+        };
+        for case in &cases {
+            if let Some(kind) = &case.documented {
+                assert!(
+                    [
+                        "heightAboveTip",
+                        "storeFailure",
+                        "peersIpFilter",
+                        "tieOrder",
+                        "decodeReason"
+                    ]
+                    .contains(&kind.as_str()),
+                    "{}: {kind}",
+                    case.name
+                );
+            }
+        }
+        // A store failure a client can cause: a memo pattern that ends with its escape character.
+        let failures = marked("storeFailure");
+        assert!(!failures.is_empty());
+        for case in failures {
+            let query = case.query.as_deref().unwrap_or("");
+            assert!(
+                query.contains("memo=") && query.ends_with("%5C"),
+                "{}",
+                case.name
+            );
+        }
+        // A tie can only be seen in the sorted column: the resource has no `sequence`, the raw
+        // data (`transform=false`) no `timestamp`.
+        for case in marked("tieOrder") {
+            let query = case.query.as_deref().unwrap_or("");
+            let raw = query.contains("transform=false");
+            let property = query
+                .split('&')
+                .find_map(|p| p.strip_prefix("orderBy="))
+                .and_then(|o| o.split(':').next())
+                .unwrap_or_else(|| panic!("{}: a tie of no order", case.name));
+            match property {
+                "sequence" => assert!(raw, "{}", case.name),
+                "timestamp" => assert!(!raw, "{}", case.name),
+                _ => {}
+            }
+        }
+    }
 }

@@ -5,6 +5,8 @@
 //! with Heartwood's own checks (the schedule, the reward, the supply, and each delegate's latest
 //! resignation height) and the store anchors. No oracle runs here.
 //!
+//! The same chain also goes through the processor and the job, as a follower imports it.
+//!
 //! In a tree whose store is still a stub, the replay runs in memory and the store's parts are
 //! reported as skipped; once the store is built, nothing may be skipped.
 
@@ -14,6 +16,7 @@ use std::path::{Path, PathBuf};
 use heartwood_difftest::corpus::{self, Corpus};
 use heartwood_difftest::digests;
 use heartwood_difftest::levels::l2::{self, L2Options};
+use heartwood_difftest::levels::l2_processor::{self, L2ProcessorOptions};
 use heartwood_difftest::restart::{
     self, PlanKind, ReferenceMode, RestartOutcome, SAME_STATE, differing_keys,
 };
@@ -131,4 +134,23 @@ fn the_committed_corpus_replays_in_heartwood() {
     } else {
         eprintln!("the store is a stub in this tree: the replay ran in memory");
     }
+}
+
+/// The committed chain replayed as a follower imports it: the download path, the enqueueing's
+/// cuts and one block per job, the job and the block processor, committed per job; both cuts
+/// against the judge's lines and its recorded processor results, and the store anchors. No oracle
+/// runs, and no part of the replay may be skipped.
+#[test]
+fn the_committed_corpus_replays_through_the_processor() {
+    let loaded = Corpus::load(&committed()).expect("the corpus loads");
+    let options = L2ProcessorOptions {
+        chunks: None,
+        to: None,
+        synthetic: false,
+    };
+    let report = l2_processor::run(&loaded, &options, None).expect("the replay runs");
+    eprintln!("{report}");
+    assert!(report.is_success(), "{report}");
+    assert!(report.is_complete(), "{report}");
+    assert!(report.compared() > 2 * 2_000, "{report}");
 }

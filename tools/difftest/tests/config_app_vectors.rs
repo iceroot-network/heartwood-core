@@ -1,17 +1,21 @@
-//! L0 over the node configuration's records of class V28 (`config.pluginOptions`, `config.loadApp`), without an oracle.
+//! L0 over the node configuration's records of class V28 (`config.pluginOptions`,
+//! `config.loadApp`), without an oracle.
 //!
-//! Each record is a component's options read with its schema and defaults, or an `app.json` profile.
+//! Each record is a component's options read with its schema and defaults, or an `app.json`
+//! profile.
 //!
-//! The class is read from `packages/kernel/tests/vectors`, or from the directory that `NODE_VECTORS` names (relative
-//! to the workspace root), for example `target/vectors/local`. When the class is in neither, the
-//! test says so and passes. Records of other operations of the class are left to their own test.
+//! The class is read from `packages/kernel/tests/vectors`, where `make vectors-install` puts it and
+//! where it must be: a class that is not installed there fails the test. The directory that
+//! `NODE_VECTORS` names (relative to the workspace root), for example `target/vectors/local`, is
+//! read instead when it is set; it may lack the class, and the test then says so and passes.
+//! Records of other operations of the class are left to their own test.
 
 use std::path::{Path, PathBuf};
 
 use heartwood_difftest::levels::l0;
 use heartwood_difftest::subject;
 use heartwood_difftest::subjects::Devnet;
-use heartwood_difftest::vectors::{MANIFEST, VectorSet};
+use heartwood_difftest::vectors::{ClassDir, VectorSet};
 
 /// The class.
 const CLASS: &str = "V28-node";
@@ -24,11 +28,12 @@ fn workspace() -> PathBuf {
 }
 
 /// The directory the class is read from.
-fn vector_dir() -> PathBuf {
-    match std::env::var_os("NODE_VECTORS") {
-        Some(dir) if !dir.is_empty() => workspace().join(dir),
-        _ => workspace().join("packages/kernel/tests/vectors"),
-    }
+fn vector_dir() -> ClassDir {
+    ClassDir::from_env(
+        &workspace(),
+        "NODE_VECTORS",
+        "packages/kernel/tests/vectors",
+    )
 }
 
 /// The devnet configuration: from the directory's genesis class when it has one (a whole run),
@@ -47,23 +52,15 @@ fn devnet(set: &VectorSet) -> Devnet {
 #[test]
 fn the_configuration_vectors_pass_l0() {
     let dir = vector_dir();
-    if !dir.join(MANIFEST).exists() {
+    let Some(mut set) = dir.load(CLASS).expect("the class is installed") else {
         eprintln!(
-            "the_configuration_vectors_pass_l0: no vector set in {}",
-            dir.display()
+            "the_configuration_vectors_pass_l0: {CLASS} is not in {}, which NODE_VECTORS names",
+            dir.path().display()
         );
         return;
-    }
-    let mut set = VectorSet::load(&dir).expect("the vector set loads");
+    };
     let devnet = devnet(&set);
     set.files.retain(|file| file.meta.class == CLASS);
-    if set.files.is_empty() {
-        eprintln!(
-            "the_configuration_vectors_pass_l0: {CLASS} is not installed in {}",
-            dir.display()
-        );
-        return;
-    }
     for file in &mut set.files {
         file.records
             .retain(|record| OPS.contains(&record.op.as_str()));

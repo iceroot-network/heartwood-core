@@ -420,7 +420,7 @@
  {
   "name": "blocks/transactions/genesis/order/sequence:asc",
   "path": "/api/blocks/1/transactions",
-  "query": "orderBy=sequence:asc",
+  "query": "orderBy=sequence:asc&transform=false",
   "documented": "tieOrder"
  },
  {
@@ -463,13 +463,12 @@
   "name": "blocks/transactions/genesis/order/senderId:asc",
   "path": "/api/blocks/1/transactions",
   "query": "orderBy=senderId:asc",
-  "documented": "storeFailure"
+  "documented": "tieOrder"
  },
  {
   "name": "blocks/transactions/genesis/order/address:desc",
   "path": "/api/blocks/1/transactions",
-  "query": "orderBy=address:desc",
-  "documented": "storeFailure"
+  "query": "orderBy=address:desc"
  },
  {
   "name": "blocks/transactions/genesis/order/refused/capital-property",

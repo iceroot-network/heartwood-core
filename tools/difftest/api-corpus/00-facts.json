@@ -58,7 +58,8 @@
    "delegateName": "data.0.asset.delegate.username",
    "delegateAddress": "data.0.sender",
    "delegateKey": "data.0.senderPublicKey"
-  }
+  },
+  "documented": "tieOrder"
  },
  {
   "name": "facts/genesis-transactions",

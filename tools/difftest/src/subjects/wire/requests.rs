@@ -111,8 +111,16 @@ fn client_request(
     let port = (headers.get("port").and_then(Value::as_u64))
         .and_then(|port| u32::try_from(port).ok())
         .ok_or_else(|| failed("input.payload.headers.port is not a port"))?;
-    let Ok(headers) = Headers::new(version, port) else {
-        return Ok(None);
+    let headers = match Headers::new(version, port) {
+        // The reference's server refuses a request without a version, so the client must not be
+        // able to write one: its refusal here is Heartwood's, not the server check's below.
+        Ok(_) if version.is_empty() => {
+            return Err(failed(
+                "the client writes headers without a version, which the reference refuses",
+            ));
+        }
+        Ok(headers) => headers,
+        Err(_) => return Ok(None),
     };
     let hex_list = |key: &str| -> Outcome<Vec<Vec<u8>>> {
         (payload
