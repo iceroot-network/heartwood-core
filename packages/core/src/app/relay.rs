@@ -65,8 +65,9 @@ use crate::config::{Package, RelayConfig};
 use crate::lock::{self, ProcessLock};
 use crate::network::Monitored;
 use crate::node_services::{MonitorSide, RelayServices, queue_state};
+use crate::signals::Signals;
 use crate::views::{BusEvents, Links, Listener, NodeView, OnThisNode, Submit};
-use crate::{VERSION, options, signals};
+use crate::{VERSION, options};
 
 /// The relay could not start, or stopped on a fatal error.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -155,6 +156,10 @@ pub fn start(relay: RelayConfig, run: &RelayRun) -> Result<(), RelayError> {
     ] {
         fs::create_dir_all(dir).map_err(|error| config(format!("{}: {error}", dir.display())))?;
     }
+    // The signals are caught before the pid file is written.
+    let runtime = Builder::new_multi_thread().enable_all().build();
+    let runtime = runtime.map_err(component)?;
+    let signals = Signals::listen_in(&runtime, "relay");
     let instance = lock::instance(Role::Relay, &relay.token, &relay.network, paths);
     let locked = ProcessLock::acquire(&instance);
     let _lock = locked.map_err(|error| RelayError::Locked(error.to_string()))?;
@@ -169,17 +174,13 @@ pub fn start(relay: RelayConfig, run: &RelayRun) -> Result<(), RelayError> {
     for warning in &relay.warnings {
         heartwood_kernel::warning!("{warning}");
     }
-    let runtime = Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(component)?;
     let api = (Builder::new_multi_thread()
         .worker_threads(2)
         .thread_name("heartwood-api")
         .enable_all()
         .build())
     .map_err(component)?;
-    let result = runtime.block_on(serve(relay, run, api.handle().clone()));
+    let result = runtime.block_on(serve(relay, run, api.handle().clone(), signals));
     if let Err(error) = &result {
         heartwood_kernel::error!("{error}");
     }
@@ -189,11 +190,16 @@ pub fn start(relay: RelayConfig, run: &RelayRun) -> Result<(), RelayError> {
 }
 
 /// Start the components of `relay` and run them until a stop.
-async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Result<(), RelayError> {
+async fn serve(
+    relay: RelayConfig,
+    run: &RelayRun,
+    api_runtime: Handle,
+    signals: Signals,
+) -> Result<(), RelayError> {
     let (stops, mut stop) = mpsc::unbounded_channel();
     let signal = stops.clone();
     tokio::spawn(async move {
-        signals::shutdown_requested("relay").await;
+        signals.requested().await;
         let _ = signal.send(Stop::Signal);
     });
     // Every option first, so a refusal stops the start before anything runs.

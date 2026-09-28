@@ -30,7 +30,8 @@ use tokio::runtime::Builder;
 use crate::commands::forger::ForgerRun;
 use crate::config::ForgerConfig;
 use crate::lock::{self, ProcessLock};
-use crate::{VERSION, options, signals};
+use crate::signals::Signals;
+use crate::{VERSION, options};
 
 /// The forger could not start, or stopped on a fatal error.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -63,6 +64,11 @@ pub fn start(forger: ForgerConfig) -> Result<(), ForgerError> {
     for dir in [&paths.data, &paths.log, &paths.temp] {
         fs::create_dir_all(dir).map_err(|error| config(format!("{}: {error}", dir.display())))?;
     }
+    // One thread, as the reference's forger has one; the signing record's writes go to the
+    // runtime's blocking pool. The signals are caught before the pid file is written.
+    let runtime = Builder::new_current_thread().enable_all().build();
+    let runtime = runtime.map_err(component)?;
+    let signals = Signals::listen_in(&runtime, "forger");
     let (token, network) = (&forger.base.token, &forger.base.network);
     let locked = ProcessLock::acquire(&lock::instance(Role::Forger, token, network, paths));
     let _lock = locked.map_err(|error| ForgerError::Locked(error.to_string()))?;
@@ -75,12 +81,7 @@ pub fn start(forger: ForgerConfig) -> Result<(), ForgerError> {
         .warnings
         .iter()
         .for_each(|w| heartwood_kernel::warning!("{w}"));
-    // One thread, as the reference's forger has one; the signing record's writes go to the
-    // runtime's blocking pool.
-    let runtime = Builder::new_current_thread().enable_all().build();
-    let result = runtime
-        .map_err(component)
-        .and_then(|runtime| runtime.block_on(serve(forger)));
+    let result = runtime.block_on(serve(forger, signals));
     if let Err(error) = &result {
         heartwood_kernel::error!("{error}");
     }
@@ -94,7 +95,7 @@ fn component(error: impl Display) -> ForgerError {
 /// Read the key file, the options and the signing record of `forger`, each checked before
 /// anything connects; boot the forger component and run its loop and attester until a signal,
 /// or until the version floor at the first round refuses this version.
-async fn serve(forger: ForgerConfig) -> Result<(), ForgerError> {
+async fn serve(forger: ForgerConfig, signals: Signals) -> Result<(), ForgerError> {
     let (base, entry, crypto) = (forger.base, forger.forger, forger.crypto);
     let keys = load_keys(&base.paths.config).map_err(config)?;
     let env = |name: &str| base.env.get(name).map(str::to_owned);
@@ -136,7 +137,7 @@ async fn serve(forger: ForgerConfig) -> Result<(), ForgerError> {
     });
     let signal = Arc::clone(&trigger);
     tokio::spawn(async move {
-        signals::shutdown_requested("forger").await;
+        signals.requested().await;
         signal.trigger();
     });
     let mut component = Forger::new(service);

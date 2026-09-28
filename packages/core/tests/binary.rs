@@ -1,10 +1,11 @@
 //! The `heartwood` binary as its operators run it: the forger process against a mock relay (it
 //! opens no listening socket, forges through its relay, refuses a second forger of its instance,
 //! and stops on SIGINT after its post in flight), the forger's refusals of its key file and its
-//! profile, `start` and `stop` of a role with their refusals, the supervisor's `errored` state,
-//! the colon spellings, `network generate` against the genesis vectors, and a relay's refusal of
-//! devnet addressing outside its guards. The relay's other tests, which need the peer-to-peer
-//! server, are in `forging_e2e.rs` and run with the integration tests.
+//! profile, `start` and `stop` of a role with their refusals, a forger's graceful stop however
+//! soon after its start its SIGINT comes, the supervisor's `errored` state, the colon spellings,
+//! `network generate` against the genesis vectors, and a relay's refusal of devnet addressing
+//! outside its guards. The relay's other tests, which need the peer-to-peer server, are in
+//! `forging_e2e.rs` and run with the integration tests.
 //!
 //! Every relay and forger address of these tests is in the loopback block 127.13.0.0/24.
 
@@ -14,8 +15,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "difftest")]
-use std::process::{Child, Stdio};
-use std::process::{Command, Output};
+use std::process::Child;
+use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
 use tokio::time::Instant;
@@ -277,6 +278,34 @@ fn start_refuses_a_running_role_and_stop_a_stopped_one() {
     assert!(stop.status.success(), "{stop:?}");
     assert!(!node.data().join("run/forger.pid").exists());
     assert!(!node.run(&with(&["forger", "stop"])).status.success());
+}
+
+#[test]
+fn a_forger_interrupted_as_soon_as_its_pid_file_appears_stops_gracefully() {
+    let node = Node::new("forger-early-stop");
+    node.keys(&[&delegate()], 0o600);
+    // No relay answers: the forger waits for one.
+    node.forger_profile(([127, 13, 0, 29], 6002).into());
+    let args = ["forger", "run", "--token", "t", "--network", "devnet"];
+    let mut forger = (node.command(&args).stdin(Stdio::null()))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid = node.data().join("run/forger.pid");
+    let start = Instant::now();
+    while !pid.exists() {
+        assert!(start.elapsed() < Duration::from_secs(20), "no pid file");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let interrupted = Command::new("kill")
+        .args(["-INT", &forger.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(interrupted.success());
+    let status = forger.wait().unwrap();
+    assert_eq!(status.code(), Some(0), "{status:?}");
+    assert!(!pid.exists(), "the pid file goes with the lock");
 }
 
 #[test]

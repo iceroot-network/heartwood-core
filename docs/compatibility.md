@@ -1206,7 +1206,9 @@ node thread, the peer-to-peer client, the blockchain service, and, once the bloc
 the API. SIGINT or SIGTERM stops them in reverse: the API stops accepting connections, the queue
 stops after its job, the pool is flushed, the online record written and the store closed, and the
 process exits with 0; a second signal exits at once. A signal during the start's restore (a long
-replay) ends the start once the restore is done, with 0. The log lines that tools read (a refused
+replay) ends the start once the restore is done, with 0. Both roles catch the signals before they
+take the process lock, so a stop that finds the pid file always gets this shutdown, however soon
+after the start it comes. The log lines that tools read (a refused
 or undone block, a download, a fork) keep the reference's text; other lines are Heartwood's.
 
 The reference's marker files and reset variables work as in the reference: `clear-saved-states.lock`
