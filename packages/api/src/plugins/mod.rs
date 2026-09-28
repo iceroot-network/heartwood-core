@@ -10,11 +10,15 @@
 //! answered here); the payload of a `POST` (its size, type and JSON); the rate limit; the path
 //! parameters, the query and the payload against the route's schema (422); the semaphore; the
 //! handler. Every answer, errors included, gets `X-Block-Height` (the published tip),
-//! `connection: close`, `cache-control: no-cache` and, but for a preflight, `vary: origin` and the
-//! CORS headers of a request with an `Origin`. An unmatched path, and another method on a
-//! matched path, are answered 404 before the rate limit, as the reference's router answers them.
+//! `connection: close`, `cache-control: no-cache` and, but for a preflight's, the route's CORS
+//! headers: `vary: origin` and `access-control-expose-headers` always (hapi's origin setting `*`
+//! matches a request without an `Origin` too), `access-control-allow-origin` when the request has
+//! an `Origin`. A `GET`'s 200 answer with a body offers byte ranges (`accept-ranges: bytes`) and
+//! serves one ([`ranges`]). An unmatched path, and another method on a matched path, are answered
+//! 404 before the rate limit, as the reference's router answers them.
 
 mod limits;
+mod ranges;
 #[cfg(test)]
 mod tests;
 
@@ -130,6 +134,30 @@ impl From<ApiError> for Answer {
     }
 }
 
+/// What an answer's headers depend on in its request.
+struct Asked {
+    /// The request's `Origin`.
+    origin: Option<HeaderValue>,
+    /// Whether it is a `GET`: hapi offers byte ranges of a `GET`'s answer only.
+    get: bool,
+    /// Its `Range`, unless an `If-Range` makes hapi ignore it (no answer has an entity tag); an
+    /// empty one is none.
+    range: Option<HeaderValue>,
+}
+
+impl Asked {
+    fn of(request: &Request<Body>) -> Asked {
+        let headers = request.headers();
+        let given = |name: HeaderName| headers.get(name).filter(|value| !value.is_empty());
+        let conditional = given(header::IF_RANGE).is_some();
+        Asked {
+            origin: headers.get(header::ORIGIN).cloned(),
+            get: request.method() == Verb::GET,
+            range: given(header::RANGE).filter(|_| !conditional).cloned(),
+        }
+    }
+}
+
 /// The routes, the host and the plugins' state: what serves a request.
 pub(crate) struct Pipeline {
     routes: Vec<RouteId>,
@@ -173,13 +201,13 @@ impl Pipeline {
 
     /// Serve `request` from `peer`.
     pub(crate) async fn handle(&self, request: Request<Body>, peer: SocketAddr) -> Response<Body> {
-        let origin = request.headers().get(header::ORIGIN).cloned();
+        let asked = Asked::of(&request);
         let target = format!("{} {}", request.method(), request.uri().path());
         let answer = self.run(request, peer).await.unwrap_or_else(Answer::from);
         if answer.status >= 500 {
             heartwood_kernel::error!("Public API: {target} answered {}", answer.status);
         }
-        self.respond(answer, origin)
+        self.respond(answer, &asked)
     }
 
     async fn run(&self, request: Request<Body>, peer: SocketAddr) -> Result<Answer, ApiError> {
@@ -201,7 +229,13 @@ impl Pipeline {
         let path = path.strip_suffix('/').filter(|_| path.len() > 1);
         let path = path.unwrap_or(parts.uri.path());
         let method = match parts.method {
-            Verb::OPTIONS => return self.preflight(&parts.headers, path),
+            // hapi's preflight route has CORS off: its refusals carry no CORS headers.
+            Verb::OPTIONS => {
+                let refused = |error: ApiError| {
+                    Answer::new(error.status, Some(error.body()), Vec::new(), false)
+                };
+                return Ok(self.preflight(&parts.headers, path).unwrap_or_else(refused));
+            }
             Verb::GET | Verb::HEAD => Method::Get,
             Verb::POST => Method::Post,
             _ => return Err(not_found()),
@@ -308,16 +342,28 @@ impl Pipeline {
         limiter.consume(client, Instant::now())
     }
 
-    /// The response of `answer`, with the headers every response gets.
-    fn respond(&self, answer: Answer, origin: Option<HeaderValue>) -> Response<Body> {
-        let body = answer.body.as_ref().map(|body| js::stringify(body, 0));
+    /// The response of `answer` to the request `asked`, with the headers every response gets.
+    fn respond(&self, answer: Answer, asked: &Asked) -> Response<Body> {
+        let Answer {
+            mut status,
+            body,
+            headers: mut fixed,
+            cors,
+        } = answer;
+        let mut body = body.map(|body| js::stringify(&body, 0).into_bytes());
         let json = body.as_ref().map(|_| "application/json; charset=utf-8");
-        // hapi varies an answer it could compress (1 KiB or more) by `accept-encoding` too.
-        let large = body.as_ref().is_some_and(|body| body.len() >= 1024);
+        // hapi varies an answer it could compress (1 KiB or more) by `accept-encoding` too; the
+        // whole answer counts, before a range is cut from it.
+        let mut large = body.as_ref().is_some_and(|body| body.len() >= 1024);
+        if let Some(whole) = body.take_if(|body| asked.get && status == 200 && !body.is_empty()) {
+            let (served, part, headers) = ranges::serve(asked.range.as_ref(), whole);
+            large &= served != 416;
+            (status, body) = (served, Some(part));
+            fixed.extend(headers);
+        }
         let mut response = Response::new(body.map_or_else(Body::empty, Body::from));
         *response.status_mut() =
-            StatusCode::from_u16(answer.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let mut fixed = answer.headers;
+            StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let mut add = |name: HeaderName, value: &'static str| {
             fixed.push((name, HeaderValue::from_static(value)));
         };
@@ -325,7 +371,7 @@ impl Pipeline {
             add(header::CONTENT_TYPE, json);
         }
         add(header::CACHE_CONTROL, "no-cache");
-        if answer.cors {
+        if cors {
             add(
                 header::VARY,
                 if large {
@@ -334,8 +380,8 @@ impl Pipeline {
                     "origin"
                 },
             );
-            if let Some(origin) = origin {
-                add(header::ACCESS_CONTROL_EXPOSE_HEADERS, EXPOSED);
+            add(header::ACCESS_CONTROL_EXPOSE_HEADERS, EXPOSED);
+            if let Some(origin) = asked.origin.clone() {
                 fixed.push((header::ACCESS_CONTROL_ALLOW_ORIGIN, origin));
             }
         }

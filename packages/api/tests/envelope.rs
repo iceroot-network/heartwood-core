@@ -57,6 +57,11 @@ async fn every_answer_has_the_envelope_and_the_headers() {
             answer.header("content-type"),
             Some("application/json; charset=utf-8")
         );
+        assert_eq!(answer.header("accept-ranges"), Some("bytes"));
+        assert_eq!(
+            answer.header("access-control-expose-headers"),
+            Some("WWW-Authenticate,Server-Authorization")
+        );
     }
     server.stop().await;
 }
@@ -81,6 +86,11 @@ async fn errors_are_boom_bodies_with_the_same_headers() {
         );
         assert_eq!(answer.header("x-block-height"), Some("265"));
         assert_eq!(answer.header("connection"), Some("close"));
+        assert_eq!(
+            answer.header("access-control-expose-headers"),
+            Some("WWW-Authenticate,Server-Authorization")
+        );
+        assert_eq!(answer.header("accept-ranges"), None);
     }
     let large = vec![b' '; 1_048_577];
     let answer = http(

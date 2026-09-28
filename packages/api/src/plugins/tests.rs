@@ -116,6 +116,11 @@ async fn an_answer_has_the_reference_headers() {
         ("content-type", "application/json; charset=utf-8"),
         ("cache-control", "no-cache"),
         ("vary", "origin"),
+        (
+            "access-control-expose-headers",
+            "WWW-Authenticate,Server-Authorization",
+        ),
+        ("accept-ranges", "bytes"),
         ("x-block-height", "265"),
         ("connection", "close"),
     ];
@@ -147,6 +152,132 @@ async fn cors_headers_answer_a_request_with_an_origin_errors_included() {
         assert_eq!(exposed, Some("WWW-Authenticate,Server-Authorization"));
         assert_eq!(header(&headers, "x-block-height"), Some("265"));
     }
+}
+
+#[tokio::test]
+async fn cors_headers_but_the_origin_answer_a_request_without_one() {
+    let mut limited = config();
+    limited.rate_limit.points = 2;
+    let pipeline = pipeline(limited);
+    let head = Request::head("/api/node/status")
+        .body(Body::empty())
+        .unwrap();
+    let put = Request::put("/api/node/status")
+        .body(Body::empty())
+        .unwrap();
+    let cases = [
+        (get("/api/node/status"), 200, Some("bytes")),
+        (get("/api/node/status?bad=1"), 422, None),
+        (head, 429, None),
+        (get("/api/node/status"), 429, None),
+        (put, 404, None),
+    ];
+    for (request, status, ranges) in cases {
+        let target = format!("{} {}", request.method(), request.uri());
+        let (answered, headers, _) = call(&pipeline, request).await;
+        assert_eq!(answered, status, "{target}");
+        let exposed = header(&headers, "access-control-expose-headers");
+        assert_eq!(exposed, Some("WWW-Authenticate,Server-Authorization"));
+        assert_eq!(header(&headers, "vary"), Some("origin"), "{target}");
+        assert_eq!(header(&headers, "access-control-allow-origin"), None);
+        assert_eq!(header(&headers, "accept-ranges"), ranges, "{target}");
+    }
+    // Only a GET's answer offers ranges: not a HEAD's, nor a POST's.
+    let pipeline = pipeline_with(config(), echo);
+    let head = Request::head("/api/node/status")
+        .body(Body::empty())
+        .unwrap();
+    for request in [head, post("{}", &[])] {
+        let (status, headers, _) = call(&pipeline, request).await;
+        assert_eq!((status, header(&headers, "accept-ranges")), (200, None));
+    }
+}
+
+#[tokio::test]
+async fn a_range_of_an_answer_is_served_as_hapi_serves_it() {
+    let pipeline = pipeline(config());
+    let ranged = |range: &str, if_range: Option<&str>| {
+        let mut request = Request::get("/api/node/status").header("range", range);
+        if let Some(tag) = if_range {
+            request = request.header("if-range", tag);
+        }
+        request.body(Body::empty()).unwrap()
+    };
+    let exchange = |request: Request<Body>| {
+        let pipeline = &pipeline;
+        async move {
+            let response = pipeline.handle(request, CLIENT.parse().unwrap()).await;
+            let status = response.status().as_u16();
+            let range = response.headers().get("content-range").cloned();
+            let accept = response.headers().get("accept-ranges").cloned();
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let text = |value: Option<axum::http::HeaderValue>| {
+                value.map(|value| value.to_str().unwrap().to_owned())
+            };
+            (status, text(range), text(accept), bytes.to_vec())
+        }
+    };
+    let whole = exchange(get("/api/node/status")).await.3;
+    let length = whole.len();
+    let part = |from: usize, to: usize| whole[from..=to].to_vec();
+    let last = length - 1;
+    let served = |from: usize, to: usize| Some(format!("bytes {from}-{to}/{length}"));
+    let cases = [
+        ("bytes=0-9", 206, served(0, 9), part(0, 9)),
+        ("BYTES= , 2-4", 206, served(2, 4), part(2, 4)),
+        (
+            "bytes=-10",
+            206,
+            served(length - 10, last),
+            part(length - 10, last),
+        ),
+        ("bytes=5-", 206, served(5, last), part(5, last)),
+        ("bytes=0-99999", 206, served(0, last), whole.clone()),
+        // A suffix longer than the body is the whole body.
+        ("bytes=-99999", 206, served(0, last), whole.clone()),
+        // Ranges that touch merge into one; hapi gives the merged range the end of the later.
+        ("bytes=4-5,0-3", 206, served(0, 5), part(0, 5)),
+        ("bytes=0-10, 2-3", 206, served(0, 3), part(0, 3)),
+        ("bytes=0-1,3-4", 200, None, whole.clone()),
+    ];
+    for (range, status, content_range, body) in cases {
+        let answer = exchange(ranged(range, None)).await;
+        let accept = Some("bytes".to_owned());
+        assert_eq!(answer, (status, content_range, accept, body), "{range}");
+    }
+    let refused = serde_json::to_vec(&boom(
+        416,
+        "Requested Range Not Satisfiable",
+        "Requested Range Not Satisfiable",
+    ))
+    .unwrap();
+    let everything = Some(format!("bytes */{length}"));
+    for range in [
+        "bytes=5-2",
+        &format!("bytes={length}-"),
+        "bytes=-0",
+        "items=0-9",
+        "bytes=0-1,",
+        "bytes=0-1 ",
+        "bytes=0-1,,2-3",
+        "bytes=-",
+    ] {
+        let answer = exchange(ranged(range, None)).await;
+        assert_eq!(
+            answer,
+            (416, everything.clone(), None, refused.clone()),
+            "{range}"
+        );
+    }
+    // An `If-Range` never matches (no answer has an entity tag): the whole answer.
+    let answer = exchange(ranged("bytes=0-9", Some("\"x\""))).await;
+    assert_eq!(answer, (200, None, Some("bytes".to_owned()), whole.clone()));
+    // An error is never cut.
+    let request = Request::get("/api/nothing")
+        .header("range", "bytes=0-3")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(exchange(request).await.0, 404);
 }
 
 #[tokio::test]
@@ -215,9 +346,15 @@ async fn a_preflight_is_answered_as_hapi_answers_it() {
             json!({ "message": "CORS error: Some headers are not allowed" }),
         ),
     ];
+    // Refused or not, a preflight's answer has no CORS headers of its own: hapi's preflight route
+    // has CORS off.
     for (request, status, body) in cases {
-        let (answered, _, answer) = call(&pipeline, request).await;
+        let (answered, headers, answer) = call(&pipeline, request).await;
         assert_eq!((answered, answer), (status, body));
+        for name in ["vary", "access-control-expose-headers", "accept-ranges"] {
+            assert_eq!(header(&headers, name), None, "{name}");
+        }
+        assert_eq!(header(&headers, "x-block-height"), Some("265"));
     }
     let allowed = ("access-control-request-headers", "Content-Type, accept");
     assert_eq!(

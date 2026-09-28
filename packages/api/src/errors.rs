@@ -80,7 +80,8 @@ impl ApiError {
     }
 }
 
-/// The reason phrase of `status`, as Boom writes it (Node 18's status texts).
+/// The reason phrase of `status`, as Boom writes it (Node 18's status texts, and Boom's own for
+/// 416).
 pub fn reason_phrase(status: u16) -> &'static str {
     match status {
         400 => "Bad Request",
@@ -91,6 +92,7 @@ pub fn reason_phrase(status: u16) -> &'static str {
         408 => "Request Timeout",
         413 => "Payload Too Large",
         415 => "Unsupported Media Type",
+        416 => "Requested Range Not Satisfiable",
         422 => "Unprocessable Entity",
         429 => "Too Many Requests",
         500 => "Internal Server Error",
