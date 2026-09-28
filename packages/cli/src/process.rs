@@ -3,7 +3,8 @@
 //! - `start` refuses a running role; it spawns `<program> supervise` (the node's own program)
 //!   with an explicit argv, the caller's environment plus `env` and the instance's five
 //!   `CORE_PATH_*`, and `/dev/null` as its input. As a daemon the supervisor leaves the caller's
-//!   session and `start` returns once it holds its lock; otherwise `start` waits for it.
+//!   session and `start` returns once it holds its lock and has written its state file (a
+//!   supervisor that cannot write it gives a timeout after 10 s); otherwise `start` waits for it.
 //! - `stop` refuses a role that does not run; it sends SIGTERM to the supervisor and returns when
 //!   the supervisor, and so the node, has exited. A node without a supervisor gets SIGINT, then
 //!   SIGKILL after 30 s.
@@ -76,13 +77,16 @@ pub fn start(
     if daemon {
         command.stdout(Stdio::null()).stderr(Stdio::null());
     }
+    // A state file left by an earlier supervisor may name a pid the system has since reused.
+    let earlier = SupervisorState::read(&instance.state_path()).ok().flatten();
     let mut supervisor = command.spawn().map_err(|e| failed(e.to_string()))?;
     let lock = instance.supervisor_lock_path();
-    // The lock is this start's once the state file names its supervisor: a start beside this one
-    // may have taken it first.
+    // The lock is this start's once a state file written since the spawn names its supervisor: a
+    // start beside this one may have taken it first.
     let ours = |id: u32| -> Result<bool, ProcessError> {
         let state = SupervisorState::read(&instance.state_path()).ok().flatten();
-        Ok(is_locked(&lock)? && state.is_some_and(|state| state.supervisor_pid == id))
+        let fresh = state.filter(|state| Some(state) != earlier.as_ref());
+        Ok(is_locked(&lock)? && fresh.is_some_and(|state| state.supervisor_pid == id))
     };
     let deadline = Instant::now() + START_WAIT;
     loop {
