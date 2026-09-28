@@ -9,6 +9,8 @@
 //! candidate. The transactions that failed are then removed from the pool with their senders'
 //! later ones.
 
+use std::sync::Arc;
+
 use heartwood_crypto::identities::Address;
 use heartwood_crypto::{Transaction, TransactionId};
 use heartwood_state::TransactionHandlers;
@@ -27,7 +29,7 @@ pub struct Collated {
     pub candidates: Vec<Transaction>,
     /// The transactions removed from the pool because they failed, with their senders' later
     /// ones.
-    pub removed: Vec<Transaction>,
+    pub removed: Vec<Arc<Transaction>>,
 }
 
 /// Collate a block candidate from `pool`.

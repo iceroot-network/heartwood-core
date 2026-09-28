@@ -4,9 +4,12 @@
 //! As in the reference, each sender mempool has its own copy of the state's wallets, so a
 //! sender's view never sees another sender's pending transactions: a pending transfer to a
 //! wallet does not fund that wallet's own pool transactions.
+//!
+//! The transactions are held shared ([`Arc`]), so that a published view of the pool
+//! ([`crate::PoolView`]) holds the same ones and copies none.
 
-use std::iter::Rev;
 use std::slice::Iter;
+use std::sync::Arc;
 
 use heartwood_crypto::identities::Address;
 use heartwood_crypto::{Transaction, TransactionId};
@@ -25,7 +28,7 @@ use crate::service::PoolContext;
 #[derive(Debug, Clone)]
 pub struct SenderMempool {
     address: Address,
-    transactions: Vec<Transaction>,
+    transactions: Vec<Arc<Transaction>>,
     undo: Vec<TxUndo>,
     state: SenderState,
 }
@@ -57,13 +60,22 @@ impl SenderMempool {
     }
 
     /// The transactions, the oldest first.
-    pub fn from_earliest(&self) -> Iter<'_, Transaction> {
-        self.transactions.iter()
+    pub fn from_earliest(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = &Transaction> + ExactSizeIterator + Clone {
+        self.transactions.iter().map(Arc::as_ref)
     }
 
     /// The transactions, the newest first.
-    pub fn from_latest(&self) -> Rev<Iter<'_, Transaction>> {
-        self.transactions.iter().rev()
+    pub fn from_latest(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = &Transaction> + ExactSizeIterator + Clone {
+        self.from_earliest().rev()
+    }
+
+    /// The transactions as the pool holds them, shared, the oldest first.
+    pub fn shared(&self) -> Iter<'_, Arc<Transaction>> {
+        self.transactions.iter()
     }
 
     /// The sender's state: its view of the wallets.
@@ -130,7 +142,7 @@ impl SenderMempool {
 
     /// Append an applied transaction and its undo record.
     pub(crate) fn push(&mut self, transaction: Transaction, undo: TxUndo) {
-        self.transactions.push(transaction);
+        self.transactions.push(Arc::new(transaction));
         self.undo.push(undo);
     }
 
@@ -141,7 +153,7 @@ impl SenderMempool {
         &mut self,
         ctx: &PoolContext<'_>,
         id: &TransactionId,
-    ) -> Vec<Transaction> {
+    ) -> Vec<Arc<Transaction>> {
         let Some(index) = self.position(id) else {
             return Vec::new();
         };
@@ -165,7 +177,7 @@ impl SenderMempool {
     /// Remove the forged transaction `id` and every earlier one, without a revert (the state
     /// has applied them). Returns the removed transactions, oldest first; none when `id` is not
     /// here.
-    pub fn remove_forged_transaction(&mut self, id: &TransactionId) -> Vec<Transaction> {
+    pub fn remove_forged_transaction(&mut self, id: &TransactionId) -> Vec<Arc<Transaction>> {
         let Some(index) = self.position(id) else {
             return Vec::new();
         };

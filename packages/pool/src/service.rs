@@ -6,6 +6,7 @@
 //! queue drains; after a revert, `readd` with the reverted blocks' transactions.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use heartwood_crypto::identities::Address;
 use heartwood_crypto::transactions::types::Asset;
@@ -82,10 +83,10 @@ pub struct Readded {
 pub struct Removed {
     /// The transactions older than `maxTransactionAge`, with their senders' later transactions,
     /// in the order they were removed.
-    pub old: Vec<Transaction>,
+    pub old: Vec<Arc<Transaction>>,
     /// The lowest-priority transactions removed while the pool held more than
     /// `maxTransactionsInPool`, with their senders' later transactions.
-    pub lowest_priority: Vec<Transaction>,
+    pub lowest_priority: Vec<Arc<Transaction>>,
 }
 
 /// The transaction pool: its options, its storage and its sender mempools.
@@ -241,7 +242,7 @@ impl Pool {
         ctx: &PoolContext<'_>,
         sender: &Address,
         id: &TransactionId,
-    ) -> Result<Vec<Transaction>, StorageError> {
+    ) -> Result<Vec<Arc<Transaction>>, StorageError> {
         if !self.storage.has(id)? {
             return Ok(Vec::new());
         }
@@ -258,7 +259,7 @@ impl Pool {
         &mut self,
         sender: &Address,
         id: &TransactionId,
-    ) -> Result<Vec<Transaction>, StorageError> {
+    ) -> Result<Vec<Arc<Transaction>>, StorageError> {
         if !self.storage.has(id)? {
             return Ok(Vec::new());
         }
@@ -363,7 +364,8 @@ impl Pool {
         id: &TransactionId,
     ) -> Result<(), Refusal> {
         let address = transaction.data().sender_address(ctx.params());
-        let ids = |removed: Vec<Transaction>| removed.iter().map(|pending| *pending.id()).collect();
+        let ids =
+            |removed: Vec<Arc<Transaction>>| removed.iter().map(|pending| *pending.id()).collect();
         let (excluded, scratch): (Vec<TransactionId>, _) = if *sender == address {
             // The sender's own transactions go: its copy is the one they leave.
             let mut victim = self.mempool.sender(sender).cloned();
@@ -413,7 +415,7 @@ impl Pool {
 
     /// Remove the stored transactions at or below the expired height, the newest first, each
     /// with its sender's later ones.
-    fn remove_old(&mut self, ctx: &PoolContext<'_>) -> Result<Vec<Transaction>, StorageError> {
+    fn remove_old(&mut self, ctx: &PoolContext<'_>) -> Result<Vec<Arc<Transaction>>, StorageError> {
         let mut removed = Vec::new();
         for (id, sender) in self.storage.old(self.expired_height(ctx))? {
             if let Ok(sender) = Address::from_base58(&sender) {
@@ -429,7 +431,7 @@ impl Pool {
         &mut self,
         ctx: &PoolContext<'_>,
         max: usize,
-    ) -> Result<Vec<Transaction>, StorageError> {
+    ) -> Result<Vec<Arc<Transaction>>, StorageError> {
         let mut removed = Vec::new();
         while self.mempool.len() > max {
             let Some((sender, id, _)) = self.lowest(ctx) else {
@@ -451,7 +453,7 @@ impl Pool {
         ctx: &PoolContext<'_>,
         sender: &Address,
         id: &TransactionId,
-    ) -> Result<Vec<Transaction>, StorageError> {
+    ) -> Result<Vec<Arc<Transaction>>, StorageError> {
         let removed = self.mempool.remove_transaction(ctx, sender, id);
         for transaction in &removed {
             self.storage.remove(transaction.id())?;
