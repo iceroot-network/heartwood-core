@@ -221,6 +221,8 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
             "remoteAccess is empty: no forger can reach this relay's internal routes"
         );
     }
+    let devnet = heartwood_p2p::devnet::guard(&p2p, &relay.crypto.network.name);
+    devnet.map_err(|error| config(error.to_string()))?;
     let blockchain_options = options::blockchain(&relay.entry(Package::Blockchain));
     let blockchain_options = Arc::new(blockchain_options.map_err(config)?);
     let mut api_config = api_options(&relay)?;
@@ -629,14 +631,17 @@ fn client(
     let runtime = Handle::current();
     let client = Arc::new(
         Communicator::new(CommunicatorParts {
-            transport: Arc::new(Connector::new()),
+            transport: Arc::new(Connector::for_addressing(&options.addressing)),
             verifier: Arc::new(PeerVerifier::new(
                 Arc::clone(&chain),
                 view.clone(),
                 Arc::clone(clock),
             )),
             rules: Arc::clone(&rules),
-            probe: Arc::new(HttpProbe::default()),
+            probe: Arc::new(HttpProbe {
+                bind: options.addressing.bind_address(),
+                ..HttpProbe::default()
+            }),
             repository: Arc::clone(&repository),
             chain: Arc::clone(&chain),
             online: view,
@@ -741,10 +746,10 @@ fn seeded(
     Ok((options, None))
 }
 
-/// The client's rules of `options`, letting `seed` through the address rules in a harness build.
+/// The client's rules of `options` (a devnet node's addressing among them), letting `seed`
+/// through the address rules in a harness build.
 fn rules(options: &P2pOptions, seed: Option<IpAddr>) -> Rules {
-    let (rate, posts) = (options.rate_limit, options.rate_limit_post_transactions);
-    let rules = heartwood_p2p::utils::rules::Rules::new(rate, posts);
+    let rules = heartwood_p2p::utils::rules::Rules::from_options(options);
     #[cfg(feature = "difftest")]
     let rules = crate::harness::SeedRules::new(rules, seed);
     #[cfg(not(feature = "difftest"))]

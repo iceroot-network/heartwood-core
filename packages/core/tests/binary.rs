@@ -2,8 +2,9 @@
 //! opens no listening socket, forges through its relay, refuses a second forger of its instance,
 //! and stops on SIGINT after its post in flight), the forger's refusals of its key file and its
 //! profile, `start` and `stop` of a role with their refusals, the supervisor's `errored` state,
-//! the colon spellings, and `network generate` against the genesis vectors. The relay's tests,
-//! which need the peer-to-peer server, are in `forging_e2e.rs` and run with the integration tests.
+//! the colon spellings, `network generate` against the genesis vectors, and a relay's refusal of
+//! devnet addressing outside its guards. The relay's other tests, which need the peer-to-peer
+//! server, are in `forging_e2e.rs` and run with the integration tests.
 //!
 //! Every relay and forger address of these tests is in the loopback block 127.13.0.0/24.
 
@@ -311,6 +312,56 @@ fn the_colon_spellings_are_the_same_commands() {
     );
     let version = heartwood().arg("version").output().unwrap();
     assert!(String::from_utf8_lossy(&version.stdout).starts_with("4.3.1-heartwood."));
+}
+
+#[test]
+fn a_relay_with_devnet_addressing_refuses_to_start_outside_the_guards() {
+    let node = Node::new("relay-devnet-guards");
+    let peers = r#"{"list": [{"ip": "127.13.0.41", "port": 6002}]}"#;
+    fs::write(node.config().join("peers.json"), peers).unwrap();
+    let address = "127.13.0.40";
+    let relay = |remote_access: &[&str], host: Option<&str>| {
+        let p2p = json!({
+            "package": "@solar-network/p2p",
+            "options": {
+                "remoteAccess": remote_access,
+                "devnet": { "addressing": "alias", "address": address },
+            },
+        });
+        let mut plugins = common::relay_plugins();
+        let list = plugins.as_array_mut().unwrap();
+        let at = list
+            .iter()
+            .position(|p| p["package"] == "@solar-network/p2p");
+        list[at.unwrap()] = p2p;
+        let app = json!({"core": {"plugins": []}, "relay": {"plugins": plugins}, "forger": {"plugins": []}});
+        fs::write(node.config().join("app.json"), app.to_string()).unwrap();
+        let env = host.map(|host| format!("CORE_P2P_HOST={host}\n"));
+        fs::write(node.config().join(".env"), env.unwrap_or_default()).unwrap();
+        // A relay that passed the guards would run on: it is killed after 60 s and fails.
+        let args = ["relay", "run", "--token", "t", "--network", "devnet"];
+        let mut command = node.command(&args);
+        let stdio = || std::process::Stdio::piped();
+        let mut child = command.stdout(stdio()).stderr(stdio()).spawn().unwrap();
+        let started = Instant::now();
+        while child.try_wait().unwrap().is_none() {
+            if started.elapsed() > Duration::from_secs(60) {
+                let _ = child.kill();
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(!output.status.success());
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+    let refused = relay(&[address], None);
+    let expected = format!("the server listens on 0.0.0.0, not on the node's address {address}");
+    assert!(refused.contains(&expected), "{refused}");
+    let refused = relay(&["10.0.0.1"], Some(address));
+    assert!(
+        refused.contains("remoteAccess must list loopback addresses only"),
+        "{refused}"
+    );
 }
 
 #[test]
