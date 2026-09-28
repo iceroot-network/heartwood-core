@@ -359,7 +359,8 @@ fn pairs(raw: &str) -> Vec<(String, String)> {
             continue;
         }
         let (key, value) = segment.split_once('=').unwrap_or((segment, ""));
-        out.push((decode(key, false), decode(value, true)));
+        let (key_escaped, value_escaped) = escapes(segment);
+        out.push((decode(key, key_escaped), decode(value, value_escaped)));
         budget -= 1;
         if last || budget == 0 {
             break;
@@ -368,28 +369,58 @@ fn pairs(raw: &str) -> Vec<(String, String)> {
     out
 }
 
-/// A key or value as Node decodes it: `+` becomes a space, and when the text holds an escape
-/// (`%` and two hex digits) it is decoded as `decodeURIComponent` does, or, where that fails, as
-/// `querystring.unescapeBuffer` does (escapes as bytes, other characters truncated to a byte,
-/// then UTF-8 with replacement characters).
-fn decode(raw: &str, value: bool) -> String {
-    let mut run = 0;
-    let mut escaped = false;
-    for c in raw.chars() {
-        if c == '%' {
-            run = 1;
-        } else if c == '+' && value {
-            // In a value Node checks `+` before the escape, so it does not end a run.
-        } else if run > 0 && c.is_ascii_hexdigit() {
-            run += 1;
-            if run == 3 {
-                escaped = true;
-                break;
+/// Whether Node's `querystring.parse` decodes the key and the value of `segment` (one pair, without
+/// its `&`): it decodes a text in which its loop found `%` and two hex digits. The loop keeps one
+/// count for the key and the value, and once the key reads as encoded it goes on to check the
+/// key's other characters as the value's, so a second escape in the key marks the value as
+/// encoded too. A `+` ends a run in a key, not in a value.
+fn escapes(segment: &str) -> (bool, bool) {
+    let (mut key, mut value, mut in_key, mut run) = (false, false, true, 0);
+    for c in segment.chars() {
+        let hex = c.is_ascii_hexdigit();
+        if in_key {
+            if c == '=' {
+                (in_key, run) = (false, 0);
+                continue;
             }
-        } else {
-            run = 0;
+            if !key {
+                match c {
+                    '%' => run = 1,
+                    _ if run > 0 && hex => {
+                        run += 1;
+                        key = run == 3;
+                    }
+                    _ => run = 0,
+                }
+                if c == '%' || hex && run > 0 {
+                    continue;
+                }
+            }
+            if c == '+' {
+                continue;
+            }
+        } else if c == '+' {
+            continue;
+        }
+        if !value {
+            match c {
+                '%' => run = 1,
+                _ if run > 0 && hex => {
+                    run += 1;
+                    value = run == 3;
+                }
+                _ => run = 0,
+            }
         }
     }
+    (key, value)
+}
+
+/// A key or value as Node decodes it: `+` becomes a space, and when Node's loop found it encoded
+/// ([`escapes`]) it is decoded as `decodeURIComponent` does, or, where that fails, as
+/// `querystring.unescapeBuffer` does (escapes as bytes, other characters truncated to a byte,
+/// then UTF-8 with replacement characters).
+fn decode(raw: &str, escaped: bool) -> String {
     let text = raw.replace('+', " ");
     if !escaped {
         return text;

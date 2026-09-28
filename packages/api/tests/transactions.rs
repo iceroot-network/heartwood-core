@@ -328,3 +328,90 @@ async fn a_transaction_shows_its_block_and_confirmations() {
         assert_eq!(data["timestamp"]["epoch"], json!(block.header().timestamp));
     }
 }
+
+/// A subscriber that records the events logged on the threads it is the default of, each as its
+/// fields (`name=value`).
+#[derive(Default, Clone)]
+struct Capture(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+impl tracing::Subscriber for Capture {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        struct Fields(String);
+        impl tracing::field::Visit for Fields {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                self.0.push_str(&format!("{}={value:?} ", field.name()));
+            }
+        }
+        let mut fields = Fields(String::new());
+        event.record(&mut fields);
+        self.0.lock().unwrap().push(fields.0);
+    }
+
+    fn enter(&self, _: &tracing::span::Id) {}
+
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+#[tokio::test]
+async fn a_store_failure_is_answered_with_a_logged_500() {
+    use heartwood_api::schemas::{parse_query, validate_query};
+    let fixture = fixture();
+    let capture = Capture::default();
+    let _logging = tracing::subscriber::set_default(capture.clone());
+    let list = |raw: &str| {
+        let query = validate_query(RouteId::TransactionsIndex, &parse_query(raw)).unwrap();
+        request(RouteId::TransactionsIndex, &[], query)
+    };
+    let failed = |line: &String| {
+        line.starts_with("message=A read of the store for the API failed: ")
+            && line.ends_with("severity=\"error\" ")
+    };
+    // The store failure a client can reach: a memo pattern that ends with its escape character.
+    // The reference's repository catches it and answers an empty page.
+    let answer = transactions::index(fixture.ctx.clone(), list("memo=%25%5C")).await;
+    assert_eq!(answer.unwrap_err(), heartwood_api::ApiError::internal());
+    let lines = capture.0.lock().unwrap().clone();
+    assert_eq!(
+        lines.iter().filter(|line| failed(line)).count(),
+        1,
+        "{lines:?}"
+    );
+    // A statement that runs past the connection's timeout (the database's
+    // `apiConnectionTimeout`), which the reference answers the same way.
+    let context = &fixture.ctx;
+    let timed =
+        heartwood_database::Readers::with_timeout(&fixture.settings, 1, std::time::Duration::ZERO);
+    let ctx = heartwood_api::ApiContext {
+        state: context.state.clone(),
+        pool: context.pool.clone(),
+        status: context.status.clone(),
+        peers: context.peers.clone(),
+        history: std::sync::Arc::new(timed.unwrap()),
+        submit: context.submit.clone(),
+        node: context.node.clone(),
+        config: context.config.clone(),
+    };
+    let answer = transactions::index(std::sync::Arc::new(ctx), list("limit=100")).await;
+    assert_eq!(answer.unwrap_err(), heartwood_api::ApiError::internal());
+    let lines = capture.0.lock().unwrap().clone();
+    assert_eq!(
+        lines.iter().filter(|line| failed(line)).count(),
+        2,
+        "{lines:?}"
+    );
+    // The same list through the fixture's readers is answered.
+    let answer = transactions::index(fixture.ctx.clone(), list("limit=100")).await;
+    assert_eq!(answer.map(|reply| reply.status), Ok(200));
+}

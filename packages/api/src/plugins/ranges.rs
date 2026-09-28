@@ -15,14 +15,14 @@ use crate::errors::ApiError;
 
 /// The status, the body and the headers of a `GET`'s 200 answer `body` (not empty) for the
 /// request's `Range`.
-pub(super) fn serve(range: Option<&HeaderValue>, body: Vec<u8>) -> (u16, Vec<u8>, Headers) {
+pub(super) fn serve(range: Option<&str>, body: Vec<u8>) -> (u16, Vec<u8>, Headers) {
     let length = body.len() as u64;
     let accept = (header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     let Some(range) = range else {
         return (200, body, vec![accept]);
     };
     let text = |text: String| HeaderValue::try_from(text).unwrap_or(HeaderValue::from_static(""));
-    let ranges = range.to_str().ok().and_then(|range| read(range, length));
+    let ranges = read(range, length);
     match ranges.as_deref() {
         None => {
             let error = ApiError::new(416, "Requested Range Not Satisfiable");

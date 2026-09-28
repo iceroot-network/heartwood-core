@@ -8,9 +8,10 @@
 //! read are ignored.
 //!
 //! Each connection is served for at most the socket timeout (300 s when it is 0), headers
-//! included, and answers one request (`connection: close`). A request whose head reaches Node's
-//! 16 KiB is answered as the reference answers it, with a bare 400. Stopping the server closes
-//! the listener and waits for the connections in flight, each bounded by that timeout.
+//! included, and answers one request (`connection: close`). Its head is read first as Node's
+//! parser reads it (`head`): a head that parser refuses, one of 16 KiB or more included, is
+//! answered as the reference answers it, with a bare 400. Stopping the server closes the listener
+//! and waits for the connections in flight, each bounded by that timeout.
 
 mod head;
 
@@ -351,26 +352,36 @@ pub(crate) async fn accept(
     while connections.join_next().await.is_some() {}
 }
 
-/// Serve one connection for at most `timeout`, headers included: its head is read first, and
-/// refused as the reference refuses one of 16 KiB or more ([`head`]).
+/// Serve one connection for at most `timeout`, headers included: its head is read first as Node's
+/// parser reads it, and refused where that parser refuses it ([`head`]).
 async fn connection(
     mut stream: TcpStream,
     peer: SocketAddr,
     pipeline: Arc<Pipeline>,
     timeout: Duration,
 ) {
-    let service = hyper::service::service_fn(move |request: hyper::Request<_>| {
-        let pipeline = Arc::clone(&pipeline);
-        async move { Ok::<_, Infallible>(pipeline.handle(request.map(Body::new), peer).await) }
-    });
     let served = async move {
-        let Ok(Some(read)) = head::read(&mut stream).await else {
+        let Ok(Some(head)) = head::read(&mut stream).await else {
             return;
         };
+        let node = head.node;
+        let service = hyper::service::service_fn(move |request: hyper::Request<_>| {
+            let pipeline = Arc::clone(&pipeline);
+            let mut request = request.map(Body::new);
+            request.extensions_mut().insert(node.clone());
+            async move { Ok::<_, Infallible>(pipeline.handle(request, peer).await) }
+        });
         let mut builder = http1::Builder::new();
         builder.timer(TokioTimer::new());
         builder.header_read_timeout(timeout);
-        let stream = TokioIo::new(head::Rewind::new(read, stream));
+        // Node's server allows half-open sockets: a client that shut its side after its request
+        // still gets the answer.
+        builder.half_close(true);
+        // hyper's default is 100 fields; Node's server takes any number.
+        if head.fields > 100 {
+            builder.max_headers(head.fields);
+        }
+        let stream = TokioIo::new(head::Rewind::new(head.bytes, stream));
         let _ = builder.serve_connection(stream, service).await;
     };
     let _ = tokio::time::timeout(timeout, served).await;

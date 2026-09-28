@@ -872,10 +872,21 @@ not part of the contract); the semaphore; the handler. Every answer, errors incl
 `X-Block-Height` (the published tip), `connection: close` and `cache-control: no-cache`; every
 answer but a preflight's carries `vary: origin` and `access-control-expose-headers`, and
 `access-control-allow-origin` when the request has an `Origin`; a preflight is answered 204 with
-the reference's fixed set of headers, and its refusals carry no CORS header. A `GET`'s 200 answer with a body offers byte ranges and serves one range as hapi does
-(206, or 416 for a range it cannot serve). A `GET` or `HEAD` that no route matches is charged a
-point and answered 404, as the reference's catch-all route answers it (a path that does not decode
-is one of the known gaps below).
+the reference's fixed set of headers, and its refusals carry no CORS header. A `GET`'s 200 answer
+with a body offers byte ranges and serves one range as hapi does (206, or 416 for a range it
+cannot serve). A `GET` or `HEAD` that no route matches is answered as the reference's catch-all
+route (its documentation's) answers it: a path that does not decode, as hapi normalises it, is 400
+"Bad Request" without a charge (500 to its preflight); any other is charged a point and answered
+404, or 403 for a path of fewer than 20 characters that leads above the documentation's directory
+(`/..%2Fx`), as inert refuses it. The headers are read as Node gives them to hapi: as Latin-1, and a
+repeated header's values joined with `, ` (the first one kept for `Content-Type`,
+`Content-Length` and the others Node does not join), so two `Range` headers do not read and two
+`Content-Encoding` values name no decoder. A preflight's empty `Origin` or
+`Access-Control-Request-Method` is a missing one, and an echoed `Origin` is written back in the
+bytes Node writes (UTF-8 when the answer has a body that hapi would not compress, Latin-1
+otherwise, the encoding chosen from `Accept-Encoding` as `@hapi/accept` chooses it). A gzip body
+is read member by member, and a zero byte where a member would start ends it, as Node's gunzip
+reads it.
 
 The query grammar is the reference's: Node's `querystring` (at most 1,000 pairs, a repeated key as
 a list), then its comma and dot plugins, with their throws, sparse lists, JavaScript's key order
@@ -883,11 +894,38 @@ and a later key changing a value an earlier one set. It builds a query with a lo
 and writes it out at most 128 levels deep and with at most 16,384 holes of sparse lists, so no
 query costs unbounded work. The bounds show only in the `asset` criteria of the three transaction
 lists, which answer 500 for a deeper value; the reference answers 200 up to about 3,000 levels and
-500 from about 4,000, when its link rendering overflows its stack. A request head whose target and
-header names and values reach 16,384 bytes is answered `HTTP/1.1 400 Bad Request` with no header,
-as the reference's server answers Node's refusal. Lists have the reference's pagination:
-`offset=0` is ignored and another offset replaces the page, and the links are relative to the
-configured base path, with the path written as hapi's request URL writes it.
+500 from about 4,000, when its link rendering overflows its stack.
+
+A request's head is read as Node 18's parser reads it (llhttp 6.1.1, in the loose mode Node builds
+it in), before hyper serves the connection. What that parser refuses (a head whose target and header
+names and values reach 16,384 bytes; an unknown or lowercase method; a byte it does not take in the
+target, a name or a value; a version other than 0.9, 1.0, 1.1 and 2.0; a folded line; a bad or
+repeated `Content-Length`; `Transfer-Encoding` after `chunked` or beside a length) is answered
+`HTTP/1.1 400 Bad Request` with no header, as the reference's server answers it. Line ends before
+the request line are skipped without being counted. A `CONNECT` and a stream that ends inside its
+head get no answer, as from Node's server; a target that starts with `*` is hapi's 400 "Invalid
+URL"; a client that shuts its side of the connection after its request is answered, as Node's server
+allows half-open sockets. Where the parser fails on what follows the head while hapi serves the
+request, hapi answers that request with its JSON 400, before any of its steps and without a charge,
+and so does Heartwood for what was read with the head: a `Transfer-Encoding` whose last coding is
+not `chunked`, and, on a connection llhttp keeps alive and does not upgrade, bytes after the request
+(and after its body, unless a route serves the request as a `GET` or `HEAD`, which hapi answers
+without reading its body) that start no request the parser takes. A request after it that Node's
+server closes the connection on (a `CONNECT`, or a method it does not know) leaves the first
+unanswered. A head the parser accepts is written again for hyper with the meaning Node's server
+gives it: single spaces and `HTTP/1.1` in the request line (Node answers every version it accepts as
+`HTTP/1.1`), the target's bytes that hyper refuses rewritten (a byte beyond ASCII as the UTF-8 of
+its Latin-1 character, another one percent-encoded) and its fragment dropped, the first 1,000 header
+fields (Node's server passes on no more) and those that frame the body, less those whose name hyper
+refuses (an empty name, or one with a space: none that the API reads) and an empty
+`Transfer-Encoding`, which names no coding for Node's parser. The API reads the target itself as
+Node gives it to hapi: each byte a Latin-1 character, the path before the first `?` and the query
+after it, so the router, the catch-all's 20-character test and the query grammar see what the
+reference's do.
+
+Lists have the reference's pagination: `offset=0` is ignored and another offset replaces the page,
+and the links are relative to the configured base path, with the path written as hapi's request
+URL writes it.
 
 The history routes read the store as the reference reads PostgreSQL (see heartwood-database). A
 transfer's resource shows the sum of its transfers, but the `amount` criteria and orders read only
@@ -912,9 +950,10 @@ each case shows only with the request named:
 - ties of a requested order are broken by the block height and the sequence;
 - pagination links drop the configured base path, where the reference drops the first four
   characters of the path whatever the base path is;
-- no response is compressed: the reference gzips a JSON answer of 1,024 bytes or more for a client
-  that accepts gzip, and such an answer carries no `accept-ranges` and is never cut to a range;
-  Heartwood answers identity, with the reference's `vary`;
+- no response is compressed: the reference compresses a JSON answer of 1,024 bytes or more with
+  the gzip or deflate its client's `Accept-Encoding` chooses, and such an answer carries no
+  `accept-ranges` and is never cut to a range; Heartwood answers identity, with the reference's
+  `vary` and the echoed `Origin` in the bytes the reference writes it in;
 - the 5 s socket timeout bounds the whole connection, headers included, where the reference's is
   5 s without activity; with a socket timeout of 0 a connection is bounded by 300 s, where the
   reference bounds only the request's reception by that time;
@@ -926,7 +965,8 @@ each case shows only with the request named:
 - the router takes the path as sent: the reference first decodes percent-escaped unreserved
   characters and resolves dot segments, so `/%61pi/...` or `/api/./peers` is 404 here;
 - the reference's documentation pages (`/`, `/index.html`, `/api.json`, `/swagger-ui.css`,
-  `/swagger-ui.js`) and the routes a relay does not serve are unmatched paths here, including
+  `/swagger-ui.js`, and the paths that reach them through an escaped slash, such as `/..%2Fwww`)
+  and the routes a relay does not serve are unmatched paths here, including
   `/blocks/first`, `/blocks/missed`, `/transactions/schemas` and `/wallets/top`, which a served
   parameter route would otherwise take and which the reference answers 200;
 - a request cookie that the reference refuses (400) is not read;
@@ -938,25 +978,30 @@ each case shows only with the request named:
 - a `POST /transactions` batch is at most 40 transactions, the pool's default
   `maxTransactionsPerRequest`; the reference takes the configured value;
 - a request head that has not ended after 417,792 bytes (possible only with bytes Node does not
-  count, such as white space before a value) is 400, where Node reads on.
+  count, such as white space before a value) is 400, where Node reads on;
+- a method that Node's parser reads and its server does not know (`PRI` without a version, or a
+  method of RTSP with an `RTSP/` version or none) makes the reference's server throw, which stops
+  its process; Heartwood closes that connection without an answer.
 
-Known gaps, not on purpose and still to be fixed; each needs a malformed or unusual request that
-common HTTP clients do not send:
+The server is hyper, which reads some requests otherwise than Node's server even after the head
+reader; none is sent by a common HTTP client:
 
-- an unmatched path that does not decode (`/api/nothing%zz`) is a charged 404, and its preflight
-  204; the reference answers 400 without a charge, and 500 to the preflight. A short path that
-  climbs above the root (`/..%2Fx`) is 404 here and 403 there;
-- line ends before the request line: with two, the head's 16,384-byte bound does not apply to that
-  request, and with one, the request line is counted and a head up to 13 bytes below the bound
-  is refused; Node skips them without counting;
-- hyper, the HTTP parser, refuses a head with 101 or more header fields (431), a target with `"`, `<`,
-  `>`, a backtick or bytes that are not UTF-8, and a header name with a space, all of which Node
-  accepts; an unknown method is a 404 here and Node's bare 400 there;
-- a gzip body followed by zero bytes is refused, a repeated `Content-Encoding` is read by its
-  first value, and a `Content-Type` with a byte beyond ASCII is read as absent; hapi decodes the
-  first, and refuses the second and the third with a 422;
-- a preflight with an empty `Origin` or `Access-Control-Request-Method` is not refused as hapi
-  refuses a missing one (404 with its CORS message).
+- what the client sends after its request's head beyond what was read with it, and a chunked body:
+  Node's parser reads them as they come, and hapi answers its 400 when the parser fails on them
+  before the answer is sent (a malformed chunk, or bytes that start no request); Heartwood judges
+  only what was read with the head, and hyper reads a chunked body itself (a malformed chunk is a
+  422 or goes unread). A submission whose JSON does not parse, followed by such bytes, is the
+  reference's 422 without its plugins' headers, and Heartwood's 400;
+- an `Expect` other than `100-continue` on HTTP/1.1: Node's server answers 417 itself and keeps the
+  connection; Heartwood serves the request;
+- a body that does not arrive in full: the reference reads the body of a `POST`, of a preflight
+  and of a request that no route takes before it answers, and answers nothing if the connection
+  ends first; Heartwood answers a preflight or an unmatched request without reading its body, and
+  a `POST /transactions` whose body ends early with a 422;
+- an absolute-form target (`GET http://host/path`, as a proxy is sent a request): the reference
+  reads its path and query with the WHATWG URL parser, and answers 400 "Invalid URL" for a host that
+  parser refuses (`http://a@b:c/`); Heartwood reads them as hyper gives them, and hyper refuses with
+  a 400 of its own headers some hosts that parser takes (`http://a%41/`).
 
 ```sh
 cargo test -p heartwood-api --locked                                # routes, grammar, envelope, plugins

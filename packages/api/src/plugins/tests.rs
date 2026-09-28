@@ -12,6 +12,7 @@ use heartwood_kernel::config::{Env, Options};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Notify, watch};
+use tokio::task::JoinHandle;
 
 use super::{Grammar, Host, Pipeline};
 use crate::context::{ApiReply, ApiRequest, HandlerFuture, RouteId};
@@ -392,6 +393,189 @@ async fn a_preflight_is_answered_as_hapi_answers_it() {
         .0,
         204
     );
+    // hapi tests the headers for truth, and reads a repeated one as Node joins it.
+    let empty_method = ("access-control-request-method", "");
+    let empty_origin = ("origin", "");
+    let asked = |headers: &[(&str, &str)]| call(&pipeline, preflight("/api/transactions", headers));
+    let missing = |name: &str| {
+        boom(
+            404,
+            "Not Found",
+            &format!("CORS error: Missing {name} header"),
+        )
+    };
+    let get = ("access-control-request-method", "GET");
+    for (headers, status, body) in [
+        (
+            vec![origin, empty_method],
+            404,
+            missing("Access-Control-Request-Method"),
+        ),
+        (vec![empty_origin, get], 404, missing("Origin")),
+        (vec![empty_origin, method], 404, missing("Origin")),
+        (
+            vec![origin, method, get],
+            404,
+            boom(404, "Not Found", "Not Found"),
+        ),
+        (
+            vec![origin, empty_method, method],
+            404,
+            boom(404, "Not Found", "Not Found"),
+        ),
+        (
+            vec![
+                origin,
+                method,
+                ("access-control-request-headers", "accept, accept"),
+            ],
+            200,
+            json!({ "message": "CORS error: Some headers are not allowed" }),
+        ),
+        (
+            vec![
+                origin,
+                method,
+                ("access-control-request-headers", "accept"),
+                ("access-control-request-headers", "x-custom"),
+            ],
+            200,
+            json!({ "message": "CORS error: Some headers are not allowed" }),
+        ),
+    ] {
+        let (answered, _, answer) = asked(&headers).await;
+        assert_eq!((answered, answer), (status, body), "{headers:?}");
+    }
+    let (status, headers, _) = asked(&[origin, ("origin", "https://b"), method]).await;
+    let allowed = header(&headers, "access-control-allow-origin");
+    assert_eq!(
+        (status, allowed),
+        (204, Some("https://wallet.example, https://b"))
+    );
+    // The path of a GET or HEAD that no route matches must decode, as a parameter must.
+    let undecodable = preflight(
+        "/x%zz",
+        &[origin, ("access-control-request-method", "HEAD")],
+    );
+    let (status, headers, _) = call(&pipeline, undecodable).await;
+    assert_eq!((status, header(&headers, "vary")), (500, None));
+    let unrouted = preflight("/x%zz", &[origin, method]);
+    assert_eq!(call(&pipeline, unrouted).await.0, 404);
+}
+
+#[tokio::test]
+async fn an_unmatched_path_is_answered_as_the_reference_catch_all_answers_it() {
+    let mut limited = config();
+    limited.rate_limit.points = 2;
+    let pipeline = pipeline(limited);
+    let head = |uri: &str| Request::head(uri).body(Body::empty()).unwrap();
+    // A path that does not decode: hapi's 400, before the rate limit.
+    let bad_request = boom(400, "Bad Request", "Bad Request");
+    for _ in 0..3 {
+        for uri in ["/api/nothing%zz", "/x%zz", "/%C3", "/api/wallets/a%2Fb/x%"] {
+            let (status, _, body) = call(&pipeline, get(uri)).await;
+            assert_eq!((status, body), (400, bad_request.clone()), "{uri}");
+        }
+        assert_eq!(call(&pipeline, head("/x%zz")).await.0, 400);
+    }
+    // A short path that leads above the documentation's directory: inert's 403, charged.
+    let (status, headers, body) = call(&pipeline, get("/..%2Fx")).await;
+    assert_eq!((status, body), (403, boom(403, "Forbidden", "Forbidden")));
+    assert_eq!(header(&headers, "vary"), Some("origin"));
+    assert_eq!(call(&pipeline, get("/api/nothing")).await.0, 404);
+    assert_eq!(call(&pipeline, get("/..%2Fx")).await.0, 429);
+    assert_eq!(call(&pipeline, get("/x%zz")).await.0, 400);
+}
+
+/// `request`'s answer from `pipeline`: its status, the bytes of `name`, and its body.
+async fn raw_header(pipeline: &Pipeline, request: Request<Body>, name: &str) -> (u16, Vec<u8>) {
+    let response = pipeline.handle(request, CLIENT.parse().unwrap()).await;
+    let value = response.headers().get(name).map(|v| v.as_bytes().to_vec());
+    (response.status().as_u16(), value.unwrap_or_default())
+}
+
+#[tokio::test]
+async fn request_headers_are_read_as_node_gives_them_to_hapi() {
+    let pipeline = pipeline(config());
+    let with = |method: &str, uri: &str, headers: &[(&str, &[u8])]| {
+        let mut request = Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            request = request.header(*name, axum::http::HeaderValue::from_bytes(value).unwrap());
+        }
+        request.body(Body::empty()).unwrap()
+    };
+    let status = "/api/node/status";
+    // Repeated values are joined with `, `: two ranges do not read, two empty `If-Range` are one.
+    for (headers, answered) in [
+        (
+            vec![("range", &b"bytes=0-1"[..]), ("range", b"bytes=3-4")],
+            416,
+        ),
+        (vec![("range", &b""[..]), ("range", b"bytes=3-4")], 416),
+        (vec![("if-range", &b""[..]), ("range", b"bytes=0-1")], 206),
+        (
+            vec![
+                ("if-range", &b""[..]),
+                ("if-range", b""),
+                ("range", b"bytes=0-1"),
+            ],
+            200,
+        ),
+    ] {
+        let (code, _) = raw_header(&pipeline, with("GET", status, &headers), "vary").await;
+        assert_eq!(code, answered, "{headers:?}");
+    }
+    let origins = [("origin", &b"a"[..]), ("origin", b"b")];
+    let origin = "access-control-allow-origin";
+    let joined = raw_header(&pipeline, with("GET", status, &origins), origin).await;
+    assert_eq!(joined, (200, b"a, b".to_vec()));
+    // A byte beyond ASCII is a Latin-1 character, which Node writes back in UTF-8 when it writes
+    // the head with a body given as text, and in Latin-1 otherwise.
+    let latin1 = [("origin", &b"\xe9"[..])];
+    for (method, range, answered, bytes) in [
+        ("GET", None, 200, &b"\xc3\xa9"[..]),
+        ("GET", Some(&b"bytes=0-1"[..]), 206, b"\xe9"),
+        ("GET", Some(b"bytes=900-901"), 416, b"\xc3\xa9"),
+        ("HEAD", None, 200, b"\xe9"),
+    ] {
+        let mut headers = latin1.to_vec();
+        headers.extend(range.map(|range| ("range", range)));
+        let echoed = raw_header(&pipeline, with(method, status, &headers), origin).await;
+        assert_eq!(echoed, (answered, bytes.to_vec()), "{method} {range:?}");
+    }
+    let unmatched = raw_header(&pipeline, with("GET", "/api/nothing", &latin1), origin).await;
+    assert_eq!(unmatched, (404, b"\xc3\xa9".to_vec()));
+    // hapi writes the head of an answer it compresses (1 KiB or more, for an `Accept-Encoding`
+    // from which `@hapi/accept` picks gzip or deflate) in Latin-1.
+    let large = format!("{status}?a={}", "x".repeat(1_200));
+    for (encoding, bytes) in [
+        ("gzip", &b"\xe9"[..]),
+        ("deflate, gzip", b"\xe9"),
+        ("x-gzip", b"\xe9"),
+        ("gzip;q=0.5, identity;q=0.4", b"\xe9"),
+        ("identity", b"\xc3\xa9"),
+        ("gzip;q=0", b"\xc3\xa9"),
+        ("gzip, identity", b"\xc3\xa9"),
+        ("*", b"\xc3\xa9"),
+        ("gzip;v=1", b"\xc3\xa9"),
+    ] {
+        let headers = [latin1[0], ("accept-encoding", encoding.as_bytes())];
+        let echoed = raw_header(&pipeline, with("GET", &large, &headers), origin).await;
+        assert_eq!(echoed, (200, bytes.to_vec()), "{encoding}");
+    }
+    let small = [latin1[0], ("accept-encoding", &b"gzip"[..])];
+    let echoed = raw_header(&pipeline, with("GET", status, &small), origin).await;
+    assert_eq!(echoed, (200, b"\xc3\xa9".to_vec()));
+    // The first entry of the joined `X-Forwarded-For`.
+    let mut trusting = config();
+    trusting.trust_proxy = true;
+    let proxied = pipeline_with(trusting, echo);
+    let forwarded = [
+        ("x-forwarded-for", &b" 10.0.0.5"[..]),
+        ("x-forwarded-for", b"10.0.0.6"),
+    ];
+    let (_, _, body) = call(&proxied, with("GET", status, &forwarded)).await;
+    assert_eq!(body["data"]["client"], "10.0.0.5");
 }
 
 #[tokio::test]
@@ -640,6 +824,49 @@ async fn a_compressed_payload_is_read_as_hapi_decompresses_it() {
             422,
             refused("Payload content length greater than maximum allowed: 1048576"),
         ),
+        // Node's gunzip reads members one after another, and stops at a zero byte after one.
+        (
+            [compress("gzip", br#"{"e":"#), compress("gzip", b"5}")].concat(),
+            "gzip",
+            200,
+            json!({ "e": 5 }),
+        ),
+        (
+            [compress("gzip", br#"{"f":6}"#), vec![0; 8]].concat(),
+            "gzip",
+            200,
+            json!({ "f": 6 }),
+        ),
+        (
+            [
+                compress("gzip", br#"{"g":"#),
+                vec![0; 2],
+                compress("gzip", b"7}"),
+            ]
+            .concat(),
+            "gzip",
+            422,
+            refused("Invalid request payload JSON format"),
+        ),
+        (
+            [compress("gzip", br#"{"h":8}"#), b"xyz".to_vec()].concat(),
+            "gzip",
+            422,
+            refused("Invalid compressed payload"),
+        ),
+        (
+            Vec::new(),
+            "gzip",
+            422,
+            refused("Invalid compressed payload"),
+        ),
+        // Its inflate ignores what follows the stream.
+        (
+            [compress("deflate", br#"{"i":9}"#), b"xyz".to_vec()].concat(),
+            "deflate",
+            200,
+            json!({ "i": 9 }),
+        ),
     ];
     for (body, encoding, status, expected) in cases {
         let headers = [
@@ -653,6 +880,67 @@ async fn a_compressed_payload_is_read_as_hapi_decompresses_it() {
         };
         assert_eq!((answered, answer), (status, expected), "{encoding}");
     }
+    // Repeated encodings are joined, which names no decoder: the body is read as it is.
+    let gzip = compress("gzip", br#"{"j":10}"#);
+    for encodings in [["gzip", "gzip"], ["gzip", ""], ["", "gzip"]] {
+        let headers = [
+            ("content-encoding", encodings[0]),
+            ("content-encoding", encodings[1]),
+        ];
+        let (answered, _, answer) = call(&pipeline, post(gzip.clone(), &headers)).await;
+        let expected = refused("Invalid request payload JSON format");
+        assert_eq!((answered, answer), (422, expected), "{encodings:?}");
+    }
+    let headers = [("content-encoding", "gzip"), ("content-encoding", "gzip")];
+    let (answered, _, answer) = call(&pipeline, post(r#"{"k":11}"#, &headers)).await;
+    assert_eq!(
+        (answered, &answer["data"]["payload"]),
+        (200, &json!({ "k": 11 }))
+    );
+}
+
+#[tokio::test]
+async fn a_content_type_is_read_as_latin1_text() {
+    let pipeline = pipeline(config());
+    let typed = |content_type: &[u8]| {
+        let value = axum::http::HeaderValue::from_bytes(content_type).unwrap();
+        Request::post("/api/transactions")
+            .header("content-type", value)
+            .body(Body::from(r#"{"a":1}"#))
+            .unwrap()
+    };
+    let unsupported = "Unsupported Media Type";
+    let missing = "Invalid content-type header: multipart missing boundary";
+    for (content_type, expected) in [
+        (&b"application/json\xe9"[..], Err(unsupported)),
+        (b"\xe9/json", Err(unsupported)),
+        (b"APPLICATION/JSON\xc9", Err(unsupported)),
+        (b"application/json\x85x", Err(unsupported)),
+        (b"application\xa0/json", Err("Invalid content-type header")),
+        (b"multipart/mixed;\x85boundary=x", Err(missing)),
+        (b"multipart/mixed;\xa0boundary=x", Err(unsupported)),
+        (b"multipart/mixed; boundary=\x85x", Err(unsupported)),
+        (b"text/plain\xe9", Ok(json!(r#"{"a":1}"#))),
+        (b"application/\xe9+json", Ok(json!({ "a": 1 }))),
+    ] {
+        let (status, _, body) = call(&pipeline, typed(content_type)).await;
+        let answer = match status {
+            200 => Ok(body["data"]["payload"].clone()),
+            _ => Err(body["message"].as_str().unwrap_or_default().to_owned()),
+        };
+        let expected = expected.map_err(str::to_owned);
+        assert_eq!(answer, expected, "{content_type:?}");
+    }
+    // Node gives hapi the first of two content types.
+    let two = Request::post("/api/transactions")
+        .header("content-type", "")
+        .header("content-type", "text/plain")
+        .body(Body::from(r#"{"a":1}"#))
+        .unwrap();
+    assert_eq!(
+        call(&pipeline, two).await.2["data"]["payload"],
+        json!({ "a": 1 })
+    );
 }
 
 #[tokio::test]
@@ -1030,12 +1318,62 @@ async fn a_head_that_node_refuses_is_answered_as_hapi_answers_it() {
         client.read_to_string(&mut answer).await.unwrap();
         answer
     };
-    // Node counts the target's bytes (and the header names and values) up to 16 KiB.
-    let get = |length: usize| format!("GET /api/{} HTTP/1.1\r\n\r\n", "q".repeat(length - 5));
-    let refused = exchange(vec![get(16_384)]).await;
-    assert_eq!(refused, "HTTP/1.1 400 Bad Request\r\n\r\n");
-    let routed = exchange(vec![get(16_383)]).await;
-    assert!(routed.starts_with("HTTP/1.1 404 Not Found\r\n"), "{routed}");
+    // Node counts the target's bytes (and the header names and values) up to 16 KiB; line ends
+    // before the request line are skipped, uncounted.
+    let bare = "HTTP/1.1 400 Bad Request\r\n\r\n";
+    for lead in ["", "\n", "\r\n\r\n"] {
+        let get = |length: usize| {
+            let target = "q".repeat(length - 5);
+            format!("{lead}GET /api/{target} HTTP/1.1\r\n\r\n")
+        };
+        assert_eq!(exchange(vec![get(16_384)]).await, bare, "{lead:?}");
+        let routed = exchange(vec![get(16_383)]).await;
+        assert!(routed.starts_with("HTTP/1.1 404 Not Found\r\n"), "{routed}");
+    }
+    // What Node's parser refuses is refused so, and what it reads is served as Node serves it.
+    let fields: String = (0..150).map(|i| format!("x{i}: v\r\n")).collect();
+    let cases = [
+        ("FOO /api/node/status HTTP/1.1\r\n\r\n".to_owned(), bare),
+        ("GET /api/node/status HTTP/1.1\nx: y\n\n".to_owned(), bare),
+        (
+            "\rGET /api/node/status HTTP/2.0\r\nx y: z\r\n\r\n".to_owned(),
+            "HTTP/1.1 200 OK\r\n",
+        ),
+        (
+            format!("GET /api/node/status HTTP/1.1\r\n{fields}\r\n"),
+            "HTTP/1.1 200 OK\r\n",
+        ),
+        (
+            "GET /api/node/status HTTP/1.1\r\nTransfer-Encoding:  \r\n\r\n".to_owned(),
+            "HTTP/1.1 200 OK\r\n",
+        ),
+        (
+            "GET /api/node/status?a=\"<>\" HTTP/1.1\r\n\r\n".to_owned(),
+            "HTTP/1.1 200 OK\r\n",
+        ),
+        (
+            "GET *x HTTP/1.1\r\n\r\n".to_owned(),
+            "HTTP/1.1 400 Bad Request\r\ncontent-type",
+        ),
+        ("CONNECT a:1 HTTP/1.1\r\n\r\n".to_owned(), ""),
+    ];
+    for (request, start) in cases {
+        let answer = exchange(vec![request.clone()]).await;
+        match start {
+            "" | "HTTP/1.1 400 Bad Request\r\n\r\n" => assert_eq!(answer, start, "{request:?}"),
+            _ => assert!(answer.starts_with(start), "{request:?}: {answer}"),
+        }
+    }
+    let invalid = exchange(vec!["GET *x HTTP/1.1\r\n\r\n".to_owned()]).await;
+    assert!(
+        invalid.ends_with(r#""message":"Invalid URL"}"#),
+        "{invalid}"
+    );
+    let quoted = exchange(vec![
+        "GET /api/node/status?a=\"<>\" HTTP/1.1\r\n\r\n".to_owned(),
+    ])
+    .await;
+    assert!(quoted.contains(r#""query":{"a":"\"<>\""}"#), "{quoted}");
     // The bytes read with the head are served again, and the body that comes after them.
     let body = r#"{"transactions":12}"#;
     let head = format!(
@@ -1050,6 +1388,150 @@ async fn a_head_that_node_refuses_is_answered_as_hapi_answers_it() {
             "{answer}"
         );
     }
+    stop.send(true).unwrap();
+    task.await.unwrap();
+}
+
+/// `pipeline` served on a local port: its address, and what stops it.
+async fn listening(pipeline: Pipeline) -> (SocketAddr, watch::Sender<bool>, JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop, stopped) = watch::channel(false);
+    let timeout = Duration::from_secs(5);
+    let task = tokio::spawn(server::accept(
+        listener,
+        Arc::new(pipeline),
+        stopped,
+        timeout,
+    ));
+    (address, stop, task)
+}
+
+/// The answer of the server at `address` to `request`, sent at once and followed by the end of
+/// the client's side when `shut`: its status line, its head and its body read as JSON (null
+/// when it has none, or none that reads).
+async fn exchange_bytes(
+    address: SocketAddr,
+    request: &[u8],
+    shut: bool,
+) -> (String, String, Value) {
+    let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
+    client.write_all(request).await.unwrap();
+    if shut {
+        client.shutdown().await.unwrap();
+    }
+    let mut answer = Vec::new();
+    let _ = client.read_to_end(&mut answer).await;
+    let answer = String::from_utf8_lossy(&answer).into_owned();
+    let (head, body) = answer.split_once("\r\n\r\n").unwrap_or((&answer, ""));
+    let line = head.lines().next().unwrap_or_default().to_owned();
+    (
+        line,
+        head.to_owned(),
+        serde_json::from_str(body).unwrap_or(Value::Null),
+    )
+}
+
+/// The plugins over the served grammar, and a handler that echoes the request.
+fn served_grammar() -> Pipeline {
+    let host = Host {
+        config: Arc::new(config()),
+        height: Box::new(|| 265),
+        dispatch: Box::new(echo),
+    };
+    Pipeline::with_parts(RouteId::ALL.to_vec(), host, Grammar::SCHEMAS)
+}
+
+#[tokio::test]
+async fn a_target_is_read_as_node_gives_it_to_hapi() {
+    let (address, stop, task) = listening(served_grammar()).await;
+    // Measured with Node 18.20.8 and hapi 20.2.1: each byte of the target is a Latin-1
+    // character, and the query is that text as Node's querystring decodes it (an escape Node
+    // does not find leaves a pair as it is, and its byte fallback truncates a character).
+    let request =
+        b"GET /api/node/status?%41%zz\xe9=1&b=\"<>\"&c=%zz\"\xe9&d=\xc3\xa9&%41\"=%zz\xe9 \
+        HTTP/1.1\r\n\r\n";
+    let (line, _, body) = exchange_bytes(address, request, false).await;
+    assert_eq!(line, "HTTP/1.1 200 OK");
+    let query = json!({
+        "A%zz\u{fffd}": "1", "b": "\"<>\"", "c": "%zz\"\u{e9}", "d": "\u{c3}\u{a9}",
+        "A\"": "%zz\u{e9}",
+    });
+    assert_eq!(body["data"]["query"], query);
+    // The catch-all's short path counts a byte as a character.
+    let (line, _, _) =
+        exchange_bytes(address, b"GET /..%2F\xe9\xe9\xe9 HTTP/1.1\r\n\r\n", false).await;
+    assert_eq!(line, "HTTP/1.1 403 Forbidden");
+    // Within Node's 16 KiB, a target of bytes beyond ASCII is served.
+    let high = b"\xc3\xa9".repeat(6_000);
+    for (start, answered) in [
+        (&b"GET /"[..], "404 Not Found"),
+        (b"GET /api/node/status?q=", "200 OK"),
+    ] {
+        let request = [start, &high, b" HTTP/1.1\r\n\r\n"].concat();
+        let (line, _, _) = exchange_bytes(address, &request, false).await;
+        assert_eq!(line, format!("HTTP/1.1 {answered}"));
+    }
+    stop.send(true).unwrap();
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_client_that_ends_its_side_after_its_request_is_answered() {
+    // Node's server allows half-open sockets: it answers a request whose client shut its side,
+    // and gives no answer when that side ends before the head does.
+    let (address, stop, task) = listening(pipeline(config())).await;
+    let body = r#"{"transactions":12}"#;
+    let post = format!(
+        "POST /api/transactions HTTP/1.1\r\ncontent-length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    for request in ["GET /api/node/status HTTP/1.1\r\n\r\n", &post] {
+        let (line, _, answer) = exchange_bytes(address, request.as_bytes(), true).await;
+        assert_eq!(line, "HTTP/1.1 200 OK", "{request:?}");
+        assert!(answer["data"]["route"].is_string(), "{request:?}");
+    }
+    let unended = exchange_bytes(address, b"GET /api/node/status HTTP/1.1\r\n", true).await;
+    assert_eq!(unended.0, "");
+    stop.send(true).unwrap();
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_request_whose_following_bytes_node_refuses_is_answered_with_hapi_s_400() {
+    // Node's parser fails on what follows the request while hapi serves it: hapi answers that
+    // request with its 400 before any of its steps, so without a charge, with the CORS headers of
+    // the route it finds (none for an `OPTIONS`). Measured with Node 18.20.8 and hapi 20.2.1.
+    let mut limited = config();
+    limited.rate_limit.points = 1;
+    let (address, stop, task) = listening(pipeline(limited)).await;
+    let refused: [&[u8]; 6] = [
+        b"GET /api/node/status HTTP/1.1\r\nOrigin: o\r\n\r\n\x00",
+        b"GET /x%zz HTTP/1.1\r\nOrigin: o\r\n\r\nFOO / HTTP/1.1\r\n\r\n",
+        b"GET /api/nothing HTTP/1.1\r\nOrigin: o\r\ncontent-length: 2\r\n\r\n{}\x00",
+        b"POST /api/transactions HTTP/1.1\r\nOrigin: o\r\ncontent-length: 2\r\n\r\n{}GARBAGE",
+        b"POST /api/transactions HTTP/1.1\r\nOrigin: o\r\ntransfer-encoding: gzip\r\n\r\n",
+        b"OPTIONS /api/node/status HTTP/1.1\r\nOrigin: o\r\n\r\n\x00",
+    ];
+    for request in refused {
+        let shown = String::from_utf8_lossy(request).into_owned();
+        let (line, head, body) = exchange_bytes(address, request, false).await;
+        assert_eq!(line, "HTTP/1.1 400 Bad Request", "{shown:?}");
+        assert_eq!(body, boom(400, "Bad Request", "Bad Request"), "{shown:?}");
+        let cors = !shown.starts_with("OPTIONS");
+        assert_eq!(head.contains("vary: origin"), cors, "{shown:?}");
+        let echoed = head.contains("access-control-allow-origin: o");
+        assert_eq!(echoed, cors, "{shown:?}");
+        assert!(head.contains("x-block-height: 265"), "{shown:?}");
+    }
+    // A `GET` that a route serves is answered before Node's parser reads on after its body. None
+    // of the refusals was charged: the window's one point was left for it.
+    let request = b"GET /api/node/status HTTP/1.1\r\ncontent-length: 2\r\n\r\n{}\x00";
+    let (line, _, _) = exchange_bytes(address, request, false).await;
+    assert_eq!(line, "HTTP/1.1 200 OK");
+    let request = b"GET /api/node/status HTTP/1.1\r\n\r\n";
+    let (line, _, _) = exchange_bytes(address, request, false).await;
+    assert_eq!(line, "HTTP/1.1 429 Too Many Requests");
     stop.send(true).unwrap();
     task.await.unwrap();
 }
