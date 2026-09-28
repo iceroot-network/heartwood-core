@@ -5,9 +5,9 @@
 //! already; it runs the jobs in order while the queue is not paused, reporting each outcome to
 //! [`QueueEvents::finished`] before it takes the next job, so a job's clear of the queue removes
 //! the jobs after it. When the processing ends with no job waiting (every job ran, or the queue
-//! was cleared), the queue drains: the node re-adds the pool and saves the online record
-//! ([`crate::work::Work::Drain`]), then [`QueueEvents::drained`] runs (the service's part, the
-//! machine's `PROCESSFINISHED`). So a resume of an idle, empty queue drains at once, and a pause
+//! was cleared), the queue drains: the node saves the online record, then re-adds the pool
+//! ([`crate::work::Work::Drain`]), and [`QueueEvents::drained`] runs once the save is done (the
+//! service's part, the machine's `PROCESSFINISHED`). So a resume of an idle, empty queue drains at once, and a pause
 //! leaves the waiting jobs without a drain. `stop` pauses, drops the waiting jobs, and waits for
 //! the running one to finish (committed or rolled back).
 
@@ -156,7 +156,7 @@ async fn run(shared: Arc<Shared>, node: NodeHandle, events: Arc<dyn QueueEvents>
         // Sent before another processing can start, so the node drains before its next jobs.
         let (answer, drained) = oneshot::channel();
         let drain = !stopped && queue.jobs.is_empty();
-        let sent = drain && node.submit(Work::Drain(answer)).is_ok();
+        let sent = drain && node.submit(Work::Drain(answer, false)).is_ok();
         sent.then_some(drained)
     };
     shared.1.notify_waiters();

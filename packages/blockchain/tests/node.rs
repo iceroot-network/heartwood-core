@@ -153,8 +153,12 @@ async fn the_pool_steps_per_batch_per_applied_block_and_per_drain() {
         version,
     };
     node.handle.online(set).unwrap();
-    node.handle.drain().await.unwrap();
-    assert!(pooled(&node).is_empty());
+    // The queue's drain answers once the record is saved; its re-add follows.
+    let (answer, drained) = oneshot::channel();
+    node.handle.submit(Work::Drain(answer, false)).unwrap();
+    drained.await.unwrap().unwrap();
+    let mut pool = node.handle.pool();
+    pool.wait_for(|view| view.is_empty()).await.unwrap();
     let stored = Database::open(&settings(&node.dir)).unwrap();
     let rows = stored.delegate_versions().unwrap();
     let row = rows

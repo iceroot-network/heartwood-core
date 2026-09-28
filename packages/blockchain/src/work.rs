@@ -132,9 +132,11 @@ pub enum Work {
     /// Process pool entries with the channel's processor, broadcast what it admits for
     /// broadcast, and answer the processor's result.
     PoolEntries(Channel, Vec<Entry>, oneshot::Sender<ProcessorResult>),
-    /// The queue's drain: re-add every pool transaction with its checks, then save the online
-    /// record.
-    Drain(oneshot::Sender<Result<(), NodeError>>),
+    /// A drain: save the online record, then re-add every pool transaction with its checks;
+    /// answered after the re-add when the flag is set (the start's re-add, which the reference
+    /// waits for), else right after the save (the queue's drain, whose re-add the reference does
+    /// not wait for before `PROCESSFINISHED`; the node's next work waits for it).
+    Drain(oneshot::Sender<Result<(), NodeError>>, bool),
     /// Remove the last blocks (at most the tip minus one), re-add their transactions to the pool
     /// in chain order, and answer the new tip's height.
     RemoveBlocks(u32, oneshot::Sender<Result<u32, NodeError>>),
@@ -224,10 +226,10 @@ impl NodeHandle {
         result.await.map_err(|_| NodeStopped)
     }
 
-    /// Run the queue's drain and wait for it.
+    /// Run a drain and wait for it, the pool's re-add included.
     pub async fn drain(&self) -> Result<(), NodeError> {
         let (answer, result) = oneshot::channel();
-        self.submit(Work::Drain(answer))?;
+        self.submit(Work::Drain(answer, true))?;
         result.await.map_err(|_| NodeError::Stopped)?
     }
 

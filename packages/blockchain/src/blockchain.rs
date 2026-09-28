@@ -14,8 +14,8 @@
 //!   a fork recovery runs.
 //! - Removal ([`Blockchain::remove_blocks`]), the fork block and the job's fork check, `isSynced`,
 //!   the wake-up timer (60 s without an accepted block: back to syncing), and the job outcomes and
-//!   the queue's drain ([`crate::queue::QueueEvents`]): after the queue had the node re-add the
-//!   pool and save the online record, `PROCESSFINISHED`.
+//!   the queue's drain ([`crate::queue::QueueEvents`]): once the queue had the node save the
+//!   online record (the pool's re-add follows on the node thread), `PROCESSFINISHED`.
 //! - The machine ([`Blockchain::dispatch`]) and its actions ([`crate::state_machine`]).
 //!
 //! The service runs its actions and loops on the runtime of [`BlockchainParts::runtime`]. It keeps

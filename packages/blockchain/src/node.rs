@@ -181,12 +181,19 @@ impl NodeThread {
                 publish.pool.send_replace(Arc::new(parts.pool.view()));
                 let _ = answer.send(result);
             }
-            Work::Drain(answer) => {
-                let readded = parts.pool.readd(&env!(parts), &[]).map_err(NodeError::from);
+            Work::Drain(answer, after_readd) => {
+                let (saved, mut answer) = (parts.pool.save_online(&mut parts.store), Some(answer));
+                if !after_readd || saved.is_err() {
+                    let _ = answer.take().map(|answer| answer.send(saved.clone()));
+                }
+                saved?;
+                let readded = parts.pool.readd(&env!(parts), &[]).map(drop);
                 publish.pool.send_replace(Arc::new(parts.pool.view()));
-                let drained = readded.and_then(|_| parts.pool.save_online(&mut parts.store));
-                let _ = answer.send(drained.clone());
-                drained?;
+                let readded = readded.map_err(NodeError::from);
+                if let Some(answer) = answer {
+                    let _ = answer.send(readded.clone());
+                }
+                readded?;
             }
             Work::RemoveBlocks(count, answer) => {
                 let removed = self.remove_blocks(count);

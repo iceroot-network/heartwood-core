@@ -315,7 +315,7 @@ async fn queue_with(name: &str, held: &[u32], clear: Option<u32>, stop: Option<u
                     };
                     let _ = answer.send(outcome);
                 }
-                Work::Drain(answer) => {
+                Work::Drain(answer, _) => {
                     script.log.push("drain".to_owned());
                     let _ = answer.send(Ok(()));
                 }

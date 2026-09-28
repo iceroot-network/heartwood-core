@@ -593,7 +593,7 @@ impl FakeNode {
                         self.record(format!("pool {channel:?} {}", entries.len()));
                         let _ = answer.send(ProcessorResult::default());
                     }
-                    Work::Drain(answer) => {
+                    Work::Drain(answer, _) => {
                         self.record("drain".into());
                         let _ = answer.send(Ok(()));
                     }
