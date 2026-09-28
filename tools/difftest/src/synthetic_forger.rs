@@ -10,8 +10,9 @@
 //!   accepted, not broadcast, logged `Discarded block <h> because it was processed too late` and
 //!   marked as forked with one block to roll back; the recovery's revert of one block and the
 //!   block's return (its re-apply) give equal lines on both sides;
-//! - `forger-posted-twice`: the same bytes posted twice in time, the second an
-//!   `EqualToLastBlock` broadcast again.
+//! - `forger-posted-twice`: the same bytes posted twice in time, the second job dropped as
+//!   applied already (the job's first height is not above the tip): no processing, no second
+//!   broadcast, the machine back to idle.
 //!
 //! Heartwood's side runs its job on a node at the chain's tip ([`JobRig`]), and applies to the
 //! job's end the blockchain service's lateness rule ([`forger_blocks::too_late`]) as the service
