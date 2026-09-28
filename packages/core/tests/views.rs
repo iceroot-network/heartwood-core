@@ -6,14 +6,18 @@
 mod common;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use common::{Setup, corpus, run};
 use heartwood_api::{PeerList, SubmitTransactions};
+use heartwood_blockchain::events::CommitObserver;
 use heartwood_blockchain::events::{NodeEvent, NodeListener};
 use heartwood_blockchain::pool_task::TransactionBroadcast;
 use heartwood_blockchain::rows::block_row;
-use heartwood_blockchain::{ChainState, ChainStatus, Channel, NodeHandle, OnlineWork, Work};
+use heartwood_blockchain::{
+    BlockProcessor, BlockchainOptions, ChainState, ChainStatus, Channel, IncomingBlock, Job, Node,
+    NodeHandle, NodeParts, OnlineWork, PoolTask, Work,
+};
 use heartwood_core::app::restored;
 use heartwood_core::config::RelayConfig;
 use heartwood_core::views::{
@@ -21,17 +25,26 @@ use heartwood_core::views::{
 };
 use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Block, Milestones, PublicKeyBytes, Transaction};
-use heartwood_database::{BlockRow, RoundRow};
+use heartwood_database::{BlockRow, Readers, RoundRow, Settings};
 use heartwood_kernel::bus::EventBus;
-use heartwood_kernel::{Event, RoundInfo};
+use heartwood_kernel::{Event, RoundInfo, SystemClock, calculate_round};
 use heartwood_p2p::errors::LookupError;
 use heartwood_p2p::monitor::PeerInfo;
-use heartwood_p2p::{BlockLookup, ChainView, OnlineSink, PeerEvents};
+use heartwood_p2p::{BlockLookup, ChainView, DownloadedBlock, OnlineSink, PeerEvents};
 use heartwood_pool::view::PoolViewOptions;
-use heartwood_pool::{Entry, Options as PoolOptions, PoolView, ProcessorResult};
-use heartwood_state::StateView;
+use heartwood_pool::{Entry, Options as PoolOptions, Pool, PoolView, ProcessorResult};
+use heartwood_state::machine::Applied;
+use heartwood_state::{State, StateView};
+use heartwood_transactions::Handlers;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, watch};
+
+/// Lock `mutex`, a poisoned one included.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// The corpus's blocks after the genesis block.
 fn blocks(milestones: &Milestones) -> Vec<Block> {
@@ -266,8 +279,173 @@ fn the_block_lookup_reads_memory_first_then_the_store_in_the_order_asked() {
         max_delegates: 53,
     };
     assert_eq!(view.round_delegate_keys(round(2)).unwrap(), keys);
-    // A round that is not stored: the current round's delegates.
-    assert_eq!(view.round_delegate_keys(round(9)).unwrap().len(), 53);
+    // A round that is not stored: the current round's delegates, and only for the current round.
+    assert_eq!(view.round_delegate_keys(round(1)).unwrap().len(), 53);
+    assert!(view.round_delegate_keys(round(9)).is_err());
+    // A round a running job started, before its commit stores it.
+    let started = vec![keys[2], keys[0]];
+    lock(&view.chain).rounds_started.push((9, started.clone()));
+    assert_eq!(view.round_delegate_keys(round(9)).unwrap(), started);
+    assert_eq!(view.round_delegate_keys(round(2)).unwrap(), keys);
+}
+
+/// What the probe read at a block that started a round, before the job's commit.
+#[derive(Debug)]
+struct MidJob {
+    tip: u32,
+    started: (u64, Vec<PublicKeyBytes>),
+    asked: Result<Vec<PublicKeyBytes>, LookupError>,
+    earlier: Vec<Result<Vec<PublicKeyBytes>, LookupError>>,
+    next: Result<Vec<PublicKeyBytes>, LookupError>,
+}
+
+/// At each block that starts a round, the delegates the peer verifier would read for the round of
+/// the tip's next block, while the job has not committed.
+struct Probe {
+    view: Arc<OnceLock<NodeView>>,
+    seen: Arc<Mutex<Vec<MidJob>>>,
+}
+
+impl CommitObserver for Probe {
+    fn applied(&mut self, _state: &State, _block: &Block) {}
+
+    fn applied_with(&mut self, _state: &State, _block: &Block, applied: &Applied) {
+        let (Some(view), Some(start)) = (self.view.get(), &applied.round_started) else {
+            return;
+        };
+        let tip = view.last_block().height();
+        let round = |round: u64| RoundInfo {
+            round,
+            ..calculate_round(tip + 1, view.milestones())
+        };
+        let keys = start.delegates.iter().map(|delegate| delegate.public_key);
+        let earlier = (2..start.round).map(|r| view.round_delegate_keys(round(r)));
+        lock(&self.seen).push(MidJob {
+            tip,
+            started: (start.round, keys.collect()),
+            asked: view.round_delegate_keys(calculate_round(tip + 1, view.milestones())),
+            earlier: earlier.collect(),
+            next: view.round_delegate_keys(round(start.round + 1)),
+        });
+    }
+
+    fn reverted(&mut self, _state: &State) {}
+
+    fn restarted(&mut self, _state: &State) {}
+}
+
+/// `block` as a peer's reply lists it.
+fn incoming(block: &Block) -> IncomingBlock {
+    let header = block.header();
+    let mut downloaded = DownloadedBlock {
+        header: Default::default(),
+        transactions: Some(block.transactions().to_vec()),
+        ip: [192, 0, 2, 1].into(),
+    };
+    let fields = &mut downloaded.header.header;
+    fields.id = Some(block.id().to_hex());
+    fields.version = Some(header.version);
+    fields.timestamp = Some(header.timestamp);
+    fields.previous_block = Some(hex::encode(&header.previous_block));
+    fields.height = Some(header.height);
+    fields.number_of_transactions = Some(header.number_of_transactions);
+    fields.payload_length = Some(header.payload_length);
+    fields.payload_hash = Some(hex::encode(&header.payload_hash));
+    fields.generator_public_key = Some(header.generator_public_key.to_hex());
+    fields.block_signature = Some(header.block_signature.to_hex());
+    downloaded.header.total_amount = header.total_amount.into();
+    downloaded.header.total_fee = header.total_fee.into();
+    downloaded.header.reward = header.reward.into();
+    IncomingBlock::downloaded(downloaded)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_round_a_running_job_started_is_read_with_the_tip_before_the_commit() {
+    let setup = Setup::new("round-mid-job", "");
+    let config = RelayConfig::load(
+        &run("--network testnet"),
+        &setup.process(&[]),
+        &setup.home(),
+        &setup.root,
+    )
+    .unwrap();
+    let (store, restored) = restored(&config).unwrap();
+    let milestones = Arc::new(config.crypto.milestones.clone());
+    let pool = PoolOptions::defaults(&|_| None, &setup.root, 2);
+    let pool = PoolTask::new(Pool::open(pool, None).unwrap(), restored.online);
+    let tip = Arc::new(restored.state.last_block().clone());
+    let chain = Arc::new(Mutex::new(ChainState::at(tip)));
+    let links = Arc::new(Links::default());
+    let (view, seen) = (Arc::new(OnceLock::new()), Arc::default());
+    let probe = Probe {
+        view: Arc::clone(&view),
+        seen: Arc::clone(&seen),
+    };
+    let (node, handle) = Node::spawn(NodeParts {
+        state: restored.state,
+        store,
+        pool,
+        chain: Arc::clone(&chain),
+        processor: Arc::new(BlockProcessor),
+        handlers: Handlers,
+        milestones: Arc::clone(&milestones),
+        network: Arc::new(config.crypto.network.clone()),
+        options: Arc::new(BlockchainOptions::default()),
+        clock: Arc::new(SystemClock),
+        listener: Arc::new(Listener {
+            bus: EventBus::new(),
+            links: Arc::clone(&links),
+        }),
+        observer: Some(Box::new(probe)),
+        broadcast: links.clone(),
+    })
+    .unwrap();
+    let settings = Settings::in_data_dir(&config.paths.data);
+    let _ = view.set(NodeView {
+        handle: handle.clone(),
+        chain,
+        milestones: Arc::clone(&milestones),
+        network: Arc::new(config.crypto.network.clone()),
+        history: Arc::new(Readers::open(&settings, 1).unwrap()),
+        links,
+    });
+    let view = view.get().unwrap();
+    // One job over two round ends (53 and 106), named at the enqueueing from the published state.
+    let wallets = handle.state().borrow().wallets.clone();
+    let blocks = blocks(&milestones).into_iter().take(109).map(|block| {
+        let mut block = incoming(&block);
+        block.set_username(&wallets);
+        block
+    });
+    let outcome = handle
+        .job(Job {
+            blocks: blocks.collect(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(outcome.committed, 109);
+    let seen = std::mem::take(&mut *lock(&seen));
+    assert_eq!(
+        seen.iter().map(|mid| mid.tip).collect::<Vec<_>>(),
+        [53, 106]
+    );
+    for mid in &seen {
+        // The round of the tip's next block is the one the block started, and the earlier
+        // rounds of the job answer too; a round nothing has started does not.
+        assert_eq!(mid.asked.as_ref().ok(), Some(&mid.started.1), "{mid:?}");
+        assert!(mid.earlier.iter().all(Result::is_ok), "{mid:?}");
+        assert!(mid.next.is_err(), "{mid:?}");
+        // After the commit the store answers the same delegates.
+        let round = calculate_round(mid.tip + 1, &milestones);
+        let mut stored = view.round_delegate_keys(round).unwrap();
+        let mut started = mid.started.1.clone();
+        stored.sort();
+        started.sort();
+        assert_eq!(stored, started);
+    }
+    assert!(lock(&view.chain).rounds_started.is_empty());
+    handle.stop().await;
+    node.join().unwrap();
 }
 
 #[test]

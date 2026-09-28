@@ -3,11 +3,12 @@
 //! [`SubmitTransactions`] and [`PeerList`], and the node thread's listener and broadcast.
 //!
 //! The chain is read from the chain state the node thread shares with the blockchain service (its
-//! last blocks change as a job runs, as the reference's state store does), the wallets and the
-//! round from the last published state, stored blocks and rounds through the store's read-only
-//! connections. The network monitor and the blockchain service are made after the node thread,
-//! which needs to reach them, so they are linked in once made ([`Links`]); until then the node
-//! reads as not synced and not idle, and nothing is broadcast.
+//! last blocks, and the rounds a running job has started, change as the job runs, as the
+//! reference's state store and its saved rounds do), the wallets and the round from the last
+//! published state, stored blocks and rounds through the store's read-only connections. The
+//! network monitor and the blockchain service are made after the node thread, which needs to
+//! reach them, so they are linked in once made ([`Links`]); until then the node reads as not
+//! synced and not idle, and nothing is broadcast.
 
 use std::sync::{Arc, OnceLock};
 
@@ -215,10 +216,28 @@ impl BlockLookup for NodeView {
         heights.iter().filter_map(find).collect()
     }
 
+    /// The delegates of `round`: a round the running job started, as the chain state recorded it
+    /// with the tip; else the stored round; else the published state's round, only when it is
+    /// the one asked, as the reference asserts before its fallback.
     fn round_delegate_keys(&self, round: RoundInfo) -> Result<Vec<PublicKeyBytes>, LookupError> {
-        let rows = self.history.round(round.round)?;
+        let (asked, chain) = (round.round, lock(&self.chain));
+        let started = chain
+            .rounds_started
+            .iter()
+            .find(|(number, _)| *number == asked);
+        if let Some((_, keys)) = started {
+            return Ok(keys.clone());
+        }
+        drop(chain);
+        let rows = self.history.round(asked)?;
         if rows.is_empty() {
             let state = Arc::clone(&self.handle.state().borrow());
+            let current = state.round.info().round;
+            if current != asked {
+                let why =
+                    format!("round {asked} is not stored, and the current round is {current}");
+                return Err(LookupError(why));
+            }
             return Ok(state
                 .round
                 .round_delegates()
