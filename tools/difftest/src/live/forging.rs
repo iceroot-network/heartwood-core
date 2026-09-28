@@ -893,6 +893,20 @@ pub fn failover_received(
     })
 }
 
+/// The height each step started at, in the order the steps ran: the runner's recorded
+/// `startHeight`, raised to the highest of the steps before it. The runner records its last
+/// reading of the chain, which can lag a height wait that has already returned; the steps run one
+/// after another, so none starts lower than a step before it.
+pub fn start_heights(steps: &[run::Step]) -> Vec<(&str, u64)> {
+    let mut floor = 0;
+    (steps.iter())
+        .map(|s| {
+            floor = floor.max(number(&s.record, "startHeight"));
+            (s.name.as_str(), floor)
+        })
+        .collect()
+}
+
 fn faults(
     dir: &Path,
     manifest: &Manifest,
@@ -953,6 +967,7 @@ fn faults(
         }
     }
     let round_of = |h: u64| h.saturating_sub(1) / u64::from(manifest.round_length) + 1;
+    let started = start_heights(&steps);
     for (name, round) in [
         ("failover-second", 2),
         ("failover-third", 2),
@@ -967,10 +982,9 @@ fn faults(
         ("resume", 4),
         ("fresh-node5", 5),
     ] {
-        if steps
-            .iter()
-            .find(|s| s.name == name)
-            .is_none_or(|s| round_of(number(&s.record, "startHeight")) != round)
+        if (started.iter())
+            .find(|(step, _)| *step == name)
+            .is_none_or(|(_, height)| round_of(*height) != round)
         {
             problems.push(format!("{name}: did not start in round {round}"));
         }

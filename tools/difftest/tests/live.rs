@@ -620,6 +620,35 @@ fn the_attestation_report_gives_the_latency_and_the_answers_without_a_quorum() {
 }
 
 #[test]
+fn a_step_starts_no_lower_than_the_steps_before_it() {
+    use live::forging::start_heights;
+    use live::run::Step;
+    let step = |name: &str, height: u64| Step {
+        name: name.into(),
+        node: "all".into(),
+        ok: true,
+        start: None,
+        record: json!({"step": name, "startHeight": height}),
+    };
+    // The runner read 53 when the failover began, just after its wait for 54 had returned.
+    let steps = [
+        step("up", 0),
+        step("processes-round2", 54),
+        step("failover-second", 53),
+        step("failover-third", 62),
+    ];
+    assert_eq!(
+        start_heights(&steps),
+        [
+            ("up", 0),
+            ("processes-round2", 54),
+            ("failover-second", 54),
+            ("failover-third", 62)
+        ]
+    );
+}
+
+#[test]
 fn a_failover_needs_the_relays_own_receipt_of_the_block_in_time() {
     use live::forging::{Receipt, failover_received};
     let receipt = |relay: &str, from: &str, id: &str, at: i64| Receipt {
