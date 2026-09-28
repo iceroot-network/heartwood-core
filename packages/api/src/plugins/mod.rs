@@ -19,6 +19,9 @@
 //! uncharged when its path does not decode, else charged a point and answered 404 (403 for a short
 //! path that leads above the documentation's directory); another method on an unmatched path is
 //! answered 404 before the rate limit.
+//!
+//! The request's headers are read as Node's server gives them to hapi ([`node_header`]): as
+//! Latin-1, and a repeated header's values joined with `, `.
 
 mod catch_all;
 mod limits;
@@ -49,6 +52,29 @@ use crate::server::ApiConfig;
 
 /// The headers that CORS exposes, hapi's default.
 const EXPOSED: &str = "WWW-Authenticate,Server-Authorization";
+
+/// The headers Node's server gives hapi the first value of, when a request repeats them; it joins
+/// the values of any other.
+const FIRST_ONLY: [&str; 18] = [
+    "age",
+    "authorization",
+    "content-length",
+    "content-type",
+    "etag",
+    "expires",
+    "from",
+    "host",
+    "if-modified-since",
+    "if-unmodified-since",
+    "last-modified",
+    "location",
+    "max-forwards",
+    "proxy-authorization",
+    "referer",
+    "retry-after",
+    "server",
+    "user-agent",
+];
 
 /// The headers a preflight may ask for, hapi's default, and `origin`.
 const ALLOWED: [&str; 5] = [
@@ -145,25 +171,64 @@ pub(crate) struct InvalidUrl;
 /// What an answer's headers depend on in its request.
 struct Asked {
     /// The request's `Origin`.
-    origin: Option<HeaderValue>,
+    origin: Option<String>,
     /// Whether it is a `GET`: hapi offers byte ranges of a `GET`'s answer only.
     get: bool,
+    /// Whether it is a `HEAD`, whose answer Node sends without a body.
+    head: bool,
     /// Its `Range`, unless an `If-Range` makes hapi ignore it (no answer has an entity tag); an
     /// empty one is none.
-    range: Option<HeaderValue>,
+    range: Option<String>,
 }
 
 impl Asked {
     fn of(request: &Request<Body>) -> Asked {
         let headers = request.headers();
-        let given = |name: HeaderName| headers.get(name).filter(|value| !value.is_empty());
+        let given = |name: HeaderName| node_header(headers, &name).filter(|v| !v.is_empty());
         let conditional = given(header::IF_RANGE).is_some();
         Asked {
-            origin: headers.get(header::ORIGIN).cloned(),
+            origin: node_header(headers, &header::ORIGIN),
             get: request.method() == Verb::GET,
-            range: given(header::RANGE).filter(|_| !conditional).cloned(),
+            head: request.method() == Verb::HEAD,
+            range: given(header::RANGE).filter(|_| !conditional),
         }
     }
+}
+
+/// The header `name` of `headers` as Node's server gives it to hapi: its bytes read as Latin-1,
+/// and the values of a repeated header joined with `, ` (the first kept, for the headers Node does
+/// not join).
+pub(crate) fn node_header(headers: &HeaderMap, name: &HeaderName) -> Option<String> {
+    let latin1 = |value: &HeaderValue| value.as_bytes().iter().map(|&b| char::from(b)).collect();
+    let mut values = headers.get_all(name).iter();
+    let mut text: String = latin1(values.next()?);
+    if !FIRST_ONLY.contains(&name.as_str()) {
+        for value in values {
+            text.push_str(", ");
+            text.push_str(&latin1(value));
+        }
+    }
+    Some(text)
+}
+
+/// JavaScript's white space (`\s`) in the Latin-1 range, where a header's characters are.
+fn is_js_space(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}')
+}
+
+/// `text`, whose characters are Latin-1, as the bytes Node writes it with in a header: Latin-1,
+/// or UTF-8 when the answer's body is written with its head (text, which hapi's JSON bodies are).
+fn header_bytes(text: &str, with_text: bool) -> Option<HeaderValue> {
+    let latin1 = || {
+        text.chars()
+            .map(|c| u8::try_from(c).unwrap_or(b'?'))
+            .collect::<Vec<u8>>()
+    };
+    let bytes = match with_text {
+        true => text.as_bytes().to_vec(),
+        false => latin1(),
+    };
+    HeaderValue::from_bytes(&bytes).ok()
 }
 
 /// The routes, the host and the plugins' state: what serves a request.
@@ -326,12 +391,14 @@ impl Pipeline {
     /// A CORS preflight, as hapi answers it for a route with CORS on.
     fn preflight(&self, headers: &HeaderMap, path: &str, full: &str) -> Result<Answer, ApiError> {
         let missing = |name: &str| format!("CORS error: Missing {name} header");
-        let Some(requested) = headers.get("access-control-request-method") else {
+        // hapi tests these headers for truth: an empty value is a missing one.
+        let given = |name: HeaderName| node_header(headers, &name).filter(|v| !v.is_empty());
+        let Some(requested) = given(header::ACCESS_CONTROL_REQUEST_METHOD) else {
             return Err(ApiError::not_found(missing(
                 "Access-Control-Request-Method",
             )));
         };
-        let method = requested.to_str().unwrap_or_default().to_ascii_lowercase();
+        let method = requested.to_ascii_lowercase();
         let method = match method.as_str() {
             "get" | "head" => Method::Get,
             "post" => Method::Post,
@@ -351,21 +418,19 @@ impl Pipeline {
             Ok(None) => return Err(not_found()),
             Err(_) => return Err(ApiError::internal()),
         }
-        let Some(origin) = headers.get(header::ORIGIN) else {
+        let Some(origin) = given(header::ORIGIN) else {
             return Err(ApiError::not_found(missing("Origin")));
         };
-        let asked = headers.get("access-control-request-headers");
-        let asked = asked
-            .and_then(|asked| asked.to_str().ok())
-            .unwrap_or_default();
-        let asked = asked.to_ascii_lowercase();
-        if !asked.is_empty() && !asked.split(',').all(|name| ALLOWED.contains(&name.trim())) {
+        let asked = node_header(headers, &header::ACCESS_CONTROL_REQUEST_HEADERS);
+        let asked = asked.unwrap_or_default().to_ascii_lowercase();
+        if !asked.is_empty() && !allowed_headers(&asked) {
             return Ok(message("CORS error: Some headers are not allowed"));
         }
         let fixed = HeaderValue::from_static;
+        let echo = |text: &str| header_bytes(text, false).unwrap_or(fixed(""));
         let headers = vec![
-            (header::ACCESS_CONTROL_ALLOW_ORIGIN, origin.clone()),
-            (header::ACCESS_CONTROL_ALLOW_METHODS, requested.clone()),
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, echo(&origin)),
+            (header::ACCESS_CONTROL_ALLOW_METHODS, echo(&requested)),
             (
                 header::ACCESS_CONTROL_ALLOW_HEADERS,
                 fixed("Accept,Authorization,Content-Type,If-None-Match"),
@@ -397,13 +462,16 @@ impl Pipeline {
             cors,
         } = answer;
         let mut body = body.map(|body| js::stringify(&body, 0).into_bytes());
+        // Node writes the head with the first chunk of a body given as text, in UTF-8.
+        let mut with_text = body.is_some() && !asked.head;
         let json = body.as_ref().map(|_| "application/json; charset=utf-8");
         // hapi varies an answer it could compress (1 KiB or more) by `accept-encoding` too; the
         // whole answer counts, before a range is cut from it.
         let mut large = body.as_ref().is_some_and(|body| body.len() >= 1024);
         if let Some(whole) = body.take_if(|body| asked.get && status == 200 && !body.is_empty()) {
-            let (served, part, headers) = ranges::serve(asked.range.as_ref(), whole);
+            let (served, part, headers) = ranges::serve(asked.range.as_deref(), whole);
             large &= served != 416;
+            with_text &= served != 206;
             (status, body) = (served, Some(part));
             fixed.extend(headers);
         }
@@ -427,7 +495,8 @@ impl Pipeline {
                 },
             );
             add(header::ACCESS_CONTROL_EXPOSE_HEADERS, EXPOSED);
-            if let Some(origin) = asked.origin.clone() {
+            let origin = asked.origin.as_deref();
+            if let Some(origin) = origin.and_then(|origin| header_bytes(origin, with_text)) {
                 fixed.push((header::ACCESS_CONTROL_ALLOW_ORIGIN, origin));
             }
         }
@@ -451,6 +520,27 @@ const UNSERVED: [&str; 4] = [
 
 fn not_found() -> ApiError {
     ApiError::not_found("Not Found")
+}
+
+/// Whether hapi allows the headers a preflight asks for, `asked` in lower case: split at its
+/// commas with the white space around them, each must be an allowed header, and none twice.
+fn allowed_headers(asked: &str) -> bool {
+    let names: Vec<&str> = asked.split(',').collect();
+    let last = names.len().saturating_sub(1);
+    let names = names.iter().enumerate().map(|(at, name)| match at {
+        0 if last == 0 => *name,
+        0 => name.trim_end_matches(is_js_space),
+        _ if at == last => name.trim_start_matches(is_js_space),
+        _ => name.trim_matches(is_js_space),
+    });
+    let mut seen = Vec::new();
+    for name in names {
+        if !ALLOWED.contains(&name) || seen.contains(&name) {
+            return false;
+        }
+        seen.push(name);
+    }
+    true
 }
 
 /// A 200 answer of `{message}`, without the route's CORS headers.
@@ -480,10 +570,11 @@ fn matches<'p>(
 /// The client's address as the reference's rate limit and whitelist key it: the socket's, or with
 /// `trust_proxy` the first entry of `X-Forwarded-For` when the request has one.
 fn client_address(headers: &HeaderMap, peer: SocketAddr, trust_proxy: bool) -> String {
-    let Some(forwarded) = headers.get("x-forwarded-for").filter(|_| trust_proxy) else {
+    let forwarded = HeaderName::from_static("x-forwarded-for");
+    let Some(forwarded) = node_header(headers, &forwarded).filter(|_| trust_proxy) else {
         return peer.ip().to_string();
     };
-    let first = forwarded.to_str().unwrap_or_default().split(',').next();
+    let first = forwarded.split(',').next();
     first.unwrap_or_default().trim().to_owned()
 }
 

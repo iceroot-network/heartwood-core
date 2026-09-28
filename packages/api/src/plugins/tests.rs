@@ -392,6 +392,65 @@ async fn a_preflight_is_answered_as_hapi_answers_it() {
         .0,
         204
     );
+    // hapi tests the headers for truth, and reads a repeated one as Node joins it.
+    let empty_method = ("access-control-request-method", "");
+    let empty_origin = ("origin", "");
+    let asked = |headers: &[(&str, &str)]| call(&pipeline, preflight("/api/transactions", headers));
+    let missing = |name: &str| {
+        boom(
+            404,
+            "Not Found",
+            &format!("CORS error: Missing {name} header"),
+        )
+    };
+    let get = ("access-control-request-method", "GET");
+    for (headers, status, body) in [
+        (
+            vec![origin, empty_method],
+            404,
+            missing("Access-Control-Request-Method"),
+        ),
+        (vec![empty_origin, get], 404, missing("Origin")),
+        (vec![empty_origin, method], 404, missing("Origin")),
+        (
+            vec![origin, method, get],
+            404,
+            boom(404, "Not Found", "Not Found"),
+        ),
+        (
+            vec![origin, empty_method, method],
+            404,
+            boom(404, "Not Found", "Not Found"),
+        ),
+        (
+            vec![
+                origin,
+                method,
+                ("access-control-request-headers", "accept, accept"),
+            ],
+            200,
+            json!({ "message": "CORS error: Some headers are not allowed" }),
+        ),
+        (
+            vec![
+                origin,
+                method,
+                ("access-control-request-headers", "accept"),
+                ("access-control-request-headers", "x-custom"),
+            ],
+            200,
+            json!({ "message": "CORS error: Some headers are not allowed" }),
+        ),
+    ] {
+        let (answered, _, answer) = asked(&headers).await;
+        assert_eq!((answered, answer), (status, body), "{headers:?}");
+    }
+    let (status, headers, _) = asked(&[origin, ("origin", "https://b"), method]).await;
+    let allowed = header(&headers, "access-control-allow-origin");
+    assert_eq!(
+        (status, allowed),
+        (204, Some("https://wallet.example, https://b"))
+    );
     // The path of a GET or HEAD that no route matches must decode, as a parameter must.
     let undecodable = preflight(
         "/x%zz",
@@ -425,6 +484,76 @@ async fn an_unmatched_path_is_answered_as_the_reference_catch_all_answers_it() {
     assert_eq!(call(&pipeline, get("/api/nothing")).await.0, 404);
     assert_eq!(call(&pipeline, get("/..%2Fx")).await.0, 429);
     assert_eq!(call(&pipeline, get("/x%zz")).await.0, 400);
+}
+
+/// `request`'s answer from `pipeline`: its status, the bytes of `name`, and its body.
+async fn raw_header(pipeline: &Pipeline, request: Request<Body>, name: &str) -> (u16, Vec<u8>) {
+    let response = pipeline.handle(request, CLIENT.parse().unwrap()).await;
+    let value = response.headers().get(name).map(|v| v.as_bytes().to_vec());
+    (response.status().as_u16(), value.unwrap_or_default())
+}
+
+#[tokio::test]
+async fn request_headers_are_read_as_node_gives_them_to_hapi() {
+    let pipeline = pipeline(config());
+    let with = |method: &str, uri: &str, headers: &[(&str, &[u8])]| {
+        let mut request = Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            request = request.header(*name, axum::http::HeaderValue::from_bytes(value).unwrap());
+        }
+        request.body(Body::empty()).unwrap()
+    };
+    let status = "/api/node/status";
+    // Repeated values are joined with `, `: two ranges do not read, two empty `If-Range` are one.
+    for (headers, answered) in [
+        (
+            vec![("range", &b"bytes=0-1"[..]), ("range", b"bytes=3-4")],
+            416,
+        ),
+        (vec![("range", &b""[..]), ("range", b"bytes=3-4")], 416),
+        (vec![("if-range", &b""[..]), ("range", b"bytes=0-1")], 206),
+        (
+            vec![
+                ("if-range", &b""[..]),
+                ("if-range", b""),
+                ("range", b"bytes=0-1"),
+            ],
+            200,
+        ),
+    ] {
+        let (code, _) = raw_header(&pipeline, with("GET", status, &headers), "vary").await;
+        assert_eq!(code, answered, "{headers:?}");
+    }
+    let origins = [("origin", &b"a"[..]), ("origin", b"b")];
+    let origin = "access-control-allow-origin";
+    let joined = raw_header(&pipeline, with("GET", status, &origins), origin).await;
+    assert_eq!(joined, (200, b"a, b".to_vec()));
+    // A byte beyond ASCII is a Latin-1 character, which Node writes back in UTF-8 when it writes
+    // the head with a body given as text, and in Latin-1 otherwise.
+    let latin1 = [("origin", &b"\xe9"[..])];
+    for (method, range, answered, bytes) in [
+        ("GET", None, 200, &b"\xc3\xa9"[..]),
+        ("GET", Some(&b"bytes=0-1"[..]), 206, b"\xe9"),
+        ("GET", Some(b"bytes=900-901"), 416, b"\xc3\xa9"),
+        ("HEAD", None, 200, b"\xe9"),
+    ] {
+        let mut headers = latin1.to_vec();
+        headers.extend(range.map(|range| ("range", range)));
+        let echoed = raw_header(&pipeline, with(method, status, &headers), origin).await;
+        assert_eq!(echoed, (answered, bytes.to_vec()), "{method} {range:?}");
+    }
+    let unmatched = raw_header(&pipeline, with("GET", "/api/nothing", &latin1), origin).await;
+    assert_eq!(unmatched, (404, b"\xc3\xa9".to_vec()));
+    // The first entry of the joined `X-Forwarded-For`.
+    let mut trusting = config();
+    trusting.trust_proxy = true;
+    let proxied = pipeline_with(trusting, echo);
+    let forwarded = [
+        ("x-forwarded-for", &b" 10.0.0.5"[..]),
+        ("x-forwarded-for", b"10.0.0.6"),
+    ];
+    let (_, _, body) = call(&proxied, with("GET", status, &forwarded)).await;
+    assert_eq!(body["data"]["client"], "10.0.0.5");
 }
 
 #[tokio::test]
@@ -686,6 +815,67 @@ async fn a_compressed_payload_is_read_as_hapi_decompresses_it() {
         };
         assert_eq!((answered, answer), (status, expected), "{encoding}");
     }
+    // Repeated encodings are joined, which names no decoder: the body is read as it is.
+    let gzip = compress("gzip", br#"{"j":10}"#);
+    for encodings in [["gzip", "gzip"], ["gzip", ""], ["", "gzip"]] {
+        let headers = [
+            ("content-encoding", encodings[0]),
+            ("content-encoding", encodings[1]),
+        ];
+        let (answered, _, answer) = call(&pipeline, post(gzip.clone(), &headers)).await;
+        let expected = refused("Invalid request payload JSON format");
+        assert_eq!((answered, answer), (422, expected), "{encodings:?}");
+    }
+    let headers = [("content-encoding", "gzip"), ("content-encoding", "gzip")];
+    let (answered, _, answer) = call(&pipeline, post(r#"{"k":11}"#, &headers)).await;
+    assert_eq!(
+        (answered, &answer["data"]["payload"]),
+        (200, &json!({ "k": 11 }))
+    );
+}
+
+#[tokio::test]
+async fn a_content_type_is_read_as_latin1_text() {
+    let pipeline = pipeline(config());
+    let typed = |content_type: &[u8]| {
+        let value = axum::http::HeaderValue::from_bytes(content_type).unwrap();
+        Request::post("/api/transactions")
+            .header("content-type", value)
+            .body(Body::from(r#"{"a":1}"#))
+            .unwrap()
+    };
+    let unsupported = "Unsupported Media Type";
+    let missing = "Invalid content-type header: multipart missing boundary";
+    for (content_type, expected) in [
+        (&b"application/json\xe9"[..], Err(unsupported)),
+        (b"\xe9/json", Err(unsupported)),
+        (b"APPLICATION/JSON\xc9", Err(unsupported)),
+        (b"application/json\x85x", Err(unsupported)),
+        (b"application\xa0/json", Err("Invalid content-type header")),
+        (b"multipart/mixed;\x85boundary=x", Err(missing)),
+        (b"multipart/mixed;\xa0boundary=x", Err(unsupported)),
+        (b"multipart/mixed; boundary=\x85x", Err(unsupported)),
+        (b"text/plain\xe9", Ok(json!(r#"{"a":1}"#))),
+        (b"application/\xe9+json", Ok(json!({ "a": 1 }))),
+    ] {
+        let (status, _, body) = call(&pipeline, typed(content_type)).await;
+        let answer = match status {
+            200 => Ok(body["data"]["payload"].clone()),
+            _ => Err(body["message"].as_str().unwrap_or_default().to_owned()),
+        };
+        let expected = expected.map_err(str::to_owned);
+        assert_eq!(answer, expected, "{content_type:?}");
+    }
+    // Node gives hapi the first of two content types.
+    let two = Request::post("/api/transactions")
+        .header("content-type", "")
+        .header("content-type", "text/plain")
+        .body(Body::from(r#"{"a":1}"#))
+        .unwrap();
+    assert_eq!(
+        call(&pipeline, two).await.2["data"]["payload"],
+        json!({ "a": 1 })
+    );
 }
 
 #[tokio::test]
