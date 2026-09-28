@@ -321,13 +321,22 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
         #[cfg(feature = "difftest")]
         record,
     };
-    let p2p = serve_p2p(p2p, Arc::new(services), peers, &links, clock).await?;
+    // A listener that cannot bind stops the relay, through the graceful shutdown.
+    let (p2p, mut unbound) = match serve_p2p(p2p, Arc::new(services), peers, &links, clock).await {
+        Ok(p2p) => (Some(p2p), None),
+        Err(error) => (None, Some(error)),
+    };
     let (booted, service) = (stops, Arc::clone(&blockchain));
-    tokio::spawn(async move { booted.send(Stop::Booted(service.boot().await)) });
+    if p2p.is_some() {
+        tokio::spawn(async move { booted.send(Stop::Booted(service.boot().await)) });
+    }
     let status = node_status(&links);
     // Serve until a stop; the API once the blockchain has started, as the reference boots it.
     let (mut api, mut node_ended) = (None, false);
     let outcome = loop {
+        if let Some(error) = unbound.take() {
+            break Err(error);
+        }
         match stop.recv().await {
             Some(Stop::Booted(Ok(()))) => {
                 links.booted.store(true, Ordering::Release);
@@ -366,7 +375,9 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
         }
     };
     // The graceful shutdown, in reverse: the forger's sessions first.
-    p2p.stop().await;
+    if let Some(p2p) = p2p {
+        p2p.stop().await;
+    }
     if let Some(mut api) = api {
         api.dispose().await;
     }

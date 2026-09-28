@@ -189,8 +189,10 @@ impl<N: Network> NodeServices for RelayServices<N> {
         };
         let mut work = Box::pin(async move { service.handle_incoming_block(incoming, fire).await });
         // The reference enqueues the block before it answers; the service's work has no wait.
-        if work.as_mut().poll(&mut Context::from_waker(Waker::noop())) == Poll::Pending {
-            tokio::spawn(work);
+        if work.as_mut().poll(&mut Context::from_waker(Waker::noop())) == Poll::Pending
+            && let Ok(runtime) = Handle::try_current()
+        {
+            runtime.spawn(work);
         }
     }
 
