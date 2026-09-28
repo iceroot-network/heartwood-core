@@ -10,11 +10,11 @@ equal byte for byte, including which inputs each side rejects.
 
 | Level | What is compared | Status |
 |---|---|---|
-| L0 | golden vectors written by the reference, against Heartwood | runs against the seven crates with vector classes: 6,220 of 6,387 records compared, all equal (see below) |
-| L1 | random and mutated cases, one oracle call each | runs: fifteen properties, from the fee floor to the pool, the crypto files and the peer-to-peer client's network monitor (see below) |
-| L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets through Heartwood's store, with seeded reverts, restarts at every height, synthetic blocks and pool sessions (see below) |
-| L3 | the same scenario on a reference devnet and on a Heartwood devnet | planned |
-| L4 | a mixed network of reference and Heartwood nodes | planned |
+| L0 | golden vectors written by the reference, against Heartwood | runs against the ten crates with vector classes: 8,643 of 8,820 records compared, all equal, the other 177 documented differences (see below) |
+| L1 | random and mutated cases, one oracle call each | runs: sixteen properties, from the fee floor to the pool, the crypto files, the peer-to-peer client and the block processor (see below) |
+| L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets through Heartwood's store and through its block processor and jobs, with seeded reverts, restarts at every height, synthetic blocks, pool sessions and kills of a running relay (see below) |
+| L3 | one scenario, observed through the node under test | runs: a scenario on a reference devnet whose observer is a reference relay, then the same with a Heartwood relay in its place; a devnet of Heartwood nodes only joins with the forger (see below) |
+| L4 | a mixed network of reference and Heartwood nodes | runs: reference devnets with Heartwood relays that restart by every path, sync from an empty store, and follow a partition and its heal (see below) |
 
 ## Layout
 
@@ -40,17 +40,25 @@ packages/database/    heartwood-database: the store, one SQLite file per node (t
                       chain tables, the state tables, the chain's identity, the start checks)
 packages/pool/        heartwood-pool: the transaction pool, with its storage, the fee rules, the
                       queries, the collator and the node-local online record
-packages/blockchain/  heartwood-blockchain: so far, a block's commit to the store and a node's
-                      start (first start, restart from the state tables, replay from genesis)
+packages/blockchain/  heartwood-blockchain: the block processor, jobs and their commit to the
+                      store, the node thread, the job queue, the state machine with fork
+                      recovery, and a node's start (first start, restart from the state tables,
+                      replay from genesis)
 packages/p2p/         heartwood-p2p: the client side of the peer-to-peer protocol (nes sessions,
                       requests and reply checks, peer acceptance and verification, the network
-                      monitor), not yet wired into a node; the mock peer behind `difftest`
+                      monitor); the mock peer behind `difftest`
+packages/api/         heartwood-api: the public API a relay serves (routes, query grammar,
+                      pagination, headers, rate limit, semaphore)
+packages/core/        heartwood-core: the `heartwood` binary, `heartwood relay run`, with the
+                      relay's configuration, process lock and signals
 packages/*/tests/vectors/  each crate's golden vectors, with its own MANIFEST.sha256
 tools/difftest/       heartwood-difftest: the harness library and the `difftest` binary
   corpus/               a committed L2 corpus (a reference devnet chain and its digest lines)
+  api-corpus/           the route corpus: the queries of every served route, for L3 and L4
 tools/check-layers.sh the dependency edges between the crates, and no async, storage or HTTP crate
                       in the consensus crates
 tools/check-lines.sh  code lines per crate against the review ceilings
+tools/test-integration.sh  runs every test marked `integration`, by name
 tools/oracle/         the oracle: Node scripts and the image recipe
   Dockerfile            the oracle image, built from scratch with pinned inputs
   make-context.sh       the build context: the reference at a commit, as a git archive
@@ -89,8 +97,11 @@ fuzz/                 cargo-fuzz targets for the transaction and block decoders,
 ## Build and test
 
 ```sh
-make check          # cargo build, clippy (warnings are errors), fmt --check, test, release check
+make check          # cargo build, clippy (warnings are errors), fmt --check, test, the integration
+                    # tests, release check, layers, rustdoc (warnings are errors), line ceilings
 make layers lines   # crate edges and code lines per crate
+make doc            # rustdoc of the workspace with every feature, warnings are errors
+make test-integration  # the tests marked `integration` in every crate
 make oracle-image   # build heartwood-oracle:<commit> from scratch (a few minutes)
 make e2e            # vectors in the image and locally, diff the two runs, run L0
 make vectors-install  # copy the image's vectors into each crate's tests/vectors
@@ -99,14 +110,23 @@ make l1             # the L1 properties against the oracle
 make l2 NAME=txgen-one-node CORPUS=tools/difftest/corpus   # replay a corpus against its digest lines
 make l2-restart NAME=txgen-one-node CORPUS=tools/difftest/corpus   # the same with restarts
 make crash-test NAME=txgen-one-node CORPUS=tools/difftest/corpus   # the store after SIGKILLs
+make l2-processor NAME=txgen-one-node CORPUS=tools/difftest/corpus # the same chain through the processor
 make pool-bench     # the cost of the pool's per-sender views and of the store's commit
+make relay-binary   # the relay's release binary with the harness's flags
+make live RUN=h     # a live run on a devnet, then make live-check RUN=h and make api-compare RUN=h
 ```
 
 `make check` needs only Rust. It lints and tests every crate on its own, with no features and
 with all of them, so that Cargo does not unify the crates' features with those difftest turns on.
 Its tests include each crate's own vector classes, the L0 comparison of the committed vectors of
-`heartwood-crypto` and of the wire class of `heartwood-p2p-wire`, and the L2 replay of the
-committed corpus; it also checks and formats the fuzz targets (their own package, `fuzz/`).
+`heartwood-crypto` and of the wire and exchange classes of `heartwood-p2p-wire`, the L2 replay of
+the committed corpus through the store and through the processor; it also checks and formats the
+fuzz targets (their own package, `fuzz/`). A test marked `#[ignore = "integration"]` needs more
+than its crate's unit (the served API over a store, a relay importing from a mock peer, the
+harness's built binaries); `make test-integration` (`tools/test-integration.sh`) finds every such
+marker and runs those tests by name, and fails when a marked test is not found, so `make check`
+runs them all. It also counts code lines with `tokei` when it is installed (CI installs it), so the
+crates' ceilings hold there too.
 `make e2e` passes when the image run and the local run agree on every record and L0 finds no
 difference in the image run. `make help` lists the other targets, among them `make ping` (the
 oracle answers, in the image and locally), `make oracle-save` (`docker save` of the image into
@@ -126,18 +146,34 @@ oracle answers, in the image and locally), `make oracle-save` (`docker save` of 
 | `DIFFTEST_DOCKER` | `tools/oracle/docker.sh` | the docker command |
 | `DEVNET_GENERATOR` | empty | the devnet generator, `gen-network.js`, for the genesis class; a separate tool that is not published |
 | `VECTOR_CRATES` | every crate and its classes | which classes `make vectors-install` puts into which crate's `tests/vectors` |
-| `L1_CASES`, `L1_SEED`, `L1_PROPERTY` | `256`, `1`, all | cases per property, the generator's seed, the properties (`P1` to `P12`, `P14` to `P16`, or their names, comma separated) |
+| `L1_CASES`, `L1_SEED`, `L1_PROPERTY` | `256`, `1`, all | cases per property, the generator's seed, the properties (`P1` to `P16`, or their names, comma separated) |
+| `L1_MIN_REACH` | 20 from 1,000 cases, else none | how often P13 must reach each reachable result of the processor and each unchained status |
 | `CORPUS`, `NAME` | `target/corpus`, empty | the L2 corpus `CORPUS/NAME` |
 | `ARCHIVE`, `CORPUS_SEED`, `DUMP` | empty | the devnet archives `make corpus-import` joins (in chain order); the chain's public key-derivation seed; heights whose records the judge writes |
 | `TO` | empty | cut the corpus at this height, in `corpus-judge`, `l2`, `l2-synthetic` and `l2-restart` (the judge and the replays must use the same cut) |
 | `RESTARTS` | empty | the restart plan `corpus-judge` writes into the corpus before it judges: `every` (a restart at every height) or `rounds` (the round ends, the first blocks of rounds, 20 seeded heights and the node's live restarts) |
 | `KILLS`, `KILL_SEED` | `200`, empty | the kill test's number of kills, and the seed of its delays |
+| `PROCESSOR` | empty | any value makes `corpus-judge` also record each block's result through the reference's job, one block per job (`ts-processor.jsonl`) |
+| `RUNTIME` | empty | any value makes `crash-test` kill a relay that imports the corpus from a mock peer, instead of the store's replay |
+| `CHUNKS` | empty | the one job cut `l2-processor` runs (`reference` or `1`); both when empty |
+| `STRICT` | `--strict` | the comparing targets fail a run in which a case was skipped or had no Rust implementation; `STRICT=` runs them leniently, for a look at a partial tree |
 | `ORACLE_ARGS` | `--image $(IMAGE)` | where the oracle of `l1`, `corpus-judge`, `l2-synthetic` and `replay-wire` runs; `--solar-dir DIR` for a local reference |
 | `RELEASE_PACKAGES` | the ten library crates | the packages `make release-check` builds without test seams |
 | `FUZZ_SECONDS`, `FUZZ_FORK` | `600`, `8` | how long each wire or p2p fuzz target runs, and its libFuzzer jobs |
 | `WIRE_SEEDS`, `WIRE_SEED_MAX` | the installed wire class, `65536` | the vector file that seeds the wire fuzz corpora, and the longest seed in bytes |
 | `WIRE_LOGS` | `target/wire-fuzz` | the logs of `make fuzz-wire` and `make replay-wire` |
 | `P2P_SEEDS`, `P2P_LOGS` | `$(VECTORS)/local`, `target/p2p-fuzz` | the vector run that seeds the p2p fuzz corpora, and the logs of `make fuzz-p2p` and `make replay-p2p` |
+| `LIVE_RECIPE`, `RELAY_IMAGE_RECIPE`, `LIVE_RESULTS` | empty | the devnet tooling's live recipe, its recipe of the relay's container image, and the directory of the live runs (a separate tool of the maintainers, which is not published) |
+| `RUN` | empty | the live run: `r`, `h`, `m1` or `m2` (see L3 and L4) |
+| `LEFT`, `RIGHT`, `API_COMPARE_OUT` | empty, empty, `target/api-compare` | two nodes' API URLs for a direct `api-compare`, and where it writes their answers |
+
+A crate's vector tests, and the harness's tests of its classes (`tools/difftest/tests`), read
+the classes from the crate's own `tests/vectors`; there the harness's tests fail when a class is
+missing. `WIRE_VECTORS` (`heartwood-p2p-wire`), `P2P_VECTORS` (`heartwood-p2p` and difftest's
+`network_vectors`) and `NODE_VECTORS` (difftest's tests of V27 and V28) name another directory,
+such as a local oracle run (`target/vectors/local`), relative to the workspace root; only such a
+directory may lack a class. `DIFFTEST_IMAGE`, or `SOLAR_DIR` for a local reference, is the oracle a
+`difftest` command uses when it is given neither `--image` nor `--solar-dir`.
 
 Settings for one machine go in `local.mk` beside the Makefile. It is git-ignored and read before
 the defaults, for example:
