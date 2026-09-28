@@ -86,6 +86,7 @@ tools/oracle/         the oracle: Node scripts and the image recipe
 tools/wire-fuzz-seeds.js  seeds the wire fuzz corpora from the wire vectors
 tools/p2p-fuzz-seeds.js   seeds the p2p fuzz corpora from a vector run's V24 and V26 records
 tools/forger-fuzz-seeds.js  seeds the forger's internal_body corpus from a vector run's V29 records
+tools/server-fuzz-seeds.js  seeds the server's nes_server_session corpus from V31's requests
 packages/crypto/tests/vectors/external/  published vector files, with their source URLs and SHA-256
 fuzz/                 cargo-fuzz targets for the transaction and block decoders, the
                       transaction handlers, whole blocks on the state, the state's records, the

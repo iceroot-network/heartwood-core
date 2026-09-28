@@ -617,16 +617,23 @@ fuzz-forger: ## the forger's fuzz targets at once, FUZZ_SECONDS each (nightly an
 
 # ---- the peer-to-peer server, the node's wiring and the forging devnet ----
 # The server's session target runs on a corpus of its own (git-ignored), with the wire targets'
-# libFuzzer options. The binary's tests start relays, forgers and supervisors as processes; the
+# libFuzzer options, seeded from the V31 requests of SERVER_SEEDS (the installed class by default)
+# when it exists. The binary's tests start relays, forgers and supervisors as processes; the
 # devnet smoke test (marked `devnet`) runs a 1-node devnet for 20 blocks, then a 5-node one for a
 # round, on the loopback addresses of DEVNET_PREFIX.
 SERVER_FUZZ   := nes_server_session
+SERVER_SEEDS  ?= packages/p2p/tests/vectors
 SERVER_LOGS   ?= target/server-fuzz
 DEVNET_PREFIX ?= 127.10.0
 
 .PHONY: fuzz-server binary-tests devnet-smoke
 
 fuzz-server: ## the server's fuzz target, FUZZ_SECONDS (nightly and cargo-fuzz); logs in SERVER_LOGS
+	@$(TOOLCHAIN) && if [ -d '$(SERVER_SEEDS)' ]; then \
+	    node tools/server-fuzz-seeds.js '$(SERVER_SEEDS)' $(FUZZ_CORPUS) $(WIRE_SEED_MAX); \
+	else \
+	    echo "fuzz-server: no seeds: $(SERVER_SEEDS) does not exist"; \
+	fi
 	$(TOOLCHAIN) && cargo +nightly fuzz build $(SERVER_FUZZ)
 	@$(TOOLCHAIN) && mkdir -p $(SERVER_LOGS) $(FUZZ_CORPUS)/$(SERVER_FUZZ) && \
 	echo "fuzz-server: $(SERVER_FUZZ) running for $(FUZZ_SECONDS) s, $(FUZZ_FORK) jobs; logs in $(SERVER_LOGS)" && \
