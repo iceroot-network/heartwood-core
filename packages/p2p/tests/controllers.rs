@@ -19,8 +19,10 @@ use heartwood_crypto::{Aux, Block, KeyPair, TransactionId};
 use heartwood_kernel::{ChainLink, Clock, ManualClock};
 use heartwood_p2p::Peer;
 use heartwood_p2p::node_services::ForgerEvent;
+use heartwood_p2p::server::controllers::remote_access_warnings;
 use heartwood_p2p::server::seams::{RouteHandlers, ServerRefusal};
 use heartwood_p2p::view::ChainView;
+use heartwood_p2p::{P2pOptions, ServerOptions};
 use heartwood_p2p_wire::codecs::Amount;
 use heartwood_p2p_wire::codecs::blocks::{BlockListing, get_blocks_decode_response};
 use heartwood_p2p_wire::codecs::transactions::{
@@ -556,6 +558,23 @@ async fn get_network_state_cleanses_then_analyses_and_takes_this_node_s_delegate
     assert_eq!(state.status, NetworkStateStatus::BelowMinimumDelegates);
 }
 
+#[test]
+fn remote_access_entries_that_admit_no_forger_are_warned_of_at_start() {
+    let with = |entries: &[&str]| P2pOptions {
+        remote_access: entries.iter().map(|entry| (*entry).to_owned()).collect(),
+        ..P2pOptions::default()
+    };
+    assert!(remote_access_warnings(&with(&["127.0.0.1", "::1"])).is_empty());
+    // A prefix entry matches no source; with no exact address left, no forger is admitted.
+    let warnings = remote_access_warnings(&with(&["127.0.0.1", "10.0.0.0/8"]));
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("10.0.0.0/8"));
+    assert_eq!(remote_access_warnings(&with(&["10.0.0.0/8"])).len(), 2);
+    assert_eq!(remote_access_warnings(&with(&[])).len(), 1);
+    let exact = ServerOptions::from_p2p(&with(&["10.0.0.0/8"]));
+    assert!(exact.remote_access.is_empty());
+}
+
 // ---- the whole server, with the communicator ---------------------------------------------
 
 #[cfg(feature = "difftest")]
@@ -567,9 +586,7 @@ mod over_the_server {
 
     use heartwood_p2p::seams::PeerClient;
     use heartwood_p2p::utils::rules::Rules as RealRules;
-    use heartwood_p2p::{
-        BlocksRequest, Connector, P2pOptions, P2pServer, ServerOptions, ServerParts, SharedPeer,
-    };
+    use heartwood_p2p::{BlocksRequest, Connector, P2pServer, ServerParts, SharedPeer};
     use peer_fakes::{Fixture, options};
     use tokio::sync::watch;
 
