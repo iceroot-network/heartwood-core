@@ -84,7 +84,7 @@ async fn each_call_has_its_route_codec_and_headers() {
         (4, vec![vec![1, 2], vec![3]])
     );
     client.broadcast_block(&[0xab, 0xcd], deadline()).await;
-    client.sync_with_network().await;
+    assert_eq!(client.sync_with_network().await, Ok(()));
     let failed = ForgerEvent::Failed { error: "x".into() };
     client.emit_event(failed).await;
     assert_eq!(client.status_to_sign(&[hex(1), hex(1)]).await, Ok(offer));
@@ -190,7 +190,11 @@ async fn failed_calls_carry_the_reference_texts() {
     assert!(refused.to_string().contains("status"), "{refused}");
 
     client.broadcast_block(&[1], deadline()).await;
-    client.sync_with_network().await;
+    assert_eq!(
+        client.sync_with_network().await,
+        Ok(()),
+        "a failed call is logged"
+    );
     let failed = format!(
         "ERROR: Broadcast block failed: Request to {} failed, because of 'bad'",
         endpoint(RouteId::PostBlock)
@@ -219,6 +223,9 @@ async fn failed_calls_carry_the_reference_texts() {
     let line =
         r#"DEBUG: No open socket connection to any host: ["127.10.0.2:6002","127.10.0.3:6002"]"#;
     assert_eq!(lines.with("No open socket"), [line]);
+    // A sync whose selection finds no host returns the selection's error to the slot check.
+    assert_eq!(nobody.sync_with_network().await, Err(error));
+    assert_eq!(lines.with("Could not sync check").len(), 1);
 }
 
 #[tokio::test(start_paused = true)]
@@ -265,7 +272,7 @@ async fn every_call_gives_up_at_its_deadline() {
         .await;
     assert_eq!(start.elapsed(), Duration::from_secs(5), "postBlock");
     let start = Instant::now();
-    client.sync_with_network().await;
+    assert_eq!(client.sync_with_network().await, Ok(()));
     assert_eq!(start.elapsed(), Duration::from_secs(20), "syncBlockchain");
     let start = Instant::now();
     client

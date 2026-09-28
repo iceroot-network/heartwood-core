@@ -132,7 +132,9 @@ impl RelayLink for Scripted {
 
     async fn broadcast_block(&self, _: &[u8], _: Deadline) {}
 
-    async fn sync_with_network(&self) {}
+    async fn sync_with_network(&self) -> Result<(), RelayError> {
+        Ok(())
+    }
 
     async fn emit_event(&self, _: ForgerEvent) {}
 

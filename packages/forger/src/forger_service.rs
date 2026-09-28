@@ -435,7 +435,7 @@ where
                 let username = name(&self.state().usernames, &next.public_key);
                 let seconds = pluralise("second", i128::from(self.block_time), true);
                 info!("Delegate {username} is due to forge in {seconds} from now :sparkles:");
-                self.link.sync_with_network().await;
+                self.link.sync_with_network().await?;
             }
             return Ok(self.until_slot_end(&round));
         };

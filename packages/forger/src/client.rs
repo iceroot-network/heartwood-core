@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use heartwood_kernel::{debug, error, warning};
+use heartwood_kernel::{debug, error};
 use heartwood_p2p::errors::SessionError;
 use heartwood_p2p::nes::{ConnectOptions, ErrorHook, Session};
 use heartwood_p2p::transport::Dial;
@@ -321,18 +321,14 @@ impl RelayLink for Client {
         }
     }
 
-    async fn sync_with_network(&self) {
-        // The reference's selection error leaves the slot check, whose error log shows it.
-        match self.select_host().await {
-            Err(failure) => warning!("{failure}"),
-            Ok(host) => {
-                debug!("Sending wake-up check to relay node {}", host.hostname);
-                let synced = self.ignored(RouteId::SyncBlockchain, b"{}".to_vec()).await;
-                if let Err(failure) = synced {
-                    error!("Could not sync check: {failure} :bangbang:");
-                }
-            }
+    async fn sync_with_network(&self) -> Result<(), RelayError> {
+        let host = self.select_host().await?;
+        debug!("Sending wake-up check to relay node {}", host.hostname);
+        let synced = self.ignored(RouteId::SyncBlockchain, b"{}".to_vec()).await;
+        if let Err(failure) = synced {
+            error!("Could not sync check: {failure} :bangbang:");
         }
+        Ok(())
     }
 
     fn emit_event(&self, event: ForgerEvent) -> impl Future<Output = ()> + Send {

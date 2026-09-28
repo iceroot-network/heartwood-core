@@ -474,7 +474,9 @@ mod far_relay {
             self.posted.fetch_add(1, Ordering::SeqCst);
         }
 
-        async fn sync_with_network(&self) {}
+        async fn sync_with_network(&self) -> Result<(), RelayError> {
+            Ok(())
+        }
 
         async fn emit_event(&self, _: ForgerEvent) {}
 

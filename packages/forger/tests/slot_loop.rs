@@ -214,8 +214,8 @@ impl RelayLink for FakeRelay {
         }
     }
 
-    async fn sync_with_network(&self) {
-        let _ = self.call("sync", String::new());
+    async fn sync_with_network(&self) -> Result<(), RelayError> {
+        self.call("sync", String::new())
     }
 
     async fn emit_event(&self, event: ForgerEvent) {
@@ -864,4 +864,26 @@ async fn a_retry_in_the_slot_resends_the_signed_block() {
     assert_eq!(relay.count("event block.forged"), 3);
     assert_eq!(relay.tip.lock().unwrap().height, 2);
     assert_eq!(forger.signer.signed.lock().unwrap().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_sync_that_finds_no_host_checks_again_after_two_seconds() {
+    let (lines, _guard) = Lines::capture();
+    // Slot 14's forger is delegate 5; the forger's delegate 1 forges slot 15.
+    let relay = FakeRelay::new(in_slot(14, 0), &[1, 2, 3, 4, 5], &[]);
+    let hosts = "127.10.0.1".to_owned();
+    relay.fail("sync", 1, RelayError::HostNoResponse { hosts });
+    let mut forger = forger(&relay, &[1], relay.clock.clone());
+    forger.service.boot().await.unwrap();
+    run_for(&forger, 3_000).await;
+    assert_eq!(
+        lines.with("didn't respond"),
+        ["WARNING: 127.10.0.1 didn't respond. Trying again later"]
+    );
+    assert_eq!(lines.with("due to forge").len(), 2);
+    assert_eq!(
+        relay.count("round"),
+        1 + 2,
+        "the boot, and the checks at 0 s and 2 s"
+    );
 }

@@ -144,8 +144,9 @@ pub trait RelayLink: Send + Sync {
     /// failed: ..."), not returned.
     fn broadcast_block(&self, bytes: &[u8], deadline: Deadline) -> impl Future<Output = ()> + Send;
 
-    /// `syncBlockchain`; a failure is logged.
-    fn sync_with_network(&self) -> impl Future<Output = ()> + Send;
+    /// `syncBlockchain`: a failed call is logged ("Could not sync check: ..."); a host selection
+    /// that finds no ready host is returned, as it leaves the reference's slot check.
+    fn sync_with_network(&self) -> impl Future<Output = Result<(), RelayError>> + Send;
 
     /// `emitEvent`, sent only when some host's address text contains `127.0.0.1` or `::1` (the
     /// reference's substring test), to the selected host; otherwise, and on a failure, an error
