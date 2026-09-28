@@ -1286,7 +1286,7 @@ judges its directory, and `make api-compare RUN=<run>` its route corpus.
 
 | Run | Network | What happens |
 |---|---|---|
-| `r` | three reference forgers and a reference relay as the observer (node 4) | the scenario: every kept transaction type with its expected refusals, sent through node 4; a batch through node 4 in every pool before the next block; node 4 finding its peers; votes before and after a restart of node 4 |
+| `r` | three reference forgers and a reference relay as the observer (node 4) | the scenario: every kept transaction type with its expected refusals, sent through node 4; a batch through node 4 in every pool before the next block; node 4 finding its peers |
 | `h` | the same, with a Heartwood relay as node 4 | the same scenario; each submission must get the answer it got in run `r`, and the scenario's wallets must equal run `r`'s |
 | `m1` | three reference forgers, a reference relay, and two Heartwood relays (nodes 4 and 5) | node 4 stopped by SIGINT, killed three times, and restarted with the replay marker; node 5 started with an empty store while the chain advances and killed during its first sync; a forger stopped; votes before and after the replay restart |
 | `m2` | four nodes with a Heartwood relay as node 4 | a partition into two pairs across a round end, both sides forging, two conflicting transfers, then the heal |
@@ -1302,8 +1302,8 @@ one and the supply check; and, for node 4 of `r`, `h` and `m1`, every block with
 of node 1. A run binds itself to the relay it tested: the check fails when the SHA-256 of the
 judged tree's `target/release/heartwood` is not the one the run recorded. For `m2` both sides must
 have forged, nodes 3 and 4 must converge on the majority's chain by themselves, node 4's lines must
-equal the judge's on the minority's chain and then on the majority's, and only one of the two
-conflicting transfers may remain, in the chain and in no pool.
+equal the judge's on the minority's chain and then on the majority's, and of the two conflicting
+transfers only the majority's may be in the final chain, while the other has left every pool.
 
 The route corpus (`tools/difftest/api-corpus`, 1,038 queries: each served route, each criterion
 alone and in pairs, orders, pages, `offset=0`, unknown keys, invalid values, the 404 texts, wallets
@@ -1322,7 +1322,7 @@ undocumented difference; the documented ones were ties of an order (27 and 25), 
 tip (3 each), a store failure (1 each) and a decoder's reason text in the pool's refusals (2 each).
 The Heartwood relays' lines equalled the judge's on every chain, and the processor replays of the
 five live chains passed. A Heartwood relay applies a block 0.5 s after node 1 at the median (at most
-1.5 to 2 s), where a reference relay applies it at once: it learns of blocks by its 500 ms poll,
+2 s away from a fault), where a reference relay applies it at once: it learns of blocks by its 500 ms poll,
 since no peer pushes to a relay without a listener; a relay started with an empty store while the
 chain was at height 107 was synced 11 s after its start, a kill during the sync included; a
 transaction posted to a Heartwood relay reached the reference nodes' pools in about 220 ms.
