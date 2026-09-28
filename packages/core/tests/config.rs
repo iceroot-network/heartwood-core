@@ -8,7 +8,7 @@ use std::fs;
 
 use common::{Setup, relay_plugins, run};
 use heartwood_blockchain::{BlockchainOptions, ReplayReason, RestorePath};
-use heartwood_core::app::{RelayError, restored, version_floor};
+use heartwood_core::app::{RelayError, api_options, restored, version_floor};
 use heartwood_core::config::{Package, RelayConfig};
 use heartwood_core::options;
 use heartwood_kernel::config::Env;
@@ -466,6 +466,29 @@ fn a_replay_marker_restores_by_the_replay_path_and_is_removed() {
         config.pool_marker(),
         setup.root.join("temp/clear-pool.lock")
     );
+}
+
+#[test]
+fn a_refused_api_option_leaves_the_api_out_and_https_or_an_unknown_host_stops_the_start() {
+    let setup = Setup::new("api-options", "");
+    let api = |extra: &[(&str, &str)]| api_options(&load(&setup, "--network testnet", extra)?);
+    let served = api(&[("CORE_API_PORT", "7003")]).unwrap().unwrap();
+    assert_eq!(served.address.port(), 7003);
+    // The reference's API is not a required component: its schema's refusal leaves it out.
+    assert_eq!(api(&[("CORE_API_PORT", "abc")]), Ok(None));
+    for extra in [("CORE_API_SSL", "1"), ("CORE_API_HOST", "unknown.invalid")] {
+        assert!(
+            matches!(api(&[extra]), Err(RelayError::Config(_))),
+            "{extra:?}"
+        );
+    }
+    let mut plugins = relay_plugins();
+    plugins
+        .as_array_mut()
+        .unwrap()
+        .retain(|p| p["package"] != "@solar-network/api");
+    setup.app(plugins);
+    assert_eq!(api(&[("CORE_API_PORT", "abc")]), Ok(None));
 }
 
 #[test]

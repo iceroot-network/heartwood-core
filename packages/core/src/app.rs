@@ -184,16 +184,7 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
     p2p.max_transactions_per_request = pool_options.max_transactions_per_request;
     let blockchain_options = options::blockchain(&relay.entry(Package::Blockchain));
     let blockchain_options = Arc::new(blockchain_options.map_err(config)?);
-    let api_config = relay
-        .components
-        .contains(&Package::Api)
-        .then(|| ApiConfig::from_options(&relay.entry(Package::Api), &relay.env));
-    let mut api_config = api_config.transpose().map_err(config)?;
-    if api_config.as_ref().is_some_and(|api| api.https) {
-        return Err(config(
-            "CORE_API_SSL is set, but this relay serves no HTTPS: serve its API through a reverse proxy that terminates TLS",
-        ));
-    }
+    let mut api_config = api_options(&relay)?;
     // The store, the state and the version floor at the stored tip.
     let settings = Settings::in_data_dir(&relay.paths.data);
     let (store, restored) = restored(&relay)?;
@@ -322,6 +313,30 @@ async fn serve(relay: RelayConfig, run: &RelayRun, api_runtime: Handle) -> Resul
         }
     }
     outcome
+}
+
+/// The API's options: `None` when the relay's profile leaves the API out, or when one of them is
+/// refused, which is logged and leaves the relay running without an API, as the reference's API
+/// is not a required component. A host that does not resolve to an address stops the start, as
+/// the reference's server cannot listen on it, and so does `CORE_API_SSL`: this relay serves no
+/// HTTPS.
+pub fn api_options(relay: &RelayConfig) -> Result<Option<ApiConfig>, RelayError> {
+    if !relay.components.contains(&Package::Api) {
+        return Ok(None);
+    }
+    match ApiConfig::from_options(&relay.entry(Package::Api), &relay.env) {
+        Ok(api) if api.https => Err(config(
+            "CORE_API_SSL is set, but this relay serves no HTTPS: serve its API through a reverse proxy that terminates TLS",
+        )),
+        Ok(api) => Ok(Some(api)),
+        Err(error) if error.key == "server.http.host" && error.reason.contains("listen") => {
+            Err(config(error))
+        }
+        Err(error) => {
+            heartwood_kernel::error!("{error}: the API is not started");
+            Ok(None)
+        }
+    }
 }
 
 /// The API of `config` over the node's snapshots and status, the monitor's peers and the store's
