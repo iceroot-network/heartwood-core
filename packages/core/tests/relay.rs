@@ -27,9 +27,10 @@ impl Drop for Killed {
     }
 }
 
-/// A port nothing listens on now.
+/// A port nothing listens on now, on any address: the relay binds the wildcard address, which
+/// a listener on any other loopback address of the same port refuses.
 fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
+    TcpListener::bind("0.0.0.0:0")
         .unwrap()
         .local_addr()
         .unwrap()
