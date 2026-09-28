@@ -305,9 +305,35 @@ values (`legacyTransfer: false`, `legacyVote: false`, `bip340: true`,
 exactly `{}`. The reference loads every such file, so these refusals are configuration-only
 differences; generated devnets never contain one.
 
+The rest of a node's configuration has the reference's files and semantics, so one configuration
+serves both implementations:
+
+- `config::env`: the node's environment, the process's own variables, then the keys of
+  `<config>/.env` the process does not have, then every key of `~/.<token>/.env` over both. The
+  reference refuses to start without the home file; a Heartwood relay does not need it. A switch is
+  on for any non-empty value, as the reference reads `!!process.env.X`.
+- `config::app`: `app.json`, with its three profiles checked as the reference's schema checks
+  them, and each component's options merged over its defaults (arrays replaced) and read as the
+  reference's option schemas read them (numbers and booleans from text). A profile's `flags` and an
+  `app.js` beside the file are not read; the relay names them in a warning at its start.
+- `config::peers`: `peers.json`, the seed list and the peer sources, which must be URIs, as the
+  reference's schema requires, so a local file cannot be a source on either side.
+- `config::floor`: the node's own version against the milestones' `p2p.minimumVersions`. The floor
+  in force at the stored tip (height 1 at a first start) must admit the node's version, or the
+  start stops and names the height; a later milestone whose floor would refuse the node is a
+  warning with its height, since the network cuts the node off there. The reference checks no
+  floor against its own version.
+- `bus`: the event bus, with the reference's event names, to every subscriber in the order the
+  node emitted them. Nothing in a relay consumes it beyond the node's own ordered listeners; the
+  external payloads (webhooks, the API's socket) come with their first consumer.
+
 ```sh
 cargo test -p heartwood-kernel --locked --all-features   # unit tests, the loader's refusals, V09-rounds, V16 and V23
 ```
+
+The class V28, installed beside the kernel and the API, holds the reference's reading of
+`app.json` (`config.loadApp`) and of the components' options (`config.pluginOptions`); difftest's
+`config_app_vectors` test compares them.
 
 ## heartwood-logger
 
@@ -315,7 +341,9 @@ cargo test -p heartwood-kernel --locked --all-features   # unit tests, the loade
 name with its colour and the message, with emoji codes such as `:white_check_mark:` replaced
 (the table is node-emoji's, with its MIT notice in `src/emoji.tsv`). Console lines are coloured,
 file lines are not; the file rotates daily into gzip files and keeps at most 10 of them and
-100 MiB. Nothing calls `init` yet: the processes arrive with the node.
+100 MiB. The relay calls `init` with its log options (`CORE_LOG_LEVEL`, `CORE_LOG_LEVEL_FILE`); a
+level name that is not one of the reference's eight turns that output off, as the reference drops
+it.
 
 ```sh
 cargo test -p heartwood-logger --locked   # the V20 class, rotation, retention and gzip
@@ -381,17 +409,36 @@ block's id and the state format), the fingerprints of the applied milestone entr
 node-local delegate versions. Ids, keys and hashes are lowercase hex text. Amounts are integers
 written through a checked conversion: a value beyond `2^63 - 1` is a storage error, where the
 reference's `bigint` columns stop too. The amount column of a transaction holds 0 where the
-reference stores `NULL`. A file of another schema version, or of another program, is refused.
+reference stores `NULL`; the API's criteria and orders read the amount of a burn only, as the
+reference's table holds it (see heartwood-api). Schema version 2 adds `transaction_recipients`,
+every recipient of a stored transfer, which the API's address criteria read as the reference's
+containment query on the transfers finds them; a file of version 1 is upgraded when it opens. A
+file of another schema version, or of another program, is refused.
 
 Writes go in chunks: one SQLite transaction per chunk of blocks, with a savepoint per block, so a
 chunk is stored whole or not at all. On every start the store checks itself: the block count is
 the tip's height; the transaction count, fee sum and amount sum agree with the block columns; no
 round rows lie above the next round; there is one undo record per height from 2 to the tip; and the
 state row names the tip. The crate stores rows, not state: it does not depend on
-`heartwood-state`.
+`heartwood-state`. When the writer closes, it checkpoints the write-ahead log into the database
+file (a passive checkpoint, which never waits for a reader), so after a stop the file alone holds
+every committed block.
+
+The API reads through `Readers`: read-only connections of its own, never the writer, so a read
+never waits for a chunk and never sees half of one. Each interrupts a statement that runs longer
+than the database's `apiConnectionTimeout` (3 s by default), as the reference's API connection has
+that statement timeout. `history` holds the queries of the served routes: blocks by id or height,
+the transactions of the reference's criteria (`address`, `senderId`, `recipientId`, `id` as a
+prefix, `memo` as a `LIKE` pattern on its bytes, `asset` as a JSON containment after the
+reference's expansion of the query's strings, and the rest), with the reference's orders and
+pages, and a round's rows. A listing counts every match and reads its page in one read
+transaction. Ties of the requested order are broken by the block height and the sequence, so a page
+is the same on every call; text sorts by its bytes, which is the reference's order on a database
+in the C locale. The pattern, the containment and the `jsonb` order were checked against
+PostgreSQL 14 in the C locale.
 
 ```sh
-cargo test -p heartwood-database --locked   # row round trips, chunks, reverts, the start checks, killed commits
+cargo test -p heartwood-database --locked   # row round trips, chunks, reverts, the start checks, killed commits, the history queries
 ```
 
 The kill test (`tests/kill.rs`) kills a child process that commits chunks in a loop with SIGKILL
@@ -434,7 +481,10 @@ reference's view of a sender keeps the copy of a delegate's wallet it took when 
 until the view is rebuilt after the next block.
 
 The pool is synchronous: each operation takes `&mut self` and returns what it added and removed,
-and it reads the time only through the kernel's clock seam.
+and it reads the time only through the kernel's clock seam. A processor also returns the admitted
+transactions that pass the broadcast fee rule, cloned when admitted, so a transaction that a later
+entry of the same batch evicts is still broadcast, as the reference's list is. The view a relay
+publishes after each change shares the transactions it already held with the view before it.
 
 ```sh
 cargo test -p heartwood-pool --locked   # every admission step with its code and message, lists, cooldown, orders, collation, storage
