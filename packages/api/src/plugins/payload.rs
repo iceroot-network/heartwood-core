@@ -2,7 +2,9 @@
 //! the content type (JSON when none is given, or an empty one), which must read as
 //! `type/subtype`, with a boundary for a multipart type; a multipart form, which hapi does not
 //! parse; the body, decompressed when its `content-encoding` is `gzip` or `deflate`, up to the
-//! limit; then by type: JSON (`null` when empty; refused when it does
+//! limit (Node's gunzip reads gzip members one after another, and stops at a zero byte where the
+//! next would start; its inflate ignores what follows the stream); then by type: JSON (`null`
+//! when empty; refused when it does
 //! not parse or names `__proto__`), text, bytes (`null` when empty, else read as text: the
 //! schema refuses both), a form (read as no fields, which the schema refuses too), or any other
 //! type refused. The reference answers every failure with a 422 and hapi's message (its server's
@@ -15,7 +17,8 @@ use std::io::Read;
 use axum::body::{Body, to_bytes};
 use axum::http::HeaderMap;
 use axum::http::header::{self, HeaderName};
-use flate2::read::{MultiGzDecoder, ZlibDecoder};
+use flate2::bufread::GzDecoder;
+use flate2::read::ZlibDecoder;
 use serde_json::{Map, Value};
 
 use super::{is_js_space, node_header};
@@ -40,8 +43,8 @@ pub(super) async fn read(headers: &HeaderMap, body: Body) -> Result<Value, ApiEr
     }
     let bytes = to_bytes(body, MAX_BODY).await.map_err(|_| too_large())?;
     let bytes = match text_of(header::CONTENT_ENCODING).as_deref() {
-        Some("gzip") => inflate(MultiGzDecoder::new(&bytes[..]))?,
-        Some("deflate") => inflate(ZlibDecoder::new(&bytes[..]))?,
+        Some("gzip") => gunzip(&bytes)?,
+        Some("deflate") => inflate(ZlibDecoder::new(&bytes[..]), Vec::new())?,
         _ => bytes.to_vec(),
     };
     // The body is read as UTF-8 text, a sequence that is not UTF-8 becoming U+FFFD.
@@ -64,16 +67,31 @@ pub(super) async fn read(headers: &HeaderMap, body: Body) -> Result<Value, ApiEr
     }
 }
 
-/// The bytes `decoder` gives, up to the limit.
-fn inflate(decoder: impl Read) -> Result<Vec<u8>, ApiError> {
-    let mut bytes = Vec::new();
-    let mut limited = decoder.take(MAX_BODY as u64 + 1);
-    let read = limited.read_to_end(&mut bytes);
+/// `bytes` followed by what `decoder` gives, up to the limit.
+fn inflate(decoder: impl Read, mut bytes: Vec<u8>) -> Result<Vec<u8>, ApiError> {
+    let room = (MAX_BODY + 1).saturating_sub(bytes.len()) as u64;
+    let read = decoder.take(room).read_to_end(&mut bytes);
     read.map_err(|_| ApiError::unprocessable("Invalid compressed payload"))?;
     if bytes.len() > MAX_BODY {
         return Err(too_large());
     }
     Ok(bytes)
+}
+
+/// The gzip members of `body`, one after another, as Node's gunzip reads them: after a member,
+/// the rest is ignored when it is empty or starts with a zero byte (padding), and must be another
+/// member otherwise.
+fn gunzip(body: &[u8]) -> Result<Vec<u8>, ApiError> {
+    let mut rest = body;
+    let mut bytes = Vec::new();
+    loop {
+        let mut member = GzDecoder::new(rest);
+        bytes = inflate(&mut member, bytes)?;
+        rest = member.into_inner();
+        if rest.first().is_none_or(|&byte| byte == 0) {
+            return Ok(bytes);
+        }
+    }
 }
 
 /// The refusal of a body over the limit.

@@ -802,6 +802,49 @@ async fn a_compressed_payload_is_read_as_hapi_decompresses_it() {
             422,
             refused("Payload content length greater than maximum allowed: 1048576"),
         ),
+        // Node's gunzip reads members one after another, and stops at a zero byte after one.
+        (
+            [compress("gzip", br#"{"e":"#), compress("gzip", b"5}")].concat(),
+            "gzip",
+            200,
+            json!({ "e": 5 }),
+        ),
+        (
+            [compress("gzip", br#"{"f":6}"#), vec![0; 8]].concat(),
+            "gzip",
+            200,
+            json!({ "f": 6 }),
+        ),
+        (
+            [
+                compress("gzip", br#"{"g":"#),
+                vec![0; 2],
+                compress("gzip", b"7}"),
+            ]
+            .concat(),
+            "gzip",
+            422,
+            refused("Invalid request payload JSON format"),
+        ),
+        (
+            [compress("gzip", br#"{"h":8}"#), b"xyz".to_vec()].concat(),
+            "gzip",
+            422,
+            refused("Invalid compressed payload"),
+        ),
+        (
+            Vec::new(),
+            "gzip",
+            422,
+            refused("Invalid compressed payload"),
+        ),
+        // Its inflate ignores what follows the stream.
+        (
+            [compress("deflate", br#"{"i":9}"#), b"xyz".to_vec()].concat(),
+            "deflate",
+            200,
+            json!({ "i": 9 }),
+        ),
     ];
     for (body, encoding, status, expected) in cases {
         let headers = [
