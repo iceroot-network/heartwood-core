@@ -330,14 +330,15 @@ fn by_id(body: &Value) -> Value {
 ///   names otherwise);
 /// - `amount` is stored only when it is above zero, and never for a transfer, whose resource shows
 ///   the sum of its transfers instead: the key is `null` for those;
-/// - `memo`, `recipientId` and `amount` may be absent (`null`); any other column must be shown, so
-///   `sequence` needs the raw data and `timestamp` the resource.
+/// - `memo`, `recipientId`, `amount` and `timestamp` may be absent (`null`; a transaction of the
+///   genesis block shows no timestamp); any other column must be shown, so `sequence` needs the
+///   raw data (which in turn has no `timestamp`).
 fn sort_key(item: &Value, property: &str) -> Option<Value> {
     let shown = |names: &[&str]| names.iter().find_map(|name| item.get(*name)).cloned();
     match property {
         "senderId" => shown(&["sender", "senderId"]),
         "recipientId" => Some(shown(&["recipient", "recipientId"]).unwrap_or(Value::Null)),
-        "memo" => Some(shown(&["memo"]).unwrap_or(Value::Null)),
+        "memo" | "timestamp" => Some(shown(&[property]).unwrap_or(Value::Null)),
         "amount" => {
             let transfer = item["typeGroup"] == 1 && item["type"] == 6;
             let amount = shown(&["amount"]).filter(|a| !transfer && a != "0" && a != 0);
@@ -471,6 +472,8 @@ mod tests {
         assert!(swapped("orderBy=fee:asc").is_failure());
         // The resource does not show the sequence: no tie can be seen.
         assert!(swapped("orderBy=sequence:asc").is_failure());
+        // A transaction of the genesis block shows no timestamp: its rows tie on it.
+        assert!(is_tie(&swapped("orderBy=timestamp:asc")));
         let raw = |sequence: u32| json!({"id": sequence.to_string(), "senderId": "dA", "sequence": sequence});
         assert!(is_tie(&outcome(&list(
             "orderBy=sequence:asc&transform=false",
