@@ -1119,10 +1119,10 @@ minimal case, which is written to `--regressions`.
 | P10 pool | fixtures of 3 to 12 wallets, some of them online delegates, with random options (small limits in a quarter of the cases, milestone fees on or off, the static mode), and 1 to 8 steps: batches of 1 to 6 entries built from the fixture's keys and mutated (nonces, fees around the floor and the lowest, amounts around the balance, duplicates, removed types, another network, bad signatures, pending conflicts, bytes or JSON with a correct, wrong or missing id), the clock moving on, removals, re-adds, a restart of the storage, changes of the online record, and a collation at the end | `pool.run`: every step's result and the pool's contents after it |
 | P11 text | amounts over the whole `i64` and `u64` range, weighted to `2^53` and to rounding ties; fraction digits; symbols; counts; transactions | `text.formatSatoshi`, `text.toLocaleFixed`, `text.toLocaleString`, `text.pluralise`, `text.transaction` |
 | P12 crypto files | the devnet's milestone and network files with keys added at random paths, `null`s, heights repeated, value types changed, removed features turned on, and files removed | `config.load`: a file the reference refuses must be refused by Heartwood; one only Heartwood refuses must match one strict-schema predicate; accepted files must merge to the same milestones |
+| P13 processor | on five prefixes of each corpus chain (the committed one, and `c2-faults` cut at 265 and `c4-restarts` when they are under `target/corpus`), the next block built as the slot's delegate builds it and then mutated (timestamp, height, previous id, generator, reward, transactions, version, payload length, signature, or a block of the chain itself), with a chain state around it (the last downloaded and forked blocks, whether the blockchain has started, blocks of the job not stored yet, a stored id, no delegate name at enqueue) | `chain.process`: the result, the handler, the unchained status, the chain state after it and the digest line after an accepted block |
 | P14 verifier | a chain of 70 headers signed by the delegates of their rounds, our height, a peer on our chain or forked from a random height with a branch of its own, bogus and short common-block replies, a failing or unlinked header, a deadline | `verifier.checkState`: the result and every request |
 | P15 exchange | the client's requests with random versions, ports and fields; replies of the six routes other than getStatus around the schemas' edges, a quarter of them with a byte changed, cut or added | `p2p.validateRequest`, `wire.checkReply` |
 | P16 monitor | peer sets with attested keys, ranks, heights and verification results around the fork threshold, with common heights of different digit counts; lists of heights | `monitor.forkDecision`, `monitor.networkHeight` |
-| P13 processor | on five prefixes of each corpus chain (the committed one, and `c2-faults` cut at 265 and `c4-restarts` when they are under `target/corpus`), the next block built as the slot's delegate builds it and then mutated (timestamp, height, previous id, generator, reward, transactions, version, payload length, signature, or a block of the chain itself), with a chain state around it (the last downloaded and forked blocks, whether the blockchain has started, blocks of the job not stored yet, a stored id, no delegate name at enqueue) | `chain.process`: the result, the handler, the unchained status, the chain state after it and the digest line after an accepted block |
 
 With the date as the seed and 10,000 cases per property (50,000 for P7), every property agrees
 with the reference. The only documented difference that appears is the one of a refused
@@ -1221,7 +1221,35 @@ storage.
 (`difftest store replay`) and kills it with SIGKILL after a random delay, `KILLS` times; after each
 kill it restores the store by both of Heartwood's start paths (`difftest store check`), which must
 land on the last or the next committed block with a state whose digest equals the continuous line of
-that height, and goes on from there.
+that height, and goes on from there. With `RUNTIME=1` (`--runtime`) the child is a relay built with
+the harness's flags that imports the chain from a mock peer on the same host, through the peer
+client, the jobs and the node thread: its digest lines must equal the continuous lines, the store
+must restore by both paths to one committed tip, and after the kills a last relay imports the rest
+of the chain. In half the kills the mock peer answers its first getBlocks with nothing; that
+request is the relay's verification of the seed (headers only), so the relay drops the seed, falls
+back to it after the monitor's wait, and imports in downloads of 400 blocks cut into jobs of 100.
+The monitor downloads a tenth of a chunk only after an empty download of blocks, which this mock
+peer never gives, so the report counts the stored tips off the grid of those jobs, which stays 0.
+On the committed chain, 200 kills of a relay land on stored tips 1, 101, 201 and 265 and all pass.
+
+**Through the processor.** `make corpus-judge PROCESSOR=1` also runs the chain through the
+reference's own job, one block per job, and writes each block's result and job end to
+`ts-processor.jsonl`; every block must be accepted and every line must equal the plain replay's.
+`make l2-processor` (`difftest run l2 DIR --processor`) replays the corpus as a follower imports it:
+each run of blocks between two reverts is one download, listed as a getBlocks reply, read through
+the reply's codec, its check and the download reader, named and cut into jobs as the reference's
+enqueueing cuts it (and again one block per job), and run through the job and the processor,
+committed per job to a new store. Both cuts must give the judge's lines, every result and job end
+must be the judge's, the store's rows must equal the node's, and the two cuts must give equal lines
+and results; a strict run fails on a corpus judged without `PROCESSOR`. `make l2-synthetic` also
+runs the synthetic processor and fork cases on top of the chain, each through the reference's job
+and Heartwood's: every unchained status, a double-forged block and the recovery at fixed depths, a
+refused block after a slot gap, an unchained first block, a job cut at a milestone, conflicting and
+already forged transactions, a removal across a round end with the pool's re-adds, a block in a
+future slot, a removed transaction type in a block (first in a job, and after an accepted block), a
+vote at a round's end with a competing branch, and a milestone at exactly the last downloaded
+height. On the committed chain the processor replay compares 6,490 records and the synthetic
+processor cases 36, with 4 documented (the two differences above).
 
 ```sh
 make corpus-import ARCHIVE='archive/...' NAME=my-chain   # into target/corpus/my-chain
@@ -1230,7 +1258,11 @@ make l2 NAME=my-chain                                     # Heartwood through it
 make l2-restart NAME=my-chain                             # the same with the restarts of the plan
 make l2-synthetic NAME=my-chain                           # with the synthetic blocks, restarts and pool sessions (needs the oracle)
 make crash-test NAME=my-chain KILLS=200                   # the store after SIGKILLs
-cargo test -p heartwood-difftest --locked --test l2       # the committed corpus with its restart lines, no oracle
+make crash-test NAME=my-chain KILLS=200 RUNTIME=1         # a relay importing the chain, after SIGKILLs
+make corpus-judge NAME=my-chain PROCESSOR=1               # also each block's result through the reference's job
+make l2-processor NAME=my-chain                           # Heartwood's download path, jobs and processor against those
+cargo test -p heartwood-difftest --locked --test l2       # the committed corpus with its restart lines, through the
+                                                          # store and through the processor, no oracle
 ```
 
 The committed corpus, `tools/difftest/corpus/txgen-one-node`, is a one-node devnet chain of five
@@ -1240,7 +1272,60 @@ maintainers also replay chains made with the same unpublished tooling, which are
 `target/corpus` and are not committed: three nodes with partitions, kills and restarts (replayed up
 to the end of its fifth round), and a one-node chain of five rounds restarted once from its saved
 state and once without it, with an API checkpoint after each restart, which the judge's headless
-restarts must reproduce.
+restarts must reproduce. The chains of the live runs (see L3 and L4) are imported and judged the
+same way, with `PROCESSOR=1`, and replayed through the processor.
+
+## L3 and L4: live runs
+
+L3 and L4 run on devnets of the maintainers' devnet tooling (a separate tool that is not published;
+`LIVE_RECIPE`), with reference nodes of the reference's image and Heartwood relays of the image the
+tooling builds from `target/release/heartwood` (`make relay-image`). A Heartwood relay starts with
+production addressing on the devnet's own network, and each run stops at the end of its fifth round
+at the latest. `make live RUN=<run>` runs one; `make live-check RUN=<run>` (`difftest live check`)
+judges its directory, and `make api-compare RUN=<run>` its route corpus.
+
+| Run | Network | What happens |
+|---|---|---|
+| `r` | three reference forgers and a reference relay as the observer (node 4) | the scenario: every kept transaction type with its expected refusals, sent through node 4; a batch through node 4 in every pool before the next block; node 4 finding its peers; votes before and after a restart of node 4 |
+| `h` | the same, with a Heartwood relay as node 4 | the same scenario; each submission must get the answer it got in run `r`, and the scenario's wallets must equal run `r`'s |
+| `m1` | three reference forgers, a reference relay, and two Heartwood relays (nodes 4 and 5) | node 4 stopped by SIGINT, killed three times, and restarted with the replay marker; node 5 started with an empty store while the chain advances and killed during its first sync; a forger stopped; votes before and after the replay restart |
+| `m2` | four nodes with a Heartwood relay as node 4 | a partition into two pairs across a round end, both sides forging, two conflicting transfers, then the heal |
+
+For each run the check requires: every scripted step met its expectation; node 1's chain (and the
+minority's, before a heal) imported as a corpus and judged, with its anchors; each Heartwood relay's
+digest lines equal to the judge's at every height and restart, its store's rows equal to node 1's,
+and its starts equal to the scripted ones (a kill during the sync must end the first start below
+node 1's height); no reply refusal and no protocol violation recorded against a reference peer; no
+reference node banning a Heartwood relay for a refused request or a broken session (a closed socket
+inside a fault window is recorded, not failed); one tip at the end, every generator the scheduled
+one and the supply check; and, for node 4 of `r`, `h` and `m1`, every block within one block time
+of node 1. A run binds itself to the relay it tested: the check fails when the SHA-256 of the
+judged tree's `target/release/heartwood` is not the one the run recorded. For `m2` both sides must
+have forged, nodes 3 and 4 must converge on the majority's chain by themselves, node 4's lines must
+equal the judge's on the minority's chain and then on the majority's, and only one of the two
+conflicting transfers may remain, in the chain and in no pool.
+
+The route corpus (`tools/difftest/api-corpus`, 1,038 queries: each served route, each criterion
+alone and in pairs, orders, pages, `offset=0`, unknown keys, invalid values, the 404 texts, wallets
+by address, key and name, the peers' filters, the pool after two submissions, and 102 requests for
+the rate limit) is sent at the run's pause to node 1 and to the node under test, alternately, and
+their answers are judged: equal status codes, `connection: close` and `X-Block-Height` present and
+equal at the paused tip, bodies equal after the volatile fields are left out (confirmations, times,
+versions, latencies), the peer routes compared by address for the peers both list, the rate
+limit's 429s equal, and each documented difference of heartwood-api behaving as documented. A 422
+message's text is not compared. The rate-limit requests go from a container on the devnet, since
+the nodes whitelist the host.
+
+On the last runs every run passed. Run `r`, the reference against itself, compared all 1,038
+queries with no difference. In `h` and `m1` the corpus compared 1,006 and 1,008 answers with no
+undocumented difference; the documented ones were ties of an order (27 and 25), a height above the
+tip (3 each), a store failure (1 each) and a decoder's reason text in the pool's refusals (2 each).
+The Heartwood relays' lines equalled the judge's on every chain, and the processor replays of the
+five live chains passed. A Heartwood relay applies a block 0.5 s after node 1 at the median (at most
+1.5 to 2 s), where a reference relay applies it at once: it learns of blocks by its 500 ms poll,
+since no peer pushes to a relay without a listener; a relay started with an empty store while the
+chain was at height 107 was synced 11 s after its start, a kill during the sync included; a
+transaction posted to a Heartwood relay reached the reference nodes' pools in about 220 ms.
 
 ## The oracle image
 
@@ -1296,9 +1381,11 @@ run without `DEVNET_GENERATOR`, and then installs nothing.
 | `V16-kernel.jsonl` (kernel) | the status canonical JSON; `.env` text (separators, comments, quotes, digits, booleans, empty values); epoch timestamps; address lists with globs, brackets and IPv6; node directories with their environment overrides; `pluralise` over words and counts 0, 1, 2, 999, 1,000 and 2,000,000 |
 | `V17-handlers.jsonl` (transactions) | the transaction handlers on wallet sets: at least one case of each error class and of each apply effect, the revoke delay at 105, 106 and 107 blocks, the fee floor and one below it, the burn minimum and one below it, votes identical, empty, too many and unknown, second signatures missing, wrong and unexpected, and a refused first transaction of a wallet without a key; each refusal with its message |
 | `V18-genesis-state.jsonl` (state) | the state digest after the genesis block of the three V10 chain definitions and of six variants of the first (fees and burns, a second key, resignations and a revoke, split votes, a transfer before the issuance record, more issuance records, a generator that registers and votes, a vote and a resignation before their registration; two that the reference refuses to start on: a negative balance, too few delegates for round 1), and of five wallet sets, one per record shape |
-| `V24-p2p-exchange.jsonl` (not installed) | the client's requests as a reference server reads them (accepted with the reference client's bytes, or refused by the version gate or the payload limit), and the reply checks of the six routes other than getStatus, with their verdicts and changed values |
-| `V25-peer-rules.jsonl` (not installed) | the address rules of candidate peers, the version gate over the devnet's, the default and 400 seeded ranges, the same-subnet test and the outgoing rate limiter's waits |
-| `V26-network.jsonl` (not installed) | the status attestations of a ping, the n-ary search for the common block and the peer verification over forks of a devnet chain, the monitor's network height, fork decisions and download plans, and blocks rebuilt from getBlocks replies |
+| `V24-p2p-exchange.jsonl` (p2p-wire) | the client's requests as a reference server reads them (accepted with the reference client's bytes, or refused by the version gate or the payload limit), and the reply checks of the six routes other than getStatus, with their verdicts and changed values |
+| `V25-peer-rules.jsonl` (p2p) | the address rules of candidate peers, the version gate over the devnet's, the default and 400 seeded ranges, the same-subnet test and the outgoing rate limiter's waits |
+| `V26-network.jsonl` (p2p) | the status attestations of a ping, the n-ary search for the common block and the peer verification over forks of a devnet chain, the monitor's network height, fork decisions and download plans, and blocks rebuilt from getBlocks replies |
+| `V27-processor.jsonl` (blockchain) | the reference's processor on one block and a chain state (`chain.process`: every result and unchained status, the invalid generator, the reward, nonces, conflicting and stored transactions, a block refused in its apply after missed slots, a removed type) and its job on a download of one or more jobs (`chain.job`: the job's results and end, its commit, a delegate's registration and its first block in one download, as one job and as two) |
+| `V28-node.jsonl` (kernel and api) | the reference's reading of `app.json` (`config.loadApp`) and of the components' options (`config.pluginOptions`), and the API's query grammar (`api.parseQuery`, with its throws) and pagination (`api.paginate`) |
 | `V20-logger.jsonl` (logger) | the log line of every level, coloured and plain, with and without emoji codes (the whole table, in slices), over times at the edges of a JavaScript date and messages with line breaks and colour codes |
 | `V21-pool.jsonl` (pool) | 50 scripted pool sessions over wallet fixtures, each step with the reference's answer and the pool's contents after it: every error code with its message (duplicates, the cooldown from 0 to 30 seconds and per channel, the size limit, another network byte, the fee floor and one below it, the static fee exact, lower and higher, a full pool with fee ties and evictions, the per-sender limit with `excess` and allowed senders, every handler refusal, the pending and offline texts, bad signatures and bytes that do not decode, the seven removed types as bytes and as JSON); JSON entries with a correct, wrong or missing id; accepted but not broadcast; a pending incoming transfer; nonce chains and gaps; re-adds after a flush and a restart of the storage; age expiry; removal cascades; forged removal; the online record's expiry; collation (fee and nonce order, ties, `exclude`, the most transactions, the byte budget, a failed sender) |
 | `V23-config.jsonl` (kernel) | `config.load` of the four crypto files: the devnet's files, accepted by both, and each refusal kind of the strict schema at each level, the keys of removed features on and off, `exceptions.json` other than `{}`, and missing files (the reference then falls back to its built-in preset) |
@@ -1339,15 +1426,19 @@ difftest oracle ping [--image TAG | --solar-dir DIR]
 difftest vectors verify DIR
 difftest vectors diff DIR DIR
 difftest run l0 DIR
-difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR] [--regressions DIR] [ORACLE]
+difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR] [--regressions DIR] [--min-reach N] [ORACLE]
 difftest run l2 DIR [--synthetic] [--restart] [--memory] [--to H] [ORACLE]
-difftest run l3|l4              says that the level is not built yet
+difftest run l2 DIR --processor [--chunks reference|1] [--synthetic] [--to H] [ORACLE]
+difftest run l3|l4              points to the live runs (see `difftest levels`)
 difftest corpus import ARCHIVE... --out DIR [--seed TEXT]
-difftest corpus judge DIR [--restarts every|rounds] [--restart-plan FILE] [--to H] [--dump H,...] [ORACLE]
+difftest corpus judge DIR [--restarts every|rounds] [--restart-plan FILE] [--to H] [--dump H,...] [--processor] [ORACLE]
 difftest corpus verify DIR
 difftest store replay DIR --db PATH [--to H]
 difftest store check DIR --db PATH
-difftest store crash DIR [--kills N] [--seed S] [--max-delay MS]
+difftest store crash DIR [--kills N] [--seed S] [--max-delay MS] [--runtime]
+difftest live check DIR
+difftest api compare --run DIR
+difftest api compare --left URL --right URL [--corpus DIR] --out DIR
 difftest levels
 difftest oracle replay OP CORPUS --vectors DIR [--height N] [--milestones FILE] [ORACLE]
 difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--compare DIR]
@@ -1356,7 +1447,11 @@ difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--
 `ORACLE` is `--image TAG` or `--solar-dir DIR`; `difftest --help` lists every option. `run l2
 --memory` replays without a store, as before the store existed; `store replay` goes on replaying a
 corpus through the store under `PATH`, one block per chunk, and `store check` restores it by both
-start paths and prints each one's tip and restart line: the kill test's two halves.
+start paths and prints each one's tip and restart line: the kill test's two halves. `live check`
+judges a live run's directory and `api compare --run` its recorded API answers (see L3 and L4);
+`api compare --left --right` sends the route corpus to two running nodes and judges their answers.
+`--strict`, with any command that compares, fails a run in which a case was skipped or had no Rust
+subject, as a failed case does; the Makefile's gate targets pass it.
 
 Library modules: `oracle` (run the scripts in the image or locally; `OracleServer` for L1),
 `vectors` (files, meta records, manifest), `subject` (a Rust implementation of one oracle
@@ -1368,10 +1463,13 @@ their double value and object keys by their JavaScript order), `report`, `replay
 inputs through the oracle and Heartwood), `genesis` (the chain-definition driver), `fixture`
 (wallet sets as both sides read them), `strategies` (the L1 generators), `corpus` and `digests`
 (L2 corpora and digest files), `synthetic` and `synthetic_pool` (the L2 synthetic blocks,
-restarts and pool sessions), `restart` (restart plans and the reference's restart lines), `store`
-(the replay through the store, the store's rows against the node's, and the kill test) and `levels`
-(L0, L1 and L2 run, with `levels::pool`, the judge of a pool session; L3 and L4 are described with
-what each one arrives with).
+restarts and pool sessions), `synthetic_processor` (the synthetic processor and fork cases),
+`restart` (restart plans and the reference's restart lines), `store` (the replay through the store,
+the store's rows against the node's, and the kill test), `runtime_kill` (the kill test through a
+relay), `levels` (L0, L1 and L2 run, with `levels::pool`, the judge of a pool session, and
+`levels::l2_processor`, the replay through the processor and the judge of a job), `live` (the
+checks of a live run) and `api` (the route corpus, its client, recording and judge, and the V28
+subjects).
 
 A difference names the JSON path and, for bytes, the first differing offset. This is
 `difftest vectors diff` against a copy of the vectors with one byte and one fee changed; an L0
