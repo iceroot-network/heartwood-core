@@ -79,7 +79,9 @@ pub fn line(level: Level, unix_ms: i64, message: &str, colour: bool) -> Option<S
 /// every other control character (C0, DEL and C1), the line and paragraph separators (U+2028,
 /// U+2029) and the bidirectional controls (Unicode's `Bidi_Control`: U+061C, U+200E, U+200F,
 /// U+202A to U+202E, U+2066 to U+2069). Backslashes are kept, so a text without such a character
-/// is returned as it is, and compact JSON inside a text stays JSON of the same value.
+/// is returned as it is, and compact JSON inside a text stays JSON of the same value. The escape
+/// is not meant to be undone: `\n` in a line is an escaped line feed or a backslash and an `n`
+/// that the text held.
 pub fn escape(text: &str) -> Cow<'_, str> {
     let escaped = |c: char| {
         c.is_control()

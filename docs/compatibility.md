@@ -354,8 +354,9 @@ character (C0, DEL and C1), the line and paragraph separators (U+2028, U+2029) a
 bidirectional controls (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069). One call
 writes exactly one line. Backslashes are kept, so the line of a message without such a character
 is byte for byte the reference's, and compact JSON inside a message stays JSON of the same value.
-A tool that reads the logs should still match a line from the start of its message: text from
-outside can hold a whole known message inside one line.
+The escape is not meant to be undone: `\n` in a line is an escaped line feed or a backslash and an
+`n` that the message held. A tool that reads the logs should still match a line from the start of
+its message: text from outside can hold a whole known message inside one line.
 
 ```sh
 cargo test -p heartwood-logger --locked   # the V20 class, rotation, retention and gzip
