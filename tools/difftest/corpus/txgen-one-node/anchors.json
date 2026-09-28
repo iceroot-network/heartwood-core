@@ -9,7 +9,7 @@
  },
  "oracle": {
   "mode": "container",
-  "image": "sha256:d0a6966b78d3cce9bfcaa0eab9969c7c7068d43d08f99fdd7b539380343fd706",
+  "image": "sha256:2353a6827497338897b5e28e39148e7e4e65fd04b55a79f43d340ce51146ecf8",
   "node": "v18.20.8"
  },
  "blocks": 264,
@@ -111,5 +111,13 @@
     "ok": true
    }
   }
+ },
+ "processor": {
+  "ok": true,
+  "blocks": 264,
+  "lines": 2073,
+  "jobs": 1168,
+  "notAccepted": [],
+  "differences": []
  }
 }
