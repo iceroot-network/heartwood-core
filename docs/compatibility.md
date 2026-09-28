@@ -835,6 +835,180 @@ The fuzz targets, seeded by `tools/p2p-fuzz-seeds.js` from a vector run's V24 an
 | `reply_check` | a selector byte (modulo 6: the routes other than getStatus), then a reply | no panic; an accepted reply encodes to bytes that decode and check to the same value | `wire.checkReply` |
 | `listed_block` | a getBlocks reply | no panic in the download path (the codec, the reply check, the transaction reader and the block rebuilt from the listed fields); a rebuilt block decodes to the same block | `block.fromListed` |
 
+## heartwood-api
+
+`packages/api` is the public API a relay serves, on axum and hyper, under `/api`. It serves the
+reference's routes that a follower answers, 18 in all: `/blocks/last`, `/blocks/{id}` and
+`/blocks/{id}/transactions`; `/node/status`, `/node/syncing`, `/node/configuration` and
+`/node/configuration/crypto`; `/peers` and `/peers/{ip}`; `/transactions` (the list, and `POST` of
+a batch into the pool), `/transactions/{id}`, `/transactions/unconfirmed` and
+`/transactions/unconfirmed/{id}`, `/transactions/types` and `/transactions/fees`; `/wallets/{id}`
+and `/wallets/{id}/transactions`. Every answer has the reference's envelope, keys in the reference's
+order, amounts as decimal strings, and hapi's error bodies. The API reads only the node's published
+snapshots and the store's read-only connections, so a request never waits for the node thread,
+except a submission for its pool's answer.
+
+A request goes through the reference's lifecycle in its order: the address whitelist (403); the
+query grammar (a query the reference's plugins throw on is 500, on any path and uncharged); the
+route; a `POST`'s payload (its declared and decoded size up to 1 MiB, its content type read as hapi
+reads it, gzip and deflate bodies decoded, JSON; any failure is 422 with hapi's message); the rate
+limit (100 points per 60 s per address, charged before validation, 429 without `Retry-After`); the
+path, query and payload against the route's schema (422 in Joi's style; the text of a 422 message is
+not part of the contract); the semaphore; the handler. Every answer, errors included, carries
+`X-Block-Height` (the published tip), `connection: close` and `cache-control: no-cache`; every
+answer of a route but a preflight's refusal carries `vary: origin` and
+`access-control-expose-headers`, and `access-control-allow-origin` when the request has an
+`Origin`. A `GET`'s 200 answer with a body offers byte ranges and serves one range as hapi does
+(206, or 416 for a range it cannot serve). A `GET` or `HEAD` that no route matches is charged a
+point and answered 404, as the reference's catch-all route answers it.
+
+The query grammar is the reference's: Node's `querystring` (at most 1,000 pairs, a repeated key as
+a list), then its comma and dot plugins, with their throws, sparse lists, JavaScript's key order
+and a later key changing a value an earlier one set. It builds a query with a loop, at any depth,
+and writes it out at most 128 levels deep and with at most 16,384 holes of sparse lists, so no
+query costs unbounded work. The bounds show only in the `asset` criteria of the three transaction
+lists, which answer 500 for a deeper value; the reference answers 200 up to about 3,000 levels and
+500 from about 4,000, when its link rendering overflows its stack. A request head whose target and
+header names and values reach 16,384 bytes is answered `HTTP/1.1 400 Bad Request` with no header,
+as the reference's server answers Node's refusal. Lists have the reference's pagination:
+`offset=0` is ignored and another offset replaces the page, and the links are relative to the
+configured base path, with the path written as hapi's request URL writes it.
+
+The history routes read the store as the reference reads PostgreSQL (see heartwood-database). A
+transfer's resource shows the sum of its transfers, but the `amount` criteria and orders read only
+a burn's amount, as the reference's table holds it. `/node/configuration/crypto` serves every
+genesis transaction with `headerType` 0, as the reference's serialiser leaves it at boot.
+
+Where the API differs on purpose, the reference has a defect or does work the relay leaves out;
+each case shows only with the request named:
+
+- a store error on a list, or a statement that runs past the database's `apiConnectionTimeout`, is
+  a logged 500; the reference answers an empty 200. A `memo` pattern that ends with its escape
+  character is the one such error a client can cause;
+- a block height above the tip, and a `/blocks/{id}/transactions` value that is neither a full id
+  nor a height at or below the tip, is 404 "Block not found"; the reference matches an id prefix;
+- the semaphore bounds the store's routes with the reference's settings, which the reference reads
+  from a path that does not exist and so never applies: a request beyond a level's places and
+  queue is 429;
+- the pool routes leave `burnedFee` out of their answers without changing the pool's transactions;
+- `/peers?ip=` lists the peers at exactly that address, where the reference ignores the filter;
+  `/peers?version=` reads the same subset of npm ranges as the client's version gate, and a range
+  outside it is 404 "Invalid version range provided", as an invalid range is in the reference;
+- ties of a requested order are broken by the block height and the sequence;
+- pagination links drop the configured base path, where the reference drops the first four
+  characters of the path whatever the base path is;
+- no response is compressed: the reference gzips a JSON answer of 1,024 bytes or more for a client
+  that accepts gzip, and such an answer carries no `accept-ranges` and is never cut to a range;
+  Heartwood answers identity, with the reference's `vary`;
+- the 5 s socket timeout bounds the whole connection, headers included, where the reference's is
+  5 s without activity; with a socket timeout of 0 a connection is bounded by 300 s, where the
+  reference bounds only the request's reception by that time;
+- a delegate's attributes come in the order the reference's wallets have after a rebuild from the
+  store (rank before voters, then the last block, the version and the resignation); a reference
+  node that has kept a wallet since a key was dropped and set again lists that key last;
+- a form body (`application/x-www-form-urlencoded`) is read as no fields, which the schema then
+  refuses (422 on both sides, with another message);
+- the router takes the path as sent: the reference first decodes percent-escaped unreserved
+  characters and resolves dot segments, so `/%61pi/...` or `/api/./peers` is 404 here;
+- the reference's documentation pages (`/`, `/index.html`, `/api.json`, `/swagger-ui.css`,
+  `/swagger-ui.js`) and the routes a relay does not serve are unmatched paths here, including
+  `/blocks/first`, `/blocks/missed`, `/transactions/schemas` and `/wallets/top`, which a served
+  parameter route would otherwise take and which the reference answers 200;
+- a request cookie that the reference refuses (400) is not read;
+- a JSON payload with a lone surrogate escape, or nested deeper than 128 levels, is 422 "Invalid
+  request payload JSON format"; the reference parses it and its schema or pool answers;
+- a byte range whose suffix is longer than the answer is served as the whole answer (206), where
+  the reference declares more bytes than it sends, and a 416 carries `X-Block-Height` and
+  `connection: close`, which the reference's lacks;
+- a `POST /transactions` batch is at most 40 transactions, the pool's default
+  `maxTransactionsPerRequest`; the reference takes the configured value;
+- a request head that has not ended after 417,792 bytes (possible only with bytes Node does not
+  count, such as white space before a value) is 400, where Node reads on.
+
+```sh
+cargo test -p heartwood-api --locked                                # routes, grammar, envelope, plugins
+cargo test -p heartwood-api --locked -- --include-ignored          # also the served chain over a store
+cargo test -p heartwood-difftest --locked --test api_vectors       # V28's grammar and pagination records
+```
+
+The tests serve the committed chain from a store and pin the answers to the reference's for the
+same chain (its node controller's answers, and its wallets, blocks and transactions at the tip);
+those marked `integration` need the whole crate. The class V28 holds the reference's query grammar (`api.parseQuery`) and pagination
+(`api.paginate`); the route corpus (`tools/difftest/api-corpus`) compares whole answers of a live
+node with a reference node's (see L3 and L4).
+
+## heartwood-core
+
+`packages/core` is the `heartwood` binary. `heartwood relay run` (or `heartwood relay:run`) runs a
+relay in the foreground, with the reference's flags in camelCase and their kebab-case aliases:
+`--token`, `--network`, `--env`, `--networkStart`, `--disableDiscovery`, `--skipDiscovery`,
+`--ignoreMinimumNetworkReach` and `--launchMode`. `config.json` in the config directory fills a
+missing `--token` or `--network` and never overrides a given flag. The relay reports its version
+as `4.3.1-heartwood.<crate version>`, a prerelease of the reference's version that a devnet's
+version floor admits and that tells the two implementations apart.
+
+The start reads the configuration before anything else (the directories, the environment, the
+relay's profile of `app.json`, the components' options, `peers.json` and the crypto files), takes
+the process lock (`<data>/run/relay.lock`, and `relay.pid`, a new file of mode 0600 in a run
+directory of mode 0700), starts the logger, and then the components in the reference's order: the
+store and the state (restored, with the version floor checked at the stored tip), the pool, the
+node thread, the peer-to-peer client, the blockchain service, and, once the blockchain has started,
+the API. SIGINT or SIGTERM stops them in reverse: the API stops accepting connections, the queue
+stops after its job, the pool is flushed, the online record written and the store closed, and the
+process exits with 0; a second signal exits at once. A signal during the start's restore (a long
+replay) ends the start once the restore is done, with 0. The log lines that tools read (a refused
+or undone block, a download, a fork) keep the reference's text; other lines are Heartwood's.
+
+The reference's marker files and reset variables work as in the reference: `clear-saved-states.lock`
+in the temp directory restores the state by a replay from the genesis block (and is removed when it
+is done), `clear-pool.lock` clears the pool's storage, `CORE_RESET_DATABASE` empties the store (the
+start is then a first start) and the pool, and `CORE_RESET_POOL` empties the pool, at every start
+while they are set. The pool's online record is loaded at every start, whatever the restore path, so
+a vote for a delegate that announced itself before the stop is admitted at once; a reference relay
+started without its saved state refuses it until a peer announces the delegate again.
+
+A relay differs from a reference relay only in what the configuration or the command line asks of
+it:
+
+- files and variables a relay does not need or use: a relay needs no `delegates.json` and no home
+  `.env`; the reference's test and skip variables (`CORE_ENV=test`, `NODE_ENV=test`,
+  `CORE_SKIP_PEER_STATE_VERIFICATION`, `CORE_SKIP_BLOCKCHAIN_STARTED_CHECK`), `CORE_API_CACHE`,
+  `CORE_API_LOG`, `CORE_WALLET_SYNC_ENABLED`, a profile's `flags`, an `app.js` and the state's options
+  in `app.json` (its saved states, caches and wallet table) are not honoured, and the start names
+  each one that is set in a warning; the DNS and NTP checks the reference logs at boot are not run;
+- an API option that the reference's schema refuses is logged and the relay runs without an API, as
+  the reference's API is not a required component; `CORE_API_SSL` and an API host that does not
+  resolve refuse the start (serve HTTPS through a reverse proxy); an API address that cannot be
+  listened on stops the relay with exit status 1 once its blockchain has started, where the
+  reference's application terminates its components and leaves the process running;
+- a log level name that is not one of the reference's eight turns that output off, as in the
+  reference; a level that is not text refuses the start, where the reference runs with its memory
+  logger on standard output. With `HOME` unset the start is refused, where the reference falls back
+  to the user's passwd entry; `USER` is not read;
+- a version floor in force at the stored tip that refuses the relay's own version stops the start,
+  naming the height;
+- the command line is read by clap: an unknown flag, a boolean flag given a value
+  (`--networkStart=false`), the `--no-` forms and the reference's global `-v` and `--quiet` are
+  refused with a usage error (status 2); `--network` takes any name that has a complete set of
+  crypto files, and with neither `--network` nor `config.json` the start is refused, where the
+  reference discovers the one network directory.
+
+Release builds build the package alone, `cargo build --release --locked -p heartwood-core`, since a
+build of the whole workspace turns on the test seams through `heartwood-difftest`. With its feature
+`difftest` (`make relay-binary`) `relay run` also takes the harness's flags, which no release build
+has: `--difftest-digest FILE` writes one state digest line per applied, reverted and restarted state,
+`--difftest-blocks FILE` the bytes of every applied block, and `--difftest-seed IP:PORT` names one
+seed that the address rules let through, for a mock peer on the same host.
+
+```sh
+cargo test -p heartwood-core --locked                               # the command line, the configuration, the lock and the views
+cargo test -p heartwood-core --locked --all-features -- --include-ignored   # also a relay importing the committed chain
+```
+
+The integration tests start the binary: a relay imports the committed chain from a mock peer, serves
+its tip through the API with a digest equal to the judge's, and stops on SIGINT with 0; a relay
+whose API port is taken stops with an error.
+
 ## L0: golden vectors
 
 `difftest run l0` compares the records of a vector run with Heartwood, with one subject per
