@@ -35,7 +35,7 @@ jobs:
   verify:
     needs: production-merge
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
@@ -47,11 +47,14 @@ jobs:
           workspaces: |
             . -> target
             fuzz -> target
+      # tokei counts the code lines that make check holds against each crate's review ceiling.
+      - name: Install the line counter
+        run: cargo install tokei --version 15.0.0 --locked
       - name: Check workspace, isolated crypto features, and release feature boundaries
         run: make check
       - name: Verify committed golden vectors
         run: cargo run --locked -p heartwood-difftest -- vectors verify packages/crypto/tests/vectors
       - name: Compare Rust subjects against committed reference vectors
-        run: cargo run --locked -p heartwood-difftest -- run l0 packages/crypto/tests/vectors
+        run: cargo run --locked -p heartwood-difftest -- run l0 packages/crypto/tests/vectors --strict
       # Oracle regeneration remains an explicit reproducibility operation: it needs
       # the pinned reference build and external genesis generator. CI never replaces vectors.
