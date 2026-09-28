@@ -45,9 +45,10 @@ to that code. The notice reads:
   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-The frame format of the peer-to-peer port (heartwood-p2p-wire) follows nes, the WebSocket
-library that the reference implementation carries as @solar-network/nes, which is distributed
-under the BSD 3-Clause License. Its notice reads:
+The frame format of the peer-to-peer port (heartwood-p2p-wire) and the client session on it
+(the nes module of heartwood-p2p: the hello, request ids, timeouts, heartbeat and reconnection)
+follow nes, the WebSocket library that the reference implementation carries as
+@solar-network/nes, which is distributed under the BSD 3-Clause License. Its notice reads:
 
   Copyright (c) 2016-2020, Sideway Inc, and project contributors
   All rights reserved.
