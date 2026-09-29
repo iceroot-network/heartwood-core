@@ -189,12 +189,10 @@ pub fn judge(path: &Path, meta: &Meta, kind: Kind, owner: u32) -> Trust {
 /// nothing is honoured, and nothing is said.
 pub fn marker_trust(marker: &Path, data: &Path) -> Option<Trust> {
     let owner = fs::metadata(data.join("run")).ok()?.uid();
-    let verdict = judge(marker, &Meta::of(marker).ok()?, Kind::File, owner);
-    if verdict != Trust::Trusted {
-        return Some(verdict);
-    }
     let dir = marker.parent().unwrap_or(Path::new("."));
-    Some(judge(dir, &Meta::of(dir).ok()?, Kind::Directory, owner))
+    let file = judge(marker, &Meta::of(marker).ok()?, Kind::File, owner);
+    let dir = judge(dir, &Meta::of(dir).ok()?, Kind::Directory, owner);
+    Some(if file == Trust::Trusted { dir } else { file })
 }
 
 /// The error of a failed file operation on `path`.
@@ -262,10 +260,7 @@ pub fn clear(flags: &InstanceFlags, marker: Marker, force: bool) -> ExitCode {
     let cwd = std::env::current_dir().unwrap_or_default();
     let done = resolve(Role::Relay, flags, &env, &home, &cwd)
         .map_err(RecoveryError::from)
-        .and_then(|instance| request(&instance, marker, force, &mut io::stdin()));
-    if let Err(error) = done {
-        eprintln!("{error}");
-        return ExitCode::FAILURE;
-    }
-    ExitCode::SUCCESS
+        .and_then(|instance| request(&instance, marker, force, &mut io::stdin()))
+        .inspect_err(|error| eprintln!("{error}"));
+    ExitCode::from(u8::from(done.is_err()))
 }
