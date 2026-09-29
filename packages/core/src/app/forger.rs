@@ -4,9 +4,11 @@
 //! component booted and its slot loop and attester run until a signal or a fatal error. The
 //! forger opens no listening socket, no store and no API.
 //!
-//! The version floor is checked at the height of the relay's tip at the first round: a floor that
-//! refuses this version stops the forger; a later one is a warning. A forger component that fails
-//! to boot stops the process with an error naming it, where the reference's idles.
+//! The version floor is checked at the height of the relay's tip at the first round, but at most
+//! at the height the forger's own clock allows (a block per slot of the shortest block time since
+//! the epoch), so that a relay reporting a height the chain cannot have reached cannot stop it: a
+//! floor that refuses this version stops the forger; a later one is a warning. A forger component
+//! that fails to boot stops the process with an error naming it, where the reference's idles.
 //!
 //! The graceful shutdown stops scheduling, lets a `postBlock` in flight finish to its deadline,
 //! then closes the relay sessions, so the relay's statuses become unsigned.
@@ -16,6 +18,8 @@ use std::fs;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use heartwood_cli::Role;
+use heartwood_crypto::Milestones;
+use heartwood_crypto::crypto::slots;
 use heartwood_forger::client::{Client, ClientOptions};
 use heartwood_forger::signing_record::{self, SigningRecord};
 use heartwood_forger::{
@@ -114,6 +118,7 @@ async fn serve(forger: ForgerConfig, signals: Signals) -> Result<(), ForgerError
     let declared = keys.declared();
     let (nethash, milestones_) = (network.nethash.clone(), milestones.clone());
     let attester = Attester::new(Arc::new(keys), nethash, milestones_, clock.clone());
+    let floor_clock = clock.clone();
     let service = ForgerService::new(ForgerParts {
         link: Arc::clone(&link),
         signer,
@@ -127,6 +132,13 @@ async fn serve(forger: ForgerConfig, signals: Signals) -> Result<(), ForgerError
     let (stop, refusal) = (Arc::clone(&trigger), Arc::clone(&refused));
     let defaults = P2pOptions::default().minimum_versions;
     service.on_first_round(move |height| {
+        let reachable = reachable_height(&milestones, floor_clock.now_ms());
+        if height > reachable {
+            heartwood_kernel::warning!(
+                "The relay reports height {height}, beyond height {reachable} that this forger's clock allows; the version floor is checked at {reachable}"
+            );
+        }
+        let height = height.min(reachable);
         let checked = super::check_floor(&milestones, &network.name, height, &defaults);
         checked
             .map_err(|error| {
@@ -153,4 +165,14 @@ async fn serve(forger: ForgerConfig, signals: Signals) -> Result<(), ForgerError
         .unwrap_or_else(PoisonError::into_inner)
         .take();
     refused.map_or(Ok(()), |refusal: String| Err(ForgerError::Config(refusal)))
+}
+
+/// The highest height a chain can have at `now_ms`: its genesis block, one block per slot of its
+/// shortest block time since the epoch, and one slot more for the clocks' drift.
+fn reachable_height(milestones: &Milestones, now_ms: i64) -> u32 {
+    let epoch = slots::epoch_unix_ms(milestones.at(1).epoch()).unwrap_or_default();
+    let block_time = (milestones.all().iter()).map(|params| params.block_time());
+    let shortest = i64::try_from(block_time.min().unwrap_or(1).max(1)).unwrap_or(i64::MAX);
+    let slots = now_ms.saturating_sub(epoch) / shortest.saturating_mul(1_000);
+    u32::try_from(slots.saturating_add(2)).unwrap_or(u32::MAX)
 }
