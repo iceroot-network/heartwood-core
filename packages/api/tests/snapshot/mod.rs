@@ -183,13 +183,13 @@ impl PeerList for Peers {
 }
 
 /// A pool processor that admits every entry of a submission, by index.
-/// A node without productivity: the routes that read it are not served in these tests, so each
-/// call is a 500.
+/// A node without productivity: no delegate has a production in its table, and the chain's totals
+/// are not served in these tests, so each call for them is a 500.
 pub struct NoProductivity;
 
 impl Productivity for NoProductivity {
     fn table(&self, _tip: &Block) -> Result<Arc<ProductivityTable>, ApiError> {
-        Err(ApiError::internal())
+        Ok(Arc::default())
     }
 
     fn totals(&self, _tip: &Block) -> Result<ChainTotals, ApiError> {
