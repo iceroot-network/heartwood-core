@@ -585,3 +585,40 @@ fn an_address_in_use_carries_its_port_and_the_capture_excerpts_stay_untrusted() 
     assert_eq!(finding.untrusted.len(), 3);
     assert!(finding.untrusted.iter().all(|u| u.text == text));
 }
+
+#[test]
+fn every_advice_of_these_areas_has_a_template_and_a_value_for_each_of_its_places() {
+    let docs = heartwood_cli::doctor::docs::docs().expect("the documentation");
+    let areas = [
+        cases(),
+        super::peers::cases(),
+        super::sync::cases(),
+        super::version::cases(),
+        super::host::cases(),
+        super::onboarding::cases(),
+    ];
+    for case in areas.into_iter().flatten() {
+        let entry = ENTRIES
+            .iter()
+            .find(|e| e.id == case.check)
+            .expect("a check");
+        let input = CheckInput {
+            entry,
+            view: &case.view,
+            options: &case.options,
+        };
+        for finding in (entry.run)(&input) {
+            let key = finding.advice.key;
+            let template = docs.template(finding.id, key);
+            let template = template.unwrap_or_else(|| panic!("{}: no advice {key}", case.name));
+            let names = template
+                .split('{')
+                .skip(1)
+                .filter_map(|p| p.split_once('}'));
+            for (name, _) in names {
+                let filled = finding.advice.values.iter().any(|(n, _)| *n == name);
+                assert!(filled, "{}: {key} has no value for {{{name}}}", case.name);
+            }
+        }
+    }
+}

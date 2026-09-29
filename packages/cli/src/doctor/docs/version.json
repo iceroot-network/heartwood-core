@@ -23,9 +23,9 @@
       },
       "advice": {
         "ok": "The version {version} is accepted at height {height}.",
-        "refused": "The network no longer accepts the version {version} at height {height}. Install the current release. See https://docs.iceroot.com/validators/updating/.",
-        "later": "The version {version} stops being accepted at height {from}, in about {days} days and {hours} hours. Plan the update. See https://docs.iceroot.com/validators/updating/.",
-        "later-height": "The version {version} stops being accepted at height {from}, and the relay is at {height}. Plan the update. See https://docs.iceroot.com/validators/updating/."
+        "refused": "At height {height} the version floor in force refuses the version {version}, so peers refuse this node. Install the release named in the announcement. See https://docs.iceroot.com/validators/doctor/#version-floor.",
+        "later": "From height {from} (in about {days} days {hours} hours) peers refuse the version {version}. Install the release named in the announcement before then. See https://docs.iceroot.com/validators/doctor/#version-floor.",
+        "later-height": "From height {from} peers refuse the version {version}; the relay is at height {height}. Install the release named in the announcement before then. See https://docs.iceroot.com/validators/doctor/#version-floor."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#version-floor"
     },
@@ -50,7 +50,7 @@
       },
       "advice": {
         "same": "The {role} runs {running}, the installed version.",
-        "restart-pending": "The {role} runs {running} and {installed} is installed. Restart the {role} to use it. See https://docs.iceroot.com/validators/updating/."
+        "restart-pending": "The {role} still runs {running} while {installed} is installed. Restart it with `heartwood {role} restart`. See https://docs.iceroot.com/validators/doctor/#version-installed."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#version-installed"
     },
@@ -70,7 +70,7 @@
       },
       "advice": {
         "release-build": "This build has no test-only code.",
-        "test-build": "This build has test-only code and is not for a real node. Install a release build. See https://docs.iceroot.com/validators/updating/."
+        "test-build": "This build has test-only code. Install a release build. See https://docs.iceroot.com/validators/doctor/#version-build."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#version-build"
     },
@@ -93,7 +93,7 @@
       },
       "advice": {
         "current": "{newer} of {total} peers run a newer release.",
-        "mostly-newer": "{newer} of {total} peers run a newer release. Update when you can. See https://docs.iceroot.com/validators/updating/."
+        "mostly-newer": "{newer} of {total} peers run a newer release. Check the announcements. See https://docs.iceroot.com/validators/doctor/#version-peers."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#version-peers"
     }

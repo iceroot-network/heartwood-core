@@ -20,9 +20,9 @@
         "skipped": "This host does not run a relay."
       },
       "advice": {
-        "ready": "The relay is synced at height {height}. The tip is {tip_id}, block 2 is {block_2_id}. The text to sign comes with the application rules. See https://docs.iceroot.com/validators/apply/.",
-        "loopback-only": "The relay is synced at height {height}, but its API listens on loopback only. Show the facts, and open the API to the applicant's checker. The text to sign comes with the application rules. See https://docs.iceroot.com/validators/apply/.",
-        "not-ready": "The relay is not ready: {behind} blocks behind, syncing {syncing}, block 2 present {has_block_2}. Wait for it to sync. The text to sign comes with the application rules. See https://docs.iceroot.com/validators/apply/."
+        "ready": "The relay is synced at height {height}. The tip is {tip_id}; block 2 is {block_2_id}; the API listens beyond loopback. The text to sign comes with the application rules. See https://docs.iceroot.com/validators/doctor/#onboarding-sync-proof.",
+        "loopback-only": "The relay is synced at height {height}, but its API listens on loopback only, so the application check cannot reach it. The check must reach this API for about 10 minutes. Use a sentry, or open the API port to the checker's address only for the check, then close it again. The text to sign comes with the application rules. See https://docs.iceroot.com/validators/doctor/#onboarding-sync-proof.",
+        "not-ready": "The relay is not ready for the application check: it is {behind} blocks behind its peers (syncing: {syncing}; block 2 served: {has_block_2}). Wait until it is synced and run the doctor again. See https://docs.iceroot.com/validators/doctor/#onboarding-sync-proof."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#onboarding-sync-proof"
     }

@@ -20,8 +20,8 @@
         "skipped": "This host does not run a relay."
       },
       "advice": {
-        "none": "The relay has no peers. Check that its P2P port is open and reachable. See https://docs.iceroot.com/validators/network/.",
-        "few": "The relay has {peers} peers, and its configuration asks for {wanted}. Check that its P2P port is open. See https://docs.iceroot.com/validators/network/.",
+        "none": "The relay has no peers. Check that the P2P port is open (net.reachable) and that `peers.json` lists reachable seeds. See https://docs.iceroot.com/validators/doctor/#peers-count.",
+        "few": "The relay has {peers} peers and wants at least {wanted}. Check that the P2P port is open (net.reachable) and that `peers.json` lists reachable seeds. See https://docs.iceroot.com/validators/doctor/#peers-count.",
         "enough": "The relay has {peers} peers."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#peers-count"
@@ -46,10 +46,10 @@
       },
       "advice": {
         "close": "The relay is level with its peers, within {blocks} blocks, at height {height}.",
-        "ahead": "The relay is {blocks} blocks ahead of its peers' median height {height}. It may be on a fork. Check the fork checks. See https://docs.iceroot.com/validators/network/.",
-        "behind": "The relay is {blocks} blocks behind its peers, at height {height}. Give it a few minutes to catch up. See https://docs.iceroot.com/validators/network/.",
-        "first-sync": "The relay is {blocks} blocks behind its peers, and has not finished its first sync since it started. Wait for it to catch up. See https://docs.iceroot.com/validators/network/.",
-        "far-behind": "The relay is {blocks} blocks behind its peers at height {height}, after it had caught up. Check its log and its peers. See https://docs.iceroot.com/validators/network/."
+        "ahead": "The relay, at height {height}, is {blocks} blocks ahead of its peers' median. It may be on a fork of its own. See sync.forks and the relay's log. See https://docs.iceroot.com/validators/doctor/#peers-height.",
+        "behind": "The relay is {blocks} blocks behind its peers, at height {height}. It may be stuck on a fork or unable to download. See sync.forks and the relay's log. See https://docs.iceroot.com/validators/doctor/#peers-height.",
+        "first-sync": "The relay is {blocks} blocks behind its peers, at height {height}, and has not finished its first sync since it started. Wait for it to catch up. See https://docs.iceroot.com/validators/doctor/#peers-height.",
+        "far-behind": "The relay is {blocks} blocks behind its peers, at height {height}, after it had caught up. It may be stuck on a fork or unable to download. See sync.forks and the relay's log. See https://docs.iceroot.com/validators/doctor/#peers-height."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#peers-height"
     },
@@ -71,7 +71,7 @@
       },
       "advice": {
         "skipped-few": "The relay has {public} public peers, too few to judge how varied they are.",
-        "shared": "{largest} of the relay's {public} public peers share one network. A single provider failing would cut most of its view. See https://docs.iceroot.com/validators/network/.",
+        "shared": "{largest} of the relay's {public} public peers share one network. A node that sees only one network is easier to isolate. Add seeds from other providers. See https://docs.iceroot.com/validators/doctor/#peers-diversity.",
         "spread": "The relay's {public} public peers come from different networks."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#peers-diversity"

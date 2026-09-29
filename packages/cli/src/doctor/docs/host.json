@@ -19,7 +19,7 @@
       },
       "advice": {
         "enough": "The host has {cpus} CPUs and {memory_gb} GiB, enough for {roles}.",
-        "below-estimate": "The host has {cpus} CPUs and {memory_gb} GiB. The planning estimate for {roles} is {need_cpus} CPUs and {need_gb} GiB. These are planning estimates, not requirements. See https://docs.iceroot.com/validators/running/."
+        "below-estimate": "This host has {cpus} CPUs and {memory_gb} GiB of memory. The planning estimates for {roles} are {need_cpus} CPUs and {need_gb} GiB. These are planning estimates, not requirements. See https://docs.iceroot.com/validators/doctor/#host-resources."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#host-resources"
     },
@@ -41,9 +41,9 @@
       },
       "advice": {
         "enough": "{percent}% of the memory is available.",
-        "low": "Only {percent}% of the memory is available. Close other programs or add memory. See https://docs.iceroot.com/validators/running/.",
-        "exhausted": "Only {percent}% of the memory is available. The system may stop the node. Add memory now. See https://docs.iceroot.com/validators/running/.",
-        "swap": "The {role} has memory in swap, which slows it. Add memory or close other programs. See https://docs.iceroot.com/validators/running/."
+        "low": "Only {percent}% of the memory is available. Add memory or stop other services. See https://docs.iceroot.com/validators/doctor/#host-memory.",
+        "exhausted": "Only {percent}% of the memory is available, and the system may stop the node. Add memory or stop other services now. See https://docs.iceroot.com/validators/doctor/#host-memory.",
+        "swap": "The {role} has memory in swap, which slows block processing. Add memory or stop other services. See https://docs.iceroot.com/validators/doctor/#host-memory."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#host-memory"
     },
@@ -65,8 +65,8 @@
       },
       "advice": {
         "node-user": "The doctor runs as user {uid}, who holds the data directory.",
-        "root": "The doctor runs as root. Run the node and the doctor as an ordinary user. See https://docs.iceroot.com/validators/running/.",
-        "other-user": "The doctor runs as user {uid}, and the data directory belongs to user {holder}. Run it as the node's user. See https://docs.iceroot.com/validators/running/."
+        "root": "The doctor runs as root. Run the doctor as the node's user. It needs no privilege. See https://docs.iceroot.com/validators/doctor/#host-user.",
+        "other-user": "The doctor runs as user {uid}, and the data directory belongs to user {holder}, so some checks may not read what they need. Run the doctor as the node's user. It needs no privilege. See https://docs.iceroot.com/validators/doctor/#host-user."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#host-user"
     }
