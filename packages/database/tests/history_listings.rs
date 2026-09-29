@@ -410,3 +410,47 @@ fn burned_totals_add_over_ranges() {
     assert_eq!(reader.rewards(3, 5).unwrap(), 90);
     assert_eq!(reader.issued().unwrap(), 1500);
 }
+
+#[test]
+fn missed_slots_are_listed_within_the_lookback_window() {
+    let (_database, readers) = store("listings-missed-window");
+    let listed = |filter: MissedBlockFilter, earliest: i64| {
+        let listing = readers
+            .get()
+            .missed_blocks(
+                &filter.within(earliest),
+                &order("timestamp", Direction::Asc),
+                ALL,
+            )
+            .unwrap();
+        (
+            listing.rows.iter().map(|r| r.height).collect::<Vec<_>>(),
+            listing.total_count,
+        )
+    };
+    let timestamps = |values: Vec<Numeric>| {
+        MissedBlockFilter::of(MissedBlockCriteria {
+            timestamp: values,
+            ..MissedBlockCriteria::default()
+        })
+    };
+    let range = |from, to| Numeric::Range { from, to };
+    // Without a timestamp the window's first second is the lower end; a window that starts
+    // before the epoch keeps every slot.
+    assert_eq!(listed(MissedBlockFilter::default(), 451), (vec![6, 7], 2));
+    assert_eq!(listed(timestamps(Vec::new()), 450), (vec![5, 6, 7], 3));
+    assert_eq!(listed(timestamps(Vec::new()), -100).1, 4);
+    // One exact timestamp before the window becomes 0, one inside it stays.
+    assert_eq!(listed(timestamps(vec![Numeric::Equal(350)]), 451).1, 0);
+    assert_eq!(listed(timestamps(vec![Numeric::Equal(550)]), 451).0, [6]);
+    // One range that starts before the window, or has no start, starts at the window.
+    assert_eq!(
+        listed(timestamps(vec![range(Some(300), Some(600))]), 451).0,
+        [6]
+    );
+    assert_eq!(listed(timestamps(vec![range(None, Some(600))]), 451).0, [6]);
+    assert_eq!(listed(timestamps(vec![range(Some(600), None)]), 451).0, [7]);
+    // Several timestamps are a list, which the reference does not narrow.
+    let two = timestamps(vec![Numeric::Equal(350), Numeric::Equal(450)]);
+    assert_eq!(listed(two, 451).0, [4, 5]);
+}
