@@ -11,16 +11,22 @@
 use std::sync::Arc;
 
 use heartwood_crypto::BlockId;
+use heartwood_crypto::crypto::slots;
 use heartwood_crypto::transactions::types::Asset;
 use heartwood_database::filters::js_number;
-use heartwood_database::{BlockRow, BlockSelector, TransactionCriteria};
+use heartwood_database::{
+    BlockCriteria, BlockFilter, BlockRow, BlockSelector, CountFlag, MissedBlockCriteria,
+    MissedBlockFilter, Numeric, Page, TransactionCriteria,
+};
 use serde_json::{Map, Value};
 
 use crate::context::{ApiContext, ApiReply, ApiRequest, Route, RouteId};
 use crate::controllers::transactions::{
-    Shape, criteria, decode, is_lowercase_hex, listing, read, transform,
+    Shape, criteria, decode, integers, is_lowercase_hex, listing, numerics, order, read, texts,
+    transform,
 };
 use crate::errors::ApiError;
+use crate::pagination::{Pagination, envelope};
 use crate::resources;
 
 /// The routes of this controller.
@@ -142,7 +148,7 @@ async fn block(
 
 /// A block's raw data, as the reference's block model holds it: its columns in the model's
 /// order, amounts as decimal texts, the donations object, and no `username` when it has none.
-fn raw(row: &BlockRow) -> Value {
+pub(crate) fn raw(row: &BlockRow) -> Value {
     let mut out = Map::new();
     let donations = serde_json::from_str::<Value>(&row.donations).unwrap_or(Value::Null);
     out.insert("id".into(), Value::from(row.id.to_hex()));
@@ -182,29 +188,217 @@ fn raw(row: &BlockRow) -> Value {
     Value::Object(out)
 }
 
-/// `GET /blocks`: the blocks matching the criteria, sorted and paginated.
-///
-/// Not served yet: until its handler is written, the route answers what an unmatched path
-/// answers, 404 "Not Found".
+/// `GET /blocks`: the blocks matching the criteria, sorted and paginated. Without `transform` the
+/// reference reads with no listing options, so it reports an estimate (`totalCountIsEstimate:
+/// true`); the count here is exact either way.
 pub async fn index(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
-    let _ = (ctx, request);
-    Err(ApiError::not_found("Not Found"))
+    let estimate = !transform(&request.query) || ctx.config.estimate_total_count;
+    let criteria = block_criteria(&request.query)?;
+    block_listing(&ctx, &request, criteria, estimate).await
 }
 
-/// `GET /blocks/missed`: the missed slots matching the criteria.
-///
-/// Not served yet: until its handler is written, the route answers what an unmatched path
-/// answers, 404 "Not Found".
+/// `GET /blocks/missed`: the missed slots matching the criteria, over the lookback window.
 pub async fn missed(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
-    let _ = (ctx, request);
-    Err(ApiError::not_found("Not Found"))
+    let criteria = missed_criteria(&ctx, &request.query)?;
+    missed_listing(&ctx, &request, criteria).await
 }
 
-/// `GET /blocks/first`: the genesis block.
-///
-/// Not served yet: until its handler is written, the route answers what an unmatched path
-/// answers, 404 "Not Found".
+/// `GET /blocks/first`: the genesis block, as `GET /blocks/{id}` shows a block.
 pub async fn first(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
-    let _ = (ctx, request);
-    Err(ApiError::not_found("Not Found"))
+    let tip = ctx.state().height();
+    block(&ctx, &request, BlockSelector::Height(1), tip).await
+}
+
+/// The values a validated query gives for `name`: a list as it is, one value as a list of one.
+fn values<'a>(query: &'a Value, name: &str) -> Option<&'a [Value]> {
+    query.get(name).map(|value| match value {
+        Value::Array(values) => values.as_slice(),
+        one => std::slice::from_ref(one),
+    })
+}
+
+/// The block criteria of the validated query; `None` when a key's list of values is empty, which
+/// matches nothing.
+pub(crate) fn block_criteria(query: &Value) -> Result<Option<BlockCriteria>, ApiError> {
+    let mut criteria = BlockCriteria::default();
+    for name in BLOCK_KEYS {
+        let Some(values) = values(query, name) else {
+            continue;
+        };
+        if values.is_empty() {
+            return Ok(None);
+        }
+        match name {
+            "id" => criteria.id = texts(name, values)?,
+            "version" => criteria.version = integers(name, values)?,
+            "timestamp" => criteria.timestamp = numerics(name, values)?,
+            "previousBlock" => criteria.previous_block = texts(name, values)?,
+            "height" => criteria.height = numerics(name, values)?,
+            "numberOfTransactions" => criteria.number_of_transactions = numerics(name, values)?,
+            "totalAmount" => criteria.total_amount = numerics(name, values)?,
+            "totalFee" => criteria.total_fee = numerics(name, values)?,
+            "burnedFee" => criteria.burned_fee = numerics(name, values)?,
+            "reward" => criteria.reward = numerics(name, values)?,
+            "payloadLength" => criteria.payload_length = numerics(name, values)?,
+            "payloadHash" => criteria.payload_hash = texts(name, values)?,
+            "generatorPublicKey" => criteria.generator_public_key = texts(name, values)?,
+            "username" => criteria.username = texts(name, values)?,
+            _ => criteria.block_signature = texts(name, values)?,
+        }
+    }
+    Ok(Some(criteria))
+}
+
+/// The keys of the block criteria.
+const BLOCK_KEYS: [&str; 15] = [
+    "id",
+    "version",
+    "timestamp",
+    "previousBlock",
+    "height",
+    "numberOfTransactions",
+    "totalAmount",
+    "totalFee",
+    "burnedFee",
+    "reward",
+    "payloadLength",
+    "payloadHash",
+    "generatorPublicKey",
+    "username",
+    "blockSignature",
+];
+
+/// The page of blocks that `criteria` (`None`: nothing) match, in the order and page of the
+/// request, as the reference's blocks or, without `transform`, its raw models. `estimate` is what
+/// the answer reports as `totalCountIsEstimate`.
+pub(crate) async fn block_listing(
+    ctx: &Arc<ApiContext>,
+    request: &ApiRequest,
+    criteria: Option<BlockCriteria>,
+    estimate: bool,
+) -> Result<ApiReply, ApiError> {
+    let pagination = Pagination::of(&request.query);
+    let page = Page {
+        offset: pagination.offset,
+        limit: pagination.limit,
+    };
+    let (order, transform) = (order(&request.query), transform(&request.query));
+    let count = if estimate {
+        CountFlag::Estimate
+    } else {
+        CountFlag::Exact
+    };
+    let (rows, total) = match criteria {
+        Some(criteria) => {
+            let filter = BlockFilter::of(criteria);
+            let listing = read(ctx, move |reader| {
+                reader.blocks(&filter, &order, page, transform, count)
+            })
+            .await?;
+            (listing.rows, listing.total_count)
+        }
+        None => (Vec::new(), 0),
+    };
+    let (tip, milestones) = (ctx.state().height(), &ctx.node.crypto.milestones);
+    let data = rows
+        .iter()
+        .map(|listed| match transform {
+            true => {
+                let transferred = listed.transferred.unwrap_or(0);
+                resources::block(&listed.row, transferred, tip, milestones)
+            }
+            false => raw(&listed.row),
+        })
+        .collect();
+    Ok(ApiReply::ok(envelope(
+        request, pagination, total, estimate, data,
+    )))
+}
+
+/// The missed-slot criteria of the validated query, narrowed to the lookback window as the
+/// reference's listing narrows them; `None` when a key's list of values is empty. The block keys a
+/// missed slot has no column for match nothing: the reference's listing fails on them and answers
+/// an empty page.
+pub(crate) fn missed_criteria(
+    ctx: &ApiContext,
+    query: &Value,
+) -> Result<Option<MissedBlockCriteria>, ApiError> {
+    let no_column = BLOCK_KEYS.iter().any(|name| {
+        !["timestamp", "height", "username"].contains(name) && query.get(name).is_some()
+    });
+    let empty = ["timestamp", "height", "username"]
+        .iter()
+        .any(|name| values(query, name).is_some_and(<[Value]>::is_empty));
+    if no_column || empty {
+        return Ok(None);
+    }
+    let one = |name: &str| values(query, name).unwrap_or_default();
+    let earliest = window_start(ctx);
+    let start = u64::try_from(earliest).unwrap_or(0);
+    let before = |value: u64| i128::from(value) < i128::from(earliest);
+    let mut timestamp = numerics("timestamp", one("timestamp"))?;
+    match (query.get("timestamp"), timestamp.as_mut_slice()) {
+        (None, _) => timestamp.push(Numeric::Range {
+            from: Some(start),
+            to: None,
+        }),
+        (Some(Value::Array(_)), _) => {}
+        (_, [Numeric::Equal(value)]) if before(*value) => *value = 0,
+        (_, [Numeric::Range { from, .. }]) if from.is_none_or(before) => *from = Some(start),
+        _ => {}
+    }
+    Ok(Some(MissedBlockCriteria {
+        timestamp,
+        height: numerics("height", one("height"))?,
+        username: texts("username", one("username"))?,
+    }))
+}
+
+/// The first timestamp of the lookback window: the UTC midnight of the tip's date, less the
+/// lookback, in seconds since the network epoch (a fractional start counts from the next whole
+/// second).
+fn window_start(ctx: &ApiContext) -> i64 {
+    const DAY: i64 = 86_400;
+    let epoch = ctx.node.crypto.milestones.at(1).epoch();
+    let epoch_ms = slots::epoch_unix_ms(epoch).unwrap_or(0);
+    let tip = i64::from(ctx.state().last_block.header().timestamp);
+    let unix = (tip * 1000 + epoch_ms).div_euclid(1000);
+    let since_epoch = unix.div_euclid(DAY) * DAY * 1000 - epoch_ms;
+    since_epoch.div_euclid(1000) + i64::from(since_epoch.rem_euclid(1000) > 0)
+        - ctx.config.missed_blocks_lookback
+}
+
+/// The page of missed slots that `criteria` (`None`: nothing) match, in the order and page of the
+/// request.
+pub(crate) async fn missed_listing(
+    ctx: &Arc<ApiContext>,
+    request: &ApiRequest,
+    criteria: Option<MissedBlockCriteria>,
+) -> Result<ApiReply, ApiError> {
+    let pagination = Pagination::of(&request.query);
+    let page = Page {
+        offset: pagination.offset,
+        limit: pagination.limit,
+    };
+    let order = order(&request.query);
+    let (rows, total) = match criteria {
+        Some(criteria) => {
+            let filter = MissedBlockFilter::of(criteria);
+            let listing = read(ctx, move |reader| {
+                reader.missed_blocks(&filter, &order, page)
+            })
+            .await?;
+            (listing.rows, listing.total_count)
+        }
+        None => (Vec::new(), 0),
+    };
+    let milestones = &ctx.node.crypto.milestones;
+    let data = rows
+        .iter()
+        .map(|row| resources::missed_block::missed_block(row, milestones))
+        .collect();
+    let estimate = ctx.config.estimate_total_count;
+    Ok(ApiReply::ok(envelope(
+        request, pagination, total, estimate, data,
+    )))
 }
