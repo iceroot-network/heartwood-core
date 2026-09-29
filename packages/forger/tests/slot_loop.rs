@@ -67,6 +67,7 @@ struct FakeRelay {
 
 impl FakeRelay {
     fn new(start_ms: i64, active: &[u32], registered: &[u32]) -> Arc<FakeRelay> {
+        log_lines();
         Arc::new(FakeRelay {
             clock: TokioClock::at(start_ms),
             active: Mutex::new(active.to_vec()),
@@ -345,6 +346,21 @@ async fn run_for(forger: &Forger, ms: u64) {
         trigger.trigger();
     };
     tokio::join!(forger.service.run(signal), stop);
+}
+
+/// A line of the call site that the capture test below reaches from two threads.
+fn shared_line(n: u32) {
+    heartwood_kernel::info!("Line {n} of a shared call site");
+}
+
+#[test]
+fn a_line_is_captured_after_a_thread_without_a_capture_reached_its_call_site() {
+    // With a subscriber per test, the other thread's first line cached the call site as wanted
+    // by no one, and this test's line was lost whenever no other test held a capture.
+    let (lines, _guard) = Lines::capture();
+    std::thread::spawn(|| shared_line(1)).join().unwrap();
+    shared_line(2);
+    assert_eq!(lines.all(), ["INFO: Line 2 of a shared call site"]);
 }
 
 #[tokio::test(start_paused = true)]

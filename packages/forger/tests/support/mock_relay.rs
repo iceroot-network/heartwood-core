@@ -4,12 +4,22 @@
 //!
 //! Every relay a test runs listens in the forger tests' loopback block, 127.10.0.0/24; the client
 //! reaches it through the mock peer's in-memory connections, which tokio's paused clock can drive.
+//!
+//! The log lines go through one subscriber for the whole test process ([`log_lines`]), which
+//! writes each line to the capture of the thread that logged it. A subscriber per test loses
+//! lines: `tracing` caches, once for all threads, whether any subscriber wants a call site's
+//! events, and while exactly one test has a subscriber of its own it asks only the subscriber of
+//! the thread that reaches the call site first. When that is another test's thread, which has
+//! none, the call site is cached as wanted by no one and the test with the capture never sees its
+//! line. Whether that happens depends on how many tests run at once, which is the number of cores
+//! by default: on two, slot loop tests lost their lines on most runs.
 
 #![allow(dead_code, reason = "each test file uses its own part of the support")]
 
+use std::cell::RefCell;
 use std::io::{self, Write};
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 use std::time::Duration;
 
 use heartwood_crypto::blocks::factory::{self, BlockDraft};
@@ -283,6 +293,7 @@ pub fn not_ready() -> Reply {
 
 /// A scripted relay at host `n`.
 pub async fn relay(n: u8, script: Script) -> MockPeer {
+    log_lines();
     MockPeer::scripted(ip(n), script)
         .await
         .expect("the mock relay listens")
@@ -295,6 +306,7 @@ pub fn client(hosts: &[RelayHost], relays: &[&MockPeer]) -> Client {
 
 /// A client of `hosts` over `dial`.
 pub fn client_over(hosts: &[RelayHost], dial: Dial) -> Client {
+    log_lines();
     let options = ClientOptions {
         hosts: hosts.to_vec(),
         local_address: None,
@@ -331,13 +343,36 @@ pub fn in_slot(slot: i64, ms: i64) -> i64 {
     EPOCH_MS + slot * 8_000 + ms
 }
 
-/// The log lines of a test, as `LEVEL: message` without the time and the emoji codes.
-#[derive(Clone, Default)]
-pub struct Lines(Arc<Mutex<Vec<u8>>>);
+thread_local! {
+    /// The capture of the lines this thread logs, while a test holds one.
+    static CAPTURE: RefCell<Option<Lines>> = const { RefCell::new(None) };
+}
 
-impl Write for Lines {
+/// Install the tests' subscriber for the whole process, once: the logger's line layer, writing
+/// each line to the capture of the thread that logged it. The helpers that start a test ([`relay`],
+/// [`client_over`], [`Lines::capture`]) call it, so that it is in place before anything logs.
+pub fn log_lines() {
+    static INSTALLED: Once = Once::new();
+    INSTALLED.call_once(|| {
+        let clock = Arc::new(heartwood_kernel::ManualClock::new(EPOCH_MS));
+        let layer = LineLayer::new(false, clock).output(Level::Debug, false, Box::new(ToCapture));
+        let installed = tracing_subscriber::registry().with(layer).try_init();
+        installed.expect("the tests' subscriber is the process's only one");
+        // A call site first reached while the subscriber was being installed is asked again.
+        tracing::callsite::rebuild_interest_cache();
+    });
+}
+
+/// Where the tests' subscriber writes: to the capture of the logging thread, if it has one.
+struct ToCapture;
+
+impl Write for ToCapture {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
+        CAPTURE.with_borrow(|capture| {
+            if let Some(lines) = capture {
+                lines.0.lock().unwrap().extend_from_slice(bytes);
+            }
+        });
         Ok(bytes.len())
     }
 
@@ -346,15 +381,26 @@ impl Write for Lines {
     }
 }
 
+/// Puts back the capture the thread had before, when dropped.
+struct Uncapture(Option<Lines>);
+
+impl Drop for Uncapture {
+    fn drop(&mut self) {
+        CAPTURE.set(self.0.take());
+    }
+}
+
+/// The log lines of a test, as `LEVEL: message` without the time and the emoji codes.
+#[derive(Clone, Default)]
+pub struct Lines(Arc<Mutex<Vec<u8>>>);
+
 impl Lines {
     /// Capture the lines logged on this thread until the guard is dropped.
     pub fn capture() -> (Lines, impl Drop) {
+        log_lines();
         let lines = Lines::default();
-        let clock = Arc::new(heartwood_kernel::ManualClock::new(EPOCH_MS));
-        let layer =
-            LineLayer::new(false, clock).output(Level::Debug, false, Box::new(lines.clone()));
-        let guard = tracing_subscriber::registry().with(layer).set_default();
-        (lines, guard)
+        let before = CAPTURE.replace(Some(lines.clone()));
+        (lines, Uncapture(before))
     }
 
     /// Every line so far.

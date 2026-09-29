@@ -34,13 +34,15 @@ zeroize.workspace = true
 
 # The tests run the loop on tokio's paused clock and the kernel's manual clock, against a scripted
 # relay over the mock peer, with keys derived from the committed devnet's seed, and read the log
-# lines through the logger's line layer.
+# lines through the logger's line layer, installed once for the test process (`tracing` then
+# asks its call sites again).
 [dev-dependencies]
 heartwood-crypto = { workspace = true, features = ["fixed-aux", "genesis"] }
 heartwood-kernel = { workspace = true, features = ["difftest"] }
 heartwood-logger.workspace = true
 heartwood-p2p = { path = "../p2p", default-features = false, features = ["difftest"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "test-util", "time"] }
+tracing.workspace = true
 tracing-subscriber.workspace = true
 
 # The crash test's child: a forger over a configuration directory against the mock relay, killed
