@@ -33,11 +33,12 @@
 //          timestamp aside) or apply
 //   chain.revert {session, count}      -> {lines}, one revert line per block
 //   chain.restart {session, mode, probe?}  the node stopped at its tip and started again
-//       (lib/state.js): mode "rebuild" (no saved state: StateBuilder) or "saved" (StateSaver, then
-//       StateLoader)
-//       -> {line}, the restart's digest line (step "restart"), or {refused: {reason}}, the text
-//          the reference's start ended with; the session goes on with the restarted node, or,
-//          with probe true, with the node it had (a session with a pool cannot be probed).
+//       (lib/state.js): mode "rebuild" (no saved state: StateBuilder), "saved" (StateSaver, then
+//       StateLoader) or "kept" (StateLoader over the states chain.saveState kept)
+//       -> {line, summary}, the restart's digest line (step "restart") and the store's summary
+//          after the start (as chain.rollback's), or {refused: {reason}}, the text the reference's
+//          start ended with; the session goes on with the restarted node, or, with probe true,
+//          with the node it had (a session with a pool cannot be probed; a probe has no summary).
 //          notes.savedStateUsername is true for a saved-state restart with a delegate name or a
 //          voted name that reads as an integer; notes.roundRowsMissing is true when the store
 //          holds no round row of the tip's round (a revert to a round's last block deleted them),
@@ -180,13 +181,14 @@ module.exports = function chainOps(context) {
         },
 
         "chain.restart": async ({ session: id, mode, probe }) => {
-            if (mode !== "rebuild" && mode !== "saved") throw new TypeError("mode must be rebuild or saved");
+            if (!["rebuild", "saved", "kept"].includes(mode)) throw new TypeError("mode must be rebuild, saved or kept");
             if (probe !== undefined && typeof probe !== "boolean") throw new TypeError("probe must be a boolean");
             const s = session(id);
             return inSession(s, async () => {
                 const r = await s.restart(mode, { probe: probe === true });
                 if (r.refused) return { ...(r.notes ? { notes: r.notes } : {}), refused: { reason: r.refused.reason.split(solar.solarDir).join("<reference>") } };
-                return r.notes ? { notes: r.notes, line: r.line } : { line: r.line };
+                const summary = probe === true ? {} : { summary: s.chain.store.summary() };
+                return r.notes ? { notes: r.notes, line: r.line, ...summary } : { line: r.line, ...summary };
             });
         },
 
