@@ -1605,6 +1605,43 @@ fn a_vote_after_the_contact_with_node_3_is_recorded_as_not_shown_live() {
 }
 
 #[test]
+fn a_failed_attempt_to_reach_node_3_is_no_contact() {
+    let f = fixture();
+    // While isolated, node 6 logs its failing attempts to reach node 3 (between r3's start and
+    // end, and before the vote): the vote still came before its first contact.
+    let text = std::fs::read_to_string(reference_log(&f.w0, "node6")).unwrap();
+    let attempts = format!(
+        "{}{}",
+        line(
+            570.0,
+            "DEBUG",
+            &format!(
+                "Socket error (peer {}): connect ECONNREFUSED :warning:",
+                ip(3)
+            )
+        ),
+        line(
+            600.0,
+            "DEBUG",
+            &format!(
+                "Response error (peer {}/p2p.peer.getStatus) : timeout :warning:",
+                ip(3)
+            )
+        ),
+    );
+    write(&reference_log(&f.w0, "node6"), format!("{attempts}{text}"));
+    let report = check_run(&f, &f.w0);
+    assert!(cases_of(&report, "recovery", "not shown live").is_empty());
+    assert_passes(&report, "recovery", "was refused before node 6's contact");
+    // A contact the recipe recorded before the vote makes it not shown live.
+    edit_step(&f.w0, "vote-node6", |step| {
+        step["detail"]["contactNode3At"] = json!(iso(565.0));
+    });
+    let report = check_run(&f, &f.w0);
+    assert!(!cases_of(&report, "recovery", "not shown live").is_empty());
+}
+
+#[test]
 fn a_vote_before_the_contact_that_was_admitted_fails() {
     let f = fixture();
     edit_step(&f.w0, "vote-node6", |step| {

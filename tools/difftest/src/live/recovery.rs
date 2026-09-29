@@ -474,8 +474,9 @@ fn node6_log(run: &MixedRun<'_>) -> Option<Vec<nodes::LogLine>> {
 }
 
 /// The vote for the delegate node 6 had recorded as attested: admitted in run w; in run w0 refused when
-/// it was submitted before node 6's first contact with node 3 after r3's start, and otherwise
-/// not shown live.
+/// it was submitted before node 6's first contact with node 3 after r3's start (`contactNode3At`
+/// of the vote's or r3's record, else node 6's first "Accepted new peer" line for node 3), and
+/// otherwise not shown live.
 fn vote(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()> {
     let label = "node6: the vote after the state clear";
     let Some(step) = mixed::step(steps, "vote-node6") else {
@@ -493,16 +494,23 @@ fn vote(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()> {
     }
     let submitted = step.time("submittedAt").or(step.start);
     let node3 = mixed::ip_of(run.manifest, "node3").unwrap_or("").to_owned();
-    let after = mixed::step(steps, "r3")
-        .and_then(|s| s.time("end").or(s.start))
-        .unwrap_or(i64::MIN);
-    let contact = node6_log(run).and_then(|lines| {
+    let r3 = mixed::step(steps, "r3");
+    let after = r3.and_then(|s| s.start).unwrap_or(i64::MIN);
+    // The first contact: the time the recipe recorded, else node 6's first acceptance of node 3
+    // after r3's start. A failed attempt to reach node 3 (an error line naming it) is none.
+    let accepted = format!("Accepted new peer {node3}:");
+    let logged = node6_log(run).and_then(|lines| {
         lines
             .iter()
-            .filter(|l| l.at.is_some_and(|t| t >= after) && l.text.contains(&node3))
+            .filter(|l| l.at.is_some_and(|t| t >= after) && l.text.starts_with(&accepted))
             .filter_map(|l| l.at)
             .min()
     });
+    let contact = [step, r3.unwrap_or(step)]
+        .iter()
+        .filter_map(|s| s.time("contactNode3At"))
+        .chain(logged)
+        .min();
     match (submitted, contact) {
         (Some(s), Some(c)) if s >= c => cases.record(
             SECTION,
