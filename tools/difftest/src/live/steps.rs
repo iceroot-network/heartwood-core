@@ -95,10 +95,16 @@ pub fn required(run: &str) -> Vec<String> {
     };
     // The steps of a mixed run, with their planned rounds, are the schedule's.
     let mixed: Vec<&str> = super::schedule::plan(run).iter().map(|p| p.name).collect();
+    // `archive` is node 1's archive. Run s's node 1 is a Heartwood relay, whose files the
+    // collection takes (its block files are the run's chain): its archive is the reference
+    // observer's, node 4's.
+    let archives: &[&str] = if run == "s" { &["archive-node4"] } else { &[] };
     common
         .iter()
+        .filter(|s| run != "s" || **s != "archive")
         .chain(own)
         .chain(&mixed)
+        .chain(archives)
         .map(|s| (*s).to_owned())
         .collect()
 }
@@ -654,6 +660,13 @@ mod tests {
                 .iter()
                 .all(|p| !p.contains("unknown live run"))
         );
+        // Run s's node 1 is a Heartwood relay: its files are collected, and the archive is the
+        // reference observer's.
+        let s: Vec<Step> = required("s").iter().map(|n| step(n, true)).collect();
+        assert!(problems("s", &s).is_empty(), "{:?}", problems("s", &s));
+        assert!(!required("s").contains(&"archive".to_owned()));
+        assert!(required("s").contains(&"archive-node4".to_owned()));
+        assert!(required("w").contains(&"archive".to_owned()));
     }
 
     #[test]
