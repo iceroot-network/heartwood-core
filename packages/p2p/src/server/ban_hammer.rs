@@ -10,7 +10,10 @@
 //! ban of an address logs `Banning <ip> for <duration>. Reason: <reason>` at debug; a ban of an
 //! address in the list, even one whose time has passed, renews it without a line.
 //!
-//! An expired ban leaves the list only when the address connects again, as in the reference.
+//! An expired ban leaves the list when the address connects again, as in the reference, and, where
+//! the reference keeps it for good, when a new ban takes the list past [`SWEEP_AT`] entries (or
+//! twice its size after the last sweep): then every expired ban leaves, so that addresses banned
+//! once and never seen again cannot grow the list without a bound.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -21,6 +24,8 @@ use super::session::SessionEnd;
 
 /// How long after the node's first sync the socket-close bans apply.
 pub const SYNC_GRACE_MS: i64 = 60_000;
+/// The size of the ban list past which a new ban drops the expired ones.
+pub const SWEEP_AT: usize = 10_000;
 
 /// The bans and the sockets by address.
 #[derive(Debug)]
@@ -35,6 +40,8 @@ pub struct BanHammer {
 struct State {
     /// When each address was last banned, and the reason it was first banned with.
     bans: HashMap<IpAddr, (i64, String)>,
+    /// The size of the list at which a new ban sweeps it (0 for [`SWEEP_AT`]).
+    sweep_at: usize,
     /// Each address's sockets, and whether each made an endpoint request.
     sockets: HashMap<IpAddr, Vec<(SessionId, bool)>>,
 }
@@ -81,6 +88,11 @@ impl BanHammer {
             state
                 .bans
                 .insert(ip, (now_ms, kept.unwrap_or_else(|| reason.to_owned())));
+            if state.bans.len() > state.sweep_at.max(SWEEP_AT) {
+                let ban_ms = self.ban_ms;
+                (state.bans).retain(|_, (since, _)| now_ms.saturating_sub(*since) < ban_ms);
+                state.sweep_at = state.bans.len().saturating_mul(2);
+            }
             first
         };
         if first {

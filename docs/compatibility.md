@@ -835,7 +835,9 @@ reference lacks, which no honest peer that reads its socket meets:
   move, so a peer that stops reading is closed at the second check after its last message, where
   the reference keeps it while anything waits to be written; a slow reader keeps its socket;
 - the writes still queued when a session ends stop 30 s later, the WebSocket library's close
-  timeout.
+  timeout;
+- the ban list drops its expired bans once it holds more than 10,000 addresses, where the
+  reference keeps an expired ban until its address connects again.
 
 ```sh
 make test-p2p                   # clippy and tests of heartwood-p2p alone, without and with difftest
