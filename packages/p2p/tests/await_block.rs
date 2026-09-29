@@ -280,7 +280,8 @@ async fn an_internal_route_makes_no_record_and_never_waits() {
             SessionId(1),
             SocketClosed::never(),
         );
-        let _ = answer.await;
+        let answer = answer.await;
+        assert!(answer.result.is_ok(), "{route:?}: {answer:?}");
     }
     assert_eq!(start.elapsed(), Duration::ZERO);
     assert!(node.records().is_empty());
