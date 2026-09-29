@@ -1,36 +1,20 @@
 "use strict";
-// Oracle operations of the lockstep producer: a session over the chain session's replay
-// (lib/state.js's ReplaySession) with a reference pool built as the pool sessions build it
-// (lib/pool.js), over the session's state (lib/lockstep.js):
-//   lockstep.open    {seed, profile} -> {session}
-//   lockstep.build   {session, height, build} -> {transactions: [{id, hex}]}  (built once, with
-//                    the fixed aux and nonces from the session's state)
-//   lockstep.apply   {session, hex} -> {verdict, digest}
-//   lockstep.submit  {session, transactions} -> {accept, errors}
-//   lockstep.online  {session, round, delegates} -> {online}
-//   lockstep.close   {session} -> {}
-// Not built yet: each operation throws.
+// Oracle operations of the lockstep producer: a chain session with a reference pool bound in its
+// node (lib/lockstep.js), which the pool operations also take by its id:
+//   lockstep.open    {crypto, options?} -> {session, line}
+//   lockstep.build   {session, build: [spec]} -> {transactions: [{id, hex}]}  (built once, with
+//                    the fixed aux; a spec is {kind, passphrase, nonce, fee?, memo?, asset}, its
+//                    fee the network's floor at the call's height when absent)
+//   lockstep.submit  {session, transactions: [hex], now} -> the pool's result {accept, broadcast,
+//                    invalid, excess, errors?}
+//   lockstep.online  {session, round, delegates: [publicKey], expireAt?} -> {online}
+//   lockstep.apply   {session, hex, step?, expireAt?} -> {accepted, height, id, reward?, missed, line?, stage?, error?}
+//   lockstep.revert  {session, count} -> {lines}
+//   lockstep.close   {session} -> {closed: true}
 // Loaded by lib/ops.js.
 
-module.exports = function lockstepOps() {
-    return {
-        "lockstep.open": async () => {
-            throw new Error("lockstep.open is not built");
-        },
-        "lockstep.build": async () => {
-            throw new Error("lockstep.build is not built");
-        },
-        "lockstep.apply": async () => {
-            throw new Error("lockstep.apply is not built");
-        },
-        "lockstep.submit": async () => {
-            throw new Error("lockstep.submit is not built");
-        },
-        "lockstep.online": async () => {
-            throw new Error("lockstep.online is not built");
-        },
-        "lockstep.close": async () => {
-            throw new Error("lockstep.close is not built");
-        },
-    };
+const { lockstepOps } = require("../lockstep");
+
+module.exports = function lockstepFile(context) {
+    return lockstepOps(context);
 };
