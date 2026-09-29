@@ -416,6 +416,13 @@ impl<N: Network> NodeServices for RelayServices<N> {
             record.write(self.clock.now_ms(), caller, state);
         }
     }
+
+    #[cfg(feature = "difftest")]
+    fn await_block_step(&self, record: &heartwood_p2p::node_services::AwaitRecord) {
+        if let Some(file) = &self.await_record {
+            file.write(record);
+        }
+    }
 }
 
 /// The network monitor, its repository and its acceptance, as the server's peer side.
