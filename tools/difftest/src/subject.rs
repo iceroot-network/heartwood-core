@@ -113,9 +113,11 @@ pub enum Documented {
     /// The wallets of a relay's getCurrentRound answer: their fields, and the order of
     /// `allDelegates`.
     RoundWallets,
-    /// The address, public-key and username index orders after a restart that replays the chain:
-    /// the reference's StateBuilder rebuilds them in its handlers' order, Heartwood's replay in
-    /// the order the chain set them.
+    /// The address, public-key and username index orders after a restart: the reference's
+    /// StateBuilder rebuilds them in its handlers' order and its saved-state start in the saved
+    /// address order, and both re-index the wallets of the current round's transactions;
+    /// Heartwood's replay sets them in the order the chain set them, its table path in the order
+    /// of the stored rows.
     ReplayIndexOrder,
 }
 
@@ -300,11 +302,12 @@ impl Documented {
                  nodes only)"
             }
             Documented::ReplayIndexOrder => {
-                "the index orders after a restart that replays the chain: the reference's \
-                 StateBuilder rebuilds its address, public-key and username indexes in its \
-                 handlers' order, Heartwood's replay sets them in the chain's order, as the live \
-                 node did; only a tie of a listing sorted by index order shows it, on a node \
-                 restarted by a replay"
+                "the index orders after a restart: the reference's StateBuilder rebuilds its \
+                 address, public-key and username indexes in its handlers' order and its \
+                 saved-state start in the saved address order, and both then re-index the \
+                 wallets of the current round's transactions; Heartwood's replay sets them in the \
+                 chain's order and its table path in the order of the stored rows; only a tie of \
+                 a listing sorted by index order shows it, on a restarted node"
             }
             Documented::RoundWallets => {
                 "the wallets of the relay's round answer: the reference writes its wallet data \
@@ -376,8 +379,7 @@ const STACK_OVERFLOW: &str = "Maximum call stack size exceeded";
 impl Documented {
     /// Whether the oracle's answer `expected` shows the reference's side of this difference: a
     /// `true` note in the output's `notes` (`pluginsPrototype`, `stackOverflow`, `wideAmount`,
-    /// `fullPoolEviction`, `savedStateUsername`, `roundRowsMissing`, `locale`, `rebuildOrder`: a
-    /// StateBuilder order that differs from the live one), or, for deep
+    /// `fullPoolEviction`, `savedStateUsername`, `roundRowsMissing`, `locale`), or, for deep
     /// groups, a `RangeError` for the overflow of the Node stack. A replaced prototype is shown
     /// only with the reply check's refusal of the plugins, the one step it changes. The
     /// differences that Heartwood checks on the input ([`Verdict::RefusedByDesign`]) are never
@@ -403,19 +405,20 @@ impl Documented {
             Documented::SavedStateUsername => note("savedStateUsername"),
             Documented::RoundRowsAfterRevert => note("roundRowsMissing"),
             Documented::Locale => note("locale"),
-            Documented::ReplayIndexOrder => note("rebuildOrder"),
             _ => false,
         }
     }
 
     /// The oracle's answer `expected` without the part this difference changes, when Heartwood's
     /// verdict `ours` and the answer both have that part; the case is then the documented
-    /// difference if `ours` equals what is left. Three differences have one: the missed rows of a
+    /// difference if `ours` equals what is left. Four differences have one: the missed rows of a
     /// refused block (the rows the reference recorded for a block both refused, in a
     /// `chain.process` answer refused by the accept handler, or in each job of a `chain.job`
     /// answer), the wallets of a round answer (the answer with Heartwood's wallets in the places
-    /// where the key and the name agree, [`crate::subjects::round_wallets_masked`]), and an escaped
-    /// log text (the reference's line with its message escaped).
+    /// where the key and the name agree, [`crate::subjects::round_wallets_masked`]), an escaped
+    /// log text (the reference's line with its message escaped), and the index orders after a
+    /// restart (the answer with Heartwood's restart orders where they list the same keys,
+    /// [`crate::subjects::index_orders_masked`]).
     pub fn masked(self, expected: &Expected, ours: &Verdict) -> Option<Expected> {
         if self == Documented::EscapedLogText {
             return crate::subjects::escaped_line(expected);
@@ -424,6 +427,11 @@ impl Documented {
             (self, expected, ours)
         {
             return crate::subjects::round_wallets_masked(theirs, ours).map(Expected::Output);
+        }
+        if let (Documented::ReplayIndexOrder, Expected::Output(theirs), Verdict::Output(ours)) =
+            (self, expected, ours)
+        {
+            return crate::subjects::index_orders_masked(theirs, ours).map(Expected::Output);
         }
         let (Documented::MissedRowsOfRefusedBlock, Expected::Output(theirs), Verdict::Output(ours)) =
             (self, expected, ours)

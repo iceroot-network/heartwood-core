@@ -98,6 +98,8 @@ mod signatures;
 mod sql_records;
 mod state;
 mod state_index;
+
+pub use state_index::masked as index_orders_masked;
 mod status_serve;
 mod text;
 mod transactions;
