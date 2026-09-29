@@ -223,7 +223,10 @@ impl Node {
             ),
             (
                 ".env",
-                "CORE_P2P_PORT=4000\nCORE_P2P_MIN_NETWORK_REACH=1\nCORE_API_DISABLED=true\n".into(),
+                format!(
+                    "CORE_P2P_PORT={}\nCORE_P2P_MIN_NETWORK_REACH=1\nCORE_API_DISABLED=true\n",
+                    free_port()?
+                ),
             ),
         ];
         for (name, text) in files {
@@ -240,6 +243,15 @@ impl Node {
     fn data(&self, store: u32) -> PathBuf {
         self.root.join(format!("data-{store}"))
     }
+}
+
+/// A port that nothing on this host listens on now, for the relay's P2P server: a fixed port would
+/// clash with any other relay on the host, and fail this run's kills that start on it.
+fn free_port() -> Result<u16> {
+    let listener = std::net::TcpListener::bind(("0.0.0.0", 0));
+    let port = listener.and_then(|listener| listener.local_addr());
+    port.map(|address| address.port())
+        .map_err(|e| Error::Usage(format!("no free port for the relay: {e}")))
 }
 
 fn mkdir(path: &Path) -> Result<()> {
@@ -679,6 +691,21 @@ mod tests {
             judge_store(&both(4, 4), Some(4), None, &forward).1,
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn the_relay_listens_on_a_free_port_of_its_own() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let corpus = Corpus::load(&root.join("corpus/txgen-one-node")).unwrap();
+        let dir = ScratchDir::new("runtime-port").unwrap();
+        Node::write(dir.path(), &corpus).unwrap();
+        let env = std::fs::read_to_string(dir.path().join("config/.env")).unwrap();
+        let port: u16 = (env.lines())
+            .find_map(|line| line.strip_prefix("CORE_P2P_PORT="))
+            .and_then(|port| port.parse().ok())
+            .unwrap();
+        assert_ne!(port, 4000, "another relay on this host may hold that port");
+        assert!(std::net::TcpListener::bind(("0.0.0.0", port)).is_ok());
     }
 
     /// The kill test on the committed chain, through the built relay and mock peer: a few kills.
