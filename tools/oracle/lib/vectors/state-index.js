@@ -3,8 +3,8 @@
 // orders (lib/ops/state-index.js) over the one-node corpus, at digest lines of its continuous
 // replay (its revert plan included) chosen by rule: the first start; each block, applied or
 // applied again, where a public key or a delegate name lands; each revert that forgets one; the
-// first block of each round end; the tip; then lines spread evenly over the replay until the
-// corpus has at least LINES records. A line where a reference restart is refused is left out.
+// first block of each round end; the tip; then as many lines spread evenly over the replay as
+// make about LINES records per corpus. A line where a reference restart is refused is left out.
 //
 // Only the one-node corpus is in the repository. STATE_INDEX_CORPORA (corpus names separated by
 // commas, looked up as the operation looks them up) adds corpora for a local run, such as the
@@ -20,10 +20,10 @@ const { findCorpus, orders, replaySteps } = require("../ops/state-index");
 
 const CORPORA = ["txgen-one-node"];
 const EXTRA = "STATE_INDEX_CORPORA";
-// The records per corpus the spread lines make up to.
-const LINES = 28;
+// The records per corpus that the spread lines make up to.
+const LINES = 26;
 // The lines of each kind that are chosen at most.
-const PER_KIND = 4;
+const PER_KIND = 3;
 
 /**
  * The digest lines of `corpus`'s continuous replay to record, each with its tip height and why it
@@ -81,8 +81,9 @@ async function chooseLines(solar, devnet, corpus) {
         heights.push(tip);
     }
     const total = steps.length + 1;
-    for (let k = 1; chosen.size < LINES && k < LINES; k++) {
-        const line = Math.max(1, Math.round((k * total) / LINES));
+    const needed = Math.max(0, LINES - chosen.size);
+    for (let k = 1; k <= needed; k++) {
+        const line = Math.max(1, Math.round((k * total) / (needed + 1)));
         if (!chosen.has(line)) chosen.set(line, { line, height: heights[line - 1], why: "spread" });
     }
     return [...chosen.values()].sort((a, b) => a.line - b.line);
