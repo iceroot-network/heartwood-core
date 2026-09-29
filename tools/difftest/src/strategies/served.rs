@@ -7,7 +7,7 @@
 //! some of them, and prefixes of the corpus chains: the committed one-node chain and, when they
 //! are under the workspace's `target/corpus`, `c2-faults` cut at 265 and `c4-restarts`, as P13
 //! reads them. A case names its tip and keeps rows up to it as the store's; a corpus case keeps
-//! at most [`WINDOW`] rows below its tip and carries the corpus's milestones.
+//! at most twelve rows below its tip and carries the corpus's milestones.
 //! The cases stay away from the answers Heartwood gives differently on purpose: no IPv4-mapped
 //! address, no peer without a latency, and no block whose header the schema refuses.
 
