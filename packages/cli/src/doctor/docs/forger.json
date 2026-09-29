@@ -12,12 +12,18 @@
         "the configuration"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The first relay is at a loopback address, so it attests the forger, and one or two more relays are listed for failover.",
+        "warn": "One relay only; more than 3; or the first relay not at a loopback address.",
+        "unknown": "The forger's configuration cannot be read.",
+        "skipped": "No forger runs on this host."
       },
-      "advice": {},
+      "advice": {
+        "pass": "The forger lists {count} relays, the first on this host.",
+        "pass-remote": "The first relay is on this host. Relay {relay} is not on a loopback address. Until node keys arrive, a relay counts only a forger on its own host as online, so while the forger is failed over to relay {relay} it still forges, but pools refuse votes for your delegate as offline and peers stop counting it toward their quorum.",
+        "one-relay": "The forger lists {count} relay. Add a second so it can fail over.",
+        "too-many": "The forger lists {count} relays. Two or three are enough: each relay it sweeps past costs time in its slot.",
+        "first-not-loopback": "The forger's first relay ({address}) is not on a loopback address. Until node keys arrive, a relay counts only a forger on its own host as online, so for as long as the forger runs it still forges, but pools refuse votes for your delegate as offline and peers stop counting it toward their quorum. Put a relay on the forger's host first."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#forger-hosts"
     },
     {
@@ -32,13 +38,17 @@
         "the configuration"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The forger holds an established connection to its first relay.",
+        "warn": "It is connected only to a later relay: failover is in effect.",
+        "fail": "The forger runs with no established connection to any of its relays.",
+        "unknown": "The forger does not run, or its configuration or the socket table cannot be read.",
+        "skipped": "No forger runs on this host."
       },
-      "advice": {},
+      "advice": {
+        "first": "The forger is connected to its first relay ({address}).",
+        "failover": "The forger is connected to relay {relay} ({address}), so its first relay is down or unreachable. Check `heartwood relay status` on that host.",
+        "none": "The forger runs but holds no connection to any of its {count} relays. Check `heartwood relay status` on the relays' hosts and the forger's log (forger.link-history)."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#forger-link"
     },
     {
@@ -53,13 +63,18 @@
         "the socket table"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "No link failure in the window: waiting for a responsive host, a relay's error, a relay that did not respond, no open socket, a session error, a failed sync check, broadcast or emit. Waiting for the relay to become ready counts only while the relay is not syncing; the harmless \"unable to find any local hosts\" line never counts.",
+        "warn": "Any such failure in the window.",
+        "fail": "A failure in the last 5 minutes while the forger holds no connection now; or a failed broadcast of a block it forged at its slot.",
+        "unknown": "The forger's log cannot be read, or its file level hides warnings.",
+        "skipped": "No forger runs on this host."
       },
-      "advice": {},
+      "advice": {
+        "none": "No link failure in the window.",
+        "failures": "The forger logged {count} link failures in the window, the last at {time}. Check the link to the relay (forger.link) and the relay's log at that time.",
+        "down": "The forger logged {count} link failures, the last at {time}, and holds no connection to a relay now. Check `heartwood relay status` and the relay's log.",
+        "broadcast": "The forger could not deliver its block at {time}. Check the link to the relay (forger.link) and the relay's log at that time."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#forger-link-history"
     },
     {
@@ -76,13 +91,18 @@
         "the signing record"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "No line of the forger saying our delegate has already forged on another node or already forged a block; or each such line is cleared by the chain: the chain's block in that slot is this forger's own (a forger restarted inside a slot it had signed).",
+        "warn": "Such a line that the chain does not confirm. A log line alone is not proof: text a relay sends can reach the forger's log.",
+        "fail": "The chain holds a block signed with our key in that slot that this forger did not sign: the signing record holds that slot with another block id, or holds another slot and the forger's log has no \"forged a new block\" line at that height.",
+        "unknown": "The forger's log cannot be read, or its file level hides warnings.",
+        "skipped": "No forger runs on this host."
       },
-      "advice": {},
+      "advice": {
+        "none": "No line says our key forged on another node.",
+        "own-block": "The forger logged that our delegate had already forged, and the chain's block in that slot is this forger's own ({count} such lines): it restarted inside a slot it had signed. Nothing to do.",
+        "logged-only": "The forger logged {count} times that {delegate} has already forged on another node or already forged a block, the last at {time}. The chain does not confirm it: confirm on the chain before acting; this line can also come from text a relay sent. Look up the block of that slot and whether this forger signed it.",
+        "another-forger": "Another forger signs with this delegate's key: the block at height {height} carries the signature of {delegate}, and this forger did not sign it. Stop the other forger now. One key on two forgers can sign two different blocks for one slot, which splits the network and exposes the delegate."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#forger-one-key-one-forger"
     },
     {
@@ -98,13 +118,20 @@
         "the forger's log"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "No record yet (the forger has not signed), or mode 0600 in a 0700 directory with this network's nethash.",
+        "warn": "A key's recorded slot is ahead of the current slot by this host's clock.",
+        "fail": "Another network's nethash (the forger will not start); a mode or directory mode open to group or others; a file that does not parse.",
+        "unknown": "The record's metadata or the forger's configuration cannot be read.",
+        "skipped": "No forger runs on this host."
       },
-      "advice": {},
+      "advice": {
+        "pass": "The signing record {path} is private and belongs to this network.",
+        "absent": "The forger has not signed a block yet, so it has no signing record.",
+        "wide-mode": "The signing record {path} (mode {mode}, directory mode {dirMode}) is open to other users on this host. Run `chmod 600 {path}` and `chmod 700` on its directory.",
+        "unparsed": "The signing record {path} does not parse, so the forger will not start. Read the forger's error log (`heartwood forger log --error`) before changing anything.",
+        "other-network": "The signing record belongs to another network. The forger will not start. Move it aside only if you are sure this forger never signed on this network.",
+        "slot-ahead": "The signing record holds slot {slot}, ahead of the current slot {current} by this host's clock. The forger will not sign until the clock reaches it. See clock.sync."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#forger-signing-record"
     },
     {
@@ -119,12 +146,24 @@
         "the process table"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "No start error in the error capture since the forger's last start, or the forger runs.",
+        "fail": "A start error (the key file, the signing record, an option or the configuration) while the forger is stopped or errored.",
+        "unknown": "The error capture or the process table cannot be read.",
+        "skipped": "No forger runs on this host."
       },
-      "advice": {},
+      "advice": {
+        "none": "No start error.",
+        "key-file-missing": "The forger did not start: its key file {path} does not exist. Create it with the delegate's key, then start the forger.",
+        "no-keys": "The forger did not start: its key file lists no key.",
+        "key-file-open": "The forger refused its key file: it can be read or changed by group or others (mode {mode}). Run `chmod 600 {path}` and start the forger.",
+        "key-file-secrets": "The forger refused its key file {path}: it lists passphrases, which the forger does not read. Keep only the keys the forger's guide names.",
+        "key-file-invalid": "The forger did not start: its key file {path} is not valid or cannot be read.",
+        "record-other-network": "The forger did not start: its signing record belongs to another network. See forger.signing-record.",
+        "record-invalid": "The forger did not start: its signing record is not valid or cannot be read or written. See forger.signing-record.",
+        "option": "The forger did not start: one of its options is not valid. Read `heartwood forger log --error`.",
+        "config": "The forger did not start: its configuration is refused. See config.load.",
+        "other": "The forger did not start. Read `heartwood forger log --error`."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#forger-start-errors"
     }
   ]
