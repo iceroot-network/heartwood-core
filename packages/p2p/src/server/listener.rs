@@ -18,7 +18,8 @@
 //!   many bytes it has written, for the heartbeat's liveness check. A socket whose unwritten bytes
 //!   pass [`MAX_BACKLOG`] is dropped by its session, and so is one that closes with more than
 //!   [`CLOSE_BACKLOG`] unwritten; the writes go on after the session ends for at most
-//!   [`DRAIN_TIMEOUT`], where the reference buffers without a bound.
+//!   [`DRAIN_TIMEOUT`], or until a newer socket from the address opens, where the reference
+//!   buffers without a bound.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -436,6 +437,12 @@ impl FrameWriter {
         } else {
             Writes::Idle
         }
+    }
+
+    /// The writing task, while it was not aborted: a newer socket from the address aborts it
+    /// when it still runs after the session.
+    pub fn writes(&self) -> Option<AbortHandle> {
+        self.task.clone()
     }
 
     /// The bytes queued and not yet written.

@@ -289,6 +289,25 @@ async fn a_peer_that_closes_with_little_unread_still_gets_it_and_the_close_echo(
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_new_socket_from_the_address_ends_the_writes_of_its_closed_one() {
+    let bench = Bench::new().await;
+    let mut old = one_answer_waiting(&bench, peer(2)).await;
+    // As the reference destroys every other socket of the address, the closing one included.
+    let mut new = bench.raw(peer(2)).await.unwrap();
+    new.hello().await;
+    sleep(ms(100)).await;
+    assert_eq!(old.next().await, Sent::Ended);
+    // Another address's closed socket keeps its writes.
+    let mut other = one_answer_waiting(&bench, peer(3)).await;
+    let _ = bench.raw(peer(4)).await.unwrap();
+    sleep(ms(100)).await;
+    assert!(matches!(
+        other.next().await,
+        Sent::Binary(Message { id: 2, .. })
+    ));
+}
+
+#[tokio::test(start_paused = true)]
 async fn close_and_reconnect_cycles_from_one_address_hold_less_than_two_backlogs() {
     let bench = Bench::new().await;
     let mut ended = Vec::new();

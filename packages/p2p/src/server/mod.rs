@@ -34,6 +34,7 @@ use heartwood_kernel::{Clock, SystemClock};
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
+use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
 use self::ban_hammer::BanHammer;
@@ -158,6 +159,8 @@ struct Shared {
     serial: AtomicU64,
     /// Each open socket's address and its session's orders.
     sessions: Mutex<HashMap<SessionId, (IpAddr, mpsc::UnboundedSender<Control>)>>,
+    /// The writes still going on after their session ended, by address, the last one of each.
+    drains: Mutex<HashMap<IpAddr, AbortHandle>>,
 }
 
 impl P2pServer {
@@ -200,6 +203,7 @@ impl P2pServer {
             beats_from: Instant::now(),
             serial: AtomicU64::new(0),
             sessions: Mutex::default(),
+            drains: Mutex::default(),
         });
         let listener = Mutex::new(Some(listener));
         Ok(P2pServer {
@@ -275,8 +279,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Shared {
-    /// One connection: the bans, the caps and one socket per address, the upgrade, the session,
-    /// and the bans when it closes.
+    /// One connection: the bans, the caps and one socket per address (a newer socket also ends
+    /// the writes left of the address's closed one, as the reference destroys a closing socket
+    /// too), the upgrade, the session, and the bans when it closes.
     async fn connection(self: Arc<Self>, stream: Box<dyn Stream>, ip: IpAddr) {
         if self.ban_hammer.is_banned(ip, self.clock.now_ms()) {
             return;
@@ -297,6 +302,9 @@ impl Shared {
                 let _ = orders.send(Control::Destroy);
             }
         }
+        if let Some(writes) = lock(&self.drains).remove(&ip) {
+            writes.abort();
+        }
         let upgraded = tokio::select! {
             upgraded = listener::upgrade(stream) => upgraded,
             _ = control.recv() => Upgrade::Failed,
@@ -312,9 +320,17 @@ impl Shared {
                     beats_from: self.beats_from,
                     control,
                 };
+                let writes = writer.writes();
                 let end = ServerSession::new(parts).run(reader, writer).await;
                 self.events.closed(id, ip);
                 self.peers.mark_stale(ip);
+                if let Some(writes) = writes.filter(|task| !task.is_finished()) {
+                    let mut drains = lock(&self.drains);
+                    drains.retain(|_, task| !task.is_finished());
+                    if let Some(older) = drains.insert(ip, writes) {
+                        older.abort();
+                    }
+                }
                 end
             }
             Upgrade::NotWebSocket => {
