@@ -8,7 +8,7 @@ mod doctor_support;
 use heartwood_cli::doctor::DoctorOptions;
 use heartwood_cli::doctor::docs::docs;
 use heartwood_cli::doctor::registry::{CheckId, CheckInput, ENTRIES, is_not_built};
-use heartwood_cli::doctor::report::{Status, keys};
+use heartwood_cli::doctor::report::{Basis, Status, keys};
 
 use doctor_support::FakeView;
 
@@ -89,4 +89,45 @@ fn every_advice_a_case_gives_has_its_text() {
     missing.sort();
     missing.dedup();
     assert!(missing.is_empty(), "advice without a text: {missing:#?}");
+}
+
+#[test]
+fn a_fail_on_the_log_alone_asks_to_stop_remove_roll_back_or_move_nothing() {
+    let docs = docs().unwrap();
+    let disruptive = ["stop", "remove", "delete", "roll back", "rollback", "move"];
+    // The start errors fail only while the process table shows the role down.
+    let confirmed = ["relay.start-errors", "forger.start-errors"];
+    let mut found = Vec::new();
+    for case in doctor_cases::all() {
+        let entry = ENTRIES.iter().find(|entry| entry.id == case.check).unwrap();
+        let id = CheckId::parse(entry.id).unwrap();
+        let input = CheckInput {
+            entry,
+            view: &case.view,
+            options: &case.options,
+        };
+        for finding in (entry.run)(&input) {
+            let log_only = finding.status == Status::Fail && finding.basis == Basis::Log;
+            if !log_only || confirmed.contains(&entry.id) {
+                continue;
+            }
+            let text = docs.template(id, finding.advice.key).unwrap_or_default();
+            let words = text
+                .to_lowercase()
+                .replace(|c: char| !c.is_ascii_alphabetic(), " ");
+            let words = format!(" {words} ");
+            if disruptive
+                .iter()
+                .any(|verb| words.contains(&format!(" {verb} ")))
+            {
+                found.push(format!("{} {}", entry.id, finding.advice.key));
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    assert!(
+        found.is_empty(),
+        "log-only fails that ask to act: {found:#?}"
+    );
 }
