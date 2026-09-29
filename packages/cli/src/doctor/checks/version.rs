@@ -2,7 +2,7 @@
 //! peers' versions.
 
 use crate::doctor::checks::process::{
-    Facts, absent, fin, guard, int, on_relay, relay, unknown_roles,
+    Facts, absent, either, fin, guard, int, on_relay, relay, unknown_roles,
 };
 use crate::doctor::registry::CheckInput;
 use crate::doctor::report::Basis::{Chain, Config, Process};
@@ -98,24 +98,11 @@ pub fn installed(input: &CheckInput<'_>) -> Vec<Finding> {
             let bad = |source| Unknown::new(source, Reason::Unparsed);
             let running = version(&text).ok_or(bad(Source::Process))?;
             let latest = version(installed).ok_or(bad(Source::Build))?;
-            let verdict = if text == installed {
-                (Pass, "same")
-            } else {
-                (Warn, "restart-pending")
-            };
-            let facts = vec![
-                ("role", Fact::Word(role.name())),
-                ("running", Fact::Id(running)),
-            ];
-            Ok(vec![fin(
-                input,
-                subject,
-                (
-                    Process,
-                    verdict,
-                    [facts, vec![("installed", Fact::Id(latest))]].concat(),
-                ),
-            )])
+            let verdict = either(text == installed, (Pass, "same"), (Warn, "restart-pending"));
+            let (role, running) = (Fact::Word(role.name()), Fact::Id(running));
+            let facts = vec![("role", role), ("running", running)];
+            let facts = [facts, vec![("installed", Fact::Id(latest))]].concat();
+            Ok(vec![fin(input, subject, (Process, verdict, facts))])
         })
     };
     Role::ALL.into_iter().flat_map(judge).collect()
@@ -125,11 +112,11 @@ pub fn installed(input: &CheckInput<'_>) -> Vec<Finding> {
 pub fn build(input: &CheckInput<'_>) -> Vec<Finding> {
     let features = input.view.build().features;
     let has = |name| features.contains(&name);
-    let verdict = if has("difftest") {
-        (Fail, "test-build")
-    } else {
-        (Pass, "release-build")
-    };
+    let verdict = either(
+        has("difftest"),
+        (Fail, "test-build"),
+        (Pass, "release-build"),
+    );
     let facts = vec![
         ("devnet", Fact::Bool(has("devnet"))),
         ("difftest", Fact::Bool(has("difftest"))),
@@ -164,11 +151,11 @@ pub fn peers(input: &CheckInput<'_>) -> Vec<Finding> {
                 None => odd.push(text),
             }
         }
-        let verdict = if newer * 2 > peers.len() {
-            (Warn, "mostly-newer")
-        } else {
-            (Pass, "current")
-        };
+        let verdict = either(
+            newer * 2 > peers.len(),
+            (Warn, "mostly-newer"),
+            (Pass, "current"),
+        );
         let facts = vec![("newer", int(newer)), ("total", int(peers.len()))];
         let mut found = fin(input, Relay, (Chain, verdict, facts));
         let at_ms = Some(view.now_ms());

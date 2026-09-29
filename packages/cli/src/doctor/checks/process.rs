@@ -44,12 +44,14 @@ pub(crate) use ints;
 /// A finding whose advice values are its facts.
 pub(crate) fn fin(input: In<'_>, subject: Subject, row: Row) -> Finding {
     let (basis, (status, key), facts) = row;
-    let advice = Advice {
-        key,
-        values: facts.clone(),
-    };
-    let found = Finding::new(input.id(), subject, status, basis, advice);
-    Finding { facts, ..found }
+    let mut found = Finding::new(input.id(), subject, status, basis, Advice::key(key));
+    (found.advice.values, found.facts) = (facts.clone(), facts);
+    found
+}
+
+/// `yes` when `cond` holds, else `no`.
+pub(crate) fn either(cond: bool, yes: Verdict, no: Verdict) -> Verdict {
+    if cond { yes } else { no }
 }
 
 /// An integer fact; a value that does not fit is the largest one.

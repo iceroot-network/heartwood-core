@@ -1,7 +1,7 @@
 //! The host: its size against the planning estimates, its free memory and the user running the
 //! doctor.
 
-use crate::doctor::checks::process::{fin, guard, int, single};
+use crate::doctor::checks::process::{either, fin, guard, int, single};
 use crate::doctor::registry::CheckInput;
 use crate::doctor::report::Basis::System;
 use crate::doctor::report::Status::{Fail, Pass, Warn};
@@ -61,11 +61,7 @@ pub fn resources(input: &CheckInput<'_>) -> Vec<Finding> {
         ];
         Ok((
             System,
-            if enough {
-                (Pass, "enough")
-            } else {
-                (Warn, "below-estimate")
-            },
+            either(enough, (Pass, "enough"), (Warn, "below-estimate")),
             facts,
         ))
     })

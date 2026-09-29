@@ -4,7 +4,7 @@
 use std::net::IpAddr;
 
 use crate::doctor::checks::peers::behind;
-use crate::doctor::checks::process::{Facts, ints, relay};
+use crate::doctor::checks::process::{Facts, either, ints, relay};
 use crate::doctor::registry::CheckInput;
 use crate::doctor::report::Basis::Chain;
 use crate::doctor::report::Status::{Fail, Pass, Warn};
@@ -44,22 +44,13 @@ pub fn sync_proof(input: &CheckInput<'_>) -> Vec<Finding> {
         facts.extend(hex(&tip.id).map(|id| ("tip_id", id)));
         facts.extend(block.and_then(|b| hex(&b.id)).map(|id| ("block_2_id", id)));
         let loopback = addresses.iter().all(IpAddr::is_loopback);
-        facts.push((
-            "api",
-            Fact::Word(if loopback {
-                "loopback only"
-            } else {
-                "beyond loopback"
-            }),
-        ));
-        Ok((
-            Chain,
-            if loopback {
-                (Warn, "loopback-only")
-            } else {
-                (Pass, "ready")
-            },
-            facts,
-        ))
+        let word = if loopback {
+            "loopback only"
+        } else {
+            "beyond loopback"
+        };
+        facts.push(("api", Fact::Word(word)));
+        let verdict = either(loopback, (Warn, "loopback-only"), (Pass, "ready"));
+        Ok((Chain, verdict, facts))
     })
 }
