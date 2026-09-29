@@ -340,6 +340,32 @@ async fn an_upgrade_header_other_than_websocket_alone_is_refused_400() {
             "{upgrade}"
         );
     }
+    // A field sent twice is read as Node joins it, "websocket, websocket", "13, 13" or two keys
+    // with ", " between them, which the library refuses as it would one such line.
+    let fields = [
+        ("Upgrade", "websocket"),
+        ("Sec-WebSocket-Version", "13"),
+        ("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="),
+    ];
+    for (twice, _) in fields {
+        let (mut client, served) = tokio::io::duplex(1024);
+        bench.server.accept(Box::new(served), peer(5));
+        let mut request = String::from("GET / HTTP/1.1\r\nConnection: Upgrade\r\n");
+        for (name, value) in fields {
+            let times = if name == twice { 2 } else { 1 };
+            for _ in 0..times {
+                request.push_str(&format!("{name}: {value}\r\n"));
+            }
+        }
+        request.push_str("\r\n");
+        client.write_all(request.as_bytes()).await.unwrap();
+        let mut answer = Vec::new();
+        client.read_to_end(&mut answer).await.unwrap();
+        assert!(
+            answer.starts_with(b"HTTP/1.1 400 Bad Request\r\n"),
+            "{twice} twice"
+        );
+    }
     // The comparison ignores case, as the library's does.
     let (mut client, served) = tokio::io::duplex(1024);
     bench.server.accept(Box::new(served), peer(4));
