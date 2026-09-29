@@ -843,9 +843,11 @@ reference lacks, which no honest peer that reads its socket meets:
 - a socket that closes, or whose stream ends, with more than 64 KiB unwritten is dropped at once,
   as a peer that closes reads no more answers; the writes left when a session ends stop 30 s
   later, the WebSocket library's close timeout, or when a newer socket from the address opens, as
-  the reference destroys every other socket of the address, a closing one included. An address
-  thus holds the backlog of one socket at most (40 MiB), and a subnet the backlogs of the sockets
-  its cap admits (`maxSameSubnetPeers`, 256 by default), each until its writes stall;
+  the reference destroys every other socket of the address, a closing one included (a socket the
+  server closed ends then too, where it waited 30 s for the peer's close frame, and it holds no
+  answer that comes after its close frame). An address thus holds the backlog of one socket at
+  most (40 MiB), and a subnet the backlogs of the sockets its cap admits (`maxSameSubnetPeers`,
+  256 by default), each until its writes stall;
 - the ban list drops its expired bans once it holds more than 10,000 addresses, where the
   reference keeps an expired ban until its address connects again.
 

@@ -52,7 +52,8 @@ pub const PROTOCOL: &str = "2";
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 /// How long the client has to answer a heartbeat.
 pub const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
-/// How long a socket the server closes waits for the client's close frame.
+/// How long a socket the server closes waits for the client's close frame, unless a newer socket
+/// from its address opens first.
 pub const CLOSE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Two client pings closer than this end the socket.
 const PING_LIMIT: Duration = Duration::from_secs(1);
@@ -246,12 +247,18 @@ impl ServerSession {
                 })
             }
             Stop::Close(code) => {
+                // Nothing is written after the close frame: the answers still to come are
+                // dropped as they come, and a newer socket from the address ends the wait.
+                drop(answered);
                 writer.close(code);
+                let control = &mut self.parts.control;
                 let _ = timeout(CLOSE_TIMEOUT, async {
-                    while !matches!(
-                        reader.next().await,
-                        Frame::Close(_) | Frame::Ended | Frame::Failed(_)
-                    ) {}
+                    while !tokio::select! {
+                        frame = reader.next() => {
+                            matches!(frame, Frame::Close(_) | Frame::Ended | Frame::Failed(_))
+                        }
+                        order = control.recv() => order != Some(Control::Close),
+                    } {}
                 })
                 .await;
                 SessionEnd::Closed

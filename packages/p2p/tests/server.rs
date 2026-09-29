@@ -308,6 +308,25 @@ async fn a_new_socket_from_the_address_ends_the_writes_of_its_closed_one() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_new_socket_from_the_address_ends_its_socket_that_waits_for_a_close_echo() {
+    let bench = Bench::new().await;
+    let mut old = bench.raw(peer(2)).await.unwrap();
+    old.hello().await;
+    // A text message that is not UTF-8: the server closes with 1007 and waits for the echo, which
+    // the peer never sends.
+    old.frame(0x81, &[0xff]).await;
+    let code = 1007_u16.to_be_bytes().to_vec();
+    assert_eq!(old.next().await, Sent::Close(code));
+    sleep(ms(10_000)).await;
+    assert!(!closed(&bench, peer(2)));
+    // As the reference destroys every other socket of the address, the closing one included.
+    let mut new = bench.raw(peer(2)).await.unwrap();
+    new.hello().await;
+    sleep(ms(100)).await;
+    assert!(closed(&bench, peer(2)), "the closing socket still waits");
+}
+
+#[tokio::test(start_paused = true)]
 async fn close_and_reconnect_cycles_from_one_address_hold_less_than_two_backlogs() {
     let bench = Bench::new().await;
     let mut ended = Vec::new();
