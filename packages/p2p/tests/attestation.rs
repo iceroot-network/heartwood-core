@@ -129,6 +129,26 @@ async fn only_a_loopback_source_gets_a_session() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_declaration_of_more_than_256_keys_is_refused() {
+    let server = tokio_server();
+    server.session.offer("first".into());
+    let declare = |count: usize| StatusToSignRequest {
+        public_keys: vec![key(1).to_hex(); count],
+    };
+    let refused = server
+        .session
+        .status_to_sign(session(1), forger(), declare(257))
+        .await;
+    assert_eq!(refused.unwrap_err().status, 499);
+    assert!(!server.session.is_attached());
+    let answer = server
+        .session
+        .status_to_sign(session(1), forger(), declare(256))
+        .await;
+    assert!(matches!(answer, Ok(StatusToSignResponse::Offer { .. })));
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_long_poll_answers_a_new_status_at_once_or_unchanged_after_ten_seconds() {
     let server = tokio_server();
     let started = Instant::now();

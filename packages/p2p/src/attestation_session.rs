@@ -1,9 +1,10 @@
-//! The forger's attestation session: from a loopback source only, at most one (a newer session
-//! replaces the older with a warning), the long poll `getStatusToSign` answered with each new
-//! status or `Unchanged` after 10 s, every signature of `postStatusSignatures` verified against
-//! the offer it names, and the attested set: the keys whose signatures verified, in declared
-//! order, duplicates kept. A session ends with its socket, with its replacement, or when no poll
-//! has been pending for 15 s; its attested set is then empty.
+//! The forger's attestation session: from a loopback source only, declaring at most
+//! [`MAX_DECLARED`] keys, at most one (a newer session replaces the older with a warning), the
+//! long poll `getStatusToSign` answered with each new status or `Unchanged` after 10 s, every
+//! signature of `postStatusSignatures` verified against the offer it names, and the attested set:
+//! the keys whose signatures verified, in declared order, duplicates kept. A session ends with
+//! its socket, with its replacement, or when no poll has been pending for 15 s; its attested set
+//! is then empty.
 //!
 //! An offer holds the status text, the keys to sign it with (the declared keys that are
 //! registered delegates, in declared order) and the session's challenge, 32 random bytes drawn
@@ -35,6 +36,8 @@ use crate::server::seams::{ServerRefusal, SessionEvents, SessionId};
 pub const LONG_POLL: Duration = Duration::from_secs(10);
 /// How long a session lasts without a pending poll.
 pub const IDLE_END_MS: i64 = 15_000;
+/// The most keys a session declares: a key file holds a few dozen.
+pub const MAX_DECLARED: usize = 256;
 
 /// What the status server gets for an offer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,6 +129,10 @@ impl AttestationSession {
         if !ip.is_loopback() {
             let only = "Status attestations are given to a forger on the relay's host only";
             return Err(ServerRefusal::new(499, only));
+        }
+        if request.public_keys.len() > MAX_DECLARED {
+            let many = format!("An attestation session declares at most {MAX_DECLARED} keys");
+            return Err(ServerRefusal::new(499, &many));
         }
         let declared = (request.public_keys.iter())
             .map(|key| PublicKeyBytes::from_hex(key))
