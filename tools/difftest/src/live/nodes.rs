@@ -11,7 +11,7 @@
 //! rows but at heights either node refused or undid a block.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use heartwood_database::{Database, Settings};
 use serde_json::Value;
@@ -137,7 +137,7 @@ pub fn heartwood_digest(
 }
 
 /// A missed row: timestamp, height, username.
-type MissedKey = (i64, u64, String);
+pub(super) type MissedKey = (i64, u64, String);
 
 /// The node's missed rows and its refused or undone heights, from a corpus's `reference/`.
 fn reference_rows(dir: &Path) -> Result<(Vec<MissedKey>, BTreeSet<u64>)> {
@@ -259,7 +259,7 @@ pub fn heartwood_store(
     out
 }
 
-fn copy_dir(from: &Path, to: &Path) -> Result<()> {
+pub(super) fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     std::fs::create_dir_all(to).map_err(|e| Error::io(to, e))?;
     for entry in std::fs::read_dir(from).map_err(|e| Error::io(from, e))? {
         let entry = entry.map_err(|e| Error::io(from, e))?;
@@ -430,34 +430,44 @@ pub(super) fn log_line(line: &str) -> Option<LogLine> {
     })
 }
 
-/// The lines of the logs in `dir` in time order of the files: the relay's own file log, rotated
-/// files (`.log.gz`) first, which alone hold its debug lines; the streams a supervisor keeps
-/// repeat its console, so they are read only when there is no file log. A directory that is not
-/// there is an error, a file that cannot be read another.
-pub(super) fn read_logs(dir: &Path) -> Result<Vec<LogLine>> {
+/// The log files in `dir` in time order of the files: the relay's own file log, rotated files
+/// (`.log.gz`) first, which alone hold its debug lines; the streams a supervisor keeps repeat its
+/// console, so they are read only when there is no file log. A directory that is not there is an
+/// error.
+fn log_paths(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut paths: Vec<_> = std::fs::read_dir(dir)
         .map_err(|e| Error::io(dir, e))?
         .filter_map(std::result::Result::ok)
         .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .is_some_and(|n| is_log(&n.to_string_lossy()))
-        })
+        .filter(|p| p.file_name().is_some_and(|n| is_log(&n.to_string_lossy())))
         .collect();
     paths.sort();
-    let named = |p: &std::path::PathBuf| {
+    let named = |p: &PathBuf| {
         p.file_name()
             .is_some_and(|n| is_file_log(&n.to_string_lossy()))
     };
     if paths.iter().any(named) {
         paths.retain(named);
     }
-    let mut out = Vec::new();
-    for path in paths {
-        let text = log_text(&path).map_err(|e| Error::io(&path, e))?;
-        out.extend(text.lines().filter_map(log_line));
+    Ok(paths)
+}
+
+/// The text of the logs in `dir`, file after file (see [`log_paths`]); a file that cannot be read
+/// is an error.
+pub(super) fn read_log_text(dir: &Path) -> Result<String> {
+    let mut out = String::new();
+    for path in log_paths(dir)? {
+        out.push_str(&log_text(&path).map_err(|e| Error::io(&path, e))?);
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
     }
     Ok(out)
+}
+
+/// The lines of the logs in `dir` that have a time and a level, in time order of the files.
+pub(super) fn read_logs(dir: &Path) -> Result<Vec<LogLine>> {
+    Ok(read_log_text(dir)?.lines().filter_map(log_line).collect())
 }
 
 /// What a log line records of a peer, for the checks that count the lines naming an address.
@@ -532,15 +542,16 @@ pub(super) fn event_of(text: &str) -> Option<Event> {
 
 /// A corpus's rows keyed for comparison: blocks by height, block columns by height, round rows by
 /// round as sets, missed rows as a multiset.
-struct Rows {
-    blocks: BTreeMap<u64, String>,
-    meta: BTreeMap<u64, Value>,
-    rounds: BTreeMap<u64, BTreeSet<(String, String)>>,
-    missed: Vec<MissedKey>,
-    refused: BTreeSet<u64>,
+pub(super) struct Rows {
+    pub(super) blocks: BTreeMap<u64, String>,
+    pub(super) meta: BTreeMap<u64, Value>,
+    pub(super) rounds: BTreeMap<u64, BTreeSet<(String, String)>>,
+    pub(super) missed: Vec<MissedKey>,
+    pub(super) refused: BTreeSet<u64>,
 }
 
-fn rows_of(dir: &Path) -> Result<Rows> {
+/// The rows of the corpus in `dir`.
+pub(super) fn rows_of(dir: &Path) -> Result<Rows> {
     let height = |v: &Value, k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0);
     let blocks = read_lines(&dir.join("blocks.jsonl"))?
         .iter()
@@ -663,7 +674,10 @@ mod tests {
     fn log_lines_are_read_as_events() {
         let line = |text: &str| {
             let l = log_line(&format!("[2026-09-27 10:24:19.332] DEBUG: {text}")).unwrap();
-            assert_eq!(l.at, super::super::run::parse_time("2026-09-27T10:24:19.332Z"));
+            assert_eq!(
+                l.at,
+                super::super::run::parse_time("2026-09-27T10:24:19.332Z")
+            );
             event_of(&l.text)
         };
         assert_eq!(
@@ -674,7 +688,9 @@ mod tests {
             })
         );
         assert_eq!(
-            line("Banning 10.82.0.11 for 5 minutes. Reason: Validation failed :oncoming_police_car:"),
+            line(
+                "Banning 10.82.0.11 for 5 minutes. Reason: Validation failed :oncoming_police_car:"
+            ),
             Some(Event::Ban {
                 ip: "10.82.0.11".into(),
                 reason: "Validation failed".into()
@@ -708,9 +724,13 @@ mod tests {
     fn a_log_directory_reads_the_file_logs_with_the_rotated_ones_first() {
         let dir = TestDir::new("live-log-order");
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        gz.write_all(b"[2026-09-27 23:59:01.000] DEBUG: rotated\n").unwrap();
-        std::fs::write(dir.path().join("solar-testnet-relay-2026-09-27.log.gz"), gz.finish().unwrap())
+        gz.write_all(b"[2026-09-27 23:59:01.000] DEBUG: rotated\n")
             .unwrap();
+        std::fs::write(
+            dir.path().join("solar-testnet-relay-2026-09-27.log.gz"),
+            gz.finish().unwrap(),
+        )
+        .unwrap();
         std::fs::write(
             dir.path().join("solar-testnet-relay-current.log"),
             "[2026-09-28 00:00:01.000] DEBUG: current\n",
