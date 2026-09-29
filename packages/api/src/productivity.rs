@@ -40,7 +40,7 @@ struct Summed {
 /// What [`StoreProductivity`] keeps between calls.
 #[derive(Default)]
 struct Kept {
-    /// The table of the last tip that computed, and the table the routes fall back on.
+    /// The table served at the last tip asked about, computed or fallen back on.
     table: Option<Cached>,
     /// The table of the last computation that succeeded, for a tip whose computation fails.
     last: Option<Arc<ProductivityTable>>,
@@ -141,10 +141,16 @@ impl Productivity for StoreProductivity {
                 Ok(table)
             }
             Err(error) => {
-                // The reference swallows the failure and keeps the attributes it set before;
-                // the next request tries again.
-                heartwood_kernel::warning!("The productivity table could not be computed: {error}");
-                Ok(kept.last.clone().unwrap_or_default())
+                // The reference swallows the failure (on every chain younger than the window, whose
+                // genesis block has no name) and keeps the attributes it set before, until its next
+                // drain: here, until the next tip.
+                heartwood_kernel::debug!("The productivity table could not be computed: {error}");
+                let table = kept.last.clone().unwrap_or_default();
+                kept.table = Some(Cached {
+                    id: *tip.id(),
+                    table: Arc::clone(&table),
+                });
+                Ok(table)
             }
         }
     }

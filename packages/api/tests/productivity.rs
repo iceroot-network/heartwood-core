@@ -409,6 +409,16 @@ fn totals_are_summed_again_after_a_revert() {
     assert_eq!(totals(&productivity, &chain.blocks[3]), expected(4));
 }
 
+#[test]
+fn a_tip_whose_table_fails_is_kept_as_well() {
+    let chain = windowed("genesis-kept");
+    // The reference tries again at its next drain, after the next block, not at every read.
+    let productivity = chain.productivity(10 * i64::from(DAY));
+    let tip = chain.blocks.last().unwrap();
+    let first = productivity.table(tip).unwrap();
+    assert!(Arc::ptr_eq(&first, &productivity.table(tip).unwrap()));
+}
+
 /// The fees of `transactions`: their count, lowest, highest and sum.
 fn fees(transactions: &[&Transaction]) -> (u64, u64, u64, u128) {
     let fees: Vec<u64> = transactions.iter().map(|t| t.data().fee).collect();
