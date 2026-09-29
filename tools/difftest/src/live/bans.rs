@@ -19,6 +19,27 @@ pub const SOCKET_CLOSE: [&str; 2] = [
     "Failed to complete websocket handshake",
 ];
 
+/// The reason of a "Banning" line without what the line ends with after it: the reference's
+/// police-car emoji, Heartwood's `:oncoming_police_car:` short code, and the space before either.
+pub fn reason_text(reason: &str) -> &str {
+    let mut text = reason.trim_end();
+    // A short code: `:name:` of letters, digits and underscores after a space.
+    if let Some(inner) = text.strip_suffix(':')
+        && let Some((head, name)) = inner.rsplit_once(':')
+        && !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && head.ends_with(' ')
+    {
+        text = head.trim_end();
+    }
+    text.trim_end_matches(|c: char| !c.is_ascii() || c.is_whitespace())
+}
+
+/// Whether `reason` is a socket-close reason (with or without its trailing emoji).
+pub fn is_socket_close(reason: &str) -> bool {
+    SOCKET_CLOSE.contains(&reason_text(reason))
+}
+
 /// A ban line of `bans.jsonl`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ban {
@@ -58,7 +79,7 @@ pub enum Verdict {
 
 /// Classify `ban` of the node `node` against the run's fault `windows`.
 pub fn classify(ban: &Ban, node: &str, windows: &[Window]) -> Verdict {
-    if !SOCKET_CLOSE.contains(&ban.reason.as_str()) {
+    if !is_socket_close(&ban.reason) {
         return Verdict::Refusal;
     }
     let Some(at) = ban.at else {
@@ -137,6 +158,22 @@ mod tests {
                 "{reason}"
             );
         }
+        // The reason as the reference logs it, with its emoji, and as Heartwood does, with a code.
+        for suffixed in [
+            format!("{close} 🚔"),
+            format!("{close} :oncoming_police_car:"),
+        ] {
+            assert_eq!(
+                classify(&ban(&suffixed, Some(20_000)), "node4", &windows),
+                Verdict::InWindow("sigkill".into()),
+                "{suffixed}"
+            );
+        }
+        assert_eq!(
+            reason_text("Validation failed (invalid version) 🚔"),
+            "Validation failed (invalid version)"
+        );
+        assert_eq!(reason_text("Rate limit exceeded"), "Rate limit exceeded");
         let json = serde_json::json!({"node": "node2", "ts": "1970-01-01T00:00:20.000Z", "ip": "198.51.100.14", "reason": close});
         assert_eq!(Ban::from_json(&json).unwrap().at, Some(20_000));
     }

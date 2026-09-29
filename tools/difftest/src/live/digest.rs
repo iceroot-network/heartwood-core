@@ -247,8 +247,10 @@ pub fn judge(digest: &NodeDigest, chains: &[JudgedChain]) -> Judged {
 /// The scripted faults after which a relay starts again (`faults.jsonl`): a kill (`sig` and the
 /// signal's name), a stop and start, a restart with the replay marker; and in a forging devnet the
 /// fresh sync after a reset, the relay stopped or killed for a failover, the supervised relay
-/// crash, and the relays stopped for the two outages (`outage-three` names the one node it stops).
-pub const RESTARTING_FAULTS: [&str; 11] = [
+/// crash, and the relays stopped for the two outages (`outage-three` names the one node it stops);
+/// in the mixed runs a relay held and started again (`hold`) and the one an offline rollback
+/// stopped (`rollback`).
+pub const RESTARTING_FAULTS: [&str; 13] = [
     "sigint",
     "sigkill",
     "sigterm",
@@ -260,6 +262,8 @@ pub const RESTARTING_FAULTS: [&str; 11] = [
     "supervised-relay",
     "outage-two",
     "outage-three",
+    "hold",
+    "rollback",
 ];
 
 /// The node's starts (its digest files) against the scripted restarts of it, of `faults` (each a
@@ -292,9 +296,9 @@ pub fn starts(
 }
 
 /// A kill during the initial sync: the node's first start, on an empty store, ends (its last whole
-/// line) below `target`, the height node 1 held when the node started, so the kill landed before
-/// the node caught up with the chain; and the next start opens with the state it restored (a
-/// `restart` line).
+/// line) above genesis and below `target`, the height node 1 held when the node started, so the
+/// kill landed after the sync began and before the node caught up with the chain; and the next
+/// start opens with the state it restored (a `restart` line).
 pub fn killed_during_sync(digest: &NodeDigest, target: u32) -> std::result::Result<String, String> {
     let first = |start: u32| digest.lines.iter().find(|l| l.start == start);
     let last = digest.lines.iter().rfind(|l| l.start == 1);
@@ -304,6 +308,12 @@ pub fn killed_during_sync(digest: &NodeDigest, target: u32) -> std::result::Resu
     if last.height() >= target {
         return Err(format!(
             "its first start reached height {} before the kill, not below node 1's height {target} at its start: the sync had ended",
+            last.height()
+        ));
+    }
+    if last.height() < 2 {
+        return Err(format!(
+            "its first start wrote no block (its last line is at height {}): the kill came before the sync began",
             last.height()
         ));
     }
@@ -398,6 +408,10 @@ mod tests {
         let err = killed_during_sync(&digest_of(&[&first, &apply_first]), 107).unwrap_err();
         assert!(err.contains("a line of step apply"), "{err}");
         assert!(killed_during_sync(&digest_of(&[&first]), 107).is_err());
+        // A kill before the first block was applied is not one during the sync either.
+        let before = digest_of(&[&first[..1], &then]);
+        let err = killed_during_sync(&before, 107).unwrap_err();
+        assert!(err.contains("before the sync began"), "{err}");
     }
 
     fn line(h: u32, id: &str, w: &str) -> Value {

@@ -342,6 +342,36 @@ pub struct Step {
     pub record: Value,
 }
 
+impl Step {
+    /// The height the step started at, as the recipe recorded it (`startHeight`).
+    pub fn start_height(&self) -> Option<u64> {
+        self.record.get("startHeight").and_then(Value::as_u64)
+    }
+
+    /// A time the step's record holds under `key` (`end`, `contactNode3At`, ...), in
+    /// milliseconds since the Unix epoch.
+    pub fn time(&self, key: &str) -> Option<i64> {
+        text(&self.record, key).and_then(|t| parse_time(&t))
+    }
+
+    /// A number the step's record holds under `key`, in its record or in its `detail` object.
+    pub fn number(&self, key: &str) -> Option<u64> {
+        self.record
+            .get(key)
+            .or_else(|| self.record.get("detail").and_then(|d| d.get(key)))
+            .and_then(Value::as_u64)
+    }
+
+    /// A text the step's record holds under `key`, in its record or in its `detail` object.
+    pub fn text(&self, key: &str) -> Option<String> {
+        self.record
+            .get(key)
+            .or_else(|| self.record.get("detail").and_then(|d| d.get(key)))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    }
+}
+
 /// The steps of the run in `dir`.
 pub fn steps(dir: &Path) -> Result<Vec<Step>> {
     Ok(read_lines(&dir.join("steps.jsonl"))?
@@ -384,6 +414,27 @@ impl Window {
     pub fn concerns(&self, node: &str) -> bool {
         self.is_partition() || self.nodes.iter().any(|n| n == node)
     }
+
+    /// The window's class, the unit the mixed runs' counts compare in: the recipe's classes
+    /// (`stall`, `restart`, `hold`, `isolation`, `rollback`, `start`, `network-start`,
+    /// `not-started`) as they are, a kill, a stop and a marker restart as `restart`, a fresh
+    /// node's sync as `start`, and any other fault (`partition`, ...) under its own name.
+    pub fn class(&self) -> &str {
+        match self.fault.as_str() {
+            "sigint" | "sigkill" | "sigterm" | "marker-restart" => "restart",
+            "fresh-sync" => "start",
+            other => other,
+        }
+    }
+}
+
+/// The window that a line at `t` concerning `node` falls in: the one that started last among
+/// those that concern the node and contain `t`.
+pub fn window_at<'w>(windows: &'w [Window], node: &str, t: i64) -> Option<&'w Window> {
+    windows
+        .iter()
+        .filter(|w| w.concerns(node) && w.contains(t))
+        .max_by_key(|w| w.start)
 }
 
 /// The fault windows of the run in `dir`; a fault without a recovery lasts to the end of time.
@@ -536,8 +587,44 @@ mod tests {
         assert!(w.concerns("node4") && !w.concerns("node1"));
         let p = Window {
             fault: "partition".into(),
-            ..w
+            ..w.clone()
         };
         assert!(p.concerns("node1"));
+        assert_eq!(p.class(), "partition");
+        assert_eq!(w.class(), "restart");
+    }
+
+    #[test]
+    fn a_line_belongs_to_the_last_window_that_holds_it() {
+        let window = |fault: &str, start: i64, end: i64| Window {
+            fault: fault.into(),
+            nodes: vec!["node6".into()],
+            start,
+            end,
+        };
+        let all = [window("isolation", 0, 100), window("rollback", 40, 80)];
+        assert_eq!(window_at(&all, "node6", 50).unwrap().class(), "rollback");
+        assert_eq!(window_at(&all, "node6", 90).unwrap().class(), "isolation");
+        assert!(window_at(&all, "node6", 101).is_none());
+        assert!(window_at(&all, "node4", 50).is_none());
+    }
+
+    #[test]
+    fn a_step_reads_its_height_and_details() {
+        let record = serde_json::json!({"step": "r3", "node": "node6", "ok": true,
+            "startHeight": 112, "contactNode3At": "1970-01-01T00:00:02.000Z",
+            "detail": {"kept": 1, "outcome": "refused"}});
+        let step = Step {
+            name: "r3".into(),
+            node: "node6".into(),
+            ok: true,
+            start: None,
+            record,
+        };
+        assert_eq!(step.start_height(), Some(112));
+        assert_eq!(step.time("contactNode3At"), Some(2_000));
+        assert_eq!(step.number("kept"), Some(1));
+        assert_eq!(step.text("outcome").as_deref(), Some("refused"));
+        assert_eq!(step.text("missing"), None);
     }
 }
