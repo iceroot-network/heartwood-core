@@ -18,7 +18,7 @@
 //!   before, nor a request in progress, nor a message being written to a peer that reads (bytes
 //!   written since the check before). A socket whose unwritten bytes pass
 //!   [`super::listener::MAX_BACKLOG`] is dropped without a reason: a peer that asks and does not
-//!   read. The reference keeps both.
+//!   read. The reference keeps such sockets, and their unwritten messages, without a bound.
 //! - A WebSocket ping or pong frame ends the socket ("Malicious ping frame received", "Malicious
 //!   pong frame received"), and so does a frame fault, with the WebSocket library's text.
 //!
