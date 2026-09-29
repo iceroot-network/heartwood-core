@@ -1,0 +1,202 @@
+{
+  "wallets": [
+    "alice",
+    "bob",
+    "carol",
+    "dave"
+  ],
+  "steps": [
+    {
+      "step": "online",
+      "round": 1,
+      "delegates": {
+        "allBut": [
+          "genesis_51",
+          "genesis_52",
+          "genesis_53"
+        ]
+      }
+    },
+    {
+      "step": "online",
+      "round": 2,
+      "delegates": {
+        "allBut": [
+          "genesis_51",
+          "genesis_52",
+          "genesis_53"
+        ]
+      }
+    },
+    {
+      "step": "online",
+      "round": 3,
+      "delegates": {
+        "allBut": [
+          "genesis_51",
+          "genesis_52",
+          "genesis_53"
+        ]
+      }
+    },
+    {
+      "step": "online",
+      "round": 4,
+      "delegates": {
+        "allBut": [
+          "genesis_51",
+          "genesis_52",
+          "genesis_53"
+        ]
+      }
+    },
+    {
+      "step": "online",
+      "round": 5,
+      "delegates": {
+        "allBut": [
+          "genesis_51",
+          "genesis_52",
+          "genesis_53"
+        ]
+      }
+    },
+    {
+      "step": "transactions",
+      "height": 2,
+      "build": [
+        {
+          "kind": "transfer",
+          "sender": "genesis-1",
+          "asset": {
+            "recipients": [
+              [
+                "alice",
+                "1000000000000"
+              ],
+              [
+                "bob",
+                "1000000000000"
+              ],
+              [
+                "carol",
+                "1000000000000"
+              ],
+              [
+                "dave",
+                "1000000000000"
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "step": "transactions",
+      "height": 3,
+      "build": [
+        {
+          "kind": "vote",
+          "sender": "alice",
+          "asset": {
+            "votes": [
+              [
+                "genesis_1",
+                "100"
+              ]
+            ]
+          }
+        },
+        {
+          "kind": "vote",
+          "sender": "bob",
+          "asset": {
+            "votes": [
+              [
+                "genesis_52",
+                "100"
+              ]
+            ]
+          },
+          "refused": "ERR_OFFLINE"
+        },
+        {
+          "kind": "delegateRegistration",
+          "sender": "carol",
+          "asset": {
+            "username": "lockstep_1"
+          }
+        },
+        {
+          "kind": "ipfs",
+          "sender": "dave",
+          "asset": {
+            "hash": "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+          },
+          "refused": "ERR_OTHER"
+        },
+        {
+          "kind": "transfer",
+          "sender": "dave",
+          "asset": {
+            "recipients": [
+              [
+                "alice",
+                "250000000"
+              ],
+              [
+                "bob",
+                "250000000"
+              ]
+            ]
+          },
+          "memo": "lockstep"
+        }
+      ]
+    },
+    {
+      "step": "transactions",
+      "height": 5,
+      "build": [
+        {
+          "kind": "burn",
+          "sender": "dave",
+          "asset": {
+            "amount": "100000000"
+          }
+        }
+      ]
+    },
+    {
+      "step": "transactions",
+      "height": 60,
+      "build": [
+        {
+          "kind": "delegateResignation",
+          "sender": "carol",
+          "asset": {
+            "resignationType": 0
+          }
+        }
+      ]
+    },
+    {
+      "step": "transactions",
+      "height": 112,
+      "build": [
+        {
+          "kind": "vote",
+          "sender": "alice",
+          "asset": {
+            "votes": [
+              [
+                "genesis_2",
+                "100"
+              ]
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
