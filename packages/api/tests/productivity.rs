@@ -11,8 +11,14 @@ use heartwood_api::{Productivity, StoreProductivity};
 use heartwood_crypto::blocks::factory::{self, BlockDraft};
 use heartwood_crypto::crypto::hash::sha256_concat;
 use heartwood_crypto::crypto::slots;
-use heartwood_crypto::{Aux, Block, BlockId, KeyPair, TransactionId};
-use heartwood_database::{BlockRow, Database, MissedRow, Readers, Settings, TransactionRow};
+use heartwood_crypto::transactions::types::Asset;
+use heartwood_crypto::{Aux, Block, BlockId, KeyPair, Transaction, TransactionId, TransactionType};
+use heartwood_database::{
+    BlockCriteria, BlockFilter, BlockRow, CountFlag, Database, Direction, MissedBlockFilter,
+    MissedRow, Order, Page, Readers, Settings, TransactionRow, avg_int8,
+};
+use heartwood_state::supply::total_balance;
+use indexmap::IndexMap;
 use serde_json::json;
 
 const DAY: u32 = 86_400;
@@ -401,4 +407,214 @@ fn totals_are_summed_again_after_a_revert() {
     assert_eq!(totals(&productivity, &chain.blocks[5]), expected(6));
     // A tip below the cached height is summed again too.
     assert_eq!(totals(&productivity, &chain.blocks[3]), expected(4));
+}
+
+/// The fees of `transactions`: their count, lowest, highest and sum.
+fn fees(transactions: &[&Transaction]) -> (u64, u64, u64, u128) {
+    let fees: Vec<u64> = transactions.iter().map(|t| t.data().fee).collect();
+    (
+        fees.len() as u64,
+        fees.iter().copied().min().unwrap_or(0),
+        fees.iter().copied().max().unwrap_or(0),
+        fees.iter().map(|fee| u128::from(*fee)).sum(),
+    )
+}
+
+#[test]
+fn the_readers_agree_with_the_one_node_chain() {
+    let fixture = history_fixture::fixture();
+    let readers = Readers::open(&fixture.settings, 1).unwrap();
+    let reader = readers.get();
+    let tip = fixture.tip();
+
+    // Every block, the newest first, each with the amounts of its Core Transfer payments.
+    let down = [Order {
+        property: "height".into(),
+        direction: Direction::Desc,
+    }];
+    let page = Page {
+        offset: 0,
+        limit: 100,
+    };
+    let listing = reader
+        .blocks(&BlockFilter::default(), &down, page, true, CountFlag::Exact)
+        .unwrap();
+    assert_eq!(listing.total_count, u64::from(tip));
+    assert_eq!(listing.rows.len(), 100);
+    for (listed, height) in listing.rows.iter().zip((1..=tip).rev()) {
+        let block = fixture.block(height);
+        assert_eq!(listed.row.height, height);
+        let transfers: u128 = block
+            .transactions()
+            .iter()
+            .filter_map(|t| match &t.data().asset {
+                Asset::Transfer { transfers } => Some(transfers),
+                _ => None,
+            })
+            .flatten()
+            .map(|item| u128::from(item.amount))
+            .sum();
+        assert_eq!(listed.transferred, Some(transfers), "block {height}");
+    }
+    // A block's id prefix finds it, and the stored name of each block is the reference's.
+    let id = fixture.block(100).id().to_hex();
+    let by_prefix = BlockCriteria {
+        id: vec![id[..12].to_owned()],
+        ..BlockCriteria::default()
+    };
+    let found = reader
+        .blocks(
+            &BlockFilter::of(by_prefix),
+            &down,
+            page,
+            false,
+            CountFlag::Exact,
+        )
+        .unwrap();
+    assert!(found.rows.iter().any(|b| b.row.height == 100));
+    let names = |name: &str| {
+        let criteria = BlockCriteria {
+            username: vec![name.to_owned()],
+            ..BlockCriteria::default()
+        };
+        reader
+            .blocks(
+                &BlockFilter::of(criteria),
+                &down,
+                page,
+                false,
+                CountFlag::Exact,
+            )
+            .unwrap()
+            .total_count
+    };
+    let mut produced: IndexMap<String, u64> = IndexMap::new();
+    for meta in &fixture.meta {
+        *produced
+            .entry(meta["username"].as_str().unwrap().to_owned())
+            .or_default() += 1;
+    }
+    for (name, count) in &produced {
+        assert_eq!(names(name), *count, "{name}");
+    }
+
+    // The burned totals are what the reference stored and what the state counts.
+    let burned_fees: u128 = fixture
+        .meta
+        .iter()
+        .map(|meta| meta["burnedFee"].as_str().unwrap().parse::<u128>().unwrap())
+        .sum();
+    let burns: u128 = fixture
+        .transactions()
+        .iter()
+        .filter_map(|(_, _, t)| match t.data().asset {
+            Asset::Burn { amount } => Some(u128::from(amount)),
+            _ => None,
+        })
+        .sum();
+    let totals = reader.burned_totals(0, tip).unwrap();
+    assert_eq!((totals.fees, totals.transactions), (burned_fees, burns));
+    let state = fixture.ctx.state.borrow().clone();
+    assert_eq!(state.totals.burned_fees, burned_fees);
+    assert_eq!(state.totals.burned_amounts, burns);
+    // The supply from the store is the sum of the state's balances, as the reference sums them.
+    let store = StoreProductivity::new(Arc::new(Readers::open(&fixture.settings, 1).unwrap()), 0);
+    let chain = store.totals(fixture.block(tip)).unwrap();
+    assert_eq!(
+        (chain.burned_fees, chain.burned_transactions),
+        (burned_fees, burns)
+    );
+    let balances = i128::try_from(total_balance(&state.wallets)).unwrap();
+    assert_eq!(chain.supply, balances);
+
+    // The fees of each kept type's last 20 transactions.
+    let statistics = reader.fee_statistics(None).unwrap();
+    let all = fixture.transactions();
+    for (row, kind) in statistics.iter().zip(TransactionType::ALL) {
+        let last: Vec<&Transaction> = all
+            .iter()
+            .rev()
+            .filter(|(_, _, t)| t.data().kind == kind)
+            .take(20)
+            .map(|(_, _, t)| *t)
+            .collect();
+        let (count, min, max, sum) = fees(&last);
+        let avg = avg_int8(i128::try_from(sum).unwrap(), count).map_or(0, |a| a as u64);
+        assert_eq!(
+            (row.type_group, row.kind),
+            (kind.type_group(), kind.type_id())
+        );
+        assert_eq!(
+            (row.avg, row.min, row.max, row.sum),
+            (avg, min, max, sum),
+            "{kind:?}"
+        );
+    }
+
+    // The reference's missed slots, stored beside the chain: each delegate's counts from the
+    // second block on; from the genesis block the reference's division fails.
+    let missed: Vec<MissedRow> = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/difftest/corpus/txgen-one-node/reference/missed-blocks.jsonl"),
+    )
+    .unwrap()
+    .lines()
+    .map(|line| {
+        let row: serde_json::Value = serde_json::from_str(line).unwrap();
+        MissedRow {
+            timestamp: row["timestamp"].as_i64().unwrap(),
+            height: u32::try_from(row["height"].as_u64().unwrap()).unwrap(),
+            username: row["username"].as_str().unwrap().to_owned(),
+        }
+    })
+    .collect();
+    let mut database = Database::open(&fixture.settings).unwrap();
+    let mut chunk = database.begin().unwrap();
+    chunk.save_missed(&missed).unwrap();
+    chunk.commit().unwrap();
+    let listed = reader
+        .missed_blocks(
+            &MissedBlockFilter::default(),
+            &[Order {
+                property: "timestamp".into(),
+                direction: Direction::Asc,
+            }],
+            page,
+        )
+        .unwrap();
+    assert_eq!(listed.rows, missed);
+    assert!(reader.productivity(0).is_err());
+    let rows = reader.productivity(1).unwrap();
+    let registered: Vec<&str> = all
+        .iter()
+        .filter_map(|(_, _, t)| match &t.data().asset {
+            Asset::DelegateRegistration { username } => Some(username.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(rows.len(), registered.len());
+    for row in rows {
+        let slots = missed.iter().filter(|m| m.username == row.username).count() as u64;
+        let blocks = produced.get(&row.username).copied();
+        assert_eq!(row.produced, blocks, "{}", row.username);
+        assert_eq!(
+            row.missed,
+            Some(slots).filter(|n| *n > 0),
+            "{}",
+            row.username
+        );
+    }
+    // The window reaches the genesis block, so the reference's node has no productivity yet.
+    let table = StoreProductivity::new(
+        Arc::new(Readers::open(&fixture.settings, 1).unwrap()),
+        2_592_000,
+    )
+    .with_epoch(fixture.milestones().at(1).epoch());
+    assert!(
+        table
+            .table(fixture.block(tip))
+            .unwrap()
+            .by_username
+            .is_empty()
+    );
 }
