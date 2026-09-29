@@ -7,8 +7,9 @@
 //! signalled only while the lock that names it is held, so a stale pid is never signalled. A
 //! supervisor writes its pid into its lock file as it takes the lock ([`record_pid`]), and `stop`
 //! and `kill` read the supervisor's pid from there while the lock is held ([`held_pid`]), never
-//! from the state file, which an earlier supervisor may have left. `kill` signals a daemon
-//! supervisor's process group, which holds its node ([`send_group`]).
+//! from the state file, which an earlier supervisor may have left. `kill` also signals process
+//! groups ([`send_group`]): a daemon supervisor's, which holds its node, and the group of the node
+//! a foreground supervisor it has just killed named last, as long as that node still leads one.
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{ErrorKind, Read};
@@ -20,7 +21,7 @@ use std::time::Duration;
 use nix::errno::Errno;
 use nix::fcntl::OFlag;
 use nix::sys::signal::{Signal, kill, killpg};
-use nix::unistd::{Pid, getsid};
+use nix::unistd::{Pid, getpgid, getsid};
 
 use crate::errors::ProcessError;
 
@@ -139,6 +140,11 @@ pub fn send_group(group: u32, signal: Signal) -> Result<bool, ProcessError> {
 /// session's one process group is then its own, and holds its node.
 pub fn leads_session(pid: u32) -> bool {
     process_id(pid).is_ok_and(|pid| getsid(Some(pid)) == Ok(pid))
+}
+
+/// Whether `pid` leads a process group, as the node of a foreground supervisor does.
+pub fn leads_group(pid: u32) -> bool {
+    process_id(pid).is_ok_and(|pid| getpgid(Some(pid)) == Ok(pid))
 }
 
 /// `pid` as a process id to signal: never 0 or negative, which would name a group.

@@ -313,6 +313,28 @@ fn a_kill_during_a_restart_ends_a_daemons_node_that_has_not_taken_its_lock_yet()
 }
 
 #[test]
+fn a_kill_during_a_restart_ends_a_foreground_supervisors_node_that_has_not_taken_its_lock_yet() {
+    use heartwood_cli::supervisor::SuperviseArgs;
+    use std::os::unix::process::CommandExt;
+    let node = Node::new("kill-in-restart-foreground");
+    let child = argv(&LATE_LOCK);
+    // The supervisor without `--daemon`, in a process group of its own as a terminal's job.
+    let mut supervisor = Command::new(CHILD)
+        .args(SuperviseArgs::command_line(&node.0, &child, false))
+        .envs(process::path_env(&node.0))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    kill_during_a_restart(&node);
+    assert_eq!(
+        supervisor.wait().unwrap().signal(),
+        Some(Signal::SIGKILL as i32)
+    );
+}
+
+#[test]
 fn the_node_runs_with_the_callers_environment_and_the_instance_directories() {
     let node = Node::new("environment");
     node.start(
