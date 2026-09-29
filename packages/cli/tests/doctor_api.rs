@@ -396,3 +396,26 @@ fn a_body_that_lacks_what_a_read_needs_is_unparsed_and_never_a_panic() {
     assert!(parse_data(b"\xff\xfe").is_err());
     assert!(parse_data(br#"{"data":{"a":1}}"#).is_ok());
 }
+
+#[test]
+fn a_wallet_is_asked_for_only_by_a_public_key() {
+    let mut run = Run::new();
+    run.answer(&format!("/api/wallets/{KEY}"), ok(WALLET));
+    for text in [
+        "../node/configuration",
+        "02aa?x=1",
+        "alice",
+        "",
+        &KEY.to_uppercase(),
+        &format!("{KEY}/"),
+    ] {
+        assert_eq!(
+            read_wallet(&run.context(), text).expect("no read"),
+            None,
+            "{text}"
+        );
+    }
+    assert_eq!(run.requests(), 0);
+    assert!(read_wallet(&run.context(), KEY).expect("a read").is_some());
+    assert_eq!(run.requests(), 1);
+}

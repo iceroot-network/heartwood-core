@@ -48,8 +48,8 @@ forger	info	ActivePositionLeft	Delegate alice is no longer in an active forging 
 forger	info	ActivePositionLeft	Delegates alice and bob are no longer in active forging positions
 forger	info	DueToForge	Delegate alice is due to forge in 4 seconds from now
 forger	info	Forged	Delegate alice forged a new block at height 1,301 with 3 transactions
-forger	info	SendsAgain	Delegate alice sends block abababababababababababababababababababababababababababababababab at height 1,301 of slot 77 again
-forger	warning	WillNotSign	Delegate alice will not sign: the block is more than one slot away
+forger	info	SendsAgain	Delegate 02cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd sends block abababababababababababababababababababababababababababababababab at height 1301 of slot 77 again
+forger	warning	WillNotSign	Delegate 02cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd will not sign: slot 80 is more than one slot away from this forger's slot 77
 forger	warning	ForgedOnAnotherNode	Not going to forge because delegate alice has already forged on another node
 forger	warning	AlreadyForgedThisRound	Delegate alice already forged a block. Will not forge
 forger	info	NotEnoughQuorum	Not enough quorum to forge next block. Will not forge
@@ -70,7 +70,7 @@ forger	error	BroadcastFailed	Broadcast block failed: timeout
 forger	error	EmitFailed	Failed to emit "block.forged" to "192.0.2.7"
 forger	error	NoLocalHosts	emitEvent: unable to find any local hosts
 forger	error	SessionError	socket hang up
-forger	warning	NotAttesting	Not attesting the relay's status: the relay gave no status
+forger	warning	NotAttesting	Not attesting the relay's status: the offered status's slot 90 is more than one slot away from slot 77
 forger	debug	NoStatusToAttest	The relay gave no status to attest: timeout
 forger	debug	AttestationsNotDelivered	The status attestations were not delivered: timeout
 forger	warning	PoolUnavailable	Could not get unconfirmed transactions from pool

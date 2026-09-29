@@ -1,0 +1,14 @@
+[2026-10-02 13:00:00.743] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of node4 on devnet
+[2026-10-02 13:00:01.033] INFO: Waiting for relay to become ready ⏳
+[2026-10-02 13:00:01.282] INFO: Forger Manager started 🔨
+[2026-10-02 13:00:01.282] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-10-02 13:00:02.022] INFO: Loaded 10 active delegates: genesis_34, genesis_35, genesis_36, genesis_37, genesis_38, genesis_39, genesis_40, genesis_41, genesis_42, genesis_43
+[2026-10-02 13:00:03.008] INFO: Delegate genesis_41 is due to forge in 8 seconds from now ✨
+[2026-10-02 13:00:04.049] INFO: Delegate genesis_41 forged a new block at height 2 with 0 transactions 🔱
+[2026-10-02 13:00:04.445] WARNING: Writing the signing record took 432 ms
+[2026-10-02 13:00:05.002] DEBUG: The status attestations were not delivered: Request to 192.0.2.11:6002<p2p.internal.postStatusSignatures> failed, because of '{"error":"Unknown","message":"App is not ready"}' ‼️
+[2026-10-02 13:00:06.344] DEBUG: The relay gave no status to attest: Request to 192.0.2.15:6002<p2p.internal.getStatusToSign> failed, because of 'Request failed - server disconnected' ‼️
+[2026-10-02 13:00:07.007] INFO: Not peered with enough delegates to get quorum. Will not forge 💣
+[2026-10-02 13:00:08.045] INFO: Delegate genesis_53 is no longer in an active forging position 😢
+[2026-10-02 13:00:09.005] INFO: Delegate genesis_53 is now in an active forging position 🎉
+[2026-10-02 13:00:10.323] WARNING: Not going to forge because delegate genesis_16 has already forged on another node 🛑

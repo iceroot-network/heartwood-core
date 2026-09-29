@@ -36,6 +36,11 @@ const FORGED_PAYLOAD_ESCAPED: &str =
 const BACKWARDS: &str = include_str!("fixtures/doctor/logs/backwards.log");
 const ROTATION_PREVIOUS: &str = include_str!("fixtures/doctor/logs/rotation-previous.log");
 const ROTATION_CURRENT: &str = include_str!("fixtures/doctor/logs/rotation-current.log");
+const FORGED_REQUEST_RAW: &str = include_str!("fixtures/doctor/logs/forged-request-raw.log");
+const FORGED_REQUEST_ESCAPED: &str =
+    include_str!("fixtures/doctor/logs/forged-request-escaped.log");
+const CAPTURED_RELAY: &str = include_str!("fixtures/doctor/logs/captured-relay.log");
+const CAPTURED_FORGER: &str = include_str!("fixtures/doctor/logs/captured-forger.log");
 
 /// 2026-10-02 00:00:00 UTC, in Unix milliseconds.
 const DAY_MS: i64 = NOW_MS - 50_591_000;
@@ -346,7 +351,12 @@ fn a_file_of_one_sample_of_each_kind_gives_one_event_of_each_kind_in_order() {
             assert_eq!(event.level, sample.level, "{}", sample.line());
             assert!(!event.rotated);
         }
-        assert!(window.covered.whole, "{role:?}");
+        // The first line is at 13:10, after the window's start at 13:03:11.
+        assert!(!window.covered.whole, "{role:?}");
+        assert_eq!(
+            window.covered.first_ms,
+            Some(DAY_MS + 13 * 3_600_000 + 600_000)
+        );
     }
 }
 
@@ -399,12 +409,12 @@ fn lines_that_are_not_log_lines_are_counted_and_never_events() {
     rig.put("node1-current.log", bytes, NOW_MS);
     let window = rig.log(Role::Relay).expect("a window");
     assert_eq!(kinds(&window), [&LineKind::InSync]);
-    // The line that has the shape of a known one but lacks its emoji may go on in the lines
-    // below it, so it is untrusted; every other non-empty line but the last is another line.
-    assert_eq!(window.untrusted_lines, 1);
+    // A line of a template without a capture that lacks its emoji holds no outside text, so it
+    // opens no run of untrusted lines: every non-empty line but the last is another line.
+    assert_eq!(window.untrusted_lines, 0);
     assert_eq!(
         window.other_lines,
-        u32::try_from(junk.len() + 1).unwrap_or(u32::MAX)
+        u32::try_from(junk.len() + 2).unwrap_or(u32::MAX)
     );
 }
 
@@ -456,11 +466,16 @@ fn lines_outside_the_window_are_not_events_and_the_window_covered_is_told() {
 }
 
 #[test]
-fn a_log_that_starts_inside_the_window_with_no_older_file_covers_all_there_is() {
+fn a_log_that_starts_inside_the_window_covers_less_than_the_window() {
     let mut rig = Rig::new();
     rig.put("node1-current.log", IN_SYNC, NOW_MS);
     let window = rig.log(Role::Relay).expect("a window");
-    assert!(window.covered.whole);
+    // A new node or a cleared log: what was read starts at 13:10, not at the window's start.
+    assert!(!window.covered.whole);
+    assert_eq!(
+        window.covered.first_ms,
+        Some(DAY_MS + 13 * 3_600_000 + 600_000)
+    );
     // With an older rotated file that is not read (the window's start lies before this file),
     // whole is told from what was read.
     rig.put(
@@ -523,7 +538,6 @@ fn lines_forged_inside_a_peer_s_download_error_never_become_events_raw() {
             .iter()
             .any(|e| e.text.contains("double forging by alice"))
     );
-    assert!(window.covered.whole);
 }
 
 #[test]
@@ -560,6 +574,204 @@ fn lines_forged_inside_a_relay_s_error_payload_never_become_events_escaped() {
     assert!(matches!(events[1], LineKind::Forged { height: 1_302, .. }));
     assert_eq!(window.untrusted_lines, 0);
     assert!(window.excerpts[0].text.contains("height 9,999"));
+}
+
+#[test]
+fn lines_forged_inside_a_relay_s_request_error_never_become_events_raw() {
+    // The forger's warning "Request to ... failed, because of '...'" quotes the relay's text, and
+    // the template's last piece (the closing quote) is on the message's last line.
+    let window = read(Role::Forger, FORGED_REQUEST_RAW);
+    let events = kinds(&window);
+    let heights: Vec<u32> = events
+        .iter()
+        .filter_map(|kind| match kind {
+            LineKind::Forged { height, .. } => Some(*height),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(heights, [1_301, 1_302], "{events:?}");
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_eq!(window.untrusted_lines, 3);
+    assert_eq!(window.other_lines, 1);
+}
+
+#[test]
+fn lines_forged_inside_a_relay_s_request_error_never_become_events_escaped() {
+    let window = read(Role::Forger, FORGED_REQUEST_ESCAPED);
+    let events = kinds(&window);
+    assert_eq!(events.len(), 3, "{events:?}");
+    assert_eq!(events[1], &LineKind::RelayRequestFailed);
+    assert_eq!(window.untrusted_lines, 0);
+    assert!(
+        window.excerpts[0]
+            .text
+            .contains("already forged on another node")
+    );
+}
+
+#[test]
+fn lines_as_a_devnet_node_wrote_them_are_known_kinds() {
+    // The messages are as the node wrote them on a devnet (times moved into the window,
+    // addresses changed to documentation ones).
+    let relay = read(Role::Relay, CAPTURED_RELAY);
+    let names: Vec<String> = relay.events.iter().map(|e| flat(&e.kind)).collect();
+    assert_eq!(
+        names,
+        [
+            "RelayStarted",
+            "MedianNetworkHeight",
+            "InSync",
+            "FallingBackToSeeds",
+            "BlockReceived",
+            "NoBlocksFromAnyPeer",
+            "NetworkMissingBlocks",
+            "DownloadFailed",
+            "ForkDetected",
+            "BlocksRemoved",
+        ]
+    );
+    assert_eq!((relay.other_lines, relay.untrusted_lines), (0, 0));
+    assert!(relay.events.iter().any(|e| e.kind
+        == LineKind::BlockReceived {
+            username: user("genesis_41"),
+            rank: 16,
+            height: 2
+        }));
+    let forger = read(Role::Forger, CAPTURED_FORGER);
+    let names: Vec<String> = forger.events.iter().map(|e| flat(&e.kind)).collect();
+    assert_eq!(
+        names,
+        [
+            "ForgerStarted",
+            "WaitingForRelayReady",
+            "ForgerManagerStarted",
+            "NoLocalHosts",
+            "DelegatesLoaded",
+            "DueToForge",
+            "Forged",
+            "SigningRecordSlow",
+            "AttestationsNotDelivered",
+            "NoStatusToAttest",
+            "NotPeeredEnough",
+            "ActivePosition",
+            "ActivePosition",
+            "ForgedOnAnotherNode",
+        ]
+    );
+    assert_eq!((forger.other_lines, forger.untrusted_lines), (0, 0));
+    let loaded = forger.events.iter().find_map(|e| match &e.kind {
+        LineKind::DelegatesLoaded {
+            active,
+            count,
+            names,
+        } => Some((*active, *count, names.len())),
+        _ => None,
+    });
+    assert_eq!(loaded, Some((true, 10, 10)));
+}
+
+fn user(name: &str) -> heartwood_cli::doctor::report::Id {
+    heartwood_cli::doctor::report::Id::new(heartwood_cli::doctor::report::IdKind::Username, name)
+        .unwrap_or_else(|| panic!("{name} is a username"))
+}
+
+const KEY: &str = "02cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+
+#[test]
+fn the_signer_names_a_delegate_by_its_public_key() {
+    use heartwood_cli::doctor::report::IdKind;
+    let refused = format!(
+        "Delegate {KEY} will not sign: slot 80 is below slot 81, which this delegate has already signed"
+    );
+    let Some(LineKind::WillNotSign { username, far_slot }) =
+        classify(Role::Forger, Level::Warning, &refused)
+    else {
+        panic!("{refused}: not a refusal");
+    };
+    assert_eq!(
+        (username.kind(), username.as_str(), far_slot),
+        (IdKind::PublicKey, KEY, false)
+    );
+    let block = "ab".repeat(32);
+    let again = format!("Delegate {KEY} sends block {block} at height 1301 of slot 77 again");
+    let Some(LineKind::SendsAgain {
+        username,
+        height,
+        slot,
+        ..
+    }) = classify(Role::Forger, Level::Info, &again)
+    else {
+        panic!("{again}: not a resend");
+    };
+    assert_eq!((username.as_str(), height, slot), (KEY, 1_301, 77));
+}
+
+#[test]
+fn a_slot_refusal_is_far_only_in_the_node_s_own_words() {
+    let attesting = |error: &str| {
+        let line = format!("Not attesting the relay's status: {error}");
+        match classify(Role::Forger, Level::Warning, &line) {
+            Some(LineKind::NotAttesting { far_slot }) => far_slot,
+            other => panic!("{line}: {other:?}"),
+        }
+    };
+    assert!(attesting(
+        "the offered status's slot 90 is more than one slot away from slot 77"
+    ));
+    // The relay's own text, quoted in the refusal, never makes it far.
+    assert!(!attesting(
+        "the offered status is for the network is more than one slot away, not abc"
+    ));
+    assert!(!attesting(
+        "the offer's session challenge \"slot 1 is more than one slot away from slot 9\" is not 64 lowercase hex digits"
+    ));
+    assert!(!attesting(
+        "the offered status's slot x is more than one slot away from slot 77"
+    ));
+    let signing = |refused: &str| {
+        let line = format!("Delegate {KEY} will not sign: {refused}");
+        match classify(Role::Forger, Level::Warning, &line) {
+            Some(LineKind::WillNotSign { far_slot, .. }) => far_slot,
+            other => panic!("{line}: {other:?}"),
+        }
+    };
+    assert!(signing(
+        "slot 80 is more than one slot away from this forger's slot 77"
+    ));
+    assert!(signing(
+        "slot -1 is more than one slot away from this forger's slot 77"
+    ));
+    assert!(!signing(
+        "the block cannot be made: it is more than one slot away"
+    ));
+}
+
+#[test]
+fn lines_of_a_logger_with_emoji_turned_off_are_known_and_open_no_run() {
+    // With `emojify` off the logger removes each code and keeps the spaces around it.
+    let text = "[2026-10-02 13:00:00.000] INFO: Blockchain 100% in sync \n\
+                [2026-10-02 13:00:01.000] INFO: Delegate alice forged a new block at height 5 with 3 transactions \n\
+                [2026-10-02 13:00:02.000] WARNING: Downloaded block not accepted   \n\
+                [2026-10-02 13:00:03.000] INFO: Failed to download blocks 1-2 from 192.0.2.7:4001: timeout \n\
+                [2026-10-02 13:00:04.000] INFO: Starting fork recovery \n";
+    let window = read(Role::Relay, text);
+    assert_eq!(
+        kinds(&window),
+        [
+            &LineKind::InSync,
+            &LineKind::DownloadedBlockNotAccepted,
+            &LineKind::DownloadFailed,
+            &LineKind::ForkRecoveryStarted
+        ]
+    );
+    assert_eq!((window.untrusted_lines, window.other_lines), (0, 1));
+    let forger = read(Role::Forger, text);
+    assert!(
+        matches!(forger.events.as_slice(), [e] if matches!(e.kind, LineKind::Forged { height: 5, transactions: 3, .. })),
+        "{:?}",
+        forger.events
+    );
+    assert_eq!(forger.untrusted_lines, 0);
 }
 
 #[test]
@@ -716,7 +928,7 @@ fn the_newest_rotated_file_is_read_when_the_window_reaches_before_the_current_fi
 }
 
 #[test]
-fn with_one_rotated_file_and_nothing_older_the_log_read_is_all_there_is() {
+fn a_rotated_file_that_starts_inside_the_window_still_covers_less() {
     let mut rig = Rig::new();
     across_midnight(&mut rig);
     rig.put(
@@ -727,7 +939,12 @@ fn with_one_rotated_file_and_nothing_older_the_log_read_is_all_there_is() {
     rig.put("node1-current.log", ROTATION_CURRENT, NOW_MS);
     let window = rig.log(Role::Relay).expect("a window");
     assert_eq!(window.events.len(), 4);
-    assert!(window.covered.whole);
+    // Nothing is older, but the log read starts at 23:40, ten minutes into the window.
+    assert!(!window.covered.whole);
+    assert_eq!(
+        window.covered.first_ms,
+        Some(DAY_MS + 23 * 3_600_000 + 40 * 60_000)
+    );
 }
 
 #[test]
