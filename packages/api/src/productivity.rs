@@ -130,29 +130,26 @@ impl Productivity for StoreProductivity {
             self.epoch_unix_ms,
             self.lookback_seconds,
         );
-        match table_of(&self.history.get(), since) {
+        let table = match table_of(&self.history.get(), since) {
             Ok(table) => {
                 let table = Arc::new(table);
                 kept.last = Some(Arc::clone(&table));
-                kept.table = Some(Cached {
-                    id: *tip.id(),
-                    table: Arc::clone(&table),
-                });
-                Ok(table)
+                table
             }
             Err(error) => {
                 // The reference swallows the failure (on every chain younger than the window, whose
                 // genesis block has no name) and keeps the attributes it set before, until its next
                 // drain: here, until the next tip.
                 heartwood_kernel::debug!("The productivity table could not be computed: {error}");
-                let table = kept.last.clone().unwrap_or_default();
-                kept.table = Some(Cached {
-                    id: *tip.id(),
-                    table: Arc::clone(&table),
-                });
-                Ok(table)
+                kept.last.clone().unwrap_or_default()
             }
-        }
+        };
+        let id = *tip.id();
+        kept.table = Some(Cached {
+            id,
+            table: Arc::clone(&table),
+        });
+        Ok(table)
     }
 
     fn totals(&self, tip: &Block) -> Result<ChainTotals, ApiError> {
