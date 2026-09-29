@@ -449,10 +449,10 @@ fn validate(root: &Value, schema: &Value, value: &Value, at: &str) -> Result<(),
     if schema.get("const").is_some_and(|c| c != value) {
         return fail("not the constant");
     }
-    if let Some(list) = schema.get("enum").and_then(Value::as_array) {
-        if !list.contains(value) {
-            return fail("not in the enum");
-        }
+    if let Some(list) = schema.get("enum").and_then(Value::as_array)
+        && !list.contains(value)
+    {
+        return fail("not in the enum");
     }
     let number = value.as_f64();
     if schema
@@ -608,11 +608,14 @@ fn the_schema_names_the_code_s_words() {
     );
 }
 
+/// A named change that makes a rendered report invalid.
+type Break = (&'static str, fn(&mut Value));
+
 #[test]
 fn the_schema_refuses_a_report_the_renderer_would_not_write() {
     let schema = schema();
     let good = report_value(&golden());
-    let breaks: [(&str, fn(&mut Value)); 8] = [
+    let breaks: [Break; 8] = [
         ("a missing key", |v| {
             drop(v.as_object_mut().unwrap().shift_remove("host"))
         }),
