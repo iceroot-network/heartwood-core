@@ -584,15 +584,14 @@ async fn the_quorum_is_read_as_the_reference_reads_it() {
             2
         )
     );
-    // The dump's lines are one log message.
+    // The dump is one line: the logger escapes its line breaks.
     assert_eq!(
-        lines.all().join("\n"),
+        lines.all(),
         [
             "INFO: Detected 1 distinct overheight block header".to_owned(),
             "INFO: Not enough quorum to forge next block. Will not forge".to_owned(),
-            dump,
+            dump.replace('\n', "\\n"),
         ]
-        .join("\n")
     );
     lines.clear();
 
