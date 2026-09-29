@@ -163,7 +163,7 @@ impl BlockSigner for Unsigned {
 
 /// The lines logged while it is installed: the reference's level and the message.
 #[derive(Clone, Default)]
-struct Lines(Arc<Mutex<Vec<(String, String)>>>);
+pub(super) struct Lines(pub(super) Arc<Mutex<Vec<(String, String)>>>);
 
 #[derive(Default)]
 struct LineFields {

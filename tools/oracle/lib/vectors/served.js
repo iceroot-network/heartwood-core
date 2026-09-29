@@ -11,9 +11,10 @@
 //   postBlock       pinged, not chaining, unregistered and unranked generators, a new valid block, a
 //                   block from the forger, the reduced reward, above maxTransactions, and the blocks
 //                   the reference receives that Heartwood refuses at the receipt (a memo that is not
-//                   UTF-8, a header its schema refuses)
+//                   UTF-8)
 // The records whose name begins `documented:` are the answers Heartwood gives differently on
-// purpose. The builder needs the corpus (lib/corpus.js): without it the class is not written.
+// purpose; the other two (a peer without a latency among others, a header the schema refuses) are
+// tested in the crate, where the difference is named. The builder needs the corpus (lib/corpus.js): without it the class is not written.
 
 const fs = require("fs");
 const path = require("path");
@@ -29,7 +30,6 @@ const CALLER = "10.0.0.9";
 const FORGER = "127.0.0.1";
 // The byte offsets of a block header's fields.
 const COUNT_AT = 44;
-const TOTAL_AT = 48;
 
 function corpusDir() {
     const candidates = [path.join(__dirname, "..", "..", "corpus", CORPUS), path.join(__dirname, "..", "..", "..", "difftest", "corpus", CORPUS)];
@@ -121,7 +121,6 @@ module.exports = async function servedVectors({ solar, devnet, rec, must, craft 
     await peerRecord(
         "getPeers: an IPv4-mapped caller",
         [
-            { ip: "10.0.0.9", port: 4000, latency: 1 },
             { ip: "::ffff:10.0.0.9", port: 4001, latency: 2 },
             { ip: "10.0.0.2", port: 4002, latency: 3 },
         ],
@@ -138,10 +137,6 @@ module.exports = async function servedVectors({ solar, devnet, rec, must, craft 
     await peerRecord("getPeers: one peer without a latency", [{ ip: "10.0.0.1", port: 4000 }]);
     await peerRecord("getPeers: 2000 peers", peers(2000, 1));
     await peerRecord("getPeers: 2001 peers with tied latencies", peers(2001, 2));
-    await peerRecord("documented: getPeers sorts a peer without a latency last", [
-        { ip: "10.0.0.1", port: 4000 },
-        { ip: "10.0.0.2", port: 4001, latency: 5 },
-    ]);
 
     // getBlocks over the corpus.
     const blocks = async (name, tip, last, limit, headersOnly) => {
@@ -304,6 +299,5 @@ module.exports = async function servedVectors({ solar, devnet, rec, must, craft 
         return { hex: bytes, key: Identities.Keys.fromPassphrase(passphrase).publicKey.secp256k1 };
     });
     await receive("documented: a memo that is not UTF-8 is accepted at the receipt", 105, raw.hex, { delegates: [{ publicKey: raw.key, username: "raw_delegate", rank: 5 }] });
-    await receive("documented: a header the schema refuses is accepted at the receipt", 105, patched(blk(106).hex, TOTAL_AT, Buffer.alloc(8, 0xff)), { delegates: [delegate(106)] });
     return out;
 };
