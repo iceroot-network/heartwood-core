@@ -71,8 +71,9 @@ pub enum ApiCompareArgs {
 /// request of the `outside` section left unsent there is judged from the run's
 /// [`outside::RATE_LIMIT`] when the run has one. Then the corpora the run's `run.json` lists as
 /// `apiExtra`, each from its own directory, without the `outside` section (the recipe sends it
-/// once, for the first corpus's nodes) and without the requests [`repeated_posts`] names; the
-/// report's source counts both.
+/// once, for the first corpus's nodes) and without the posts of a body the first corpus posted to
+/// the same control node, which the control answered from its cooldown; the report's source
+/// counts both.
 /// Live, the corpus is sent to both nodes first, and the report is also written to
 /// `report.txt` in the output directory.
 pub fn compare(args: &ApiCompareArgs) -> Result<Report> {
@@ -230,7 +231,7 @@ fn posted_bodies(files: &[PathBuf]) -> Result<BTreeSet<String>> {
 
 /// Whether `recorded` posts one of `posted` again ([`posted_bodies`]) and the control node
 /// answered it from its cooldown, which only a repeat reaches.
-pub fn repeated_posts(recorded: &Recorded, posted: &BTreeSet<String>) -> bool {
+fn repeated_posts(recorded: &Recorded, posted: &BTreeSet<String>) -> bool {
     let request = recorded.request.as_ref().filter(|r| r.method == "POST");
     let repeated = request
         .and_then(|r| r.body.as_ref())
