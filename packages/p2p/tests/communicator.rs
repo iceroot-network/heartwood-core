@@ -16,7 +16,7 @@ use std::time::Duration;
 use heartwood_crypto::{BlockId, TransactionId};
 use heartwood_kernel::Event;
 use heartwood_p2p::communicator::BlocksRequest;
-use heartwood_p2p::errors::{PingError, VerificationStopped};
+use heartwood_p2p::errors::{DownloadError, PingError, VerificationStopped};
 use heartwood_p2p::seams::{PeerClient, VerifierLink};
 use heartwood_p2p::{ChainView, DownloadedBlock, P2pOptions, SessionError, Verification};
 use heartwood_p2p_wire::RouteId;
@@ -744,6 +744,52 @@ async fn a_ping_verifies_the_peer_and_records_its_state() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn port_probes_end_by_their_deadline_and_ask_each_port_once() {
+    use heartwood_p2p_wire::messages::peer::Plugin;
+    let fixture = Fixture::new();
+    let client = &fixture.communicator;
+    let peer = stored(&fixture, 1);
+    fixture.probe.open.lock().unwrap().insert(4003);
+    fixture.probe.silent.lock().unwrap().insert(4004);
+    let plugin = |port| {
+        Some(Plugin {
+            port: Some(port),
+            ..Plugin::default()
+        })
+    };
+    peer.with(|p| {
+        p.ports.insert("dropped".to_owned(), 4000);
+        p.plugins.insert("api".to_owned(), plugin(4003));
+        p.plugins.insert("api-again".to_owned(), plugin(4003));
+        p.plugins.insert("silent".to_owned(), plugin(4004));
+        for n in 0..20 {
+            p.plugins.insert(format!("other-{n}"), plugin(5000 + n));
+        }
+    });
+    let started = Instant::now();
+    let probes = tokio::time::timeout(Duration::from_secs(60), client.ping_ports(&peer));
+    probes.await.expect("the probes end");
+    assert_eq!(started.elapsed(), Duration::from_secs(3));
+    let ports = peer.snapshot().ports;
+    // The names the peer lists now, each port asked once, at most 8 distinct ports.
+    assert_eq!(ports.len(), 23);
+    assert!(!ports.contains_key("dropped"));
+    assert_eq!(ports.get("api"), Some(&4003));
+    assert_eq!(ports.get("api-again"), Some(&4003));
+    assert_eq!(ports.get("silent"), Some(&-1));
+    assert_eq!(ports.get("other-19"), Some(&-1));
+    let probed: Vec<u16> = fixture
+        .probe
+        .probed
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|p| p.1)
+        .collect();
+    assert_eq!(probed, [4003, 4004, 5000, 5001, 5002, 5003, 5004, 5005]);
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_ping_skips_ignored_and_recently_pinged_peers() {
     let fixture = Fixture::new();
     let client = &fixture.communicator;
@@ -1096,6 +1142,70 @@ async fn downloaded_transactions_are_read_as_the_reference_reads_them() {
     );
     assert!(downloaded[0].header.transactions.is_empty());
     assert_eq!(downloaded[1].transactions, Some(vec![]));
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_idle_download_pauses_half_a_second_at_most_and_keeps_no_raw_list() {
+    let chain = Chain::with(10, milestones_with_max_transactions(1_000, 300));
+    let fixture = Fixture::with(chain, options());
+    let client = &fixture.communicator;
+    let peer = stored(&fixture, 1);
+    fixture
+        .chain
+        .idle
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    // 4 blocks of 250 transactions: the reference would pause for a second.
+    let transfer = transfer_bytes(1);
+    let blocks: Vec<ListedBlock> = (6..10)
+        .map(|height| listed(height, vec![transfer.clone(); 250]))
+        .collect();
+    fixture
+        .transport
+        .answer(RouteId::GetBlocks, Answer::Bytes(blocks_reply(&blocks)));
+    let started = Instant::now();
+    let downloaded = client
+        .get_peer_blocks(&peer, BlocksRequest::after(5))
+        .await
+        .unwrap();
+    assert_eq!(started.elapsed(), Duration::from_millis(500));
+    assert_eq!(downloaded.len(), 4);
+    for block in &downloaded {
+        assert_eq!(block.transactions.as_ref().map(Vec::len), Some(250));
+        // The reply's raw list is not kept beside the transactions read from it.
+        assert_eq!(block.header.header.transactions.as_deref(), Some(&[][..]));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_block_with_more_transactions_than_any_milestone_allows_fails_the_download() {
+    let fixture = Fixture::new();
+    let client = &fixture.communicator;
+    let peer = stored(&fixture, 1);
+    let transfer = transfer_bytes(1);
+    // The devnet's blocks hold at most 150 transactions; the reference reads 501 per block.
+    let blocks = [listed(6, vec![transfer.clone(); 151])];
+    fixture
+        .transport
+        .answer(RouteId::GetBlocks, Answer::Bytes(blocks_reply(&blocks)));
+    let failed = client.get_peer_blocks(&peer, BlocksRequest::after(5)).await;
+    assert_eq!(
+        failed,
+        Err(DownloadError::TooManyTransactions {
+            height: 6,
+            count: 151,
+            most: 150
+        })
+    );
+    assert_eq!(peer.snapshot().violations.len(), 1);
+    // As many as a milestone allows are read.
+    let peer = stored(&fixture, 2);
+    let blocks = [listed(6, vec![transfer; 150])];
+    fixture
+        .transport
+        .answer(RouteId::GetBlocks, Answer::Bytes(blocks_reply(&blocks)));
+    let downloaded = client.get_peer_blocks(&peer, BlocksRequest::after(5)).await;
+    assert_eq!(downloaded.map(|blocks| blocks.len()), Ok(1));
+    assert!(peer.snapshot().violations.is_empty());
 }
 
 #[tokio::test(start_paused = true)]

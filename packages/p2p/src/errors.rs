@@ -151,6 +151,17 @@ pub enum DownloadError {
         /// The decoder's refusal.
         source: heartwood_crypto::errors::DecodeError,
     },
+    /// A downloaded block above height 1 lists more transactions than any milestone allows. The
+    /// reference reads up to 501 and refuses the block only when it processes it.
+    #[error("block {height} lists {count} transactions, more than the {most} any milestone allows")]
+    TooManyTransactions {
+        /// The height of the block.
+        height: u32,
+        /// How many transactions it lists.
+        count: usize,
+        /// The largest `block.maxTransactions` of the milestones.
+        most: usize,
+    },
 }
 
 /// A downloaded block could not be rebuilt as the reference's `BlockFactory.fromData` rebuilds

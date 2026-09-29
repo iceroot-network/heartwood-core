@@ -430,10 +430,14 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
         }
     }
 
-    /// A job's end (see [`JobEnd`]), and the queue cleared when a handler asked for it.
+    /// A job's end (see [`JobEnd`]), the queue cleared when a handler asked for it, and a fault of
+    /// the peer that served a block reported to the network.
     fn job_finished(self: &Arc<Self>, outcome: JobOutcome) {
         if outcome.clear_queue {
             self.queue.clear();
+        }
+        if let Some(ip) = outcome.faulty {
+            self.parts.network.refused_block(ip);
         }
         match outcome.end {
             JobEnd::Broadcast(block, from_forger) => {

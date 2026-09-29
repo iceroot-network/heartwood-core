@@ -101,6 +101,7 @@ pub fn accept(ctx: &mut ProcessContext<'_>, block: &Block) -> Processed {
                 result: BlockProcessorResult::Accepted,
                 applied: Some(applied),
                 unchained: None,
+                fault: false,
             }
         }
         Err(ApplyError::RollbackFailed(error)) => {
@@ -108,21 +109,24 @@ pub fn accept(ctx: &mut ProcessContext<'_>, block: &Block) -> Processed {
                 "Critical error occurs when reverting block at height {}. Possible state corruption. Message: {error}",
                 locale(height)
             );
-            Processed {
-                result: BlockProcessorResult::Corrupted,
-                applied: None,
-                unchained: None,
-            }
+            not_applied(BlockProcessorResult::Corrupted, false)
         }
+        // A refused apply of a block that chains, by its slot's delegate, is no honest block.
         Err(error) => {
             refused_apply(ctx, block, &error);
             reset_last_downloaded(ctx.state, ctx.chain);
-            Processed {
-                result: BlockProcessorResult::Rejected,
-                applied: None,
-                unchained: None,
-            }
+            not_applied(BlockProcessorResult::Rejected, true)
         }
+    }
+}
+
+/// A block that was not applied, with `result` and whether it was refused for a `fault`.
+fn not_applied(result: BlockProcessorResult, fault: bool) -> Processed {
+    Processed {
+        result,
+        applied: None,
+        unchained: None,
+        fault,
     }
 }
 

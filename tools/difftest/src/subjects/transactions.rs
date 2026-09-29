@@ -129,6 +129,7 @@ fn has_json_form(difference: Documented, json: &Value) -> bool {
         | Documented::OnlineView
         | Documented::StrictSchema
         | Documented::UnlinkedForkSegment
+        | Documented::OwnForkSegment
         | Documented::MissedRowsOfRefusedBlock
         | Documented::Api(_)
         | Documented::OverHeightOwnBlock

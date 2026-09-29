@@ -99,6 +99,10 @@ pub struct JobOutcome {
     pub clear_queue: bool,
     /// How the job ended.
     pub end: JobEnd,
+    /// The peer that served a block no honest peer serves: one the rebuild refused, one the
+    /// processor refused for a fault ([`crate::processor::Processed::fault`]), or one discarded
+    /// for its future slot that no delegate forged ([`crate::processor::no_delegate_forged`]).
+    pub faulty: Option<std::net::IpAddr>,
 }
 
 /// Where pool entries come from; each source has its own processor, and so its own cooldown.

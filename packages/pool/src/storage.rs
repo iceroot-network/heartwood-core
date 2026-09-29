@@ -11,7 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use heartwood_crypto::TransactionId;
-use rusqlite::{Connection, params};
+use rusqlite::config::DbConfig;
+use rusqlite::{Connection, OpenFlags, params};
 
 use crate::errors::StorageError;
 
@@ -84,7 +85,14 @@ impl Storage {
                 detail: error.to_string(),
             })?;
         }
-        let connection = Connection::open(path)?;
+        // As the store opens its file: no URI file names (the path is a path), and a schema that
+        // is only this file's.
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let connection = Connection::open_with_flags(path, flags)?;
+        connection.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
+        connection.set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
         // `journal_mode` answers with the mode it set, so it is read as a query.
         connection.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))?;
         connection.execute_batch("PRAGMA synchronous = NORMAL;")?;
@@ -206,6 +214,15 @@ mod tests {
             sender_id: format!("sender{n}"),
             serialised: vec![n; usize::from(n) + 1],
         }
+    }
+
+    #[test]
+    fn the_file_is_opened_as_the_store_opens_its_own() {
+        let dir = tempdir("flags");
+        let storage = Storage::open(&dir.join("pool.sqlite"), None).unwrap();
+        let config = |flag| storage.connection.db_config(flag).unwrap();
+        assert!(config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE));
+        assert!(!config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA));
     }
 
     #[test]

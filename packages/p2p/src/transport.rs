@@ -144,6 +144,10 @@ pub async fn open(
     Ok((reader, Writer::spawn(write)))
 }
 
+/// The most capacity the read buffer keeps between messages: one large message grew it to twice
+/// its size, which the connection then held for its life.
+const KEPT_BUFFER: usize = 64 * 1024;
+
 /// The receiving side of a connection.
 pub struct Reader {
     half: ReadHalf<Box<dyn Stream>>,
@@ -180,6 +184,7 @@ impl Reader {
             }
             if let Some((header, length)) = self.frame.take_if(|(_, n)| *n <= self.buffer.len()) {
                 let payload: Vec<u8> = self.buffer.drain(..length).collect();
+                self.buffer.shrink_to(KEPT_BUFFER);
                 if let Some(received) = self.complete(&header, payload) {
                     return received;
                 }
@@ -319,5 +324,47 @@ impl Writer {
         let mut frame = Vec::with_capacity(payload.len().saturating_add(14));
         let _ = Frame::from_payload(header, payload.into()).format(&mut frame);
         let _ = self.queue.send(frame);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_large_message_leaves_no_large_buffer_behind() {
+        let (client, mut server) = tokio::io::duplex(64 * 1024);
+        let (half, _write) = tokio::io::split(Box::new(client) as Box<dyn Stream>);
+        let mut reader = Reader {
+            half,
+            buffer: Vec::new(),
+            frame: None,
+            message: Vec::new(),
+            fragmented: None,
+            total: 0,
+        };
+        let length = 4 * 1024 * 1024;
+        tokio::spawn(async move {
+            let mut header = vec![0x82, 127];
+            header.extend_from_slice(&u64::try_from(length).unwrap().to_be_bytes());
+            server.write_all(&header).await.unwrap();
+            server.write_all(&vec![7; length]).await.unwrap();
+            server.write_all(&[0x82, 1, 9]).await.unwrap();
+            // Keep the stream open until the reader is done.
+            std::future::pending::<()>().await;
+        });
+        assert_eq!(
+            reader.next(8 * 1024 * 1024).await,
+            Received::Binary(vec![7; length])
+        );
+        assert!(
+            reader.buffer.capacity() <= KEPT_BUFFER,
+            "{}",
+            reader.buffer.capacity()
+        );
+        assert_eq!(
+            reader.next(8 * 1024 * 1024).await,
+            Received::Binary(vec![9])
+        );
     }
 }

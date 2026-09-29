@@ -137,13 +137,19 @@ pub(crate) async fn listing(
     Ok(ApiReply::ok(body))
 }
 
-/// Run `query` on a reader, on a blocking thread; a store error is logged and answered with 500.
+/// Run `query` on a reader, on a blocking thread, after the store's log is reset when reads have
+/// kept it growing ([`heartwood_database::Readers::relieve_log`]); a store error is logged and
+/// answered with 500.
 pub(crate) async fn read<T: Send + 'static>(
     ctx: &Arc<ApiContext>,
     query: impl FnOnce(&Reader<'_>) -> Result<T, DatabaseError> + Send + 'static,
 ) -> Result<T, ApiError> {
     let history = Arc::clone(&ctx.history);
-    match tokio::task::spawn_blocking(move || query(&history.get())).await {
+    let read = move || {
+        history.relieve_log();
+        query(&history.get())
+    };
+    match tokio::task::spawn_blocking(read).await {
         Ok(Ok(value)) => Ok(value),
         Ok(Err(error)) => {
             heartwood_kernel::error!("A read of the store for the API failed: {error}");

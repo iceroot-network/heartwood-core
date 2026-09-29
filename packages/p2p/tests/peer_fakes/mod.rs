@@ -527,16 +527,21 @@ impl StateCheck for Verifier {
     }
 }
 
-/// A port probe for which the ports in `open` answer 200 and the others 404.
+/// A port probe for which the ports in `open` answer 200, those in `silent` never answer, and the
+/// others 404.
 #[derive(Default)]
 pub struct Probe {
     pub open: Mutex<HashSet<u16>>,
+    pub silent: Mutex<HashSet<u16>>,
     pub probed: Mutex<Vec<(IpAddr, u16)>>,
 }
 
 impl PortProbe for Probe {
     async fn head(&self, ip: IpAddr, port: u16) -> Option<u16> {
         self.probed.lock().unwrap().push((ip, port));
+        if self.silent.lock().unwrap().contains(&port) {
+            std::future::pending::<()>().await;
+        }
         Some(if self.open.lock().unwrap().contains(&port) {
             200
         } else {

@@ -171,6 +171,7 @@ impl BlockProcess for Scripted {
             result,
             applied: None,
             unchained,
+            fault: false,
         };
         match script.unwrap_or(Script::Accept) {
             Script::Accept | Script::AcceptWithoutPool | Script::Corrupt => {
@@ -192,6 +193,7 @@ impl BlockProcess for Scripted {
                     result: BlockProcessorResult::Accepted,
                     applied: Some(applied),
                     unchained: None,
+                    fault: false,
                 }
             }
             Script::Reject => {

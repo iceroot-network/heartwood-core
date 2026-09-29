@@ -526,6 +526,10 @@ fn from_listed(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
                 };
                 return Ok(differs(verdict));
             }
+            // The reader counts no transactions: only the communicator refuses too many.
+            Err(error @ DownloadError::TooManyTransactions { .. }) => {
+                return Err(failed(format!("the reader refused a block: {error}")));
+            }
         }
     }
     let blocks: Vec<Value> = downloaded

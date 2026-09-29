@@ -153,7 +153,7 @@ pub(crate) fn decode_with(
         // Every length is read before any transaction, so a count the bytes cannot hold fails
         // here, before anything is allocated for it.
         let mut lengths = Reader::new(reader.bytes(count.saturating_mul(4))?);
-        transactions.reserve(count);
+        transactions.reserve(capacity_for(count, reader.remaining()));
         for index in 0..count {
             let length = lengths.u32_le()?;
             let transaction_bytes = reader.bytes(length as usize)?;
@@ -170,6 +170,16 @@ pub(crate) fn decode_with(
         header,
         transactions,
     })
+}
+
+/// The fewest bytes a serialised transaction takes: its signature alone.
+const MIN_TRANSACTION_BYTES: usize = 64;
+
+/// The transactions to make room for when a block states `count` of them and `remaining` bytes
+/// follow its lengths: no more than those bytes can hold, so a stated count does not reserve
+/// about 90 times the bytes it came in.
+fn capacity_for(count: usize, remaining: usize) -> usize {
+    count.min(remaining.checked_div(MIN_TRANSACTION_BYTES).unwrap_or(0))
 }
 
 /// The header rules of the reference's block schema that decoded bytes can break.
@@ -194,4 +204,16 @@ fn check_header(header: &BlockHeader) -> Result<(), BlockDecodeError> {
         return refuse("the reward must be at most 9223372036854775807");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_room_made_for_transactions_is_what_the_bytes_can_hold() {
+        assert_eq!(capacity_for(500_000, 0), 0);
+        assert_eq!(capacity_for(500_000, 6_400), 100);
+        assert_eq!(capacity_for(3, 1_000_000), 3);
+    }
 }

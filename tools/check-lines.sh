@@ -28,7 +28,10 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # floor) and the event bus live in the kernel, which loads configuration in the reference too, and
 # the kernel was at its ceiling before them. heartwood-blockchain's processor has a ceiling of its
 # own; its runtime (the node thread, the job, the queue, the pool on the node thread, the service,
-# the state machine and the fork recovery) is listed on its own. The parts listed without a ceiling
+# the state machine and the fork recovery) is listed on its own. heartwood-blockchain was
+# re-baselined from 3,500 to 3,600 with the peer faults the job and the processor name (a chained
+# block refused by a rule of the shared state, and a block discarded for its future slot, judged
+# without the clock): the crate was at its ceiling before them. The parts listed without a ceiling
 # (the blockchain's runtime and storage, heartwood-p2p's client side, ...) are informational: the
 # crate's ceiling bounds them. CI installs tokei, so make check holds every ceiling there too.
 # heartwood-p2p was re-baselined from 6,000 to 8,000 and heartwood-p2p-wire from 2,500 to 3,200
@@ -49,11 +52,12 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # With the server side and the node's wiring:
 # - heartwood-forger goes from 2,100 to 2,200: its 2 lines of room cannot hold the signing record's
 #   write off the runtime's thread and the first round's height for the version floor check.
-# - heartwood-blockchain goes from 3,500 to 3,700: the node's side of its own forger (the lateness
-#   checks of a forger's block, the wake-up on request, the block ping, the queue's running state,
-#   the pool's collation and third processor, the node's own delegates) belongs to the service, as
-#   the reference keeps it in its blockchain package; the processor's ceiling is unchanged, and the
-#   forger's blocks are listed apart.
+# - heartwood-blockchain goes from 3,500 to 3,700, which also holds the peer faults above (their
+#   3,600 on their own): the node's side of its own forger (the lateness checks of a forger's
+#   block, the wake-up on request, the block ping, the queue's running state, the pool's collation
+#   and third processor, the node's own delegates) belongs to the service, as the reference keeps
+#   it in its blockchain package; the processor's ceiling is unchanged, and the forger's blocks are
+#   listed apart.
 # - heartwood-core goes from 2,000 to 3,000: the command tree of both roles, one file per command
 #   family, the forger's composition root and the server's wiring join the relay's configuration
 #   and composition root, and no line of it takes part in consensus. Its `harness` module (the
