@@ -347,7 +347,8 @@ fn control(opcode: u8, payload: &[u8]) -> Frame {
 pub struct FrameWriter {
     queue: mpsc::UnboundedSender<Vec<u8>>,
     progress: Arc<Progress>,
-    task: AbortHandle,
+    /// The writing task; none once it was aborted.
+    task: Option<AbortHandle>,
     /// The bytes written at the last heartbeat check.
     checked: AtomicU64,
 }
@@ -383,11 +384,10 @@ impl FrameWriter {
             }
             let _ = half.shutdown().await;
         });
-        let task = task.abort_handle();
         FrameWriter {
             queue,
             progress,
-            task,
+            task: Some(task.abort_handle()),
             checked: AtomicU64::new(0),
         }
     }
@@ -441,8 +441,10 @@ impl FrameWriter {
     }
 
     /// Drop the connection at once, with whatever is still queued.
-    pub fn terminate(self) {
-        self.task.abort();
+    pub fn terminate(mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
     }
 
     /// Queue a frame; where it ends.
@@ -471,10 +473,9 @@ impl Drop for FrameWriter {
     /// The writes still queued get [`DRAIN_TIMEOUT`], as the library destroys a socket that
     /// closed: a peer that stops reading holds no memory after its session.
     fn drop(&mut self) {
-        if self.task.is_finished() {
+        let Some(task) = self.task.take().filter(|task| !task.is_finished()) else {
             return;
-        }
-        let task = self.task.clone();
+        };
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => drop(runtime.spawn(async move {
                 tokio::time::sleep(DRAIN_TIMEOUT).await;

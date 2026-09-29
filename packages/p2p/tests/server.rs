@@ -235,6 +235,23 @@ async fn the_writes_after_the_clients_close_end_within_the_close_timeout() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_dropped_socket_leaves_no_task_behind() {
+    let bench = Bench::new().await;
+    sleep(ms(100)).await;
+    let metrics = tokio::runtime::Handle::current().metrics();
+    let before = metrics.num_alive_tasks();
+    for n in 2..6 {
+        let mut raw = bench.raw(peer(n)).await.unwrap();
+        raw.hello().await;
+        // A text message ends the socket at once, with a reason.
+        raw.frame(0x81, b"text").await;
+        assert_eq!(raw.next().await, Sent::Ended);
+    }
+    sleep(ms(100)).await;
+    assert_eq!(metrics.num_alive_tasks(), before);
+}
+
+#[tokio::test(start_paused = true)]
 async fn requests_on_one_socket_are_answered_as_they_finish() {
     let bench = Bench::new().await;
     let handlers = &bench.fakes.handlers;
