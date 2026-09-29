@@ -117,7 +117,7 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
     let forged = ctx.store.database().forged_transaction_ids(&ids);
     let forged: BTreeSet<TransactionId> = forged.map_err(StoreError::from)?.into_iter().collect();
     #[cfg(feature = "difftest")]
-    hold(ctx.stall, &job);
+    crate::difftest::hold(ctx.stall, job.blocks.len());
     let mut chunk = ctx.store.chunk()?;
     let (mut accepted, mut results, mut clear_queue) = (Vec::new(), Vec::new(), false);
     let (mut last_result, mut last_processed, mut fork, mut faulty) = (None, None, None, None);
@@ -210,20 +210,6 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
     };
     let committed = u32::try_from(accepted.len()).unwrap_or(u32::MAX);
     Ok(outcome(results, committed, clear_queue, end, faulty))
-}
-
-/// The harness's stall, ahead of the work of a job of one block, which is how a block received in
-/// `newBlock` comes (a download's job holds a range): the job sleeps for the time the control
-/// file asks for. It comes before the block moves the tip, so that a request waiting on the job
-/// still sees the tip the job found; the commit follows the wait either way.
-#[cfg(feature = "difftest")]
-fn hold(stall: Option<&crate::difftest::StallControl>, job: &Job) {
-    if let Some(time) = stall
-        .filter(|_| job.blocks.len() == 1)
-        .and_then(|s| s.take())
-    {
-        std::thread::sleep(time);
-    }
 }
 
 /// The chain link of a downloaded block's header, for the chaining test: its ids as Node reads

@@ -38,6 +38,16 @@ impl StallControl {
     }
 }
 
+/// The stall of a job of `blocks` blocks, ahead of its work: a job of one block, which is how a
+/// block received in `newBlock` comes (a download's job holds a range), sleeps for the time the
+/// control file asks for. It comes before the block moves the tip, so that a request waiting on
+/// the job still sees the tip the job found; the commit follows the wait either way.
+pub(crate) fn hold(stall: Option<&StallControl>, blocks: usize) {
+    if let Some(time) = stall.filter(|_| blocks == 1).and_then(StallControl::take) {
+        std::thread::sleep(time);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,6 +80,18 @@ mod tests {
         assert_eq!(control.take(), Some(Duration::from_millis(12_000)));
         assert!(!scratch.0.join(STALL_FILE).exists());
         assert_eq!(control.take(), None);
+    }
+
+    #[test]
+    fn only_a_job_of_one_block_is_held() {
+        let scratch = Scratch::new("held");
+        let control = StallControl::new(scratch.0.clone());
+        std::fs::write(scratch.0.join(STALL_FILE), "5").expect("written");
+        hold(Some(&control), 2);
+        hold(None, 1);
+        assert!(scratch.0.join(STALL_FILE).exists());
+        hold(Some(&control), 1);
+        assert!(!scratch.0.join(STALL_FILE).exists());
     }
 
     #[test]
