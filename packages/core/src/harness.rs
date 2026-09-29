@@ -32,7 +32,7 @@ use heartwood_crypto::blocks::serialiser;
 use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Block, BlockHeader, Milestones, Params};
 use heartwood_kernel::timestamp::UtcDateTime;
-use heartwood_p2p::node_services::AwaitRecord;
+use heartwood_p2p::node_services::{AwaitEnd, AwaitRecord};
 use heartwood_p2p::seams::PeerRules;
 use heartwood_p2p::utils::rules::Rules;
 use heartwood_p2p_wire::RouteId;
@@ -298,9 +298,23 @@ impl AwaitRecordFile {
         })
     }
 
-    /// Record `record`.
+    /// Record `record`: `{t, route, caller, waitMs, end, tipBefore, tipAfter}`, `t` the UTC time
+    /// the request reached the step, `end` one of `none`, `drained`, `bound` and `closed`.
     pub fn write(&self, record: &AwaitRecord) {
-        let _ = (&self.file, record);
+        let t = UtcDateTime::from_unix_ms(record.at_ms).map(|time| time.to_iso_string());
+        let end = match record.end {
+            AwaitEnd::NoWait => "none",
+            AwaitEnd::Drained => "drained",
+            AwaitEnd::Bound => "bound",
+            AwaitEnd::SocketClosed => "closed",
+        };
+        let line = json!({
+            "t": t, "route": record.route.name(), "caller": record.caller.to_string(),
+            "waitMs": u64::try_from(record.waited.as_millis()).unwrap_or(u64::MAX),
+            "end": end, "tipBefore": record.tip_before, "tipAfter": record.tip_after,
+        });
+        let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
+        write(&mut file, &line.to_string());
     }
 }
 
