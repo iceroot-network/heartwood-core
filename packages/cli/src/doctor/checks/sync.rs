@@ -9,7 +9,7 @@ use crate::doctor::report::Finding;
 use crate::doctor::report::Status::{Fail, Pass, Warn};
 use crate::doctor::seams::RoleState;
 use crate::doctor::sources::logs::LineKind;
-use crate::doctor::view::{Unknown, View};
+use crate::doctor::view::{Reason, Source, Unknown, View};
 use crate::seams::Role;
 
 /// One round of blocks: how far behind a relay fails.
@@ -17,20 +17,21 @@ pub(crate) const ROUND: i64 = 53;
 /// Fork recoveries in the window from which the relay fails.
 const FORKS_FAIL: u32 = 3;
 
-/// Whether the relay logged "in sync" since its last start in the window; unknown when its log
-/// cannot say.
+/// Whether the relay logged "in sync" since its last start; unknown when its log cannot say: the
+/// file level hides info lines, or the window holds neither the start nor an "in sync" line (a
+/// relay that started before the window and has been in sync all along logs neither).
 pub(crate) fn synced_once(view: &dyn View) -> Result<bool, Unknown> {
     let log = view.log(Role::Relay)?;
     log.shows(Level::Info)?;
-    let start = log
-        .events
+    let events = &log.events;
+    let start = events
         .iter()
         .rposition(|e| e.kind == LineKind::RelayStarted);
-    Ok(log
-        .events
-        .iter()
-        .skip(start.unwrap_or(0))
-        .any(|e| e.kind == LineKind::InSync))
+    let since = events.get(start.unwrap_or(0)..).unwrap_or_default();
+    match (since.iter().any(|e| e.kind == LineKind::InSync), start) {
+        (false, None) => Err(Unknown::new(Source::RelayLog, Reason::Missing)),
+        (synced, _) => Ok(synced),
+    }
 }
 
 /// `sync.state`.
@@ -38,10 +39,12 @@ pub fn state(input: &CheckInput<'_>) -> Vec<Finding> {
     relay(input, |view| {
         let (status, syncing) = (view.api_status()?, view.api_syncing()?);
         let (height, blocks) = (status.now, status.blocks_count.max(syncing.blocks).max(0));
-        let verdict = match () {
-            _ if status.synced => (Pass, "synced"),
-            _ if !synced_once(view)? => (Warn, "first-sync"),
-            _ if blocks > ROUND => (Fail, "fell-behind"),
+        // Only a relay far behind needs the log to tell a first sync from a fall.
+        let verdict = match (status.synced, blocks > ROUND, synced_once(view)) {
+            (true, ..) => (Pass, "synced"),
+            (_, _, Ok(false)) => (Warn, "first-sync"),
+            (_, true, Ok(true)) => (Fail, "fell-behind"),
+            (_, true, Err(cause)) => return Err(cause),
             _ => (Warn, "catching-up"),
         };
         Ok((Chain, verdict, ints!(height, blocks)))

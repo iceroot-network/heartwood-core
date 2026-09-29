@@ -163,10 +163,16 @@ pub fn cases() -> Vec<Case> {
             "far-behind",
         ),
         height(
-            "height: 53 behind, never synced",
-            far(Vec::new()),
+            "height: 53 behind, never synced since the start",
+            far(vec![LineKind::RelayStarted]),
             Status::Warn,
             "first-sync",
+        ),
+        height(
+            "height: 53 behind, started before the window",
+            far(Vec::new()),
+            Status::Warn,
+            "behind",
         ),
         height(
             "height: in sync before the last start only",
@@ -297,7 +303,7 @@ fn a_private_peer_counts_in_the_total_and_not_in_the_public_ones() {
 
 #[test]
 fn the_first_sync_is_not_a_failure_however_far_behind() {
-    let findings = run("peers.height", &far(Vec::new()));
+    let findings = run("peers.height", &far(vec![LineKind::RelayStarted]));
     assert!(
         findings
             .iter()

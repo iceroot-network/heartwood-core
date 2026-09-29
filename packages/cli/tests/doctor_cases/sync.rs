@@ -55,12 +55,18 @@ fn recoveries(n: usize) -> Vec<LineKind> {
 pub fn cases() -> Vec<Case> {
     let synced = vec![LineKind::RelayStarted, LineKind::InSync];
     let started = vec![LineKind::RelayStarted];
-    let mut quiet = lagging(false, 10, 10, synced.clone());
-    let mut window = log(synced.clone());
-    window.file_level = Some(Level::Warning);
-    quiet.logs.insert(Role::Relay, Ok(window));
-    let mut no_log = lagging(false, 10, 10, Vec::new());
-    no_log.logs.clear();
+    let quiet = |blocks| {
+        let mut view = lagging(false, blocks, blocks, Vec::new());
+        let mut window = log(vec![LineKind::RelayStarted, LineKind::InSync]);
+        window.file_level = Some(Level::Warning);
+        view.logs.insert(Role::Relay, Ok(window));
+        view
+    };
+    let no_log = |blocks| {
+        let mut view = lagging(false, blocks, blocks, Vec::new());
+        view.logs.clear();
+        view
+    };
     let mut not_here = FakeView::new();
     not_here.roles_present = Ok(RolePresence {
         relay: false,
@@ -130,12 +136,41 @@ pub fn cases() -> Vec<Case> {
             "catching-up",
         ),
         state(
-            "state: the log has no word on info",
-            quiet,
+            "state: 54 behind, the log has no word on info",
+            quiet(54),
             Status::Unknown,
             "unknown",
         ),
-        state("state: no log", no_log, Status::Unknown, "unknown"),
+        state(
+            "state: 10 behind, the log has no word on info",
+            quiet(10),
+            Status::Warn,
+            "catching-up",
+        ),
+        state(
+            "state: 54 behind, no log",
+            no_log(54),
+            Status::Unknown,
+            "unknown",
+        ),
+        state(
+            "state: 10 behind, no log",
+            no_log(10),
+            Status::Warn,
+            "catching-up",
+        ),
+        state(
+            "state: 54 behind, started before the window, never in sync in it",
+            lagging(false, 54, 54, Vec::new()),
+            Status::Unknown,
+            "unknown",
+        ),
+        state(
+            "state: 54 behind, started before the window, in sync in it",
+            lagging(false, 54, 54, vec![LineKind::InSync]),
+            Status::Fail,
+            "fell-behind",
+        ),
         state(
             "state: the status is unknown",
             no_status,
