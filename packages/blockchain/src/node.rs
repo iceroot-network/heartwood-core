@@ -173,6 +173,9 @@ impl NodeThread {
             Work::Job(job, answer) => {
                 let _ = answer.send(self.job(job)?);
             }
+            // A requester that is gone (an API request past its timeout) no longer waits for its
+            // entries: the reference processed them anyway, and a flood queued work without end.
+            Work::PoolEntries(.., answer) if answer.is_closed() => {}
             Work::PoolEntries(channel, entries, answer) => {
                 let (result, admitted) = parts.pool.process(channel, &env!(parts), entries)?;
                 if !admitted.is_empty() {
