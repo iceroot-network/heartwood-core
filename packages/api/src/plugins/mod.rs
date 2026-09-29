@@ -164,6 +164,16 @@ impl Answer {
     }
 }
 
+/// The page at the root: it names the base path, and is text, not JSON.
+fn root_page(base: &str) -> Answer {
+    let page = format!("<html><body><a href=\"{base}\">{base}</a></body></html>");
+    let html = (
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    Answer::new(200, Some(Value::String(page)), vec![html], true)
+}
+
 impl From<ApiError> for Answer {
     fn from(error: ApiError) -> Answer {
         Answer::json(error.status, error.body())
@@ -436,10 +446,11 @@ impl Pipeline {
             if config.rate_limit.enabled && !self.admit(&client) {
                 return Err(ApiError::too_many_requests("Too Many Requests"));
             }
-            return Err(match answer {
-                CatchAll::Forbidden => ApiError::forbidden("Forbidden"),
-                CatchAll::Undecodable | CatchAll::NotFound => not_found(),
-            });
+            return match answer {
+                CatchAll::Root => Ok(root_page(&config.base_path)),
+                CatchAll::Forbidden => Err(ApiError::forbidden("Forbidden")),
+                CatchAll::Undecodable | CatchAll::NotFound => Err(not_found()),
+            };
         };
         let (_post, payload) = match method {
             Method::Post => {
@@ -572,10 +583,17 @@ impl Pipeline {
             headers: mut fixed,
             cors,
         } = answer;
-        let mut body = body.map(|body| js::stringify(&body, 0).into_bytes());
+        let text = fixed.iter().any(|(name, _)| name == header::CONTENT_TYPE);
+        let mut body = body.map(|body| match body {
+            Value::String(page) if text => page.into_bytes(),
+            body => js::stringify(&body, 0).into_bytes(),
+        });
         // Node writes the head with the first chunk of a body given as text, in UTF-8.
         let mut with_text = body.is_some() && !asked.head;
-        let json = body.as_ref().map(|_| "application/json; charset=utf-8");
+        let json = body
+            .as_ref()
+            .filter(|_| !text)
+            .map(|_| "application/json; charset=utf-8");
         // hapi varies an answer it could compress (1 KiB or more) by `accept-encoding` too; the
         // whole answer counts, before a range is cut from it.
         let mut large = body.as_ref().is_some_and(|body| body.len() >= 1024);
