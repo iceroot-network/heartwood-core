@@ -19,8 +19,9 @@
 //!    checks are read once, for all the job's transactions, before the chunk opens.
 //! 5. The end: `Broadcast` when the last result was accepted or discarded but can be broadcast,
 //!    `Fork` when a block was marked as forked, else `Clear` ([`crate::work::JobEnd`]). A block
-//!    that failed its rebuild, or that the processor refused for a fault, names the peer that
-//!    served it ([`JobOutcome::faulty`]); the reference names none.
+//!    that failed its rebuild, that the processor refused for a fault, or that was discarded for
+//!    its future slot when no delegate forged it ([`crate::processor::no_delegate_forged`]), names
+//!    the peer that served it ([`JobOutcome::faulty`]); the reference names none.
 //!
 //! After the commit the node publishes the new snapshot and its events; never between blocks. A
 //! failed write or commit is fatal (the node stops; its next start restores the committed tip),
@@ -43,7 +44,7 @@ use crate::commit::ChainStore;
 use crate::errors::{NodeError, StoreError};
 use crate::events::CommitObserver;
 use crate::pool_task::PoolTask;
-use crate::processor::{BlockProcess, BlockProcessorResult, ForgedIds, ProcessContext};
+use crate::processor::{self, BlockProcess, BlockProcessorResult, ForgedIds, ProcessContext};
 use crate::work::{IncomingBlock, Job, JobEnd, JobOutcome};
 
 /// What a job reads and changes on the node thread.
@@ -120,6 +121,12 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
         if slot(ctx.milestones, timestamp.into()) > current_slot(ctx.milestones, ctx.clock) {
             let height = locale(incoming.height());
             error!("Discarded block {height} because it takes a future slot :crystal_ball:");
+            // Judged without the clock: a block no delegate forged names its peer, as one the
+            // processor refuses does, or the peer would be asked for it again and again.
+            let junk = to_block(&incoming.block, ctx.milestones).map_or(true, |b| {
+                processor::no_delegate_forged(ctx.state, ctx.milestones, &b)
+            });
+            faulty = junk.then_some(incoming.block.ip);
             break;
         }
         let block = match to_block(&incoming.block, ctx.milestones) {

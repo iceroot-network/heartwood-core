@@ -157,9 +157,11 @@ pub struct Processed {
     pub unchained: Option<UnchainedStatus>,
     /// Whether the block was refused for a fault that no honest peer serves: a verification
     /// failure other than the timestamp, a wrong reward, conflicting transactions, a refused apply,
-    /// or any refusal of a chained block whose key is no registered delegate's. A nonce out of
-    /// order, a generator out of its slot and a transaction already forged can come from an honest
-    /// branch, and so can a block that does not chain.
+    /// and, of a block that chains to the tip, a nonce out of order, a generator that is not its
+    /// slot's delegate or a key that is no registered delegate's (the shared state decides those,
+    /// so no honest node accepted the block). A timestamp ahead of our clock, a transaction
+    /// already forged, a block that does not chain and a generator whose name the enqueueing did
+    /// not know (registered in an earlier block of the same download) are no fault.
     pub fault: bool,
 }
 
@@ -205,12 +207,16 @@ pub fn trace(ctx: &mut ProcessContext<'_>, block: &Block) -> Traced {
 /// block's delegate name: the name its generator key had when the block was enqueued, `None` when
 /// the key named no delegate then; and name the handler that decided it.
 pub fn trace_named(ctx: &mut ProcessContext<'_>, block: &Block, name: Option<&str>) -> Traced {
+    // A block that chains to the tip is judged on the state it was built on, so a refusal by a
+    // rule of that state is no honest node's block.
+    let tip = ChainLink::of(ctx.state.last_block());
+    let chained = is_block_chained(&tip, &ChainLink::of(block), ctx.milestones).is_ok();
     let refused = |ctx: &mut ProcessContext<'_>, refusal, fault: bool| Traced {
         processed: Processed {
             result: handlers::refuse(ctx, block, refusal),
             applied: None,
             unchained: None,
-            fault: fault || delegate_name(ctx.state, block).is_none(),
+            fault: fault || (chained && delegate_name(ctx.state, block).is_none()),
         },
         handler: Handler::Refused(refusal),
     };
@@ -218,10 +224,9 @@ pub fn trace_named(ctx: &mut ProcessContext<'_>, block: &Block, name: Option<&st
         return refused(ctx, Refusal::VerificationFailed, fault);
     }
     if has_nonce_out_of_order(ctx.state, ctx.milestones, block) {
-        return refused(ctx, Refusal::NonceOutOfOrder, false);
+        return refused(ctx, Refusal::NonceOutOfOrder, chained);
     }
     let generator_valid = is_valid_generator(ctx.state, ctx.milestones, block, name);
-    let tip = ChainLink::of(ctx.state.last_block());
     if is_block_chained(&tip, &ChainLink::of(block), ctx.milestones).is_err() {
         let (result, status) = unchained::handle(ctx, block, name, generator_valid);
         return Traced {
@@ -234,8 +239,11 @@ pub fn trace_named(ctx: &mut ProcessContext<'_>, block: &Block, name: Option<&st
             handler: Handler::Unchained,
         };
     }
+    // Chained: the round's list on the shared state names the slot's delegate. Only a block whose
+    // delegate the enqueueing could not name (registered in an earlier block of the same
+    // download) is refused as an honest peer's.
     if !generator_valid {
-        return refused(ctx, Refusal::InvalidGenerator, false);
+        return refused(ctx, Refusal::InvalidGenerator, name.is_some());
     }
     if !is_valid_reward(ctx.state, ctx.milestones, block) {
         return refused(ctx, Refusal::InvalidReward, true);
@@ -287,6 +295,29 @@ pub fn delegate_name<'s>(state: &'s State, block: &Block) -> Option<&'s str> {
         .find_by_public_key(&block.header().generator_public_key)
         .and_then(heartwood_state::Wallet::delegate)
         .map(heartwood_state::Delegate::username)
+}
+
+/// Whether `block`, judged without the clock, is one that no honest peer serves: a rule other
+/// than the timestamp fails, or it chains to the tip and its generator is not the delegate of its
+/// slot in its round's list, which the shared state decides. For a block discarded before it is
+/// processed because its slot is in the future by our clock: the reference discards it unjudged,
+/// so a peer needed no key to be asked for it again and again ([`crate::process_blocks_job`]).
+pub fn no_delegate_forged(state: &State, milestones: &Milestones, block: &Block) -> bool {
+    let header = block.header();
+    let failures = block.verify(milestones, i64::MAX).failures;
+    if failures.iter().any(|f| *f != VerifyFailure::Timestamp) {
+        return true;
+    }
+    let tip = ChainLink::of(state.last_block());
+    if is_block_chained(&tip, &ChainLink::of(block), milestones).is_err() {
+        return false;
+    }
+    let forgers = round_forgers(state, header.height, milestones);
+    let info = calculate_forging_info(i64::from(header.timestamp), header.height, milestones);
+    let forger = usize::try_from(info.current_forger)
+        .ok()
+        .and_then(|i| forgers.get(i));
+    forger.is_none_or(|forger| forger.public_key != header.generator_public_key)
 }
 
 /// The forging list of the round of `height`, as the reference's `getActiveDelegates` reads it:

@@ -94,8 +94,9 @@ pub struct JobOutcome {
     pub clear_queue: bool,
     /// How the job ended.
     pub end: JobEnd,
-    /// The peer that served a block no honest peer serves: one the rebuild refused, or one the
-    /// processor refused for a fault ([`crate::processor::Processed::fault`]).
+    /// The peer that served a block no honest peer serves: one the rebuild refused, one the
+    /// processor refused for a fault ([`crate::processor::Processed::fault`]), or one discarded
+    /// for its future slot that no delegate forged ([`crate::processor::no_delegate_forged`]).
     pub faulty: Option<std::net::IpAddr>,
 }
 

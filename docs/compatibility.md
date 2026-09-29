@@ -635,10 +635,15 @@ of a step; none changes a verdict or a digest on an honest chain:
   dropped when the node reaches it; the reference processes it;
 - a downloaded block that fails its rebuild, or that the processor refuses for a fault no honest
   peer makes (a verification failure other than the timestamp, a wrong reward, conflicting
-  transactions, a refused apply, or any refusal of a chained block whose key is no registered
-  delegate's), counts as a protocol violation of the peer that served it (see heartwood-p2p). A
-  nonce out of order, a generator out of its slot, a transaction already forged and a block that
-  does not chain are no violation: they can come from an honest branch.
+  transactions, a refused apply, and, of a block that chains to the tip, a nonce out of order, a
+  generator that is not its slot's delegate or a key that is no registered delegate's: the shared
+  state decides those, so no honest node accepted the block), counts as a protocol violation of
+  the peer that served it (see heartwood-p2p). A timestamp ahead of our clock, a transaction
+  already forged, a block that does not chain and a generator whose name the enqueueing did not
+  know are no violation. A block discarded because its slot is in the future by our clock, which
+  the reference discards unjudged, is judged without the clock: a violation when its rebuild
+  fails, a rule other than the timestamp fails, or it chains to the tip and its generator is not
+  its slot's delegate; an honest block ahead of our clock is discarded as before;
 
 ```sh
 cargo test -p heartwood-blockchain --locked   # commit and restart at every height of the committed chain, the start's refusals,

@@ -165,6 +165,30 @@ async fn a_block_in_a_future_slot_ends_the_loop() {
     let outcome = node.run(&chain, 2, 6).await;
     assert_eq!(heights(&outcome, &chain), [2, 3]);
     assert_eq!(outcome.end, broadcast(&chain, 3));
+    // An honest block ahead of our clock names no peer.
+    assert_eq!(outcome.faulty, None);
+    node.stop().await.unwrap();
+}
+
+/// A block discarded for its future slot is judged without the clock: the peer that served one
+/// no delegate forged is named, as for a block the processor refuses, so that it is not asked
+/// again and again for a block that is never processed.
+#[tokio::test]
+async fn a_block_in_a_future_slot_that_no_delegate_forged_names_its_peer() {
+    let chain = Chain::load();
+    let node = node_at(&chain, "jobs-future-slot-fault", 1, &[]).await;
+    node.clock
+        .set(at_epoch_seconds(&chain, chain.block(3).header().timestamp));
+    let mut junk = node.enqueued(job(&chain, 2, 6));
+    let signature = junk.blocks[2].block.header.header.block_signature.as_mut();
+    let signature = signature.expect("a signature");
+    let flipped = if signature.starts_with('0') { "1" } else { "0" };
+    signature.replace_range(..1, flipped);
+    junk.blocks[2].block.ip = IpAddr::from([192, 0, 2, 9]);
+    let outcome = node.handle.job(junk).await.unwrap();
+    assert_eq!(heights(&outcome, &chain), [2, 3]);
+    assert_eq!(outcome.end, broadcast(&chain, 3));
+    assert_eq!(outcome.faulty, Some(IpAddr::from([192, 0, 2, 9])));
     node.stop().await.unwrap();
 }
 

@@ -445,9 +445,11 @@ fn a_block_that_fails_its_verification_is_rejected() {
 
 /// A refusal is a fault of the peer that served the block when no honest peer serves such a
 /// block: a verification failure other than the timestamp, a wrong reward, conflicting
-/// transactions, a refused apply, or any refusal of a block by a key that is no delegate's. A
-/// nonce out of order, a generator out of its slot, a transaction already forged and a block that
-/// does not chain can come from an honest peer on another branch.
+/// transactions, a refused apply, and, of a block that chains to the tip, a nonce out of order,
+/// a generator that is not its slot's delegate or a key that is no delegate's: the shared state
+/// decides those, so no honest node accepted the block. A timestamp ahead of our clock, a
+/// transaction already forged, a block that does not chain and a generator whose name the
+/// enqueueing did not know are no fault.
 #[test]
 fn only_a_refusal_no_honest_peer_causes_is_a_fault() {
     let mut node = Node::at_tip();
@@ -500,7 +502,8 @@ fn only_a_refusal_no_honest_peer_causes_is_a_fault() {
     let traced = node.process_at(&block, early);
     assert_eq!(traced.handler, refused(Refusal::VerificationFailed));
     assert!(!traced.processed.fault);
-    // A delegate out of its slot.
+    // A delegate out of its slot, in a block that chains to the tip: the round's list on the
+    // shared state names the slot's delegate, so no honest node accepted the block.
     let other = FIXTURE
         .keys
         .iter()
@@ -512,13 +515,32 @@ fn only_a_refusal_no_honest_peer_causes_is_a_fault() {
         signer: Some(other),
         ..Forge::default()
     });
-    assert!(!fault(&mut node, &out_of_slot));
+    let traced = node.process(&out_of_slot);
+    assert_eq!(traced.handler, refused(Refusal::InvalidGenerator));
+    assert!(traced.processed.fault);
+    // A nonce out of order in a block that chains to the tip: the same.
     let gap = node.transfer(from, key("genesis-2"), 1_000, 1);
     let nonce = node.forge(Forge {
-        transactions: vec![gap],
+        transactions: vec![gap.clone()],
         ..Forge::default()
     });
-    assert!(!fault(&mut node, &nonce));
+    let traced = node.process(&nonce);
+    assert_eq!(traced.handler, refused(Refusal::NonceOutOfOrder));
+    assert!(traced.processed.fault);
+    // In a block that does not chain, the nonce is judged on a state that is not the block's.
+    let nonce_elsewhere = node.forge(Forge {
+        transactions: vec![gap],
+        previous: Some([7; 32]),
+        ..Forge::default()
+    });
+    let traced = node.process(&nonce_elsewhere);
+    assert_eq!(traced.handler, refused(Refusal::NonceOutOfOrder));
+    assert!(!traced.processed.fault);
+    // A generator whose name the enqueueing did not know (its delegate registered in an earlier
+    // block of the same download) is refused until the block is downloaded again: no fault.
+    let traced = node.process_named(&block, None);
+    assert_eq!(traced.handler, refused(Refusal::InvalidGenerator));
+    assert!(!traced.processed.fault);
     let transfer = node.transfer(from, key("genesis-2"), 1_000, 0);
     let forged = node.forge(Forge {
         transactions: vec![transfer.clone()],
@@ -534,6 +556,92 @@ fn only_a_refusal_no_honest_peer_causes_is_a_fault() {
     // Accepted.
     node.forged.0.clear();
     assert!(!fault(&mut node, &forged));
+}
+
+/// A registered delegate that is not its slot's, ranked or not yet: no honest chain holds its
+/// block, so a peer that serves one with a key it registered for that is at fault, and cannot
+/// keep a syncing node asking it again.
+#[test]
+fn a_registered_delegate_out_of_its_slot_is_a_fault() {
+    let mut node = Node::at_tip();
+    let from = key("genesis-1");
+    // A registration costs more than the fee above every floor.
+    let params = node.params();
+    let registration = TransactionBuilder::delegate_registration("intruder")
+        .network(params.network())
+        .nonce(node.nonce(from) + 1)
+        .fee(8_000_000_000)
+        .build(&from.keys, Aux::fixed(AUX), params)
+        .unwrap();
+    node.advance(vec![registration]);
+    let intruder = |node: &Node, transactions| {
+        node.forge(Forge {
+            signer: Some(&from.keys),
+            transactions,
+            ..Forge::default()
+        })
+    };
+    // Registered, not ranked yet.
+    let traced = node.process(&intruder(&node, vec![]));
+    assert_eq!(traced.handler, refused(Refusal::InvalidGenerator));
+    assert!(traced.processed.fault);
+    // Ranked, once the round turns.
+    let round = node.state.round().info().round;
+    while node.state.round().info().round == round {
+        node.advance(vec![]);
+    }
+    let traced = node.process(&intruder(&node, vec![]));
+    assert_eq!(traced.handler, refused(Refusal::InvalidGenerator));
+    assert!(traced.processed.fault);
+    // With a nonce out of order, refused before its generator is judged: the same.
+    let gap = node.transfer(from, key("genesis-2"), 1_000, 1);
+    let traced = node.process(&intruder(&node, vec![gap]));
+    assert_eq!(traced.handler, refused(Refusal::NonceOutOfOrder));
+    assert!(traced.processed.fault);
+}
+
+/// A block judged without the clock, as a block discarded for its future slot is: at fault when
+/// it chains to the tip and a rule other than the timestamp fails or its generator is not the
+/// delegate of its slot; a block that does not chain is not judged.
+#[test]
+fn a_block_is_judged_without_the_clock_as_the_shared_state_has_it() {
+    let node = Node::at_tip();
+    let judged =
+        |forge| processor::no_delegate_forged(&node.state, milestones(), &node.forge(forge));
+    // The scheduled delegate's block, in a slot far ahead of any clock.
+    assert!(!judged(Forge {
+        gap: 100,
+        ..Forge::default()
+    }));
+    assert!(judged(Forge {
+        bad_signature: true,
+        ..Forge::default()
+    }));
+    // A delegate that is not the slot's.
+    let scheduled = node.forge(Forge::default()).header().generator_public_key;
+    let other = FIXTURE
+        .keys
+        .iter()
+        .filter(|k| k.role.starts_with("delegate/"))
+        .map(|k| &k.keys)
+        .find(|k| k.public_key().to_compressed() != scheduled)
+        .unwrap();
+    assert!(judged(Forge {
+        signer: Some(other),
+        ..Forge::default()
+    }));
+    static STRANGER: LazyLock<KeyPair> =
+        LazyLock::new(|| KeyPair::from_passphrase("processor test: no delegate either").unwrap());
+    assert!(judged(Forge {
+        signer: Some(&STRANGER),
+        ..Forge::default()
+    }));
+    // Not chained: not judged, whoever signed it.
+    assert!(!judged(Forge {
+        signer: Some(&STRANGER),
+        previous: Some([7; 32]),
+        ..Forge::default()
+    }));
 }
 
 #[test]
