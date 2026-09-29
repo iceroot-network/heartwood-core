@@ -200,7 +200,7 @@ fn a_stale_pid_file_goes_so_that_status_and_stop_during_the_rollback_read_no_pid
     // The store held by another writer, so that the command waits inside its run.
     let mut writer = Database::open(&Settings::in_data_dir(&relay.data())).unwrap();
     let chunk = writer.begin().unwrap();
-    let mut rollback = relay
+    let rollback = relay
         .command(&["snapshot", "rollback", "--height", "133"])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
