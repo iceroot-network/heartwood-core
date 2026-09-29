@@ -649,7 +649,11 @@ mod tests {
         assert!(required("w").contains(&"stall".to_owned()));
         assert!(!required("w0").contains(&"stall".to_owned()));
         assert!(required("s").contains(&"restart-node2".to_owned()));
-        assert!(problems("s", &[]).iter().all(|p| !p.contains("unknown live run")));
+        assert!(
+            problems("s", &[])
+                .iter()
+                .all(|p| !p.contains("unknown live run"))
+        );
     }
 
     #[test]

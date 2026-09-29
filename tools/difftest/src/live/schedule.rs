@@ -184,7 +184,11 @@ pub(super) fn problems(run: &str, steps: &[Step], round_length: u32, stop: u32) 
     let heights: BTreeMap<usize, u64> = {
         let floors = start_heights(steps);
         // `start_heights` keeps the steps' order: index i is the i-th step.
-        floors.iter().enumerate().map(|(i, (_, h))| (i, *h)).collect()
+        floors
+            .iter()
+            .enumerate()
+            .map(|(i, (_, h))| (i, *h))
+            .collect()
     };
     let first = |name: &str| steps.iter().position(|s| s.name == name);
     for p in plan(run) {
@@ -238,7 +242,9 @@ pub(super) fn problems(run: &str, steps: &[Step], round_length: u32, stop: u32) 
     }
     if let Some(i) = first("pause") {
         match steps[i].start_height() {
-            Some(h) if round_of(h.max(1), round_length) != round_of(u64::from(stop), round_length) => {
+            Some(h)
+                if round_of(h.max(1), round_length) != round_of(u64::from(stop), round_length) =>
+            {
                 out.push(format!(
                     "the pause started at height {h}, outside the last round (the stop height is {stop})"
                 ));
@@ -361,7 +367,9 @@ mod tests {
         steps[b].start = start;
         let found = problems("w", &steps, 53, 212);
         assert!(
-            found.iter().any(|p| p.contains("step r1 started after step r2")),
+            found
+                .iter()
+                .any(|p| p.contains("step r1 started after step r2")),
             "{found:?}"
         );
     }
@@ -383,7 +391,10 @@ mod tests {
         let i = steps.iter().position(|s| s.name == "pause").unwrap();
         steps[i].record["startHeight"] = json!(150);
         let found = problems("w", &steps, 53, 212);
-        assert!(found.iter().any(|p| p.contains("outside the last round")), "{found:?}");
+        assert!(
+            found.iter().any(|p| p.contains("outside the last round")),
+            "{found:?}"
+        );
         assert!(problems("w", &kept(), 53, 265)[0].contains("planned 212"));
     }
 
