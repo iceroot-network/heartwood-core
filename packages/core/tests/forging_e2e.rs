@@ -5,9 +5,10 @@
 //! the relay (its forger's sessions closed first) and then the forger, each within 30 s.
 //!
 //! Each test's relay listens at its own address in the loopback block of these tests (127.13.0.31
-//! and 127.13.0.32, P2P 6002, API 6003), so the two can run at once; its forger connects from the
-//! same address, which the relay's `remoteAccess` lists, and its `peers.json` names the relay
-//! itself, as a one-node devnet's does (a relay stops at the start without a seed peer).
+//! and 127.13.0.32, P2P 6002, API 6003, or .31 and .32 of the block `HEARTWOOD_TEST_LOOPBACK`
+//! names), so the two can run at once; its forger connects from the same address, which the
+//! relay's `remoteAccess` lists, and its `peers.json` names the relay itself, as a one-node
+//! devnet's does (a relay stops at the start without a seed peer).
 
 use std::fs;
 use std::io::{Read, Write};
@@ -37,19 +38,29 @@ impl Drop for Killed {
 /// other four directories beside it.
 struct Node {
     root: PathBuf,
-    host: &'static str,
+    host: String,
+}
+
+/// The address `last` of the tests' loopback block.
+fn host(last: u8) -> String {
+    let block = std::env::var("HEARTWOOD_TEST_LOOPBACK").unwrap_or_default();
+    let block = if block.is_empty() { "127.13.0" } else { &block };
+    format!("{block}.{last}")
 }
 
 impl Node {
     /// A node named `name` at the address `host` whose chain `network generate` makes now, with
     /// its epoch now.
-    fn new(name: &str, host: &'static str) -> Node {
+    fn new(name: &str, host: String) -> Node {
         let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
             .join("forging-e2e")
             .join(name);
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        let node = Node { root, host };
+        let node = Node {
+            root,
+            host: host.clone(),
+        };
         let config = node.config();
         let generated = Command::new(env!("CARGO_BIN_EXE_heartwood"))
             .args([
@@ -124,7 +135,7 @@ impl Node {
 
     /// `GET path` on the relay's API: the body's `data`, when it answers 200.
     fn api(&self, path: &str) -> Option<Value> {
-        api(self.host, path)
+        api(&self.host, path)
     }
 }
 
@@ -180,7 +191,7 @@ fn interrupt(child: &mut Killed) -> std::process::ExitStatus {
 #[test]
 #[ignore = "integration"]
 fn a_relay_serves_without_the_key_file_and_with_one_it_cannot_read_and_is_alone() {
-    let node = Node::new("relay-keys", "127.13.0.31");
+    let node = Node::new("relay-keys", host(31));
     let key_file = node.config().join("delegates.json");
     fs::remove_file(&key_file).unwrap();
     for pass in 0..2 {
@@ -208,7 +219,7 @@ fn a_relay_serves_without_the_key_file_and_with_one_it_cannot_read_and_is_alone(
 #[test]
 #[ignore = "integration"]
 fn a_forger_forges_through_its_relays_server_and_both_stop_on_sigint() {
-    let node = Node::new("forging", "127.13.0.32");
+    let node = Node::new("forging", host(32));
     let mut relay = node.start("relay", "relay", &["--networkStart"]);
     wait_until(Duration::from_secs(60), "API", || {
         node.api("/api/node/status").is_some()

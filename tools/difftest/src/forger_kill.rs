@@ -1,5 +1,5 @@
 //! The forger's crash test (`difftest forger crash`): the `forger-child` binary, which runs the
-//! forger's slot loop, relay client and block signer, against a mock relay on [`RELAY_IP`] on a
+//! forger's slot loop, relay client and block signer, against a mock relay on [`relay_ip`] on a
 //! test network with a 3 s block time, killed with SIGKILL at random moments, most of them while
 //! the relay holds the answer to a `postBlock`, so after the signing record's write.
 //!
@@ -66,8 +66,16 @@ pub struct KillOptions {
     pub child: PathBuf,
 }
 
-/// The mock relay's address, in the loopback block the crash test uses.
-pub const RELAY_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 14, 0, 1));
+/// The mock relay's address, in the loopback block the crash test uses: 127.14.0.1, or the first
+/// address of the block `HEARTWOOD_TEST_LOOPBACK` names (three octets, such as `127.24.0`).
+pub fn relay_ip() -> IpAddr {
+    let block = std::env::var("HEARTWOOD_TEST_LOOPBACK").unwrap_or_default();
+    let named = format!("{block}.1")
+        .parse()
+        .ok()
+        .filter(|_| !block.is_empty());
+    named.unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 14, 0, 1)))
+}
 /// The test network's block time, in seconds.
 const BLOCK_TIME: u64 = 3;
 /// The share of kills made while the relay holds a `postBlock` answer, in percent.
@@ -746,7 +754,7 @@ impl RelayServer {
             };
             runtime.block_on(async move {
                 let answer: Answer = Arc::new(move |route, payload| relay.answer(route, payload));
-                let peer = match MockPeer::answering((RELAY_IP, 0).into(), answer).await {
+                let peer = match MockPeer::answering((relay_ip(), 0).into(), answer).await {
                     Ok(peer) => peer,
                     Err(error) => {
                         let _ = started.send(Err(error.to_string()));

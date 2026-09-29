@@ -971,7 +971,9 @@ neither gets a block signed, recorded or posted.
 
 The crash test (`difftest forger crash`) starts the `forger-child` binary (feature `difftest`),
 which runs the slot loop, the relay client and the signer with a fresh random aux for every
-signature, against a mock relay on `127.14.0.1` whose answers follow the clock on a test network
+signature, against a mock relay on `127.14.0.1` (or the first address of the loopback block that
+`HEARTWOOD_TEST_LOOPBACK` names, three octets such as `127.24.0`) whose answers follow the clock
+on a test network
 with 3-second slots: the child's delegate forges every slot, every network state names a new
 random previous block, and a posted block becomes the relay's last block once its answer is sent,
 after a random hold. The harness kills the child with SIGKILL at random moments, most of them
@@ -1282,7 +1284,10 @@ cargo test -p heartwood-core --locked --all-features -- --include-ignored   # al
 
 The integration tests start the binary: a relay imports the committed chain from a mock peer, serves
 its tip through the API with a digest equal to the judge's, and stops on SIGINT with 0; a relay
-whose API port is taken stops with an error.
+whose API port is taken stops with an error. The tests that start a relay, a forger or a mock
+relay listen in `127.13.0.0/24`, or in the block `HEARTWOOD_TEST_LOOPBACK` names (such as
+`127.24.0`), so that two runs on one host can be kept apart; the devnet smoke test takes
+`HEARTWOOD_DEVNET_PREFIX`.
 
 ## L0: golden vectors
 

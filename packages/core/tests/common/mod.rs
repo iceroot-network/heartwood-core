@@ -11,6 +11,14 @@ use heartwood_core::commands::relay::{RelayCommand, RelayRun};
 use heartwood_core::commands::{self, Command};
 use serde_json::{Value, json};
 
+/// An address of the loopback block these tests' processes listen on: the three octets of
+/// `HEARTWOOD_TEST_LOOPBACK` (such as `127.24.0`) when it is set, else `default`, and `last`.
+pub fn loopback(default: &str, last: u8) -> String {
+    let block = std::env::var("HEARTWOOD_TEST_LOOPBACK").unwrap_or_default();
+    let block = if block.is_empty() { default } else { &block };
+    format!("{block}.{last}")
+}
+
 /// The committed one-node corpus.
 pub fn corpus() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/difftest/corpus/txgen-one-node")

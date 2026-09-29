@@ -7,7 +7,8 @@
 //! outside its guards. The relay's other tests, which need the peer-to-peer server, are in
 //! `forging_e2e.rs` and run with the integration tests.
 //!
-//! Every relay and forger address of these tests is in the loopback block 127.13.0.0/24.
+//! Every relay and forger address of these tests is in the loopback block 127.13.0.0/24; the
+//! mock relay listens in the block `HEARTWOOD_TEST_LOOPBACK` names instead when it is set.
 
 mod common;
 
@@ -26,7 +27,9 @@ use serde_json::{Value, json};
 
 #[cfg(feature = "difftest")]
 /// The forger tests' relay address.
-const RELAY_IP: [u8; 4] = [127, 13, 0, 21];
+fn relay_ip() -> std::net::IpAddr {
+    common::loopback("127.13.0", 21).parse().unwrap()
+}
 
 /// The `heartwood` binary.
 fn heartwood() -> Command {
@@ -617,7 +620,7 @@ mod against_a_mock_relay {
         let answering = Arc::clone(&relay);
         let answer: Answer = Arc::new(move |route, payload| answering.answer(route, payload));
         let peer = runtime
-            .block_on(MockPeer::answering((RELAY_IP, 0).into(), answer))
+            .block_on(MockPeer::answering((relay_ip(), 0).into(), answer))
             .unwrap();
         let address = peer.address();
         runtime.spawn(async move {
