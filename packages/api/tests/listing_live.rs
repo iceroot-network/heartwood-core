@@ -40,6 +40,30 @@ async fn the_wallet_listings_over_http() {
     }
     assert_eq!(walked.len(), 350);
     assert_eq!(walked[..100], addresses(&first.body)[..]);
+    // Ties in the balance keep the address index's order, the state's iterator's.
+    let index: Vec<String> = chain()
+        .state
+        .wallets
+        .by_address_index()
+        .map(|wallet| wallet.address().to_base58())
+        .collect();
+    let at = |address: &String| index.iter().position(|known| known == address).unwrap();
+    let mut balances = Vec::new();
+    for page in 1..=4 {
+        let answer = get(address, &format!("/api/wallets?limit=100&page={page}")).await;
+        for wallet in answer.body["data"].as_array().unwrap() {
+            balances.push(wallet["balance"].as_str().unwrap().parse::<u64>().unwrap());
+        }
+    }
+    let mut ties = 0;
+    for (pair, balance) in walked.windows(2).zip(balances.windows(2)) {
+        assert!(balance[0] >= balance[1], "{pair:?}");
+        if balance[0] == balance[1] {
+            ties += 1;
+            assert!(at(&pair[0]) < at(&pair[1]), "{pair:?}");
+        }
+    }
+    assert!(ties > 10, "{ties} ties");
     let offset = get(address, "/api/wallets?limit=10&offset=95&page=7").await;
     assert_eq!(addresses(&offset.body), walked[95..105]);
     let beyond = get(address, "/api/wallets?limit=100&page=5").await;
