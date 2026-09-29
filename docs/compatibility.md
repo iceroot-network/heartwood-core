@@ -373,18 +373,21 @@ file lines are not; the file rotates daily into gzip files and keeps at most 10 
 level name that is not one of the reference's eight turns that output off, as the reference drops
 it.
 
-One difference is on purpose. The reference writes a message's characters as they are, so text
-from outside the node inside a message (a peer's error payload in "Failed to download blocks ...",
-up to 512 bytes) can write whole lines of its own, with any time and level, and restyle a
-terminal. Heartwood's logger escapes the message and its fields before it writes the line: a line
-feed, carriage return and tab as `\n`, `\r` and `\t`, and as `\uXXXX` every other control
-character (C0, DEL and C1), the line and paragraph separators (U+2028, U+2029) and the
-bidirectional controls (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069). One call
-writes exactly one line. Backslashes are kept, so the line of a message without such a character
-is byte for byte the reference's, and compact JSON inside a message stays JSON of the same value.
-The escape is not meant to be undone: `\n` in a line is an escaped line feed or a backslash and an
-`n` that the message held. A tool that reads the logs should still match a line from the start of
-its message: text from outside can hold a whole known message inside one line.
+One difference is on purpose. The reference writes a message's characters as they are, so text from
+outside the node inside a message (a peer's error payload in "Failed to download blocks ...", up to
+512 bytes, or a relay's in the forger's "Request to ... failed, because of '...'") can write whole
+lines of its own, with any time and level, and restyle a terminal. Heartwood's logger escapes the
+message and its fields before it writes the line: a line feed, carriage return and tab as `\n`, `\r`
+and `\t`, and as `\uXXXX` every other control character (C0, DEL and C1), the line and paragraph
+separators (U+2028, U+2029) and the bidirectional controls (U+061C, U+200E, U+200F, U+202A to
+U+202E, U+2066 to U+2069). One call writes exactly one line. Backslashes are kept, so the line of a
+message without such a character is byte for byte the reference's, and compact JSON inside a message
+stays JSON of the same value. One honest message holds line breaks: the forger's debug dump "Network
+State: {...}" after "Not enough quorum to forge next block", which the reference writes over several
+lines and Heartwood on one, with `\n` escapes. The escape is not meant to be undone: `\n` in a line
+is an escaped line feed or a backslash and an `n` that the message held. A tool that reads the logs
+should still match a line from the start of its message: text from outside can hold a whole known
+message inside one line.
 
 ```sh
 cargo test -p heartwood-logger --locked   # the V20 class, rotation, retention and gzip
