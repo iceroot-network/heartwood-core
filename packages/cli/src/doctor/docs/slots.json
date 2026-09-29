@@ -12,12 +12,17 @@
         "the forger's log"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The forger's latest line about each of our delegates in the window (loaded as active, entering the active forging positions, due to forge, or forged) shows it active.",
+        "warn": "The latest such line shows a delegate of ours out of the active set: loaded as inactive, or no longer in an active forging position.",
+        "unknown": "The forger's log cannot be read, its file level hides info lines, or no line in the window says whether our delegates are active.",
+        "skipped": "No forger runs on this host, or no delegate of ours is known (name it with --delegate)."
       },
-      "advice": {},
+      "advice": {
+        "active": "{count} of our delegates are in an active forging position.",
+        "left": "Your delegate {delegate} is no longer in an active forging position, so it has no slots to fill. This follows the votes, not your node.",
+        "no-evidence": "No line of the forger's log in the window says whether our delegates are active. Run the doctor with a longer --window, or read the forger's log since its start.",
+        "no-delegates": "No delegate of this forger is known, so its slots are not checked. Name it with --delegate <name>."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#slots-active"
     },
     {
@@ -33,13 +38,23 @@
         "the relay's API"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "No slot of ours missed in the last 5 rounds, fewer than 1% missed over the window once it holds 100 or more of our slots, and no block the forger logged as forged that the chain holds with another generator.",
+        "warn": "One or two slots missed in the last 5 rounds; 1% or more missed over the window (with 100 or more of our slots); or one block the forger logged as forged that the chain holds with another generator or not at all.",
+        "fail": "Our last 2 slots both missed; 3 or more missed in the last 5 rounds; or two or more blocks the forger logged as forged that the chain does not hold as ours.",
+        "unknown": "The relay's store (read only while the relay runs), the chain definition or the tip's height cannot be read, or no delegate of ours is known.",
+        "skipped": "No forger runs on this host."
       },
-      "advice": {},
+      "advice": {
+        "none": "No slot missed in the window ({slots} of our slots checked).",
+        "cause-quorum": "Slot at {time} missed by {delegate}: the forger found no quorum (see quorum.forging-allowed).",
+        "cause-not-running": "Slot at {time} missed by {delegate}: the forger was not running (see process.roles and forger.start-errors).",
+        "cause-late": "Slot at {time} missed by {delegate}: the forger left less than 2,000 ms to forge, or its clock refused the slot (see clock.symptoms).",
+        "cause-not-on-chain": "Slot at {time} missed by {delegate}: the forger signed a block at height {height}, but the chain does not hold it: the relay or the network refused or lost it (see forger.link-history and the relay's log at that time).",
+        "cause-none": "Slot at {time} missed by {delegate}: the forger did not act in this slot.",
+        "cause-unread": "Slot at {time} missed by {delegate}: the forger's log cannot be read, so the cause is not known.",
+        "not-on-chain": "The forger logged {count} forged blocks that the chain holds with another generator or not at all, the last at height {height}. Either this forger signs outside its own slot, or the network refused its blocks. See forger.link-history and the relay's log at that time.",
+        "no-delegates": "No delegate of this forger is known, so its slots are not checked. Name it with --delegate <name>."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#slots-missed"
     }
   ]
