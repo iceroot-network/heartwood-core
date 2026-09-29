@@ -114,6 +114,8 @@ struct Request {
     at: i64,
     /// The route's name.
     route: String,
+    /// The caller's address.
+    caller: String,
     /// The wait, in milliseconds.
     wait: u64,
     /// How it ended.
@@ -149,12 +151,12 @@ impl Request {
                 .and_then(Value::as_u64)
                 .ok_or_else(|| format!("no {key}"))
         };
-        text("caller")?;
         let t = text("t")?;
         let end = text("end")?;
         Ok(Request {
             at: run::parse_time(t).ok_or_else(|| format!("{t:?} is not a UTC time"))?,
             route: text("route")?.to_owned(),
+            caller: text("caller")?.to_owned(),
             wait: number("waitMs")?,
             end: End::parse(end).ok_or_else(|| format!("{end:?} is not an end"))?,
             before: number("tipBefore")?,
@@ -352,6 +354,8 @@ fn client_class(route: &str) -> &'static str {
 struct StallVerdict {
     problems: Vec<String>,
     bound: usize,
+    /// The `bound` ends of the stall's own client, of `bound`.
+    bound_client: usize,
     closed: usize,
     /// The tip before the job.
     pre_tip: Option<u64>,
@@ -360,13 +364,15 @@ struct StallVerdict {
 /// Judge the requests of a relay against its stall `window`, the job having been held from
 /// `hold`'s time for its milliseconds (the commit following the hold's end), or, without it,
 /// committed at the stall's recovery after `STALL_MS` of hold; `closed_needed` when the record must
-/// show a socket closed by a client.
+/// show a socket closed by a client; `client` the address of the stall's own client, whose `bound`
+/// ends are counted apart.
 fn judge_stall(
     requests: &[Request],
     window: &Window,
     window_seconds: i64,
     hold: Option<(i64, i64)>,
     closed_needed: bool,
+    client: Option<&str>,
 ) -> StallVerdict {
     let mut v = StallVerdict::default();
     if window.end == i64::MAX {
@@ -396,6 +402,9 @@ fn judge_stall(
         .collect();
     let bounds: Vec<&&Request> = held.iter().filter(|r| r.end == End::Bound).collect();
     v.bound = bounds.len();
+    v.bound_client = (bounds.iter())
+        .filter(|r| client == Some(r.caller.as_str()))
+        .count();
     v.closed = held.iter().filter(|r| r.end == End::Closed).count();
     v.pre_tip = bounds.first().map(|r| r.before);
     if bounds.is_empty() {
@@ -788,18 +797,32 @@ fn stall(run_dir: &Path, manifest: &Manifest, relay: &Relay, window: &Window, ca
         Ok(counts) => counts.iter().any(|(_, n)| *n >= ERRORS_TO_CLOSE),
         Err(_) => true,
     };
+    // The stall's own client (the recipe's, on a socket of its own with a timeout above the
+    // bound), whose `bound` ends are counted apart from the reference relays'.
+    let steps = run::steps(run_dir).unwrap_or_default();
+    let step = steps.iter().find(|s| s.name == format!("stall-{name}"));
+    let client = step.and_then(|s| s.text("clientAddress"));
     let verdict = judge_stall(
         &relay.requests,
         window,
         manifest.window_seconds,
         hold,
         closed_needed,
+        client.as_deref(),
     );
     if verdict.problems.is_empty() {
+        let relays = verdict.bound - verdict.bound_client;
+        let by = match &client {
+            Some(ip) => format!(
+                " ({} from the stall's client at {ip}, {relays} from the reference relays)",
+                verdict.bound_client
+            ),
+            None => " (the run has no stall client)".to_owned(),
+        };
         cases.pass(
             SECTION,
             format!(
-                "{label}: {} ended `bound` and {} `closed` around the tip {}",
+                "{label}: {} ended `bound`{by} and {} `closed` around the tip {}",
                 verdict.bound,
                 verdict.closed,
                 verdict.pre_tip.unwrap_or(0)
@@ -1006,6 +1029,7 @@ mod tests {
         Request {
             at: began,
             route: "getStatus".into(),
+            caller: "198.51.100.11".into(),
             wait,
             end,
             before,
@@ -1061,9 +1085,34 @@ mod tests {
             request(120_000, 40, End::Drained, 111, 112),
             request(130_000, 0, End::None, 112, 113),
         ];
-        let v = judge_stall(&requests, &window(), 30, Some((100_000, 12_000)), true);
+        let v = judge_stall(
+            &requests,
+            &window(),
+            30,
+            Some((100_000, 12_000)),
+            true,
+            None,
+        );
         assert_eq!(v.problems, Vec::<String>::new());
         assert_eq!((v.bound, v.closed, v.pre_tip), (2, 1, Some(110)));
+    }
+
+    #[test]
+    fn the_stall_clients_bound_ends_are_counted_apart() {
+        let mut client = request(100_500, 8_010, End::Bound, 110, 110);
+        client.caller = "198.51.100.31".into();
+        let requests = vec![
+            client,
+            request(101_000, 8_030, End::Bound, 110, 110),
+            request(113_000, 0, End::None, 111, 111),
+            request(120_000, 40, End::Drained, 111, 112),
+        ];
+        let hold = Some((100_000, 12_000));
+        let v = judge_stall(&requests, &window(), 30, hold, false, Some("198.51.100.31"));
+        assert_eq!(v.problems, Vec::<String>::new());
+        assert_eq!((v.bound, v.bound_client), (2, 1));
+        let v = judge_stall(&requests, &window(), 30, hold, false, None);
+        assert_eq!((v.bound, v.bound_client), (2, 0));
     }
 
     #[test]
@@ -1080,10 +1129,10 @@ mod tests {
             request(113_500, 0, End::None, 111, 111),
             request(120_000, 40, End::Drained, 111, 112),
         ];
-        let v = judge_stall(&requests, &late, 30, Some((100_000, 12_000)), false);
+        let v = judge_stall(&requests, &late, 30, Some((100_000, 12_000)), false, None);
         assert_eq!(v.problems, Vec::<String>::new());
         // Without the relay's line the recovery is taken for the commit, and the drain is wrong.
-        let v = judge_stall(&requests, &late, 30, None, false);
+        let v = judge_stall(&requests, &late, 30, None, false, None);
         assert!(
             v.problems
                 .iter()
@@ -1096,7 +1145,14 @@ mod tests {
     #[test]
     fn a_stall_without_a_bound_end_fails() {
         let requests = vec![request(105_000, 7_000, End::Drained, 110, 111)];
-        let v = judge_stall(&requests, &window(), 30, Some((100_000, 12_000)), false);
+        let v = judge_stall(
+            &requests,
+            &window(),
+            30,
+            Some((100_000, 12_000)),
+            false,
+            None,
+        );
         assert!(
             v.problems
                 .iter()
@@ -1111,14 +1167,21 @@ mod tests {
             request(100_000, 8_010, End::Bound, 110, 110),
             request(100_100, 12_000, End::Drained, 110, 111),
         ];
-        let v = judge_stall(&drained, &window(), 30, Some((100_000, 12_000)), false);
+        let v = judge_stall(
+            &drained,
+            &window(),
+            30,
+            Some((100_000, 12_000)),
+            false,
+            None,
+        );
         assert!(v.problems.iter().any(|p| p.contains("began")));
         // A bound end after 8.9 s, and one that began 3 s before the commit.
         let late = vec![
             request(100_000, 8_900, End::Bound, 110, 110),
             request(109_000, 8_000, End::Bound, 110, 110),
         ];
-        let v = judge_stall(&late, &window(), 30, Some((100_000, 12_000)), false);
+        let v = judge_stall(&late, &window(), 30, Some((100_000, 12_000)), false, None);
         assert!(
             v.problems
                 .iter()
@@ -1138,7 +1201,14 @@ mod tests {
             request(i64::MIN, u64::MAX, End::Drained, 1, 2),
             request(113_000, 0, End::None, u64::MAX, u64::MAX),
         ];
-        let v = judge_stall(&requests, &window(), 30, Some((100_000, 12_000)), false);
+        let v = judge_stall(
+            &requests,
+            &window(),
+            30,
+            Some((100_000, 12_000)),
+            false,
+            None,
+        );
         assert!(v.problems.iter().any(|p| p.contains("go past")));
         let load = Load(vec![(i64::MIN, 1.0), (i64::MAX, 2.0)]);
         assert_eq!(load.beside(0), "no load sample");
@@ -1151,7 +1221,14 @@ mod tests {
             request(104_000, 8_000, End::Drained, 110, 110),
             request(113_000, 0, End::None, 110, 110),
         ];
-        let v = judge_stall(&requests, &window(), 30, Some((100_000, 12_000)), false);
+        let v = judge_stall(
+            &requests,
+            &window(),
+            30,
+            Some((100_000, 12_000)),
+            false,
+            None,
+        );
         assert!(
             v.problems
                 .iter()
