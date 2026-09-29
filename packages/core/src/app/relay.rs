@@ -579,6 +579,8 @@ async fn serve_api(
 ) -> Result<Option<Api>, RelayError> {
     let history = Arc::new(history);
     let lookback = config.missed_blocks_lookback;
+    let productivity = StoreProductivity::new(Arc::clone(&history), lookback)
+        .with_epoch(node.crypto.milestones.at(1).epoch());
     let context = ApiContext {
         state: handle.state(),
         pool: handle.pool(),
@@ -586,7 +588,7 @@ async fn serve_api(
         peers: Arc::clone(links) as Arc<dyn PeerList>,
         history: Arc::clone(&history),
         submit: Arc::new(Submit(handle.clone())),
-        productivity: Arc::new(StoreProductivity::new(history, lookback)),
+        productivity: Arc::new(productivity),
         node: Arc::new(node),
         config: Arc::new(config),
     };
