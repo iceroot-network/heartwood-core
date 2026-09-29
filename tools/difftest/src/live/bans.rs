@@ -11,6 +11,8 @@
 //!   reference relay whose sockets die in a kill or a partition: allowed inside a fault window of
 //!   the banned node or of a partition, a failure outside one.
 
+use std::collections::BTreeMap;
+
 use crate::live::run::{Window, parse_time};
 
 /// The socket-close reasons.
@@ -91,6 +93,135 @@ pub fn classify(ban: &Ban, node: &str, windows: &[Window]) -> Verdict {
         .map_or(Verdict::OutsideWindow, |w| {
             Verdict::InWindow(w.fault.clone())
         })
+}
+
+/// The class a line outside every fault window of its node is counted in.
+pub const OUTSIDE: &str = "outside";
+
+/// The class of the stall, whose lines are left out of every comparison.
+pub const STALL: &str = "stall";
+
+/// Counts of log events per node, window class and kind: the unit a mixed run's log lines are
+/// compared with the baseline run's.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Tally {
+    counts: BTreeMap<(String, String, String), usize>,
+}
+
+/// How one count stands against the baseline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ruling {
+    /// No more than the baseline's count, which is the number.
+    Within(usize),
+    /// More than the baseline's count, which is the number.
+    Over(usize),
+    /// Left out of the comparison, with the reason.
+    Left(&'static str),
+}
+
+/// One count and its ruling.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Finding {
+    /// The node the count is keyed by.
+    pub node: String,
+    /// The window class.
+    pub class: String,
+    /// The kind of line.
+    pub kind: String,
+    /// The count.
+    pub count: usize,
+    /// How it stands.
+    pub ruling: Ruling,
+}
+
+impl Finding {
+    /// The finding as a sentence: what was counted and against what.
+    pub fn describe(&self) -> String {
+        let what = format!(
+            "{} {} lines of {} in {}",
+            self.count, self.kind, self.node, self.class
+        );
+        match &self.ruling {
+            Ruling::Within(n) => format!("{what} (the baseline had {n})"),
+            Ruling::Over(n) => format!("{what}, more than the baseline's {n}"),
+            Ruling::Left(why) => format!("{what}, left out: {why}"),
+        }
+    }
+}
+
+impl Tally {
+    /// Count one more `kind` line of `node` in `class`.
+    pub fn add(&mut self, node: &str, class: &str, kind: &str) {
+        *self
+            .counts
+            .entry((node.to_owned(), class.to_owned(), kind.to_owned()))
+            .or_default() += 1;
+    }
+
+    /// The count of `kind` lines of `node` in `class`.
+    pub fn get(&self, node: &str, class: &str, kind: &str) -> usize {
+        self.counts
+            .get(&(node.to_owned(), class.to_owned(), kind.to_owned()))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Whether nothing was counted.
+    pub fn is_empty(&self) -> bool {
+        self.counts.is_empty()
+    }
+
+    /// Every count, in order of node, class and kind.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str, &str, usize)> {
+        self.counts
+            .iter()
+            .map(|((n, c, k), v)| (n.as_str(), c.as_str(), k.as_str(), *v))
+    }
+
+    /// Rule on every count against `baseline`, whose own fault windows are `windows`:
+    ///
+    /// - the stall's lines are left out (they are the await check's evidence);
+    /// - a count outside every window is compared with the baseline's count outside;
+    /// - a count in a class the baseline had a window of for the same node is compared with the
+    ///   baseline's count in that class;
+    /// - a restart count of a node the baseline never restarted is compared with the baseline's
+    ///   `fallback` node's restart count, when that node had a restart window;
+    /// - any other count is left out: the baseline has no fault of that class to compare with.
+    pub fn compare(&self, baseline: &Tally, windows: &[Window], fallback: &str) -> Vec<Finding> {
+        let had = |node: &str, class: &str| {
+            windows
+                .iter()
+                .any(|w| w.class() == class && w.concerns(node) && !w.is_partition())
+        };
+        self.iter()
+            .map(|(node, class, kind, count)| {
+                let ruling = if class == STALL {
+                    Ruling::Left("the stall's lines are evidence for the await check")
+                } else if class == OUTSIDE || had(node, class) {
+                    rule(count, baseline.get(node, class, kind))
+                } else if class == "restart" && had(fallback, class) {
+                    rule(count, baseline.get(fallback, class, kind))
+                } else {
+                    Ruling::Left("the baseline has no fault of that class for the node")
+                };
+                Finding {
+                    node: node.to_owned(),
+                    class: class.to_owned(),
+                    kind: kind.to_owned(),
+                    count,
+                    ruling,
+                }
+            })
+            .collect()
+    }
+}
+
+fn rule(count: usize, allowed: usize) -> Ruling {
+    if count > allowed {
+        Ruling::Over(allowed)
+    } else {
+        Ruling::Within(allowed)
+    }
 }
 
 #[cfg(test)]
@@ -176,5 +307,45 @@ mod tests {
         assert_eq!(reason_text("Rate limit exceeded"), "Rate limit exceeded");
         let json = serde_json::json!({"node": "node2", "ts": "1970-01-01T00:00:20.000Z", "ip": "198.51.100.14", "reason": close});
         assert_eq!(Ban::from_json(&json).unwrap().at, Some(20_000));
+    }
+
+    #[test]
+    fn counts_compare_per_node_and_class() {
+        let win = |fault: &str, node: &str| Window {
+            fault: fault.into(),
+            nodes: vec![node.into()],
+            start: 0,
+            end: 1,
+        };
+        let baseline_windows = [win("sigkill", "node4"), win("stall", "node2")];
+        let mut baseline = Tally::default();
+        baseline.add("node4", "restart", "close");
+        baseline.add("node4", "restart", "close");
+        baseline.add("node3", OUTSIDE, "close");
+        let mut run = Tally::default();
+        for _ in 0..3 {
+            run.add("node4", "restart", "close");
+        }
+        run.add("node2", "stall", "close");
+        run.add("node6", "restart", "close");
+        run.add("node6", "restart", "close");
+        run.add("node4", "partition", "close");
+        run.add("node3", OUTSIDE, "close");
+        run.add("node3", OUTSIDE, "close");
+        let found = run.compare(&baseline, &baseline_windows, "node4");
+        let ruling = |node: &str, class: &str| {
+            found
+                .iter()
+                .find(|f| f.node == node && f.class == class)
+                .map(|f| f.ruling.clone())
+                .unwrap()
+        };
+        assert_eq!(ruling("node4", "restart"), Ruling::Over(2));
+        assert!(matches!(ruling("node2", "stall"), Ruling::Left(_)));
+        // Node 6 was never restarted in the baseline: node 4's restart count is the allowance.
+        assert_eq!(ruling("node6", "restart"), Ruling::Within(2));
+        assert!(matches!(ruling("node4", "partition"), Ruling::Left(_)));
+        assert_eq!(ruling("node3", OUTSIDE), Ruling::Over(1));
+        assert!(found[0].describe().contains("lines of node"));
     }
 }
