@@ -17,15 +17,18 @@
 //! directory that fails it. [`judge`] is the rule itself, over metadata the caller read, so the tests
 //! can give it any owner and mode.
 
-use std::io;
+use std::fs::{self, DirBuilder, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use nix::fcntl::OFlag;
 use thiserror::Error;
 
 use crate::errors::InstanceError;
-use crate::instance::InstanceFlags;
-use crate::seams::Instance;
+use crate::instance::{InstanceFlags, resolve};
+use crate::seams::{Instance, Role};
 
 /// A marker of the reference, which the relay acts on at its next start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -39,18 +42,25 @@ pub enum Marker {
 impl Marker {
     /// The marker's file name in the temp directory, the reference's.
     pub fn file_name(self) -> &'static str {
-        todo!("the reference's file names")
+        match self {
+            Marker::ClearPool => "clear-pool.lock",
+            Marker::ClearSavedStates => "clear-saved-states.lock",
+        }
     }
 
     /// The question the command asks before it writes the marker, the reference's word for word.
+    #[rustfmt::skip]
     pub fn question(self) -> &'static str {
-        todo!("the reference's prompts")
+        match self {
+            Marker::ClearPool => "Clear all unconfirmed transactions from your pool on next startup?",
+            Marker::ClearSavedStates => "Clear all saved states so a fresh state will be generated on startup?",
+        }
     }
 }
 
 /// Asks the user a yes-or-no question.
 pub trait Confirm {
-    /// The answer to `question`; `None` when there is no terminal to ask on.
+    /// The answer to `question`; `None` when there is no answer to read (no terminal).
     fn confirm(&mut self, question: &str) -> Option<bool>;
 }
 
@@ -79,8 +89,14 @@ pub struct Meta {
 impl Meta {
     /// The metadata of `path` (`symlink_metadata`).
     pub fn of(path: &Path) -> io::Result<Meta> {
-        let _ = path;
-        todo!("the path's own metadata")
+        let meta = fs::symlink_metadata(path)?;
+        let kind = match (meta.is_file(), meta.is_dir()) {
+            (true, _) => Kind::File,
+            (_, true) => Kind::Directory,
+            _ => Kind::Other,
+        };
+        let (uid, mode) = (meta.uid(), meta.mode() & 0o7777);
+        Ok(Meta { kind, uid, mode })
     }
 }
 
@@ -132,7 +148,7 @@ pub enum RecoveryError {
     /// The instance could not be resolved.
     #[error(transparent)]
     Instance(#[from] InstanceError),
-    /// The temp directory fails the trust rule.
+    /// The temp directory, or a marker already in it, fails the trust rule.
     #[error("{}: {why}", path.display())]
     Untrusted {
         /// The directory.
@@ -153,8 +169,18 @@ pub enum RecoveryError {
 /// The trust rule on `path`, whose metadata is `meta`: it must be of `kind`, belong to the user
 /// `owner` and not be writable by every user.
 pub fn judge(path: &Path, meta: &Meta, kind: Kind, owner: u32) -> Trust {
-    let _ = (path, meta, kind, owner);
-    todo!("the trust rule")
+    let Meta { uid, mode, .. } = *meta;
+    let why = if meta.kind != kind {
+        Untrusted::WrongKind { expected: kind }
+    } else if uid != owner {
+        Untrusted::OtherOwner { uid, owner }
+    } else if mode & 0o002 != 0 {
+        Untrusted::WorldWritable { mode }
+    } else {
+        return Trust::Trusted;
+    };
+    let path = path.to_owned();
+    Trust::Untrusted { path, why }
 }
 
 /// The relay's check of `marker` at its start, for the relay whose data directory is `data`: the
@@ -162,29 +188,72 @@ pub fn judge(path: &Path, meta: &Meta, kind: Kind, owner: u32) -> Trust {
 /// `None` when the marker does not exist, or `<data>/run` does not (no user to compare with): then
 /// nothing is honoured, and nothing is said.
 pub fn marker_trust(marker: &Path, data: &Path) -> Option<Trust> {
-    let _ = (marker, data);
-    todo!("the relay's side of the rule")
+    let owner = fs::metadata(data.join("run")).ok()?.uid();
+    let dir = marker.parent().unwrap_or(Path::new("."));
+    let file = judge(marker, &Meta::of(marker).ok()?, Kind::File, owner);
+    let dir = judge(dir, &Meta::of(dir).ok()?, Kind::Directory, owner);
+    Some(if file == Trust::Trusted { dir } else { file })
+}
+
+/// The error of a failed file operation on `path`.
+fn io_at(path: &Path) -> impl FnOnce(io::Error) -> RecoveryError {
+    let path = path.to_owned();
+    |source| RecoveryError::Io { path, source }
 }
 
 /// The commands' check of the temp directory `temp` before a marker is written into it: the rule
 /// on a directory, with the owner of `<data>/run` as the user, or the process's own user when the
 /// relay has never run.
 pub fn temp_trust(temp: &Path, data: &Path) -> Result<Trust, RecoveryError> {
-    let _ = (temp, data);
-    todo!("the commands' side of the rule")
+    let owner = fs::metadata(data.join("run"))
+        .map_or_else(|_| nix::unistd::Uid::current().as_raw(), |m| m.uid());
+    let meta = Meta::of(temp).map_err(io_at(temp))?;
+    Ok(judge(temp, &meta, Kind::Directory, owner))
 }
 
 /// Write `marker` for `instance` (a relay), asking `confirm` unless `force`: the temp directory
 /// created with mode 0700 when it is missing, refused when it fails the trust rule, and the empty
-/// marker created without following a symbolic link. The marker's path.
+/// marker created without following a symbolic link (one that exists is kept, and refused when the
+/// relay would ignore it). The marker's path.
 pub fn request(
     instance: &Instance,
     marker: Marker,
     force: bool,
     confirm: &mut dyn Confirm,
 ) -> Result<PathBuf, RecoveryError> {
-    let _ = (instance, marker, force, confirm);
-    todo!("the marker's request")
+    if !force && confirm.confirm(marker.question()) != Some(true) {
+        return Err(RecoveryError::NotConfirmed);
+    }
+    let temp = &instance.paths.temp;
+    let made = DirBuilder::new().recursive(true).mode(0o700).create(temp);
+    made.map_err(io_at(temp))?;
+    if let Trust::Untrusted { path, why } = temp_trust(temp, &instance.paths.data)? {
+        return Err(RecoveryError::Untrusted { path, why });
+    }
+    let path = temp.join(marker.file_name());
+    let mut file = OpenOptions::new();
+    file.write(true).create(true).truncate(false).mode(0o600);
+    file.custom_flags(OFlag::O_NOFOLLOW.bits());
+    file.open(&path).map_err(io_at(&path))?;
+    match marker_trust(&path, &instance.paths.data) {
+        Some(Trust::Untrusted { path, why }) => Err(RecoveryError::Untrusted { path, why }),
+        _ => Ok(path),
+    }
+}
+
+/// The confirmation on standard input: the question and `(y/N)` on standard output, then a line
+/// read from standard input (the reference's prompt reads a pipe as it reads a terminal). As the
+/// reference's prompt, the first `y` or `n` typed decides, in either case, other characters are
+/// ignored, and the end of the line before either is a no; no answer when nothing can be read.
+impl Confirm for io::Stdin {
+    fn confirm(&mut self, question: &str) -> Option<bool> {
+        print!("{question} (y/N) ");
+        io::stdout().flush().ok()?;
+        let mut line = String::new();
+        let read = self.read_line(&mut line).ok()?;
+        let key = line.chars().find(|c| "yYnN\n\r".contains(*c));
+        (read > 0).then_some(matches!(key, Some('y' | 'Y')))
+    }
 }
 
 /// `pool clear` (`marker` [`Marker::ClearPool`]) or `state clear` ([`Marker::ClearSavedStates`]):
@@ -192,6 +261,12 @@ pub fn request(
 /// directory; the question on a terminal unless `force`; [`request`]; silence on success, the
 /// error's message and exit status 1 otherwise.
 pub fn clear(flags: &InstanceFlags, marker: Marker, force: bool) -> ExitCode {
-    let _ = (flags, marker, force);
-    todo!("the command")
+    let env = |name: &str| std::env::var(name).ok();
+    let home = std::env::home_dir().unwrap_or_default();
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let done = resolve(Role::Relay, flags, &env, &home, &cwd)
+        .map_err(RecoveryError::from)
+        .and_then(|instance| request(&instance, marker, force, &mut io::stdin()))
+        .inspect_err(|error| eprintln!("{error}"));
+    ExitCode::from(u8::from(done.is_err()))
 }
