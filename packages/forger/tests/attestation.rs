@@ -88,7 +88,8 @@ fn the_references_statuses_are_signed_with_every_offered_key_in_order() {
     let preimages = preimages();
     assert_eq!(preimages.len(), 5);
     for (slot, status) in preimages {
-        let (attester, _) = make_attester(&["delegate a", "delegate b"], ZERO, slot);
+        let declared = ["delegate b", "delegate a", "delegate b"];
+        let (attester, _) = make_attester(&declared, ZERO, slot);
         let offered = [
             public("delegate b"),
             public("delegate a"),
@@ -101,7 +102,8 @@ fn the_references_statuses_are_signed_with_every_offered_key_in_order() {
         for (key, signature) in offered.iter().zip(&signed.signatures) {
             assert!(verify_attestation(status.as_bytes(), key, signature));
         }
-        // The legacy scheme is deterministic: a duplicated key signs the same signature twice.
+        // The legacy scheme is deterministic: a key declared and offered twice signs the same
+        // signature twice.
         assert_eq!(signed.signatures[0], signed.signatures[2]);
         assert!(
             attester
@@ -208,17 +210,52 @@ fn a_status_of_another_network_or_for_a_key_it_does_not_hold_is_refused() {
     ));
 }
 
+#[test]
+fn an_offer_of_a_key_more_often_than_declared_or_of_an_oversized_status_is_refused() {
+    let (slot, status) = preimages().remove(0);
+    let (attester, _) = make_attester(&["delegate a", "delegate b"], ZERO, slot);
+    let (a, b) = (public("delegate a"), public("delegate b"));
+    assert!(
+        attester
+            .sign_offer(&status, &[b.clone(), a.clone()])
+            .is_ok()
+    );
+    // Each declared key signs at most as often as it is declared.
+    let copies = vec![a.clone(); 1_000];
+    assert_eq!(
+        attester.sign_offer(&status, &copies),
+        Err(AttestError::Repeated { public_key: a })
+    );
+    // A canonical status whose explorer text is 1 MiB is refused before it is read.
+    let explorer = format!(r#""explorer":"{}""#, "e".repeat(1024 * 1024));
+    let at = status.find(r#""explorer":"#).unwrap();
+    let end = at + status[at + 12..].find('"').unwrap() + 13;
+    let large = format!("{}{explorer}{}", &status[..at], &status[end..]);
+    assert!(heartwood_p2p_wire::status::parse_preimage(large.as_bytes()).is_ok());
+    assert_eq!(
+        attester.sign_offer(&large, std::slice::from_ref(&b)),
+        Err(AttestError::Oversized {
+            length: large.len()
+        })
+    );
+}
+
 /// A relay's attestation routes, answering from a script and recording what was posted.
 #[derive(Default)]
 struct ScriptedRelay {
     answers: Mutex<VecDeque<Result<StatusToSignResponse, RelayError>>>,
     polls: Mutex<Vec<Vec<String>>>,
+    polled_at: Mutex<Vec<tokio::time::Instant>>,
     posted: Mutex<Vec<StatusSignatures>>,
 }
 
 impl AttestLink for ScriptedRelay {
     async fn status_to_sign(&self, keys: &[String]) -> Result<StatusToSignResponse, RelayError> {
         self.polls.lock().unwrap().push(keys.to_vec());
+        self.polled_at
+            .lock()
+            .unwrap()
+            .push(tokio::time::Instant::now());
         let next = self.answers.lock().unwrap().pop_front();
         match next {
             Some(answer) => answer,
@@ -270,10 +307,35 @@ async fn the_long_poll_answers_each_good_offer_and_stops_at_the_shutdown() {
     assert_eq!(posted.len(), 2, "the refused offer is not answered");
     assert!(posted.iter().all(|p| p.offer == offer_hash(&status)));
     let polls = relay.polls.lock().unwrap();
-    // Five scripted answers, the error's pause of 1 s, then long polls of 10 s from 1 s, 11 s
-    // and 21 s.
+    // Five scripted answers, the pauses of 250 ms after the Unchanged and of 1 s after the
+    // error, then long polls of 10 s from 1.25 s, 11.25 s and 21.25 s.
     assert_eq!(polls.len(), 8);
     let declared = vec![public("delegate a"), public("delegate a")];
     assert!(polls.iter().all(|keys| *keys == declared));
     assert!(RETRY <= Duration::from_secs(5));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_relay_that_answers_unchanged_at_once_is_polled_four_times_a_second_at_most() {
+    let (slot, _) = preimages().remove(0);
+    let (attester, _) = make_attester(&["delegate a"], ZERO, slot);
+    let relay = ScriptedRelay::default();
+    let unchanged = (0..8).map(|_| Ok(StatusToSignResponse::Unchanged));
+    relay.answers.lock().unwrap().extend(unchanged);
+    let (trigger, shutdown) = ShutdownSignal::new();
+    let stop = async {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        trigger.trigger();
+    };
+    let started = tokio::time::Instant::now();
+    tokio::join!(attester.run(&relay, shutdown), stop);
+    // Eight quick answers, then the long poll of the ninth.
+    let polled: Vec<Duration> = (relay.polled_at.lock().unwrap().iter())
+        .map(|at| *at - started)
+        .collect();
+    let floor = heartwood_forger::attestation::UNCHANGED_FLOOR;
+    assert_eq!(polled.len(), 9);
+    for (n, at) in polled.iter().enumerate() {
+        assert_eq!(*at, floor * u32::try_from(n).unwrap());
+    }
 }

@@ -936,9 +936,11 @@ first (the bytes a slot gets stay the reference's):
 - a relay hostname with a CIDR suffix (`127.0.0.1/8`), which the reference's schema accepts, and a
   `delay` that is not a whole number of milliseconds, which the reference reads as no delay, are
   refused at start; `localAddress` is Heartwood's own option;
-- the attester signs an offer only when its text reads back as a status tree and writes back to
-  the same bytes, for the forger's network, with a height equal to its header's and a slot within
-  one of the forger's clock, and only for the forger's own keys;
+- the attester signs an offer only when its text, of at most 16 KiB, reads back as a status tree
+  and writes back to the same bytes, for the forger's network, with a height equal to its
+  header's and a slot within one of the forger's clock, and only for the forger's own keys, each
+  offered at most as often as the key file lists it; after an `Unchanged` answer it polls again no
+  sooner than 250 ms after the poll began;
 - the fields of an internal body that the forger uses are read when the body arrives, so a missing
   or out-of-range field fails the call, where the reference fails later.
 
@@ -984,7 +986,7 @@ The fuzz targets:
 | Target | Input | Checks | Seeded from |
 |---|---|---|---|
 | `internal_body` | a selector byte (modulo 9: the nine internal bodies) and the body's JSON text | no panic; an accepted body writes bytes that read back to a body that writes the same bytes | the round and network-state bodies of a vector run's V29 records (`FORGER_SEEDS`) |
-| `status_to_sign` | an offer: arbitrary text, or a status tree in canonical form perhaps cut or changed by one byte, and a list of keys | no panic; only an offer whose text is the canonical form of a status for the attester's network, height and slot window, with the attester's own keys, is signed, and every such offer is | none (the target builds its status trees) |
+| `status_to_sign` | an offer: arbitrary text, or a status tree in canonical form perhaps cut or changed by one byte, and a list of keys | no panic; only an offer whose text is the canonical form of a status of at most 16 KiB for the attester's network, height and slot window, with the attester's own keys each at most as often as declared, is signed, and every such offer is | none (the target builds its status trees) |
 
 ## heartwood-cli
 
