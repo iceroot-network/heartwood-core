@@ -836,8 +836,10 @@ reference lacks, which no honest peer that reads its socket meets:
 - a socket whose queued and unwritten bytes pass 40 MiB (twice the largest message) is dropped,
   without a ban;
 - the heartbeat counts an answer being written as the socket's activity only while its bytes
-  move, so a peer that stops reading is closed at the second check after its last message, where
-  the reference keeps it while anything waits to be written; a slow reader keeps its socket;
+  move, where the reference keeps a socket while anything waits to be written: a check that finds
+  the bytes that waited at the check before still unwritten drops the socket, whatever the peer
+  sends (a nes ping included), so a peer that stops reading is dropped 15 to 30 s after its
+  writes stall; a slow reader keeps its socket;
 - the writes still queued when a session ends stop 30 s later, the WebSocket library's close
   timeout;
 - the ban list drops its expired bans once it holds more than 10,000 addresses, where the

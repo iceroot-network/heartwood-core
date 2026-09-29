@@ -349,8 +349,19 @@ pub struct FrameWriter {
     progress: Arc<Progress>,
     /// The writing task; none once it was aborted.
     task: Option<AbortHandle>,
-    /// The bytes written at the last heartbeat check.
-    checked: AtomicU64,
+    /// The bytes written, and those queued, at the last heartbeat check.
+    checked: (AtomicU64, AtomicU64),
+}
+
+/// What the heartbeat's check finds of a socket's writes since the check before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Writes {
+    /// Bytes were written, of a frame still being written or of one that counts as activity.
+    Active,
+    /// Nothing that shows the socket active.
+    Idle,
+    /// Bytes waited at the check before and none was written since: the peer does not read.
+    Stalled,
 }
 
 /// How far the writes are, in bytes counted from the WebSocket's opening.
@@ -388,7 +399,7 @@ impl FrameWriter {
             queue,
             progress,
             task: Some(task.abort_handle()),
-            checked: AtomicU64::new(0),
+            checked: (AtomicU64::new(0), AtomicU64::new(0)),
         }
     }
 
@@ -402,19 +413,25 @@ impl FrameWriter {
         }
     }
 
-    /// The heartbeat's check: whether the writes show the socket active since the check before.
-    /// They do when bytes were written since then and either some are still queued (the
-    /// reference's `_sending`, of a peer that reads) or a frame that counts as activity was
-    /// written to its end since then (its `_flush` marking the socket). A queue that did not move
-    /// shows nothing: a peer that stops reading is not kept by what waits for it.
-    pub fn check(&self) -> bool {
-        let written = self.written();
-        let before = self.checked.swap(written, Ordering::AcqRel);
-        let (queued, activity) = (
-            self.queued(),
-            self.progress.activity.load(Ordering::Acquire),
-        );
-        written != u64::MAX && written > before && (written < queued || activity > before)
+    /// The heartbeat's check of the writes since the check before. They show the socket active
+    /// when bytes were written since then and either some are still queued (the reference's
+    /// `_sending`, of a peer that reads) or a frame that counts as activity was written to its
+    /// end since then (its `_flush` marking the socket). A queue that did not move shows nothing:
+    /// a peer that stops reading is not kept by what waits for it, and when bytes that waited at
+    /// the check before are still unwritten, the writes are stalled.
+    pub fn check(&self) -> Writes {
+        let (written, queued) = (self.written(), self.queued());
+        let before = self.checked.0.swap(written, Ordering::AcqRel);
+        let waiting = self.checked.1.swap(queued, Ordering::AcqRel);
+        let activity = self.progress.activity.load(Ordering::Acquire);
+        let active = written > before && (written < queued || activity > before);
+        if written == before && written < waiting {
+            Writes::Stalled
+        } else if written != u64::MAX && active {
+            Writes::Active
+        } else {
+            Writes::Idle
+        }
     }
 
     /// The bytes queued and not yet written.

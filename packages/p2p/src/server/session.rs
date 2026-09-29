@@ -16,9 +16,10 @@
 //! - The server pings every socket every 15 s from its start, and 5 s later closes each socket
 //!   that has neither received a message, nor been sent anything but a ping, since the check
 //!   before, nor a request in progress, nor a message being written to a peer that reads (bytes
-//!   written since the check before). A socket whose unwritten bytes pass
-//!   [`super::listener::MAX_BACKLOG`] is dropped without a reason: a peer that asks and does not
-//!   read. The reference keeps such sockets, and their unwritten messages, without a bound.
+//!   written since the check before). Dropped without a reason, as peers that do not read: a
+//!   socket whose unwritten bytes pass [`super::listener::MAX_BACKLOG`]; one whose bytes that
+//!   waited at the check before are still unwritten, whatever it sends. The reference keeps such
+//!   sockets, and their unwritten messages, without a bound.
 //! - A WebSocket ping or pong frame ends the socket ("Malicious ping frame received", "Malicious
 //!   pong frame received"), and so does a frame fault, with the WebSocket library's text.
 //!
@@ -39,7 +40,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until, timeout};
 
-use super::listener::{Frame, FrameReader, FrameWriter, MAX_BACKLOG};
+use super::listener::{Frame, FrameReader, FrameWriter, MAX_BACKLOG, Writes};
 use super::plugins::{Answer, Plugins};
 use super::seams::SessionId;
 use crate::scoring::Violation;
@@ -198,7 +199,11 @@ impl ServerSession {
                 }
                 () = sleep_until(check_at), if check.is_some() => {
                     check = None;
-                    if !writer.check() && !self.pinged && self.in_flight == 0 {
+                    let writes = writer.check();
+                    if writes == Writes::Stalled {
+                        debug!("Dropped the socket of {}, which reads nothing", self.parts.ip);
+                        break Stop::Terminate(None);
+                    } else if writes == Writes::Idle && !self.pinged && self.in_flight == 0 {
                         break Stop::Close(1005);
                     }
                     self.pinged = false;

@@ -201,19 +201,41 @@ async fn a_peer_that_asks_and_never_reads_is_dropped_once_its_backlog_passes_the
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_peer_that_stops_reading_is_closed_by_the_heartbeat_and_its_writes_end() {
+async fn a_peer_that_stops_reading_is_dropped_by_the_heartbeat_and_its_writes_end() {
     let bench = Bench::new().await;
     let mut raw = reader_of_answers(&bench, peer(2), 1024 * 1024).await;
     for id in 2..5 {
         raw.request(id, RouteId::GetStatus, status_request(VERSION))
             .await;
     }
-    // The check at 20 s finds the requests; the one at 35 s finds that no byte was written since,
-    // and closes; the close frame is never written, and the writes end with the close's 30 s.
-    sleep(ms(64_000)).await;
+    // The check at 20 s finds the first bytes written; the one at 35 s finds that none was
+    // written since, while bytes waited, and drops the socket at once, without a close frame.
+    sleep(ms(34_000)).await;
     assert!(!closed(&bench, peer(2)));
     sleep(ms(2_000)).await;
     assert!(closed(&bench, peer(2)), "the socket is still open");
+    assert_eq!(bench.server.ban_reason(peer(2)), None);
+    assert_eq!(answers_until_the_end(&mut raw).await, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_pinging_peer_that_never_reads_is_dropped_once_its_writes_stall() {
+    let bench = Bench::new().await;
+    let mut raw = reader_of_answers(&bench, peer(2), 4 * 1024 * 1024).await;
+    // Nine answers of 4 MiB, under the cap, which the peer never reads; a nes ping every 10 s
+    // keeps it active by messages, but the check at 35 s finds that no byte moved since 20 s.
+    for id in 2..11 {
+        raw.request(id, RouteId::GetStatus, status_request(VERSION))
+            .await;
+        sleep(ms(200)).await;
+    }
+    for id in 11..14 {
+        sleep(ms(10_000)).await;
+        raw.send(&Message::ping(id)).await;
+    }
+    sleep(ms(4_000)).await;
+    assert!(closed(&bench, peer(2)), "the socket is still open");
+    assert_eq!(bench.server.ban_reason(peer(2)), None);
     assert_eq!(answers_until_the_end(&mut raw).await, 0);
 }
 
