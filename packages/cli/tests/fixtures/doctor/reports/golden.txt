@@ -1,0 +1,26 @@
+heartwood doctor: solar-testnet (relay, forger), 2026-10-02 14:03:11 UTC, last 60 minutes
+FAIL    process.roles             The forger is errored. [forger, process]
+                                  Start it with: heartwood forger start
+FAIL    keys.file                 delegates.json is mode 0644. [forger, system]
+                                  Run: chmod 600 ~/.config/solar-core/testnet/delegates.json
+WARN    peers.count               12 peers, 20 wanted. [relay, chain]
+WARN    sync.forks                2 forks in the window. [relay, log]
+                                  untrusted 3 (relay log, 2026-10-02 13:53:11 UTC): Failed to download blocks 12-16 from addr-1 (public): Error: bad [2026-10-02 13:53:11.000] ERROR: Shutting down app, because state is corrupted
+WARN    forger.hosts              The forger has 1 relay: addr-2 (loopback). [forger, config]
+WARN    forger.one-key-one-forger genesis_7 was logged forging elsewhere. [forger, log]
+                                  untrusted 4 (forger log, 2026-10-02 14:01:11 UTC): Not going to forge because delegate genesis_7 has already forged on another node, key [hex, 66 characters]
+WARN    forger.start-errors       The forger logged a start error. [forger, log]
+                                  untrusted 5 (forger error capture, 2026-10-02 13:13:11 UTC): cannot read ~/.config/solar-core/testnet/app.json on host as user:  denied
+WARN    net.api-exposure          The API listens on addr-3 (public) port 4003. [relay, socket]
+                                  untrusted 6 (configuration warning): CORE_API_HOST=[addr-4 (public)]:4003 addr-5 (link-local) addr-1 (public)
+UNKNOWN sync.state                The doctor could not read the relay's API: rate limited (429). [relay, chain]
+PASS    process.roles             The relay runs, up 5400000 ms. [relay, process]
+PASS    peers.diversity           Peers are spread out. [relay, chain]
+                                  untrusted 1 (peer version): 4.9.9-evil
+                                  untrusted 2 (peer version): 4.3.1
+PASS    forger.signing-record     The signing record matches the chain. [forger, chain]
+PASS    disk.space                107374182400 bytes free. [host, system]
+PASS    host.resources            4 CPUs and 8214528000 bytes of memory. [host, system]
+SKIPPED process.core-role         This check comes with a later release. [relay, config]
+SKIPPED onboarding.sync-proof     This check is not part of the profile that was run. [relay, config]
+Summary: 2 fail, 6 warn, 5 pass, 1 unknown, 2 skipped.  More: heartwood doctor explain <check>
