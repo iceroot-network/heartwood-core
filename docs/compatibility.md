@@ -1464,9 +1464,12 @@ is done), `clear-pool.lock` clears the pool's storage, `CORE_RESET_DATABASE` emp
 start is then a first start) and the pool, and `CORE_RESET_POOL` empties the pool, at every start
 while they are set. Two differences keep another local user from using the temp directory, which
 is under the shared `/tmp` by default: the relay does not make that directory (the reference does,
-and refuses to start when it cannot), and it honours a marker only when the marker is a file, and
-it and its directory belong to the user of the data directory and are not writable by every user;
-another marker is ignored with a warning. The pool's online record is loaded at every start, whatever the restore path, so
+and refuses to start when it cannot), and it honours a marker only when the marker is a file with
+no other hard link, and it and its directory belong to the user of the data directory and are not
+writable by every user, the directory not by a group other than the user's own either (on a system
+whose users share a primary group, set `CORE_PATH_TEMP` to a directory of mode 0700, which `pool
+clear` and `state clear` create when it is missing); another marker is ignored with a warning that
+says why. The pool's online record is loaded at every start, whatever the restore path, so
 a vote for a delegate that announced itself before the stop is admitted at once; a reference relay
 started without its saved state refuses it until a peer announces the delegate again.
 

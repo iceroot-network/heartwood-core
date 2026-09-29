@@ -7,7 +7,7 @@ mod common;
 
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -174,14 +174,12 @@ fn a_directory_made_under_umask_002_is_honoured_and_one_any_user_may_write_is_no
     let instance = command_instance(&setup);
     fs::remove_dir_all(&config.paths.temp).ok();
     mkdir_umask_002(&config.paths.temp);
-    assert_eq!(
-        fs::metadata(&config.paths.temp)
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o775
-    );
+    let made = fs::metadata(&config.paths.temp).unwrap();
+    assert_eq!(made.permissions().mode() & 0o777, 0o775);
+    if !heartwood_cli::recovery::own_group(made.uid(), made.gid()) {
+        eprintln!("skipped: the user's files get a shared group, whose members may write there");
+        return;
+    }
     assert_eq!(restored(&config).unwrap().1.path, RestorePath::FirstStart);
     request(&instance, Marker::ClearSavedStates, true, &mut Yes).unwrap();
     // The file is 0600 and its directory 0775: the group's write bit does not matter.

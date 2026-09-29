@@ -12,10 +12,12 @@
 //! One trust rule serves the commands and the relay's start (core's `markers`): a path is trusted
 //! when it is of its kind (a file for the marker, a directory for its directory; a symbolic link is
 //! neither), belongs to the user who owns the relay's `<data>/run` directory, and is not writable by
-//! every user. The group's write bit is allowed, as a umask of 002 gives it to the user's own group.
-//! The relay ignores a marker that fails the rule, with a warning; the commands refuse a temp
-//! directory that fails it. [`judge`] is the rule itself, over metadata the caller read, so the tests
-//! can give it any owner and mode.
+//! every user. The group's write bit is allowed on the file, and on the directory only when the
+//! group is the user's own (named as the user, with no other member), as a umask of 002 gives it: a
+//! member of a shared group could rename or link a file of the user into a directory the group may
+//! write. The marker must have no other hard link. The relay ignores a marker that fails the rule,
+//! with a warning; the commands refuse a temp directory that fails it. [`judge`] is the rule itself,
+//! over metadata the caller read, so the tests can give it any owner and mode.
 
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, Write};
@@ -84,6 +86,12 @@ pub struct Meta {
     pub uid: u32,
     /// The permission bits.
     pub mode: u32,
+    /// The group id.
+    pub gid: u32,
+    /// Whether the group is the owner's own ([`own_group`]).
+    pub own_group: bool,
+    /// The number of hard links.
+    pub links: u64,
 }
 
 impl Meta {
@@ -95,9 +103,27 @@ impl Meta {
             (_, true) => Kind::Directory,
             _ => Kind::Other,
         };
-        let (uid, mode) = (meta.uid(), meta.mode() & 0o7777);
-        Ok(Meta { kind, uid, mode })
+        let (uid, mode, gid) = (meta.uid(), meta.mode() & 0o7777, meta.gid());
+        let (own_group, links) = (own_group(uid, gid), meta.nlink());
+        Ok(Meta {
+            kind,
+            uid,
+            mode,
+            gid,
+            own_group,
+            links,
+        })
     }
+}
+
+/// Whether the group `gid` is the user `uid`'s own: named as the user, with no other member.
+pub fn own_group(uid: u32, gid: u32) -> bool {
+    use nix::unistd::{Gid, Group, Uid, User};
+    let user = User::from_uid(Uid::from_raw(uid)).ok().flatten();
+    let group = Group::from_gid(Gid::from_raw(gid)).ok().flatten();
+    user.zip(group).is_some_and(|(user, group)| {
+        group.name == user.name && group.mem.iter().all(|member| *member == user.name)
+    })
 }
 
 /// Why a path is not trusted.
@@ -122,6 +148,20 @@ pub enum Untrusted {
     WorldWritable {
         /// Its permission bits.
         mode: u32,
+    },
+    /// A directory the members of a group other than its owner's own may write.
+    #[error("the members of group {gid} may write it (mode {mode:o})")]
+    GroupWritable {
+        /// Its permission bits.
+        mode: u32,
+        /// Its group.
+        gid: u32,
+    },
+    /// A marker with another hard link, which a user who may read and write it can make.
+    #[error("it has {links} hard links")]
+    Linked {
+        /// Its hard links.
+        links: u64,
     },
 }
 
@@ -167,15 +207,26 @@ pub enum RecoveryError {
 }
 
 /// The trust rule on `path`, whose metadata is `meta`: it must be of `kind`, belong to the user
-/// `owner` and not be writable by every user.
+/// `owner` and not be writable by every user; a directory not by a group other than the user's
+/// own either; a file must have no other hard link.
 pub fn judge(path: &Path, meta: &Meta, kind: Kind, owner: u32) -> Trust {
-    let Meta { uid, mode, .. } = *meta;
+    let Meta {
+        uid,
+        mode,
+        gid,
+        links,
+        ..
+    } = *meta;
     let why = if meta.kind != kind {
         Untrusted::WrongKind { expected: kind }
     } else if uid != owner {
         Untrusted::OtherOwner { uid, owner }
     } else if mode & 0o002 != 0 {
         Untrusted::WorldWritable { mode }
+    } else if kind == Kind::Directory && mode & 0o020 != 0 && !meta.own_group {
+        Untrusted::GroupWritable { mode, gid }
+    } else if kind == Kind::File && links > 1 {
+        Untrusted::Linked { links }
     } else {
         return Trust::Trusted;
     };
@@ -188,7 +239,7 @@ pub fn judge(path: &Path, meta: &Meta, kind: Kind, owner: u32) -> Trust {
 /// `None` when the marker does not exist, or `<data>/run` does not (no user to compare with): then
 /// nothing is honoured, and nothing is said.
 pub fn marker_trust(marker: &Path, data: &Path) -> Option<Trust> {
-    let owner = fs::metadata(data.join("run")).ok()?.uid();
+    let owner = relay_user(data)?;
     let dir = marker.parent().unwrap_or(Path::new("."));
     let file = judge(marker, &Meta::of(marker).ok()?, Kind::File, owner);
     let dir = judge(dir, &Meta::of(dir).ok()?, Kind::Directory, owner);
@@ -205,10 +256,14 @@ fn io_at(path: &Path) -> impl FnOnce(io::Error) -> RecoveryError {
 /// on a directory, with the owner of `<data>/run` as the user, or the process's own user when the
 /// relay has never run.
 pub fn temp_trust(temp: &Path, data: &Path) -> Result<Trust, RecoveryError> {
-    let owner = fs::metadata(data.join("run"))
-        .map_or_else(|_| nix::unistd::Uid::current().as_raw(), |m| m.uid());
+    let owner = relay_user(data).unwrap_or_else(|| nix::unistd::Uid::current().as_raw());
     let meta = Meta::of(temp).map_err(io_at(temp))?;
     Ok(judge(temp, &meta, Kind::Directory, owner))
+}
+
+/// The relay's user: the owner of `<data>/run`, if the relay has run.
+fn relay_user(data: &Path) -> Option<u32> {
+    Some(fs::metadata(data.join("run")).ok()?.uid())
 }
 
 /// Write `marker` for `instance` (a relay), asking `confirm` unless `force`: the temp directory

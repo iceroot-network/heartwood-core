@@ -8,8 +8,8 @@ use std::process::Command;
 
 use heartwood_cli::instance::{InstanceFlags, resolve};
 use heartwood_cli::recovery::{
-    Confirm, Kind, Marker, Meta, RecoveryError, Trust, Untrusted, judge, marker_trust, request,
-    temp_trust,
+    Confirm, Kind, Marker, Meta, RecoveryError, Trust, Untrusted, judge, marker_trust, own_group,
+    request, temp_trust,
 };
 use heartwood_cli::seams::{Instance, Role};
 
@@ -78,6 +78,12 @@ fn mode(path: &Path) -> u32 {
 
 fn me() -> u32 {
     fs::metadata(env!("CARGO_TARGET_TMPDIR")).unwrap().uid()
+}
+
+/// The group of the files this process makes, and whether it is the user's own.
+fn my_group() -> (u32, bool) {
+    let gid = nix::unistd::Gid::effective().as_raw();
+    (gid, own_group(me(), gid))
 }
 
 /// `path` made with a umask of 002 (a child process, so that no other test sees the umask).
@@ -283,6 +289,15 @@ fn a_group_writable_directory_of_the_users_own_umask_is_trusted() {
     mkdir_umask_002(&tmp);
     assert_eq!(mode(&tmp), 0o775);
     let instance = simple(&home);
+    let (gid, own) = my_group();
+    if !own {
+        // A user whose files get a shared group: its members could plant a marker there.
+        let why = Untrusted::GroupWritable { mode: 0o775, gid };
+        let path = tmp.clone();
+        let verdict = temp_trust(&tmp, &instance.paths.data).unwrap();
+        assert_eq!(verdict, Trust::Untrusted { path, why });
+        return;
+    }
     assert_eq!(
         temp_trust(&tmp, &instance.paths.data).unwrap(),
         Trust::Trusted
@@ -298,7 +313,100 @@ fn a_group_writable_directory_of_the_users_own_umask_is_trusted() {
 }
 
 fn meta(kind: Kind, uid: u32, mode: u32) -> Meta {
-    Meta { kind, uid, mode }
+    Meta {
+        kind,
+        uid,
+        mode,
+        gid: 7,
+        own_group: true,
+        links: 1,
+    }
+}
+
+#[test]
+fn a_directory_a_shared_group_may_write_and_a_linked_marker_are_not_trusted() {
+    let path = Path::new("/x");
+    let bad = |why| Trust::Untrusted {
+        path: path.to_owned(),
+        why,
+    };
+    let (file, dir) = (Kind::File, Kind::Directory);
+    let shared = |kind, mode| Meta {
+        own_group: false,
+        gid: 100,
+        ..meta(kind, 7, mode)
+    };
+    assert_eq!(
+        judge(path, &shared(dir, 0o775), dir, 7),
+        bad(Untrusted::GroupWritable {
+            mode: 0o775,
+            gid: 100
+        })
+    );
+    assert_eq!(judge(path, &shared(dir, 0o755), dir, 7), Trust::Trusted);
+    assert_eq!(judge(path, &meta(dir, 7, 0o775), dir, 7), Trust::Trusted);
+    // The file's own group bit lets no one place it: its directory decides that.
+    assert_eq!(judge(path, &shared(file, 0o664), file, 7), Trust::Trusted);
+    let linked = Meta {
+        links: 2,
+        ..meta(file, 7, 0o600)
+    };
+    assert_eq!(
+        judge(path, &linked, file, 7),
+        bad(Untrusted::Linked { links: 2 })
+    );
+    let directory = Meta {
+        links: 5,
+        ..meta(dir, 7, 0o700)
+    };
+    assert_eq!(judge(path, &directory, dir, 7), Trust::Trusted);
+}
+
+#[test]
+fn the_relay_ignores_a_marker_in_a_directory_of_another_group_or_one_hard_linked_there() {
+    let home = scratch("group-and-link");
+    let (tmp, data) = (home.join("tmp"), home.join("data"));
+    fs::create_dir_all(&tmp).unwrap();
+    fs::create_dir_all(data.join("run")).unwrap();
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o700)).unwrap();
+    let marker = tmp.join("clear-pool.lock");
+    // A file of the user linked in as the marker, as a user who may read and write it can.
+    fs::write(home.join("elsewhere"), b"").unwrap();
+    fs::hard_link(home.join("elsewhere"), &marker).unwrap();
+    assert!(matches!(
+        marker_trust(&marker, &data),
+        Some(Trust::Untrusted { why: Untrusted::Linked { links: 2 }, ref path }) if *path == marker
+    ));
+    fs::remove_file(&marker).unwrap();
+    fs::write(&marker, b"").unwrap();
+    assert_eq!(marker_trust(&marker, &data), Some(Trust::Trusted));
+    // The directory given to another group of the user, which its members may write.
+    let (primary, _) = my_group();
+    let groups = nix::unistd::getgroups().unwrap();
+    let Some(other) = groups.iter().map(|g| g.as_raw()).find(|&g| g != primary) else {
+        eprintln!("skipped: the user is in no group but its primary one");
+        return;
+    };
+    nix::unistd::chown(&tmp, None, Some(nix::unistd::Gid::from_raw(other))).unwrap();
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o775)).unwrap();
+    let verdict = marker_trust(&marker, &data);
+    if own_group(me(), other) {
+        assert_eq!(verdict, Some(Trust::Trusted));
+    } else {
+        let why = Untrusted::GroupWritable {
+            mode: 0o775,
+            gid: other,
+        };
+        assert_eq!(
+            verdict,
+            Some(Trust::Untrusted {
+                path: tmp.clone(),
+                why
+            })
+        );
+    }
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(marker_trust(&marker, &data), Some(Trust::Trusted));
 }
 
 #[test]
@@ -353,10 +461,12 @@ fn the_relays_check_reads_the_marker_and_its_directory_against_the_owner_of_run(
     fs::write(&marker, b"").unwrap();
     fs::set_permissions(&marker, fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(marker_trust(&marker, &data), Some(Trust::Trusted));
-    // The group's write bit is allowed on the file and on its directory.
+    // The group's write bit is allowed on the file, and on its directory of the user's own group.
     fs::set_permissions(&marker, fs::Permissions::from_mode(0o660)).unwrap();
     fs::set_permissions(&tmp, fs::Permissions::from_mode(0o770)).unwrap();
-    assert_eq!(marker_trust(&marker, &data), Some(Trust::Trusted));
+    if my_group().1 {
+        assert_eq!(marker_trust(&marker, &data), Some(Trust::Trusted));
+    }
     // Any user's write bit is not, on either.
     fs::set_permissions(&marker, fs::Permissions::from_mode(0o666)).unwrap();
     let verdict = marker_trust(&marker, &data);
