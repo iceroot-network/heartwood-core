@@ -1024,11 +1024,12 @@ each case shows only with the request named:
   `X-Forwarded-For`, the one the proxy appended, when it is an address, else the socket's; the
   reference takes the first entry as it is, which the client writes. The rate limit keys an IPv6
   client by its /64 (the reference by its address) and keeps at most 100,000 windows, beyond which
-  new clients share one.
+  new clients share one until ended windows are dropped (once a second at most while it is full).
 
 Some bounds of Heartwood's own change only the timing of an answer or the node's log, never its
 content: the body of a `POST` is decompressed and parsed on a blocking thread; at most 8 `POST`s
-are served at once, the others waiting; the line logged for an answer of 500 or more names at most
+are parsed and served at once, from their body's last byte to their answer, the others waiting
+with their body read; the line logged for an answer of 500 or more names at most
 128 bytes of the path, and at most one such line is written a second, naming how many answers went
 without one; and before a read of the store, a log (`-wal`) that continuous reads kept above
 64 MiB is reset: new reads wait while those running end, then a checkpoint truncates it.

@@ -27,9 +27,12 @@ use crate::server::{Semaphore, SemaphoreLevel};
 
 /// The windows kept before the ended ones are dropped; the bound doubles with the live ones.
 const PRUNE_AT: usize = 4_096;
-/// The most windows kept: beyond, every new client shares one window. The reference keeps one per
-/// key, and any text was a key behind a trusted proxy.
+/// The most windows kept: beyond, every new client shares one window until ended windows are
+/// dropped. The reference keeps one per key, and any text was a key behind a trusted proxy.
 pub(crate) const MAX_WINDOWS: usize = 100_000;
+/// How often the ended windows are dropped while the table is full: a flood of clients that
+/// ended frees the table for new ones, and one that goes on costs a scan a second at most.
+const PRUNE_EVERY: Duration = Duration::from_secs(1);
 /// The key of the window every client beyond [`MAX_WINDOWS`] shares.
 const SHARED: &str = "*";
 
@@ -52,6 +55,8 @@ pub(crate) struct RateLimiter {
     duration: Option<Duration>,
     windows: HashMap<String, (Option<Instant>, u64)>,
     prune_at: usize,
+    /// When the windows were last pruned.
+    pruned: Option<Instant>,
 }
 
 impl RateLimiter {
@@ -63,19 +68,30 @@ impl RateLimiter {
             duration,
             windows: HashMap::new(),
             prune_at: PRUNE_AT,
+            pruned: None,
         }
     }
 
     /// Charge a point to `key` at `now`: whether it is within the limit.
     pub(crate) fn consume(&mut self, key: &str, now: Instant) -> bool {
-        if self.windows.len() >= self.prune_at {
+        let known = self.windows.contains_key(key);
+        // The table cannot grow past its bound, so a full one is pruned for a new client too,
+        // once in [`PRUNE_EVERY`]: otherwise one flood left every later client on the shared
+        // window for good.
+        let full = !known && self.windows.len() >= MAX_WINDOWS;
+        let due = self.pruned.is_none_or(|pruned| now >= pruned + PRUNE_EVERY);
+        if self.windows.len() >= self.prune_at || (full && due) {
             self.windows
                 .retain(|_, (ends, _)| ends.is_none_or(|ends| now < ends));
             self.prune_at = PRUNE_AT.max(self.windows.len().saturating_mul(2));
+            self.pruned = Some(now);
         }
         let fresh = (self.duration.map(|duration| now + duration), 0);
-        let known = self.windows.contains_key(key) || self.windows.len() < MAX_WINDOWS;
-        let key = if known { key } else { SHARED };
+        let key = if known || self.windows.len() < MAX_WINDOWS {
+            key
+        } else {
+            SHARED
+        };
         let window = self.windows.entry(key.to_owned()).or_insert(fresh);
         if window.0.is_some_and(|ends| now >= ends) {
             *window = fresh;

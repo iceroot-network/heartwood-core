@@ -272,12 +272,13 @@ pub(crate) struct Pipeline {
     gates: Gates,
     /// The lines of the answers of 500 or more.
     errors: Mutex<ErrorLines>,
-    /// The `POST`s served at once, from their payload to their answer.
+    /// The `POST`s served at once, from the parse of their body to their answer.
     posts: tokio::sync::Semaphore,
 }
 
 /// The most `POST`s served at once: each holds its payload, parsed, until the node has processed
-/// it, so a flood of them held memory without a bound. Those beyond wait.
+/// it, so a flood of them held memory without a bound. Those beyond wait, with their body read
+/// (a place is taken once the body is in, so a body that comes slowly holds none).
 const POSTS_AT_ONCE: usize = 8;
 
 /// The longest part of a request's path that the line of a server error names.
@@ -440,18 +441,15 @@ impl Pipeline {
                 CatchAll::Undecodable | CatchAll::NotFound => not_found(),
             });
         };
-        let _post = match method {
-            Method::Post => Some(
-                self.posts
-                    .acquire()
-                    .await
-                    .map_err(|_| ApiError::internal())?,
-            ),
-            Method::Get => None,
-        };
-        let payload = match method {
-            Method::Post => Some(payload::read(&parts.headers, body).await?),
-            Method::Get => None,
+        let (_post, payload) = match method {
+            Method::Post => {
+                // The body first, then a place: a body that comes slowly holds no place.
+                let raw = payload::bytes(&parts.headers, body).await?;
+                let place = self.posts.acquire().await;
+                let place = place.map_err(|_| ApiError::internal())?;
+                (Some(place), Some(payload::parse(raw).await?))
+            }
+            Method::Get => (None, None),
         };
         if config.rate_limit.enabled && !self.admit(&client) {
             return Err(ApiError::too_many_requests("Too Many Requests"));

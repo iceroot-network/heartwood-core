@@ -1637,7 +1637,8 @@ async fn a_compressed_body_is_read_off_the_runtime() {
     headers.insert("content-type", "application/json".parse().unwrap());
     let (done, polls) = (AtomicBool::new(false), AtomicUsize::new(0));
     let read = async {
-        let read = super::payload::read(&headers, Body::from(body)).await;
+        let raw = super::payload::bytes(&headers, Body::from(body)).await;
+        let read = super::payload::parse(raw.unwrap()).await;
         done.store(true, Ordering::SeqCst);
         read
     };
@@ -1722,6 +1723,67 @@ fn the_limit_keeps_a_bounded_number_of_windows() {
     assert!(!limiter.consume("another new client", now));
     assert!(!limiter.consume("0", now));
     assert_eq!(limiter.len(), super::limits::MAX_WINDOWS + 1);
+}
+
+#[test]
+fn a_full_limit_frees_its_ended_windows_for_new_clients() {
+    let mut limiter = super::limits::RateLimiter::new(1, 60);
+    let now = tokio::time::Instant::now();
+    for n in 0..super::limits::MAX_WINDOWS {
+        assert!(limiter.consume(&n.to_string(), now));
+    }
+    // Full: new clients share one window, which the first of them spends.
+    assert!(limiter.consume("late", now));
+    assert!(!limiter.consume("later", now));
+    // The flood's windows ended: the table is pruned for a new client, which has its own window
+    // again, as does the next.
+    let after = now + Duration::from_secs(60);
+    assert!(limiter.consume("one", after));
+    assert!(limiter.consume("two", after));
+    assert_eq!(limiter.len(), 2);
+    // A full table of live windows is scanned once a second at most: within the second, the
+    // clients beyond the bound share one window again.
+    for n in 0..super::limits::MAX_WINDOWS - 2 {
+        assert!(limiter.consume(&format!("again-{n}"), after));
+    }
+    assert_eq!(limiter.len(), super::limits::MAX_WINDOWS);
+    assert!(limiter.consume("three", after + Duration::from_millis(500)));
+    assert!(!limiter.consume("four", after + Duration::from_millis(500)));
+    assert_eq!(limiter.len(), super::limits::MAX_WINDOWS + 1);
+}
+
+/// A body that never ends, as a client that trickles one gives it.
+struct Trickle;
+
+impl hyper::body::Body for Trickle {
+    type Data = axum::body::Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        std::task::Poll::Pending
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_slow_post_body_holds_no_place_of_the_eight() {
+    let pipeline = Arc::new(pipeline(config()));
+    // Eight bodies that never end hold their connections, and nothing else.
+    let stuck: Vec<_> = (0..8)
+        .map(|_| {
+            let pipeline = Arc::clone(&pipeline);
+            tokio::spawn(async move { call(&pipeline, post(Body::new(Trickle), &[])).await.0 })
+        })
+        .collect();
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    // A ninth, whole, is answered: a place is taken once the body is in.
+    let answered = tokio::time::timeout(Duration::from_secs(2), call(&pipeline, post("{}", &[])));
+    assert_eq!(answered.await.expect("answered").0, 200);
+    for task in stuck {
+        task.abort();
+    }
 }
 
 #[tokio::test(start_paused = true)]

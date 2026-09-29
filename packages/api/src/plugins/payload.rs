@@ -14,7 +14,7 @@
 
 use std::io::Read;
 
-use axum::body::{Body, to_bytes};
+use axum::body::{Body, Bytes, to_bytes};
 use axum::http::HeaderMap;
 use axum::http::header::{self, HeaderName};
 use flate2::bufread::GzDecoder;
@@ -27,8 +27,16 @@ use crate::errors::ApiError;
 /// The largest request body, hapi's default.
 const MAX_BODY: usize = 1_048_576;
 
-/// The payload of a request with `headers` and `body`.
-pub(super) async fn read(headers: &HeaderMap, body: Body) -> Result<Value, ApiError> {
+/// A body read up to the limit, with the `content-encoding` and the media type that parse it:
+/// what a request holds while it waits for a place to be parsed and served.
+pub(super) struct Raw {
+    bytes: Bytes,
+    encoding: Option<String>,
+    mime: String,
+}
+
+/// The body of a request with `headers` and `body`, checked and read as hapi reads it.
+pub(super) async fn bytes(headers: &HeaderMap, body: Body) -> Result<Raw, ApiError> {
     let refused = |message: &str| ApiError::unprocessable(message);
     let text_of = |name: HeaderName| node_header(headers, &name);
     let declared = text_of(header::CONTENT_LENGTH).and_then(|text| text.trim().parse::<u64>().ok());
@@ -42,10 +50,18 @@ pub(super) async fn read(headers: &HeaderMap, body: Body) -> Result<Value, ApiEr
         return Err(unsupported());
     }
     let bytes = to_bytes(body, MAX_BODY).await.map_err(|_| too_large())?;
-    let encoding = text_of(header::CONTENT_ENCODING);
-    // The decompression and the parse run on a blocking thread: a body of many gzip members costs
-    // CPU time that would hold one of the API runtime's workers, and its accept loop with it.
-    let work = move || decode(&bytes, encoding.as_deref(), &mime);
+    Ok(Raw {
+        bytes,
+        encoding: text_of(header::CONTENT_ENCODING),
+        mime,
+    })
+}
+
+/// The payload of a body: decompressed and parsed on a blocking thread, since a body of many gzip
+/// members costs CPU time that would hold one of the API runtime's workers, and its accept loop
+/// with it.
+pub(super) async fn parse(raw: Raw) -> Result<Value, ApiError> {
+    let work = move || decode(&raw.bytes, raw.encoding.as_deref(), &raw.mime);
     tokio::task::spawn_blocking(work)
         .await
         .map_err(|_| ApiError::internal())?
