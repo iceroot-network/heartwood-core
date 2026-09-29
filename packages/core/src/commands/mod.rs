@@ -193,10 +193,12 @@ mod tests {
     #[test]
     fn start_is_a_daemon_unless_the_reference_spellings_of_the_flag_say_otherwise() {
         for role in ["relay", "forger"] {
-            for flags in ["", "--daemon", "--daemon=true"] {
+            let on = ["", "--daemon", "--daemon=true", "--daemon true"];
+            for flags in on.into_iter().chain(["--daemon --token solar"]) {
                 assert!(daemon(role, flags), "{role} {flags}");
             }
-            for flags in ["--daemon=false", "--no-daemon"] {
+            let off = ["--daemon=false", "--no-daemon", "--daemon false"];
+            for flags in off.into_iter().chain(["--daemon false --token solar"]) {
                 assert!(!daemon(role, flags), "{role} {flags}");
             }
         }

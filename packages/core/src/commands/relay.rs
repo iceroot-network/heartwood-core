@@ -116,13 +116,13 @@ pub struct RelayStart {
     #[command(flatten)]
     pub run: RelayRun,
     /// Run the supervisor as a daemon, as the reference's command does by default;
-    /// `--daemon=false` or `--no-daemon` keeps it in the foreground until the node stops.
+    /// `--daemon false`, `--daemon=false` or `--no-daemon` keeps it in the foreground until the
+    /// node stops.
     #[arg(
         long,
         default_value_t = true,
         action = ArgAction::Set,
         num_args = 0..=1,
-        require_equals = true,
         default_missing_value = "true"
     )]
     pub daemon: bool,
