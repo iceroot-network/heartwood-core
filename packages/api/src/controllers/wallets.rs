@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use heartwood_crypto::identities::{Address, PublicKeyBytes};
-use heartwood_state::{StateView, Wallet};
+use heartwood_state::{StateView, Wallet, WalletRepository};
 use serde_json::Value;
 
 use crate::context::{ApiContext, ApiReply, ApiRequest, Route, RouteId};
@@ -67,7 +67,11 @@ pub async fn transactions(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<A
 /// key, by delegate name, else a new wallet for a valid address of the network; 422 "Wallet not
 /// valid" for another id of 34 characters, 404 "Wallet not found" for anything else.
 pub fn find(state: &StateView, id: &str) -> Result<Wallet, ApiError> {
-    let wallets = &state.wallets;
+    find_in(&state.wallets, id)
+}
+
+/// [`find`] over the wallets alone.
+pub fn find_in(wallets: &WalletRepository, id: &str) -> Result<Wallet, ApiError> {
     let network = wallets.network();
     // Each index is keyed by the canonical text: an address, a lowercase key, a name.
     let address = Address::from_base58_for(id, network).ok();

@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use heartwood_pool::PoolView;
-use heartwood_state::{StateView, Wallet};
+use heartwood_state::{StateView, Wallet, WalletRepository};
 use serde_json::{Map, Value, json};
 
 use crate::context::{ApiContext, ApiReply, ApiRequest, ProductivityTable};
@@ -83,7 +83,7 @@ pub async fn index(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply
 }
 
 /// The envelope of `page` with its resources written out.
-pub(crate) fn listing(request: &ApiRequest, pagination: Pagination, page: ResultsPage) -> ApiReply {
+pub fn listing(request: &ApiRequest, pagination: Pagination, page: ResultsPage) -> ApiReply {
     let data = page.results.into_iter().map(plain).collect();
     let total = (page.total_count, page.total_count_is_estimate);
     ApiReply::ok(envelope(request, pagination, total.0, total.1, data))
@@ -91,10 +91,10 @@ pub(crate) fn listing(request: &ApiRequest, pagination: Pagination, page: Result
 
 /// The delegate that `id` names, as the reference's wallet search finds it: by address, public
 /// key or name, with the wallet's resource; 404 "Delegate not found" for any other.
-fn find(state: &StateView, id: &str) -> Result<Wallet, ApiError> {
+pub fn find_delegate(wallets: &WalletRepository, id: &str) -> Result<Wallet, ApiError> {
     let not_found = || ApiError::not_found("Delegate not found");
-    let wallet = super::wallets::find(state, id).map_err(|_| not_found())?;
-    match state.wallets.find_by_address(wallet.address()) {
+    let wallet = super::wallets::find_in(wallets, id).map_err(|_| not_found())?;
+    match wallets.find_by_address(wallet.address()) {
         Some(known) if known.delegate().is_some() => Ok(known.clone()),
         _ => Err(not_found()),
     }
@@ -103,7 +103,7 @@ fn find(state: &StateView, id: &str) -> Result<Wallet, ApiError> {
 /// `GET /delegates/{id}`: one delegate, by username, address or public key.
 pub async fn show(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
     let state = ctx.state();
-    let wallet = find(&state, request.param("id").unwrap_or_default())?;
+    let wallet = find_delegate(&state.wallets, request.param("id").unwrap_or_default())?;
     let table = table(&ctx, &state)?;
     let resource = delegate(&wallet, supply(&state.wallets), &ctx.pool(), &table)?;
     Ok(ApiReply::data(plain(resource)))
@@ -112,7 +112,7 @@ pub async fn show(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply,
 /// `GET /delegates/{id}/voters`: the wallets voting for a delegate.
 pub async fn voters(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
     let state = ctx.state();
-    let wallet = find(&state, request.param("id").unwrap_or_default())?;
+    let wallet = find_delegate(&state.wallets, request.param("id").unwrap_or_default())?;
     let table = table(&ctx, &state)?;
     let name = wallet
         .delegate()
