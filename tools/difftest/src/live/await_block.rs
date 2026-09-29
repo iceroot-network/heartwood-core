@@ -281,8 +281,8 @@ impl Load {
     /// The load beside the time `t`, as text.
     fn beside(&self, t: i64) -> String {
         let near = (self.0.iter())
-            .min_by_key(|(at, _)| (at - t).abs())
-            .filter(|(at, _)| (at - t).abs() <= LOAD_REACH_MS);
+            .min_by_key(|(at, _)| at.abs_diff(t))
+            .filter(|(at, _)| at.abs_diff(t) <= LOAD_REACH_MS.unsigned_abs());
         near.map_or_else(
             || "no load sample".to_owned(),
             |(_, load)| format!("load {load:.2}"),
@@ -403,7 +403,7 @@ fn judge_stall(
         }
     }
     for r in held.iter().filter(|r| r.end != End::None) {
-        let ahead = commit - r.began();
+        let ahead = commit.saturating_sub(r.began());
         if ahead > bound_ms + COMMIT_LAG_MS && !matches!(r.end, End::Bound | End::Closed) {
             v.problems.push(format!(
                 "a {} wait that began {} ms before the commit ended `{}`, not `bound` or `closed` (ended {})",
@@ -454,11 +454,11 @@ fn judge_stall(
         let resumed = requests
             .iter()
             .filter(|r| r.began() >= commit)
-            .any(|r| r.after > pre + 1);
+            .any(|r| r.after > pre.saturating_add(1));
         if !resumed {
             v.problems.push(format!(
                 "no request after the commit saw the chain go past {}",
-                pre + 1
+                pre.saturating_add(1)
             ));
         }
     }
@@ -1013,6 +1013,19 @@ mod tests {
                 .iter()
                 .any(|p| p.contains("ended `bound` (ended"))
         );
+    }
+
+    #[test]
+    fn a_record_with_extreme_numbers_is_judged_without_a_panic() {
+        let requests = vec![
+            request(100_000, 8_010, End::Bound, u64::MAX, u64::MAX),
+            request(i64::MIN, u64::MAX, End::Drained, 1, 2),
+            request(113_000, 0, End::None, u64::MAX, u64::MAX),
+        ];
+        let v = judge_stall(&requests, &window(), 30, Some(100_000), false);
+        assert!(v.problems.iter().any(|p| p.contains("go past")));
+        let load = Load(vec![(i64::MIN, 1.0), (i64::MAX, 2.0)]);
+        assert_eq!(load.beside(0), "no load sample");
     }
 
     #[test]
