@@ -32,7 +32,9 @@ use nix::sys::signal::Signal;
 use crate::errors::ProcessError;
 use crate::process_table;
 use crate::seams::{Env, Instance, ProcessOps, StatusRow, SupervisedStatus};
-use crate::supervisor::signals::{KILL_AFTER, held_pid, is_locked, send, signal_if_locked};
+use crate::supervisor::signals::{
+    KILL_AFTER, held_pid, is_locked, leads_session, send, send_group, signal_if_locked,
+};
 use crate::supervisor::state::SupervisorState;
 use crate::supervisor::{SuperviseArgs, VERSION, at, run_dir};
 
@@ -151,11 +153,12 @@ pub fn stop(instance: &Instance) -> Result<(), ProcessError> {
 
 /// Kill `instance`'s supervisor and node with SIGKILL, as a crash does, wait until they have
 /// exited, and record the stop in the state file. The supervisor is killed first, so the node is
-/// never restarted, then the node through its own lock.
+/// never restarted. A daemon supervisor leads its session, whose process group holds its node, so
+/// the group is killed: that ends a node the supervisor has just started again and that has not
+/// taken its lock yet. Last, the node is killed through its own lock.
 pub fn kill(instance: &Instance) -> Result<(), ProcessError> {
     let name = instance.name();
     let (supervisor_lock, node_lock) = (instance.supervisor_lock_path(), instance.lock_path());
-    let state = SupervisorState::read(&instance.state_path())?;
     let seconds = EXIT_WAIT.as_secs();
     let timeout = || ProcessError::Timeout {
         name: name.clone(),
@@ -163,12 +166,18 @@ pub fn kill(instance: &Instance) -> Result<(), ProcessError> {
     };
     let mut killed = false;
     if let Some(pid) = supervisor_pid(instance)? {
-        let sent = send(pid, Signal::SIGKILL)?;
+        let sent = if leads_session(pid) {
+            send_group(pid, Signal::SIGKILL)?
+        } else {
+            send(pid, Signal::SIGKILL)?
+        };
         if sent && !wait_unlocked(&supervisor_lock, EXIT_WAIT)? {
             return Err(timeout());
         }
         killed = sent;
     }
+    // Read once the supervisor has exited, so that it names the last node the supervisor started.
+    let state = SupervisorState::read(&instance.state_path())?;
     let node = read_pid(&instance.pid_path()).or(state.as_ref().and_then(|s| s.pid));
     if let Some(pid) = node
         && signal_if_locked(pid, Signal::SIGKILL, &node_lock)?

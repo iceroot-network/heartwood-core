@@ -1,7 +1,8 @@
 //! The supervisor with the test child (feature `test-child`): an immediate restart after a run of
 //! 1 s or more, `errored` after 5 unstable runs, SIGINT then SIGKILL after 30 s (a slow test),
-//! signals only while a lock is held, the state file's transitions, the node's environment, the
-//! second supervisor's refusal, and the capture files with their rotation at a small limit.
+//! signals only while a lock is held, the state file's transitions, a kill during a restart, the
+//! node's environment, the second supervisor's refusal, and the capture files with their rotation
+//! at a small limit.
 
 #![cfg(feature = "test-child")]
 
@@ -101,6 +102,36 @@ fn wait_for(what: &str, timeout: Duration, mut done: impl FnMut() -> bool) {
         );
         thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// The node's command line for [`kill_during_a_restart`]: it takes its lock 800 ms after its
+/// start, as a node that loads its configuration and builds its runtime first.
+const LATE_LOCK: [&str; 4] = ["relay", "run", "--lock-after", "800"];
+
+/// Crash `node`'s node (run with [`LATE_LOCK`]), then kill the instance while the node its
+/// supervisor started again has not taken its lock yet: no node may run on.
+fn kill_during_a_restart(node: &Node) {
+    let first = node.online();
+    let lock = node.0.lock_path();
+    wait_for("the node's lock", Duration::from_secs(10), || {
+        is_locked(&lock).unwrap()
+    });
+    assert!(send(first, Signal::SIGKILL).unwrap());
+    wait_for("the node started again", Duration::from_secs(10), || {
+        let state = node.state();
+        state.status == SupervisedStatus::Online && state.pid.is_some_and(|pid| pid != first)
+    });
+    let second = node.state().pid.unwrap();
+    assert!(!is_locked(&lock).unwrap(), "the node took its lock at once");
+    process::kill(&node.0).unwrap();
+    // Past the moment the node would have taken its lock.
+    thread::sleep(Duration::from_millis(1200));
+    assert!(
+        !is_locked(&lock).unwrap(),
+        "the node {second} outlived the kill"
+    );
+    let row = process::status(&node.0).unwrap();
+    assert_eq!((row.status, row.pid), (SupervisedStatus::Stopped, None));
 }
 
 fn count(text: &str, needle: &str) -> usize {
@@ -272,6 +303,13 @@ fn a_terminal_interrupt_reaches_the_node_once_through_the_supervisor() {
     let state = node.state();
     assert_eq!(state.status, SupervisedStatus::Stopped);
     assert_eq!(state.last_exit.as_deref(), Some("exit status: 0"));
+}
+
+#[test]
+fn a_kill_during_a_restart_ends_a_daemons_node_that_has_not_taken_its_lock_yet() {
+    let node = Node::new("kill-in-restart");
+    node.start(&LATE_LOCK, &[]);
+    kill_during_a_restart(&node);
 }
 
 #[test]

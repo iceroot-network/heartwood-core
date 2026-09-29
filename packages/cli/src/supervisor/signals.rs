@@ -7,7 +7,8 @@
 //! signalled only while the lock that names it is held, so a stale pid is never signalled. A
 //! supervisor writes its pid into its lock file as it takes the lock ([`record_pid`]), and `stop`
 //! and `kill` read the supervisor's pid from there while the lock is held ([`held_pid`]), never
-//! from the state file, which an earlier supervisor may have left.
+//! from the state file, which an earlier supervisor may have left. `kill` signals a daemon
+//! supervisor's process group, which holds its node ([`send_group`]).
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{ErrorKind, Read};
@@ -18,8 +19,8 @@ use std::time::Duration;
 
 use nix::errno::Errno;
 use nix::fcntl::OFlag;
-use nix::sys::signal::{Signal, kill};
-use nix::unistd::Pid;
+use nix::sys::signal::{Signal, kill, killpg};
+use nix::unistd::{Pid, getsid};
 
 use crate::errors::ProcessError;
 
@@ -115,13 +116,45 @@ pub fn signal_if_locked(pid: u32, signal: Signal, lock: &Path) -> Result<bool, P
 
 /// Send `signal` to `pid`; gives `false` when no such process exists.
 pub fn send(pid: u32, signal: Signal) -> Result<bool, ProcessError> {
-    let failed = |message: String| ProcessError::Signal { pid, message };
-    let target = i32::try_from(pid).ok().filter(|&pid| pid > 0);
-    let target = target.ok_or_else(|| failed("not a process id".into()))?;
-    match kill(Pid::from_raw(target), signal) {
+    let target = process_id(pid)?;
+    match kill(target, signal) {
         Ok(()) => Ok(true),
         Err(Errno::ESRCH) => Ok(false),
-        Err(e) => Err(failed(e.to_string())),
+        Err(e) => Err(signal_error(pid, &e)),
+    }
+}
+
+/// Send `signal` to every process of the process group `group`; gives `false` when no process is
+/// in it.
+pub fn send_group(group: u32, signal: Signal) -> Result<bool, ProcessError> {
+    let target = process_id(group)?;
+    match killpg(target, signal) {
+        Ok(()) => Ok(true),
+        Err(Errno::ESRCH) => Ok(false),
+        Err(e) => Err(signal_error(group, &e)),
+    }
+}
+
+/// Whether `pid` leads a session, as a daemon supervisor does once it has left its caller's: its
+/// session's one process group is then its own, and holds its node.
+pub fn leads_session(pid: u32) -> bool {
+    process_id(pid).is_ok_and(|pid| getsid(Some(pid)) == Ok(pid))
+}
+
+/// `pid` as a process id to signal: never 0 or negative, which would name a group.
+fn process_id(pid: u32) -> Result<Pid, ProcessError> {
+    let target = i32::try_from(pid).ok().filter(|&pid| pid > 0);
+    let failed = || ProcessError::Signal {
+        pid,
+        message: "not a process id".into(),
+    };
+    target.map(Pid::from_raw).ok_or_else(failed)
+}
+
+fn signal_error(pid: u32, error: &Errno) -> ProcessError {
+    ProcessError::Signal {
+        pid,
+        message: error.to_string(),
     }
 }
 

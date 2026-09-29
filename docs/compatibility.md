@@ -986,11 +986,13 @@ and nix are used by this crate only (`make layers`).
   `--network`.
 - **the supervisor** (`heartwood supervise`): pm2's restart rules (a child that exits restarts at
   once; a run under 1 second counts as unstable only in the supervisor's first 5 seconds, the
-  count is never reset, and the 5th unstable run makes the role `errored`), the child leading a
-  process group of its own, `relay start` and `forger start` daemons unless `--daemon=false` or
-  `--no-daemon` says otherwise, a stop by SIGINT
-  and SIGKILL 30 seconds later, a lock per role, a state file, and the child's output captured
-  into `<name>-out.log` and `<name>-error.log`, rotated at 500 MB into seven numbered files.
+  count is never reset, and the 5th unstable run makes the role `errored`), `relay start` and
+  `forger start` daemons unless `--daemon=false` or `--no-daemon` says otherwise, a daemon
+  leading a session of its own whose process group holds its child (so that a devnet kill ends
+  both, even a child just started again), a foreground supervisor's child leading a process
+  group of its own, a stop by SIGINT and SIGKILL 30 seconds later, a lock per role, a state file,
+  and the child's output captured into `<name>-out.log` and `<name>-error.log`, rotated at 500 MB
+  into seven numbered files.
 - **the role commands**: `start`, `stop`, `restart`, `status` (with a process table read from
   `/proc`, or from `ps` elsewhere) and `log`, with their refusals.
 - **network generate**: a network's chain definition, keys and single-node instance for a seed.
