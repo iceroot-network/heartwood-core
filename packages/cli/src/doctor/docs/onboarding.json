@@ -13,13 +13,17 @@
         "the socket table"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The relay is synced (within 2 blocks of its peers), has block 2, and its API listens beyond loopback.",
+        "warn": "The relay is synced, but its API listens on loopback only.",
+        "fail": "The relay is still syncing, is more than 2 blocks behind, or lacks block 2.",
+        "unknown": "The peers, the API or the sockets could not be read.",
+        "skipped": "This host does not run a relay."
       },
-      "advice": {},
+      "advice": {
+        "ready": "The relay is synced at height {height}. The tip is {tip_id}, block 2 is {block_2_id}. The text to sign comes with the application rules. See https://docs.iceroot.com/validators/apply/.",
+        "loopback-only": "The relay is synced at height {height}, but its API listens on loopback only. Show the facts, and open the API to the applicant's checker. The text to sign comes with the application rules. See https://docs.iceroot.com/validators/apply/.",
+        "not-ready": "The relay is not ready: {behind} blocks behind, syncing {syncing}, block 2 present {has_block_2}. Wait for it to sync. The text to sign comes with the application rules. See https://docs.iceroot.com/validators/apply/."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#onboarding-sync-proof"
     }
   ]

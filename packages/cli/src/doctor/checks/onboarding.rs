@@ -1,9 +1,65 @@
-//! The onboarding profile: whether the application's sync check would pass.
+//! The onboarding proof: the facts an applicant shows that the relay is synced and its API is
+//! reachable.
 
-use crate::doctor::registry::{CheckInput, not_built};
-use crate::doctor::report::Finding;
+use std::net::IpAddr;
 
-/// `onboarding.sync-proof`.
+use crate::doctor::checks::peers::behind;
+use crate::doctor::checks::process::{Facts, ints, relay};
+use crate::doctor::registry::CheckInput;
+use crate::doctor::report::Basis::Chain;
+use crate::doctor::report::Status::{Fail, Pass, Warn};
+use crate::doctor::report::{Fact, Finding, Id, IdKind};
+use crate::doctor::sources::procfs::TcpState;
+use crate::doctor::view::{Reason, Source, Unknown};
+
+/// How many blocks behind the peers' median still counts as synced.
+const TOLERANCE: i64 = 2;
+/// The height whose block the proof shows: the first after genesis.
+const FIRST_BLOCK: u32 = 2;
+
+/// `onboarding.sync-proof`: prints the facts and no text to sign.
 pub fn sync_proof(input: &CheckInput<'_>) -> Vec<Finding> {
-    not_built(input)
+    relay(input, |view| {
+        let (behind, height) = behind(view)?;
+        let (syncing, tip) = (view.api_syncing()?.syncing, view.api_last_block()?);
+        let block = view.api_block(FIRST_BLOCK)?;
+        let (behind, block_2) = (behind.max(0), block.is_some());
+        let mut facts: Facts = ints!(height, behind);
+        facts.extend([
+            ("syncing", Fact::Bool(syncing)),
+            ("has_block_2", Fact::Bool(block_2)),
+        ]);
+        if syncing || behind > TOLERANCE || !block_2 {
+            return Ok((Chain, (Fail, "not-ready"), facts));
+        }
+        let port = view.api_address()?.port();
+        let rows = view.sockets()?.iter();
+        let listening =
+            rows.filter(|row| row.state == TcpState::Listen && row.local.port() == port);
+        let addresses: Vec<IpAddr> = listening.map(|row| row.local.ip()).collect();
+        if addresses.is_empty() {
+            return Err(Unknown::new(Source::Sockets, Reason::Missing));
+        }
+        let hex = |text: &str| Id::new(IdKind::Hex64, text).map(Fact::Id);
+        facts.extend(hex(&tip.id).map(|id| ("tip_id", id)));
+        facts.extend(block.and_then(|b| hex(&b.id)).map(|id| ("block_2_id", id)));
+        let loopback = addresses.iter().all(IpAddr::is_loopback);
+        facts.push((
+            "api",
+            Fact::Word(if loopback {
+                "loopback only"
+            } else {
+                "beyond loopback"
+            }),
+        ));
+        Ok((
+            Chain,
+            if loopback {
+                (Warn, "loopback-only")
+            } else {
+                (Pass, "ready")
+            },
+            facts,
+        ))
+    })
 }
