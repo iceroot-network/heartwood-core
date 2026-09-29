@@ -871,6 +871,7 @@ impl JobRig {
                 milestones: &self.milestones,
                 clock: &self.clock,
                 observer: &mut observer,
+                stall: None,
             };
             let job = Job { blocks: incoming };
             guarded(|| run_job(&mut ctx, job))

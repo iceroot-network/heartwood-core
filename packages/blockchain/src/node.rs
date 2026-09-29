@@ -251,6 +251,8 @@ impl NodeThread {
                 milestones: &parts.milestones,
                 clock: &*parts.clock,
                 observer,
+                #[cfg(feature = "difftest")]
+                stall: parts.stall.as_ref(),
             },
             job,
         )?;
