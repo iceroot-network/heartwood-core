@@ -103,6 +103,25 @@ fn config_json_fills_a_missing_token_or_network_and_never_overrides_a_flag() {
 }
 
 #[test]
+fn a_token_or_network_that_is_no_plain_name_is_refused_as_the_commands_refuse_it() {
+    let setup = Setup::new("names", "");
+    let text = refusal(&setup, "--token ../evil --network net1", &[]);
+    assert_eq!(
+        text,
+        r#"the token "../evil" may hold letters, digits, '-' and '_' only"#
+    );
+    let text = refusal(&setup, "--network ../../evil-net", &[]);
+    assert!(
+        text.starts_with(r#"the network "../../evil-net""#),
+        "{text}"
+    );
+    // A config.json that names such a network is refused too.
+    setup.write("config.json", r#"{"network": "../evil-net"}"#);
+    assert!(refusal(&setup, "", &[]).starts_with(r#"the network "../evil-net""#));
+    assert!(load(&setup, "--network dev_net-2", &[]).is_ok());
+}
+
+#[test]
 fn the_relay_profile_becomes_components_in_rank_order() {
     let setup = Setup::new("profile", "");
     let config = load(&setup, "--network testnet", &[]).unwrap();

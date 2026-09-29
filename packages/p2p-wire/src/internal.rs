@@ -276,17 +276,20 @@ pub struct StatusToSignRequest {
     pub public_keys: Vec<String>,
 }
 
-/// The `getStatusToSign` answer: a status to attest, `{status, publicKeys}`, or nothing new
-/// within the long poll, `{unchanged: true}`.
+/// The `getStatusToSign` answer: a status to attest, `{status, publicKeys, challenge}`, or nothing
+/// new within the long poll, `{unchanged: true}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatusToSignResponse {
-    /// The canonical status text to sign, and the keys to sign it with: the declared keys that are
-    /// registered delegates, in the declared order.
+    /// The canonical status text to sign, the keys to sign it with (the declared keys that are
+    /// registered delegates, in the declared order), and the session's challenge.
     Offer {
         /// The status text, as [`crate::status::signing_preimage`] writes it.
         status: String,
         /// The keys to sign with, in hex.
         public_keys: Vec<String>,
+        /// The session's challenge, which each key signs as [`crate::status::session_proof`]
+        /// writes it.
+        challenge: String,
     },
     /// The status did not change within the long poll.
     Unchanged,
@@ -299,6 +302,9 @@ pub struct StatusSignatures {
     pub offer: String,
     /// One legacy Schnorr signature per offered key, in the offer's order, in hex.
     pub signatures: Vec<String>,
+    /// One legacy Schnorr signature of the session's proof text per offered key, in the same
+    /// order, in hex.
+    pub proofs: Vec<String>,
 }
 
 impl InternalBody for CurrentRound {
@@ -492,7 +498,8 @@ impl InternalBody for StatusToSignResponse {
             StatusToSignResponse::Offer {
                 status,
                 public_keys,
-            } => json!({ "status": status, "publicKeys": public_keys }),
+                challenge,
+            } => json!({ "status": status, "publicKeys": public_keys, "challenge": challenge }),
             StatusToSignResponse::Unchanged => json!({ "unchanged": true }),
         }
     }
@@ -503,6 +510,7 @@ impl InternalBody for StatusToSignResponse {
             Some(status) => Ok(StatusToSignResponse::Offer {
                 status: string(Some(status), "status")?,
                 public_keys: listed(answer, "publicKeys")?,
+                challenge: string(get(answer, "challenge"), "challenge")?,
             }),
             None if answer.get("unchanged") == Some(&Value::Bool(true)) => {
                 Ok(StatusToSignResponse::Unchanged)
@@ -516,7 +524,7 @@ impl InternalBody for StatusSignatures {
     const ROUTE: RouteId = RouteId::PostStatusSignatures;
 
     fn to_json(&self) -> Value {
-        json!({ "offer": self.offer, "signatures": self.signatures })
+        json!({ "offer": self.offer, "signatures": self.signatures, "proofs": self.proofs })
     }
 
     fn from_json(value: &Value) -> Result<StatusSignatures, InternalBodyError> {
@@ -524,6 +532,7 @@ impl InternalBody for StatusSignatures {
         Ok(StatusSignatures {
             offer: string(get(signatures, "offer"), "offer")?,
             signatures: listed(signatures, "signatures")?,
+            proofs: listed(signatures, "proofs")?,
         })
     }
 }

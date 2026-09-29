@@ -101,15 +101,8 @@ pub fn resolve(
         .ok_or_else(|| InstanceError::MissingNetwork {
             config: candidates.last().cloned().unwrap_or_default(),
         })?;
-    for (what, value) in [("token", &token), ("network", &network)] {
-        let valid = value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-        if value.is_empty() || !valid {
-            let value = value.clone();
-            return Err(InstanceError::InvalidName { what, value });
-        }
-    }
+    check_name("token", &token)?;
+    check_name("network", &network)?;
     let paths = resolve_paths(&token, &network, env, home, cwd);
     Ok(Instance {
         token,
@@ -117,6 +110,18 @@ pub fn resolve(
         role,
         paths,
     })
+}
+
+/// Refuse a token or network name (`what`) that is empty or holds anything but letters, digits,
+/// `-` and `_`: a name becomes part of the instance's directories and file names. `relay run` and
+/// `forger run` check theirs with it too.
+pub fn check_name(what: &'static str, value: &str) -> Result<(), InstanceError> {
+    let valid = (value.bytes()).all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if value.is_empty() || !valid {
+        let value = value.to_owned();
+        return Err(InstanceError::InvalidName { what, value });
+    }
+    Ok(())
 }
 
 /// The token and network of the first `config.json` of `candidates` that exists.

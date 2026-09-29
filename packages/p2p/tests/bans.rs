@@ -9,7 +9,7 @@ mod server_support;
 use std::time::Duration;
 
 use heartwood_p2p::server::ServerOptions;
-use heartwood_p2p::server::ban_hammer::{BanHammer, SYNC_GRACE_MS, format_seconds};
+use heartwood_p2p::server::ban_hammer::{BanHammer, SWEEP_AT, SYNC_GRACE_MS, format_seconds};
 use heartwood_p2p::server::seams::{ServerRefusal, SessionId};
 use heartwood_p2p::server::session::SessionEnd;
 use heartwood_p2p::testing::server::StubAnswer;
@@ -57,6 +57,31 @@ fn a_ban_lasts_its_seconds_and_keeps_its_first_reason() {
     assert!(!bans.is_banned(peer(2), START_MS + 15_000));
     assert_eq!(bans.reason(peer(2)), None);
     assert!(!bans.is_banned(peer(3), START_MS));
+}
+
+#[test]
+fn a_long_ban_list_drops_its_expired_bans() {
+    use std::net::{IpAddr, Ipv6Addr};
+    let bans = BanHammer::new(10, vec![FORGER]);
+    let address = |n: u32| IpAddr::V6(Ipv6Addr::from((0x2001_0db8_u128 << 96) | u128::from(n)));
+    let listed = u32::try_from(SWEEP_AT).unwrap();
+    for n in 0..listed {
+        bans.ban(address(n), "Not a websocket connection", START_MS);
+    }
+    // Up to the threshold, an expired ban stays until its address connects again, as in the
+    // reference; a ban that takes the list past it drops every expired one.
+    bans.ban(peer(2), "Validation failed", START_MS + 10_000);
+    assert_eq!(bans.reason(address(0)), None);
+    assert_eq!(bans.reason(address(listed - 1)), None);
+    assert_eq!(bans.reason(peer(2)).as_deref(), Some("Validation failed"));
+    // A ban still running is kept.
+    bans.ban(peer(3), "Validation failed", START_MS + 10_000);
+    for n in 0..listed {
+        bans.ban(address(n), "Not a websocket connection", START_MS + 15_000);
+    }
+    bans.ban(peer(4), "Validation failed", START_MS + 20_000);
+    assert!(bans.is_banned(peer(3), START_MS + 19_999));
+    assert!(bans.reason(address(7)).is_some());
 }
 
 #[test]

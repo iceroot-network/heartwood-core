@@ -1,6 +1,7 @@
 //! The attester on arbitrary offers: an offer's status text and key list. No input may panic it,
 //! and it signs only an offer whose text writes back byte for byte as a status tree and passes the
-//! attester's checks (height, slot window, network, own keys).
+//! attester's checks (its length, height, slot window, network, own keys each offered at most as
+//! often as declared).
 //!
 //! The text is either arbitrary or a status tree written in canonical form, then perhaps cut or
 //! changed by one byte, so that most inputs come close to what a relay offers. An offer that is
@@ -13,15 +14,18 @@ use std::sync::{Arc, LazyLock};
 use arbitrary::Arbitrary;
 use heartwood_crypto::crypto::slots;
 use heartwood_crypto::{KeyPair, Milestones, Network};
+use heartwood_forger::attestation::MAX_STATUS;
 use heartwood_forger::{Attester, DelegateKeys};
 use heartwood_kernel::ManualClock;
 use heartwood_p2p_wire::status::{
     NetworkConfig, PeerConfig, PluginConfig, SignedState, StatusHeaderData, TokenConfig,
-    parse_preimage, signing_preimage, verify_attestation,
+    parse_preimage, session_proof, signing_preimage, verify_attestation,
 };
 use libfuzzer_sys::fuzz_target;
 
 const NETHASH: &str = "c9b03ab996ef3ac216a2ac53eaee71118cbf7995fa44449a7fb7f94bbe18bcca";
+/// The session's challenge.
+const CHALLENGE: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
 /// The slot of the attester's clock.
 const OWN_SLOT: i64 = 1_000;
 
@@ -82,6 +86,13 @@ struct Offer {
     text: Text,
     /// Indices into the setup's keys: 0 and 1 are the attester's, 2 is not.
     keys: Vec<u8>,
+}
+
+/// Whether the key indices name only the attester's two keys, each at most once, as it declares
+/// them.
+fn once_each(keys: &[u8]) -> bool {
+    let count = |key: u8| keys.iter().filter(|&&i| i % 3 == key).count();
+    count(0) <= 1 && count(1) <= 1 && count(2) == 0
 }
 
 fuzz_target!(|offer: Offer| {
@@ -167,21 +178,28 @@ fuzz_target!(|offer: Offer| {
                 && header_height.is_none_or(|h| h == height)
                 && slot_offset.unsigned_abs() <= 1
                 && !other_network
-                && offer.keys.iter().all(|&i| i % 3 != 2);
+                && text.len() <= MAX_STATUS
+                && once_each(&offer.keys);
             (text, valid)
         }
     };
-    match setup.attester.sign_offer(&text, &keys) {
+    match setup.attester.sign_offer(&text, &keys, CHALLENGE) {
         Ok(signed) => {
             let (state, config) = parse_preimage(text.as_bytes()).expect("a signed offer reads");
             assert_eq!(signing_preimage(&state, &config), text.as_bytes());
             assert_eq!(state.height, state.header.height);
             assert!(state.current_slot.abs_diff(OWN_SLOT) <= 1);
             assert_eq!(config.network.nethash, NETHASH);
-            assert!(keys.iter().all(|key| *key != setup.keys[2]));
+            assert!(text.len() <= MAX_STATUS);
+            assert!(once_each(&offer.keys));
             assert_eq!(signed.signatures.len(), keys.len());
             for (key, signature) in keys.iter().zip(&signed.signatures) {
                 assert!(verify_attestation(text.as_bytes(), key, signature));
+            }
+            let proof = session_proof(CHALLENGE).expect("a challenge");
+            assert_eq!(signed.proofs.len(), keys.len());
+            for (key, proven) in keys.iter().zip(&signed.proofs) {
+                assert!(verify_attestation(&proof, key, proven));
             }
         }
         Err(error) => assert!(!valid, "a valid offer was refused: {error}"),

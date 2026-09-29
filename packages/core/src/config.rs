@@ -21,6 +21,7 @@ use heartwood_kernel::config::{Env, PeersFile, Role, app, env, peers};
 use heartwood_kernel::paths::{Paths, resolve_paths};
 use serde_json::{Map, Value, json};
 
+use heartwood_cli::instance::check_name;
 use heartwood_forger::PACKAGE;
 
 use crate::app::RelayError;
@@ -305,6 +306,8 @@ impl Base {
         }
         let token = token.unwrap_or_else(|| "solar".into());
         let network = network.ok_or("no network: give --network, or name it in config.json")?;
+        let named = check_name("token", &token).and_then(|()| check_name("network", &network));
+        named.map_err(|error| error.to_string())?;
         let paths = resolve_paths(&token, &network, &|name| lookup(name).cloned(), home, cwd);
         // The reference's process has these set when its `.env` files and its components'
         // defaults are read.

@@ -26,11 +26,13 @@ use heartwood_p2p::attestation_session::DelegatesOnThisNode;
 use heartwood_p2p::node_services::AttestedKeys;
 use heartwood_p2p::server::seams::{ServerRefusal, SessionEvents, SessionId};
 use heartwood_p2p::status_server::StatusServer;
-use heartwood_p2p_wire::internal::{StatusSignatures, StatusToSignRequest, StatusToSignResponse};
+use heartwood_p2p_wire::internal::{
+    self, StatusSignatures, StatusToSignRequest, StatusToSignResponse,
+};
 use heartwood_p2p_wire::messages::Proto;
 use heartwood_p2p_wire::messages::peer::GetStatusResponse;
 use heartwood_p2p_wire::status::{
-    NetworkConfig, PeerConfig, PluginConfig, TokenConfig, attest, parse_preimage,
+    NetworkConfig, PeerConfig, PluginConfig, TokenConfig, attest, parse_preimage, session_proof,
 };
 use node_fakes::{Node, Server, TokioClock, forger};
 use peer_fakes::{Chain, DEVNET, START_MS, block, delegate};
@@ -62,8 +64,9 @@ fn tokio_server() -> Server {
     Server::new(Node::at(10), Arc::new(TokioClock::at(START_MS)))
 }
 
-/// The forger's signatures of `status` with the keys offered, in their order.
-fn sign(status: &str, keys: &[String]) -> StatusSignatures {
+/// The forger's signatures of `status` with the keys offered, in their order, and their proofs
+/// of the session's `challenge`.
+fn sign(status: &str, keys: &[String], challenge: &str) -> StatusSignatures {
     let keys: Vec<KeyPair> = keys
         .iter()
         .map(|hex| {
@@ -73,22 +76,27 @@ fn sign(status: &str, keys: &[String]) -> StatusSignatures {
                 .unwrap()
         })
         .collect();
+    let proof = session_proof(challenge).unwrap();
+    let signed = |text: &[u8]| -> Vec<String> {
+        (keys.iter())
+            .map(|k| attest(text, k).unwrap().signature.to_hex())
+            .collect()
+    };
     StatusSignatures {
         offer: hex::encode(&sha256(status.as_bytes())),
-        signatures: keys
-            .iter()
-            .map(|k| attest(status.as_bytes(), k).unwrap().signature.to_hex())
-            .collect(),
+        signatures: signed(status.as_bytes()),
+        proofs: signed(&proof),
     }
 }
 
-/// An offer's text and keys.
-fn offered(answer: StatusToSignResponse) -> (String, Vec<String>) {
+/// An offer's text, keys and challenge.
+fn offered(answer: StatusToSignResponse) -> (String, Vec<String>, String) {
     match answer {
         StatusToSignResponse::Offer {
             status,
             public_keys,
-        } => (status, public_keys),
+            challenge,
+        } => (status, public_keys, challenge),
         StatusToSignResponse::Unchanged => panic!("no offer"),
     }
 }
@@ -121,6 +129,26 @@ async fn only_a_loopback_source_gets_a_session() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_declaration_of_more_than_256_keys_is_refused() {
+    let server = tokio_server();
+    server.session.offer("first".into());
+    let declare = |count: usize| StatusToSignRequest {
+        public_keys: vec![key(1).to_hex(); count],
+    };
+    let refused = server
+        .session
+        .status_to_sign(session(1), forger(), declare(257))
+        .await;
+    assert_eq!(refused.unwrap_err().status, 499);
+    assert!(!server.session.is_attached());
+    let answer = server
+        .session
+        .status_to_sign(session(1), forger(), declare(256))
+        .await;
+    assert!(matches!(answer, Ok(StatusToSignResponse::Offer { .. })));
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_long_poll_answers_a_new_status_at_once_or_unchanged_after_ten_seconds() {
     let server = tokio_server();
     let started = Instant::now();
@@ -131,9 +159,9 @@ async fn the_long_poll_answers_a_new_status_at_once_or_unchanged_after_ten_secon
     assert_eq!(answer.unwrap(), StatusToSignResponse::Unchanged);
     assert_eq!(started.elapsed(), Duration::from_secs(10));
     // An offer waiting for the poll: answered at once, with the declared keys that are registered
-    // delegates, in declared order, duplicates kept.
+    // delegates, in declared order, duplicates kept, and the session's challenge.
     server.session.offer("first".into());
-    let (status, keys) = offered(
+    let (status, keys, challenge) = offered(
         server
             .session
             .status_to_sign(session(1), forger(), declared())
@@ -142,6 +170,7 @@ async fn the_long_poll_answers_a_new_status_at_once_or_unchanged_after_ten_secon
     );
     assert_eq!(status, "first");
     assert_eq!(keys, [key(1), key(2), key(1)].map(|k| k.to_hex()));
+    assert!(session_proof(&challenge).is_some());
     // An offer made while the poll waits answers it then.
     let poll = server
         .session
@@ -167,7 +196,7 @@ async fn the_long_poll_answers_a_new_status_at_once_or_unchanged_after_ten_secon
 async fn signatures_are_verified_against_the_offer_they_name_and_stale_ones_dropped() {
     let server = tokio_server();
     server.session.offer("first".into());
-    let (status, keys) = offered(
+    let (status, keys, challenge) = offered(
         server
             .session
             .status_to_sign(session(1), forger(), declared())
@@ -175,39 +204,48 @@ async fn signatures_are_verified_against_the_offer_they_name_and_stale_ones_drop
             .unwrap(),
     );
     // One signature is of other bytes: its key is not attested.
-    let mut signatures = sign(&status, &keys);
+    let mut signatures = sign(&status, &keys, &challenge);
     signatures.signatures[1] = attest(b"other", &delegate(2)).unwrap().signature.to_hex();
     server
         .session
         .post_signatures(session(1), signatures)
         .unwrap();
     assert_eq!(server.session.attested(), [key(1), key(1)]);
+    // A proof of another session's challenge, or no proof: that key is not attested either.
+    let mut signatures = sign(&status, &keys, &challenge);
+    signatures.proofs[0] = sign(&status, &keys, &"0".repeat(64)).proofs[0].clone();
+    signatures.proofs.truncate(2);
+    server
+        .session
+        .post_signatures(session(1), signatures)
+        .unwrap();
+    assert_eq!(server.session.attested(), [key(2)]);
     // Every signature verifies: the attested set in declared order, duplicates kept.
     server
         .session
-        .post_signatures(session(1), sign(&status, &keys))
+        .post_signatures(session(1), sign(&status, &keys, &challenge))
         .unwrap();
     assert_eq!(server.session.attested(), [key(1), key(2), key(1)]);
     // Signatures naming no offer of the session, and of a session that is not this one: dropped.
     server
         .session
-        .post_signatures(session(1), sign("never offered", &keys))
+        .post_signatures(session(1), sign("never offered", &keys, &challenge))
         .unwrap();
     server
         .session
-        .post_signatures(session(2), sign(&status, &keys))
+        .post_signatures(session(2), sign(&status, &keys, &challenge))
         .unwrap();
     assert_eq!(server.session.attested(), [key(1), key(2), key(1)]);
     // Once the status has changed, the old offer's signatures are dropped.
     server.session.offer("second".into());
-    let mut stale = sign(&status, &keys);
+    let mut stale = sign(&status, &keys, &challenge);
     stale.signatures.truncate(1);
     server.session.post_signatures(session(1), stale).unwrap();
     assert_eq!(server.session.attested(), [key(1), key(2), key(1)]);
     // An offer that was not delivered yet cannot be signed.
     server
         .session
-        .post_signatures(session(1), sign("second", &keys))
+        .post_signatures(session(1), sign("second", &keys, &challenge))
         .unwrap();
     let wait = server.session.signatures("second", Duration::ZERO).await;
     assert_eq!(wait, heartwood_p2p::attestation_session::Signing::Unsigned);
@@ -217,7 +255,7 @@ async fn signatures_are_verified_against_the_offer_they_name_and_stale_ones_drop
 async fn a_newer_session_replaces_the_older_one() {
     let server = Arc::new(tokio_server());
     server.session.offer("first".into());
-    let (status, keys) = offered(
+    let (status, keys, challenge) = offered(
         server
             .session
             .status_to_sign(session(1), forger(), declared())
@@ -226,7 +264,7 @@ async fn a_newer_session_replaces_the_older_one() {
     );
     server
         .session
-        .post_signatures(session(1), sign(&status, &keys))
+        .post_signatures(session(1), sign(&status, &keys, &challenge))
         .unwrap();
     let older = {
         let server = Arc::clone(&server);
@@ -240,13 +278,14 @@ async fn a_newer_session_replaces_the_older_one() {
     sleep(Duration::from_secs(1)).await;
     // The newer session gets the status at once; the older one's poll ends, and so does its
     // attested set.
-    let (again, _) = offered(
+    let (again, _, second) = offered(
         server
             .session
             .status_to_sign(session(2), forger(), declared())
             .await
             .unwrap(),
     );
+    assert_ne!(second, challenge);
     assert_eq!(again, status);
     let ended = older.await.unwrap().unwrap_err();
     assert_eq!(
@@ -257,12 +296,12 @@ async fn a_newer_session_replaces_the_older_one() {
     // The older session's signatures are dropped.
     server
         .session
-        .post_signatures(session(1), sign(&status, &keys))
+        .post_signatures(session(1), sign(&status, &keys, &challenge))
         .unwrap();
     assert!(server.session.attested().is_empty());
     server
         .session
-        .post_signatures(session(2), sign(&status, &keys))
+        .post_signatures(session(2), sign(&status, &keys, &second))
         .unwrap();
     assert_eq!(server.session.attested().len(), 3);
 }
@@ -271,7 +310,7 @@ async fn a_newer_session_replaces_the_older_one() {
 async fn a_session_ends_with_its_socket_or_after_fifteen_seconds_without_a_poll() {
     let server = tokio_server();
     server.session.offer("first".into());
-    let (status, keys) = offered(
+    let (status, keys, challenge) = offered(
         server
             .session
             .status_to_sign(session(1), forger(), declared())
@@ -280,7 +319,7 @@ async fn a_session_ends_with_its_socket_or_after_fifteen_seconds_without_a_poll(
     );
     server
         .session
-        .post_signatures(session(1), sign(&status, &keys))
+        .post_signatures(session(1), sign(&status, &keys, &challenge))
         .unwrap();
     // Another socket's close changes nothing; the session's own ends it.
     server.session.closed(session(9), forger());
@@ -290,7 +329,7 @@ async fn a_session_ends_with_its_socket_or_after_fifteen_seconds_without_a_poll(
     assert!(server.session.attested().is_empty());
     // A new session, then no poll: it lasts 15 s.
     server.session.offer("second".into());
-    let (status, keys) = offered(
+    let (status, keys, challenge) = offered(
         server
             .session
             .status_to_sign(session(3), forger(), declared())
@@ -299,7 +338,7 @@ async fn a_session_ends_with_its_socket_or_after_fifteen_seconds_without_a_poll(
     );
     server
         .session
-        .post_signatures(session(3), sign(&status, &keys))
+        .post_signatures(session(3), sign(&status, &keys, &challenge))
         .unwrap();
     advance(Duration::from_millis(14_999)).await;
     assert_eq!(server.session.attested().len(), 3);
@@ -308,7 +347,7 @@ async fn a_session_ends_with_its_socket_or_after_fifteen_seconds_without_a_poll(
     assert!(!server.session.is_attached());
     // A pending poll keeps a session: 10 s of poll, then 15 s from its end.
     server.session.offer("third".into());
-    let (status, keys) = offered(
+    let (status, keys, challenge) = offered(
         server
             .session
             .status_to_sign(session(4), forger(), declared())
@@ -317,7 +356,7 @@ async fn a_session_ends_with_its_socket_or_after_fifteen_seconds_without_a_poll(
     );
     server
         .session
-        .post_signatures(session(4), sign(&status, &keys))
+        .post_signatures(session(4), sign(&status, &keys, &challenge))
         .unwrap();
     let answer = server
         .session
@@ -336,7 +375,7 @@ async fn the_delegates_on_this_node_are_the_attested_keys_of_the_round() {
     let on_node = DelegatesOnThisNode(Arc::clone(&server.session));
     assert!(on_node.attested().is_empty());
     server.session.offer("first".into());
-    let (status, keys) = offered(
+    let (status, keys, challenge) = offered(
         server
             .session
             .status_to_sign(session(1), forger(), declared())
@@ -345,7 +384,7 @@ async fn the_delegates_on_this_node_are_the_attested_keys_of_the_round() {
     );
     server
         .session
-        .post_signatures(session(1), sign(&status, &keys))
+        .post_signatures(session(1), sign(&status, &keys, &challenge))
         .unwrap();
     // Delegate 2 is attested but not in the round of the tip plus one.
     *server.node.active.lock().unwrap() = vec![key(0), key(1)];
@@ -372,8 +411,9 @@ fn honest_forger(server: &Arc<Server>, id: u64) -> tokio::task::JoinHandle<()> {
                 Ok(StatusToSignResponse::Offer {
                     status,
                     public_keys,
+                    challenge,
                 }) => {
-                    let signatures = sign(&status, &public_keys);
+                    let signatures = sign(&status, &public_keys, &challenge);
                     server
                         .session
                         .post_signatures(session(id), signatures)
@@ -384,6 +424,34 @@ fn honest_forger(server: &Arc<Server>, id: u64) -> tokio::task::JoinHandle<()> {
             }
         }
     })
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_session_without_the_keys_cannot_attest_with_the_signatures_the_status_serves() {
+    let server = Arc::new(tokio_server());
+    let forger_task = honest_forger(&server, 1);
+    sleep(Duration::from_millis(10)).await;
+    let signed = served(&server.status.get_status().await.unwrap());
+    assert_eq!(signed.public_keys[0], key(1).to_hex());
+    forger_task.abort();
+    // Another loopback caller, which holds no key, declares delegate 1 thirty times and posts
+    // the served signature of delegate 1 for each copy, as its signature and as its proof.
+    let copies = StatusToSignRequest {
+        public_keys: vec![key(1).to_hex(); 30],
+    };
+    let other: IpAddr = "::1".parse().unwrap();
+    let answer = server.session.status_to_sign(session(2), other, copies);
+    let Ok(StatusToSignResponse::Offer { status, .. }) = answer.await else {
+        panic!("no offer");
+    };
+    let copied = vec![signed.signatures[0].clone(); 30];
+    let offer = hex::encode(&sha256(status.as_bytes()));
+    let body = json!({ "offer": offer, "signatures": copied, "proofs": copied });
+    let posted = internal::decode::<StatusSignatures>(body.to_string().as_bytes()).unwrap();
+    server.session.post_signatures(session(2), posted).unwrap();
+    assert_eq!(server.session.attested(), []);
+    let on_node = DelegatesOnThisNode(Arc::clone(&server.session));
+    assert_eq!(on_node.attested(), []);
 }
 
 #[tokio::test(start_paused = true)]
@@ -461,10 +529,10 @@ async fn a_slow_forger_costs_one_wait_of_500_ms_then_the_status_is_served_unsign
     );
     assert_eq!(started.elapsed(), Duration::ZERO);
     // The signatures come: the next getStatus serves them and caches.
-    let (status, keys) = offered(quiet.await.unwrap().unwrap());
+    let (status, keys, challenge) = offered(quiet.await.unwrap().unwrap());
     server
         .session
-        .post_signatures(session(1), sign(&status, &keys))
+        .post_signatures(session(1), sign(&status, &keys, &challenge))
         .unwrap();
     let signed = server.status.get_status().await.unwrap();
     assert_eq!(served(&signed).public_keys.len(), 3);
@@ -661,24 +729,28 @@ async fn serve(input: &Value) -> Value {
                     if let StatusToSignResponse::Offer {
                         status,
                         public_keys,
+                        challenge,
                     } = answer
                     {
-                        let signatures = (public_keys.iter())
-                            .map(|hex| {
-                                let key = keys
-                                    .iter()
-                                    .find(|k| k.public_key().to_compressed().to_hex() == *hex);
-                                attest(status.as_bytes(), key.unwrap())
-                                    .unwrap()
-                                    .signature
-                                    .to_hex()
-                            })
-                            .collect();
+                        let proof = session_proof(&challenge).unwrap();
+                        let signed = |text: &[u8]| -> Vec<String> {
+                            (public_keys.iter())
+                                .map(|hex| {
+                                    let key = keys
+                                        .iter()
+                                        .find(|k| k.public_key().to_compressed().to_hex() == *hex);
+                                    attest(text, key.unwrap()).unwrap().signature.to_hex()
+                                })
+                                .collect()
+                        };
                         let offer = hex::encode(&sha256(status.as_bytes()));
-                        server
-                            .session
-                            .post_signatures(session(1), StatusSignatures { offer, signatures })
-                            .unwrap();
+                        let (signatures, proofs) = (signed(status.as_bytes()), signed(&proof));
+                        let posted = StatusSignatures {
+                            offer,
+                            signatures,
+                            proofs,
+                        };
+                        server.session.post_signatures(session(1), posted).unwrap();
                     }
                 }
             })

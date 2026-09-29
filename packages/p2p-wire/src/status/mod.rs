@@ -29,7 +29,7 @@ mod tree;
 #[cfg(test)]
 mod tests;
 
-pub use self::attest::{Attestation, attest, response, verify_attestation};
+pub use self::attest::{Attestation, attest, response, session_proof, verify_attestation};
 pub use self::parse::parse_preimage;
 pub use self::reply::{
     CheckedStatus, ReceivedStatus, check_reply, decode_response, encode_response,

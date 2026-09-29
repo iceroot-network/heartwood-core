@@ -15,7 +15,12 @@
 //!   they come. A 499 is answered and the socket kept; any other refusal ends the socket.
 //! - The server pings every socket every 15 s from its start, and 5 s later closes each socket
 //!   that has neither received a message, nor been sent anything but a ping, since the check
-//!   before, nor a request in progress, nor a message still being written.
+//!   before, nor a request in progress, nor a message being written to a peer that reads (bytes
+//!   written since the check before). Dropped without a reason, as peers that do not read: a
+//!   socket whose unwritten bytes pass [`super::listener::MAX_BACKLOG`]; one whose bytes that
+//!   waited at the check before are still unwritten, whatever it sends; one that closes, or whose
+//!   stream ends, with more than [`CLOSE_BACKLOG`] unwritten. The reference keeps such sockets,
+//!   and their unwritten messages, without a bound.
 //! - A WebSocket ping or pong frame ends the socket ("Malicious ping frame received", "Malicious
 //!   pong frame received"), and so does a frame fault, with the WebSocket library's text.
 //!
@@ -29,13 +34,14 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use heartwood_kernel::debug;
 use heartwood_p2p_wire::RouteId;
 use heartwood_p2p_wire::nes::{Heartbeat, Kind, Message};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until, timeout};
 
-use super::listener::{Frame, FrameReader, FrameWriter};
+use super::listener::{CLOSE_BACKLOG, Frame, FrameReader, FrameWriter, MAX_BACKLOG, Writes};
 use super::plugins::{Answer, Plugins};
 use super::seams::SessionId;
 use crate::scoring::Violation;
@@ -46,7 +52,8 @@ pub const PROTOCOL: &str = "2";
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 /// How long the client has to answer a heartbeat.
 pub const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
-/// How long a socket the server closes waits for the client's close frame.
+/// How long a socket the server closes waits for the client's close frame, unless a newer socket
+/// from its address opens first.
 pub const CLOSE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Two client pings closer than this end the socket.
 const PING_LIMIT: Duration = Duration::from_secs(1);
@@ -194,12 +201,14 @@ impl ServerSession {
                 }
                 () = sleep_until(check_at), if check.is_some() => {
                     check = None;
-                    if !self.pinged && self.in_flight == 0 && !writer.is_writing() {
+                    let writes = writer.check();
+                    if writes == Writes::Stalled {
+                        debug!("Dropped the socket of {}, which reads nothing", self.parts.ip);
+                        break Stop::Terminate(None);
+                    } else if writes == Writes::Idle && !self.pinged && self.in_flight == 0 {
                         break Stop::Close(1005);
                     }
-                    // A message still being written marks the socket active once it is, as the
-                    // reference's `_flush` marks it after each message but a ping.
-                    self.pinged = writer.is_writing_activity();
+                    self.pinged = false;
                 }
                 Some((id, answer)) = answered.recv() => {
                     self.in_flight = self.in_flight.saturating_sub(1);
@@ -207,6 +216,12 @@ impl ServerSession {
                         Reply::Payload(payload) => self.send(&writer, &Message::response(id, payload)),
                         Reply::Graceful(body) => self.send(&writer, &Message::graceful_error(id, &body)),
                         Reply::Terminate(reason) => break Stop::Terminate(Some(reason)),
+                    }
+                    let backlog = writer.backlog();
+                    if backlog > MAX_BACKLOG {
+                        let ip = self.parts.ip;
+                        debug!("Dropped the socket of {ip}, which has {backlog} bytes to read");
+                        break Stop::Terminate(None);
                     }
                 }
                 frame = reader.next() => {
@@ -216,6 +231,14 @@ impl ServerSession {
                 }
             }
         };
+        let stop = match (stop, writer.backlog()) {
+            (Stop::Close(_) | Stop::Echo(_) | Stop::Ended, backlog) if backlog > CLOSE_BACKLOG => {
+                let ip = self.parts.ip;
+                debug!("Dropped the socket of {ip}, which closes with {backlog} bytes to read");
+                Stop::Terminate(None)
+            }
+            (stop, _) => stop,
+        };
         match stop {
             Stop::Terminate(reason) => {
                 writer.terminate();
@@ -224,12 +247,18 @@ impl ServerSession {
                 })
             }
             Stop::Close(code) => {
+                // Nothing is written after the close frame: the answers still to come are
+                // dropped as they come, and a newer socket from the address ends the wait.
+                drop(answered);
                 writer.close(code);
+                let control = &mut self.parts.control;
                 let _ = timeout(CLOSE_TIMEOUT, async {
-                    while !matches!(
-                        reader.next().await,
-                        Frame::Close(_) | Frame::Ended | Frame::Failed(_)
-                    ) {}
+                    while !tokio::select! {
+                        frame = reader.next() => {
+                            matches!(frame, Frame::Close(_) | Frame::Ended | Frame::Failed(_))
+                        }
+                        order = control.recv() => order != Some(Control::Close),
+                    } {}
                 })
                 .await;
                 SessionEnd::Closed

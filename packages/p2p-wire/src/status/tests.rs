@@ -580,3 +580,32 @@ fn a_header_at_height_1_may_have_no_previous_block_and_unbounded_totals() {
         Err(ReplyRefused::Header)
     );
 }
+
+#[test]
+fn a_session_proof_is_a_fixed_prefix_and_a_challenge_of_64_hex_digits() {
+    let challenge = "0123456789abcdef".repeat(4);
+    let proof = session_proof(&challenge).unwrap();
+    assert_eq!(
+        proof,
+        format!("Heartwood attestation session {challenge}").into_bytes()
+    );
+    assert!(parse_preimage(&proof).is_err());
+    for other in [
+        &challenge[1..],
+        &challenge.to_uppercase(),
+        &format!("{challenge}0"),
+        "",
+    ] {
+        assert_eq!(session_proof(other), None, "{other}");
+    }
+    // A proof signs and verifies as an attestation of its own text only.
+    let signed = attest(&proof, &key("proof")).unwrap();
+    let public = key("proof").public_key().to_hex();
+    let signature = signed.signature.to_hex();
+    assert!(verify_attestation(&proof, &public, &signature));
+    assert!(!verify_attestation(
+        PREIMAGE.as_bytes(),
+        &public,
+        &signature
+    ));
+}

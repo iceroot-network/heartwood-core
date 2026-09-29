@@ -7,7 +7,8 @@
 //! outside its guards. The relay's other tests, which need the peer-to-peer server, are in
 //! `forging_e2e.rs` and run with the integration tests.
 //!
-//! Every relay and forger address of these tests is in the loopback block 127.13.0.0/24.
+//! Every relay and forger address of these tests is in the loopback block 127.13.0.0/24; the
+//! mock relay listens in the block `HEARTWOOD_TEST_LOOPBACK` names instead when it is set.
 
 mod common;
 
@@ -26,7 +27,9 @@ use serde_json::{Value, json};
 
 #[cfg(feature = "difftest")]
 /// The forger tests' relay address.
-const RELAY_IP: [u8; 4] = [127, 13, 0, 21];
+fn relay_ip() -> std::net::IpAddr {
+    common::loopback("127.13.0", 21).parse().unwrap()
+}
 
 /// The `heartwood` binary.
 fn heartwood() -> Command {
@@ -476,7 +479,8 @@ mod against_a_mock_relay {
         heartwood_kernel::SystemClock.now_ms()
     }
 
-    /// A relay whose delegate of every slot is the test's, which takes each block after `hold`.
+    /// A relay whose delegate of every slot is the test's, which takes each block after `hold`,
+    /// and whose round names `round_height` as its last block's height when it is set.
     struct Relay {
         epoch: i64,
         block_time: u64,
@@ -484,11 +488,12 @@ mod against_a_mock_relay {
         public_key: String,
         milestones: heartwood_crypto::Milestones,
         hold: Duration,
+        round_height: Option<u32>,
         posted: Mutex<Vec<(i64, Instant)>>,
     }
 
     impl Relay {
-        fn new(node: &Node, hold: Duration) -> Relay {
+        fn new(node: &Node, hold: Duration, round_height: Option<u32>) -> Relay {
             let files = crypto::load(&node.config().join("crypto")).unwrap();
             let params = files.milestones.at(1);
             let public_key = delegate().public_key().to_compressed().to_hex();
@@ -503,6 +508,7 @@ mod against_a_mock_relay {
                 public_key,
                 milestones: files.milestones.clone(),
                 hold,
+                round_height,
                 posted: Mutex::default(),
             }
         }
@@ -520,7 +526,7 @@ mod against_a_mock_relay {
                     current_forger: Some(self.wallet.clone()),
                     delegates: vec![self.wallet.clone()],
                     last_block: LastBlockData::new(object(
-                        json!({"height": height, "id": "0".repeat(64)}),
+                        json!({"height": self.round_height.unwrap_or(height), "id": "0".repeat(64)}),
                     ))
                     .unwrap(),
                     next_forger: Some(self.wallet.clone()),
@@ -608,7 +614,16 @@ mod against_a_mock_relay {
 
     /// The relay of `node`, holding each post `hold`, on a runtime of its own.
     fn relay(node: &Node, hold: Duration) -> (Arc<Relay>, SocketAddr, tokio::runtime::Runtime) {
-        let relay = Arc::new(Relay::new(node, hold));
+        relay_reporting(node, hold, None)
+    }
+
+    /// [`relay`], its round naming `round_height` as its last block's height when it is set.
+    fn relay_reporting(
+        node: &Node,
+        hold: Duration,
+        round_height: Option<u32>,
+    ) -> (Arc<Relay>, SocketAddr, tokio::runtime::Runtime) {
+        let relay = Arc::new(Relay::new(node, hold, round_height));
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
@@ -617,7 +632,7 @@ mod against_a_mock_relay {
         let answering = Arc::clone(&relay);
         let answer: Answer = Arc::new(move |route, payload| answering.answer(route, payload));
         let peer = runtime
-            .block_on(MockPeer::answering((RELAY_IP, 0).into(), answer))
+            .block_on(MockPeer::answering((relay_ip(), 0).into(), answer))
             .unwrap();
         let address = peer.address();
         runtime.spawn(async move {
@@ -651,6 +666,29 @@ mod against_a_mock_relay {
             "{}",
             node.output("forger")
         );
+    }
+
+    #[test]
+    fn a_relay_height_beyond_the_forgers_clock_does_not_stop_it_at_the_version_floor() {
+        let node = Node::new("forger-far-height");
+        node.keys(&[&delegate()], 0o600);
+        // A floor that refuses this version from a height the chain cannot reach for years.
+        let path = node.config().join("crypto/milestones.json");
+        let text = fs::read_to_string(&path).unwrap();
+        let mut milestones: Vec<Value> = serde_json::from_str(&text).unwrap();
+        let floor = json!({"height": 100_000_000, "p2p": {"minimumVersions": [">=9.0.0"]}});
+        milestones.push(floor);
+        fs::write(&path, Value::Array(milestones).to_string()).unwrap();
+        let (relay, address, _runtime) =
+            relay_reporting(&node, Duration::ZERO, Some(4_000_000_000));
+        node.forger_profile(address);
+        let args = ["forger", "run", "--token", "t", "--network", "devnet"];
+        let _forger = node.spawn("forger", &args);
+        wait_until(Duration::from_secs(30), "posted block", || {
+            !relay.posted.lock().unwrap().is_empty()
+        });
+        let output = node.output("forger");
+        assert!(output.contains("reports height 4000000000"), "{output}");
     }
 
     #[test]

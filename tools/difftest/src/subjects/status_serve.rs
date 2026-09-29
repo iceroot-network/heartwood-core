@@ -223,20 +223,28 @@ async fn sign_offers(session: Arc<AttestationSession>, keys: Vec<KeyPair>) {
         let StatusToSignResponse::Offer {
             status,
             public_keys,
+            challenge,
         } = answer
         else {
             continue;
         };
-        let mut signatures = Vec::new();
+        let proof = status::session_proof(&challenge).unwrap_or_default();
+        let (mut signatures, mut proofs) = (Vec::new(), Vec::new());
         for offered in &public_keys {
             let key = keys
                 .iter()
                 .find(|key| key.public_key().to_compressed().to_hex() == *offered);
-            let signature = key.and_then(|key| status::attest(status.as_bytes(), key).ok());
-            signatures.extend(signature.map(|signed| signed.signature.to_hex()));
+            let sign = |text: &[u8]| key.and_then(|key| status::attest(text, key).ok());
+            signatures.extend(sign(status.as_bytes()).map(|signed| signed.signature.to_hex()));
+            proofs.extend(sign(&proof).map(|signed| signed.signature.to_hex()));
         }
         let offer = hex::encode(&sha256(status.as_bytes()));
-        let _ = session.post_signatures(id, StatusSignatures { offer, signatures });
+        let posted = StatusSignatures {
+            offer,
+            signatures,
+            proofs,
+        };
+        let _ = session.post_signatures(id, posted);
     }
 }
 

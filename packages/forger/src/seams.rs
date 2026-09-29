@@ -160,6 +160,12 @@ pub trait RelayLink: Send + Sync {
 
 /// The attestation routes, on the selected host's session.
 pub trait AttestLink: Send + Sync {
+    /// Whether the selected host is one the forger reaches over loopback, the only kind of relay
+    /// that attests it.
+    fn selected_is_local(&self) -> bool {
+        true
+    }
+
     /// `getStatusToSign`: the long poll for a status to attest, with the forger's declared keys
     /// (file order, duplicates kept).
     fn status_to_sign(

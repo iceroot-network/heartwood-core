@@ -347,8 +347,10 @@ serves both implementations:
 - `config::floor`: the node's own version against the milestones' `p2p.minimumVersions`. The floor
   in force at the stored tip (height 1 at a first start) must admit the node's version, or the
   start stops and names the height; a later milestone whose floor would refuse the node is a
-  warning with its height, since the network cuts the node off there. The reference checks no
-  floor against its own version.
+  warning with its height, since the network cuts the node off there. A forger checks it at the
+  height its relay's first round names, but no higher than one block per slot of the shortest
+  block time since the epoch allows, so a relay reporting a height the chain cannot have reached
+  does not stop it. The reference checks no floor against its own version.
 - `bus`: the event bus, with the reference's event names, to every subscriber in the order the
   node emitted them. Nothing in a relay consumes it beyond the node's own ordered listeners; the
   external payloads (webhooks, the API's socket) come with their first consumer.
@@ -698,7 +700,9 @@ transport are in `heartwood-p2p`, which uses the codec.
 - **signed peer status**: the tree a relay signs over its last block and its configuration, its
   canonical JSON, the slot before the network epoch (negative in the signed text, wrapped on the
   wire), the attestations (legacy Schnorr over the text, one per key; a key listed twice is signed
-  twice), and what a node does with a status it receives: the reply check with the changes it
+  twice), the text a forger signs with each key to show its relay that it holds the key on one
+  attestation session (a fixed prefix and the session's random challenge, Heartwood's own), and
+  what a node does with a status it receives: the reply check with the changes it
   makes to the value (plugin names outside 4 to 64 characters removed, the generator key
   lowercased), the text the sender signed, and the signature checks. Only the reply check makes a
   `CheckedStatus`, the one input the signed text is rebuilt from, so an unchecked reply cannot
@@ -835,6 +839,27 @@ configuration, except the last, which needs a transaction that no honest wallet 
 - a downloaded block that holds a removed transaction type or a memo that is not valid UTF-8 fails
   that peer's whole getBlocks reply, and the monitor asks the next peer, since the reader refuses
   both (see L0 below).
+
+The server keeps the reference's heartbeat, bans and one socket per address, with bounds the
+reference lacks, which no honest peer that reads its socket meets:
+
+- a socket whose queued and unwritten bytes pass 40 MiB (twice the largest message) is dropped,
+  without a ban;
+- the heartbeat counts an answer being written as the socket's activity only while its bytes
+  move, where the reference keeps a socket while anything waits to be written: a check that finds
+  the bytes that waited at the check before still unwritten drops the socket, whatever the peer
+  sends (a nes ping included), so a peer that stops reading is dropped 15 to 30 s after its
+  writes stall; a slow reader keeps its socket;
+- a socket that closes, or whose stream ends, with more than 64 KiB unwritten is dropped at once,
+  as a peer that closes reads no more answers; the writes left when a session ends stop 30 s
+  later, the WebSocket library's close timeout, or when a newer socket from the address opens, as
+  the reference destroys every other socket of the address, a closing one included (a socket the
+  server closed ends then too, where it waited 30 s for the peer's close frame, and it holds no
+  answer that comes after its close frame). An address thus holds the backlog of one socket at
+  most (40 MiB), and a subnet the backlogs of the sockets its cap admits (`maxSameSubnetPeers`,
+  256 by default), each until its writes stall;
+- the ban list drops its expired bans once it holds more than 10,000 addresses, where the
+  reference keeps an expired ban until its address connects again.
 
 ```sh
 make test-p2p                   # clippy and tests of heartwood-p2p alone, without and with difftest
@@ -1005,7 +1030,8 @@ pool, the store, the chain or the API. `heartwood forger run` runs it (see heart
 - **the relay client**: one nes session per configured host with a 20 MiB receive limit, the
   reference's host selection (up to ten sweeps 250 ms apart, the first ready host in list order),
   each call with its route's codec and the forger's headers, and the two attestation routes on the
-  selected host.
+  selected host when the forger reaches it over loopback, as the relay attests only a forger on
+  its own host.
 - **blocks**: a delegate's block from the relay's inputs (the collated transactions, the previous
   block, the timestamp and the reward), byte for byte the reference's for the same inputs and aux.
 - **the signing record**: per key, the height, slot, id and bytes of the last block signed,
@@ -1013,7 +1039,12 @@ pool, the store, the chain or the API. `heartwood forger run` runs it (see heart
 - **the key file**: `delegates.json`, with the reference's messages for a missing file and a file
   without keys.
 - **the attester**: signs the status its relay offers over the forger's own session, one
-  signature per offered key, naming the offer by the SHA-256 of its text.
+  signature per offered key, naming the offer by the SHA-256 of its text, and signs the
+  session's challenge with each key; the relay counts a key as attested only with both, since
+  the status signatures it serves are public. A key the key file lists n times is attested and
+  counted n times in the relay's quorum and fork checks, as the reference counts its key file;
+  only its holder can do this, to its own node, at most 256 times (a session's declaration
+  limit).
 
 Where Heartwood differs on purpose, none of which an honest relay on the same host shows except the
 first (the bytes a slot gets stay the reference's):
@@ -1048,9 +1079,12 @@ first (the bytes a slot gets stay the reference's):
 - a relay hostname with a CIDR suffix (`127.0.0.1/8`), which the reference's schema accepts, and a
   `delay` that is not a whole number of milliseconds, which the reference reads as no delay, are
   refused at start; `localAddress` is Heartwood's own option;
-- the attester signs an offer only when its text reads back as a status tree and writes back to
-  the same bytes, for the forger's network, with a height equal to its header's and a slot within
-  one of the forger's clock, and only for the forger's own keys;
+- the attester signs an offer only when its text, of at most 16 KiB, reads back as a status tree
+  and writes back to the same bytes, for the forger's network, with a height equal to its
+  header's and a slot within one of the forger's clock, and only for the forger's own keys, each
+  offered at most as often as the key file lists it; it polls again no sooner than 250 ms after
+  the poll before began, whatever the answer, and polls no relay it does not reach over loopback
+  (it looks at the selection again each second);
 - the fields of an internal body that the forger uses are read when the body arrives, so a missing
   or out-of-range field fails the call, where the reference fails later.
 
@@ -1077,7 +1111,9 @@ neither gets a block signed, recorded or posted.
 
 The crash test (`difftest forger crash`) starts the `forger-child` binary (feature `difftest`),
 which runs the slot loop, the relay client and the signer with a fresh random aux for every
-signature, against a mock relay on `127.14.0.1` whose answers follow the clock on a test network
+signature, against a mock relay on `127.14.0.1` (or the first address of the loopback block that
+`HEARTWOOD_TEST_LOOPBACK` names, three octets such as `127.24.0`) whose answers follow the clock
+on a test network
 with 3-second slots: the child's delegate forges every slot, every network state names a new
 random previous block, and a posted block becomes the relay's last block once its answer is sent,
 after a random hold. The harness kills the child with SIGKILL at random moments, most of them
@@ -1096,7 +1132,7 @@ The fuzz targets:
 | Target | Input | Checks | Seeded from |
 |---|---|---|---|
 | `internal_body` | a selector byte (modulo 9: the nine internal bodies) and the body's JSON text | no panic; an accepted body writes bytes that read back to a body that writes the same bytes | the round and network-state bodies of a vector run's V29 records (`FORGER_SEEDS`) |
-| `status_to_sign` | an offer: arbitrary text, or a status tree in canonical form perhaps cut or changed by one byte, and a list of keys | no panic; only an offer whose text is the canonical form of a status for the attester's network, height and slot window, with the attester's own keys, is signed, and every such offer is | none (the target builds its status trees) |
+| `status_to_sign` | an offer: arbitrary text, or a status tree in canonical form perhaps cut or changed by one byte, and a list of keys | no panic; only an offer whose text is the canonical form of a status of at most 16 KiB for the attester's network, height and slot window, with the attester's own keys each at most as often as declared, is signed, and every such offer is | none (the target builds its status trees) |
 
 ## heartwood-cli
 
@@ -1405,7 +1441,9 @@ it:
   (`--networkStart=false`), the `--no-` forms and the reference's global `-v` and `--quiet` are
   refused with a usage error (status 2); `--network` takes any name that has a complete set of
   crypto files, and with neither `--network` nor `config.json` the start is refused, where the
-  reference discovers the one network directory.
+  reference discovers the one network directory; a token or network name, from the flags or
+  `config.json`, holds letters, digits, `-` and `_` only, as the role commands require, where
+  the reference takes any text, `../` included.
 
 Release builds build the package alone, `cargo build --release --locked -p heartwood-core`, since a
 build of the whole workspace turns on the test seams through `heartwood-difftest`. With its feature
@@ -1430,9 +1468,11 @@ relay (no listening socket, a block forged through the relay, a second forger re
 its post in flight), the key file's and the forger profile's refusals, `start` and `stop` with their
 refusals, a stop that comes as soon as the pid file exists, the supervisor's `errored` state, the
 colon spellings, `network generate` against the genesis vectors and the devnet addressing's
-refusals, on loopback addresses `127.13.0.x`. The devnet smoke test (marked `devnet`) has `heartwood
-devnet init --validators 1` forge 20 blocks, then a devnet of five nodes forge a round, each chain
-consistent across its relays and every process stopped at the end.
+refusals. The tests that start a relay, a forger or a mock relay listen in `127.13.0.0/24`, or in
+the block `HEARTWOOD_TEST_LOOPBACK` names (such as `127.24.0`), so that two runs on one host can be
+kept apart. The devnet smoke test (marked `devnet`), on the prefix `HEARTWOOD_DEVNET_PREFIX` names,
+has `heartwood devnet init --validators 1` forge 20 blocks, then a devnet of five nodes forge a
+round, each chain consistent across its relays and every process stopped at the end.
 
 ## L0: golden vectors
 
