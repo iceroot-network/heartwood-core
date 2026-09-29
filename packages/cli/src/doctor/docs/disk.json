@@ -14,12 +14,15 @@
         "the configuration"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet."
+        "pass": "At least 15% free, at least 180 days of growth left, at least 2 GiB free.",
+        "warn": "Under 15% free, or under 180 days at the store's growth.",
+        "fail": "Under 5% free, under 2 GiB free, or under 14 days at the store's growth.",
+        "unknown": "The data directory's free space could not be read."
       },
-      "advice": {},
+      "advice": {
+        "ok": "The data disk has {free_mb} MB free ({percent}%): about {days} days at {growth_mb} MB a day, {growth}.",
+        "low": "The data disk has {days} days left at the current growth ({growth_mb} MB a day, {growth}); {free_mb} MB ({percent}%) is free. Every node keeps every block, so the store only grows. Add space before it fills: a full disk stops the relay. More: https://docs.iceroot.com/validators/doctor/#disk-space"
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#disk-space"
     },
     {
@@ -34,13 +37,17 @@
         "/proc"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The log, temporary and configuration directories that sit on other filesystems each have at least 1 GiB free.",
+        "warn": "One has under 1 GiB free.",
+        "fail": "One has under 100 MiB free.",
+        "unknown": "A mount table or a directory's free space could not be read.",
+        "skipped": "All three directories are on the data directory's filesystem, which disk.space covers."
       },
-      "advice": {},
+      "advice": {
+        "ok": "The {disk} disk has {free_mb} MB free.",
+        "low": "The {disk} disk has {free_mb} MB free. Logs rotate daily; when the disk fills, the node stops writing its log. More: https://docs.iceroot.com/validators/doctor/#disk-other",
+        "same-disk": "The log, temporary and configuration directories share the data directory's filesystem."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#disk-other"
     },
     {
@@ -54,12 +61,15 @@
         "the node's files"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet."
+        "pass": "At least 5% of the data filesystem's file entries are free.",
+        "warn": "Under 5% free.",
+        "fail": "Under 1% free.",
+        "unknown": "The inode counts could not be read, or the filesystem reports none."
       },
-      "advice": {},
+      "advice": {
+        "ok": "The data filesystem has {percent}% of its file entries free.",
+        "low": "The data filesystem is running out of file entries (inodes), even though space is left: {percent}% ({free} entries) free. More: https://docs.iceroot.com/validators/doctor/#disk-inodes"
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#disk-inodes"
     },
     {
@@ -74,12 +84,18 @@
         "/sys"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet."
+        "pass": "The store sits on a local, non-rotational device.",
+        "warn": "A rotational disk, tmpfs, or a device whose type the kernel does not report.",
+        "fail": "A network filesystem (nfs, cifs, fuse.sshfs).",
+        "unknown": "The mount table or the device could not be read."
       },
-      "advice": {},
+      "advice": {
+        "local": "The store sits on a local, non-rotational disk.",
+        "network": "The store sits on a network filesystem. Its database needs a local disk: locking over a network filesystem can corrupt it. More: https://docs.iceroot.com/validators/doctor/#disk-type",
+        "tmpfs": "The store sits on a memory filesystem (tmpfs), which is lost at every reboot. Move the data directory to a disk. More: https://docs.iceroot.com/validators/doctor/#disk-type",
+        "spinning": "The store sits on a spinning disk. Block commits wait for the disk; an SSD is strongly recommended, NVMe preferred. More: https://docs.iceroot.com/validators/doctor/#disk-type",
+        "unreported": "The store sits on a virtual disk whose type the kernel does not report, so the doctor cannot tell whether it is an SSD. An SSD is strongly recommended, NVMe preferred. More: https://docs.iceroot.com/validators/doctor/#disk-type"
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#disk-type"
     },
     {
@@ -93,13 +109,16 @@
         "the forger's log"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "No write of the signing record took 250 ms or more.",
+        "warn": "The slowest took 250 to 999 ms.",
+        "fail": "The slowest took 1,000 ms or more.",
+        "unknown": "The forger's log could not be read, or its level hides the lines needed.",
+        "skipped": "The forger does not run on this host."
       },
-      "advice": {},
+      "advice": {
+        "none": "No slow write of the signing record in the window.",
+        "slow": "Writing the signing record took {millis} ms at its slowest. The forger writes it before each block leaves, so a slow disk can make it miss its slot. Move the data directory to a faster disk. More: https://docs.iceroot.com/validators/doctor/#disk-slow-writes"
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#disk-slow-writes"
     }
   ]

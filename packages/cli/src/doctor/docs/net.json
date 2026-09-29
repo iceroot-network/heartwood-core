@@ -13,13 +13,17 @@
         "the socket table"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The relay listens on its configured P2P address and port.",
+        "warn": "The relay listens on its P2P port, but on another address than the one configured.",
+        "fail": "The relay runs and nothing listens on its P2P port.",
+        "unknown": "The configuration or the socket table could not be read.",
+        "skipped": "The relay does not run on this host."
       },
-      "advice": {},
+      "advice": {
+        "listening": "The relay listens on its P2P port {port}.",
+        "other-address": "The relay listens on port {port}, but not on the configured address. Check the P2P host setting, then restart the relay. More: https://docs.iceroot.com/validators/doctor/#net-p2p-listen",
+        "not-listening": "The relay runs but does not listen on port {port}. Read its log for a bind error. More: https://docs.iceroot.com/validators/doctor/#net-p2p-listen"
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#net-p2p-listen"
     },
     {
@@ -34,12 +38,18 @@
         "the socket table"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The API listens on loopback only, is switched off, or no forger uses this relay. Under the onboarding profile a public API is reported as a fact.",
+        "warn": "The API listens on a non-loopback address on a relay a forger uses.",
+        "unknown": "The configuration, the socket table or the forger's configuration could not be read.",
+        "skipped": "The relay does not run on this host."
       },
-      "advice": {},
+      "advice": {
+        "loopback": "The node API listens on loopback only (port {port}).",
+        "api-off": "The node API is switched off.",
+        "no-forger": "The node API listens on a public address, but no forger uses this relay.",
+        "exposed-onboarding": "The node API listens on a public address (port {port}). The application check needs that. A sentry relay is the better place for it; if you opened this port for the check, close it again afterwards.",
+        "exposed": "The node API listens on a public address on a validator's relay. Public APIs belong on separate API nodes. Set CORE_API_HOST=127.0.0.1, or block port {port} in your firewall. More: https://docs.iceroot.com/validators/hardening/"
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#net-api-exposure"
     },
     {
@@ -53,12 +63,15 @@
         "the socket table"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The forger listens on no port.",
+        "fail": "The forger listens on a port, in any mode.",
+        "unknown": "The socket table could not be read.",
+        "skipped": "The forger does not run on this host."
       },
-      "advice": {},
+      "advice": {
+        "none": "The forger listens on no port.",
+        "listens": "The forger listens on port {port}. It should open none. Report this: it is a defect. More: https://docs.iceroot.com/validators/doctor/#net-forger-no-listener"
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#net-forger-no-listener"
     },
     {
@@ -73,13 +86,20 @@
         "the socket table"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "Every remoteAccess entry is a plain IP address, and the address a forger connects from is listed. With no forger, an empty list is fine.",
+        "warn": "An entry is not a plain address (a prefix such as 10.0.0.0/24, or a host name), which the relay matches against nothing; or a public address is listed.",
+        "fail": "The list is empty, or no entry matches the forger's address, while a forger is configured to use this relay.",
+        "unknown": "The configuration or the forger's configuration could not be read.",
+        "skipped": "The relay does not run on this host."
       },
-      "advice": {},
+      "advice": {
+        "listed": "The remoteAccess list holds plain addresses only, and the forger's address is among them.",
+        "none-needed": "The remoteAccess list is empty, and no forger uses this relay.",
+        "unmatched-entry": "{entries} remoteAccess entries match no address: this relay compares exact addresses only, so a prefix such as 10.0.0.0/24 or a host name admits nobody. List the forger's address itself. More: https://docs.iceroot.com/validators/doctor/#net-remote-access",
+        "public-address": "A public address is listed in remoteAccess. Only your own forger's address belongs there. More: https://docs.iceroot.com/validators/doctor/#net-remote-access",
+        "empty": "remoteAccess is empty, so the relay refuses its forger's calls. Add the forger's address (127.0.0.1 when it runs on this host). More: https://docs.iceroot.com/validators/doctor/#net-remote-access",
+        "no-match": "remoteAccess admits no forger, so the relay refuses its forger's calls. Add the forger's address itself (127.0.0.1 when it runs on this host); prefixes and host names match nothing. More: https://docs.iceroot.com/validators/doctor/#net-remote-access"
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#net-remote-access"
     },
     {
@@ -94,11 +114,14 @@
         "the node's files"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "unknown": "Not built yet."
+        "pass": "A host firewall service is active (ufw, nftables or firewalld).",
+        "warn": "No host firewall service is active. A provider's firewall may stand in, which the doctor cannot see.",
+        "unknown": "The service states could not be read."
       },
-      "advice": {},
+      "advice": {
+        "active": "A host firewall service is active (ufw {ufw}, nftables {nftables}, firewalld {firewalld}).",
+        "none-active": "No host firewall service is active (ufw {ufw}, nftables {nftables}, firewalld {firewalld}). If your provider's firewall protects this host, you can ignore this. Otherwise follow the hardening guide's rules: https://docs.iceroot.com/validators/hardening/"
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#net-firewall"
     },
     {
@@ -112,10 +135,12 @@
         "the configuration"
       ],
       "rules": {
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "unknown": "Nothing on this host can prove the relay is reachable from outside, so the finding is always unknown, with advice for testing it.",
+        "skipped": "The relay does not run on this host."
       },
-      "advice": {},
+      "advice": {
+        "unverifiable": "The doctor cannot see this host from outside. Test the P2P port from a machine that holds no connection to this relay (not your forger's host, not one of your other relays or sentries), for example nc -vz <public address> {port}. A new connection from an address closes that address's other connections to the relay, and a probe that never completes the handshake gets its address banned for about 10 seconds, so a test from the forger's address would cut the forger off."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#net-reachable"
     }
   ]
