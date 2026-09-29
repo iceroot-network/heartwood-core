@@ -362,6 +362,8 @@ impl TestNode {
             broadcast: broadcasts.clone(),
             own_keys,
             version: "4.3.1-heartwood.0.1.0".into(),
+            #[cfg(feature = "difftest")]
+            stall: None,
         };
         let (node, handle) = Node::spawn(parts).unwrap();
         *lock(&processor.published) = Some(handle.state());

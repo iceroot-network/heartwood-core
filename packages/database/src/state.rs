@@ -117,6 +117,12 @@ impl Chunk<'_> {
         Ok(())
     }
 
+    /// Delete the state row and every wallet row, so that the next start finds no state and
+    /// restores by a replay from the genesis block (a rollback's store change).
+    pub fn delete_state(&mut self) -> Result<(), DatabaseError> {
+        todo!("delete the state row and every wallet row")
+    }
+
     /// Replace the state row.
     pub fn put_state(&mut self, row: &StateRow) -> Result<(), DatabaseError> {
         self.transaction

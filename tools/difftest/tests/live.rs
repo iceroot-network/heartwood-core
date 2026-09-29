@@ -33,7 +33,8 @@ fn a_live_check_parses() {
     assert_eq!(
         cli::parse(&args).unwrap(),
         Command::LiveCheck {
-            dir: "fixtures/run".into()
+            dir: "fixtures/run".into(),
+            compare: None,
         }
     );
 }
@@ -170,6 +171,7 @@ fn check(f: &Fixture) -> Report {
             corpus_root: f.root.clone(),
             oracle: &no_oracle,
             relay_binary: f.relay.clone(),
+            compare: None,
         },
     )
     .expect("the live check runs")

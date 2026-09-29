@@ -33,6 +33,10 @@
 //! - [`genesis`]: the devnet chain-definition driver (`difftest genesis`).
 //! - [`forger_kill`]: the forger's crash test (`difftest forger crash`).
 //! - [`network_generate`]: `heartwood network generate` against the genesis vectors.
+//! - [`p2p_compare`]: `difftest p2p compare`, the reference-client probe's records of two relays.
+//! - [`store_summary`]: `difftest store summary`, a relay's store summarised.
+//! - [`synthetic_rollback`] and [`synthetic_clear`]: the synthetic recovery cases on a corpus
+//!   chain's tip.
 
 #![warn(missing_docs)]
 
@@ -50,19 +54,23 @@ pub mod levels;
 pub mod live;
 pub mod network_generate;
 pub mod oracle;
+pub mod p2p_compare;
 pub mod replay;
 pub mod report;
 pub mod restart;
 pub mod runtime_kill;
 pub mod service_rig;
 pub mod store;
+pub mod store_summary;
 pub mod strategies;
 pub mod subject;
 pub mod subjects;
 pub mod synthetic;
+pub mod synthetic_clear;
 pub mod synthetic_forger;
 pub mod synthetic_pool;
 pub mod synthetic_processor;
+pub mod synthetic_rollback;
 pub mod vectors;
 
 pub use errors::{Error, Result};

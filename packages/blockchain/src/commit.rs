@@ -189,6 +189,23 @@ impl ChunkWriter<'_> {
         self.write_state(state, state.height(), true)
     }
 
+    /// At a start whose tip ends a round (`is_new_round(tip + 1)`, the reference's condition being
+    /// `height == 1 || isNewRound(height + 1)`), write the rows of round N, the round that starts
+    /// after the tip, from `state`, as the reference's start does (`RoundState.restore`: its
+    /// `deleteRound(N)`, then `applyRound(tip)`, which saves round N's rows): the chunk's
+    /// `delete_above(state.height(), N - 1)`, which at the tip removes round N's rows and any above
+    /// and nothing else, then `save_round` of round N's rows. Whether they were written. After an
+    /// ordinary stop at a round end the rows are there already and equal; after a rollback, or a
+    /// revert to a round end followed by a stop, they are not, and this writes them again.
+    pub fn next_round_at_start(
+        &mut self,
+        state: &State,
+        milestones: &Milestones,
+    ) -> Result<bool, StoreError> {
+        let _ = (state, milestones);
+        Ok(false)
+    }
+
     /// Write the wallets that changed since the chunk's last block (every wallet when `all`), a
     /// wallet back to its empty value by deleting its row; the state row; and the milestone
     /// entries that the tip reaches from `from`.

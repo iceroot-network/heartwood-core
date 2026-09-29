@@ -592,6 +592,8 @@ mod through_the_node {
             broadcast: Arc::new(Silent),
             own_keys: Arc::new(heartwood_p2p::NoAttestedKeys),
             version: "4.3.1-heartwood.0.1.0".into(),
+            #[cfg(feature = "difftest")]
+            stall: None,
         })
         .unwrap();
         let network = FakeNetwork::default();

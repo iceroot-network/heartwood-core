@@ -18,6 +18,8 @@
 //!   applied entry changed.
 //! - [`online`]: the pool's node-local online record in the store, saved when it changes and
 //!   loaded at every start.
+//! - [`rollback`]: `snapshot rollback`, the reference's rollback to the last block of a finished
+//!   round, in one transaction.
 //!
 //! Blocks and the runtime:
 //!
@@ -40,8 +42,8 @@
 //! A [`StoreError`] is fatal: the state in memory is then ahead of the store, so the node stops,
 //! and its next start restores the state from the store.
 //!
-//! Features: `difftest` adds the seeded and fixed rollback depths of the fork recovery, test seams
-//! that only test code enables; a release build never has them.
+//! Features: `difftest` adds the seeded and fixed rollback depths of the fork recovery and the job
+//! stall (`difftest`), test seams that only test code enables; a release build never has them.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -63,6 +65,8 @@
 pub mod blockchain;
 pub mod chain_state;
 pub mod commit;
+#[cfg(feature = "difftest")]
+pub mod difftest;
 pub mod errors;
 pub mod events;
 pub mod forger_blocks;
@@ -77,6 +81,7 @@ pub mod process_blocks_job;
 pub mod processor;
 pub mod queue;
 pub mod restore;
+pub mod rollback;
 pub mod rows;
 pub mod state_machine;
 pub mod work;
@@ -97,6 +102,7 @@ pub use crate::processor::{
 };
 pub use crate::queue::JobQueue;
 pub use crate::restore::{ReplayReason, RestoreMode, RestorePath, Restored, restore};
+pub use crate::rollback::{RollbackPlan, RollbackRefusal, Rolled};
 pub use crate::work::{
     ChainStatus, Channel, IncomingBlock, Job, JobEnd, JobOutcome, NodeHandle, OnlineWork, OwnKeys,
     Work,

@@ -82,6 +82,9 @@ pub struct RelayServices<N> {
     /// Where each network state served is recorded (feature `difftest`).
     #[cfg(feature = "difftest")]
     pub record: Option<crate::harness::NetworkStateRecord>,
+    /// Where each public request's AwaitBlock step is recorded (feature `difftest`).
+    #[cfg(feature = "difftest")]
+    pub await_record: Option<crate::harness::AwaitRecordFile>,
 }
 
 /// The machine's `newBlock` state and the queue's running state of `blockchain`, kept current

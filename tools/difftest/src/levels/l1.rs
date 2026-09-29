@@ -30,7 +30,7 @@ use crate::oracle::OracleServer;
 use crate::report::{CaseResult, Outcome, Report};
 use crate::strategies::transactions::{TxContext, fee_cases, handler_cases};
 use crate::strategies::{
-    exchange, fixtures, forger_decide, forging, kernel, monitor, quorum, state, verifier,
+    exchange, fixtures, forger_decide, forging, kernel, monitor, quorum, served, state, verifier,
 };
 use crate::subject::{Case, Registry};
 use crate::vectors::Expected;
@@ -76,11 +76,13 @@ pub enum Property {
     Quorum,
     /// The forger's decisions in a slot (`forger.decide`).
     Decisions,
+    /// The public routes' answers (`p2p.controller`).
+    Served,
 }
 
 impl Property {
     /// Every property.
-    pub const ALL: [Property; 19] = [
+    pub const ALL: [Property; 20] = [
         Property::FeeFloor,
         Property::Rounds,
         Property::Slots,
@@ -100,6 +102,7 @@ impl Property {
         Property::Forging,
         Property::Quorum,
         Property::Decisions,
+        Property::Served,
     ];
 
     /// The property's name on the command line.
@@ -124,10 +127,11 @@ impl Property {
             Property::Forging => "forging",
             Property::Quorum => "quorum",
             Property::Decisions => "decisions",
+            Property::Served => "served",
         }
     }
 
-    /// The property's short name (P1 to P19), which the command line accepts too.
+    /// The property's short name (P1 to P20), which the command line accepts too.
     pub const fn number(self) -> &'static str {
         match self {
             Property::FeeFloor => "P1",
@@ -149,6 +153,7 @@ impl Property {
             Property::Forging => "P17",
             Property::Quorum => "P18",
             Property::Decisions => "P19",
+            Property::Served => "P20",
         }
     }
 }
@@ -188,6 +193,9 @@ pub struct L1Options {
     /// How often P19 must reach each action and refusal of the reference's forging attempt; 0
     /// asks nothing (the counts are reported all the same).
     pub decision_reach: u32,
+    /// How often P20 must reach each public route, and a tenth as often the getBlocks cut; 0 asks
+    /// nothing.
+    pub served_reach: u32,
 }
 
 /// One case of a property, as the oracle takes it.
@@ -267,6 +275,9 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
             .prop_map(L1Case::plain)
             .boxed(),
         Property::Decisions => forger_decide::decision_cases(context)
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::Served => served::served_cases(context)
             .prop_map(L1Case::plain)
             .boxed(),
     }
@@ -564,6 +575,9 @@ pub fn run(
             if *property == Property::Decisions {
                 decision_outcomes(&answer, &mut seen.borrow_mut());
             }
+            if *property == Property::Served {
+                served::outcomes(&case.input, &answer, &mut seen.borrow_mut());
+            }
             let judged = super::judge_documented(&request, &answer, registry);
             let failed = judged.is_failure();
             let message = format!("{judged:?}");
@@ -584,6 +598,9 @@ pub fn run(
         }
         if *property == Property::Decisions {
             results.extend(decision_checks(&file, &seen, options.decision_reach));
+        }
+        if *property == Property::Served {
+            results.extend(served::reach_checks(&file, &seen, options.served_reach));
         }
         if matches!(
             *property,
@@ -842,7 +859,8 @@ mod tests {
         assert_eq!("P17".parse::<Property>().unwrap(), Property::Forging);
         assert_eq!("P18".parse::<Property>().unwrap(), Property::Quorum);
         assert_eq!("P19".parse::<Property>().unwrap(), Property::Decisions);
-        assert!("P20".parse::<Property>().is_err());
+        assert_eq!("P20".parse::<Property>().unwrap(), Property::Served);
+        assert!("P21".parse::<Property>().is_err());
     }
 
     #[test]

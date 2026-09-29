@@ -11,6 +11,8 @@
 //! - [`process`] and [`process_table`]: the role commands `start`, `stop`, `restart`, `status` and
 //!   `log`, and the process table that `status` prints.
 //! - [`network`]: the file-writing side of `network generate`, with the devnet profile built in.
+//! - [`recovery`]: `pool clear` and `state clear`, the reference's markers, and the trust rule the
+//!   relay applies to them at its start.
 //! - `devnet` (feature `devnet`) and [`http`]: the local devnet library, mode B (one loopback
 //!   address per node), and the loopback HTTP reads of a relay's API.
 //! - [`seams`]: the instance, the traits between the parts (the process operations, the API reads
@@ -43,6 +45,7 @@ pub mod instance;
 pub mod network;
 pub mod process;
 pub mod process_table;
+pub mod recovery;
 pub mod seams;
 pub mod supervisor;
 

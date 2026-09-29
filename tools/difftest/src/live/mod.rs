@@ -46,15 +46,28 @@
 //!   their listeners, the status polls, the attestations before every block, no slot with two
 //!   blocks of one key, and run `f`'s faults.
 //!
+//! The runs of reference nodes beside Heartwood relays ([`MIXED_RUNS`]: `w`, `p` and `s`, and `w0`,
+//! their reference baseline) have the checks of `mixed_checks` too: one chain, the judge, the
+//! acceptance of the Heartwood relays, the reference and Heartwood logs per fault window's class
+//! against the baseline, the fresh sync, the propagation, the fork of run `p`, the attestations of
+//! run `s`, the recovery commands, AwaitBlock, the processes, the records and the schedule. The
+//! baseline is the run `--compare` names, or [`COMPARE`]'s run beside this one.
+//!
 //! Besides the report, the check writes every case with its outcome to `live-check.txt` in the run
 //! directory.
 
+mod attest;
+pub mod await_block;
 pub mod bans;
 mod corpora;
 pub mod digest;
 pub mod forging;
+mod fresh;
+mod mixed;
 mod nodes;
+mod recovery;
 pub mod run;
+mod schedule;
 pub mod steps;
 
 use std::collections::BTreeMap;
@@ -78,8 +91,11 @@ pub const CORPUS_ROOT: &str = "target/corpus";
 pub const LAG_LIMIT_SECONDS: f64 = 8.0;
 /// The variable naming the run a check of run `t` or `m` compares with (the other of the two), as
 /// `make live-check RUN=t COMPARE=m` gives it: make passes a variable of its command line to the
-/// environment of its recipes. Run `m`'s `run.json` names run `t` as its pair already.
+/// environment of its recipes. Run `m`'s `run.json` names run `t` as its pair already. Runs `w`,
+/// `p` and `s` compare with their baseline `w0`.
 pub const COMPARE: &str = "COMPARE";
+/// The runs of reference nodes beside Heartwood relays, `w0` being their reference baseline.
+pub const MIXED_RUNS: [&str; 4] = ["w0", "w", "p", "s"];
 
 /// What a live check reads besides the run directory.
 pub struct LiveOptions<'a> {
@@ -89,12 +105,15 @@ pub struct LiveOptions<'a> {
     pub oracle: &'a dyn Fn() -> Result<Oracle>,
     /// The release binary of the tree being judged, which must be the relay the run tested.
     pub relay_binary: PathBuf,
+    /// The run the run is compared with (`--compare`): the other of runs `t` and `m`, or the
+    /// baseline `w0` of a mixed run.
+    pub compare: Option<PathBuf>,
 }
 
 /// Check the live run in `run_dir`, with the corpora under [`CORPUS_ROOT`], the oracle of the
-/// environment (`DIFFTEST_IMAGE` or `SOLAR_DIR`) and the tree's release binary at
-/// [`run::RELAY_BINARY`].
-pub fn check(run_dir: &Path) -> Result<Report> {
+/// environment (`DIFFTEST_IMAGE` or `SOLAR_DIR`), the tree's release binary at
+/// [`run::RELAY_BINARY`] and the run `compare` to compare with.
+pub fn check(run_dir: &Path, compare: Option<&Path>) -> Result<Report> {
     let oracle = || OracleArgs::default().resolve(|name: &str| std::env::var(name).ok());
     check_with(
         run_dir,
@@ -102,8 +121,43 @@ pub fn check(run_dir: &Path) -> Result<Report> {
             corpus_root: PathBuf::from(CORPUS_ROOT),
             oracle: &oracle,
             relay_binary: PathBuf::from(run::RELAY_BINARY),
+            compare: compare.map(Path::to_path_buf),
         },
     )
+}
+
+/// What the checks of a mixed run ([`MIXED_RUNS`]) read.
+pub struct MixedRun<'a> {
+    /// The run's directory.
+    pub run_dir: &'a Path,
+    /// Its `run.json`.
+    pub manifest: &'a Manifest,
+    /// Its fault windows.
+    pub windows: &'a [run::Window],
+    /// The baseline run's directory, when the check compares with one.
+    pub baseline: Option<&'a Path>,
+    /// Where the run's corpora are imported and judged.
+    pub corpus_root: &'a Path,
+    /// The oracle, asked for only when a check needs it.
+    pub oracle: &'a dyn Fn() -> Result<Oracle>,
+}
+
+/// The checks of a mixed run, in the report's order.
+fn mixed_checks(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
+    mixed::one_chain(run, cases)?;
+    mixed::judge(run, cases)?;
+    mixed::acceptance(run, cases)?;
+    mixed::reference_logs(run, cases)?;
+    mixed::heartwood_logs(run, cases)?;
+    fresh::check(run, cases)?;
+    mixed::propagation(run, cases)?;
+    mixed::fork(run, cases)?;
+    attest::check(run, cases)?;
+    recovery::check(run, cases)?;
+    await_block::gate(run, cases)?;
+    mixed::processes(run, cases)?;
+    mixed::recorded(run, cases)?;
+    schedule::check(run, cases)
 }
 
 /// The cases of a check, by section.
@@ -132,6 +186,16 @@ impl Cases {
         self.push(section, label, 0, Outcome::HarnessError(message.into()));
     }
 
+    /// A check that has no Rust implementation yet: a strict run fails on it.
+    fn not_built(&mut self, section: &str, label: &str) {
+        self.push(
+            section,
+            format!("{label} (not built)"),
+            0,
+            Outcome::NoSubject,
+        );
+    }
+
     fn record(&mut self, section: &str, label: impl AsRef<str>) {
         self.push(
             section,
@@ -145,17 +209,25 @@ impl Cases {
 /// Check the live run in `run_dir` with `options`.
 pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
     let mut manifest = Manifest::load(run_dir)?;
-    if let Some(pair) = std::env::var(COMPARE).ok().filter(|p| !p.is_empty()) {
-        if !matches!(
-            (manifest.run.as_str(), pair.as_str()),
-            ("t", "m") | ("m", "t")
-        ) {
-            return Err(Error::Usage(format!(
-                "{COMPARE}={pair}: run {} compares with run t or m only (T against M)",
-                manifest.run
-            )));
+    let named = (options.compare.as_deref())
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned());
+    let pair = named.or_else(|| std::env::var(COMPARE).ok().filter(|p| !p.is_empty()));
+    let mut baseline = None;
+    if let Some(pair) = pair {
+        match (manifest.run.as_str(), pair.as_str()) {
+            ("t", "m") | ("m", "t") => manifest.pair = Some(pair),
+            ("w" | "p" | "s", "w0") => {
+                let beside = || run_dir.parent().unwrap_or(Path::new(".")).join(&pair);
+                baseline = Some(options.compare.clone().unwrap_or_else(beside));
+            }
+            _ => {
+                return Err(Error::Usage(format!(
+                    "{COMPARE}={pair}: run {} compares with run t or m (T against M), or runs w, p and s with run w0",
+                    manifest.run
+                )));
+            }
         }
-        manifest.pair = Some(pair);
     }
     if matches!(manifest.run.as_str(), "t" | "m" | "f") {
         let expected = if manifest.run == "f" { 7 } else { 5 };
@@ -204,6 +276,17 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
     check_bans(run_dir, &manifest, &windows, &mut cases)?;
     check_invariants(run_dir, &manifest, &windows, &mut cases)?;
     forging::check(run_dir, &manifest, &windows, &mut cases)?;
+    if MIXED_RUNS.contains(&manifest.run.as_str()) {
+        let mixed = MixedRun {
+            run_dir,
+            manifest: &manifest,
+            windows: &windows,
+            baseline: baseline.as_deref(),
+            corpus_root: &options.corpus_root,
+            oracle: options.oracle,
+        };
+        mixed_checks(&mixed, &mut cases)?;
+    }
     let report = Report {
         title: match (&manifest.relay_image, &manifest.relay_binary_sha256) {
             (Some(image), Some(sha)) if manifest.has_heartwood() => format!(

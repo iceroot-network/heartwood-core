@@ -131,6 +131,9 @@ fn restore_state<H: TransactionHandlers>(
         RestoreMode::Auto => match table(store, &genesis, &blocks, milestones)? {
             Ok(state) => {
                 store.committed = Some(state.wallets().clone());
+                let mut chunk = store.chunk()?;
+                chunk.next_round_at_start(&state, milestones)?;
+                chunk.commit()?;
                 return Ok((state, RestorePath::Table));
             }
             Err(reason) => reason,
@@ -143,6 +146,7 @@ fn restore_state<H: TransactionHandlers>(
     }
     let mut chunk = store.chunk()?;
     chunk.rewrite_state(&state)?;
+    chunk.next_round_at_start(&state, milestones)?;
     chunk.commit()?;
     Ok((state, RestorePath::Replay(reason)))
 }

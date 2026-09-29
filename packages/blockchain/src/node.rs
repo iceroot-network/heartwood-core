@@ -73,6 +73,9 @@ pub struct NodeParts {
     pub own_keys: Arc<dyn OwnKeys>,
     /// The node's version, which the online record gives the delegates on this node.
     pub version: String,
+    /// The job stall of a harness build (feature `difftest`), if the harness asks for one.
+    #[cfg(feature = "difftest")]
+    pub stall: Option<crate::difftest::StallControl>,
 }
 
 /// The node thread.

@@ -91,6 +91,9 @@ CLASSES.push(
     ["V30-relay-forger", require("./lib/vectors/relay").relayForger],
     ["V31-server", require("./lib/vectors/serving")],
 );
+// The served answers (heartwood-p2p) and the rollback (heartwood-blockchain); their builders return
+// null while they have no records, and the class is then not written.
+CLASSES.push(["V32-served", require("./lib/vectors/served")], ["V33-rollback", require("./lib/vectors/rollback")]);
 
 function parseArgs(argv) {
     const opts = {

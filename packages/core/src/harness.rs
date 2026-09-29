@@ -15,7 +15,9 @@
 //!   devnet's argv carries no harness flag). Each start of the relay without the two flags writes
 //!   the next free pair `digest-NNNN.jsonl` and `blocks-NNNN.bin` there, and every start appends
 //!   to `network-state.jsonl` one line per getNetworkState answer the relay gives
-//!   ([`NetworkStateRecord`]).
+//!   ([`NetworkStateRecord`]). Each start also writes `await-NNNN.jsonl` there, with the number of
+//!   its digest file (`await-0000.jsonl` for a start given `--difftest-digest`): one line per public
+//!   request's AwaitBlock step ([`AwaitRecordFile`]).
 
 use std::cmp::Ordering;
 use std::fs::{File, OpenOptions};
@@ -30,6 +32,7 @@ use heartwood_crypto::blocks::serialiser;
 use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Block, BlockHeader, Milestones, Params};
 use heartwood_kernel::timestamp::UtcDateTime;
+use heartwood_p2p::node_services::AwaitRecord;
 use heartwood_p2p::seams::PeerRules;
 use heartwood_p2p::utils::rules::Rules;
 use heartwood_p2p_wire::RouteId;
@@ -279,12 +282,39 @@ impl NetworkStateRecord {
     }
 }
 
-/// The recorder and the network-state record of a relay run, when the harness asks for them.
-pub type HarnessFiles = (Option<Box<dyn CommitObserver>>, Option<NetworkStateRecord>);
+/// The AwaitBlock record of one start of a relay: one JSON line per public request's AwaitBlock
+/// step, appended to its `await-NNNN.jsonl` and flushed line by line.
+pub struct AwaitRecordFile {
+    file: Mutex<Option<File>>,
+}
+
+impl AwaitRecordFile {
+    /// The record at `path` (created when missing, else appended to).
+    pub fn open(path: &Path) -> Result<AwaitRecordFile, String> {
+        let file = OpenOptions::new().create(true).append(true).open(path);
+        let file = file.map_err(|error| format!("{}: {error}", path.display()))?;
+        Ok(AwaitRecordFile {
+            file: Mutex::new(Some(file)),
+        })
+    }
+
+    /// Record `record`.
+    pub fn write(&self, record: &AwaitRecord) {
+        let _ = (&self.file, record);
+    }
+}
+
+/// The recorder, the network-state record and the AwaitBlock record of a relay run, when the
+/// harness asks for them.
+pub type HarnessFiles = (
+    Option<Box<dyn CommitObserver>>,
+    Option<NetworkStateRecord>,
+    Option<AwaitRecordFile>,
+);
 
 /// The harness's files of a relay run: the recorder of `--difftest-digest` and
 /// `--difftest-blocks`, or else of the next free pair of per-start files in the directory that
-/// [`DIR_VARIABLE`] names; and the network-state record there.
+/// [`DIR_VARIABLE`] names; and the network-state record and this start's AwaitBlock record there.
 pub fn files(
     relay: &crate::config::RelayConfig,
     run: &crate::commands::relay::RelayRun,
@@ -294,8 +324,13 @@ pub fn files(
     let dir = relay.env.get(DIR_VARIABLE).filter(|dir| !dir.is_empty());
     let dir = dir.map(PathBuf::from);
     let (mut digests, mut blocks) = (run.difftest_digest.clone(), run.difftest_blocks.clone());
+    let mut number = "0000.jsonl".to_owned();
     if let (None, None, Some(dir)) = (&digests, &blocks, &dir) {
         let (digest, block) = next_start_files(dir)?;
+        let name = digest.file_name().and_then(|name| name.to_str());
+        if let Some(digits) = name.and_then(|name| name.strip_prefix("digest-")) {
+            digits.clone_into(&mut number);
+        }
         (digests, blocks) = (Some(digest), Some(block));
     }
     let observer: Option<Box<dyn CommitObserver>> = match (&digests, &blocks) {
@@ -310,6 +345,7 @@ pub fn files(
             .map_err(|error| error.to_string())?,
         )),
     };
-    let record = dir.map(|dir| NetworkStateRecord::open(&dir)).transpose()?;
-    Ok((observer, record))
+    let record = (dir.as_ref().map(|dir| NetworkStateRecord::open(dir))).transpose()?;
+    let awaits = dir.map(|dir| AwaitRecordFile::open(&dir.join(format!("await-{number}"))));
+    Ok((observer, record, awaits.transpose()?))
 }

@@ -190,6 +190,8 @@ async fn the_servers_reads_and_work_go_to_the_node_and_its_store() {
         broadcast: broadcasts.clone(),
         own_keys: links.clone(),
         version: heartwood_core::VERSION.into(),
+        #[cfg(feature = "difftest")]
+        stall: None,
     })
     .unwrap();
     let corpus = blocks(&milestones);
@@ -228,6 +230,8 @@ async fn the_servers_reads_and_work_go_to_the_node_and_its_store() {
         clock,
         #[cfg(feature = "difftest")]
         record: Some(heartwood_core::harness::NetworkStateRecord::open(&record).unwrap()),
+        #[cfg(feature = "difftest")]
+        await_record: None,
     };
 
     // The boot and the first sync, as the server reads them.

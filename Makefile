@@ -14,6 +14,8 @@
 #   make pool-bench     the cost of the pool's per-sender views and of the store's commit
 #   make l2-processor   the L2 chains through the processor and the job, as a relay imports them
 #   make relay-image live live-check api-compare   the relay on a devnet, and its comparisons
+#   make p2p-compare await-report   a mixed run's reference-client probe and its AwaitBlock report
+#   make rollback-replay   the L2 chains rolled back, started again and re-synced
 #   make fuzz-server binary-tests devnet-smoke   the server's fuzz target, the binary's tests and
 #                       a forging devnet's smoke test
 #
@@ -49,17 +51,20 @@ GENERATOR_ARG := $(if $(DEVNET_GENERATOR),--devnet-generator '$(DEVNET_GENERATOR
 # classes, with their own MANIFEST.sha256, into packages/<crate>/tests/vectors.
 VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12,V19,V22 kernel=V09-rounds,V16,V23,V28 \
                  logger=V20 pool=V21 state=V08,V09-shuffle,V15,V18 transactions=V17 p2p-wire=V13,V24,V29 \
-                 p2p=V25,V26,V30,V31 blockchain=V27 api=V28 forger=V29
-# L1: cases per property, the generator's seed, the properties (P1 to P19 or their names, comma
+                 p2p=V25,V26,V30,V31,V32 blockchain=V27,V33 api=V28 forger=V29
+# L1: cases per property, the generator's seed, the properties (P1 to P20 or their names, comma
 # separated; all when empty); L1_MIN_REACH, how often P13 must reach each reachable result of the
 # processor and each unchained status (when empty: 20 from 1,000 cases per property, else none);
 # L1_DECISION_REACH, how often P19 must reach each action and refusal of the reference (when
-# empty: 20 from 10,000 cases, else none; its rarest classes come about once in fifty cases).
+# empty: 20 from 10,000 cases, else none; its rarest classes come about once in fifty cases);
+# L1_SERVED_REACH, how often P20 must reach each public route, and a tenth as often the getBlocks
+# cut (when empty: 200 from 10,000 cases, else none).
 L1_CASES      ?= 256
 L1_SEED       ?= 1
 L1_PROPERTY   ?=
 L1_MIN_REACH  ?=
 L1_DECISION_REACH ?=
+L1_SERVED_REACH ?=
 # L2: the corpus directory CORPUS/NAME; ARCHIVE the devnet archives to import (in chain order);
 # CORPUS_SEED the chain's public key-derivation seed (difftest's default when empty); DUMP heights
 # whose records the judge writes.
@@ -114,7 +119,7 @@ need-name = $(if $(NAME),,$(error set NAME, the corpus under CORPUS=$(CORPUS)))
         oracle-save vectors vectors-local vectors-diff vectors-install l0 ping test-oracle e2e \
         l1 corpus-import corpus-judge corpus-verify l2 l2-synthetic l2-restart crash-test pool-bench \
         layers lines lines-if-tokei l2-processor relay-binary relay-image live live-check api-compare doc \
-        test-integration
+        test-integration rollback-replay p2p-compare await-report
 
 help: ## this list
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | awk -F'\t' '{ printf "  make %-15s %s\n", $$1, $$2 }'
@@ -254,13 +259,14 @@ test-oracle: ## the oracle tests of cargo test (ping, 256 L1 cases per property)
 
 e2e: vectors vectors-local vectors-diff l0 ## end to end: generate, diff, compare (needs oracle-image first)
 
-l1: build ## L1 properties against the oracle (ORACLE_ARGS): L1_CASES, L1_SEED, L1_PROPERTY, L1_MIN_REACH, L1_DECISION_REACH
+l1: build ## L1 properties against the oracle (ORACLE_ARGS): L1_CASES, L1_SEED, L1_PROPERTY, L1_MIN_REACH, L1_DECISION_REACH, L1_SERVED_REACH
 	$(need-image)
-	$(TOOLCHAIN) && reach='$(L1_MIN_REACH)'; decisions='$(L1_DECISION_REACH)'; \
+	$(TOOLCHAIN) && reach='$(L1_MIN_REACH)'; decisions='$(L1_DECISION_REACH)'; served='$(L1_SERVED_REACH)'; \
 	if [ -z "$$reach" ]; then if [ $(L1_CASES) -ge 1000 ]; then reach=20; else reach=0; fi; fi; \
 	if [ -z "$$decisions" ]; then if [ $(L1_CASES) -ge 10000 ]; then decisions=20; else decisions=0; fi; fi; \
+	if [ -z "$$served" ]; then if [ $(L1_CASES) -ge 10000 ]; then served=200; else served=0; fi; fi; \
 	$(DIFFTEST) run l1 $(if $(L1_PROPERTY),--property $(L1_PROPERTY)) --min-reach $$reach \
-	    --decision-reach $$decisions \
+	    --decision-reach $$decisions --served-reach $$served \
 	    --cases $(L1_CASES) --seed $(L1_SEED) --regressions target/l1-regressions $(STRICT) $(ORACLE_ARGS)
 
 corpus-import: build ## devnet archives (ARCHIVE='dir ...', in chain order) to the corpus CORPUS/NAME
@@ -293,6 +299,13 @@ l2-synthetic: build ## L2 of CORPUS/NAME with the synthetic restart, pool and pr
 l2-restart: build ## L2 of CORPUS/NAME with the restarts of its restart plan, by both of Heartwood's paths (TO=H)
 	$(need-name)
 	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --restart $(if $(TO),--to $(TO)) $(STRICT)
+
+# The rollback replay compares with the oracle's rollback and restart on the same corpus, so it
+# needs the oracle (ORACLE_ARGS), as l2-synthetic does.
+rollback-replay: build ## CORPUS/NAME rolled back to each target it reaches, started and re-synced, against the oracle (TO=H)
+	$(need-name)
+	$(need-image)
+	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --rollback $(if $(TO),--to $(TO)) $(STRICT) $(ORACLE_ARGS)
 
 crash-test: build ## CORPUS/NAME replayed through the store (or a relay, RUNTIME=1) in a child process killed KILLS times
 	$(need-name)
@@ -418,11 +431,11 @@ replay-wire: build ## each wire fuzz corpus through the oracle (ORACLE_ARGS) and
 # ---- end of heartwood-p2p-wire ----
 
 # ---- heartwood-p2p: the client side of the peer protocol ----
-# Its vector classes, and the wire's new one, are installed once an oracle image writes them.
-# Until then the crate tests read a class that is not installed from the directory that
-# P2P_VECTORS (heartwood-p2p and difftest's network_vectors test) or WIRE_VECTORS
-# (heartwood-p2p-wire) names, relative to the workspace root, such as the run of
-# `make vectors-local`; without either the test reports the class as not installed and passes.
+# Its vector classes, and the wire's, are installed in each crate's tests/vectors (VECTOR_CRATES),
+# which must hold them: a class test fails when its class is not installed there. P2P_VECTORS
+# (heartwood-p2p and difftest's network_vectors test) or WIRE_VECTORS (heartwood-p2p-wire) name
+# another vector run instead, relative to the workspace root, such as the run of
+# `make vectors-local`; a class that run lacks is reported and its test passes.
 P2P_FUZZ      := nes_session reply_check listed_block
 # The oracle operation that replays each p2p fuzz target's corpus; the session's has none.
 P2P_REPLAY    := reply_check=wire.checkReply listed_block=block.fromListed
@@ -493,25 +506,43 @@ replay-p2p: build ## the reply_check and listed_block corpora through the oracle
 # The live runs are orchestrated by the maintainers' devnet tooling, a separate tool that is not
 # published: LIVE_RECIPE (run, steps, archives and the API corpus at the pause, for RUN=r, h, m1 or
 # m2), DEVNET_RECIPE (the runs of a forging devnet: t, a reference devnet, and m and f, devnets of
-# this tree's release binary on loopback addresses), RELAY_IMAGE_RECIPE (the relay's container
-# image from a binary) and LIVE_RESULTS (the run directories) are set in local.mk. The comparisons of a run are the harness's (live check, api
-# compare). CHUNKS names one job cut of l2-processor (reference or 1; both when empty); LEFT and
-# RIGHT are two nodes' API URLs for a direct api-compare.
+# this tree's release binary on loopback addresses), MIXED_RECIPE (the mixed runs: w0, reference
+# nodes only, the baseline; w and p, reference nodes beside Heartwood relays; s, Heartwood relays
+# and forgers with a reference observer), RELAY_IMAGE_RECIPE (the relay's container image from a
+# binary), LIVE_RESULTS (the run directories) and MIXED_RESULTS (the mixed runs' directories) are
+# set in local.mk. The comparisons of a run are the harness's (live check, api compare, p2p
+# compare, live await). CHUNKS names one job cut of l2-processor (reference or 1; both when empty);
+# LEFT and RIGHT are two nodes' API URLs for a direct api-compare; COMPARE names the run a run is
+# compared with (m for t and t for m; w0 for w, p and s).
 LIVE_RECIPE        ?=
 DEVNET_RECIPE      ?=
+MIXED_RECIPE       ?=
 RELAY_IMAGE_RECIPE ?=
 LIVE_RESULTS       ?=
+MIXED_RESULTS      ?=
+COMPARE            ?=
 RUN                ?=
 CHUNKS             ?=
 LEFT               ?=
 RIGHT              ?=
 API_COMPARE_OUT    ?= target/api-compare
-# The runs of a forging devnet, which DEVNET_RECIPE runs.
+# The runs of a forging devnet, which DEVNET_RECIPE runs, and the mixed runs, which MIXED_RECIPE
+# runs into MIXED_RESULTS.
 DEVNET_RUNS        := t m f
-recipe-of-run = $(if $(filter $(DEVNET_RUNS),$(RUN)),$(DEVNET_RECIPE),$(LIVE_RECIPE))
-need-live = $(if $(recipe-of-run),,$(error set $(if $(filter $(DEVNET_RUNS),$(RUN)),DEVNET_RECIPE,LIVE_RECIPE), the devnet tooling's recipe, in local.mk))
-need-run = $(if $(RUN),,$(error set RUN, the live run: r, h, m1, m2, t, m or f))
-need-results = $(if $(LIVE_RESULTS),,$(error set LIVE_RESULTS, the live runs' directory, in local.mk))
+MIXED_RUNS         := w0 w p s
+is-mixed = $(filter $(MIXED_RUNS),$(RUN))
+recipe-name-of-run = $(if $(filter $(DEVNET_RUNS),$(RUN)),DEVNET_RECIPE,$(if $(is-mixed),MIXED_RECIPE,LIVE_RECIPE))
+recipe-of-run = $($(recipe-name-of-run))
+results-name-of-run = $(if $(is-mixed),MIXED_RESULTS,LIVE_RESULTS)
+results-of-run = $($(results-name-of-run))
+need-live = $(if $(recipe-of-run),,$(error set $(recipe-name-of-run), the devnet tooling's recipe, in local.mk))
+need-run = $(if $(RUN),,$(error set RUN, the live run: r, h, m1, m2, t, m, f, w0, w, p or s))
+need-results = $(if $(results-of-run),,$(error set $(results-name-of-run), the live runs' directory, in local.mk))
+need-mixed = $(if $(is-mixed),,$(error set RUN to a mixed run: w0, w, p or s))
+# The two relays a mixed run's probe compares: the Heartwood relay against a reference relay (node
+# 4 against node 1; in run s node 1, a Heartwood relay, against node 4, the reference observer),
+# and the two reference relays of run w0 in the same places.
+probe-pair = $(if $(filter s,$(RUN)),--left node1 --right node4,--left node4 --right node1)
 
 l2-processor: build ## replay CORPUS/NAME through the processor and the job against the judge's lines (TO, CHUNKS)
 	$(need-name)
@@ -521,33 +552,54 @@ l2-processor: build ## replay CORPUS/NAME through the processor and the job agai
 relay-binary: ## the relay's release binary with the harness's flags (target/release/heartwood)
 	$(TOOLCHAIN) && cargo build --release --locked -p heartwood-core --features difftest
 
+# The image recipe runs without IMAGE in its environment: make passes a variable of its command line
+# to its recipes, and IMAGE there names the oracle's image, not the relay's.
 relay-image: relay-binary ## the relay's release binary and its devnet image (RELAY_IMAGE_RECIPE)
 	$(if $(RELAY_IMAGE_RECIPE),,$(error set RELAY_IMAGE_RECIPE, the devnet tooling's image recipe, in local.mk))
-	$(RELAY_IMAGE_RECIPE) $(CURDIR)/target/release/heartwood
+	env -u IMAGE $(RELAY_IMAGE_RECIPE) $(CURDIR)/target/release/heartwood
 
-# A run with a Heartwood relay (every run but r and t) tests this tree's release binary: live
+# A run with a Heartwood relay (every run but r, t and w0) tests this tree's release binary: live
 # builds it (and, for a run in Docker, its image) first, and live-check and api-compare build it
 # again (nothing to do when the tree is unchanged), so that a run of another build fails their
-# check that it is this tree's relay.
-relay-of-run = $(if $(filter-out r t,$(RUN)),$(1))
+# check that it is this tree's relay. The mixed runs start at once and share one relay image, so
+# their live target builds the binary only: `make relay-image` runs once before them, and
+# MIXED_RECIPE checks that the image holds this tree's binary.
+relay-of-run = $(if $(filter-out r t w0,$(RUN)),$(1))
+live-prerequisite = $(if $(filter m f,$(RUN)),relay-binary,$(if $(is-mixed),$(call relay-of-run,relay-binary),$(call relay-of-run,relay-image)))
 
-live: $(if $(filter m f,$(RUN)),relay-binary,$(call relay-of-run,relay-image)) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2 with LIVE_RECIPE, t|m|f with DEVNET_RECIPE)
+live: $(live-prerequisite) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2 with LIVE_RECIPE, t|m|f with DEVNET_RECIPE, w0|w|p|s with MIXED_RECIPE)
 	$(need-run)
 	$(need-live)
 	$(recipe-of-run) $(RUN) $(CURDIR)
 
-live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS)
+# A mixed run's check reads the oracle's image (its rollback's prediction), and its baseline run
+# from --compare, not from COMPARE in difftest's environment.
+live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS or MIXED_RESULTS; COMPARE)
 	$(need-run)
 	$(need-results)
-	$(TOOLCHAIN) && $(DIFFTEST) live check $(LIVE_RESULTS)/$(RUN) $(STRICT)
+	$(if $(is-mixed),$(need-image))
+	$(TOOLCHAIN) && $(if $(is-mixed),env -u COMPARE DIFFTEST_IMAGE='$(IMAGE)') $(DIFFTEST) live check \
+	    $(results-of-run)/$(RUN) $(if $(and $(is-mixed),$(COMPARE)),--compare $(results-of-run)/$(COMPARE)) $(STRICT)
 
-api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the API answers a live run recorded (RUN, LIVE_RESULTS), or two nodes' (LEFT, RIGHT)
+api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the API answers a live run recorded (RUN, LIVE_RESULTS or MIXED_RESULTS), or two nodes' (LEFT, RIGHT)
 	$(TOOLCHAIN) && if [ -n '$(LEFT)' ] && [ -n '$(RIGHT)' ]; then \
 	    $(DIFFTEST) api compare --left '$(LEFT)' --right '$(RIGHT)' --out $(API_COMPARE_OUT) $(STRICT); \
 	else \
-	    [ -n '$(RUN)' ] && [ -n '$(LIVE_RESULTS)' ] || { echo "api-compare: set RUN and LIVE_RESULTS, or LEFT and RIGHT" >&2; exit 2; }; \
-	    $(DIFFTEST) api compare --run $(LIVE_RESULTS)/$(RUN) $(STRICT); \
+	    [ -n '$(RUN)' ] && [ -n '$(results-of-run)' ] || { echo "api-compare: set RUN and $(results-name-of-run), or LEFT and RIGHT" >&2; exit 2; }; \
+	    $(DIFFTEST) api compare --run $(results-of-run)/$(RUN) $(STRICT); \
 	fi
+
+p2p-compare: build $(call relay-of-run,relay-binary) ## the reference-client probe's records of a mixed run's two relays (RUN=w0|w|s, MIXED_RESULTS)
+	$(need-run)
+	$(need-mixed)
+	$(need-results)
+	$(DIFFTEST) p2p compare $(results-of-run)/$(RUN) $(probe-pair) $(STRICT)
+
+await-report: build ## the AwaitBlock report of a mixed run's Heartwood relays (RUN=w|p|s, MIXED_RESULTS)
+	$(need-run)
+	$(need-mixed)
+	$(need-results)
+	$(DIFFTEST) live await $(results-of-run)/$(RUN) $(STRICT)
 # ---- end of the relay ----
 
 # ---- heartwood-forger and heartwood-cli: the forger, the commands and the devnet ----
