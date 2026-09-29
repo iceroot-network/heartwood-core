@@ -17,7 +17,8 @@
 // the address, username and public-key indexes as permutations of fixture positions (the order
 // the reference's own indexing gives is the fixture's own); `extras` gives, by delegate name, the
 // attributes a fixture has no way to state: rank, missed (blocks missed), productivity (in
-// hundredths of a percent) and version. Both are what the listings read from the state.
+// hundredths of a percent) and version. Both are what the listings read from the state. A
+// delegate's attribute keys are put in the order a state built from the store gives them.
 //
 // api.delegateResource builds one delegate wallet from `wallet` (keys a, pk optional, u, vb, voters,
 // rk, rs, pb, ff, fr, bf, dn, lb, missed, productivity, version; the amounts are decimal
@@ -27,6 +28,15 @@
 const path = require("path");
 
 const { FixtureState } = require("../state");
+
+// The keys of a delegate's attribute in the order of a wallet that the reference built from its
+// store (a registration, then the round's rank, the vote balances' voters, the blocks, the
+// version, the resignation, and the productivity the API adds), which a fixture's own loading does
+// not give: the rank and the extras are set after it.
+const DELEGATE_KEYS = [
+    "username", "voteBalance", "forgedFees", "burnedFees", "forgedRewards", "donations", "producedBlocks", "rank", "voters",
+    "lastBlock", "version", "resigned", "missedBlocks", "productivity",
+];
 
 module.exports = function apiStateOps({ solar, withConfig }) {
     const apiDir = path.join(solar.solarDir, "packages", "api");
@@ -123,6 +133,13 @@ module.exports = function apiStateOps({ solar, withConfig }) {
             if (extra.missed !== undefined) delegate.missedBlocks = extra.missed;
             if (extra.productivity !== undefined) delegate.productivity = extra.productivity / 100;
             if (extra.version !== undefined) delegate.version = { version: extra.version };
+        }
+        for (const wallet of wallets) {
+            const delegate = wallet.hasAttribute("delegate") ? wallet.getAttribute("delegate") : undefined;
+            if (delegate === undefined) continue;
+            const ordered = {};
+            for (const name of DELEGATE_KEYS) if (name in delegate) ordered[name] = delegate[name];
+            wallet.setAttribute("delegate", { ...ordered, ...delegate });
         }
         return repository;
     }

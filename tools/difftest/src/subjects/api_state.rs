@@ -316,8 +316,12 @@ impl State {
 // The routes.
 
 /// A route's request: its validated query and its parameters, or the refusal of the validation.
-fn request(case: &Case<'_>, kinds: &[RouteId]) -> Outcome<Result<ApiRequest, Verdict>> {
-    let path = case.input["path"].as_str().unwrap_or("");
+fn request(
+    case: &Case<'_>,
+    kinds: &[RouteId],
+    default: &str,
+) -> Outcome<Result<ApiRequest, Verdict>> {
+    let path = case.input["path"].as_str().unwrap_or(default);
     let raw = super::text(case.input, "query")?;
     let path = format!("/api{path}");
     let route = crate::api::route_of("GET", &path)
@@ -360,7 +364,7 @@ fn delegates_route(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         RouteId::DelegatesShow,
         RouteId::DelegatesVoters,
     ];
-    let request = match request(case, &KINDS)? {
+    let request = match request(case, &KINDS, "/delegates")? {
         Ok(request) => request,
         Err(verdict) => return Ok(verdict),
     };
@@ -404,7 +408,7 @@ fn delegates_route(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
 }
 
 fn wallets_route(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
-    let request = match request(case, &[RouteId::WalletsIndex, RouteId::WalletsTop])? {
+    let request = match request(case, &[RouteId::WalletsIndex, RouteId::WalletsTop], "/wallets")? {
         Ok(request) => request,
         Err(verdict) => return Ok(verdict),
     };

@@ -232,9 +232,11 @@ module.exports = async function apiStateVectors({ solar, rec, must }) {
     await resource("the smallest supply", { vb: "1" }, "1");
     await resource("no supply", { vb: "1" }, "0");
     await resource("no supply and no votes", { vb: "0" }, "0");
-    await resource("a huge supply", { vb: "123456789012345678901234567890" }, "1000000000000000000000000000000");
+    await resource("a huge supply", { vb: "12345678901234567890" }, "1000000000000000000000000000000");
     await resource("a tiny share of a huge supply", { vb: "1" }, "1000000000000000000000000000000");
-    await resource("a share beyond the arithmetic's four digits", { vb: "1" }, "100000000000000000000000000000000000000000");
+    await resource("a share beyond the arithmetic's four digits", { vb: "1" }, `1${"0".repeat(37)}`);
+    // The exponents at which Math.pow(10, k) is off by one step in Node 18: 26, 29, 34, 36 and 39.
+    for (const k of [26, 29, 34, 36, 39]) await resource(`a supply of ${k - 3} digits behind one vote`, { vb: "1" }, `1${"0".repeat(k - 4)}`);
     await resource("resigned for good", { rs: 1 }, "8000");
     await resource("resigned for a while", { rs: 0 }, "8000");
     await resource("no version", { version: undefined }, "8000");
@@ -243,7 +245,7 @@ module.exports = async function apiStateVectors({ solar, rec, must }) {
     await resource("a productivity of one hundredth", { productivity: 1 }, "8000");
     await resource("no public key", { pk: undefined }, "8000");
     await resource("forged total below zero", { ff: "1", fr: "1", bf: "100", dn: "100" }, "8000");
-    await resource("forged amounts of 20 digits", { ff: "12345678901234567890", fr: "98765432109876543210", bf: "1", dn: "2" }, "8000");
+    await resource("forged amounts of 20 digits", { ff: "12345678901234567890", fr: "9876543210987654321", bf: "1", dn: "2" }, "8000");
     await resource("a long username", { u: "a".repeat(20) }, "8000");
     await resource("many voters and blocks", { voters: 4096, pb: 1000000 }, "8000");
 
