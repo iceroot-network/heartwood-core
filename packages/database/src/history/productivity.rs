@@ -21,18 +21,18 @@ pub struct ProductivityRow {
     pub missed: Option<u64>,
 }
 
-/// The registered names, each with the blocks it produced and the slots it missed since `?1`.
-const QUERY: &str = "SELECT r.username, \
-    (SELECT COUNT(*) FROM blocks b WHERE b.username = r.username AND b.timestamp >= ?1), \
-    (SELECT COUNT(*) FROM missed_blocks m WHERE m.username = r.username AND m.timestamp >= ?1) \
+/// The registered names, each with the blocks it produced and the slots it missed since `?1`; and,
+/// as a row of no name, the blocks of the window without a generator name (the genesis block),
+/// which the reference's join keeps as a produced row of no name and no count, and whose division
+/// of zero by zero fails its query.
+const QUERY: &str = "SELECT username, produced, missed FROM (\
+    SELECT r.username AS username, \
+    (SELECT COUNT(*) FROM blocks b WHERE b.username = r.username AND b.timestamp >= ?1) AS produced, \
+    (SELECT COUNT(*) FROM missed_blocks m WHERE m.username = r.username AND m.timestamp >= ?1) AS missed \
     FROM (SELECT DISTINCT CAST(json_extract(asset, '$.delegate.username') AS TEXT) AS username \
-          FROM transactions WHERE type_group = 1 AND type = 2) r \
-    WHERE r.username IS NOT NULL ORDER BY r.username COLLATE BINARY";
-
-/// A block of the window with no generator name (the genesis block): the reference's join keeps it
-/// as a produced row of no name and no count, and its division of zero by zero fails the query.
-const NAMELESS: &str =
-    "SELECT EXISTS (SELECT 1 FROM blocks WHERE username IS NULL AND timestamp >= ?1)";
+          FROM transactions WHERE type_group = 1 AND type = 2) r WHERE r.username IS NOT NULL \
+    UNION ALL SELECT NULL, COUNT(*), 0 FROM blocks WHERE username IS NULL AND timestamp >= ?1 \
+    HAVING COUNT(*) > 0) ORDER BY username COLLATE BINARY";
 
 impl Reader<'_> {
     /// Every delegate's produced and missed counts since `since_epoch_seconds` (seconds since the
@@ -46,15 +46,7 @@ impl Reader<'_> {
         &self,
         since_epoch_seconds: i64,
     ) -> Result<Vec<ProductivityRow>, DatabaseError> {
-        let read = self.connection().unchecked_transaction()?;
-        let nameless = self.timed(|connection| {
-            let mut statement = connection.prepare_cached(NAMELESS)?;
-            Ok(statement.query_row([since_epoch_seconds], |row| row.get::<_, bool>(0))?)
-        })?;
-        if nameless {
-            return Err(DatabaseError::Sqlite("division by zero".to_owned()));
-        }
-        let rows = self.timed(|connection| {
+        self.timed(|connection| {
             let mut statement = connection.prepare_cached(QUERY)?;
             let mut rows = statement.query([since_epoch_seconds])?;
             let mut out = Vec::new();
@@ -63,16 +55,17 @@ impl Reader<'_> {
                 let side = |index| -> Result<Option<u64>, DatabaseError> {
                     Ok(Some(columns.uint::<u64>(index)?).filter(|count| *count > 0))
                 };
+                let Some(username) = columns.get(0)? else {
+                    return Err(DatabaseError::Sqlite("division by zero".to_owned()));
+                };
                 out.push(ProductivityRow {
-                    username: columns.get(0)?,
+                    username,
                     produced: side(1)?,
                     missed: side(2)?,
                 });
             }
             Ok(out)
-        })?;
-        read.commit()?;
-        Ok(rows)
+        })
     }
 }
 
@@ -89,32 +82,23 @@ pub fn hundredths(produced: u64, missed: u64) -> Option<u64> {
 /// (two decimals, no negative zero): halves round away from zero. `None` when `value` is not such
 /// a number or has more than 30 digits.
 pub fn round2(value: &str) -> Option<String> {
-    let (negative, unsigned) = match value.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, value.strip_prefix('+').unwrap_or(value)),
-    };
+    let unsigned = value.strip_prefix(['-', '+']).unwrap_or(value);
     let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
-    let digits = |text: &str| text.bytes().all(|b| b.is_ascii_digit());
-    if whole.is_empty() && fraction.is_empty()
-        || !digits(whole)
-        || !digits(fraction)
-        || whole.len() + fraction.len() > 30
-    {
+    let digits = format!("{whole}{fraction}");
+    if digits.len() > 30 || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    let mut kept = format!("{whole}{}", fraction.get(..2).unwrap_or(fraction));
-    for _ in fraction.len()..2 {
-        kept.push('0');
-    }
-    let mut hundredths: u128 = kept.parse().ok()?;
-    if fraction
-        .as_bytes()
-        .get(2)
-        .is_some_and(|digit| *digit >= b'5')
-    {
-        hundredths += 1;
-    }
-    let sign = if negative && hundredths != 0 { "-" } else { "" };
+    let scale = u32::try_from(fraction.len()).ok()?;
+    let number: i128 = digits.parse().ok()?;
+    let hundredths = match scale.checked_sub(2) {
+        Some(excess) => round_div(number, 10u128.pow(excess))?,
+        None => number * 10i128.pow(2 - scale),
+    };
+    let sign = if value.starts_with('-') && hundredths != 0 {
+        "-"
+    } else {
+        ""
+    };
     Some(format!(
         "{sign}{}.{:02}",
         hundredths / 100,

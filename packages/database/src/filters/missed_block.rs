@@ -2,7 +2,7 @@
 //! reads them: every key a criteria gives must hold, and a key holds when one of its values does.
 
 use super::Numeric;
-use super::sql::{Condition, all, any};
+use super::sql::{Condition, keys};
 use crate::errors::DatabaseError;
 
 /// One criteria of the reference's missed-block criteria. An empty list is a key the criteria
@@ -44,19 +44,10 @@ impl MissedBlockFilter {
 impl MissedBlockCriteria {
     /// Every key the criteria gives, each holding when one of its values does.
     fn sql(&self, c: &mut Condition) -> Result<String, DatabaseError> {
-        let mut keys = Vec::new();
-        let mut key = |values: Vec<String>| {
-            if !values.is_empty() {
-                keys.push(any(values));
-            }
-        };
-        key(c.numerics("timestamp", &self.timestamp)?);
-        key(c.numerics("height", &self.height)?);
-        key(self
-            .username
-            .iter()
-            .map(|name| c.text("username", name))
-            .collect());
-        Ok(all(keys))
+        Ok(keys(vec![
+            c.numerics("timestamp", &self.timestamp)?,
+            c.numerics("height", &self.height)?,
+            c.texts("username", &self.username),
+        ]))
     }
 }

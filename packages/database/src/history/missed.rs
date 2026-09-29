@@ -1,6 +1,6 @@
 //! The missed-slot listing of `GET /blocks/missed` and `GET /delegates/{id}/blocks/missed`.
 
-use super::blocks_list::{Query, order_by};
+use super::blocks_list::order_by;
 use super::{Listing, Order, Page};
 use crate::errors::DatabaseError;
 use crate::filters::MissedBlockFilter;
@@ -25,21 +25,18 @@ impl Reader<'_> {
         };
         let condition = filter.condition()?;
         let read = self.connection().unchecked_transaction()?;
-        let query = Query {
-            table: "missed_blocks",
-            columns: "timestamp, height, username",
-            condition: &condition,
-            order: &order,
-            page,
-        };
-        let (rows, total_count) = self.page(&query, |row| {
-            let columns = Columns::new("missed_blocks", row);
-            Ok(MissedRow {
-                timestamp: columns.get(0)?,
-                height: columns.uint(1)?,
-                username: columns.get(2)?,
-            })
-        })?;
+        let (rows, total_count) = self.page(
+            ("missed_blocks", "timestamp, height, username"),
+            (&condition, &order, page),
+            |row| {
+                let columns = Columns::new("missed_blocks", row);
+                Ok(MissedRow {
+                    timestamp: columns.get(0)?,
+                    height: columns.uint(1)?,
+                    username: columns.get(2)?,
+                })
+            },
+        )?;
         read.commit()?;
         Ok(Listing {
             rows,

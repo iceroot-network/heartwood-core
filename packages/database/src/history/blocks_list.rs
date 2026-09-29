@@ -5,6 +5,7 @@
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, Row, params_from_iter};
 
+use super::totals::amount_sum;
 use super::{Direction, Listing, Order, Page};
 use crate::blocks::{self, BlockRow};
 use crate::errors::DatabaseError;
@@ -59,21 +60,17 @@ impl Reader<'_> {
         let condition = filter.condition()?;
         let connection = self.connection();
         let read = connection.unchecked_transaction()?;
-        let query = Query {
-            table: "blocks",
-            columns: blocks::COLUMNS,
-            condition: &condition,
-            order: &order,
-            page,
-        };
-        let (rows, total_count) = self.page(&query, blocks::read_block)?;
+        let (rows, total_count) = self.page(
+            ("blocks", blocks::COLUMNS),
+            (&condition, &order, page),
+            blocks::read_block,
+        )?;
         let rows = self.timed(|connection| {
             rows.into_iter()
                 .map(|row| {
-                    let transferred = match transfers {
-                        true => Some(transferred(connection, row.height)?),
-                        false => None,
-                    };
+                    let transferred = transfers
+                        .then(|| transferred(connection, row.height))
+                        .transpose()?;
                     Ok(ListedBlock { row, transferred })
                 })
                 .collect::<Result<Vec<_>, DatabaseError>>()
@@ -87,37 +84,18 @@ impl Reader<'_> {
     }
 }
 
-/// A page of one table: what to select, which rows, in which order.
-pub(super) struct Query<'q> {
-    /// The table.
-    pub(super) table: &'q str,
-    /// The columns to select, in the order the row reader reads them.
-    pub(super) columns: &'q str,
-    /// The rows that match.
-    pub(super) condition: &'q Condition,
-    /// The `ORDER BY` terms.
-    pub(super) order: &'q str,
-    /// The page.
-    pub(super) page: Page,
-}
-
 impl Reader<'_> {
-    /// The rows of the page `query` names, read with `read`, and every match's count. It runs
-    /// two statements: the caller wraps them in one read transaction.
+    /// The rows of `table` that `condition` matches, `columns` of them in the order `order`, the
+    /// page `page`, read with `read`, and every match's count. It runs two statements: the caller
+    /// wraps them in one read transaction.
     pub(super) fn page<T>(
         &self,
-        query: &Query<'_>,
+        (table, columns): (&str, &str),
+        (condition, order, page): (&Condition, &str, Page),
         read: impl Fn(&Row<'_>) -> Result<T, DatabaseError>,
     ) -> Result<(Vec<T>, u64), DatabaseError> {
-        let limit = int("page.limit", query.page.limit)?;
-        let offset = int("page.offset", query.page.offset)?;
-        let Query {
-            table,
-            columns,
-            condition,
-            order,
-            ..
-        } = query;
+        let limit = int("page.limit", page.limit)?;
+        let offset = int("page.offset", page.offset)?;
         let rows = self.timed(|connection| {
             let sql = format!(
                 "SELECT {columns} FROM {table} WHERE {} ORDER BY {order} LIMIT ? OFFSET ?",
@@ -191,24 +169,12 @@ fn block_column(property: &str) -> Option<&'static str> {
 /// The sum of the amounts in the `asset.transfers` of the Core Transfer transactions (type group
 /// 1, type 6) of the block at `height`.
 fn transferred(connection: &Connection, height: u32) -> Result<u128, DatabaseError> {
-    let mut statement = connection.prepare_cached(
-        "SELECT json_extract(j.value, '$.amount') FROM transactions t, \
+    amount_sum(
+        connection,
+        "SELECT CAST(json_extract(j.value, '$.amount') AS TEXT) FROM transactions t, \
          json_each(t.asset, '$.transfers') j \
          WHERE t.block_height = ?1 AND t.type_group = 1 AND t.type = 6",
-    )?;
-    let mut rows = statement.query([height])?;
-    let mut sum: u128 = 0;
-    while let Some(row) = rows.next()? {
-        let amount = match row.get::<_, SqlValue>(0)? {
-            SqlValue::Text(text) => text.parse::<u128>().ok(),
-            SqlValue::Integer(number) => u128::try_from(number).ok(),
-            _ => None,
-        };
-        let amount = amount.ok_or_else(|| DatabaseError::CorruptRow {
-            table: "transactions",
-            detail: format!("a transfer of block {height} has no whole amount"),
-        })?;
-        sum = sum.saturating_add(amount);
-    }
-    Ok(sum)
+        [height],
+        &format!("a transfer of block {height}"),
+    )
 }

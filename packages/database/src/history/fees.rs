@@ -68,7 +68,8 @@ impl Reader<'_> {
             None => TransactionType::ALL
                 .iter()
                 .map(|kind| self.timed(|c| last_of(c, kind.type_group(), kind.type_id())))
-                .collect::<Result<Vec<_>, _>>()?,
+                .collect::<Result<Vec<_>, _>>()?
+                .concat(),
         };
         read.commit()?;
         Ok(rows)
@@ -87,22 +88,7 @@ fn in_window(
         wide_sum("fee"),
         wide_sum("burned_fee")
     );
-    let mut statement = connection.prepare_cached(&sql)?;
-    let mut rows = statement.query([first, last])?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next()? {
-        let columns = Columns::new("transactions", row);
-        let (sum, burned) = (read_wide(&columns, 5)?, read_wide(&columns, 7)?);
-        out.push(row_of(
-            columns.uint(0)?,
-            columns.uint(1)?,
-            columns.uint(2)?,
-            (columns.uint(3)?, columns.uint(4)?),
-            sum,
-            burned,
-        )?);
-    }
-    Ok(out)
+    rows_of(connection, &sql, [first, last])
 }
 
 /// The statistics of one type from its last 20 transactions, with its burned fees over all of
@@ -111,58 +97,55 @@ fn last_of(
     connection: &Connection,
     type_group: u32,
     kind: u16,
-) -> Result<FeeStatisticsRow, DatabaseError> {
-    let mut statement = connection.prepare_cached(
-        "SELECT fee FROM transactions WHERE type_group = ?1 AND type = ?2 \
-         ORDER BY block_height DESC, sequence DESC LIMIT ?3",
-    )?;
-    let mut rows = statement.query((type_group, kind, LAST))?;
-    let mut fees: Vec<u64> = Vec::new();
-    while let Some(row) = rows.next()? {
-        fees.push(Columns::new("transactions", row).uint(0)?);
-    }
-    let count = u64::try_from(fees.len()).unwrap_or_default();
-    let sum: u128 = fees.iter().map(|fee| u128::from(*fee)).sum();
-    let extremes = (
-        fees.iter().copied().min().unwrap_or_default(),
-        fees.iter().copied().max().unwrap_or_default(),
-    );
-    let burned = if fees.is_empty() {
-        0
-    } else {
-        let sql = format!(
-            "SELECT {} FROM transactions WHERE type_group = ?1 AND type = ?2",
-            wide_sum("burned_fee")
-        );
-        let mut statement = connection.prepare_cached(&sql)?;
-        statement.query_row((type_group, kind), |row| {
-            Ok(read_wide(&Columns::new("transactions", row), 0))
-        })??
+) -> Result<Vec<FeeStatisticsRow>, DatabaseError> {
+    let burned = |sum: &str| {
+        format!(
+            "(SELECT COALESCE(SUM(burned_fee {sum}), 0) FROM transactions \
+             WHERE type_group = ?1 AND type = ?2)"
+        )
     };
-    row_of(type_group, kind, count, extremes, sum, burned)
+    let sql = format!(
+        "SELECT ?1, ?2, COUNT(*), COALESCE(MIN(fee), 0), COALESCE(MAX(fee), 0), {}, {}, {} \
+         FROM (SELECT fee FROM transactions WHERE type_group = ?1 AND type = ?2 \
+               ORDER BY block_height DESC, sequence DESC LIMIT ?3)",
+        wide_sum("fee"),
+        burned(">> 32"),
+        burned("& 4294967295")
+    );
+    rows_of(connection, &sql, (type_group, kind, LAST))
 }
 
-/// The row of `count` fees with the extremes `(min, max)`, `sum` and `burned`.
-fn row_of(
-    type_group: u32,
-    kind: u16,
-    count: u64,
-    (min, max): (u64, u64),
-    sum: u128,
-    burned: u128,
-) -> Result<FeeStatisticsRow, DatabaseError> {
+/// The rows that `sql` selects: the type group, the type, the count, the lowest and highest fee,
+/// the fees' sum and the burned fees' sum, each sum as [`wide_sum`] selects it.
+fn rows_of(
+    connection: &Connection,
+    sql: &str,
+    params: impl rusqlite::Params,
+) -> Result<Vec<FeeStatisticsRow>, DatabaseError> {
+    let mut statement = connection.prepare_cached(sql)?;
+    let mut rows = statement.query(params)?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(row_of(&Columns::new("transactions", row))?);
+    }
+    Ok(out)
+}
+
+/// The row that `rows_of` reads from `columns`.
+fn row_of(columns: &Columns<'_, '_>) -> Result<FeeStatisticsRow, DatabaseError> {
+    let (sum, count): (u128, u64) = (read_wide(columns, 5)?, columns.uint(2)?);
     let avg = i128::try_from(sum)
         .ok()
         .and_then(|sum| avg_int8(sum, count))
         .and_then(|avg| u64::try_from(avg).ok())
         .unwrap_or_default();
     Ok(FeeStatisticsRow {
-        type_group,
-        kind,
+        type_group: columns.uint(0)?,
+        kind: columns.uint(1)?,
         avg,
-        min,
-        max,
+        min: columns.uint(3)?,
+        max: columns.uint(4)?,
         sum,
-        burned,
+        burned: read_wide(columns, 7)?,
     })
 }

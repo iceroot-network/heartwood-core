@@ -127,9 +127,17 @@ impl Condition {
     }
 
     /// `column = value`.
-    pub(crate) fn text(&mut self, column: &str, value: &str) -> String {
+    fn text(&mut self, column: &str, value: &str) -> String {
         self.params.push(SqlValue::Text(value.to_owned()));
         format!("{column} = ?")
+    }
+
+    /// `column = value` for each value.
+    pub(crate) fn texts(&mut self, column: &str, values: &[String]) -> Vec<String> {
+        values
+            .iter()
+            .map(|value| self.text(column, value))
+            .collect()
     }
 
     /// `address` is a recipient: the row's recipient, or one of a transfer's recipients.
@@ -223,8 +231,17 @@ impl Condition {
     }
 }
 
+/// Every key holds, a key holding when one of its values does; a key without values is not given.
+pub(crate) fn keys(keys: Vec<Vec<String>>) -> String {
+    all(keys
+        .into_iter()
+        .filter(|values| !values.is_empty())
+        .map(any)
+        .collect())
+}
+
 /// Every one of `conditions`; true when there is none.
-pub(crate) fn all(conditions: Vec<String>) -> String {
+fn all(conditions: Vec<String>) -> String {
     if conditions.is_empty() {
         "1".to_owned()
     } else {
@@ -233,7 +250,7 @@ pub(crate) fn all(conditions: Vec<String>) -> String {
 }
 
 /// One of `conditions`; false when there is none.
-pub(crate) fn any(conditions: Vec<String>) -> String {
+fn any(conditions: Vec<String>) -> String {
     if conditions.is_empty() {
         "0".to_owned()
     } else {
