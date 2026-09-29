@@ -9,37 +9,30 @@
 //! writable by every user; another is ignored with a warning. The group's write bit is allowed, as
 //! a umask of 002 gives it to the user's own group.
 
-use std::fs::{self, Metadata};
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
+use heartwood_cli::recovery::{self, Trust};
+
 /// Whether the marker file `marker` is to be honoured by the relay whose data directory is `data`
-/// (see the module documentation). A marker that does not exist is not.
+/// (see the module documentation; the rule is [`recovery::marker_trust`], which the commands
+/// share). A marker that does not exist is not.
 pub fn honoured(marker: &Path, data: &Path) -> bool {
-    let Ok(run) = fs::metadata(data.join("run")) else {
-        return false;
-    };
-    let ours = |path: &Path, kind: fn(&Metadata) -> bool| {
-        let meta = fs::symlink_metadata(path);
-        meta.is_ok_and(|meta| kind(&meta) && meta.uid() == run.uid() && meta.mode() & 0o002 == 0)
-    };
-    if fs::symlink_metadata(marker).is_err() {
-        return false;
+    match recovery::marker_trust(marker, data) {
+        None => false,
+        Some(Trust::Trusted) => true,
+        Some(Trust::Untrusted { .. }) => {
+            heartwood_kernel::warning!(
+                "Ignored {}: it or its directory is another user's, or any user may write it :warning:",
+                marker.display()
+            );
+            false
+        }
     }
-    let directory = marker.parent().unwrap_or(Path::new("."));
-    let honoured = ours(marker, Metadata::is_file) && ours(directory, Metadata::is_dir);
-    if !honoured {
-        heartwood_kernel::warning!(
-            "Ignored {}: it or its directory is another user's, or any user may write it :warning:",
-            marker.display()
-        );
-    }
-    honoured
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs::Permissions;
+    use std::fs::{self, Permissions};
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
 
