@@ -14,12 +14,19 @@
         "the node's files"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet."
+        "pass": "A role that runs here is online under its supervisor.",
+        "warn": "A role is starting or stopping, runs without a supervisor, or has restarted 3 or more times and has run for less than 10 minutes.",
+        "fail": "A role that runs here is stopped, or its supervisor gave up on it.",
+        "unknown": "The roles, or a role's process row, could not be read, or no role that the run looks at is set up on this host."
       },
-      "advice": {},
+      "advice": {
+        "running": "The {role} runs.",
+        "not-running": "The {role} is not running. Start it with `heartwood {role} start`, then read its error log with `heartwood {role} log --error`. See https://docs.iceroot.com/validators/doctor/#process-roles.",
+        "errored": "The supervisor gave up restarting the {role}. Read its error log with `heartwood {role} log --error`, fix the cause, then start it with `heartwood {role} start`. See https://docs.iceroot.com/validators/doctor/#process-roles.",
+        "changing": "The {role} is starting or stopping. Run the doctor again in a minute.",
+        "unsupervised": "The {role} runs without a supervisor and stops when this terminal closes. Start it with `heartwood {role} start --daemon` or as a service. See https://docs.iceroot.com/validators/doctor/#process-roles.",
+        "restarting": "The {role} restarted {restarts} times and has run for {minutes} minutes. Read its error log with `heartwood {role} log --error`. See https://docs.iceroot.com/validators/doctor/#process-roles."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#process-roles"
     },
     {
@@ -33,7 +40,7 @@
         "the process table"
       ],
       "rules": {
-        "skipped": "Not built yet."
+        "skipped": "This check is not in this release."
       },
       "advice": {},
       "docs": "https://docs.iceroot.com/validators/doctor/#process-core-role"
@@ -51,12 +58,22 @@
         "the process table"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The relay runs, or it stopped without a start error.",
+        "fail": "The relay is stopped, and its error capture since its last start, or its log after its last start line, shows a start error, which is named.",
+        "unknown": "Neither the error capture nor the log could be read.",
+        "skipped": "This host does not run a relay."
       },
-      "advice": {},
+      "advice": {
+        "none": "The relay shows no start error.",
+        "p2p-in-use": "The relay stopped at start: its P2P port {port} is already in use on this host. Find the other process with `ss -ltnp 'sport = :{port}'`, stop it or change `CORE_P2P_PORT`, then start the relay. See https://docs.iceroot.com/validators/doctor/#relay-start-errors.",
+        "p2p-cannot-listen": "The relay stopped at start: it could not listen on its P2P address. Check `CORE_P2P_HOST` and `CORE_P2P_PORT`, then start the relay. See https://docs.iceroot.com/validators/doctor/#relay-start-errors.",
+        "api-in-use": "The relay stopped at start: its API port {port} is already in use on this host. Find the other process with `ss -ltnp 'sport = :{port}'`, stop it or change `CORE_API_PORT`, then start the relay. See https://docs.iceroot.com/validators/doctor/#relay-start-errors.",
+        "api-cannot-listen": "The relay stopped at start: it could not open its API on its configured address. Check `CORE_API_HOST` and `CORE_API_PORT`, then start the relay. See https://docs.iceroot.com/validators/doctor/#relay-start-errors.",
+        "version-floor": "The relay stopped at start: the network's version floor refuses this release. Install the release named in the announcement, then start the relay. See https://docs.iceroot.com/validators/doctor/#relay-start-errors.",
+        "api-https": "The relay stopped at start: `CORE_API_SSL` is set, which this release does not support. Remove it, then start the relay. See https://docs.iceroot.com/validators/doctor/#relay-start-errors.",
+        "config": "The relay stopped at start: it refused its configuration. Read its error log with `heartwood relay log --error`, fix the setting it names, then start the relay. See https://docs.iceroot.com/validators/doctor/#relay-start-errors.",
+        "other": "The relay stopped at start with an error the doctor does not sort. Read its error log with `heartwood relay log --error`. See https://docs.iceroot.com/validators/doctor/#relay-start-errors."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#relay-start-errors"
     }
   ]

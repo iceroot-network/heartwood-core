@@ -1,0 +1,7 @@
+{
+  "note": "planning estimates, not requirements",
+  "roles": {
+    "relay": { "vcpus": 4, "memory_gb": 8 },
+    "forger": { "vcpus": 2, "memory_gb": 2 }
+  }
+}
