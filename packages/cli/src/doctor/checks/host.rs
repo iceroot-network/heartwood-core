@@ -51,10 +51,14 @@ pub fn resources(input: &CheckInput<'_>) -> Vec<Finding> {
             [_] => "a forger",
             _ => "a relay and a forger together",
         };
-        let enough = u64::from(cpus) >= need.0 && memory * 100 >= need.1 * GIB * MEMORY_PERCENT;
+        let wanted = u128::from(need.1) * u128::from(GIB * MEMORY_PERCENT);
+        let enough = u64::from(cpus) >= need.0 && u128::from(memory) * 100 >= wanted;
         let facts = vec![
             ("cpus", int(cpus)),
-            ("memory_gb", int((memory + GIB / 2) / GIB)),
+            (
+                "memory_gb",
+                int(memory / GIB + u64::from(memory % GIB >= GIB / 2)),
+            ),
             ("roles", Fact::Word(phrase)),
             ("need_cpus", int(need.0)),
             ("need_gb", int(need.1)),
@@ -75,7 +79,8 @@ pub fn memory(input: &CheckInput<'_>) -> Vec<Finding> {
         if mem.total == 0 {
             return Err(Unknown::new(Source::Proc, Reason::Unparsed));
         }
-        let (available, total) = (mem.available * 100, mem.total);
+        // In u128, so that no value of /proc/meminfo overflows.
+        let (available, total) = (u128::from(mem.available) * 100, u128::from(mem.total));
         let low = match () {
             _ if available < total * 2 => Some((Fail, "exhausted")),
             _ if available <= total * 10 => Some((Warn, "low")),

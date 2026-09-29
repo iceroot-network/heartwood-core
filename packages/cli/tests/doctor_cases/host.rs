@@ -290,7 +290,8 @@ pub fn cases() -> Vec<Case> {
 
 #[test]
 fn the_resources_check_never_fails() {
-    for (cpus, memory) in [(Some(1), 1), (Some(0), 0), (Some(64), 1 << 40), (None, 1)] {
+    let sizes = [(Some(1), 1), (Some(0), 0), (Some(64), 1 << 40), (None, 1)];
+    for (cpus, memory) in sizes.into_iter().chain([(Some(u32::MAX), u64::MAX)]) {
         let findings = run("host.resources", &sized(cpus, memory, true, true));
         assert!(findings.iter().all(|f| f.status != Status::Fail));
     }
@@ -319,4 +320,19 @@ fn the_swap_finding_names_the_role() {
         panic!("one finding")
     };
     assert!(finding.facts.contains(&("role", Fact::Word("relay"))));
+}
+
+#[test]
+fn memory_figures_at_the_limits_of_their_type_give_a_finding_and_no_panic() {
+    for (total, available) in [(u64::MAX, u64::MAX), (u64::MAX, 0), (1, u64::MAX)] {
+        let mut view = free(0);
+        view.meminfo = Ok(MemInfo {
+            total,
+            available,
+            swap_total: u64::MAX,
+            swap_free: 0,
+        });
+        let findings = run("host.memory", &view);
+        assert_eq!(findings.len(), 1);
+    }
 }
