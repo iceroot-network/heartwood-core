@@ -5,6 +5,7 @@
 //! its proofs of the session's challenge and the offer's name, and its long poll.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -12,7 +13,7 @@ use heartwood_crypto::crypto::hash::sha256;
 use heartwood_crypto::crypto::slots;
 use heartwood_crypto::utils::hex;
 use heartwood_crypto::{KeyPair, Milestones, Network};
-use heartwood_forger::attestation::{RETRY, offer_hash};
+use heartwood_forger::attestation::{POLL_FLOOR, RETRY, offer_hash};
 use heartwood_forger::{
     AttestError, AttestLink, Attester, DelegateKeys, RelayError, ShutdownSignal,
 };
@@ -264,22 +265,34 @@ fn an_offer_of_a_key_more_often_than_declared_or_of_an_oversized_status_is_refus
     );
 }
 
-/// A relay's attestation routes, answering from a script and recording what was posted.
+/// A relay's attestation routes, answering from a script and recording what was posted; one
+/// that is `remote` (off the forger's host) refuses, as the client refuses it.
 #[derive(Default)]
 struct ScriptedRelay {
     answers: Mutex<VecDeque<Result<StatusToSignResponse, RelayError>>>,
     polls: Mutex<Vec<Vec<String>>>,
     polled_at: Mutex<Vec<tokio::time::Instant>>,
     posted: Mutex<Vec<StatusSignatures>>,
+    remote: AtomicBool,
 }
 
 impl AttestLink for ScriptedRelay {
+    fn selected_is_local(&self) -> bool {
+        !self.remote.load(Ordering::SeqCst)
+    }
+
     async fn status_to_sign(&self, keys: &[String]) -> Result<StatusToSignResponse, RelayError> {
         self.polls.lock().unwrap().push(keys.to_vec());
         self.polled_at
             .lock()
             .unwrap()
             .push(tokio::time::Instant::now());
+        if self.remote.load(Ordering::SeqCst) {
+            return Err(RelayError::Communication {
+                endpoint: "192.0.2.1:4002<p2p.internal.getStatusToSign>".into(),
+                message: "status attestations go to a relay on the forger's host only".into(),
+            });
+        }
         let next = self.answers.lock().unwrap().pop_front();
         match next {
             Some(answer) => answer,
@@ -332,9 +345,15 @@ async fn the_long_poll_answers_each_good_offer_and_stops_at_the_shutdown() {
     assert_eq!(posted.len(), 2, "the refused offer is not answered");
     assert!(posted.iter().all(|p| p.offer == offer_hash(&status)));
     let polls = relay.polls.lock().unwrap();
-    // Five scripted answers, the pauses of 250 ms after the Unchanged and of 1 s after the
-    // error, then long polls of 10 s from 1.25 s, 11.25 s and 21.25 s.
+    // Five scripted answers, 250 ms apart but for the pause of 1 s after the error, then long
+    // polls of 10 s from 2 s, 12 s and 22 s.
     assert_eq!(polls.len(), 8);
+    let polled = relay.polled_at.lock().unwrap();
+    let from = |at: &tokio::time::Instant| (*at - started).as_millis();
+    assert_eq!(
+        polled.iter().map(from).collect::<Vec<_>>(),
+        [0, 250, 500, 750, 1_750, 2_000, 12_000, 22_000]
+    );
     let declared = vec![public("delegate a"), public("delegate a")];
     assert!(polls.iter().all(|keys| *keys == declared));
     assert!(RETRY <= Duration::from_secs(5));
@@ -358,9 +377,66 @@ async fn a_relay_that_answers_unchanged_at_once_is_polled_four_times_a_second_at
     let polled: Vec<Duration> = (relay.polled_at.lock().unwrap().iter())
         .map(|at| *at - started)
         .collect();
-    let floor = heartwood_forger::attestation::UNCHANGED_FLOOR;
     assert_eq!(polled.len(), 9);
     for (n, at) in polled.iter().enumerate() {
-        assert_eq!(*at, floor * u32::try_from(n).unwrap());
+        assert_eq!(*at, POLL_FLOOR * u32::try_from(n).unwrap());
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_relay_that_offers_at_once_is_polled_four_times_a_second_at_most() {
+    let (slot, status) = preimages().remove(0);
+    let (attester, _) = make_attester(&["delegate a"], ZERO, slot);
+    let relay = ScriptedRelay::default();
+    let offer = || {
+        Ok(StatusToSignResponse::Offer {
+            status: status.clone(),
+            public_keys: vec![public("delegate a")],
+            challenge: CHALLENGE.into(),
+        })
+    };
+    relay
+        .answers
+        .lock()
+        .unwrap()
+        .extend((0..8).map(|_| offer()));
+    let (trigger, shutdown) = ShutdownSignal::new();
+    let stop = async {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        trigger.trigger();
+    };
+    let started = tokio::time::Instant::now();
+    tokio::join!(attester.run(&relay, shutdown), stop);
+    // Each offer is signed and answered at once; the next poll waits for the floor.
+    assert_eq!(relay.posted.lock().unwrap().len(), 8);
+    let polled: Vec<Duration> = (relay.polled_at.lock().unwrap().iter())
+        .map(|at| *at - started)
+        .collect();
+    assert_eq!(polled.len(), 9);
+    for (n, at) in polled.iter().enumerate() {
+        assert_eq!(*at, POLL_FLOOR * u32::try_from(n).unwrap());
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_relay_off_the_forgers_host_is_not_polled_until_the_selection_comes_back() {
+    let (slot, _) = preimages().remove(0);
+    let (attester, _) = make_attester(&["delegate a"], ZERO, slot);
+    let relay = ScriptedRelay::default();
+    relay.remote.store(true, Ordering::SeqCst);
+    let (trigger, shutdown) = ShutdownSignal::new();
+    let script = async {
+        tokio::time::sleep(Duration::from_millis(4_500)).await;
+        relay.remote.store(false, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(5_500)).await;
+        trigger.trigger();
+    };
+    let started = tokio::time::Instant::now();
+    tokio::join!(attester.run(&relay, shutdown), script);
+    // The selection is looked at once a second; the first poll is the one after it came back,
+    // and the long poll holds until the shutdown.
+    let polled: Vec<Duration> = (relay.polled_at.lock().unwrap().iter())
+        .map(|at| *at - started)
+        .collect();
+    assert_eq!(polled, [RETRY * 5]);
 }

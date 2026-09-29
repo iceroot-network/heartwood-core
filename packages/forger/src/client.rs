@@ -377,16 +377,18 @@ impl Client {
     /// Refuse an attestation route to a relay the forger does not reach over loopback, which the
     /// relay's own rule would refuse as a source: a remote host gets no signature.
     fn on_this_host(&self, route: RouteId) -> Result<(), RelayError> {
-        let host = self.selected();
         let only = "status attestations go to a relay on the forger's host only";
-        let local = host.address.to_canonical().is_loopback();
-        local
+        (self.selected_is_local())
             .then_some(())
-            .ok_or_else(|| RelayError::communication(&host, route, only))
+            .ok_or_else(|| RelayError::communication(&self.selected(), route, only))
     }
 }
 
 impl AttestLink for Client {
+    fn selected_is_local(&self) -> bool {
+        self.selected().address.to_canonical().is_loopback()
+    }
+
     async fn status_to_sign(
         &self,
         public_keys: &[String],

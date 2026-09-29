@@ -946,8 +946,9 @@ first (the bytes a slot gets stay the reference's):
 - the attester signs an offer only when its text, of at most 16 KiB, reads back as a status tree
   and writes back to the same bytes, for the forger's network, with a height equal to its
   header's and a slot within one of the forger's clock, and only for the forger's own keys, each
-  offered at most as often as the key file lists it; after an `Unchanged` answer it polls again no
-  sooner than 250 ms after the poll began;
+  offered at most as often as the key file lists it; it polls again no sooner than 250 ms after
+  the poll before began, whatever the answer, and polls no relay it does not reach over loopback
+  (it looks at the selection again each second);
 - the fields of an internal body that the forger uses are read when the body arrives, so a missing
   or out-of-range field fails the call, where the reference fails later.
 

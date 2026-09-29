@@ -1,7 +1,9 @@
 //! The attester: the forger signs the statuses its relay offers, over the forger's own session.
 //!
 //! - It long-polls `getStatusToSign` on the selected host with its declared keys, and polls again
-//!   after each answer; when the forger's selection moves, it polls the new host only.
+//!   after each answer; when the forger's selection moves, it polls the new host only. A selected
+//!   host the forger does not reach over loopback attests nothing: it is not polled, and the
+//!   selection is looked at again [`RETRY`] later.
 //! - It signs only an offer whose text is at most [`MAX_STATUS`] bytes and exactly the canonical
 //!   form of a status tree ([`heartwood_p2p_wire::status::parse_preimage`]), whose state's height
 //!   is its header's, whose slot is within one of the forger's own slot, whose nethash is its own
@@ -11,8 +13,9 @@
 //!   the SHA-256 of its bytes, and with each key a signature of the session's challenge
 //!   ([`heartwood_p2p_wire::status::session_proof`]), which shows the relay that this session
 //!   holds the key.
-//! - After an `Unchanged` answer it polls again [`UNCHANGED_FLOOR`] after the poll's start at the
-//!   earliest, so that a relay answering at once cannot make it spin.
+//! - It polls again [`POLL_FLOOR`] after the poll's start at the earliest, whatever the answer,
+//!   so that a relay answering at once, with `Unchanged` or with a fresh offer to sign, cannot make
+//!   it spin.
 
 use std::future::Future;
 use std::pin::pin;
@@ -34,8 +37,8 @@ use crate::seams::{AttestLink, ShutdownSignal};
 
 /// The wait before polling again after a failed poll.
 pub const RETRY: Duration = Duration::from_secs(1);
-/// The least time from one poll to the next after an `Unchanged` answer.
-pub const UNCHANGED_FLOOR: Duration = Duration::from_millis(250);
+/// The least time from the start of one poll to the next.
+pub const POLL_FLOOR: Duration = Duration::from_millis(250);
 /// The longest status text signed: a status is about 1 KiB.
 pub const MAX_STATUS: usize = 16 * 1024;
 
@@ -126,21 +129,21 @@ impl Attester {
     pub async fn run<L: AttestLink>(&self, link: &L, mut shutdown: ShutdownSignal) {
         let declared: Vec<String> = self.keys.declared().iter().map(|k| k.to_hex()).collect();
         loop {
-            // A poll, and its offer checked and signed; after a failed poll, a pause.
+            // A poll, and its offer checked and signed; after a failed poll, or none as the
+            // selected host is remote, a pause.
+            let floor = tokio::time::Instant::now().checked_add(POLL_FLOOR);
             let poll = async {
-                let floor = tokio::time::Instant::now().checked_add(UNCHANGED_FLOOR);
+                if !link.selected_is_local() {
+                    tokio::time::sleep(RETRY).await;
+                    return None;
+                }
                 match link.status_to_sign(&declared).await {
                     Ok(StatusToSignResponse::Offer {
                         status,
                         public_keys,
                         challenge,
                     }) => Some(self.sign_offer(&status, &public_keys, &challenge)),
-                    Ok(StatusToSignResponse::Unchanged) => {
-                        if let Some(floor) = floor {
-                            tokio::time::sleep_until(floor).await;
-                        }
-                        None
-                    }
+                    Ok(StatusToSignResponse::Unchanged) => None,
                     Err(error) => {
                         debug!("The relay gave no status to attest: {error}");
                         tokio::time::sleep(RETRY).await;
@@ -157,6 +160,12 @@ impl Attester {
                     }
                 }
                 Some(Some(Err(error))) => warning!("Not attesting the relay's status: {error}"),
+            }
+            let pause = floor.map(tokio::time::sleep_until);
+            if let Some(pause) = pause
+                && until(&mut shutdown, pause).await.is_none()
+            {
+                return;
             }
         }
     }
