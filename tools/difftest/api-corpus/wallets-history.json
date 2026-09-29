@@ -1,0 +1,978 @@
+[
+ {
+  "name": "wallets-history/sent/sender",
+  "path": "/api/wallets/${txSender}/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/public-key",
+  "path": "/api/wallets/${txSenderKey}/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/registered",
+  "path": "/api/wallets/${delegateName}/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/genesis-name",
+  "path": "/api/wallets/genesis_1/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/voter",
+  "path": "/api/wallets/${voter}/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/recipient",
+  "path": "/api/wallets/${recipient}/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/burner",
+  "path": "/api/wallets/${burner}/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/genesis-sender",
+  "path": "/api/wallets/${gSender}/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/paging/default",
+  "path": "/api/wallets/${txSender}/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/paging/limit-10",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "limit=10"
+ },
+ {
+  "name": "wallets-history/sent/paging/page-2",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "wallets-history/sent/paging/offset-5",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "wallets-history/sent/paging/offset-0-ignored",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "offset=0&page=2&limit=10"
+ },
+ {
+  "name": "wallets-history/sent/paging/page-beyond",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "page=50&limit=100"
+ },
+ {
+  "name": "wallets-history/sent/paging/limit-100",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "limit=100"
+ },
+ {
+  "name": "wallets-history/sent/paging/transform-false",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "transform=false"
+ },
+ {
+  "name": "wallets-history/sent/paging/transform-false-page-2",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "transform=false&page=2&limit=10"
+ },
+ {
+  "name": "wallets-history/sent/recipient-raw",
+  "path": "/api/wallets/${recipient}/transactions/sent",
+  "query": "transform=false"
+ },
+ {
+  "name": "wallets-history/sent/criteria/id",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "id=${tx}"
+ },
+ {
+  "name": "wallets-history/sent/criteria/senderId-other",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "senderId=${voter}"
+ },
+ {
+  "name": "wallets-history/sent/criteria/recipientId-other",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "recipientId=${burner}"
+ },
+ {
+  "name": "wallets-history/sent/criteria/senderPublicKey",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets-history/sent/criteria/address",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "address=${voter}"
+ },
+ {
+  "name": "wallets-history/sent/criteria/blockHeight",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "blockHeight=${txHeight}"
+ },
+ {
+  "name": "wallets-history/sent/criteria/blockHeight-range",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "blockHeight.from=2&blockHeight.to=100"
+ },
+ {
+  "name": "wallets-history/sent/criteria/blockId",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "blockId=${transferBlock}"
+ },
+ {
+  "name": "wallets-history/sent/criteria/type",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "type=6"
+ },
+ {
+  "name": "wallets-history/sent/criteria/type-group",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "typeGroup=1&type=6"
+ },
+ {
+  "name": "wallets-history/sent/criteria/type-solar",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "typeGroup=2&type=2"
+ },
+ {
+  "name": "wallets-history/sent/criteria/fee-from",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "fee.from=1"
+ },
+ {
+  "name": "wallets-history/sent/criteria/amount-from",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "amount.from=1"
+ },
+ {
+  "name": "wallets-history/sent/criteria/memo",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "memo=%25"
+ },
+ {
+  "name": "wallets-history/sent/criteria/timestamp-from",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "timestamp.from=${txTimestamp}"
+ },
+ {
+  "name": "wallets-history/sent/criteria/combined",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "typeGroup=1&type=6&blockHeight.from=2"
+ },
+ {
+  "name": "wallets-history/sent/criteria/empty-list",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "id=,"
+ },
+ {
+  "name": "wallets-history/sent/order/timestamp:desc,sequence:desc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=timestamp:desc,sequence:desc"
+ },
+ {
+  "name": "wallets-history/sent/order/timestamp:asc,sequence:asc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=timestamp:asc,sequence:asc"
+ },
+ {
+  "name": "wallets-history/sent/order/blockHeight:desc,sequence:desc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=blockHeight:desc,sequence:desc"
+ },
+ {
+  "name": "wallets-history/sent/order/id:asc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=id:asc"
+ },
+ {
+  "name": "wallets-history/sent/order/id:desc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=id:desc"
+ },
+ {
+  "name": "wallets-history/sent/order/fee:desc,id:asc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=fee:desc,id:asc"
+ },
+ {
+  "name": "wallets-history/sent/order/timestamp:asc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=timestamp:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/sent/order/amount:desc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=amount:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/sent/order/fee:asc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=fee:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/sent/order/nonce:desc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=nonce:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/sent/order/type:asc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=type:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/sent/order/memo:asc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=memo:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/sent/order/senderPublicKey:asc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=senderPublicKey:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/sent/order/burnedFee:desc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=burnedFee:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/sent/order/sequence:asc",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=sequence:asc&transform=false",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/sent/refused/order/address",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=address:desc"
+ },
+ {
+  "name": "wallets-history/sent/refused/order/capital-property",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=Fee:asc"
+ },
+ {
+  "name": "wallets-history/sent/refused/order/capital-direction",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "orderBy=fee:DESC"
+ },
+ {
+  "name": "wallets-history/sent/refused/limit-0",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "limit=0"
+ },
+ {
+  "name": "wallets-history/sent/refused/limit-101",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "limit=101"
+ },
+ {
+  "name": "wallets-history/sent/refused/limit-negative",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "limit=-1"
+ },
+ {
+  "name": "wallets-history/sent/refused/limit-text",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "limit=ten"
+ },
+ {
+  "name": "wallets-history/sent/refused/limit-fraction",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "limit=1.5"
+ },
+ {
+  "name": "wallets-history/sent/refused/page-0",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "page=0"
+ },
+ {
+  "name": "wallets-history/sent/refused/offset-negative",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "offset=-1"
+ },
+ {
+  "name": "wallets-history/sent/refused/unknown-key",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "nonsense=1"
+ },
+ {
+  "name": "wallets-history/sent/refused/unknown-nested",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "a.b=1"
+ },
+ {
+  "name": "wallets-history/sent/refused/empty-key",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "=1"
+ },
+ {
+  "name": "wallets-history/sent/refused/limit-twice",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "limit=1&limit=2"
+ },
+ {
+  "name": "wallets-history/sent/refused/transform-text",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "transform=maybe"
+ },
+ {
+  "name": "wallets-history/sent/refused/senderId-short",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "senderId=abc"
+ },
+ {
+  "name": "wallets-history/sent/refused/asset",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "asset=x"
+ },
+ {
+  "name": "wallets-history/sent/id/unknown-valid-address",
+  "path": "/api/wallets/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/id/invalid-address",
+  "path": "/api/wallets/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxkia/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/id/unknown-username",
+  "path": "/api/wallets/nosuchdelegate1/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/id/unknown-public-key",
+  "path": "/api/wallets/0368d294e20ada56bd4f14084f7aa3552534b1a0852aff6aafdcf5dfce303b4956/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/id/upper-address",
+  "path": "/api/wallets/${txSender|upper}/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/id/upper-text",
+  "path": "/api/wallets/UPPER/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/id/too-long",
+  "path": "/api/wallets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/id/dots",
+  "path": "/api/wallets/a.b/transactions/sent"
+ },
+ {
+  "name": "wallets-history/sent/id/trailing-slash",
+  "path": "/api/wallets/${txSender}/transactions/sent/"
+ },
+ {
+  "name": "wallets-history/received/sender",
+  "path": "/api/wallets/${txSender}/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/public-key",
+  "path": "/api/wallets/${txSenderKey}/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/registered",
+  "path": "/api/wallets/${delegateName}/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/genesis-name",
+  "path": "/api/wallets/genesis_1/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/voter",
+  "path": "/api/wallets/${voter}/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/recipient",
+  "path": "/api/wallets/${recipient}/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/burner",
+  "path": "/api/wallets/${burner}/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/genesis-sender",
+  "path": "/api/wallets/${gSender}/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/paging/default",
+  "path": "/api/wallets/${txSender}/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/paging/limit-10",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "limit=10"
+ },
+ {
+  "name": "wallets-history/received/paging/page-2",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "wallets-history/received/paging/offset-5",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "wallets-history/received/paging/offset-0-ignored",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "offset=0&page=2&limit=10"
+ },
+ {
+  "name": "wallets-history/received/paging/page-beyond",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "page=50&limit=100"
+ },
+ {
+  "name": "wallets-history/received/paging/limit-100",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "limit=100"
+ },
+ {
+  "name": "wallets-history/received/paging/transform-false",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "transform=false"
+ },
+ {
+  "name": "wallets-history/received/paging/transform-false-page-2",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "transform=false&page=2&limit=10"
+ },
+ {
+  "name": "wallets-history/received/recipient-raw",
+  "path": "/api/wallets/${recipient}/transactions/received",
+  "query": "transform=false"
+ },
+ {
+  "name": "wallets-history/received/criteria/id",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "id=${tx}"
+ },
+ {
+  "name": "wallets-history/received/criteria/senderId-other",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "senderId=${voter}"
+ },
+ {
+  "name": "wallets-history/received/criteria/recipientId-other",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "recipientId=${burner}"
+ },
+ {
+  "name": "wallets-history/received/criteria/senderPublicKey",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets-history/received/criteria/address",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "address=${voter}"
+ },
+ {
+  "name": "wallets-history/received/criteria/blockHeight",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "blockHeight=${txHeight}"
+ },
+ {
+  "name": "wallets-history/received/criteria/blockHeight-range",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "blockHeight.from=2&blockHeight.to=100"
+ },
+ {
+  "name": "wallets-history/received/criteria/blockId",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "blockId=${transferBlock}"
+ },
+ {
+  "name": "wallets-history/received/criteria/type",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "type=6"
+ },
+ {
+  "name": "wallets-history/received/criteria/type-group",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "typeGroup=1&type=6"
+ },
+ {
+  "name": "wallets-history/received/criteria/type-solar",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "typeGroup=2&type=2"
+ },
+ {
+  "name": "wallets-history/received/criteria/fee-from",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "fee.from=1"
+ },
+ {
+  "name": "wallets-history/received/criteria/amount-from",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "amount.from=1"
+ },
+ {
+  "name": "wallets-history/received/criteria/memo",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "memo=%25"
+ },
+ {
+  "name": "wallets-history/received/criteria/timestamp-from",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "timestamp.from=${txTimestamp}"
+ },
+ {
+  "name": "wallets-history/received/criteria/combined",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "typeGroup=1&type=6&blockHeight.from=2"
+ },
+ {
+  "name": "wallets-history/received/criteria/empty-list",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "id=,"
+ },
+ {
+  "name": "wallets-history/received/order/timestamp:desc,sequence:desc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=timestamp:desc,sequence:desc"
+ },
+ {
+  "name": "wallets-history/received/order/timestamp:asc,sequence:asc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=timestamp:asc,sequence:asc"
+ },
+ {
+  "name": "wallets-history/received/order/blockHeight:desc,sequence:desc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=blockHeight:desc,sequence:desc"
+ },
+ {
+  "name": "wallets-history/received/order/id:asc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=id:asc"
+ },
+ {
+  "name": "wallets-history/received/order/id:desc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=id:desc"
+ },
+ {
+  "name": "wallets-history/received/order/fee:desc,id:asc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=fee:desc,id:asc"
+ },
+ {
+  "name": "wallets-history/received/order/timestamp:asc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=timestamp:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/received/order/amount:desc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=amount:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/received/order/fee:asc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=fee:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/received/order/nonce:desc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=nonce:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/received/order/type:asc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=type:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/received/order/memo:asc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=memo:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/received/order/senderPublicKey:asc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=senderPublicKey:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/received/order/burnedFee:desc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=burnedFee:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/received/order/sequence:asc",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=sequence:asc&transform=false",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/received/refused/order/address",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=address:desc"
+ },
+ {
+  "name": "wallets-history/received/refused/order/capital-property",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=Fee:asc"
+ },
+ {
+  "name": "wallets-history/received/refused/order/capital-direction",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "orderBy=fee:DESC"
+ },
+ {
+  "name": "wallets-history/received/refused/limit-0",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "limit=0"
+ },
+ {
+  "name": "wallets-history/received/refused/limit-101",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "limit=101"
+ },
+ {
+  "name": "wallets-history/received/refused/limit-negative",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "limit=-1"
+ },
+ {
+  "name": "wallets-history/received/refused/limit-text",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "limit=ten"
+ },
+ {
+  "name": "wallets-history/received/refused/limit-fraction",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "limit=1.5"
+ },
+ {
+  "name": "wallets-history/received/refused/page-0",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "page=0"
+ },
+ {
+  "name": "wallets-history/received/refused/offset-negative",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "offset=-1"
+ },
+ {
+  "name": "wallets-history/received/refused/unknown-key",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "nonsense=1"
+ },
+ {
+  "name": "wallets-history/received/refused/unknown-nested",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "a.b=1"
+ },
+ {
+  "name": "wallets-history/received/refused/empty-key",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "=1"
+ },
+ {
+  "name": "wallets-history/received/refused/limit-twice",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "limit=1&limit=2"
+ },
+ {
+  "name": "wallets-history/received/refused/transform-text",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "transform=maybe"
+ },
+ {
+  "name": "wallets-history/received/refused/senderId-short",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "senderId=abc"
+ },
+ {
+  "name": "wallets-history/received/refused/asset",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "asset=x"
+ },
+ {
+  "name": "wallets-history/received/id/unknown-valid-address",
+  "path": "/api/wallets/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/id/invalid-address",
+  "path": "/api/wallets/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxkia/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/id/unknown-username",
+  "path": "/api/wallets/nosuchdelegate1/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/id/unknown-public-key",
+  "path": "/api/wallets/0368d294e20ada56bd4f14084f7aa3552534b1a0852aff6aafdcf5dfce303b4956/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/id/upper-address",
+  "path": "/api/wallets/${txSender|upper}/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/id/upper-text",
+  "path": "/api/wallets/UPPER/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/id/too-long",
+  "path": "/api/wallets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/id/dots",
+  "path": "/api/wallets/a.b/transactions/received"
+ },
+ {
+  "name": "wallets-history/received/id/trailing-slash",
+  "path": "/api/wallets/${txSender}/transactions/received/"
+ },
+ {
+  "name": "wallets-history/votes/sender",
+  "path": "/api/wallets/${txSender}/votes"
+ },
+ {
+  "name": "wallets-history/votes/public-key",
+  "path": "/api/wallets/${txSenderKey}/votes"
+ },
+ {
+  "name": "wallets-history/votes/registered",
+  "path": "/api/wallets/${delegateName}/votes"
+ },
+ {
+  "name": "wallets-history/votes/genesis-name",
+  "path": "/api/wallets/genesis_1/votes"
+ },
+ {
+  "name": "wallets-history/votes/voter",
+  "path": "/api/wallets/${voter}/votes"
+ },
+ {
+  "name": "wallets-history/votes/recipient",
+  "path": "/api/wallets/${recipient}/votes"
+ },
+ {
+  "name": "wallets-history/votes/burner",
+  "path": "/api/wallets/${burner}/votes"
+ },
+ {
+  "name": "wallets-history/votes/genesis-sender",
+  "path": "/api/wallets/${gSender}/votes"
+ },
+ {
+  "name": "wallets-history/votes/paging/default",
+  "path": "/api/wallets/${voter}/votes"
+ },
+ {
+  "name": "wallets-history/votes/paging/limit-10",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "limit=10"
+ },
+ {
+  "name": "wallets-history/votes/paging/page-2",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "wallets-history/votes/paging/offset-5",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "wallets-history/votes/paging/offset-0-ignored",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "offset=0&page=2&limit=10"
+ },
+ {
+  "name": "wallets-history/votes/paging/page-beyond",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "page=50&limit=100"
+ },
+ {
+  "name": "wallets-history/votes/paging/limit-100",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "limit=100"
+ },
+ {
+  "name": "wallets-history/votes/paging/transform-false",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "transform=false"
+ },
+ {
+  "name": "wallets-history/votes/criteria/id",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "id=${voteTx}"
+ },
+ {
+  "name": "wallets-history/votes/criteria/senderId-other",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "senderId=${txSender}"
+ },
+ {
+  "name": "wallets-history/votes/criteria/type-overridden",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "typeGroup=1&type=0"
+ },
+ {
+  "name": "wallets-history/votes/criteria/type-only",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "type=7"
+ },
+ {
+  "name": "wallets-history/votes/criteria/blockHeight-range",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "blockHeight.from=2&blockHeight.to=100"
+ },
+ {
+  "name": "wallets-history/votes/criteria/fee-from",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "fee.from=1"
+ },
+ {
+  "name": "wallets-history/votes/criteria/combined",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "blockHeight.from=2&fee.from=1&transform=false"
+ },
+ {
+  "name": "wallets-history/votes/order/timestamp:desc,sequence:desc",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "orderBy=timestamp:desc,sequence:desc"
+ },
+ {
+  "name": "wallets-history/votes/order/timestamp:asc,sequence:asc",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "orderBy=timestamp:asc,sequence:asc"
+ },
+ {
+  "name": "wallets-history/votes/order/id:asc",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "orderBy=id:asc"
+ },
+ {
+  "name": "wallets-history/votes/order/fee:desc,id:asc",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "orderBy=fee:desc,id:asc"
+ },
+ {
+  "name": "wallets-history/votes/order/timestamp:asc",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "orderBy=timestamp:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/votes/order/fee:asc",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "orderBy=fee:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/votes/order/blockHeight:asc",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "orderBy=blockHeight:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "wallets-history/votes/refused/limit-0",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "limit=0"
+ },
+ {
+  "name": "wallets-history/votes/refused/limit-101",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "limit=101"
+ },
+ {
+  "name": "wallets-history/votes/refused/limit-negative",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "limit=-1"
+ },
+ {
+  "name": "wallets-history/votes/refused/limit-text",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "limit=ten"
+ },
+ {
+  "name": "wallets-history/votes/refused/limit-fraction",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "limit=1.5"
+ },
+ {
+  "name": "wallets-history/votes/refused/page-0",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "page=0"
+ },
+ {
+  "name": "wallets-history/votes/refused/offset-negative",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "offset=-1"
+ },
+ {
+  "name": "wallets-history/votes/refused/unknown-key",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "nonsense=1"
+ },
+ {
+  "name": "wallets-history/votes/refused/unknown-nested",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "a.b=1"
+ },
+ {
+  "name": "wallets-history/votes/refused/empty-key",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "=1"
+ },
+ {
+  "name": "wallets-history/votes/refused/limit-twice",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "limit=1&limit=2"
+ },
+ {
+  "name": "wallets-history/votes/refused/transform-text",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "transform=maybe"
+ },
+ {
+  "name": "wallets-history/votes/refused/order-address",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "orderBy=address:asc"
+ },
+ {
+  "name": "wallets-history/votes/refused/asset",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "asset=x"
+ },
+ {
+  "name": "wallets-history/votes/id/unknown-valid-address",
+  "path": "/api/wallets/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2/votes"
+ },
+ {
+  "name": "wallets-history/votes/id/invalid-address",
+  "path": "/api/wallets/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxkia/votes"
+ },
+ {
+  "name": "wallets-history/votes/id/unknown-username",
+  "path": "/api/wallets/nosuchdelegate1/votes"
+ },
+ {
+  "name": "wallets-history/votes/id/upper-address",
+  "path": "/api/wallets/${voter|upper}/votes"
+ },
+ {
+  "name": "wallets-history/votes/id/too-long",
+  "path": "/api/wallets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/votes"
+ }
+]

@@ -1,0 +1,658 @@
+[
+ {
+  "name": "blocks-list/paging/default",
+  "path": "/api/blocks"
+ },
+ {
+  "name": "blocks-list/paging/limit-10",
+  "path": "/api/blocks",
+  "query": "limit=10"
+ },
+ {
+  "name": "blocks-list/paging/page-2",
+  "path": "/api/blocks",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "blocks-list/paging/offset-5",
+  "path": "/api/blocks",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "blocks-list/paging/offset-0-ignored",
+  "path": "/api/blocks",
+  "query": "offset=0&page=2&limit=10"
+ },
+ {
+  "name": "blocks-list/paging/page-beyond",
+  "path": "/api/blocks",
+  "query": "page=50&limit=100"
+ },
+ {
+  "name": "blocks-list/paging/limit-100",
+  "path": "/api/blocks",
+  "query": "limit=100"
+ },
+ {
+  "name": "blocks-list/paging-raw/default",
+  "path": "/api/blocks",
+  "query": "transform=false",
+  "documented": "estimatedCount"
+ },
+ {
+  "name": "blocks-list/paging-raw/limit-10",
+  "path": "/api/blocks",
+  "query": "limit=10&transform=false",
+  "documented": "estimatedCount"
+ },
+ {
+  "name": "blocks-list/paging-raw/page-2",
+  "path": "/api/blocks",
+  "query": "page=2&limit=10&transform=false",
+  "documented": "estimatedCount"
+ },
+ {
+  "name": "blocks-list/paging-raw/offset-5",
+  "path": "/api/blocks",
+  "query": "offset=5&limit=10&transform=false",
+  "documented": "estimatedCount"
+ },
+ {
+  "name": "blocks-list/transform-false",
+  "path": "/api/blocks",
+  "query": "transform=false",
+  "documented": "estimatedCount"
+ },
+ {
+  "name": "blocks-list/transform-true",
+  "path": "/api/blocks",
+  "query": "transform=true"
+ },
+ {
+  "name": "blocks-list/transform-false-page-3",
+  "path": "/api/blocks",
+  "query": "transform=false&page=3",
+  "documented": "estimatedCount"
+ },
+ {
+  "name": "blocks-list/criteria/height",
+  "path": "/api/blocks",
+  "query": "height=${tipHeight}"
+ },
+ {
+  "name": "blocks-list/criteria/height-list",
+  "path": "/api/blocks",
+  "query": "height=1,2,${tipHeight}"
+ },
+ {
+  "name": "blocks-list/criteria/height-range",
+  "path": "/api/blocks",
+  "query": "height.from=2&height.to=20"
+ },
+ {
+  "name": "blocks-list/criteria/height-from",
+  "path": "/api/blocks",
+  "query": "height.from=${tipHeight-5}"
+ },
+ {
+  "name": "blocks-list/criteria/height-to",
+  "path": "/api/blocks",
+  "query": "height.to=3"
+ },
+ {
+  "name": "blocks-list/criteria/height-repeated",
+  "path": "/api/blocks",
+  "query": "height=3&height=4"
+ },
+ {
+  "name": "blocks-list/criteria/id",
+  "path": "/api/blocks",
+  "query": "id=${tipId}"
+ },
+ {
+  "name": "blocks-list/criteria/id-list",
+  "path": "/api/blocks",
+  "query": "id=${tipId},${transferBlock}"
+ },
+ {
+  "name": "blocks-list/criteria/id-upper",
+  "path": "/api/blocks",
+  "query": "id=${tipId|upper}"
+ },
+ {
+  "name": "blocks-list/criteria/previousBlock",
+  "path": "/api/blocks",
+  "query": "previousBlock=${tipId}"
+ },
+ {
+  "name": "blocks-list/criteria/version",
+  "path": "/api/blocks",
+  "query": "version=0"
+ },
+ {
+  "name": "blocks-list/criteria/version-list",
+  "path": "/api/blocks",
+  "query": "version=0,1"
+ },
+ {
+  "name": "blocks-list/criteria/timestamp",
+  "path": "/api/blocks",
+  "query": "timestamp=${txTimestamp}"
+ },
+ {
+  "name": "blocks-list/criteria/timestamp-range",
+  "path": "/api/blocks",
+  "query": "timestamp.from=${txTimestamp}&timestamp.to=${txTimestamp+100}"
+ },
+ {
+  "name": "blocks-list/criteria/timestamp-from",
+  "path": "/api/blocks",
+  "query": "timestamp.from=${txTimestamp}"
+ },
+ {
+  "name": "blocks-list/criteria/numberOfTransactions",
+  "path": "/api/blocks",
+  "query": "numberOfTransactions=1"
+ },
+ {
+  "name": "blocks-list/criteria/numberOfTransactions-zero",
+  "path": "/api/blocks",
+  "query": "numberOfTransactions=0"
+ },
+ {
+  "name": "blocks-list/criteria/numberOfTransactions-range",
+  "path": "/api/blocks",
+  "query": "numberOfTransactions.from=1&numberOfTransactions.to=3"
+ },
+ {
+  "name": "blocks-list/criteria/totalAmount",
+  "path": "/api/blocks",
+  "query": "totalAmount=0"
+ },
+ {
+  "name": "blocks-list/criteria/totalAmount-from",
+  "path": "/api/blocks",
+  "query": "totalAmount.from=1"
+ },
+ {
+  "name": "blocks-list/criteria/totalFee",
+  "path": "/api/blocks",
+  "query": "totalFee=0"
+ },
+ {
+  "name": "blocks-list/criteria/totalFee-from",
+  "path": "/api/blocks",
+  "query": "totalFee.from=1"
+ },
+ {
+  "name": "blocks-list/criteria/burnedFee",
+  "path": "/api/blocks",
+  "query": "burnedFee=0"
+ },
+ {
+  "name": "blocks-list/criteria/burnedFee-from",
+  "path": "/api/blocks",
+  "query": "burnedFee.from=1"
+ },
+ {
+  "name": "blocks-list/criteria/reward",
+  "path": "/api/blocks",
+  "query": "reward=0"
+ },
+ {
+  "name": "blocks-list/criteria/reward-from",
+  "path": "/api/blocks",
+  "query": "reward.from=1"
+ },
+ {
+  "name": "blocks-list/criteria/payloadLength",
+  "path": "/api/blocks",
+  "query": "payloadLength=0"
+ },
+ {
+  "name": "blocks-list/criteria/payloadLength-from",
+  "path": "/api/blocks",
+  "query": "payloadLength.from=32"
+ },
+ {
+  "name": "blocks-list/criteria/payloadHash",
+  "path": "/api/blocks",
+  "query": "payloadHash=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ {
+  "name": "blocks-list/criteria/payloadHash-short",
+  "path": "/api/blocks",
+  "query": "payloadHash=e3b0"
+ },
+ {
+  "name": "blocks-list/criteria/payloadHash-upper",
+  "path": "/api/blocks",
+  "query": "payloadHash=E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+ },
+ {
+  "name": "blocks-list/criteria/generatorPublicKey",
+  "path": "/api/blocks",
+  "query": "generatorPublicKey=${delegateKey}"
+ },
+ {
+  "name": "blocks-list/criteria/generatorPublicKey-genesis",
+  "path": "/api/blocks",
+  "query": "generatorPublicKey=${gKey}"
+ },
+ {
+  "name": "blocks-list/criteria/username",
+  "path": "/api/blocks",
+  "query": "username=${gName}"
+ },
+ {
+  "name": "blocks-list/criteria/username-registered",
+  "path": "/api/blocks",
+  "query": "username=${delegateName}"
+ },
+ {
+  "name": "blocks-list/criteria/username-list",
+  "path": "/api/blocks",
+  "query": "username=genesis_1,genesis_2"
+ },
+ {
+  "name": "blocks-list/criteria/username-absent",
+  "path": "/api/blocks",
+  "query": "username=nosuchdelegate1"
+ },
+ {
+  "name": "blocks-list/criteria/blockSignature",
+  "path": "/api/blocks",
+  "query": "blockSignature=00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+ },
+ {
+  "name": "blocks-list/criteria/combined",
+  "path": "/api/blocks",
+  "query": "height.from=2&height.to=100&numberOfTransactions.from=1&reward=0"
+ },
+ {
+  "name": "blocks-list/criteria/combined-username",
+  "path": "/api/blocks",
+  "query": "username=${gName}&height.from=2"
+ },
+ {
+  "name": "blocks-list/criteria/empty-value",
+  "path": "/api/blocks",
+  "query": "id="
+ },
+ {
+  "name": "blocks-list/criteria/empty-list",
+  "path": "/api/blocks",
+  "query": "height=,"
+ },
+ {
+  "name": "blocks-list/criteria/transform-false-height",
+  "path": "/api/blocks",
+  "query": "transform=false&height.from=${tipHeight-3}",
+  "documented": "estimatedCount"
+ },
+ {
+  "name": "blocks-list/criteria/transform-false-username",
+  "path": "/api/blocks",
+  "query": "transform=false&username=${gName}",
+  "documented": "estimatedCount"
+ },
+ {
+  "name": "blocks-list/order/height:desc",
+  "path": "/api/blocks",
+  "query": "orderBy=height:desc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/height:asc",
+  "path": "/api/blocks",
+  "query": "orderBy=height:asc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/timestamp:desc",
+  "path": "/api/blocks",
+  "query": "orderBy=timestamp:desc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/timestamp:asc",
+  "path": "/api/blocks",
+  "query": "orderBy=timestamp:asc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/id:asc",
+  "path": "/api/blocks",
+  "query": "orderBy=id:asc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/id:desc",
+  "path": "/api/blocks",
+  "query": "orderBy=id:desc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/username:asc,height:desc",
+  "path": "/api/blocks",
+  "query": "orderBy=username:asc,height:desc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/username:desc,height:asc",
+  "path": "/api/blocks",
+  "query": "orderBy=username:desc,height:asc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/reward:desc,height:desc",
+  "path": "/api/blocks",
+  "query": "orderBy=reward:desc,height:desc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/numberOfTransactions:desc,height:desc",
+  "path": "/api/blocks",
+  "query": "orderBy=numberOfTransactions:desc,height:desc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/totalFee:asc,height:asc",
+  "path": "/api/blocks",
+  "query": "orderBy=totalFee:asc,height:asc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/burnedFee:desc,height:desc",
+  "path": "/api/blocks",
+  "query": "orderBy=burnedFee:desc,height:desc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/totalAmount:desc,height:desc",
+  "path": "/api/blocks",
+  "query": "orderBy=totalAmount:desc,height:desc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/payloadLength:asc,height:asc",
+  "path": "/api/blocks",
+  "query": "orderBy=payloadLength:asc,height:asc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/version:asc,height:asc",
+  "path": "/api/blocks",
+  "query": "orderBy=version:asc,height:asc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/previousBlock:asc",
+  "path": "/api/blocks",
+  "query": "orderBy=previousBlock:asc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/generatorPublicKey:asc,height:asc",
+  "path": "/api/blocks",
+  "query": "orderBy=generatorPublicKey:asc,height:asc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/blockSignature:asc",
+  "path": "/api/blocks",
+  "query": "orderBy=blockSignature:asc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/payloadHash:desc,height:desc",
+  "path": "/api/blocks",
+  "query": "orderBy=payloadHash:desc,height:desc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/height:asc,height:desc",
+  "path": "/api/blocks",
+  "query": "orderBy=height:asc,height:desc&limit=20"
+ },
+ {
+  "name": "blocks-list/order/two-parameters",
+  "path": "/api/blocks",
+  "query": "orderBy=height:asc&orderBy=timestamp:asc&limit=5"
+ },
+ {
+  "name": "blocks-list/order/page-2",
+  "path": "/api/blocks",
+  "query": "orderBy=height:asc&page=2&limit=20"
+ },
+ {
+  "name": "blocks-list/order/raw",
+  "path": "/api/blocks",
+  "query": "orderBy=height:asc&transform=false&limit=20",
+  "documented": "estimatedCount"
+ },
+ {
+  "name": "blocks-list/refused/order/unknown-property",
+  "path": "/api/blocks",
+  "query": "orderBy=donations:asc"
+ },
+ {
+  "name": "blocks-list/refused/order/address",
+  "path": "/api/blocks",
+  "query": "orderBy=address:asc"
+ },
+ {
+  "name": "blocks-list/refused/order/capital-property",
+  "path": "/api/blocks",
+  "query": "orderBy=Height:asc"
+ },
+ {
+  "name": "blocks-list/refused/order/capital-direction",
+  "path": "/api/blocks",
+  "query": "orderBy=height:DESC"
+ },
+ {
+  "name": "blocks-list/refused/order/no-direction",
+  "path": "/api/blocks",
+  "query": "orderBy=height"
+ },
+ {
+  "name": "blocks-list/refused/order/bad-direction",
+  "path": "/api/blocks",
+  "query": "orderBy=height:up"
+ },
+ {
+  "name": "blocks-list/refused/order/empty",
+  "path": "/api/blocks",
+  "query": "orderBy="
+ },
+ {
+  "name": "blocks-list/refused/order/colon",
+  "path": "/api/blocks",
+  "query": "orderBy=:"
+ },
+ {
+  "name": "blocks-list/refused/limit-0",
+  "path": "/api/blocks",
+  "query": "limit=0"
+ },
+ {
+  "name": "blocks-list/refused/limit-101",
+  "path": "/api/blocks",
+  "query": "limit=101"
+ },
+ {
+  "name": "blocks-list/refused/limit-negative",
+  "path": "/api/blocks",
+  "query": "limit=-1"
+ },
+ {
+  "name": "blocks-list/refused/limit-text",
+  "path": "/api/blocks",
+  "query": "limit=ten"
+ },
+ {
+  "name": "blocks-list/refused/limit-fraction",
+  "path": "/api/blocks",
+  "query": "limit=1.5"
+ },
+ {
+  "name": "blocks-list/refused/page-0",
+  "path": "/api/blocks",
+  "query": "page=0"
+ },
+ {
+  "name": "blocks-list/refused/offset-negative",
+  "path": "/api/blocks",
+  "query": "offset=-1"
+ },
+ {
+  "name": "blocks-list/refused/unknown-key",
+  "path": "/api/blocks",
+  "query": "nonsense=1"
+ },
+ {
+  "name": "blocks-list/refused/unknown-nested",
+  "path": "/api/blocks",
+  "query": "a.b=1"
+ },
+ {
+  "name": "blocks-list/refused/empty-key",
+  "path": "/api/blocks",
+  "query": "=1"
+ },
+ {
+  "name": "blocks-list/refused/limit-twice",
+  "path": "/api/blocks",
+  "query": "limit=1&limit=2"
+ },
+ {
+  "name": "blocks-list/refused/transform-text",
+  "path": "/api/blocks",
+  "query": "transform=maybe"
+ },
+ {
+  "name": "blocks-list/refused/height-0",
+  "path": "/api/blocks",
+  "query": "height=0"
+ },
+ {
+  "name": "blocks-list/refused/height-negative",
+  "path": "/api/blocks",
+  "query": "height=-1"
+ },
+ {
+  "name": "blocks-list/refused/height-text",
+  "path": "/api/blocks",
+  "query": "height=abc"
+ },
+ {
+  "name": "blocks-list/refused/height-from-0",
+  "path": "/api/blocks",
+  "query": "height.from=0"
+ },
+ {
+  "name": "blocks-list/refused/timestamp-negative",
+  "path": "/api/blocks",
+  "query": "timestamp=-1"
+ },
+ {
+  "name": "blocks-list/refused/id-short",
+  "path": "/api/blocks",
+  "query": "id=abc"
+ },
+ {
+  "name": "blocks-list/refused/id-long",
+  "path": "/api/blocks",
+  "query": "id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "blocks-list/refused/previousBlock-short",
+  "path": "/api/blocks",
+  "query": "previousBlock=ab"
+ },
+ {
+  "name": "blocks-list/refused/generatorPublicKey-short",
+  "path": "/api/blocks",
+  "query": "generatorPublicKey=02ab"
+ },
+ {
+  "name": "blocks-list/refused/blockSignature-short",
+  "path": "/api/blocks",
+  "query": "blockSignature=aa"
+ },
+ {
+  "name": "blocks-list/refused/username-underscore",
+  "path": "/api/blocks",
+  "query": "username=_x"
+ },
+ {
+  "name": "blocks-list/refused/username-digits",
+  "path": "/api/blocks",
+  "query": "username=12345"
+ },
+ {
+  "name": "blocks-list/refused/username-long",
+  "path": "/api/blocks",
+  "query": "username=aaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "blocks-list/refused/payloadHash-text",
+  "path": "/api/blocks",
+  "query": "payloadHash=xyz"
+ },
+ {
+  "name": "blocks-list/refused/version-negative",
+  "path": "/api/blocks",
+  "query": "version=-1"
+ },
+ {
+  "name": "blocks-list/refused/totalFee-text",
+  "path": "/api/blocks",
+  "query": "totalFee=free"
+ },
+ {
+  "name": "blocks-list/refused/nested-range",
+  "path": "/api/blocks",
+  "query": "height.from.x=1"
+ },
+ {
+  "name": "blocks-list/first/default",
+  "path": "/api/blocks/first"
+ },
+ {
+  "name": "blocks-list/first/transform-false",
+  "path": "/api/blocks/first",
+  "query": "transform=false"
+ },
+ {
+  "name": "blocks-list/first/transform-true",
+  "path": "/api/blocks/first",
+  "query": "transform=true"
+ },
+ {
+  "name": "blocks-list/first/transform-upper",
+  "path": "/api/blocks/first",
+  "query": "transform=TRUE"
+ },
+ {
+  "name": "blocks-list/first/transform-one",
+  "path": "/api/blocks/first",
+  "query": "transform=1"
+ },
+ {
+  "name": "blocks-list/first/refused/limit",
+  "path": "/api/blocks/first",
+  "query": "limit=1"
+ },
+ {
+  "name": "blocks-list/first/refused/page",
+  "path": "/api/blocks/first",
+  "query": "page=1"
+ },
+ {
+  "name": "blocks-list/first/refused/height",
+  "path": "/api/blocks/first",
+  "query": "height=1"
+ },
+ {
+  "name": "blocks-list/first/refused/unknown",
+  "path": "/api/blocks/first",
+  "query": "nonsense=1"
+ },
+ {
+  "name": "blocks-list/first/refused/transform-text",
+  "path": "/api/blocks/first",
+  "query": "transform=maybe"
+ },
+ {
+  "name": "blocks-list/first/ignored-nothing",
+  "path": "/api/blocks/first",
+  "query": "transform=false&transform=true"
+ },
+ {
+  "name": "blocks-list/first/trailing-slash",
+  "path": "/api/blocks/first/"
+ }
+]

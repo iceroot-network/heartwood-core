@@ -1,0 +1,500 @@
+[
+ {
+  "name": "votes/paging/default",
+  "path": "/api/votes"
+ },
+ {
+  "name": "votes/paging/limit-10",
+  "path": "/api/votes",
+  "query": "limit=10"
+ },
+ {
+  "name": "votes/paging/page-2",
+  "path": "/api/votes",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "votes/paging/offset-5",
+  "path": "/api/votes",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "votes/paging/offset-0-ignored",
+  "path": "/api/votes",
+  "query": "offset=0&page=2&limit=10"
+ },
+ {
+  "name": "votes/paging/page-beyond",
+  "path": "/api/votes",
+  "query": "page=50&limit=100"
+ },
+ {
+  "name": "votes/paging/limit-100",
+  "path": "/api/votes",
+  "query": "limit=100"
+ },
+ {
+  "name": "votes/paging/transform-false",
+  "path": "/api/votes",
+  "query": "transform=false"
+ },
+ {
+  "name": "votes/paging/transform-false-page-2",
+  "path": "/api/votes",
+  "query": "transform=false&page=2&limit=10"
+ },
+ {
+  "name": "votes/paging/transform-true",
+  "path": "/api/votes",
+  "query": "transform=true"
+ },
+ {
+  "name": "votes/criteria/id",
+  "path": "/api/votes",
+  "query": "id=${voteTx}"
+ },
+ {
+  "name": "votes/criteria/id-list",
+  "path": "/api/votes",
+  "query": "id=${voteTx},${tx}"
+ },
+ {
+  "name": "votes/criteria/id-upper",
+  "path": "/api/votes",
+  "query": "id=${voteTx|upper}"
+ },
+ {
+  "name": "votes/criteria/senderId",
+  "path": "/api/votes",
+  "query": "senderId=${voter}"
+ },
+ {
+  "name": "votes/criteria/senderId-other",
+  "path": "/api/votes",
+  "query": "senderId=${txSender}"
+ },
+ {
+  "name": "votes/criteria/senderPublicKey",
+  "path": "/api/votes",
+  "query": "senderPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "votes/criteria/address",
+  "path": "/api/votes",
+  "query": "address=${voter}"
+ },
+ {
+  "name": "votes/criteria/recipientId",
+  "path": "/api/votes",
+  "query": "recipientId=${recipient}"
+ },
+ {
+  "name": "votes/criteria/blockHeight",
+  "path": "/api/votes",
+  "query": "blockHeight=${tipHeight}"
+ },
+ {
+  "name": "votes/criteria/blockHeight-range",
+  "path": "/api/votes",
+  "query": "blockHeight.from=2&blockHeight.to=100"
+ },
+ {
+  "name": "votes/criteria/blockId",
+  "path": "/api/votes",
+  "query": "blockId=${tipId}"
+ },
+ {
+  "name": "votes/criteria/timestamp-range",
+  "path": "/api/votes",
+  "query": "timestamp.from=${txTimestamp}"
+ },
+ {
+  "name": "votes/criteria/fee-from",
+  "path": "/api/votes",
+  "query": "fee.from=1"
+ },
+ {
+  "name": "votes/criteria/fee-exact",
+  "path": "/api/votes",
+  "query": "fee=${txFee}"
+ },
+ {
+  "name": "votes/criteria/nonce",
+  "path": "/api/votes",
+  "query": "nonce.from=1"
+ },
+ {
+  "name": "votes/criteria/version",
+  "path": "/api/votes",
+  "query": "version=1"
+ },
+ {
+  "name": "votes/criteria/type-core-vote",
+  "path": "/api/votes",
+  "query": "typeGroup=1&type=3"
+ },
+ {
+  "name": "votes/criteria/type-solar-vote",
+  "path": "/api/votes",
+  "query": "typeGroup=2&type=2"
+ },
+ {
+  "name": "votes/criteria/type-other",
+  "path": "/api/votes",
+  "query": "typeGroup=1&type=0"
+ },
+ {
+  "name": "votes/criteria/type-only",
+  "path": "/api/votes",
+  "query": "type=7"
+ },
+ {
+  "name": "votes/criteria/typeGroup-only",
+  "path": "/api/votes",
+  "query": "typeGroup=2"
+ },
+ {
+  "name": "votes/criteria/amount-zero",
+  "path": "/api/votes",
+  "query": "amount=0"
+ },
+ {
+  "name": "votes/criteria/amount-from",
+  "path": "/api/votes",
+  "query": "amount.from=1"
+ },
+ {
+  "name": "votes/criteria/memo",
+  "path": "/api/votes",
+  "query": "memo=%25"
+ },
+ {
+  "name": "votes/criteria/burnedFee",
+  "path": "/api/votes",
+  "query": "burnedFee.from=0"
+ },
+ {
+  "name": "votes/criteria/combined",
+  "path": "/api/votes",
+  "query": "senderId=${voter}&blockHeight.from=2&fee.from=1"
+ },
+ {
+  "name": "votes/criteria/raw-senderId",
+  "path": "/api/votes",
+  "query": "transform=false&senderId=${voter}"
+ },
+ {
+  "name": "votes/criteria/raw-blockHeight",
+  "path": "/api/votes",
+  "query": "transform=false&blockHeight.from=2&limit=5"
+ },
+ {
+  "name": "votes/criteria/empty-list",
+  "path": "/api/votes",
+  "query": "id=,"
+ },
+ {
+  "name": "votes/order/timestamp:desc,sequence:desc",
+  "path": "/api/votes",
+  "query": "orderBy=timestamp:desc,sequence:desc"
+ },
+ {
+  "name": "votes/order/timestamp:asc,sequence:asc",
+  "path": "/api/votes",
+  "query": "orderBy=timestamp:asc,sequence:asc"
+ },
+ {
+  "name": "votes/order/blockHeight:desc,sequence:desc",
+  "path": "/api/votes",
+  "query": "orderBy=blockHeight:desc,sequence:desc"
+ },
+ {
+  "name": "votes/order/id:asc",
+  "path": "/api/votes",
+  "query": "orderBy=id:asc"
+ },
+ {
+  "name": "votes/order/id:desc",
+  "path": "/api/votes",
+  "query": "orderBy=id:desc"
+ },
+ {
+  "name": "votes/order/fee:desc,id:asc",
+  "path": "/api/votes",
+  "query": "orderBy=fee:desc,id:asc"
+ },
+ {
+  "name": "votes/order/nonce:asc,id:asc",
+  "path": "/api/votes",
+  "query": "orderBy=nonce:asc,id:asc"
+ },
+ {
+  "name": "votes/order/timestamp:asc",
+  "path": "/api/votes",
+  "query": "orderBy=timestamp:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "votes/order/fee:asc",
+  "path": "/api/votes",
+  "query": "orderBy=fee:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "votes/order/amount:desc",
+  "path": "/api/votes",
+  "query": "orderBy=amount:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "votes/order/blockHeight:asc",
+  "path": "/api/votes",
+  "query": "orderBy=blockHeight:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "votes/order/type:asc",
+  "path": "/api/votes",
+  "query": "orderBy=type:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "votes/order/typeGroup:desc",
+  "path": "/api/votes",
+  "query": "orderBy=typeGroup:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "votes/order/senderPublicKey:asc",
+  "path": "/api/votes",
+  "query": "orderBy=senderPublicKey:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "votes/order/burnedFee:desc",
+  "path": "/api/votes",
+  "query": "orderBy=burnedFee:desc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "votes/order/version:asc",
+  "path": "/api/votes",
+  "query": "orderBy=version:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "votes/order/memo:asc",
+  "path": "/api/votes",
+  "query": "orderBy=memo:asc",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "votes/order/sequence:asc",
+  "path": "/api/votes",
+  "query": "orderBy=sequence:asc&transform=false",
+  "documented": "tieOrder"
+ },
+ {
+  "name": "votes/refused/order/address",
+  "path": "/api/votes",
+  "query": "orderBy=address:desc"
+ },
+ {
+  "name": "votes/refused/order/capital-property",
+  "path": "/api/votes",
+  "query": "orderBy=Fee:asc"
+ },
+ {
+  "name": "votes/refused/order/capital-direction",
+  "path": "/api/votes",
+  "query": "orderBy=fee:DESC"
+ },
+ {
+  "name": "votes/refused/order/no-direction",
+  "path": "/api/votes",
+  "query": "orderBy=fee"
+ },
+ {
+  "name": "votes/refused/limit-0",
+  "path": "/api/votes",
+  "query": "limit=0"
+ },
+ {
+  "name": "votes/refused/limit-101",
+  "path": "/api/votes",
+  "query": "limit=101"
+ },
+ {
+  "name": "votes/refused/limit-negative",
+  "path": "/api/votes",
+  "query": "limit=-1"
+ },
+ {
+  "name": "votes/refused/limit-text",
+  "path": "/api/votes",
+  "query": "limit=ten"
+ },
+ {
+  "name": "votes/refused/limit-fraction",
+  "path": "/api/votes",
+  "query": "limit=1.5"
+ },
+ {
+  "name": "votes/refused/page-0",
+  "path": "/api/votes",
+  "query": "page=0"
+ },
+ {
+  "name": "votes/refused/offset-negative",
+  "path": "/api/votes",
+  "query": "offset=-1"
+ },
+ {
+  "name": "votes/refused/unknown-key",
+  "path": "/api/votes",
+  "query": "nonsense=1"
+ },
+ {
+  "name": "votes/refused/unknown-nested",
+  "path": "/api/votes",
+  "query": "a.b=1"
+ },
+ {
+  "name": "votes/refused/empty-key",
+  "path": "/api/votes",
+  "query": "=1"
+ },
+ {
+  "name": "votes/refused/limit-twice",
+  "path": "/api/votes",
+  "query": "limit=1&limit=2"
+ },
+ {
+  "name": "votes/refused/transform-text",
+  "path": "/api/votes",
+  "query": "transform=maybe"
+ },
+ {
+  "name": "votes/refused/senderId-short",
+  "path": "/api/votes",
+  "query": "senderId=abc"
+ },
+ {
+  "name": "votes/refused/senderPublicKey-short",
+  "path": "/api/votes",
+  "query": "senderPublicKey=02ab"
+ },
+ {
+  "name": "votes/refused/id-short",
+  "path": "/api/votes",
+  "query": "id=abc"
+ },
+ {
+  "name": "votes/refused/blockHeight-negative",
+  "path": "/api/votes",
+  "query": "blockHeight=-1"
+ },
+ {
+  "name": "votes/refused/fee-text",
+  "path": "/api/votes",
+  "query": "fee=free"
+ },
+ {
+  "name": "votes/refused/typeGroup-text",
+  "path": "/api/votes",
+  "query": "typeGroup=x"
+ },
+ {
+  "name": "votes/refused/asset",
+  "path": "/api/votes",
+  "query": "asset=x"
+ },
+ {
+  "name": "votes/show/vote",
+  "path": "/api/votes/${voteTx}"
+ },
+ {
+  "name": "votes/show/vote-raw",
+  "path": "/api/votes/${voteTx}",
+  "query": "transform=false"
+ },
+ {
+  "name": "votes/show/vote-transform",
+  "path": "/api/votes/${voteTx}",
+  "query": "transform=true"
+ },
+ {
+  "name": "votes/show/vote-transform-upper",
+  "path": "/api/votes/${voteTx}",
+  "query": "transform=TRUE"
+ },
+ {
+  "name": "votes/show/other-kind",
+  "path": "/api/votes/${tx}"
+ },
+ {
+  "name": "votes/show/registration",
+  "path": "/api/votes/${delegateName}"
+ },
+ {
+  "name": "votes/show/genesis-transaction",
+  "path": "/api/votes/${gTx}"
+ },
+ {
+  "name": "votes/show/upper",
+  "path": "/api/votes/${voteTx|upper}"
+ },
+ {
+  "name": "votes/show/short",
+  "path": "/api/votes/${voteTx|head:63}"
+ },
+ {
+  "name": "votes/show/unknown",
+  "path": "/api/votes/abababababababababababababababababababababababababababababababab"
+ },
+ {
+  "name": "votes/show/zeros",
+  "path": "/api/votes/0000000000000000000000000000000000000000000000000000000000000000"
+ },
+ {
+  "name": "votes/show/text",
+  "path": "/api/votes/abc"
+ },
+ {
+  "name": "votes/show/long",
+  "path": "/api/votes/ababababababababababababababababababababababababababababababababab"
+ },
+ {
+  "name": "votes/show/dots",
+  "path": "/api/votes/a.b"
+ },
+ {
+  "name": "votes/show/limit",
+  "path": "/api/votes/${voteTx}",
+  "query": "limit=1"
+ },
+ {
+  "name": "votes/show/page",
+  "path": "/api/votes/${voteTx}",
+  "query": "page=1"
+ },
+ {
+  "name": "votes/show/unknown-key",
+  "path": "/api/votes/${voteTx}",
+  "query": "nonsense=1"
+ },
+ {
+  "name": "votes/show/transform-text",
+  "path": "/api/votes/${voteTx}",
+  "query": "transform=maybe"
+ },
+ {
+  "name": "votes/show/trailing-slash",
+  "path": "/api/votes/${voteTx}/"
+ },
+ {
+  "name": "votes/show/ignored-order",
+  "path": "/api/votes/${voteTx}",
+  "query": "orderBy=fee:asc"
+ }
+]
