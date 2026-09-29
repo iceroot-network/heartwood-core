@@ -17,7 +17,7 @@ struct Rule {
     allowed_in: &'static [&'static str],
 }
 
-const RULES: [Rule; 5] = [
+const RULES: [Rule; 6] = [
     Rule {
         what: "files only through DoctorFs",
         words: &[
@@ -46,15 +46,13 @@ const RULES: [Rule; 5] = [
     },
     Rule {
         what: "processes only through Probes",
-        words: &[
-            "std::process",
-            "Command::",
-            "Command",
-            "nix::",
-            "spawn(",
-            "kill(",
-        ],
+        words: &["std::process", "Command::", "Command", "spawn(", "kill("],
         allowed_in: &["sources/probes.rs"],
+    },
+    Rule {
+        what: "nix only for the probes and the file flags and statvfs of DoctorFs",
+        words: &["nix::"],
+        allowed_in: &["sources/probes.rs", "sources/fs.rs"],
     },
     Rule {
         what: "no process operation",
