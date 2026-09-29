@@ -1,8 +1,9 @@
 //! The job stall of a harness build (feature `difftest`), which no release build has: the next job
-//! of a block received in `newBlock` sleeps, ahead of its work and so of its commit, for the
-//! number of milliseconds that the file `stall-next-job` in the harness's directory holds, and the
-//! file is removed, so a live run can hold one job past AwaitBlock's bound while reference clients
-//! wait on the relay.
+//! of one block sleeps, ahead of its work and so of its commit, for the number of milliseconds
+//! that the file `stall-next-job` in the harness's directory holds, and the file is removed, so a
+//! live run can hold one job past AwaitBlock's bound while reference clients wait on the relay.
+//! The job's origin is not read: a block received in `newBlock` comes in such a job, and so does a
+//! download that fetched one block, which may take the control first on a node that syncs.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -39,7 +40,7 @@ impl StallControl {
 }
 
 /// The stall of a job of `blocks` blocks, ahead of its work: a job of one block, which is how a
-/// block received in `newBlock` comes (a download's job holds a range), sleeps for the time the
+/// block received in `newBlock` comes (and a download of one block), sleeps for the time the
 /// control file asks for. It comes before the block moves the tip, so that a request waiting on
 /// the job still sees the tip the job found; the commit follows the wait either way.
 pub(crate) fn hold(stall: Option<&StallControl>, blocks: usize) {
