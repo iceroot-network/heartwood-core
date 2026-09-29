@@ -186,7 +186,7 @@ pub fn make_with(
         dir: out.to_path_buf(),
         tip,
         transactions: made.blocks.iter().map(|b| b.transactions as u64).sum(),
-        missed: made.missed,
+        missed: made.missed(),
     })
 }
 

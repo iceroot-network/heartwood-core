@@ -1,6 +1,7 @@
 //! The labels of a recipe and the keys behind them: a genesis delegate by its name
 //! (`genesis_1`), a key of the devnet tooling by its role (`genesis-1`, `wallet/3`), and a
-//! wallet of the recipe by its label, whose key derives from the seed and `recipe/LABEL`.
+//! wallet of the recipe by its label, whose key derives from the seed and `recipe/LABEL`. The
+//! genesis delegates and the recipe's wallets (any of which may register as a delegate) forge.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -88,6 +89,10 @@ impl Labels {
             )
             .map_err(|e| LockstepError::Heartwood(e.to_string()))?;
             add(label, &key)?;
+            // A recipe wallet may register as a delegate: it forges its slots once it is active.
+            labels
+                .forgers
+                .insert(key.keys.public_key().to_compressed(), Arc::new(key.keys));
         }
         Ok(labels)
     }

@@ -427,6 +427,8 @@ fn a_revert_across_a_round_end_a_missed_pattern_and_a_milestone_go_through() {
         json!({"step": "missed", "delegate": "genesis_5", "fromHeight": 20, "toHeight": 60}),
         json!({"step": "revert", "afterHeight": 53, "blocks": 2}),
         json!({"step": "fork", "afterHeight": 110, "blocks": 3}),
+        // A second fork over the first one's replacement, whose first block missed a slot.
+        json!({"step": "fork", "afterHeight": 110, "blocks": 3}),
         json!({"step": "restart", "height": 54}),
     ];
     let dir = scratch.path().join("r");
@@ -434,8 +436,8 @@ fn a_revert_across_a_round_end_a_missed_pattern_and_a_milestone_go_through() {
     let made = make_in(&mut twin, &dir, &profile, &recipe(more)).expect("the chain");
     assert_eq!(made.tip, 265);
     assert!(made.missed >= 1, "the stopped delegate misses a slot");
-    // A revert across the end of round 1, and the fork's revert.
-    assert_eq!(twin.reverts, vec![2, 3]);
+    // A revert across the end of round 1, and the forks' reverts.
+    assert_eq!(twin.reverts, vec![2, 3, 3]);
     let reapplied = twin.applied.iter().filter(|(_, s)| s == "reapply").count();
     assert_eq!(reapplied, 2);
     let loaded = Corpus::load(&dir).expect("the corpus loads");
@@ -473,6 +475,46 @@ fn a_revert_across_a_round_end_a_missed_pattern_and_a_milestone_go_through() {
             .map(|r| r["donations"].as_object().map_or(0, |d| d.len()))
     };
     assert_eq!((donated(119), donated(120)), (Some(0), Some(2)));
+}
+
+#[test]
+fn a_delegate_the_recipe_registers_forges_its_slots_once_it_is_active() {
+    let scratch = ScratchDir::new("lockstep-test").expect("scratch");
+    let all_but = json!({"allBut": ["genesis_51", "genesis_52", "genesis_53"]});
+    // Round 2 attests the new delegate too, so that a vote for it is admitted.
+    let mut round_two: Vec<String> = (1..=50).map(|i| format!("genesis_{i}")).collect();
+    round_two.push("lockstep_1".into());
+    let mut steps = vec![
+        json!({"step": "online", "round": 1, "delegates": all_but}),
+        json!({"step": "online", "round": 2, "delegates": {"only": round_two}}),
+    ];
+    steps.extend(
+        (3..=5).map(|round| json!({"step": "online", "round": round, "delegates": all_but})),
+    );
+    steps.push(json!({"step": "transactions", "height": 2,
+        "build": [transfer("genesis-1", &["carol", "dave"], "1000000000000")]}));
+    steps.push(json!({"step": "transactions", "height": 3, "build": [
+        {"kind": "delegateRegistration", "sender": "carol", "fee": "7600000000",
+         "asset": {"username": "lockstep_1"}}]}));
+    steps.push(json!({"step": "transactions", "height": 55, "build": [
+        {"kind": "vote", "sender": "dave", "asset": {"votes": [["lockstep_1", "100"]]}}]}));
+    let recipe: Recipe =
+        serde_json::from_value(json!({"wallets": ["carol", "dave"], "steps": steps}))
+            .expect("the recipe reads");
+    let dir = scratch.path().join("n");
+    let made = make_in(&mut Twin::default(), &dir, &devnet(), &recipe).expect("the chain");
+    assert_eq!(
+        made.missed, 0,
+        "the new delegate's slots are forged, not missed"
+    );
+    let rows =
+        std::fs::read_to_string(dir.join("reference/meta.jsonl")).expect("the block columns");
+    let forged = rows
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).expect("a row"))
+        .filter(|r| r["username"] == "lockstep_1")
+        .count();
+    assert_eq!(forged, 3, "one block in each of rounds 3 to 5");
 }
 
 #[test]

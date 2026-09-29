@@ -32,6 +32,8 @@ pub struct BlockRecord {
     pub hex: String,
     /// The number of transactions.
     pub transactions: usize,
+    /// The slots missed before the block.
+    pub missed: usize,
 }
 
 /// What the loop made.
@@ -43,8 +45,14 @@ pub struct Made {
     pub reverts: Vec<RevertStep>,
     /// The restart points of the recipe.
     pub restarts: Vec<u32>,
-    /// The slots missed.
-    pub missed: u64,
+}
+
+impl Made {
+    /// The slots missed in the chain made: those before its blocks, not before the blocks a fork
+    /// replaced.
+    pub fn missed(&self) -> u64 {
+        self.blocks.iter().map(|b| b.missed as u64).sum()
+    }
 }
 
 /// A transaction submitted, and what the recipe expects of the pools.
@@ -198,12 +206,12 @@ impl<'a> Producer<'a> {
             return Err(block_error(height, differences));
         }
         if step == Apply::Apply {
-            self.made.missed += posted.missed as u64;
             self.made.blocks.push(BlockRecord {
                 height,
                 id: self.heart.state.last_block().id().to_hex(),
                 hex: block_hex,
                 transactions: posted.transactions,
+                missed: posted.missed,
             });
         }
         Ok(())
