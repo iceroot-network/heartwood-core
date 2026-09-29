@@ -503,6 +503,13 @@ mod with_child {
         let args = argv(&["env", "HW_TEST_VAR"]);
         process::start(&forger, &args, &env(&[("HW_TEST_VAR", "first")]), true).unwrap();
         online(&forger);
+        // Online is the child spawned, not yet its first line: a restart at once could end it
+        // before it wrote.
+        wait_for("the first run's line", || {
+            fs::read_to_string(forger.out_log_path())
+                .unwrap()
+                .contains("HW_TEST_VAR=first\n")
+        });
         let before = SupervisorState::read(&forger.state_path())
             .unwrap()
             .unwrap();
