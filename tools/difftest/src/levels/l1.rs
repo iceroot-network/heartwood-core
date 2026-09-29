@@ -666,7 +666,7 @@ pub fn run(
     }
     if options.properties.contains(&Property::Decisions) && options.decision_reach > 0 {
         source.push_str(&format!(
-            "; P19 each action and refusal at least {} times",
+            "; P19 each action, refusal and path at least {} times",
             options.decision_reach
         ));
     }
