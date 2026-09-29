@@ -573,13 +573,15 @@ live: $(live-prerequisite) ## one live run of at most 5 rounds on a devnet (RUN=
 	$(recipe-of-run) $(RUN) $(CURDIR)
 
 # A mixed run's check reads the oracle's image (its rollback's prediction), and its baseline run
-# from --compare, not from COMPARE in difftest's environment.
-live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS or MIXED_RESULTS; COMPARE)
+# from --compare, not from COMPARE in difftest's environment. The baseline of runs w, p and s is
+# w0 unless COMPARE names it.
+mixed-compare = $(if $(COMPARE),$(COMPARE),$(if $(filter-out w0,$(is-mixed)),w0))
+live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS or MIXED_RESULTS; COMPARE, for w, p and s w0 by default)
 	$(need-run)
 	$(need-results)
 	$(if $(is-mixed),$(need-image))
 	$(TOOLCHAIN) && $(if $(is-mixed),env -u COMPARE DIFFTEST_IMAGE='$(IMAGE)') $(DIFFTEST) live check \
-	    $(results-of-run)/$(RUN) $(if $(and $(is-mixed),$(COMPARE)),--compare $(results-of-run)/$(COMPARE)) $(STRICT)
+	    $(results-of-run)/$(RUN) $(if $(and $(is-mixed),$(mixed-compare)),--compare $(results-of-run)/$(mixed-compare)) $(STRICT)
 
 api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the API answers a live run recorded (RUN, LIVE_RESULTS or MIXED_RESULTS), or two nodes' (LEFT, RIGHT)
 	$(TOOLCHAIN) && if [ -n '$(LEFT)' ] && [ -n '$(RIGHT)' ]; then \
