@@ -185,15 +185,22 @@ pub fn rollback(
 /// height is: `<c>`", "Rolling back blockchain to last finished round `<r>` with last block height
 /// `<h>`".
 pub fn lines(plan: &RollbackPlan, rolled: &Rolled) -> [String; 3] {
+    let [start, last] = opening(plan);
     [
-        START.into(),
-        last_height(plan.current),
+        start,
+        last,
         format!(
             "Rolling back blockchain to last finished round {} with last block height {}",
             locale(rolled.round),
             locale(rolled.target)
         ),
     ]
+}
+
+/// The first two of [`lines`], which the reference logs before it deletes anything: "Rolling back
+/// the blockchain" and "Last block height is: `<c>`".
+pub fn opening(plan: &RollbackPlan) -> [String; 2] {
+    [START.into(), last_height(plan.current)]
 }
 
 /// The first line of a rollback that is not refused before it starts.

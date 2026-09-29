@@ -103,16 +103,21 @@ fn roll_back(flags: &RollbackFlags) -> Result<bool, String> {
         .ok_or("the store has no block")?;
     let milestones = &files.milestones;
     let refused = match rollback::plan(flags.height, flags.number, current, milestones) {
-        Ok(plan) => match rollback::rollback(&mut store, &plan, milestones) {
-            Ok(rolled) => {
-                log(rollback::lines(&plan, &rolled).map(|line| (Level::Info, line)));
-                return Ok(true);
+        Ok(plan) => {
+            // The reference logs its first two lines before it deletes, and the third after.
+            log(rollback::opening(&plan).map(|line| (Level::Info, line)));
+            match rollback::rollback(&mut store, &plan, milestones) {
+                Ok(rolled) => {
+                    let [.., landed] = rollback::lines(&plan, &rolled);
+                    log([(Level::Info, landed)]);
+                    return Ok(true);
+                }
+                Err(error) => vec![
+                    (Level::Error, "Rollback failed".to_owned()),
+                    (Level::Error, text(error)),
+                ],
             }
-            Err(error) => vec![
-                (Level::Error, "Rollback failed".to_owned()),
-                (Level::Error, text(error)),
-            ],
-        },
+        }
         Err(refusal) => refusal.lines(),
     };
     log(refused);

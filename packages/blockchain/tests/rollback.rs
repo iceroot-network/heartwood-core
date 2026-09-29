@@ -247,6 +247,11 @@ fn a_rollback_deletes_the_rows_the_reference_deletes_and_the_state_tables() {
                 ),
             ]
         );
+        // The first two, which the command logs before it deletes anything.
+        assert_eq!(
+            rollback::opening(&plan)[..],
+            rollback::lines(&plan, &rolled)[..2]
+        );
         let database = store.database();
         assert_eq!(database.last_block().unwrap().unwrap().row.height, target);
         assert!(database.state_row().unwrap().is_none(), "{height}");
