@@ -199,6 +199,30 @@ fn a_directory_made_under_umask_002_is_honoured_and_one_any_user_may_write_is_no
     assert!(!config.pool_marker().exists());
 }
 
+#[test]
+fn a_reset_variable_empties_the_pool_whatever_the_markers_trust() {
+    let setup = Setup::new("clear-reset-untrusted", "");
+    let config = load(&setup, &[]);
+    locked(&config);
+    let mut storage = Storage::open(&pool_storage(&config), None).unwrap();
+    storage.flush().unwrap();
+    storage.add(&stored_row(9)).unwrap();
+    drop(storage);
+    // A marker in a directory every user may write is not the relay's: ignored, and left.
+    fs::create_dir_all(&config.paths.temp).unwrap();
+    fs::write(config.pool_marker(), "").unwrap();
+    let open = fs::Permissions::from_mode(0o777);
+    fs::set_permissions(&config.paths.temp, open).unwrap();
+    drop(open_pool(&config, pool_options(&config)).unwrap());
+    assert_eq!(rows(&config), 1);
+    assert!(config.pool_marker().exists());
+    // A reset variable flushes the pool all the same, and leaves the marker where it was.
+    let reset = load(&setup, &[("CORE_RESET_POOL", "1")]);
+    drop(open_pool(&reset, pool_options(&reset)).unwrap());
+    assert_eq!(rows(&config), 0);
+    assert!(config.pool_marker().exists());
+}
+
 /// A node's directories in a scratch root, for the binary.
 fn node(name: &str) -> PathBuf {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
