@@ -1,7 +1,8 @@
 //! The job stall of a harness build (feature `difftest`), which no release build has: the next job
-//! of a block received in `newBlock` sleeps before its commit for the number of milliseconds that
-//! the file `stall-next-job` in the harness's directory holds, and the file is removed, so a live
-//! run can hold one job past AwaitBlock's bound while reference clients wait on the relay.
+//! of a block received in `newBlock` sleeps, ahead of its work and so of its commit, for the
+//! number of milliseconds that the file `stall-next-job` in the harness's directory holds, and the
+//! file is removed, so a live run can hold one job past AwaitBlock's bound while reference clients
+//! wait on the relay.
 
 use std::path::PathBuf;
 use std::time::Duration;
