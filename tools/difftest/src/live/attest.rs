@@ -28,7 +28,7 @@ pub(super) fn check(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                 return Ok(());
             }
             let recorded = run::steps(run.run_dir)?;
-            // S-18 (a) and (b): the votes for a node-1 and a node-2 delegate through node 4.
+            // The votes through node 4 for a node-1 and then a node-2 delegate.
             for name in ["vote-s18a", "vote-s18b"] {
                 let label = format!("{name}: the reference observer admits the vote");
                 match mixed::step(&recorded, name) {

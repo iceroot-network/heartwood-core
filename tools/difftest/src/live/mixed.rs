@@ -628,7 +628,7 @@ pub(super) fn propagation(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                     }
                 }
             }
-            // The blocks are timed from S-21's batch on, which follows the node's sync.
+            // The blocks are timed from the batch on, which follows the node's sync.
             let from = step(&steps, &batch).and_then(|s| s.start).unwrap_or(0);
             let label = format!("{fresh}: every block within {LAG_LIMIT_SECONDS} s of node 1's");
             let arrivals = steps::arrivals(&run.run_dir.join("propagation.jsonl"))?;
