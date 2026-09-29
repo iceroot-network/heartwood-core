@@ -18,7 +18,9 @@
 // the reference's own indexing gives is the fixture's own); `extras` gives, by delegate name, the
 // attributes a fixture has no way to state: rank, missed (blocks missed), productivity (in
 // hundredths of a percent) and version. Both are what the listings read from the state. A
-// delegate's attribute keys are put in the order a state built from the store gives them.
+// delegate's attribute keys are put in the order a state built from the store gives them, and a
+// delegate's second key after its delegate attribute (a wallet's attribute order follows its
+// history, which a fixture does not state).
 //
 // api.delegateResource builds one delegate wallet from `wallet` (keys a, pk optional, u, vb, voters,
 // rk, rs, pb, ff, fr, bf, dn, lb, missed, productivity, version; the amounts are decimal
@@ -140,6 +142,11 @@ module.exports = function apiStateOps({ solar, withConfig }) {
             const ordered = {};
             for (const name of DELEGATE_KEYS) if (name in delegate) ordered[name] = delegate[name];
             wallet.setAttribute("delegate", { ...ordered, ...delegate });
+            if (wallet.hasAttribute("secondPublicKey")) {
+                const second = wallet.getAttribute("secondPublicKey");
+                wallet.forgetAttribute("secondPublicKey");
+                wallet.setAttribute("secondPublicKey", second);
+            }
         }
         return repository;
     }
