@@ -7,6 +7,7 @@
 //! over-height headers are real blocks: empty ones of delegates 1 and 2, a signed header of
 //! delegate 1 that counts a transaction, and one of delegate 1 whose signature does not verify.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
 use heartwood_crypto::blocks::{factory, serialiser};
@@ -20,6 +21,56 @@ use serde_json::{Value, json};
 
 use super::kernel::OpCase;
 use super::transactions::TxContext;
+use crate::vectors::Expected;
+
+/// The forger's paths that P19 must reach besides the reference's actions and refusals: a block
+/// the reference cannot make (the height after `u32::MAX`, or a pool transaction that the block's
+/// schema refuses), which ends the attempt as an error before the status request; and an
+/// over-height header without an id, which the sort of the distinct headers reads.
+pub const PATHS: [&str; 2] = [
+    "decide path: a block that cannot be made",
+    "decide path: an over-height header without an id",
+];
+
+/// The network byte of a pool transaction that the block's schema refuses.
+const OTHER_NETWORK: u8 = 30;
+
+/// Count the paths of [`PATHS`] that the reference took on `input` (`answer`). A block that
+/// cannot be made counts when the input has one, the calls before the block answer, and the
+/// reference's attempt errs. A header without an id counts when the network state has one and
+/// the reference's attempt passed the status refusals to the sort of the distinct headers: it
+/// forged, came late, found its slot taken, or refused for an own header or the quorum.
+pub fn paths(input: &Value, answer: &Expected, seen: &mut BTreeMap<String, usize>) {
+    let Expected::Output(output) = answer else {
+        return;
+    };
+    let (action, reason) = (output["action"].as_str(), output["reason"].as_str());
+    let state = &input["networkState"];
+    let first = input["firstAttempt"] == Value::Bool(true);
+    let before_block = |call: &str| {
+        call == "networkState" || call == "roundSlot" || (first && call == "transactions")
+    };
+    let answered = !input["fail"]["call"].as_str().is_some_and(before_block);
+    let height = state["nodeHeight"].as_u64();
+    let other_network = |transaction: &Value| {
+        let bytes = transaction.as_str().and_then(|t| hex::decode(t).ok());
+        bytes.and_then(|b| b.get(2).copied()) == Some(OTHER_NETWORK)
+    };
+    let pool = input["pool"]["transactions"].as_array();
+    let refused = first && pool.is_some_and(|list| list.iter().any(other_network));
+    let unmakeable = height == Some(u64::from(u32::MAX)) || (height.is_some() && refused);
+    let mut count = |path: &str| *seen.entry(path.to_owned()).or_insert(0) += 1;
+    if unmakeable && state["lastBlockId"].is_string() && answered && action == Some("error") {
+        count(PATHS[0]);
+    }
+    let headers = state["quorumDetails"]["overHeightBlockHeaders"].as_object();
+    let without_id = headers.is_some_and(|h| h.values().any(|header| header.get("id").is_none()));
+    let sorted = matches!(action, Some("forged" | "late" | "sameSlot"))
+        || matches!(reason, Some("alreadyForged" | "quorum"));
+    if without_id && sorted {
+        count(PATHS[1]);
+    }
+}
 
 /// Delegate `n`'s key pair.
 fn keys(n: u32) -> KeyPair {
@@ -267,4 +318,60 @@ pub fn decision_cases(context: &Arc<TxContext>) -> BoxedStrategy<OpCase> {
             ("forger.decide", 2, input)
         })
         .boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The paths `paths` counts for `input` and the reference's `action` and `reason`.
+    fn counted(input: &Value, action: &str, reason: Option<&str>) -> Vec<String> {
+        let answer = Expected::Output(json!({ "action": action, "reason": reason, "lines": [] }));
+        let mut seen = BTreeMap::new();
+        paths(input, &answer, &mut seen);
+        seen.into_keys().collect()
+    }
+
+    #[test]
+    fn paths_count_only_what_the_reference_reached() {
+        let top = json!({
+            "networkState": { "nodeHeight": u32::MAX, "lastBlockId": "00" },
+            "firstAttempt": false,
+        });
+        assert_eq!(counted(&top, "error", None), [PATHS[0]]);
+        assert!(counted(&top, "stop", None).is_empty(), "no error");
+        let mut failed = top.clone();
+        failed["fail"] = json!({ "call": "roundSlot", "message": "Request timed out" });
+        assert!(counted(&failed, "error", None).is_empty(), "failed before");
+        failed["fail"]["call"] = json!("transactions");
+        assert_eq!(counted(&failed, "error", None), [PATHS[0]], "not asked");
+        let mut below = top.clone();
+        below["networkState"]["nodeHeight"] = json!(u32::MAX - 1);
+        assert!(counted(&below, "error", None).is_empty());
+        let mut unknown = top.clone();
+        unknown["networkState"]
+            .as_object_mut()
+            .unwrap()
+            .remove("lastBlockId");
+        assert!(counted(&unknown, "error", None).is_empty());
+        let other = format!("ff02{:02x}{}", OTHER_NETWORK, "00".repeat(8));
+        let mut pool = below.clone();
+        pool["pool"] = json!({ "poolSize": 1, "transactions": [other] });
+        assert!(counted(&pool, "error", None).is_empty(), "not read");
+        pool["firstAttempt"] = json!(true);
+        assert_eq!(counted(&pool, "error", None), [PATHS[0]]);
+        let header = json!({
+            "networkState": {
+                "quorumDetails": { "overHeightBlockHeaders": { "192.0.2.1": { "height": 101 } } },
+            },
+        });
+        assert_eq!(counted(&header, "late", None), [PATHS[1]]);
+        assert_eq!(counted(&header, "refused", Some("quorum")), [PATHS[1]]);
+        assert!(counted(&header, "refused", Some("coldStart")).is_empty());
+        assert!(counted(&header, "stop", None).is_empty());
+        let mut with_id = header.clone();
+        with_id["networkState"]["quorumDetails"]["overHeightBlockHeaders"]["192.0.2.1"]["id"] =
+            json!("ab");
+        assert!(counted(&with_id, "forged", None).is_empty());
+    }
 }
