@@ -13,13 +13,18 @@
         "the relay's log"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The API says the relay is synced.",
+        "warn": "The relay is not synced and has not been in sync since it started, or it is 53 blocks or fewer behind.",
+        "fail": "The relay had been in sync since its last start and is now more than 53 blocks behind.",
+        "unknown": "The API or the log could not be read.",
+        "skipped": "This host does not run a relay."
       },
-      "advice": {},
+      "advice": {
+        "synced": "The relay is synced at height {height}.",
+        "first-sync": "The relay has not finished its first sync since it started, and is {blocks} blocks behind at height {height}. Wait for it to catch up. See https://docs.iceroot.com/validators/network/.",
+        "fell-behind": "The relay was in sync and is now {blocks} blocks behind at height {height}. Check its peers and its log. See https://docs.iceroot.com/validators/network/.",
+        "catching-up": "The relay is {blocks} blocks behind at height {height}, and catching up. See https://docs.iceroot.com/validators/network/."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#sync-state"
     },
     {
@@ -34,13 +39,19 @@
         "the process table"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The log shows no fork recovery, download failure or corruption line in the window.",
+        "warn": "The log shows 1 or 2 fork recoveries, a download failure, or a corruption line while the relay still runs.",
+        "fail": "The log shows 3 or more fork recoveries in the window, or a corruption line and the relay is stopped.",
+        "unknown": "The relay's log could not be read, or its level hides info lines.",
+        "skipped": "This host does not run a relay."
       },
-      "advice": {},
+      "advice": {
+        "none": "The log shows no fork recovery in the last {minutes} minutes.",
+        "some": "The log shows {forks} fork recoveries and {failures} failed downloads in the last {minutes} minutes. A few are normal. See https://docs.iceroot.com/validators/doctor/#sync-forks.",
+        "many": "The log shows {forks} fork recoveries in the last {minutes} minutes. Check the relay's peers and its clock. See https://docs.iceroot.com/validators/doctor/#sync-forks.",
+        "corruption-logged": "The log shows a line about corrupted state, and the relay still runs. Do not delete any data. Read https://docs.iceroot.com/validators/doctor/#sync-forks before you act.",
+        "corrupted": "The relay stopped after logging that its state is corrupted. Do not delete any data. Read https://docs.iceroot.com/validators/doctor/#sync-forks before you act."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#sync-forks"
     }
   ]
