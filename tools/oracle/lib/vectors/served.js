@@ -143,8 +143,10 @@ module.exports = async function servedVectors({ solar, devnet, rec, must, craft 
         const payload = { lastBlockHeight: last };
         if (limit !== undefined) payload.blockLimit = limit;
         if (headersOnly !== undefined) payload.headersOnly = headersOnly;
+        // The store holds the block at the requested height and two past the limit too, so that
+        // where the listing starts and where the limit ends it are both pinned.
         const count = Math.min(limit || 400, Math.max(0, tip - last));
-        const rows = range(last + 1, last + count);
+        const rows = range(Math.max(1, last), last + count + 2);
         const kept = rows.filter((h) => h <= tip);
         await serve(`getBlocks: ${name}`, tip, "p2p.blocks.getBlocks", payload, { store: store(tip, kept) });
     };
