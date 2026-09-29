@@ -28,7 +28,10 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # floor) and the event bus live in the kernel, which loads configuration in the reference too, and
 # the kernel was at its ceiling before them. heartwood-blockchain's processor has a ceiling of its
 # own; its runtime (the node thread, the job, the queue, the pool on the node thread, the service,
-# the state machine and the fork recovery) is listed on its own. The parts listed without a ceiling
+# the state machine and the fork recovery) is listed on its own. heartwood-blockchain was
+# re-baselined from 3,500 to 3,600 with the peer faults the job and the processor name (a chained
+# block refused by a rule of the shared state, and a block discarded for its future slot, judged
+# without the clock): the crate was at its ceiling before them. The parts listed without a ceiling
 # (the blockchain's runtime and storage, heartwood-p2p's client side, ...) are informational: the
 # crate's ceiling bounds them. CI installs tokei, so make check holds every ceiling there too.
 CHECKS=(
@@ -42,7 +45,7 @@ CHECKS=(
     "heartwood-p2p-wire:packages/p2p-wire/src:2500"
     "heartwood-database:packages/database/src:3000"
     "heartwood-pool:packages/pool/src:2000"
-    "heartwood-blockchain:packages/blockchain/src:3500"
+    "heartwood-blockchain:packages/blockchain/src:3600"
     "heartwood-blockchain storage and restart:packages/blockchain/src/commit.rs packages/blockchain/src/rows.rs packages/blockchain/src/restore.rs packages/blockchain/src/milestones.rs packages/blockchain/src/online.rs:"
     "heartwood-blockchain processor:packages/blockchain/src/processor:1200"
     "heartwood-blockchain runtime:packages/blockchain/src/node.rs packages/blockchain/src/process_blocks_job.rs packages/blockchain/src/queue.rs packages/blockchain/src/pool_task.rs packages/blockchain/src/events.rs packages/blockchain/src/options.rs packages/blockchain/src/blockchain.rs packages/blockchain/src/state_machine packages/blockchain/src/fork_recovery.rs packages/blockchain/src/chain_state.rs packages/blockchain/src/network.rs packages/blockchain/src/work.rs:"
