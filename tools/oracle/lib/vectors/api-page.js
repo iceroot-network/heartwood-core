@@ -158,6 +158,10 @@ module.exports = async function apiPageVectors({ rec, shared }) {
         { values: [7], script: [["insert", 0], ["remove", 0], ["remove", 0]] },
     ];
     for (let i = 0; i < 24; i++) scripts.push(script(random, 6 + random(30), i % 3 === 0 ? 4 : 1000));
+    // Longer scripts, so that each rebalancing case of insert and remove, on both sides, is met
+    // many times over; their own generator leaves the records above as they were.
+    const long = generator(35);
+    for (let i = 0; i < 12; i++) scripts.push(script(long, 60 + long(90), i % 3 === 0 ? 6 : 1000));
     for (const [index, input] of scripts.entries()) out.push({ ...(await rec("js.rbTrace", height, input)), name: `rbTrace: script ${index} of ${input.script.length} steps` });
     const lists = [[5, 3, 8, 1, 4], [1, 2, 3, 4, 5, 6], [6, 5, 4, 3, 2, 1], [2, 2, 2, 2, 2], [1, 2, 1, 2, 1, 2, 1], [], [9]];
     for (let i = 0; i < 6; i++) lists.push(Array.from({ length: 8 + random(20) }, () => random(i % 2 === 0 ? 5 : 1000)));
