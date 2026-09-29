@@ -9,9 +9,6 @@
 //! block or two below the trigger: [`LAG_BLOCKS`] of slack for the lower bound of a trigger, none
 //! for a round's edges.
 
-use std::collections::BTreeMap;
-
-use super::forging::start_heights;
 use super::run::Step;
 use super::{Cases, MixedRun};
 use crate::errors::Result;
@@ -77,9 +74,9 @@ pub(super) fn plan(run: &str) -> Vec<Planned> {
             planned("conflict", 2, 3, 0),
             planned("minority-pause", 2, 3, 0),
             planned("archive-minority", 2, 3, 0),
-            planned("heal", 3, 3, 107),
-            planned("converged", 3, 3, 107),
-            planned("conflict-outcome", 3, 3, 107),
+            planned("heal", 3, 3, 133),
+            planned("converged", 3, 3, 133),
+            planned("conflict-outcome", 3, 3, 133),
         ],
         "s" => vec![
             planned("txgen-fund", 1, 1, 0),
@@ -165,14 +162,9 @@ fn round_of(height: u64, length: u32) -> u64 {
     height.saturating_sub(1) / u64::from(length.max(1)) + 1
 }
 
-/// Where a step stands against the others: its start time, and else its place in the file.
-fn started(steps: &[Step], index: usize) -> (i64, usize) {
-    (steps[index].start.unwrap_or(i64::MIN), index)
-}
-
-/// The problems of the schedule of `steps` of the run `run`: a step outside its planned round or
-/// before its trigger height, a pair out of order, a window that had not closed, the pause away
-/// from the stop height.
+/// The problems of the schedule of `steps` of the run `run`: a step without its start height or
+/// time, outside its planned round or before its trigger height, a pair out of order, a window
+/// that had not closed, the pause away from the stop height.
 pub(super) fn problems(run: &str, steps: &[Step], round_length: u32, stop: u32) -> Vec<String> {
     let mut out = Vec::new();
     if stop_height(run) != Some(stop) {
@@ -181,22 +173,15 @@ pub(super) fn problems(run: &str, steps: &[Step], round_length: u32, stop: u32) 
             stop_height(run).map_or_else(|| "?".to_owned(), |h| h.to_string())
         ));
     }
-    let heights: BTreeMap<usize, u64> = {
-        let floors = start_heights(steps);
-        // `start_heights` keeps the steps' order: index i is the i-th step.
-        floors
-            .iter()
-            .enumerate()
-            .map(|(i, (_, h))| (i, *h))
-            .collect()
-    };
     let first = |name: &str| steps.iter().position(|s| s.name == name);
     for p in plan(run) {
         let Some(i) = first(p.name) else {
             continue;
         };
-        let recorded = steps[i].start_height();
-        let Some(h) = recorded.map(|_| heights[&i]) else {
+        if steps[i].start.is_none() {
+            out.push(format!("step {} records no start time", p.name));
+        }
+        let Some(h) = steps[i].start_height() else {
             out.push(format!("step {} records no start height", p.name));
             continue;
         };
@@ -224,7 +209,9 @@ pub(super) fn problems(run: &str, steps: &[Step], round_length: u32, stop: u32) 
         let (Some(a), Some(b)) = (first(before), first(after)) else {
             continue;
         };
-        if started(steps, a) > started(steps, b) {
+        if let (Some(ta), Some(tb)) = (steps[a].start, steps[b].start)
+            && ta > tb
+        {
             out.push(format!("step {before} started after step {after}"));
         }
     }
@@ -240,18 +227,15 @@ pub(super) fn problems(run: &str, steps: &[Step], round_length: u32, stop: u32) 
             ));
         }
     }
-    if let Some(i) = first("pause") {
-        match steps[i].start_height() {
-            Some(h)
-                if round_of(h.max(1), round_length) != round_of(u64::from(stop), round_length) =>
-            {
-                out.push(format!(
-                    "the pause started at height {h}, outside the last round (the stop height is {stop})"
-                ));
-            }
-            None => out.push("the pause records no start height".into()),
-            Some(_) => {}
+    match first("pause").map(|i| steps[i].start_height()) {
+        None => out.push("the run records no pause step".into()),
+        Some(None) => out.push("the pause records no start height".into()),
+        Some(Some(h)) if h > u64::from(stop) || h + LAG_BLOCKS < u64::from(stop) => {
+            out.push(format!(
+                "the pause started at height {h}, not at the stop height {stop}"
+            ));
         }
+        Some(Some(_)) => {}
     }
     out
 }
@@ -387,15 +371,73 @@ mod tests {
                 .any(|p| p.contains("heal-node6 started before the window of step vote-node6")),
             "{found:?}"
         );
+        // A pause inside the last round but short of the stop height.
         let mut steps = kept();
         let i = steps.iter().position(|s| s.name == "pause").unwrap();
-        steps[i].record["startHeight"] = json!(150);
+        steps[i].record["startHeight"] = json!(170);
         let found = problems("w", &steps, 53, 212);
         assert!(
-            found.iter().any(|p| p.contains("outside the last round")),
+            found
+                .iter()
+                .any(|p| p.contains("the pause started at height 170, not at the stop height 212")),
             "{found:?}"
         );
+        steps.remove(i);
+        assert!(
+            problems("w", &steps, 53, 212)
+                .iter()
+                .any(|p| p.contains("no pause step"))
+        );
         assert!(problems("w", &kept(), 53, 265)[0].contains("planned 212"));
+    }
+
+    #[test]
+    fn a_step_is_placed_by_its_own_height_and_needs_its_time() {
+        // A later record of a step that started lower is still in its own round.
+        let mut steps = kept();
+        let i = steps.iter().position(|s| s.name == "lag-node5").unwrap();
+        let lag = steps.remove(i);
+        let j = steps.iter().position(|s| s.name == "stall").unwrap();
+        steps.insert(j + 1, lag);
+        let found = problems("w", &steps, 53, 212);
+        assert!(!found.iter().any(|p| p.contains("lag-node5")), "{found:?}");
+        // A step without its start time is named.
+        let mut steps = kept();
+        let i = steps.iter().position(|s| s.name == "r2").unwrap();
+        steps[i].start = None;
+        let found = problems("w", &steps, 53, 212);
+        assert!(
+            found
+                .iter()
+                .any(|p| p.contains("step r2 records no start time")),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn the_heal_of_run_p_waits_for_the_partitions_end() {
+        let steps: Vec<Step> = [
+            ("txgen-fund", 5),
+            ("send-txs", 56),
+            ("partition", 80),
+            ("conflict", 90),
+            ("minority-pause", 100),
+            ("archive-minority", 101),
+            ("heal", 115),
+            ("converged", 136),
+            ("conflict-outcome", 140),
+            ("pause", 159),
+        ]
+        .iter()
+        .enumerate()
+        .map(|(k, (name, h))| {
+            let at = i64::try_from(k).unwrap() * 1_000;
+            step(name, *h, at, at + 500)
+        })
+        .collect();
+        let found = problems("p", &steps, 53, 159);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("step heal started at height 115, before the height 133"));
     }
 
     #[test]
