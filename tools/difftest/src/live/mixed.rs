@@ -931,6 +931,75 @@ fn conflict(run: &MixedRun<'_>, cases: &mut Cases, steps: &[Step], dir: &Path) -
 // The processes
 // ---------------------------------------------------------------------------------------------
 
+/// The problems of the process reports `reports` for the Heartwood `nodes`: in every report each
+/// node's relay process (`role` "relay", or no role) listens, and only on the node's own address;
+/// a node that forges (run `s`) also has its forger process (`role` "forger"), which listens on
+/// nothing. A run with no report has no evidence.
+pub(super) fn listener_problems(nodes: &[&Node], reports: &[Value]) -> Vec<String> {
+    let mut problems = Vec::new();
+    if reports.is_empty() {
+        problems.push("no report of the processes and their listeners".to_owned());
+    }
+    for report in reports {
+        let round = report.get("round").and_then(Value::as_u64).unwrap_or(0);
+        let listed = report
+            .get("processes")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        for node in nodes {
+            let of = |role: &str| {
+                listed.iter().find(|p| {
+                    p.get("node").and_then(Value::as_str) == Some(node.name.as_str())
+                        && p.get("role").and_then(Value::as_str).unwrap_or("relay") == role
+                })
+            };
+            let listeners = |p: &Value| {
+                p.get("listeners")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            match of("relay") {
+                None => problems.push(format!("round {round}: no relay process of {}", node.name)),
+                Some(entry) => {
+                    let found = listeners(entry);
+                    if found.is_empty() {
+                        problems.push(format!(
+                            "round {round}: {}'s relay listens on nothing",
+                            node.name
+                        ));
+                    }
+                    for l in &found {
+                        let ip = l.get("ip").and_then(Value::as_str).unwrap_or("");
+                        let port = l.get("port").and_then(Value::as_u64).unwrap_or(0);
+                        if ip != node.ip || port == 0 {
+                            problems.push(format!(
+                                "round {round}: {} listens on {ip}:{port}, not on its own address",
+                                node.name
+                            ));
+                        }
+                    }
+                }
+            }
+            if node.forger {
+                match of("forger") {
+                    None => {
+                        problems.push(format!("round {round}: no forger process of {}", node.name))
+                    }
+                    Some(entry) if !listeners(entry).is_empty() => problems.push(format!(
+                        "round {round}: {}'s forger listens on {} sockets",
+                        node.name,
+                        listeners(entry).len()
+                    )),
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+    problems
+}
+
 /// Every Heartwood relay listens on its node address only; run `s`'s forgers listen on nothing.
 pub(super) fn processes(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
     guard(
@@ -947,69 +1016,20 @@ pub(super) fn processes(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                 return Ok(());
             }
             let reports = run::read_lines(&run.run_dir.join("processes.jsonl"))?;
-            if !reports
-                .iter()
-                .any(|r| r.get("round").and_then(Value::as_u64) == Some(5))
-            {
-                cases.fail(
-                    SECTION,
-                    "the processes at round 5",
-                    "no report of the processes at round 5",
-                );
-            }
-            let mut problems = Vec::new();
-            for report in &reports {
-                let round = report.get("round").and_then(Value::as_u64).unwrap_or(0);
-                let listed = report.get("processes").and_then(Value::as_array);
-                for node in &nodes {
-                    let entry = listed.and_then(|l| {
-                        l.iter().find(|p| {
-                            p.get("node").and_then(Value::as_str) == Some(node.name.as_str())
-                        })
-                    });
-                    let Some(entry) = entry else {
-                        problems.push(format!("round {round}: no process of {}", node.name));
-                        continue;
-                    };
-                    let listeners = entry
-                        .get("listeners")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default();
-                    if node.forger {
-                        if !listeners.is_empty() {
-                            problems.push(format!(
-                                "round {round}: {} is a forger and listens on {} sockets",
-                                node.name,
-                                listeners.len()
-                            ));
-                        }
-                        continue;
-                    }
-                    if listeners.is_empty() {
-                        problems.push(format!("round {round}: {} listens on nothing", node.name));
-                    }
-                    for l in &listeners {
-                        let ip = l.get("ip").and_then(Value::as_str).unwrap_or("");
-                        let port = l.get("port").and_then(Value::as_u64).unwrap_or(0);
-                        if ip != node.ip || port == 0 {
-                            problems.push(format!(
-                                "round {round}: {} listens on {ip}:{port}, not on its own address",
-                                node.name
-                            ));
-                        }
-                    }
-                }
-            }
+            let problems = listener_problems(&nodes, &reports);
             if problems.is_empty() {
+                let rounds: BTreeSet<u64> = reports
+                    .iter()
+                    .filter_map(|r| r.get("round").and_then(Value::as_u64))
+                    .collect();
                 cases.pass(
-                SECTION,
-                format!(
-                    "{} Heartwood processes listen on their own address only (or, as forgers, on nothing), in {} reports",
-                    nodes.len(),
-                    reports.len()
-                ),
-            );
+                    SECTION,
+                    format!(
+                        "{} Heartwood nodes' relays listen on their own address only (and their forgers on nothing), in {} reports (rounds {rounds:?})",
+                        nodes.len(),
+                        reports.len()
+                    ),
+                );
             } else {
                 for p in problems.iter().take(10) {
                     cases.fail(SECTION, "the processes and their listeners", p.clone());
@@ -1160,4 +1180,66 @@ pub(super) fn recorded(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn node(name: &str, ip: &str, forger: bool) -> Node {
+        Node {
+            name: name.into(),
+            ip: ip.into(),
+            implementation: Implementation::Heartwood,
+            forger,
+            under_test: true,
+        }
+    }
+
+    #[test]
+    fn a_forging_node_has_a_listening_relay_and_a_silent_forger() {
+        let one = node("node1", "10.84.0.11", true);
+        let nodes = [&one];
+        let report = |forger_listeners: Value| {
+            vec![json!({"round": 2, "processes": [
+                {"node": "node1", "role": "relay", "listeners": [{"ip": "10.84.0.11", "port": 6002}]},
+                {"node": "node1", "role": "forger", "listeners": forger_listeners}]})]
+        };
+        assert_eq!(
+            listener_problems(&nodes, &report(json!([]))),
+            Vec::<String>::new()
+        );
+        let found = listener_problems(&nodes, &report(json!([{"ip": "10.84.0.11", "port": 4000}])));
+        assert!(
+            found.iter().any(|p| p.contains("forger listens on 1")),
+            "{found:?}"
+        );
+        let relay_only = vec![json!({"round": 2, "processes": [
+            {"node": "node1", "role": "relay", "listeners": [{"ip": "10.84.0.11", "port": 6002}]}]})];
+        let found = listener_problems(&nodes, &relay_only);
+        assert!(
+            found.iter().any(|p| p.contains("no forger process")),
+            "{found:?}"
+        );
+        let found = listener_problems(&nodes, &[]);
+        assert!(found.iter().any(|p| p.contains("no report")), "{found:?}");
+    }
+
+    #[test]
+    fn a_relay_without_a_role_listens_on_its_own_address() {
+        let four = node("node4", "10.82.0.14", false);
+        let nodes = [&four];
+        let at = |ip: &str| {
+            vec![json!({"round": 4, "processes": [
+                {"node": "node4", "listeners": [{"ip": ip, "port": 6002}]}]})]
+        };
+        assert!(listener_problems(&nodes, &at("10.82.0.14")).is_empty());
+        let found = listener_problems(&nodes, &at("0.0.0.0"));
+        assert!(
+            found.iter().any(|p| p.contains("not on its own address")),
+            "{found:?}"
+        );
+    }
 }
