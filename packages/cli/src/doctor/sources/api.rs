@@ -13,6 +13,7 @@ use std::time::Duration;
 use heartwood_kernel::Clock;
 use serde_json::Value;
 
+use crate::doctor::report::{Id, IdKind};
 use crate::doctor::seams::{DoctorApi, RelayFacts};
 use crate::doctor::sources::ParseError;
 use crate::doctor::view::{Budget, Reason, Source, Unknown};
@@ -305,12 +306,16 @@ pub fn read_block(context: &ApiContext<'_>, height: u32) -> Result<Option<ApiBlo
     shaped(&data, block).map(Some)
 }
 
-/// `GET /api/wallets/{publicKey}`; `None` when there is no such wallet.
+/// `GET /api/wallets/{publicKey}`; `None` when there is no such wallet. A key that is not a
+/// public key (66 hex digits) is never put into a request: it has no wallet.
 pub fn read_wallet(
     context: &ApiContext<'_>,
     public_key: &str,
 ) -> Result<Option<ApiWallet>, Unknown> {
-    let (status, body) = fetch(context, &format!("/api/wallets/{public_key}"))?;
+    let Some(key) = Id::new(IdKind::PublicKey, public_key) else {
+        return Ok(None);
+    };
+    let (status, body) = fetch(context, &format!("/api/wallets/{}", key.as_str()))?;
     if status == 404 {
         return Ok(None);
     }
