@@ -1,0 +1,63 @@
+{
+  "area": "process",
+  "checks": [
+    {
+      "id": "process.roles",
+      "title": "The roles are running",
+      "area": "process",
+      "subjects": [
+        "relay",
+        "forger"
+      ],
+      "sources": [
+        "the process table",
+        "the node's files"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#process-roles"
+    },
+    {
+      "id": "process.core-role",
+      "title": "No core role",
+      "area": "process",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "the process table"
+      ],
+      "rules": {
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#process-core-role"
+    },
+    {
+      "id": "relay.start-errors",
+      "title": "The relay's start errors",
+      "area": "process",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the error capture",
+        "the relay's log",
+        "the process table"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#relay-start-errors"
+    }
+  ]
+}

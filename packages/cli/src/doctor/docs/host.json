@@ -1,0 +1,62 @@
+{
+  "area": "host",
+  "checks": [
+    {
+      "id": "host.resources",
+      "title": "Resources against the planning estimates",
+      "area": "host",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "/proc",
+        "the process table"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "unknown": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#host-resources"
+    },
+    {
+      "id": "host.memory",
+      "title": "Memory and swap",
+      "area": "host",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "/proc"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#host-memory"
+    },
+    {
+      "id": "host.user",
+      "title": "The doctor's user",
+      "area": "host",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "/proc",
+        "the node's files"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "unknown": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#host-user"
+    }
+  ]
+}

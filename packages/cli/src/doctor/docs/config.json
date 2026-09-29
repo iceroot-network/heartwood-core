@@ -1,0 +1,126 @@
+{
+  "area": "config",
+  "checks": [
+    {
+      "id": "config.load",
+      "title": "The configuration loads",
+      "area": "config",
+      "subjects": [
+        "relay",
+        "forger"
+      ],
+      "sources": [
+        "the configuration"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#config-load"
+    },
+    {
+      "id": "config.log-level",
+      "title": "The file log level",
+      "area": "config",
+      "subjects": [
+        "relay",
+        "forger"
+      ],
+      "sources": [
+        "the configuration"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#config-log-level"
+    },
+    {
+      "id": "config.run-dir",
+      "title": "The run directory",
+      "area": "config",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "the node's files",
+        "/proc"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#config-run-dir"
+    },
+    {
+      "id": "keys.file",
+      "title": "The key file",
+      "area": "config",
+      "subjects": [
+        "forger"
+      ],
+      "sources": [
+        "the key files",
+        "/proc"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#keys-file"
+    },
+    {
+      "id": "keys.dir",
+      "title": "The configuration directory",
+      "area": "config",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "the node's files"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#keys-dir"
+    },
+    {
+      "id": "keys.stray",
+      "title": "No key file on a relay-only host",
+      "area": "config",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the key files",
+        "the process table",
+        "the node's files"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#keys-stray"
+    }
+  ]
+}

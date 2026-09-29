@@ -1,0 +1,131 @@
+{
+  "area": "forger",
+  "checks": [
+    {
+      "id": "forger.hosts",
+      "title": "The forger's relays",
+      "area": "forger",
+      "subjects": [
+        "forger"
+      ],
+      "sources": [
+        "the configuration"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#forger-hosts"
+    },
+    {
+      "id": "forger.link",
+      "title": "The forger's connection",
+      "area": "forger",
+      "subjects": [
+        "forger"
+      ],
+      "sources": [
+        "the socket table",
+        "the configuration"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#forger-link"
+    },
+    {
+      "id": "forger.link-history",
+      "title": "The forger's link failures",
+      "area": "forger",
+      "subjects": [
+        "forger"
+      ],
+      "sources": [
+        "the forger's log",
+        "the socket table"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#forger-link-history"
+    },
+    {
+      "id": "forger.one-key-one-forger",
+      "title": "One key on one forger",
+      "area": "forger",
+      "subjects": [
+        "forger"
+      ],
+      "sources": [
+        "the forger's log",
+        "the relay's store",
+        "the relay's API",
+        "the signing record"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#forger-one-key-one-forger"
+    },
+    {
+      "id": "forger.signing-record",
+      "title": "The signing record",
+      "area": "forger",
+      "subjects": [
+        "forger"
+      ],
+      "sources": [
+        "the signing record",
+        "the node's files",
+        "the forger's log"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#forger-signing-record"
+    },
+    {
+      "id": "forger.start-errors",
+      "title": "The forger's start errors",
+      "area": "forger",
+      "subjects": [
+        "forger"
+      ],
+      "sources": [
+        "the error capture",
+        "the process table"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#forger-start-errors"
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "area": "clock",
+  "checks": [
+    {
+      "id": "clock.sync",
+      "title": "The clock is synchronized",
+      "area": "clock",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "the system probes",
+        "the node's files"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#clock-sync"
+    },
+    {
+      "id": "clock.vs-chain",
+      "title": "The clock against the chain",
+      "area": "clock",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the relay's log",
+        "the relay's store"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#clock-vs-chain"
+    },
+    {
+      "id": "clock.symptoms",
+      "title": "Clock symptoms in the logs",
+      "area": "clock",
+      "subjects": [
+        "relay",
+        "forger"
+      ],
+      "sources": [
+        "the relay's log",
+        "the forger's log"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#clock-symptoms"
+    }
+  ]
+}

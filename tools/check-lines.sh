@@ -75,6 +75,13 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # 3,000 to 3,100: the peer caps, the probe and fetch deadlines, the fork segment and reply checks
 # and the chunk cache's byte bound add 122 lines to heartwood-p2p, and the marker check of the temp
 # directory 24 to heartwood-core, which were at 7,956 and 2,985 of their ceilings before them.
+# A read-only diagnostics command and its protocol server join the commands crate, which links no
+# node crate: heartwood-cli goes from 3,500 to 8,600 and heartwood-core from 3,100 to 3,500. The
+# doctor is budgeted at 4,170 lines in heartwood-cli (its runner, report, rendering and redaction,
+# its sources and their parsers, 47 checks and the server) and 370 in heartwood-core (its command
+# and the node's view for it), each ceiling the count before it plus the budget plus a quarter of
+# the budget, rounded up to the next hundred. heartwood-database keeps its 3,000 with the doctor's
+# read-only store opener. The doctor is listed on its own, without a ceiling of its own.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"
@@ -97,15 +104,16 @@ CHECKS=(
     "heartwood-p2p server controllers and forger channel:packages/p2p/src/server/controllers packages/p2p/src/status_server.rs packages/p2p/src/attestation_session.rs packages/p2p/src/network_state.rs:"
     "heartwood-p2p test support (difftest only):packages/p2p/src/testing:"
     "heartwood-api:packages/api/src:5000"
-    "heartwood-core:packages/core/src !packages/core/src/harness.rs:3100"
+    "heartwood-core:packages/core/src !packages/core/src/harness.rs:3500"
     "heartwood-core test support (difftest only):packages/core/src/harness.rs:"
     "heartwood-forger:packages/forger/src !packages/forger/src/bin:2200"
     "heartwood-forger loop and relay client:packages/forger/src/forger_service.rs packages/forger/src/client.rs packages/forger/src/deadlines.rs:"
     "heartwood-forger forging, keys, record and attester:packages/forger/src/delegate.rs packages/forger/src/keys.rs packages/forger/src/signing_record.rs packages/forger/src/signer.rs packages/forger/src/attestation.rs:"
     "heartwood-forger test support (difftest only):packages/forger/src/bin:"
-    "heartwood-cli:packages/cli/src !packages/cli/src/bin:3500"
+    "heartwood-cli:packages/cli/src !packages/cli/src/bin:8600"
     "heartwood-cli supervisor, commands and network generate:packages/cli/src/argv.rs packages/cli/src/instance.rs packages/cli/src/supervisor packages/cli/src/process.rs packages/cli/src/process_table.rs packages/cli/src/network.rs:"
     "heartwood-cli devnet:packages/cli/src/devnet packages/cli/src/http.rs:"
+    "heartwood-cli doctor:packages/cli/src/doctor:"
     "heartwood-cli test support (test-child only):packages/cli/src/bin:"
 )
 

@@ -1,0 +1,87 @@
+{
+  "area": "version",
+  "checks": [
+    {
+      "id": "version.floor",
+      "title": "The version floor",
+      "area": "version",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the relay's API",
+        "the configuration",
+        "the process table",
+        "this build"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#version-floor"
+    },
+    {
+      "id": "version.installed",
+      "title": "The running versions",
+      "area": "version",
+      "subjects": [
+        "relay",
+        "forger"
+      ],
+      "sources": [
+        "the process table",
+        "the relay's API",
+        "this build"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#version-installed"
+    },
+    {
+      "id": "version.build",
+      "title": "A release build",
+      "area": "version",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "this build"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "fail": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#version-build"
+    },
+    {
+      "id": "version.peers",
+      "title": "The peers' versions",
+      "area": "version",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the relay's API",
+        "this build"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#version-peers"
+    }
+  ]
+}

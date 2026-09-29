@@ -1,0 +1,10 @@
+{
+  "advice": {
+    "not-built": "This check is not built in this release.",
+    "unknown": "The doctor could not read {source}: {reason}.",
+    "skipped-profile": "This check is not part of the profile that was run.",
+    "skipped-role": "This check is about a role that --role left out.",
+    "skipped-absent": "This check is about a role that does not run on this host.",
+    "skipped-release": "This check comes with a later release."
+  }
+}

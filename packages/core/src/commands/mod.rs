@@ -1,13 +1,15 @@
 //! The command tree of the `heartwood` binary, one module per family: [`relay`] and [`forger`]
 //! (`run`, `start`, `stop`, `restart`, `status`, `log`), [`network`] (`generate`), `devnet`
 //! (feature `devnet`: `init`, `start`, `stop`, `status`, `logs`, `stop-node`, `start-node`,
-//! `restart-node`, `reset`, `wait`, `env`) and [`supervise`] (the hidden supervisor), with
-//! `version` and clap's `help`. The reference's colon spellings (`relay:start`) are rewritten
-//! first ([`heartwood_cli::argv::rewrite`]); flags keep the reference's camelCase with kebab-case
+//! `restart-node`, `reset`, `wait`, `env`), [`doctor`] (read-only diagnostics, `checks`, `explain`,
+//! `mcp`) and [`supervise`] (the hidden supervisor), with `version` and clap's `help`. The
+//! reference's colon spellings (`relay:start`) are rewritten first
+//! ([`heartwood_cli::argv::rewrite`]); flags keep the reference's camelCase with kebab-case
 //! aliases.
 
 #[cfg(feature = "devnet")]
 pub mod devnet;
+pub mod doctor;
 pub mod forger;
 pub mod network;
 pub mod relay;
@@ -45,6 +47,8 @@ pub enum Command {
     /// A local devnet on this host.
     #[cfg(feature = "devnet")]
     Devnet(devnet::Devnet),
+    /// Read-only diagnostics of this host's node.
+    Doctor(doctor::DoctorLine),
     /// Supervise a started role (written by `start`).
     #[command(hide = true)]
     Supervise(supervise::Supervise),
@@ -164,6 +168,7 @@ pub fn run(command: Command) -> ExitCode {
         Command::Network(command) => network::run(command),
         #[cfg(feature = "devnet")]
         Command::Devnet(command) => devnet::run(command),
+        Command::Doctor(line) => doctor::run(line),
         Command::Supervise(command) => supervise::run(command),
         Command::Version => {
             println!("{}", crate::VERSION);

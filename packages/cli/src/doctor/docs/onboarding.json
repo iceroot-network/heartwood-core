@@ -1,0 +1,26 @@
+{
+  "area": "onboarding",
+  "checks": [
+    {
+      "id": "onboarding.sync-proof",
+      "title": "The sync check of an application",
+      "area": "onboarding",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the relay's API",
+        "the socket table"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#onboarding-sync-proof"
+    }
+  ]
+}

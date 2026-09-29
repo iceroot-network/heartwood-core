@@ -1,0 +1,66 @@
+{
+  "area": "peers",
+  "checks": [
+    {
+      "id": "peers.count",
+      "title": "Enough peers",
+      "area": "peers",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the relay's API",
+        "the configuration"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#peers-count"
+    },
+    {
+      "id": "peers.height",
+      "title": "Height against the peers",
+      "area": "peers",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the relay's API",
+        "the relay's log"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#peers-height"
+    },
+    {
+      "id": "peers.diversity",
+      "title": "Peers from several networks",
+      "area": "peers",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the relay's API"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#peers-diversity"
+    }
+  ]
+}

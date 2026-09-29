@@ -1,0 +1,47 @@
+{
+  "area": "sync",
+  "checks": [
+    {
+      "id": "sync.state",
+      "title": "Sync state",
+      "area": "sync",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the relay's API",
+        "the relay's log"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#sync-state"
+    },
+    {
+      "id": "sync.forks",
+      "title": "Fork recoveries",
+      "area": "sync",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the relay's log",
+        "the process table"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#sync-forks"
+    }
+  ]
+}

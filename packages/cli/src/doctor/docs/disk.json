@@ -1,0 +1,106 @@
+{
+  "area": "disk",
+  "checks": [
+    {
+      "id": "disk.space",
+      "title": "Disk space and growth",
+      "area": "disk",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "the node's files",
+        "the relay's API",
+        "the configuration"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#disk-space"
+    },
+    {
+      "id": "disk.other",
+      "title": "The other directories' disks",
+      "area": "disk",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "the node's files",
+        "/proc"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#disk-other"
+    },
+    {
+      "id": "disk.inodes",
+      "title": "File entries left",
+      "area": "disk",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "the node's files"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#disk-inodes"
+    },
+    {
+      "id": "disk.type",
+      "title": "The store's disk",
+      "area": "disk",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "/proc",
+        "/sys"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#disk-type"
+    },
+    {
+      "id": "disk.slow-writes",
+      "title": "Signing record writes",
+      "area": "disk",
+      "subjects": [
+        "forger"
+      ],
+      "sources": [
+        "the forger's log"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#disk-slow-writes"
+    }
+  ]
+}

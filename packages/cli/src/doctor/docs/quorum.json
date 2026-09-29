@@ -1,0 +1,66 @@
+{
+  "area": "quorum",
+  "checks": [
+    {
+      "id": "quorum.forging-allowed",
+      "title": "Forging allowed at our slots",
+      "area": "quorum",
+      "subjects": [
+        "forger"
+      ],
+      "sources": [
+        "the forger's log",
+        "the relay's API"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#quorum-forging-allowed"
+    },
+    {
+      "id": "quorum.attestation",
+      "title": "The relay attests its forger",
+      "area": "quorum",
+      "subjects": [
+        "forger",
+        "relay"
+      ],
+      "sources": [
+        "the forger's log",
+        "the relay's log",
+        "the socket table",
+        "the process table"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#quorum-attestation"
+    },
+    {
+      "id": "quorum.reach",
+      "title": "The relay's reach",
+      "area": "quorum",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the node's files"
+      ],
+      "rules": {
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#quorum-reach"
+    }
+  ]
+}

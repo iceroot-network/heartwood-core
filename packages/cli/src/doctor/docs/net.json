@@ -1,0 +1,122 @@
+{
+  "area": "net",
+  "checks": [
+    {
+      "id": "net.p2p-listen",
+      "title": "The P2P listener",
+      "area": "net",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the configuration",
+        "the socket table"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#net-p2p-listen"
+    },
+    {
+      "id": "net.api-exposure",
+      "title": "The API's exposure",
+      "area": "net",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the configuration",
+        "the socket table"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#net-api-exposure"
+    },
+    {
+      "id": "net.forger-no-listener",
+      "title": "The forger listens on no port",
+      "area": "net",
+      "subjects": [
+        "forger"
+      ],
+      "sources": [
+        "the socket table"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#net-forger-no-listener"
+    },
+    {
+      "id": "net.remote-access",
+      "title": "remoteAccess admits the forger",
+      "area": "net",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the configuration",
+        "the socket table"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#net-remote-access"
+    },
+    {
+      "id": "net.firewall",
+      "title": "A host firewall",
+      "area": "net",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "the system probes",
+        "the node's files"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "unknown": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#net-firewall"
+    },
+    {
+      "id": "net.reachable",
+      "title": "Reachable from outside",
+      "area": "net",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the configuration"
+      ],
+      "rules": {
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#net-reachable"
+    }
+  ]
+}

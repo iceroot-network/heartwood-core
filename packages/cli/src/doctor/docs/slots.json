@@ -1,0 +1,46 @@
+{
+  "area": "slots",
+  "checks": [
+    {
+      "id": "slots.active",
+      "title": "Our delegates are active",
+      "area": "slots",
+      "subjects": [
+        "forger"
+      ],
+      "sources": [
+        "the forger's log"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#slots-active"
+    },
+    {
+      "id": "slots.missed",
+      "title": "Missed slots",
+      "area": "slots",
+      "subjects": [
+        "forger"
+      ],
+      "sources": [
+        "the relay's store",
+        "the forger's log",
+        "the relay's API"
+      ],
+      "rules": {
+        "pass": "Not built yet.",
+        "warn": "Not built yet.",
+        "fail": "Not built yet.",
+        "unknown": "Not built yet.",
+        "skipped": "Not built yet."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#slots-missed"
+    }
+  ]
+}
