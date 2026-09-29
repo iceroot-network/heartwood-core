@@ -76,7 +76,9 @@ fn shuffled(n: usize, seed: u32) -> Vec<usize> {
     let mut list: Vec<usize> = (0..n).collect();
     let mut state = u64::from(seed) | 1;
     for i in (1..n).rev() {
-        state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
         let j = usize::try_from((state >> 33) % (i as u64 + 1)).unwrap_or(0);
         list.swap(i, j);
     }
@@ -186,17 +188,36 @@ fn delegate_criterion(kind: u32, seed: u32, facts: &Facts) -> String {
         3 => format!("address={}%25", &facts.address(seed)[..3]),
         4 => format!("publicKey={}", facts.key(seed)),
         5 => format!("publicKey={}%25", &facts.key(seed)[..3]),
-        6 => ranged("votesReceived.percent", seed, &percent(p_low), &percent(p_high)),
+        6 => ranged(
+            "votesReceived.percent",
+            seed,
+            &percent(p_low),
+            &percent(p_high),
+        ),
         7 => ranged(
             "votesReceived.votes",
             seed,
             &facts.balance(seed).to_string(),
             &facts.balance(seed >> 3).to_string(),
         ),
-        8 => ranged("votesReceived.voters", seed, &low.to_string(), &high.to_string()),
-        9 => ranged("rank", seed, &(low % 12 + 1).to_string(), &(high % 12 + 1).to_string()),
-        10 => ["isResigned=true", "isResigned=false", "isResigned=true,false"][pick(seed, 3)]
-            .to_owned(),
+        8 => ranged(
+            "votesReceived.voters",
+            seed,
+            &low.to_string(),
+            &high.to_string(),
+        ),
+        9 => ranged(
+            "rank",
+            seed,
+            &(low % 12 + 1).to_string(),
+            &(high % 12 + 1).to_string(),
+        ),
+        10 => [
+            "isResigned=true",
+            "isResigned=false",
+            "isResigned=true,false",
+        ][pick(seed, 3)]
+        .to_owned(),
         11 => ["resignationType=permanent", "resignationType=temporary"][pick(seed, 2)].to_owned(),
         12 => ranged(
             "blocks.produced",
@@ -205,11 +226,31 @@ fn delegate_criterion(kind: u32, seed: u32, facts: &Facts) -> String {
             &facts.count(seed >> 3).to_string(),
         ),
         13 => ranged("blocks.missed", seed, &low.to_string(), &high.to_string()),
-        14 => ranged("blocks.productivity", seed, &percent(p_low), &percent(p_high)),
+        14 => ranged(
+            "blocks.productivity",
+            seed,
+            &percent(p_low),
+            &percent(p_high),
+        ),
         15 => ranged("forged.fees", seed, &small.to_string(), &large.to_string()),
-        16 => ranged("forged.rewards", seed, &small.to_string(), &large.to_string()),
-        17 => ranged("forged.burnedFees", seed, &small.to_string(), &large.to_string()),
-        18 => ranged("forged.donations", seed, &small.to_string(), &large.to_string()),
+        16 => ranged(
+            "forged.rewards",
+            seed,
+            &small.to_string(),
+            &large.to_string(),
+        ),
+        17 => ranged(
+            "forged.burnedFees",
+            seed,
+            &small.to_string(),
+            &large.to_string(),
+        ),
+        18 => ranged(
+            "forged.donations",
+            seed,
+            &small.to_string(),
+            &large.to_string(),
+        ),
         19 => ranged("forged.total", seed, &small.to_string(), &large.to_string()),
         20 => {
             let (a, b) = (VERSIONS[pick(seed, 6)], VERSIONS[pick(seed >> 4, 6)]);
@@ -245,7 +286,11 @@ fn wallet_criterion(kind: u32, seed: u32, facts: &Facts) -> String {
     let (low, high) = (low.min(high), low.max(high));
     match kind % 34 {
         0 => format!("address={}", facts.address(seed)),
-        1 => format!("address={},{}", facts.address(seed), facts.address(seed >> 5)),
+        1 => format!(
+            "address={},{}",
+            facts.address(seed),
+            facts.address(seed >> 5)
+        ),
         2 => format!("address={}%25", &facts.address(seed)[..3]),
         3 => format!("address=%25{}", &facts.address(seed)[28..]),
         4 => format!("publicKey={}", facts.key(seed)),
@@ -263,10 +308,10 @@ fn wallet_criterion(kind: u32, seed: u32, facts: &Facts) -> String {
         ),
         13 => format!(
             "attributes.secondPublicKey={}",
-            facts.seconds.get(pick(seed, facts.seconds.len().max(1))).map_or_else(
-                || format!("03{}", "cd".repeat(32)),
-                Clone::clone
-            )
+            facts
+                .seconds
+                .get(pick(seed, facts.seconds.len().max(1)))
+                .map_or_else(|| format!("03{}", "cd".repeat(32)), Clone::clone)
         ),
         14 => "attributes.secondPublicKey.from=1&attributes.secondPublicKey.to=2".to_owned(),
         15 => "attributes.delegate.username.from=a".to_owned(),
@@ -525,7 +570,14 @@ mod tests {
             .iter()
             .map(|(_, _, input)| input["query"].as_str().unwrap())
             .collect();
-        for wanted in ["orderBy=", "limit=", "page=", "%25", ".from=", "attributes."] {
+        for wanted in [
+            "orderBy=",
+            "limit=",
+            "page=",
+            "%25",
+            ".from=",
+            "attributes.",
+        ] {
             assert!(queries.iter().any(|q| q.contains(wanted)), "{wanted}");
         }
     }

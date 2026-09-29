@@ -155,7 +155,7 @@ pub fn wallet_with(wallet: &Wallet, pool: &PoolView, table: &ProductivityTable) 
 }
 
 /// [`wallet_with`] as the listings search and sort it: each BigNumber a
-/// [`big_number`](crate::search::big_number) (the balance, the nonce, the amounts of the delegate
+/// [`big_number`] (the balance, the nonce, the amounts of the delegate
 /// attribute and the votes of `votingFor`), which [`plain`] writes out as text.
 pub fn wallet_searchable(wallet: &Wallet, pool: &PoolView, table: &ProductivityTable) -> Value {
     let key = wallet.public_key().map(|key| key.to_compressed());

@@ -4,7 +4,7 @@
 //! and the version.
 //!
 //! The resource is built as the listings search and sort it: a BigNumber is a
-//! [`big_number`](crate::search::big_number) and the version a [`semver`](crate::search::semver);
+//! [`big_number`] and the version a [`semver`];
 //! [`plain`](crate::search::plain) writes it out. A key that the reference leaves `undefined` is
 //! absent.
 

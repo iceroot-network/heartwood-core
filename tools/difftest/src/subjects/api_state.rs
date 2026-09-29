@@ -408,7 +408,11 @@ fn delegates_route(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
 }
 
 fn wallets_route(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
-    let request = match request(case, &[RouteId::WalletsIndex, RouteId::WalletsTop], "/wallets")? {
+    let request = match request(
+        case,
+        &[RouteId::WalletsIndex, RouteId::WalletsTop],
+        "/wallets",
+    )? {
         Ok(request) => request,
         Err(verdict) => return Ok(verdict),
     };
