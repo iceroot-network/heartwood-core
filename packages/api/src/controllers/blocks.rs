@@ -349,8 +349,8 @@ pub(crate) fn missed_criteria(
 /// The missed-slot criteria of `query` for a window that starts at `earliest`: no timestamp starts
 /// at `earliest` (at 0 before the epoch); one exact timestamp before it becomes 0; one range that
 /// starts before it, or has no start, starts at it; a list is kept. A window that starts within a
-/// second (`Window::whole` false) is a start the reference's store refuses as an integer, so a
-/// criteria that starts at it matches nothing.
+/// second (`Window::whole` false), or below the `integer` range, is a start the reference's store
+/// refuses as an integer, so a criteria that starts at it matches nothing.
 fn narrowed(query: &Value, window: Window) -> Result<Option<MissedBlockCriteria>, ApiError> {
     let Window {
         start: earliest,
@@ -389,7 +389,8 @@ fn narrowed(query: &Value, window: Window) -> Result<Option<MissedBlockCriteria>
         _ => false,
     };
     let height = numerics("height", one("height"))?;
-    if (starts && !whole) || !fits(&timestamp, INTEGER) || !fits(&height, INTEGER) {
+    let refused = !whole || i128::from(earliest) < -i128::from(INTEGER) - 1;
+    if (starts && refused) || !fits(&timestamp, INTEGER) || !fits(&height, INTEGER) {
         return Ok(None);
     }
     Ok(Some(MissedBlockCriteria {
@@ -424,7 +425,7 @@ fn window_from(tip: u32, epoch_ms: i64, lookback: i64) -> Window {
     let since_epoch = unix.div_euclid(DAY) * DAY * 1000 - epoch_ms;
     let whole = since_epoch.rem_euclid(1000) == 0;
     Window {
-        start: since_epoch.div_euclid(1000) + i64::from(!whole) - lookback,
+        start: (since_epoch.div_euclid(1000) + i64::from(!whole)).saturating_sub(lookback),
         whole,
     }
 }
@@ -592,6 +593,24 @@ mod tests {
         ] {
             assert!(!storable(&block(query.clone())), "{query}");
         }
+    }
+
+    #[test]
+    fn a_window_that_starts_below_the_integer_range_is_a_start_the_store_refuses() {
+        // A lookback of any size gives a start, however far before the epoch.
+        let far = window_from(0, 3_600_000, i64::MAX);
+        assert_eq!(far.start, i64::MIN);
+        let lowest = at(-(INTEGER as i64) - 1);
+        assert!(narrowed(&json!({}), lowest).unwrap().is_some());
+        let below = at(-(INTEGER as i64) - 2);
+        // A criteria that starts at the window's start fails the reference's listing.
+        assert_eq!(narrowed(&json!({}), below).unwrap(), None);
+        assert_eq!(narrowed(&json!({"timestamp": {"to": 9}}), below).unwrap(), None);
+        // One that keeps its own start or its exact value does not.
+        let kept = narrowed(&json!({"timestamp": {"from": 300}}), below).unwrap();
+        assert_eq!(kept.unwrap().timestamp, [range(300)]);
+        let exact = narrowed(&json!({"timestamp": 50}), below).unwrap();
+        assert_eq!(exact.unwrap().timestamp, [Numeric::Equal(50)]);
     }
 
     #[test]
