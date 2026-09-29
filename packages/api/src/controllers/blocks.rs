@@ -190,11 +190,16 @@ pub(crate) fn raw(row: &BlockRow) -> Value {
 
 /// `GET /blocks`: the blocks matching the criteria, sorted and paginated. Without `transform` the
 /// reference reads with no listing options, so it reports an estimate (`totalCountIsEstimate:
-/// true`); the count here is exact either way.
+/// true`), or `false` when its store refuses the criteria and the listing fails; the count here is
+/// exact either way.
 pub async fn index(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
-    let estimate = !transform(&request.query) || ctx.config.estimate_total_count;
+    let transform = transform(&request.query);
     let criteria = block_criteria(&request.query)?;
-    block_listing(&ctx, &request, criteria, estimate).await
+    let estimate = match criteria.as_ref().is_some_and(|c| !storable(c)) {
+        true => transform && ctx.config.estimate_total_count,
+        false => !transform || ctx.config.estimate_total_count,
+    };
+    block_listing(&ctx, &request, criteria.filter(storable), estimate).await
 }
 
 /// `GET /blocks/missed`: the missed slots matching the criteria, over the lookback window.
@@ -247,6 +252,34 @@ pub(crate) fn block_criteria(query: &Value) -> Result<Option<BlockCriteria>, Api
         }
     }
     Ok(Some(criteria))
+}
+
+/// The largest values of PostgreSQL's `integer` and `smallint`, the types of the reference's block
+/// and missed-slot columns that are not `bigint` or text.
+const INTEGER: u64 = 2_147_483_647;
+const SMALLINT: u64 = 32_767;
+
+/// Whether every value of `numerics` fits a column whose largest value is `max`. The reference's
+/// store refuses a value beyond its column's type, and the listing that fails answers an empty
+/// page.
+fn fits(numerics: &[Numeric], max: u64) -> bool {
+    numerics.iter().all(|numeric| match *numeric {
+        Numeric::Equal(value) => value <= max,
+        Numeric::Range { from, to } => [from, to].into_iter().flatten().all(|end| end <= max),
+    })
+}
+
+/// Whether the reference's store takes every value of the block criteria `criteria`.
+pub(crate) fn storable(criteria: &BlockCriteria) -> bool {
+    criteria.version.iter().all(|version| *version <= SMALLINT)
+        && [
+            &criteria.timestamp,
+            &criteria.height,
+            &criteria.number_of_transactions,
+            &criteria.payload_length,
+        ]
+        .into_iter()
+        .all(|numerics| fits(numerics, INTEGER))
 }
 
 /// The keys of the block criteria.
@@ -318,7 +351,7 @@ pub(crate) async fn block_listing(
 /// The missed-slot criteria of the validated query, narrowed to the lookback window as the
 /// reference's listing narrows them; `None` when a key's list of values is empty. The block keys a
 /// missed slot has no column for match nothing: the reference's listing fails on them and answers
-/// an empty page.
+/// an empty page. So does a value beyond its column's type.
 pub(crate) fn missed_criteria(
     ctx: &ApiContext,
     query: &Value,
@@ -328,8 +361,14 @@ pub(crate) fn missed_criteria(
 
 /// The missed-slot criteria of `query` for a window that starts at `earliest`: no timestamp starts
 /// at `earliest` (at 0 before the epoch); one exact timestamp before it becomes 0; one range that
-/// starts before it, or has no start, starts at it; a list is kept.
-fn narrowed(query: &Value, earliest: i64) -> Result<Option<MissedBlockCriteria>, ApiError> {
+/// starts before it, or has no start, starts at it; a list is kept. A window that starts within a
+/// second (`Window::whole` false) is a start the reference's store refuses as an integer, so a
+/// criteria that starts at it matches nothing.
+fn narrowed(query: &Value, window: Window) -> Result<Option<MissedBlockCriteria>, ApiError> {
+    let Window {
+        start: earliest,
+        whole,
+    } = window;
     let no_column = BLOCK_KEYS.iter().any(|name| {
         !["timestamp", "height", "username"].contains(name) && query.get(name).is_some()
     });
@@ -343,27 +382,48 @@ fn narrowed(query: &Value, earliest: i64) -> Result<Option<MissedBlockCriteria>,
     let start = u64::try_from(earliest).unwrap_or(0);
     let before = |value: u64| i128::from(value) < i128::from(earliest);
     let mut timestamp = numerics("timestamp", one("timestamp"))?;
-    match (query.get("timestamp"), timestamp.as_mut_slice()) {
-        (None, _) => timestamp.push(Numeric::Range {
-            from: Some(start),
-            to: None,
-        }),
-        (Some(Value::Array(_)), _) => {}
-        (_, [Numeric::Equal(value)]) if before(*value) => *value = 0,
-        (_, [Numeric::Range { from, .. }]) if from.is_none_or(before) => *from = Some(start),
-        _ => {}
+    let starts = match (query.get("timestamp"), timestamp.as_mut_slice()) {
+        (None, _) => {
+            timestamp.push(Numeric::Range {
+                from: Some(start),
+                to: None,
+            });
+            true
+        }
+        (Some(Value::Array(_)), _) => false,
+        (_, [Numeric::Equal(value)]) if before(*value) => {
+            *value = 0;
+            false
+        }
+        (_, [Numeric::Range { from, .. }]) if from.is_none_or(before) => {
+            *from = Some(start);
+            true
+        }
+        _ => false,
+    };
+    let height = numerics("height", one("height"))?;
+    if (starts && !whole) || !fits(&timestamp, INTEGER) || !fits(&height, INTEGER) {
+        return Ok(None);
     }
     Ok(Some(MissedBlockCriteria {
         timestamp,
-        height: numerics("height", one("height"))?,
+        height,
         username: texts("username", one("username"))?,
     }))
+}
+
+/// The start of the lookback window, in whole seconds since the network epoch: the reference's
+/// start, rounded up, and whether it is a whole second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Window {
+    start: i64,
+    whole: bool,
 }
 
 /// The first timestamp of the lookback window: the UTC midnight of the tip's date, less the
 /// lookback, in seconds since the network epoch (a fractional start counts from the next whole
 /// second).
-fn window_start(ctx: &ApiContext) -> i64 {
+fn window_start(ctx: &ApiContext) -> Window {
     let epoch = ctx.node.crypto.milestones.at(1).epoch();
     let epoch_ms = slots::epoch_unix_ms(epoch).unwrap_or(0);
     let tip = ctx.state().last_block.header().timestamp;
@@ -371,11 +431,15 @@ fn window_start(ctx: &ApiContext) -> i64 {
 }
 
 /// [`window_start`] for a tip at `tip` seconds after an epoch of `epoch_ms` (Unix milliseconds).
-fn window_from(tip: u32, epoch_ms: i64, lookback: i64) -> i64 {
+fn window_from(tip: u32, epoch_ms: i64, lookback: i64) -> Window {
     const DAY: i64 = 86_400;
     let unix = (i64::from(tip) * 1000 + epoch_ms).div_euclid(1000);
     let since_epoch = unix.div_euclid(DAY) * DAY * 1000 - epoch_ms;
-    since_epoch.div_euclid(1000) + i64::from(since_epoch.rem_euclid(1000) > 0) - lookback
+    let whole = since_epoch.rem_euclid(1000) == 0;
+    Window {
+        start: since_epoch.div_euclid(1000) + i64::from(!whole) - lookback,
+        whole,
+    }
 }
 
 /// The page of missed slots that `criteria` (`None`: nothing) match, in the order and page of the
@@ -419,8 +483,16 @@ mod tests {
 
     use super::*;
 
+    fn at(start: i64) -> Window {
+        Window { start, whole: true }
+    }
+
     fn timestamps(query: &Value, earliest: i64) -> Vec<Numeric> {
-        narrowed(query, earliest).unwrap().unwrap().timestamp
+        narrowed(query, at(earliest)).unwrap().unwrap().timestamp
+    }
+
+    fn starts(tip: u32, epoch_ms: i64, lookback: i64) -> i64 {
+        window_from(tip, epoch_ms, lookback).start
     }
 
     fn range(from: u64) -> Numeric {
@@ -434,13 +506,21 @@ mod tests {
     fn the_window_starts_at_the_midnight_of_the_tips_day_less_the_lookback() {
         // An epoch at a midnight: the tip 90 000 seconds in is on the second day.
         let midnight = 1_700_000_000_000 - 1_700_000_000_000 % 86_400_000;
-        assert_eq!(window_from(90_000, midnight, 1_000), 86_400 - 1_000);
-        assert_eq!(window_from(0, midnight, 0), 0);
+        assert_eq!(starts(90_000, midnight, 1_000), 86_400 - 1_000);
+        assert_eq!(starts(0, midnight, 0), 0);
         // An epoch that is not at a midnight: the start is in the epoch's seconds, before it.
-        assert_eq!(window_from(0, midnight + 3_600_000, 0), -3_600);
+        assert_eq!(starts(0, midnight + 3_600_000, 0), -3_600);
         // A fraction of a second rounds up.
-        assert_eq!(window_from(0, midnight + 1_500, 0), -1);
-        assert_eq!(window_from(86_400, midnight, 2_592_000), 86_400 - 2_592_000);
+        let fraction = window_from(0, midnight + 1_500, 0);
+        assert_eq!(
+            fraction,
+            Window {
+                start: -1,
+                whole: false
+            }
+        );
+        assert!(window_from(0, midnight + 3_600_000, 0).whole);
+        assert_eq!(starts(86_400, midnight, 2_592_000), 86_400 - 2_592_000);
     }
 
     #[test]
@@ -488,9 +568,62 @@ mod tests {
     #[test]
     fn a_block_key_without_a_column_matches_nothing() {
         for key in ["reward", "id", "generatorPublicKey", "totalFee"] {
-            assert_eq!(narrowed(&json!({key: 1}), 0).unwrap(), None, "{key}");
+            assert_eq!(narrowed(&json!({key: 1}), at(0)).unwrap(), None, "{key}");
         }
-        assert_eq!(narrowed(&json!({"height": []}), 0).unwrap(), None);
+        assert_eq!(narrowed(&json!({"height": []}), at(0)).unwrap(), None);
+    }
+
+    #[test]
+    fn a_value_beyond_its_columns_type_matches_nothing() {
+        let beyond = INTEGER + 1;
+        for query in [
+            json!({"timestamp": beyond}),
+            json!({"timestamp": {"from": 300, "to": beyond}}),
+            json!({"timestamp": [300, beyond]}),
+            json!({"height": {"to": beyond}}),
+        ] {
+            assert_eq!(narrowed(&query, at(100)).unwrap(), None, "{query}");
+        }
+        assert!(
+            narrowed(&json!({"height": INTEGER}), at(100))
+                .unwrap()
+                .is_some()
+        );
+        let block = |query: Value| block_criteria(&query).unwrap().unwrap();
+        assert!(storable(&block(
+            json!({"version": 32_767, "height": INTEGER})
+        )));
+        assert!(storable(&block(
+            json!({"totalAmount": u64::MAX, "reward": beyond})
+        )));
+        for query in [
+            json!({"version": 32_768}),
+            json!({"timestamp": beyond}),
+            json!({"height": {"from": 1, "to": beyond}}),
+            json!({"numberOfTransactions": [0, beyond]}),
+            json!({"payloadLength": {"from": beyond}}),
+        ] {
+            assert!(!storable(&block(query.clone())), "{query}");
+        }
+    }
+
+    #[test]
+    fn a_window_within_a_second_is_a_start_the_store_refuses() {
+        let within = Window {
+            start: 100,
+            whole: false,
+        };
+        // A criteria that starts at the window's start fails the reference's listing.
+        assert_eq!(narrowed(&json!({}), within).unwrap(), None);
+        let open = json!({"timestamp": {"to": 500}});
+        assert_eq!(narrowed(&open, within).unwrap(), None);
+        // One that keeps its own start, or its exact value, does not.
+        let kept = narrowed(&json!({"timestamp": {"from": 300}}), within).unwrap();
+        assert_eq!(kept.unwrap().timestamp, [range(300)]);
+        let early = narrowed(&json!({"timestamp": 50}), within).unwrap();
+        assert_eq!(early.unwrap().timestamp, [Numeric::Equal(0)]);
+        let list = narrowed(&json!({"timestamp": [10, 20]}), within).unwrap();
+        assert!(list.is_some());
     }
 
     #[test]

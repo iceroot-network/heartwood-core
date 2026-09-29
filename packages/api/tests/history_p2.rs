@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use heartwood_api::controllers::{blocks, rounds, votes, wallets};
+use heartwood_api::controllers::{blocks, delegate_history, rounds, votes, wallets};
 use heartwood_api::{ApiError, ApiReply, RouteId};
 use heartwood_crypto::{Address, KeyPair, Transaction};
 use serde_json::{Value, json};
@@ -500,5 +500,80 @@ async fn an_unknown_wallet_is_refused_or_has_nothing() {
             .await
             .unwrap();
         assert_eq!((ids(&reply).len(), total(&reply)), (0, 0));
+    }
+}
+
+/// `base` with `criteria` over it.
+fn with(mut base: Value, criteria: Value) -> Value {
+    for (key, value) in criteria.as_object().unwrap() {
+        base[key] = value.clone();
+    }
+    base
+}
+
+/// The data, the count and the estimate flag of a page.
+fn page_of(reply: &ApiReply) -> (Value, Value, Value) {
+    let meta = &reply.body["meta"];
+    (
+        reply.body["data"].clone(),
+        meta["totalCount"].clone(),
+        meta["totalCountIsEstimate"].clone(),
+    )
+}
+
+#[tokio::test]
+async fn a_criterion_beyond_its_columns_type_gives_the_failed_listings_empty_page() {
+    // The reference's store refuses a value beyond `integer` (`smallint` for the version), its
+    // listing fails, and the answer is an empty page whose flag is the listing options' (none on
+    // the raw block list, so `false`).
+    let empty = (json!([]), json!(0), json!(false));
+    let beyond = 2_147_483_648_u64;
+    let blocks_query = json!({"page": 1, "limit": 100, "orderBy": "height:desc"});
+    for criteria in [
+        json!({"height": {"from": 1, "to": beyond}}),
+        json!({"version": 32_768}),
+        json!({"timestamp": [5, beyond]}),
+        json!({"numberOfTransactions": {"to": beyond}}),
+        json!({"payloadLength": beyond}),
+    ] {
+        for transform in [false, true] {
+            let given = with(
+                with(blocks_query.clone(), criteria.clone()),
+                json!({"transform": transform}),
+            );
+            let asked = request(RouteId::BlocksIndex, &[], given);
+            let reply = blocks::index(fixture().ctx.clone(), asked).await.unwrap();
+            assert_eq!(page_of(&reply), empty, "{criteria} {transform}");
+            let given = with(
+                with(blocks_query.clone(), criteria.clone()),
+                json!({"transform": transform}),
+            );
+            let asked = request(RouteId::DelegatesBlocks, &[("id", "genesis_1")], given);
+            let reply = delegate_history::blocks(fixture().ctx.clone(), asked)
+                .await
+                .unwrap();
+            assert_eq!(page_of(&reply), empty, "{criteria} {transform}");
+        }
+    }
+    let missed_query = json!({"page": 1, "limit": 100, "orderBy": "timestamp:desc"});
+    for criteria in [
+        json!({"height": {"to": beyond}}),
+        json!({"timestamp": beyond}),
+        json!({"timestamp": {"to": beyond}}),
+        json!({"timestamp": [1, beyond]}),
+    ] {
+        let given = with(missed_query.clone(), criteria.clone());
+        let asked = request(RouteId::BlocksMissed, &[], given.clone());
+        let reply = blocks::missed(fixture().ctx.clone(), asked).await.unwrap();
+        assert_eq!(page_of(&reply), empty, "{criteria}");
+        let asked = request(
+            RouteId::DelegatesMissedBlocks,
+            &[("id", "genesis_1")],
+            given,
+        );
+        let reply = delegate_history::missed_blocks(fixture().ctx.clone(), asked)
+            .await
+            .unwrap();
+        assert_eq!(page_of(&reply), empty, "{criteria}");
     }
 }

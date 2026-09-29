@@ -9,15 +9,19 @@ use std::sync::Arc;
 use heartwood_database::BlockCriteria;
 
 use crate::context::{ApiContext, ApiReply, ApiRequest};
-use crate::controllers::blocks::{block_criteria, block_listing, missed_criteria, missed_listing};
+use crate::controllers::blocks::{
+    block_criteria, block_listing, missed_criteria, missed_listing, storable,
+};
 use crate::controllers::wallets;
 use crate::errors::ApiError;
 
 /// `GET /delegates/{id}/blocks`: a delegate's blocks; the query's `transform` chooses the
-/// resource, and the count flag is the configured one either way.
+/// resource, and the count flag is the configured one either way (a value beyond its column's type
+/// fails the reference's listing, which answers an empty page with the same flag).
 pub async fn blocks(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
     let username = delegate_name(&ctx, &request)?;
-    let criteria = block_criteria(&request.query)?.map(|criteria| BlockCriteria {
+    let criteria = block_criteria(&request.query)?.filter(storable);
+    let criteria = criteria.map(|criteria| BlockCriteria {
         username: vec![username],
         ..criteria
     });
