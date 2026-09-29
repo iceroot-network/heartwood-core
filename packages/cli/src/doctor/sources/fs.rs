@@ -123,7 +123,7 @@ pub fn is_key_file_name(path: &Path) -> bool {
 ///
 /// ```no_run
 /// # use heartwood_cli::doctor::seams::{DoctorFs, KeyFile};
-/// fn owner(key: &KeyFile, fs: &dyn DoctorFs) -> Option<u32> {
+/// fn file_uid(key: &KeyFile, fs: &dyn DoctorFs) -> Option<u32> {
 ///     key.facts(fs).ok().map(|facts| facts.own.uid)
 /// }
 /// ```
