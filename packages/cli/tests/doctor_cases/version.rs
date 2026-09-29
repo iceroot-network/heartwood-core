@@ -389,6 +389,35 @@ fn a_later_milestone_says_when_it_starts() {
 }
 
 #[test]
+fn the_earliest_refusing_milestone_is_the_one_named() {
+    let mut view = floored(floors(false, vec![40_000, 30_000]));
+    view.relay_config = Ok(relay_facts(4001, 4003));
+    let findings = run("version.floor", &view);
+    assert!(findings[0].facts.contains(&("from", Fact::Int(30_000))));
+}
+
+#[test]
+fn a_recorded_version_that_is_not_one_gives_way_to_this_build() {
+    let mut view = floored(floors(false, Vec::new()));
+    let process = view
+        .processes
+        .get_mut(&Role::Relay)
+        .and_then(|p| p.as_mut().ok());
+    process.expect("a process").supervisor = Some(SupervisorFacts {
+        started_at_ms: None,
+        restarts: 0,
+        unstable: 0,
+        version: "not a version {height}".into(),
+    });
+    let findings = run("version.floor", &view);
+    let [finding] = findings.as_slice() else {
+        panic!("one finding")
+    };
+    assert_eq!(finding.status, Status::Pass);
+    assert!(finding.facts.iter().any(|(name, _)| *name == "version"));
+}
+
+#[test]
 fn the_build_check_names_its_features() {
     let findings = run("version.build", &built(&["devnet"]));
     let [finding] = findings.as_slice() else {

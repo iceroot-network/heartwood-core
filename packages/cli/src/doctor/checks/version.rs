@@ -35,7 +35,8 @@ fn relay_version(view: &dyn View) -> String {
     let process = view.process(Role::Relay).ok();
     let recorded = process
         .and_then(|p| p.supervisor.as_ref())
-        .map(|s| s.version.clone());
+        .map(|s| s.version.clone())
+        .filter(|text| version(text).is_some());
     core_version(view)
         .or(recorded)
         .unwrap_or_else(|| view.build().version.into())
@@ -55,7 +56,7 @@ pub fn floor(input: &CheckInput<'_>) -> Vec<Finding> {
         if verdict.refused_now {
             return Ok((Config, (Fail, "refused"), facts));
         }
-        let Some(from) = verdict.refused_from.first() else {
+        let Some(from) = verdict.refused_from.iter().min() else {
             return Ok((Config, (Pass, "ok"), facts));
         };
         facts.push(("from", int(*from)));
