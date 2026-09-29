@@ -6,7 +6,8 @@
 //! The record is `nodes/<node>/difftest/await-NNNN.jsonl`, one file per start of the relay, beside
 //! that start's `digest-NNNN.jsonl`. A line is one public request that reached the wait:
 //! `{"t", "route", "caller", "waitMs", "end", "tipBefore", "tipAfter"}` with `t` the UTC time the
-//! wait ended and `end` one of `none`, `drained`, `bound` and `closed`. The checks:
+//! request reached the wait (so the wait ended `waitMs` later) and `end` one of `none`, `drained`,
+//! `bound` and `closed`. The checks:
 //!
 //! - every start of every Heartwood relay has its record file, and the lines parse (a torn last
 //!   line is dropped and recorded);
@@ -103,8 +104,8 @@ impl End {
 /// One line of a record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Request {
-    /// The UTC time the wait ended, in milliseconds.
-    t: i64,
+    /// The UTC time the request reached the wait, in milliseconds.
+    at: i64,
     /// The route's name.
     route: String,
     /// The wait, in milliseconds.
@@ -118,9 +119,15 @@ struct Request {
 }
 
 impl Request {
-    /// When the wait began.
+    /// When the wait began: when the request reached it.
     fn began(&self) -> i64 {
-        self.t - i64::try_from(self.wait).unwrap_or(i64::MAX)
+        self.at
+    }
+
+    /// When the wait ended.
+    fn ended(&self) -> i64 {
+        self.at
+            .saturating_add(i64::try_from(self.wait).unwrap_or(i64::MAX))
     }
 
     fn parse(value: &Value) -> std::result::Result<Request, String> {
@@ -140,7 +147,7 @@ impl Request {
         let t = text("t")?;
         let end = text("end")?;
         Ok(Request {
-            t: run::parse_time(t).ok_or_else(|| format!("{t:?} is not a UTC time"))?,
+            at: run::parse_time(t).ok_or_else(|| format!("{t:?} is not a UTC time"))?,
             route: text("route")?.to_owned(),
             wait: number("waitMs")?,
             end: End::parse(end).ok_or_else(|| format!("{end:?} is not an end"))?,
@@ -365,7 +372,7 @@ fn judge_stall(
     let bound_ms = i64::try_from(BOUND_MS).unwrap_or(i64::MAX);
     let held: Vec<&Request> = requests
         .iter()
-        .filter(|r| r.t >= hold_at && r.began() <= window.end)
+        .filter(|r| r.ended() >= hold_at && r.began() <= window.end)
         .collect();
     let bounds: Vec<&&Request> = held.iter().filter(|r| r.end == End::Bound).collect();
     v.bound = bounds.len();
@@ -380,7 +387,7 @@ fn judge_stall(
                 "a {} wait ended `bound` after {} ms, not between 8.0 and 8.3 s (ended {})",
                 r.route,
                 r.wait,
-                run::format_time(r.t)
+                run::format_time(r.ended())
             ));
         }
         if let Some(pre) = v.pre_tip
@@ -391,7 +398,7 @@ fn judge_stall(
                 r.route,
                 r.before,
                 r.after,
-                run::format_time(r.t)
+                run::format_time(r.ended())
             ));
         }
     }
@@ -403,7 +410,7 @@ fn judge_stall(
                 r.route,
                 ahead,
                 r.end.name(),
-                run::format_time(r.t)
+                run::format_time(r.ended())
             ));
         }
         if ahead < bound_ms && r.end == End::Bound {
@@ -411,7 +418,7 @@ fn judge_stall(
                 "a {} wait that began {} ms before the commit ended `bound` (ended {})",
                 r.route,
                 ahead,
-                run::format_time(r.t)
+                run::format_time(r.ended())
             ));
         }
         if let Some(pre) = v.pre_tip
@@ -421,7 +428,7 @@ fn judge_stall(
             v.problems.push(format!(
                 "a {} wait ended `drained` on the tip before the job, {pre} (ended {})",
                 r.route,
-                run::format_time(r.t)
+                run::format_time(r.ended())
             ));
         }
     }
@@ -441,7 +448,7 @@ fn judge_stall(
             v.problems.push(format!(
                 "a {} request after the commit carried the tip before the job, {pre} (at {})",
                 r.route,
-                run::format_time(r.t)
+                run::format_time(r.ended())
             ));
         }
         let resumed = requests
@@ -543,7 +550,7 @@ fn checks(run_dir: &Path, manifest: &Manifest, windows: &[Window], cases: &mut C
     let in_stall = |node: &str, r: &Request| {
         stalls_of(node)
             .iter()
-            .any(|w| w.contains(r.t) || w.contains(r.began()))
+            .any(|w| w.contains(r.ended()) || w.contains(r.began()))
     };
     let mut honest_drained = 0usize;
     let mut honest_max: Option<(String, u64, String, i64)> = None;
@@ -623,18 +630,18 @@ fn checks(run_dir: &Path, manifest: &Manifest, windows: &[Window], cases: &mut C
         for r in &honest {
             let fault = windows
                 .iter()
-                .find(|w| w.concerns(name) && (w.contains(r.t) || w.contains(r.began())));
+                .find(|w| w.concerns(name) && (w.contains(r.ended()) || w.contains(r.began())));
             match r.end {
                 End::Bound => problems.push(format!(
                     "a {} wait ended `bound` after {} ms (ended {})",
                     r.route,
                     r.wait,
-                    run::format_time(r.t)
+                    run::format_time(r.ended())
                 )),
                 End::Closed if fault.is_none() => problems.push(format!(
                     "a {} wait ended `closed` outside a fault window (ended {})",
                     r.route,
-                    run::format_time(r.t)
+                    run::format_time(r.ended())
                 )),
                 _ => {}
             }
@@ -656,7 +663,7 @@ fn checks(run_dir: &Path, manifest: &Manifest, windows: &[Window], cases: &mut C
                     "a {} wait ended on the tip {}, which the digest never applied (ended {})",
                     r.route,
                     r.after,
-                    run::format_time(r.t)
+                    run::format_time(r.ended())
                 ));
             }
         }
@@ -671,7 +678,7 @@ fn checks(run_dir: &Path, manifest: &Manifest, windows: &[Window], cases: &mut C
             .count();
         for r in &honest {
             if honest_max.as_ref().is_none_or(|m| r.wait > m.1) && r.end != End::Bound {
-                honest_max = Some((name.clone(), r.wait, r.route.clone(), r.t));
+                honest_max = Some((name.clone(), r.wait, r.route.clone(), r.ended()));
             }
         }
     }
@@ -775,7 +782,7 @@ fn stall(run_dir: &Path, manifest: &Manifest, relay: &Relay, window: &Window, ca
     for r in relay
         .requests
         .iter()
-        .filter(|r| r.t >= hold.unwrap_or(commit - STALL_MS) && r.began() <= window.end)
+        .filter(|r| r.ended() >= hold.unwrap_or(commit - STALL_MS) && r.began() <= window.end)
     {
         let entry = by_route.entry(r.route.as_str()).or_default();
         match r.end {
@@ -850,7 +857,7 @@ fn distribution(relay: &Relay, load: &Load, cases: &mut Cases) {
             let longest = requests
                 .iter()
                 .max_by_key(|r| r.wait)
-                .map_or(String::new(), |r| load.beside(r.t));
+                .map_or(String::new(), |r| load.beside(r.ended()));
             format!(
                 "waits median {} ms, p99 {} ms, max {} ms ({longest})",
                 percentile(&waits, 50),
@@ -908,7 +915,7 @@ mod tests {
 
     fn request(began: i64, wait: u64, end: End, before: u64, after: u64) -> Request {
         Request {
-            t: began + i64::try_from(wait).unwrap(),
+            at: began,
             route: "getStatus".into(),
             wait,
             end,
@@ -933,7 +940,12 @@ mod tests {
             "caller": "198.51.100.15", "waitMs": 8004, "end": "bound", "tipBefore": 110, "tipAfter": 110});
         let r = Request::parse(&good).unwrap();
         assert_eq!((r.wait, r.end, r.before), (8004, End::Bound, 110));
-        assert_eq!(r.began(), r.t - 8004);
+        // `t` is when the request reached the wait, as the relay writes it.
+        assert_eq!(
+            r.began(),
+            run::parse_time("2026-09-29T10:00:08.123Z").unwrap()
+        );
+        assert_eq!(r.ended(), r.began() + 8004);
         let bad = serde_json::json!({"t": "2026-09-29T10:00:08.123Z", "route": "getStatus",
             "caller": "x", "waitMs": 1, "end": "late", "tipBefore": 1, "tipAfter": 1});
         assert!(Request::parse(&bad).unwrap_err().contains("not an end"));

@@ -41,10 +41,11 @@ fn tip_at(t: i64) -> u64 {
     u64::try_from(1 + since.div_euclid(SLOT)).unwrap()
 }
 
-/// A record line ending at `end_ms` after the start.
+/// A record line of a wait that ended at `end_ms` after the start. As the relay writes it, `t` is
+/// the time the request reached the wait, `wait` milliseconds before its end.
 fn line(end_ms: i64, route: &str, wait: i64, end: &str, before: u64, after: u64) -> Value {
     json!({
-        "t": format_time(base() + end_ms),
+        "t": format_time(base() + end_ms - wait),
         "route": route,
         "caller": "198.51.100.15",
         "waitMs": wait,
