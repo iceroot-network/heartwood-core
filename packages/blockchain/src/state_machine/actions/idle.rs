@@ -14,7 +14,6 @@
 
 use std::future::Future;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::time::Duration;
 
 use heartwood_crypto::identities::PublicKeyBytes;
@@ -80,11 +79,12 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
         F: Fn(Arc<Self>) -> T + Send + 'static,
         T: Future<Output = ()> + Send + 'static,
     {
-        let (service, running) = (Arc::downgrade(self), Arc::new(AtomicBool::new(false)));
+        let service = Arc::downgrade(self);
         let task = self.parts.runtime.spawn(async move {
             let mut interval = tokio::time::interval(period);
             // The first tick is at once; `setInterval` runs its callback first after one period.
             interval.tick().await;
+            let mut last: Option<tokio::task::JoinHandle<()>> = None;
             loop {
                 interval.tick().await;
                 let Some(service) = service.upgrade() else {
@@ -93,12 +93,9 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
                 if service.flags().stopped {
                     return;
                 }
-                if service.state().is_idle() && !running.swap(true, SeqCst) {
-                    let (tick, running) = (tick(Arc::clone(&service)), Arc::clone(&running));
-                    service.spawn(async move {
-                        tick.await;
-                        running.store(false, SeqCst);
-                    });
+                let running = last.as_ref().is_some_and(|last| !last.is_finished());
+                if service.state().is_idle() && !running {
+                    last = Some(service.parts.runtime.spawn(tick(Arc::clone(&service))));
                 }
             }
         });
