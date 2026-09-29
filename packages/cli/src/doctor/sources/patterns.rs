@@ -321,7 +321,8 @@ fn build(kind: &str, c: &[&str]) -> Option<LineKind> {
     Some(match kind {
         "RelayStarted" | "ForgerStarted" => {
             Id::new(IdKind::Version, c.first()?)?;
-            (named(1)?, named(2)?);
+            named(1)?;
+            named(2)?;
             if kind == "RelayStarted" {
                 K::RelayStarted
             } else {

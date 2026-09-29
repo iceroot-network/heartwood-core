@@ -11,15 +11,18 @@
 //! Limits: the last [`MAX_TAIL`] bytes of each file, [`MAX_RUN`] bytes a run (the view's budget),
 //! excerpts of at most [`MAX_EXCERPT`] bytes.
 
+use std::ffi::OsString;
+use std::io::Read;
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use heartwood_kernel::Clock;
 use heartwood_kernel::log::Level;
 
-use crate::doctor::report::{Id, Untrusted};
-use crate::doctor::seams::DoctorFs;
-use crate::doctor::sources::fs::ReadableRoots;
+use crate::doctor::report::{Id, Untrusted, UntrustedSource};
+use crate::doctor::seams::{DoctorFs, FsError, Tail};
+use crate::doctor::sources::fs::{Readable, ReadableRoots};
+use crate::doctor::sources::patterns;
 use crate::doctor::view::{Budget, Reason, Source, Unknown, Window};
 use crate::seams::Role;
 
@@ -463,16 +466,365 @@ pub struct LogContext<'a> {
     pub file_level: Option<Level>,
 }
 
-/// The role's log window.
-pub fn read_log(context: &LogContext<'_>) -> Result<LogWindow, Unknown> {
-    Err(Unknown::new(source_of(context.role), Reason::NotBuilt))
+/// The most excerpts a window keeps (the latest ones).
+const MAX_EXCERPTS: usize = 32;
+/// The most decompressed bytes read from a rotated file.
+const MAX_INFLATED: u64 = 128 * 1024 * 1024;
+/// The most physical lines after a line that opens a longer message that are read as its text.
+const MAX_CONTINUED: usize = 64;
+
+/// Whether the line's message holds text of a peer, a relay or another outside source: its
+/// excerpt is kept, and an older build's log can hold lines forged inside it.
+pub fn carries_outside(kind: &LineKind) -> bool {
+    use LineKind as K;
+    matches!(
+        kind,
+        K::DownloadFailed
+            | K::RelayRequestFailed
+            | K::SessionError
+            | K::SyncCheckFailed
+            | K::BroadcastFailed
+            | K::EmitFailed
+            | K::NodeStops
+            | K::NotAttesting { .. }
+            | K::NoStatusToAttest
+            | K::AttestationsNotDelivered
+            | K::NoOpenSocket
+    )
 }
 
-/// The role's error capture from `since_ms` (its last start) on.
+/// `text` as an excerpt, cut to [`MAX_EXCERPT`] bytes.
+fn excerpt(source: UntrustedSource, at_ms: Option<i64>, text: &str) -> Untrusted {
+    let mut end = text.len().min(MAX_EXCERPT);
+    while !text.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    let text = text.get(..end).unwrap_or_default().to_owned();
+    Untrusted {
+        source,
+        at_ms,
+        text,
+    }
+}
+
+/// The days from 1970-01-01 to a civil date.
+fn days(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let of_year = year - era * 400;
+    let of_day = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+    let of_era = of_year * 365 + of_year / 4 - of_year / 100 + of_day;
+    era * 146_097 + of_era - 719_468
+}
+
+/// A line: `[YYYY-MM-DD HH:MM:ss.lll] LEVEL: message`, its time in Unix milliseconds.
+fn parse_line(line: &str) -> Option<(i64, Level, &str)> {
+    let (stamp, rest) = line.strip_prefix('[')?.split_once("] ")?;
+    let (label, message) = rest.split_once(':')?;
+    let level = Level::from_name(&label.to_ascii_lowercase())?;
+    let message = message.strip_prefix(' ').unwrap_or(message);
+    let bytes = stamp.as_bytes();
+    let shape = bytes.len() == 23
+        && [
+            (4, b'-'),
+            (7, b'-'),
+            (10, b' '),
+            (13, b':'),
+            (16, b':'),
+            (19, b'.'),
+        ]
+        .iter()
+        .all(|&(at, sign)| bytes.get(at) == Some(&sign));
+    let field = |from: usize, to: usize| -> Option<i64> {
+        let digits = stamp.get(from..to)?;
+        digits
+            .bytes()
+            .all(|b| b.is_ascii_digit())
+            .then(|| digits.parse().ok())?
+    };
+    let (month, day) = (field(5, 7)?, field(8, 10)?);
+    let (hour, minute, second) = (field(11, 13)?, field(14, 16)?, field(17, 19)?);
+    let valid = shape && (1..=12).contains(&month) && (1..=31).contains(&day);
+    if !valid || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    let date = days(field(0, 4)?, month, day);
+    let time = ((date * 24 + hour) * 60 + minute) * 60 + second;
+    Some((time * 1000 + field(20, 23)?, level, message))
+}
+
+/// What the lines of one or two files gave.
+#[derive(Default)]
+struct Scan {
+    events: Vec<LogEvent>,
+    other: u32,
+    untrusted: u32,
+    excerpts: Vec<Untrusted>,
+    first: Option<i64>,
+    last: Option<i64>,
+    /// The time of the first line read, whatever the window.
+    earliest: Option<i64>,
+}
+
+impl Scan {
+    fn keep(&mut self, excerpt: Untrusted) {
+        if self.excerpts.len() >= MAX_EXCERPTS {
+            self.excerpts.remove(0);
+        }
+        self.excerpts.push(excerpt);
+    }
+
+    /// The lines of `text`, which starts `base` bytes into its file.
+    fn lines(&mut self, context: &LogContext<'_>, text: &str, base: u64, rotated: bool) {
+        let (role, window) = (context.role, context.window);
+        let source = UntrustedSource::Log(role);
+        let (mut previous, mut offset) = (None::<i64>, base);
+        let mut open: Option<(&str, usize)> = None;
+        for line in text.split('\n') {
+            let at = offset;
+            offset = offset.saturating_add(u64::try_from(line.len()).unwrap_or(0) + 1);
+            if line.is_empty() {
+                continue;
+            }
+            if let Some((emoji, used)) = open {
+                self.untrusted += 1;
+                self.keep(excerpt(source, previous, line));
+                let ended = line.ends_with(emoji) || used >= MAX_CONTINUED;
+                open = (!ended).then_some((emoji, used + 1));
+                continue;
+            }
+            let Some((at_ms, level, message)) = parse_line(line) else {
+                self.other += 1;
+                continue;
+            };
+            self.earliest.get_or_insert(at_ms);
+            let backwards = previous.is_some_and(|before| at_ms < before - BACKWARDS_MS);
+            previous = Some(at_ms);
+            if backwards {
+                self.untrusted += 1;
+                self.keep(excerpt(source, Some(at_ms), line));
+                continue;
+            }
+            if let Some(emoji) = patterns::continues(role, level, message) {
+                open = Some((emoji, 0));
+            }
+            if at_ms < window.from_ms || at_ms > window.to_ms {
+                continue;
+            }
+            self.first.get_or_insert(at_ms);
+            self.last = Some(at_ms);
+            match patterns::classify(role, level, message) {
+                Some(kind) => {
+                    if carries_outside(&kind) {
+                        self.keep(excerpt(source, Some(at_ms), message));
+                    }
+                    self.events.push(LogEvent {
+                        kind,
+                        level,
+                        at_ms,
+                        offset: at,
+                        rotated,
+                    });
+                }
+                None => {
+                    self.other += 1;
+                    if level <= Level::Warning {
+                        self.keep(excerpt(source, Some(at_ms), message));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `path` as a file the doctor may read.
+fn readable(context: &LogContext<'_>, path: &Path, source: Source) -> Result<Readable, Unknown> {
+    let refused = |error| Unknown::from_fs(source, &FsError::Refused(error));
+    Readable::new(path, context.roots).map_err(refused)
+}
+
+/// The end of `file`, at most [`MAX_TAIL`] bytes and what the run's budget still allows, charged
+/// for the bytes the file has.
+fn tail_of(context: &LogContext<'_>, file: &Readable, source: Source) -> Result<Tail, Unknown> {
+    context.budget.check(source, context.clock.now_ms())?;
+    let size = context
+        .fs
+        .facts(file.path())
+        .ok()
+        .map(|facts| facts.own.size);
+    let wanted = size.map_or(MAX_TAIL, |size| size.min(MAX_TAIL));
+    let granted = context.budget.take_log_bytes(wanted);
+    if granted == 0 && wanted > 0 {
+        return Err(Unknown::new(source, Reason::RunBudget));
+    }
+    context
+        .fs
+        .tail(file, granted)
+        .map_err(|error| Unknown::from_fs(source, &error))
+}
+
+/// The text of a tail, without the line the cut may have made partial.
+fn whole_lines(tail: &Tail) -> (String, u64) {
+    let text = String::from_utf8_lossy(&tail.bytes);
+    if tail.start == 0 {
+        return (text.into_owned(), 0);
+    }
+    let cut = text.find('\n').map_or(text.len(), |at| at + 1);
+    let skipped = u64::try_from(cut).unwrap_or(0);
+    (
+        text.get(cut..).unwrap_or_default().to_owned(),
+        tail.start.saturating_add(skipped),
+    )
+}
+
+/// The newest rotated file among `names`, by date then by number, and how many there are.
+fn newest_rotated(stem: &str, names: &[OsString]) -> (Option<String>, usize) {
+    let key = |name: &str| -> Option<(String, u32)> {
+        let middle = name
+            .strip_prefix(stem)?
+            .strip_prefix('-')?
+            .strip_suffix(".log.gz")?;
+        let (date, number) = middle.split_once('.').unwrap_or((middle, "0"));
+        let dated = date.len() == 10 && date.bytes().all(|b| b.is_ascii_digit() || b == b'-');
+        dated.then(|| Some((date.to_owned(), number.parse().ok()?)))?
+    };
+    let rotated: Vec<(&str, (String, u32))> = (names.iter())
+        .filter_map(|name| name.to_str())
+        .filter_map(|name| Some((name, key(name)?)))
+        .collect();
+    let newest = rotated.iter().max_by(|a, b| a.1.cmp(&b.1));
+    (newest.map(|(name, _)| (*name).to_owned()), rotated.len())
+}
+
+/// The last [`MAX_TAIL`] bytes of what `bytes` inflate to, and how many came before them.
+fn inflate_tail(bytes: &[u8]) -> Option<(Vec<u8>, u64)> {
+    let (mut decoder, mut kept, mut chunk) =
+        (flate2::read::GzDecoder::new(bytes), Vec::new(), [0; 65_536]);
+    let (keep, mut total) = (usize::try_from(MAX_TAIL).ok()?, 0_u64);
+    loop {
+        let read = decoder.read(&mut chunk).ok()?;
+        if read == 0 {
+            break;
+        }
+        kept.extend_from_slice(chunk.get(..read)?);
+        total = total.saturating_add(u64::try_from(read).ok()?);
+        if total > MAX_INFLATED {
+            return None;
+        }
+        if kept.len() > keep.saturating_mul(2) {
+            kept.drain(..kept.len() - keep);
+        }
+    }
+    if kept.len() > keep {
+        kept.drain(..kept.len() - keep);
+    }
+    let before = total.saturating_sub(u64::try_from(kept.len()).ok()?);
+    Some((kept, before))
+}
+
+/// The newest rotated file of the role, scanned into `scan`; whether it holds the log from its
+/// start and there is no older file.
+fn read_rotated(context: &LogContext<'_>, scan: &mut Scan) -> Option<bool> {
+    let source = source_of(context.role);
+    let dir = readable(context, &context.files.dir, source).ok()?;
+    let names = context.fs.list(&dir).ok()?;
+    let (name, count) = newest_rotated(&context.files.stem, &names);
+    let Some(name) = name else {
+        return Some(true);
+    };
+    let file = readable(context, &context.files.dir.join(name), source).ok()?;
+    let size = context
+        .fs
+        .facts(file.path())
+        .ok()
+        .map(|facts| facts.own.size);
+    let granted = context
+        .budget
+        .take_log_bytes(size.map_or(MAX_TAIL, |size| size.min(MAX_TAIL)));
+    let compressed = context.fs.read(&file, granted).ok()?;
+    let (bytes, before) = inflate_tail(&compressed)?;
+    let tail = Tail {
+        bytes,
+        start: before,
+        len: 0,
+    };
+    let (text, base) = whole_lines(&tail);
+    scan.lines(context, &text, base, true);
+    Some(before == 0 && count == 1)
+}
+
+/// The role's log window.
+pub fn read_log(context: &LogContext<'_>) -> Result<LogWindow, Unknown> {
+    let source = source_of(context.role);
+    let file = readable(context, &context.files.current(), source)?;
+    let tail = tail_of(context, &file, source)?;
+    let (text, base) = whole_lines(&tail);
+    let mut current = Scan::default();
+    current.lines(context, &text, base, false);
+    let from = context.window.from_ms;
+    let (mut older, mut nothing_older) = (Scan::default(), None);
+    let before_window = current.earliest.is_none_or(|first| first > from);
+    if tail.start == 0 && before_window {
+        nothing_older = read_rotated(context, &mut older);
+    }
+    let earliest = older.earliest.or(current.earliest);
+    let covered = Covered {
+        first_ms: older.first.or(current.first),
+        last_ms: current.last.or(older.last),
+        whole: earliest.is_some_and(|first| first <= from) || nothing_older == Some(true),
+    };
+    let mut excerpts = older.excerpts;
+    excerpts.extend(current.excerpts);
+    let surplus = excerpts.len().saturating_sub(MAX_EXCERPTS);
+    excerpts.drain(..surplus);
+    older.events.extend(current.events);
+    Ok(LogWindow {
+        role: context.role,
+        events: older.events,
+        other_lines: older.other + current.other,
+        untrusted_lines: older.untrusted + current.untrusted,
+        covered,
+        file_level: context.file_level,
+        excerpts,
+        capped: tail.start > 0,
+    })
+}
+
+/// The role's error capture from `since_ms` (its last start) on. The capture has no times: a
+/// file last written before the start holds nothing since it, and otherwise its end is read
+/// whole, so a start error of an earlier start may still be in it.
 pub fn read_capture(
     context: &LogContext<'_>,
     since_ms: Option<i64>,
 ) -> Result<CaptureWindow, Unknown> {
-    let _ = (context, since_ms);
-    Err(Unknown::new(Source::ErrorCapture, Reason::NotBuilt))
+    let source = Source::ErrorCapture;
+    let file = readable(context, &context.files.error_capture(), source)?;
+    let facts = context.fs.facts(file.path()).ok();
+    let stale = since_ms
+        .zip(facts)
+        .is_some_and(|(since, facts)| facts.own.modified_ms < since);
+    let mut window = CaptureWindow::default();
+    if stale {
+        return Ok(window);
+    }
+    let tail = tail_of(context, &file, source)?;
+    let (text, _) = whole_lines(&tail);
+    let origin = UntrustedSource::ErrorCapture(context.role);
+    for line in text.lines().filter(|line| !line.is_empty()) {
+        match patterns::classify(context.role, Level::Error, line) {
+            Some(LineKind::StartError(error)) => {
+                if window.errors.last() != Some(&error) {
+                    window.errors.push(error);
+                }
+            }
+            _ => {
+                window.other_lines += 1;
+                if window.excerpts.len() >= MAX_EXCERPTS {
+                    window.excerpts.remove(0);
+                }
+                window.excerpts.push(excerpt(origin, None, line));
+            }
+        }
+    }
+    Ok(window)
 }
