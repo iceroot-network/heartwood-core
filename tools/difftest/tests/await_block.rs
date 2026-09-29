@@ -5,8 +5,8 @@
 //! The honest run has a bit over 90 lines of each exercised route per relay, waits of a few
 //! milliseconds that drained, and one stall: node 4's job held from 10:16:40 for 12 s. Its waits end
 //! `bound` (a status poll, a block post) or `closed` (a block poll whose client gave up), one wait ends
-//! `drained` on the new tip, and requests after the commit carry it. Each other test changes one
-//! thing.
+//! `drained` on the new tip, and requests after the commit carry it; node 5, whose only peer node 4
+//! is, lists it in its peer poll after the commit. Each other test changes one thing.
 
 use std::path::{Path, PathBuf};
 
@@ -114,8 +114,8 @@ struct Recorded {
     timeouts: usize,
     /// The line of node 4's log that says the job was held.
     hold_logged: bool,
-    /// The load samples.
-    load: Vec<Value>,
+    /// The peer polls, with the machine's load beside each.
+    polls: Vec<Value>,
 }
 
 impl Recorded {
@@ -133,9 +133,10 @@ impl Recorded {
             })),
             timeouts: 3,
             hold_logged: true,
-            load: vec![
-                json!({"ts": format_time(base() + 500_000), "load1": 1.25}),
-                json!({"ts": format_time(base() + 1_500_000), "load1": 2.5}),
+            polls: vec![
+                poll(500_000, "node1", 1.25, &[]),
+                poll(HOLD + HELD + 10_000, "node5", 2.5, &[RELAY]),
+                poll(1_500_000, "node1", 2.5, &[]),
             ],
         }
     }
@@ -207,9 +208,20 @@ impl Recorded {
             &run.join("logs/node1/core-current.log"),
             "[2026-09-29 09:00:00.000] INFO: started\n",
         );
-        let load: Vec<String> = self.load.iter().map(Value::to_string).collect();
-        write(&run.join("load.jsonl"), &load.join("\n"));
+        let polls: Vec<String> = self.polls.iter().map(Value::to_string).collect();
+        write(&run.join("peer-polls.jsonl"), &polls.join("\n"));
     }
+}
+
+/// A peer poll of `node` at `ms` after the start listing `peers`, with the machine's `load1`, as
+/// the recipe writes it.
+fn poll(ms: i64, node: &str, load1: f64, peers: &[&str]) -> Value {
+    let listed: Vec<Value> = peers
+        .iter()
+        .map(|ip| json!({"ip": ip, "port": 6002, "ports": {"@solar-network/api": 6003}}))
+        .collect();
+    json!({"t": format_time(base() + ms), "node": node, "ok": true, "load1": load1,
+        "status": 200, "count": listed.len(), "peers": listed})
 }
 
 fn write(path: &Path, text: &str) {
@@ -294,15 +306,33 @@ fn an_honest_run_with_a_stall_passes() {
         "{recorded}"
     );
     assert!(recorded.contains("20 ms granularity"), "{recorded}");
-    // The peer check of the stall is not built, which a strict run fails on.
+    // Node 5 kept node 4, its only peer, through the stall.
     assert!(
-        report
-            .results
-            .iter()
-            .any(|r| r.outcome == Outcome::NoSubject
-                && r.label
-                    .contains("kept or regained it in the stall's window (not built)")),
+        report.results.iter().any(|r| r.outcome == Outcome::Pass
+            && r.label
+                .contains("kept or regained it in the stall's window: listed at")),
         "{report:#?}"
+    );
+}
+
+#[test]
+fn a_sole_peer_lost_in_the_stall_fails() {
+    // Node 5's last poll in the window lists no peer.
+    let mut recorded = Recorded::honest();
+    recorded
+        .polls
+        .push(poll(HOLD + HELD + 20_000, "node5", 1.5, &[]));
+    fails_on(&report_of(&recorded), "does not list 198.51.100.14");
+    // No poll of node 5 in the window at all; a failed poll is none.
+    let mut recorded = Recorded::honest();
+    recorded.polls.retain(|p| p["node"] != "node5");
+    recorded
+        .polls
+        .push(json!({"t": format_time(base() + HOLD + HELD + 10_000),
+        "node": "node5", "ok": false, "load1": 1.0, "error": "fetch failed"}));
+    fails_on(
+        &report_of(&recorded),
+        "no poll of node5's peer list in the window",
     );
 }
 

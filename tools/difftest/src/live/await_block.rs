@@ -22,10 +22,12 @@
 //!   before the job, or `closed`; at least one ended `bound`; at least one ended `closed` unless the
 //!   reference nodes' logs show no client reached three timeouts on the relay in the window; waits
 //!   that began later did not end `bound`, and none ended `drained` on the tip before the job;
-//!   requests after the commit carried a later tip and the chain went on; whether the node whose
-//!   only peer the relay is kept or regained it is not checked yet (a case that fails a strict run);
+//!   requests after the commit carried a later tip and the chain went on; the node whose only peer
+//!   the relay is (node 5 of runs `w0`, `w` and `p`) listed it in its last peer poll inside the
+//!   stall's window (it kept or regained it). The commit is the end of the hold the relay's debug
+//!   log names ("holding the job for N ms"); without that line it is the stall's `recovered`;
 //! - recorded, not gated: per relay and route the distribution of the waits, the longest honest
-//!   wait beside the machine's load (`load.jsonl`, `{ts, load1}` lines, when the recipe wrote it),
+//!   wait beside the machine's load (the `load1` of the recipe's peer polls, `peer-polls.jsonl`),
 //!   and what the stall did per route.
 //!
 //! The wait sees the queue through a watch that is refreshed every 20 ms, so a drain is seen up to
@@ -38,7 +40,7 @@ use heartwood_p2p_wire::RouteId;
 use serde_json::Value;
 
 use super::run::{self, Implementation, Manifest, Node, Window};
-use super::{Cases, MixedRun, digest, nodes};
+use super::{Cases, MixedRun, digest, mixed, nodes};
 use crate::errors::Result;
 use crate::report::Report;
 
@@ -49,12 +51,15 @@ const BOUND_MS: u64 = 8_000;
 /// How far past the bound a bound end may land: the queue is polled every 20 ms, and the timer and
 /// the scheduler add a little.
 const BOUND_LATE_MS: u64 = 300;
-/// How much later than the job's commit the recipe may have noted it (the moment it saw the relay
-/// answer again), in milliseconds.
+/// How far the job's commit may lie from the time the check takes for it, in milliseconds: after
+/// the end of the hold the relay logged (the job's own work follows it), or before the stall's
+/// `recovered` when the relay's log does not name the hold.
 const COMMIT_LAG_MS: i64 = 1_000;
 /// The length of the stall the recipe asks for, used when the relay's log does not say when the
 /// job was held.
 const STALL_MS: i64 = 12_000;
+/// The words of the relay's debug line that names a held job and its milliseconds.
+const HOLD_LINE: &str = "holding the job for ";
 /// Lines per round of the run, per route that must be exercised.
 const PER_ROUND: usize = 20;
 /// The routes the record must show, per round of the run.
@@ -259,12 +264,12 @@ fn read_record(path: &Path, start: u32, relay: &mut Relay) {
     }
 }
 
-/// The load samples of `load.jsonl`, in order of time.
+/// The load samples of the recipe's peer polls (`load1` beside each poll), in order of time.
 struct Load(Vec<(i64, f64)>);
 
 impl Load {
     fn read(run_dir: &Path) -> Load {
-        let lines = run::read_lines(&run_dir.join("load.jsonl")).unwrap_or_default();
+        let lines = run::read_lines(&run_dir.join(mixed::PEER_POLLS)).unwrap_or_default();
         let mut samples: Vec<(i64, f64)> = lines
             .iter()
             .filter_map(|v| {
@@ -353,13 +358,14 @@ struct StallVerdict {
 }
 
 /// Judge the requests of a relay against its stall `window`, the job having been held from
-/// `hold` (or `STALL_MS` before its commit); `closed_needed` when the record must show a socket
-/// closed by a client.
+/// `hold`'s time for its milliseconds (the commit following the hold's end), or, without it,
+/// committed at the stall's recovery after `STALL_MS` of hold; `closed_needed` when the record must
+/// show a socket closed by a client.
 fn judge_stall(
     requests: &[Request],
     window: &Window,
     window_seconds: i64,
-    hold: Option<i64>,
+    hold: Option<(i64, i64)>,
     closed_needed: bool,
 ) -> StallVerdict {
     let mut v = StallVerdict::default();
@@ -368,8 +374,21 @@ fn judge_stall(
             .push("the stall has no recovery time, so no commit".into());
         return v;
     }
-    let commit = window.end - window_seconds * 1_000;
-    let hold_at = hold.unwrap_or(commit - STALL_MS);
+    let recovered = window
+        .end
+        .saturating_sub(window_seconds.saturating_mul(1_000));
+    // The commit lies between `commit` and `settled`.
+    let (hold_at, commit, settled) = match hold {
+        Some((at, ms)) => {
+            let end = at.saturating_add(ms);
+            (at, end, end.saturating_add(COMMIT_LAG_MS))
+        }
+        None => (
+            recovered.saturating_sub(STALL_MS),
+            recovered.saturating_sub(COMMIT_LAG_MS),
+            recovered,
+        ),
+    };
     let bound_ms = i64::try_from(BOUND_MS).unwrap_or(i64::MAX);
     let held: Vec<&Request> = requests
         .iter()
@@ -405,7 +424,7 @@ fn judge_stall(
     }
     for r in held.iter().filter(|r| r.end != End::None) {
         let ahead = commit.saturating_sub(r.began());
-        if ahead > bound_ms + COMMIT_LAG_MS && !matches!(r.end, End::Bound | End::Closed) {
+        if ahead > bound_ms && !matches!(r.end, End::Bound | End::Closed) {
             v.problems.push(format!(
                 "a {} wait that began {} ms before the commit ended `{}`, not `bound` or `closed` (ended {})",
                 r.route,
@@ -414,7 +433,7 @@ fn judge_stall(
                 run::format_time(r.ended())
             ));
         }
-        if ahead < bound_ms && r.end == End::Bound {
+        if settled.saturating_sub(r.began()) < bound_ms && r.end == End::Bound {
             v.problems.push(format!(
                 "a {} wait that began {} ms before the commit ended `bound` (ended {})",
                 r.route,
@@ -440,7 +459,7 @@ fn judge_stall(
     if let Some(pre) = v.pre_tip {
         let after: Vec<&Request> = requests
             .iter()
-            .filter(|r| r.began() >= commit && r.began() <= window.end)
+            .filter(|r| r.began() >= settled && r.began() <= window.end)
             .collect();
         if after.is_empty() {
             v.problems.push("no request after the commit".into());
@@ -454,7 +473,7 @@ fn judge_stall(
         }
         let resumed = requests
             .iter()
-            .filter(|r| r.began() >= commit)
+            .filter(|r| r.began() >= settled)
             .any(|r| r.after > pre.saturating_add(1));
         if !resumed {
             v.problems.push(format!(
@@ -466,8 +485,9 @@ fn judge_stall(
     v
 }
 
-/// When the relay's log says it held a job, within `from` to `to` (the latest such line).
-fn hold_time(run_dir: &Path, node: &str, from: i64, to: i64) -> Option<i64> {
+/// When the relay's log says it held a job, within `from` to `to` (the latest such line), and for
+/// how many milliseconds (`STALL_MS` when the line does not say).
+fn hold_time(run_dir: &Path, node: &str, from: i64, to: i64) -> Option<(i64, i64)> {
     let dir = run_dir.join("nodes").join(node).join("log");
     let mut paths: Vec<_> = std::fs::read_dir(dir)
         .ok()?
@@ -478,9 +498,15 @@ fn hold_time(run_dir: &Path, node: &str, from: i64, to: i64) -> Option<i64> {
     let mut latest = None;
     for path in paths {
         let text = nodes::log_text(&path).ok()?;
-        for line in text.lines().filter(|l| l.contains("holding the job for")) {
+        for line in text.lines().filter(|l| l.contains(HOLD_LINE)) {
             if let Some(at) = line_time(line).filter(|t| (from..=to).contains(t)) {
-                latest = latest.max(Some(at));
+                let ms = line
+                    .split(HOLD_LINE)
+                    .nth(1)
+                    .and_then(|rest| rest.split_whitespace().next())
+                    .and_then(|n| n.parse::<i64>().ok())
+                    .unwrap_or(STALL_MS);
+                latest = latest.max(Some((at, ms)));
             }
         }
     }
@@ -748,12 +774,15 @@ fn checks(run_dir: &Path, manifest: &Manifest, windows: &[Window], cases: &mut C
 fn stall(run_dir: &Path, manifest: &Manifest, relay: &Relay, window: &Window, cases: &mut Cases) {
     let name = &relay.name;
     let label = format!("{name}: the stall's waits");
-    let commit = window.end.saturating_sub(manifest.window_seconds * 1_000);
+    let recovered = window
+        .end
+        .saturating_sub(manifest.window_seconds.saturating_mul(1_000));
     let hold = if window.end == i64::MAX {
         None
     } else {
-        hold_time(run_dir, name, window.start, commit)
+        hold_time(run_dir, name, window.start, recovered)
     };
+    let commit = hold.map_or(recovered, |(at, ms)| at.saturating_add(ms));
     let counts = timeouts_naming(run_dir, manifest, &relay.ip, window.start, window.end);
     let closed_needed = match &counts {
         Ok(counts) => counts.iter().any(|(_, n)| *n >= ERRORS_TO_CLOSE),
@@ -780,11 +809,10 @@ fn stall(run_dir: &Path, manifest: &Manifest, relay: &Relay, window: &Window, ca
         listed(cases, &label, &verdict.problems);
     }
     let mut by_route: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
-    for r in relay
-        .requests
-        .iter()
-        .filter(|r| r.ended() >= hold.unwrap_or(commit - STALL_MS) && r.began() <= window.end)
-    {
+    for r in relay.requests.iter().filter(|r| {
+        r.ended() >= hold.map_or(commit.saturating_sub(STALL_MS), |h| h.0)
+            && r.began() <= window.end
+    }) {
         let entry = by_route.entry(r.route.as_str()).or_default();
         match r.end {
             End::Bound => entry.0 += 1,
@@ -805,8 +833,8 @@ fn stall(run_dir: &Path, manifest: &Manifest, relay: &Relay, window: &Window, ca
             run::format_time(window.end),
             run::format_time(commit),
             hold.map_or(
-                "at an unknown time, taken as 12 s before the commit".to_owned(),
-                |h| format!("from {}", run::format_time(h))
+                "at an unknown time, taken as 12 s before the recovery".to_owned(),
+                |(at, ms)| format!("from {} for {ms} ms", run::format_time(at))
             ),
             if routes.is_empty() {
                 "no wait ended bound or closed".to_owned()
@@ -830,14 +858,66 @@ fn stall(run_dir: &Path, manifest: &Manifest, relay: &Relay, window: &Window, ca
         Err(why) => format!("the reference logs could not be counted ({why})"),
     };
     cases.record(SECTION, format!("{name}: {seen}"));
-    // The peer lists of the reference node that reaches only this relay are not read yet, so a
-    // strict run cannot pass the stall without this check.
-    cases.not_built(
-        SECTION,
-        &format!(
-            "{name}: the node whose only peer it is kept or regained it in the stall's window"
-        ),
+    sole_peer(run_dir, manifest, relay, window, cases);
+}
+
+/// The reference node that reaches the relay `relay` alone, by the run's route table: node 5 of
+/// runs `w0`, `w` and `p`, whose only peer is node 4.
+fn sole_reader(manifest: &Manifest, relay: &str) -> Option<&'static str> {
+    (matches!(manifest.run.as_str(), "w0" | "w" | "p") && relay == "node4").then_some("node5")
+}
+
+/// The node whose only peer the relay is kept or regained it in the stall's window: its last peer
+/// poll inside the window lists the relay.
+fn sole_peer(
+    run_dir: &Path,
+    manifest: &Manifest,
+    relay: &Relay,
+    window: &Window,
+    cases: &mut Cases,
+) {
+    let name = &relay.name;
+    let Some(reader) = sole_reader(manifest, name) else {
+        cases.record(
+            SECTION,
+            format!("{name}: no node of this run has it as its only peer"),
+        );
+        return;
+    };
+    let label = format!(
+        "{name}: {reader}, whose only peer it is, kept or regained it in the stall's window"
     );
+    let polls = match mixed::polls(run_dir) {
+        Ok(polls) => polls,
+        Err(e) => {
+            cases.fail(SECTION, label, e.to_string());
+            return;
+        }
+    };
+    let last = polls
+        .iter()
+        .filter(|p| p.node == reader && window.contains(p.at))
+        .max_by_key(|p| p.at);
+    match last {
+        None => cases.fail(
+            SECTION,
+            label,
+            format!("no poll of {reader}'s peer list in the window"),
+        ),
+        Some(p) if p.lists(&relay.ip) => cases.pass(
+            SECTION,
+            format!("{label}: listed at {}", run::format_time(p.at)),
+        ),
+        Some(p) => cases.fail(
+            SECTION,
+            label,
+            format!(
+                "its last poll in the window, at {}, does not list {}",
+                run::format_time(p.at),
+                relay.ip
+            ),
+        ),
+    }
 }
 
 /// The distribution of the waits of one relay, per route.
@@ -981,15 +1061,42 @@ mod tests {
             request(120_000, 40, End::Drained, 111, 112),
             request(130_000, 0, End::None, 112, 113),
         ];
-        let v = judge_stall(&requests, &window(), 30, Some(100_000), true);
+        let v = judge_stall(&requests, &window(), 30, Some((100_000, 12_000)), true);
         assert_eq!(v.problems, Vec::<String>::new());
         assert_eq!((v.bound, v.closed, v.pre_tip), (2, 1, Some(110)));
     }
 
     #[test]
+    fn the_commit_is_the_end_of_the_hold_the_relay_logged() {
+        // The recipe noted the recovery 2.5 s after the commit (it waits for the relay to answer).
+        let late = Window {
+            end: 144_500,
+            ..window()
+        };
+        // Began 7.5 s before the commit, so it drained there, 9.5 s before the noted recovery.
+        let requests = vec![
+            request(100_500, 8_010, End::Bound, 110, 110),
+            request(104_500, 7_520, End::Drained, 110, 111),
+            request(113_500, 0, End::None, 111, 111),
+            request(120_000, 40, End::Drained, 111, 112),
+        ];
+        let v = judge_stall(&requests, &late, 30, Some((100_000, 12_000)), false);
+        assert_eq!(v.problems, Vec::<String>::new());
+        // Without the relay's line the recovery is taken for the commit, and the drain is wrong.
+        let v = judge_stall(&requests, &late, 30, None, false);
+        assert!(
+            v.problems
+                .iter()
+                .any(|p| p.contains("ended `drained`, not `bound`")),
+            "{:?}",
+            v.problems
+        );
+    }
+
+    #[test]
     fn a_stall_without_a_bound_end_fails() {
         let requests = vec![request(105_000, 7_000, End::Drained, 110, 111)];
-        let v = judge_stall(&requests, &window(), 30, Some(100_000), false);
+        let v = judge_stall(&requests, &window(), 30, Some((100_000, 12_000)), false);
         assert!(
             v.problems
                 .iter()
@@ -1004,14 +1111,14 @@ mod tests {
             request(100_000, 8_010, End::Bound, 110, 110),
             request(100_100, 12_000, End::Drained, 110, 111),
         ];
-        let v = judge_stall(&drained, &window(), 30, Some(100_000), false);
+        let v = judge_stall(&drained, &window(), 30, Some((100_000, 12_000)), false);
         assert!(v.problems.iter().any(|p| p.contains("began")));
         // A bound end after 8.9 s, and one that began 3 s before the commit.
         let late = vec![
             request(100_000, 8_900, End::Bound, 110, 110),
             request(109_000, 8_000, End::Bound, 110, 110),
         ];
-        let v = judge_stall(&late, &window(), 30, Some(100_000), false);
+        let v = judge_stall(&late, &window(), 30, Some((100_000, 12_000)), false);
         assert!(
             v.problems
                 .iter()
@@ -1031,7 +1138,7 @@ mod tests {
             request(i64::MIN, u64::MAX, End::Drained, 1, 2),
             request(113_000, 0, End::None, u64::MAX, u64::MAX),
         ];
-        let v = judge_stall(&requests, &window(), 30, Some(100_000), false);
+        let v = judge_stall(&requests, &window(), 30, Some((100_000, 12_000)), false);
         assert!(v.problems.iter().any(|p| p.contains("go past")));
         let load = Load(vec![(i64::MIN, 1.0), (i64::MAX, 2.0)]);
         assert_eq!(load.beside(0), "no load sample");
@@ -1044,7 +1151,7 @@ mod tests {
             request(104_000, 8_000, End::Drained, 110, 110),
             request(113_000, 0, End::None, 110, 110),
         ];
-        let v = judge_stall(&requests, &window(), 30, Some(100_000), false);
+        let v = judge_stall(&requests, &window(), 30, Some((100_000, 12_000)), false);
         assert!(
             v.problems
                 .iter()
