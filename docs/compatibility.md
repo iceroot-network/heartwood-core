@@ -10,7 +10,7 @@ equal byte for byte, including which inputs each side rejects.
 
 | Level | What is compared | Status |
 |---|---|---|
-| L0 | golden vectors written by the reference, against Heartwood | runs against the ten crates with vector classes: 8,643 of 8,820 records compared, all equal, the other 177 documented differences (see below) |
+| L0 | golden vectors written by the reference, against Heartwood | runs against the ten crates with vector classes: 8,660 of 8,840 records compared, all equal, the other 180 documented differences (see below) |
 | L1 | random and mutated cases, one oracle call each | runs: sixteen properties, from the fee floor to the pool, the crypto files, the peer-to-peer client and the block processor (see below) |
 | L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets through Heartwood's store and through its block processor and jobs, with seeded reverts, restarts at every height, synthetic blocks, pool sessions and kills of a running relay (see below) |
 | L3 | one scenario, observed through the node under test | runs: a scenario on a reference devnet whose observer is a reference relay, then the same with a Heartwood relay in its place; a devnet of Heartwood nodes only joins with the forger (see below) |
@@ -628,7 +628,17 @@ of a step; none changes a verdict or a digest on an honest chain:
 - the events the reference also puts on its bus for plugins (`block.received`,
   `block.disregarded`, `state.started`) have no listener in a relay, and two log lines of the idle
   loop are not written: the launch countdown is logged once instead of every slot, and the line
-  that says a delegate's reward was reduced.
+  that says a delegate's reward was reduced;
+- an idle loop starts no tick while its last one runs (the reference's `setInterval` ticks
+  overlap, so a peer that kept the block poll busy piled up polls and their replies);
+- a batch of pool entries whose requester no longer waits (an API request past its timeout) is
+  dropped when the node reaches it; the reference processes it;
+- a downloaded block that fails its rebuild, or that the processor refuses for a fault no honest
+  peer makes (a verification failure other than the timestamp, a wrong reward, conflicting
+  transactions, a refused apply, or any refusal of a chained block whose key is no registered
+  delegate's), counts as a protocol violation of the peer that served it (see heartwood-p2p). A
+  nonce out of order, a generator out of its slot, a transaction already forged and a block that
+  does not chain are no violation: they can come from an honest branch.
 
 ```sh
 cargo test -p heartwood-blockchain --locked   # commit and restart at every height of the committed chain, the start's refusals,
@@ -781,7 +791,9 @@ depend on tokio-tungstenite directly, and no consensus crate on tokio.
 
 Where the reference is lenient with a peer that breaks the protocol, Heartwood is stricter on
 purpose. None of these differences shows with an honest peer or a generated devnet's
-configuration, except the last, which needs a transaction that no honest wallet writes:
+configuration, except two: the reader's refusals, which need a transaction that no honest wallet
+writes, and the own fork segment, which an honest peer shows when one of its common-block probes
+fails:
 
 - a fork segment fetched during verification must chain: each header to the one before it, and
   the first to the node's block at the common height. The reference checks each header's
@@ -807,7 +819,28 @@ configuration, except the last, which needs a transaction that no honest wallet 
   peer;
 - a downloaded block that holds a removed transaction type or a memo that is not valid UTF-8 fails
   that peer's whole getBlocks reply, and the monitor asks the next peer, since the reader refuses
-  both (see L0 below).
+  both (see L0 below);
+- a fork segment whose first header is our own block at its height is refused, without a
+  violation: the common block found is not the peer's highest one (a low probe answer, or a later
+  probe that failed), where the reference verifies the peer as forked there. A peer on our chain
+  could otherwise pass as forked, and count toward a rollback, with no delegate key;
+- a downloaded block above height 1 with more transactions than the largest
+  `block.maxTransactions` of the milestones fails that peer's reply and is a violation (the
+  reference reads up to 501 and refuses the block when it processes it), and so is a block the
+  node refuses for a fault (see heartwood-blockchain);
+- a getBlocks reply whose first block is not the one after the height asked is no answer: the
+  download asks the next peer;
+- candidates being pinged count toward `maxSameSubnetPeers`, which is checked again before a new
+  peer is stored; an IPv6 candidate is capped by its /48 (the reference caps IPv4 /24s only); and
+  a node holds at most 1,000 peers besides its seeds (the reference has no bound).
+
+Some bounds of Heartwood's own change only the timing or the memory of the client, never a peer's
+verdict: while idle, the pause of a millisecond after each downloaded transaction stops after half
+a second per reply; a plugin port probe ends after 3 seconds in all, asks each distinct port once
+and at most 8 ports per peer, and the port record holds the plugins the peer lists now (the
+reference keeps every name it saw); a peer source's fetch ends after 10 seconds; the chunk cache
+also drops its oldest chunks beyond 256 MiB; a session's read buffer keeps at most 64 KiB between
+messages; and a peer's last error is forgotten when it is disconnected.
 
 ```sh
 make test-p2p                   # clippy and tests of heartwood-p2p alone, without and with difftest
@@ -837,7 +870,7 @@ Three vector classes cover the crate (see Vector files), installed beside the cr
 difftest's `l0_wire` test compares V24 under the devnet configuration with nothing skipped;
 `heartwood-p2p` checks the peer rules against V25; difftest's `network_vectors` sends each V26
 record to the subject of its area and allows no documented difference other than the unlinked
-fork segment and the two reader refusals above. The L1 properties P14 to P16 cover the verifier,
+and own fork segments and the two reader refusals above. The L1 properties P14 to P16 cover the verifier,
 the exchange and the monitor (see L1).
 
 The fuzz targets, seeded by `tools/p2p-fuzz-seeds.js` from a vector run's V24 and V26 records
@@ -981,7 +1014,19 @@ each case shows only with the request named:
   count, such as white space before a value) is 400, where Node reads on;
 - a method that Node's parser reads and its server does not know (`PRI` without a version, or a
   method of RTSP with an `RTSP/` version or none) makes the reference's server throw, which stops
-  its process; Heartwood closes that connection without an answer.
+  its process; Heartwood closes that connection without an answer;
+- behind a trusted proxy (`CORE_API_TRUST_PROXY`), the client's address is the last entry of
+  `X-Forwarded-For`, the one the proxy appended, when it is an address, else the socket's; the
+  reference takes the first entry as it is, which the client writes. The rate limit keys an IPv6
+  client by its /64 (the reference by its address) and keeps at most 100,000 windows, beyond which
+  new clients share one.
+
+Some bounds of Heartwood's own change only the timing of an answer or the node's log, never its
+content: the body of a `POST` is decompressed and parsed on a blocking thread; at most 8 `POST`s
+are served at once, the others waiting; the line logged for an answer of 500 or more names at most
+128 bytes of the path, and at most one such line is written a second, naming how many answers went
+without one; and before a read of the store, a log (`-wal`) that continuous reads kept above
+64 MiB is reset: new reads wait while those running end, then a checkpoint truncates it.
 
 The server is hyper, which reads some requests otherwise than Node's server even after the head
 reader; none is sent by a common HTTP client:
@@ -1041,7 +1086,11 @@ The reference's marker files and reset variables work as in the reference: `clea
 in the temp directory restores the state by a replay from the genesis block (and is removed when it
 is done), `clear-pool.lock` clears the pool's storage, `CORE_RESET_DATABASE` empties the store (the
 start is then a first start) and the pool, and `CORE_RESET_POOL` empties the pool, at every start
-while they are set. The pool's online record is loaded at every start, whatever the restore path, so
+while they are set. Two differences keep another local user from using the temp directory, which
+is under the shared `/tmp` by default: the relay does not make that directory (the reference does,
+and refuses to start when it cannot), and it honours a marker only when the marker is a file, and
+it and its directory belong to the user of the data directory and are not writable by every user;
+another marker is ignored with a warning. The pool's online record is loaded at every start, whatever the restore path, so
 a vote for a delegate that announced itself before the stop is admitted at once; a reference relay
 started without its saved state refuses it until a peer announces the delegate again.
 
@@ -1095,11 +1144,11 @@ models the reference's class. On a run of every class (reference tag `s1-ref-v2`
 
 | Outcome | Records |
 |---|---|
-| compared, equal to the reference | 8,643 |
-| documented differences, each with its form checked on the input or shown by the oracle's answer | 177 |
+| compared, equal to the reference | 8,660 |
+| documented differences, each with its form checked on the input or shown by the oracle's answer | 180 |
 | skipped | 0 |
 
-That is 8,820 records in 28 files, and a run of the image and a local run agree on every one. The
+That is 8,840 records in 28 files, and a run of the image and a local run agree on every one. The
 gate runs with `--strict` (`make l0`), which fails a record that is skipped or has no Rust subject
 as it fails a difference. The builders of the removed types and of the extended header, which
 Heartwood does not have, are documented refusals (checked on the builder's input), so nothing is
@@ -1110,7 +1159,7 @@ comparison over the committed vectors of `heartwood-crypto` (2,212 compared, 64 
 skipped), the test `l0_wire` over the wire class of `heartwood-p2p-wire` (1,179 compared, 14
 documented, none skipped) and its exchange class, `pool_vectors` over the pool class (42 sessions
 compared, 8 documented), `config_vectors` over the crypto-file class (17 compared, 79 documented),
-`network_vectors` over V26 (404 compared, 5 documented), `processor_vectors` and `job_vectors` over
+`network_vectors` over V26 (401 compared, 8 documented), `processor_vectors` and `job_vectors` over
 V27, and `api_vectors` and `config_app_vectors` over V28.
 A refusal's message is compared as well as its class: the handlers' messages in V17 and every
 message of the pool.
@@ -1143,6 +1192,10 @@ refuses and the reference accepts:
 - crypto files that the strict schema refuses (see heartwood-kernel above): the reference loads
   them, or falls back to its built-in preset when a file is missing. Each refusal kind has its own
   predicate on the input, and a file that the reference refuses must be refused by Heartwood;
+- a peer whose fork segment starts with our own block at its height (a low common-block answer,
+  or a later probe that failed): Heartwood refuses the peer, where the reference verifies it as
+  forked at the common block found. The case is documented only when the peer's block at the first
+  height fetched is ours;
 - a block refused in its apply after missed slots: the reference keeps the missed-slot rows it
   wrote before it validated the block. The case is documented only when the reference also refused
   the block in its apply and its answer, less those rows, equals Heartwood's whole answer (two V27
