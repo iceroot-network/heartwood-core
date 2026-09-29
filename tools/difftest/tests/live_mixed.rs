@@ -1506,21 +1506,25 @@ fn missed_after_start(run: &Path, missed: u64) {
 }
 
 #[test]
-fn heartwoods_start_without_the_backfilled_rows_is_recorded_when_block_2_is_not_in_slot_1() {
+fn heartwoods_start_must_hold_the_backfilled_rows_when_block_2_is_not_in_slot_1() {
     let f = fixture();
     roll_w_back_to_106(&f);
     move_block_2_to_slot_3(&f, "w");
+    // Node 6 of run w is Heartwood's: its start writes the two rows, as the reference's does.
     let report = check_run(&f, &f.w);
-    let found = cases_of(&report, "recovery", "the summary");
-    assert!(
-        found
-            .iter()
-            .any(|(_, label, _)| label.starts_with("recorded:")
-                && label.contains("the summary after the start")
-                && label.contains("2 more missed rows than node 6")),
-        "{found:#?}"
+    assert_fails(
+        &report,
+        "recovery",
+        "the summary after the start",
+        "0 missed rows against the oracle's 2",
     );
-    assert!(found.iter().all(|(failed, ..)| !failed), "{found:#?}");
+    assert!(
+        cases_of(&report, "recovery", "more missed rows").is_empty(),
+        "no caveat is recorded"
+    );
+    missed_after_start(&f.w, 2);
+    let report = check_run(&f, &f.w);
+    assert_passes(&report, "recovery", "the summary after the start");
     // Any other difference fails.
     missed_after_start(&f.w, 1);
     let report = check_run(&f, &f.w);
