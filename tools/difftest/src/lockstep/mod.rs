@@ -215,8 +215,56 @@ pub fn run(args: &LockstepArgs) -> Result<MadeChain> {
         &args.out,
         &args.oracle,
     )
-    .map_err(|e| match e {
+    .map_err(command_error)
+}
+
+/// The harness error of a stop: a recipe the chain cannot follow is a usage error; a file that
+/// cannot be written stays an I/O error; a disagreement with the reference, or a failure of either
+/// side, stops the command as a failure (exit 1, without the usage text) that names the height or
+/// the transaction.
+fn command_error(e: LockstepError) -> Error {
+    match e {
+        LockstepError::Recipe(m) => Error::Usage(format!("lockstep: the recipe: {m}")),
+        LockstepError::Io { path, source } => Error::Io { path, source },
         LockstepError::Oracle(m) => Error::Oracle(m),
-        other => Error::Usage(other.to_string()),
-    })
+        other => Error::Oracle(format!("lockstep make stopped: {other}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_disagreement_stops_the_command_as_a_failure_and_a_bad_recipe_as_a_usage_error() {
+        let stop = command_error(LockstepError::Block {
+            height: 7,
+            detail: "$.s differs".into(),
+        });
+        assert!(
+            matches!(&stop, Error::Oracle(m) if m.contains("height 7") && m.contains("$.s differs")),
+            "{stop}"
+        );
+        let pool = command_error(LockstepError::Pool {
+            id: "ab".repeat(32),
+            detail: "another verdict".into(),
+        });
+        assert!(
+            matches!(&pool, Error::Oracle(m) if m.contains(&"ab".repeat(32))),
+            "{pool}"
+        );
+        let recipe = command_error(LockstepError::Recipe("no wallet is labelled x".into()));
+        assert!(
+            matches!(&recipe, Error::Usage(m) if m.contains("labelled x")),
+            "{recipe}"
+        );
+        let io = command_error(LockstepError::Io {
+            path: PathBuf::from("out"),
+            source: std::io::Error::other("full"),
+        });
+        assert!(
+            matches!(&io, Error::Io { path, .. } if path == Path::new("out")),
+            "{io}"
+        );
+    }
 }
