@@ -14,7 +14,9 @@
 //! in the saved address order, and both then re-index the wallets of the current round's
 //! transactions; Heartwood's replay path gives the order the chain's blocks set, and its table
 //! path the order of the stored rows. [`masked`] accepts those two parts when they list the same
-//! keys as the reference's, and Heartwood's replay path is the reference's replayed order.
+//! keys as the reference's, and Heartwood's replay path is the reference's replayed order. A
+//! corpus with a delegate name or a voted name that reads as a number is answered as
+//! [`Documented::SavedStateUsername`] where the oracle notes it, as the restart lines are.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -119,9 +121,14 @@ fn index_orders(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         "rebuild": replayed,
         "replayed": replayed,
     });
+    // A name that the reference's saved state reads back as a number changes its saved-state
+    // start (the oracle's note shows it); every other case is judged by the restart orders' mask.
     Ok(Verdict::DiffersWhereShown {
-        difference: Documented::ReplayIndexOrder,
-        verdict: Box::new(Verdict::Output(ours)),
+        difference: Documented::SavedStateUsername,
+        verdict: Box::new(Verdict::DiffersWhereShown {
+            difference: Documented::ReplayIndexOrder,
+            verdict: Box::new(Verdict::Output(ours)),
+        }),
     })
 }
 
