@@ -130,6 +130,12 @@ impl Reference for Twin {
                     }
                     TransactionBuilder::vote(votes)
                 }
+                "secondSignature" => TransactionBuilder::second_signature(
+                    KeyPair::from_passphrase(text(asset, "secondPassphrase")?)
+                        .map_err(oracle_error)?
+                        .public_key()
+                        .to_compressed(),
+                ),
                 "delegateRegistration" => {
                     TransactionBuilder::delegate_registration(text(asset, "username")?)
                 }
@@ -231,7 +237,7 @@ fn transfer(sender: &str, to: &[&str], amount: &str) -> Value {
 }
 
 /// A recipe the twin can build: funding, an attested vote, a vote for a delegate that is not
-/// attested, a registration and a burn; more steps when `more` are given.
+/// attested, a registration, a burn and a second signature; more steps when `more` are given.
 fn recipe(more: Vec<Value>) -> Recipe {
     let mut steps: Vec<Value> = (1..=5)
         .map(|round| {
@@ -250,7 +256,9 @@ fn recipe(more: Vec<Value>) -> Recipe {
          "asset": {"recipients": [["alice", "250000000"]]}},
     ]}));
     steps.push(json!({"step": "transactions", "height": 5, "build": [
-        {"kind": "burn", "sender": "dave", "asset": {"amount": "100000000"}}]}));
+        {"kind": "burn", "sender": "dave", "asset": {"amount": "100000000"}},
+        {"kind": "secondSignature", "sender": "bob",
+         "asset": {"secondPassphrase": "lockstep second passphrase"}}]}));
     steps.extend(more);
     serde_json::from_value(json!({"wallets": ["alice", "bob", "carol", "dave"], "steps": steps}))
         .expect("the recipe reads")
@@ -297,7 +305,7 @@ fn a_five_round_chain_is_reproduced_byte_for_byte() {
     let recipe = recipe(Vec::new());
     let made = make_in(&mut Twin::default(), &a, &devnet(), &recipe).expect("the first run");
     let again = make_in(&mut Twin::default(), &b, &devnet(), &recipe).expect("the second run");
-    assert_eq!((made.tip, made.transactions, made.missed), (265, 5, 0));
+    assert_eq!((made.tip, made.transactions, made.missed), (265, 6, 0));
     assert_eq!(
         (again.tip, again.transactions),
         (made.tip, made.transactions)
@@ -376,7 +384,7 @@ fn every_block_is_accepted_and_the_pools_agree_on_every_transaction() {
     assert_eq!(
         submitted.len(),
         3,
-        "funding, the votes and registration, the burn"
+        "funding, the votes and registration, the burn and second signature"
     );
     let accepted = |v: &Value| v["accept"].as_array().map_or(0, Vec::len);
     let refused = |v: &Value| v["errors"].as_object().map_or(0, |m| m.len());
@@ -402,7 +410,7 @@ fn every_block_is_accepted_and_the_pools_agree_on_every_transaction() {
         "{}",
         message.1
     );
-    assert_eq!((accepted(submitted[2]), refused(submitted[2])), (1, 0));
+    assert_eq!((accepted(submitted[2]), refused(submitted[2])), (2, 0));
 }
 
 #[test]
@@ -685,7 +693,7 @@ fn a_chain_with_the_real_reference_goes_through_the_judge_and_the_replays() {
     );
     assert!(ok, "{made}");
     assert!(
-        made.contains("to height 265, 7 transactions, 0 missed slots"),
+        made.contains("to height 265, 8 transactions, 0 missed slots"),
         "{made}"
     );
     let (ok, judged) = difftest(&["corpus", "judge", d, "--processor"], &oracle);

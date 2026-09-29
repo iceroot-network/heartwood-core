@@ -15,7 +15,7 @@ const { ReplaySession } = require("./corpus");
 const { HeadlessPool, sessions: registry } = require("./pool");
 const { newDataDir } = require("./state");
 
-const BUILDERS = new Set(["transfer", "vote", "delegateRegistration", "delegateResignation", "burn", "ipfs"]);
+const BUILDERS = new Set(["transfer", "secondSignature", "vote", "delegateRegistration", "delegateResignation", "burn", "ipfs"]);
 
 // A fee to build with before the floor is known: its bytes are as long as any fee's.
 const PLACEHOLDER_FEE = "10000000000";
@@ -51,6 +51,9 @@ function lockstepOps(context) {
                 for (const [address, value] of asset.recipients) b = b.addTransfer(text(address, "address"), text(value, "amount"));
                 break;
             }
+            case "secondSignature":
+                b = b.signatureAsset(text(asset.secondPassphrase, "secondPassphrase"));
+                break;
             case "vote": {
                 const votes = {};
                 for (const [name, percent] of asset.votes || []) votes[text(name, "name")] = Number(percent);

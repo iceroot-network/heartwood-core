@@ -164,6 +164,13 @@
           "asset": {
             "amount": "100000000"
           }
+        },
+        {
+          "kind": "secondSignature",
+          "sender": "bob",
+          "asset": {
+            "secondPassphrase": "lockstep second passphrase"
+          }
         }
       ]
     },
