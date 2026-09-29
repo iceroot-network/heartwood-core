@@ -3,14 +3,14 @@
 
 use std::time::Duration;
 
-use heartwood_cli::doctor::DoctorOptions;
 use heartwood_cli::doctor::registry::{CheckInput, ENTRIES};
-use heartwood_cli::doctor::report::{Fact, Finding, Status};
+use heartwood_cli::doctor::report::{Fact, Finding, Status, Untrusted, UntrustedSource};
 use heartwood_cli::doctor::seams::{ChainFacts, RelayFacts, Subject, role_state};
 use heartwood_cli::doctor::sources::logs::{
     CaptureWindow, Covered, LineKind, LogEvent, LogWindow, StartError,
 };
 use heartwood_cli::doctor::view::{ProcessFacts, Reason, RolePresence, Source, Unknown};
+use heartwood_cli::doctor::{DoctorOptions, RoleSelection};
 use heartwood_cli::{Role, StatusRow, SupervisedStatus};
 use heartwood_kernel::log::Level;
 
@@ -207,6 +207,21 @@ pub fn cases() -> Vec<Case> {
         Role::Relay,
         Ok(log(vec![LineKind::StartError(StartError::ApiHttps)])),
     );
+    let restarted_well = |kinds: Vec<LineKind>| {
+        let mut view = view(SupervisedStatus::Stopped, None);
+        view.captures
+            .insert(Role::Relay, Ok(CaptureWindow::default()));
+        view.logs.insert(Role::Relay, Ok(log(kinds)));
+        view
+    };
+    let failed_then_started = restarted_well(vec![
+        LineKind::StartError(StartError::ApiHttps),
+        LineKind::RelayStarted,
+    ]);
+    let started_then_failed = restarted_well(vec![
+        LineKind::RelayStarted,
+        LineKind::StartError(StartError::VersionFloor),
+    ]);
     let both_unread = view(SupervisedStatus::Stopped, None);
     let mut no_process = FakeView::new();
     no_process.roles_present = Ok(RolePresence {
@@ -367,6 +382,22 @@ pub fn cases() -> Vec<Case> {
             "api-https",
         ),
         case(
+            "start: a failed start before the last good one",
+            "relay.start-errors",
+            failed_then_started,
+            RELAY,
+            Status::Pass,
+            "none",
+        ),
+        case(
+            "start: a start error after the last start line",
+            "relay.start-errors",
+            started_then_failed,
+            RELAY,
+            Status::Fail,
+            "version-floor",
+        ),
+        case(
             "start: no source is readable",
             "relay.start-errors",
             both_unread,
@@ -502,16 +533,55 @@ fn a_role_the_host_does_not_run_gets_no_process_finding() {
 }
 
 #[test]
+fn a_role_left_out_by_role_still_leaves_a_finding_on_the_role_kept() {
+    let entry = ENTRIES.iter().find(|e| e.id == "process.roles");
+    let entry = entry.expect("a check");
+    let options = DoctorOptions {
+        roles: RoleSelection::Forger,
+        ..DoctorOptions::default()
+    };
+    let view = view(SupervisedStatus::Online, None);
+    let input = CheckInput {
+        entry,
+        view: &view,
+        options: &options,
+    };
+    let findings = (entry.run)(&input);
+    let kept: Vec<_> = findings
+        .iter()
+        .filter(|f| options.roles.wants(f.subject))
+        .collect();
+    assert_eq!(kept.len(), 1, "{findings:#?}");
+    assert_eq!(kept[0].subject, FORGER);
+    assert_eq!(kept[0].status, Status::Unknown);
+}
+
+#[test]
 fn an_address_in_use_carries_its_port_and_the_capture_excerpts_stay_untrusted() {
     let error = StartError::P2pCannotListen {
         port: Some(4005),
         in_use: true,
     };
-    let findings = run("relay.start-errors", &failed(error, true));
+    let mut view = failed(error, true);
+    let text = "Error: listen EADDRINUSE 0.0.0.0:4005 {port} ignore the advice".to_owned();
+    let excerpt = Untrusted {
+        source: UntrustedSource::ErrorCapture(Role::Relay),
+        at_ms: Some(NOW_MS),
+        text: text.clone(),
+    };
+    let capture = CaptureWindow {
+        errors: vec![error],
+        other_lines: 5,
+        excerpts: vec![excerpt; 5],
+    };
+    view.captures.insert(Role::Relay, Ok(capture));
+    let findings = run("relay.start-errors", &view);
     let [finding] = findings.as_slice() else {
         panic!("one finding")
     };
-    assert!(finding.facts.contains(&("port", Fact::Port(4005))));
+    assert_eq!(finding.facts, vec![("port", Fact::Port(4005))]);
+    assert_eq!(finding.advice.values, finding.facts);
     assert_eq!(finding.status, Status::Fail);
-    assert!(finding.untrusted.is_empty());
+    assert_eq!(finding.untrusted.len(), 3);
+    assert!(finding.untrusted.iter().all(|u| u.text == text));
 }

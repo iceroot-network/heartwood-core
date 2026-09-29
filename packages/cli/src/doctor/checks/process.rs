@@ -117,9 +117,10 @@ pub fn roles(input: &CheckInput<'_>) -> Vec<Finding> {
     };
     let present = Role::ALL.into_iter().filter(|role| presence.has(*role));
     let found: Vec<Finding> = present.map(|role| role_finding(input, role)).collect();
-    match found.is_empty() {
-        true => unknown_roles(input, Unknown::new(Source::Process, Reason::NotConfigured)),
-        false => found,
+    // With no role here that `--role` keeps, the entry still gives a finding on each role it keeps.
+    match found.iter().any(|f| input.options.roles.wants(f.subject)) {
+        false => unknown_roles(input, Unknown::new(Source::Process, Reason::NotConfigured)),
+        true => found,
     }
 }
 
@@ -152,11 +153,21 @@ pub fn core_role(input: &CheckInput<'_>) -> Vec<Finding> {
     vec![Finding::skipped(input.id(), Host, keys::SKIPPED_RELEASE)]
 }
 
-/// The last start error the error capture or the log shows.
+/// The last start error the error capture or the log shows; in the log, only after the relay's last
+/// start line, so that a failed start followed by a good one is not named.
 fn last_error(view: &dyn View) -> Result<Option<StartError>, Unknown> {
     let (capture, log) = (view.error_capture(Role::Relay), view.log(Role::Relay));
     let captured = capture.iter().flat_map(|c| c.errors.iter().copied());
-    let events = log.iter().flat_map(|window| window.events.iter());
+    let events = log.iter().flat_map(|window| {
+        let started = window
+            .events
+            .iter()
+            .rposition(|e| e.kind == LineKind::RelayStarted);
+        window
+            .events
+            .get(started.unwrap_or(0)..)
+            .unwrap_or_default()
+    });
     let mut logged = events.filter_map(|e| match e.kind {
         LineKind::StartError(error) => Some(error),
         _ => None,
