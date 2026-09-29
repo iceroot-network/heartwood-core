@@ -303,7 +303,9 @@ pub fn full_counts(
 }
 
 /// Every recorded block was preceded, in its slot, by an answer to its delegate's forger at the
-/// height below it with `hasQuorum` at least [`QUORUM`].
+/// height below it with `hasQuorum` at least [`QUORUM`]. When several validators' forgers call from
+/// one address (each reaching its own relay over its loopback), the answer must be the holder's own
+/// relay's: another relay's answer to that address was to another forger.
 pub fn quorum_before_blocks(
     blocks: &BTreeMap<String, Recorded>,
     answers: &[Answer],
@@ -319,8 +321,14 @@ pub fn quorum_before_blocks(
             ));
             continue;
         };
+        let shared = validators
+            .iter()
+            .filter(|v| v.forger == holder.forger)
+            .count()
+            > 1;
         let evidence = answers.iter().any(|a| {
             a.caller == holder.forger
+                && (!shared || a.relay == holder.name)
                 && slots.at(a.at) == b.slot
                 && a.node_height == Some(u64::from(b.height) - 1)
                 && a.has_quorum >= QUORUM
@@ -1055,4 +1063,62 @@ fn faults(
     }
     verdict(cases, "faults and failover", problems);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn validator(name: &str, forger: &str, key: &str) -> Validator {
+        Validator {
+            name: name.into(),
+            forger: forger.into(),
+            keys: BTreeMap::from([(key.to_owned(), format!("{name}-delegate"))]),
+        }
+    }
+
+    fn answer(relay: &str, caller: &str, at: i64, height: u64) -> Answer {
+        Answer {
+            relay: relay.into(),
+            at,
+            caller: caller.into(),
+            node_height: Some(height),
+            has_quorum: 53,
+            no_response: Some(0),
+        }
+    }
+
+    #[test]
+    fn a_forger_address_several_validators_share_needs_the_holders_own_relay() {
+        let slots = Slots {
+            epoch_ms: 0,
+            slot_ms: 8_000,
+        };
+        let block = |key: &str| Recorded {
+            id: "ab".into(),
+            height: 11,
+            slot: 3,
+            key: key.into(),
+        };
+        let blocks = BTreeMap::from([("ab".to_owned(), block("k1"))]);
+        // Each forger reaches its own relay over the loopback: every caller is 127.0.0.1.
+        let shared = [
+            validator("node1", "127.0.0.1", "k1"),
+            validator("node2", "127.0.0.1", "k2"),
+        ];
+        let from_node2 = [answer("node2", "127.0.0.1", 24_500, 10)];
+        assert_eq!(
+            quorum_before_blocks(&blocks, &from_node2, &shared, slots).len(),
+            1
+        );
+        let from_node1 = [answer("node1", "127.0.0.1", 24_500, 10)];
+        assert!(quorum_before_blocks(&blocks, &from_node1, &shared, slots).is_empty());
+        // Forgers with addresses of their own may ask any relay.
+        let own = [
+            validator("node1", "127.0.0.11", "k1"),
+            validator("node2", "127.0.0.12", "k2"),
+        ];
+        let elsewhere = [answer("node2", "127.0.0.11", 24_500, 10)];
+        assert!(quorum_before_blocks(&blocks, &elsewhere, &own, slots).is_empty());
+    }
 }
