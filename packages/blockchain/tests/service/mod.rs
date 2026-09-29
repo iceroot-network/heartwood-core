@@ -511,6 +511,7 @@ impl FakeNode {
             committed,
             clear_queue: false,
             end,
+            faulty: None,
         };
         let mut chain = lock(&self.chain);
         let (Some(first), Some(tip)) = (blocks.first(), chain.last_block().cloned()) else {

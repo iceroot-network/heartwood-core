@@ -48,6 +48,7 @@ use crate::options::P2pOptions;
 use crate::peer::{Peer, SharedPeer, Verification};
 use crate::processor::AcceptOptions;
 use crate::repository::PeerRepository;
+use crate::scoring::{self, Violation};
 use crate::seams::{PeerAcceptor, PeerClient, PeerRules};
 use crate::seeds;
 use crate::view::{BlockPing, ChainView, PeerEvents};
@@ -646,9 +647,15 @@ where
             return Ok(blocks);
         }
         let (mut returned, mut printed, log) = (false, String::new(), !request.silent);
+        let first = request.from_height.saturating_add(1);
         for peer in &peers {
             printed = format!("{}:{}", peer.ip(), peer.port());
             let why = match self.p.client.get_peer_blocks(peer, request).await {
+                // Blocks that do not start after the height asked are no answer (the reference
+                // takes them, and its sync then asks the same peer again).
+                Ok(blocks) if blocks.first().is_some_and(|block| block.height() != first) => {
+                    "Peer returned blocks that do not follow the height asked".to_owned()
+                }
                 Ok(blocks) if !blocks.is_empty() || last => {
                     if log {
                         debug!("Downloaded blocks {key} ({}) from {printed}", blocks.len());
@@ -833,6 +840,15 @@ where
             {
                 self.p.client.remove_peer(peer.ip());
             }
+        }
+    }
+
+    /// The peer at `ip`, if the node holds it, served a block that the node refused for a fault
+    /// no honest peer makes (the blockchain's job tells): a violation of the peer, so it is no
+    /// source of blocks while it is in its window. The reference records nothing.
+    pub fn refused_block(&self, ip: IpAddr) {
+        if let Some(peer) = self.p.repository.get(ip) {
+            scoring::record(&peer, Violation::DownloadedBlock, self.p.clock.now_ms());
         }
     }
 

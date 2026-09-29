@@ -95,4 +95,8 @@ pub trait Network: Send + Sync + 'static {
 
     /// Complete the cold start.
     fn complete_cold_start(&self);
+
+    /// The peer at `ip` served a block that no honest peer serves (a fault the reference does not
+    /// score): a violation of the peer, which is then asked for no blocks until it expires.
+    fn refused_block(&self, _ip: IpAddr) {}
 }

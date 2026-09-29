@@ -270,6 +270,8 @@ struct Answers {
     failing: Vec<(IpAddr, u32)>,
     pool: HashMap<IpAddr, Vec<Vec<u8>>>,
     throttled: Vec<(IpAddr, RouteId)>,
+    /// Peers whose getBlocks replies start a height late.
+    late: Vec<IpAddr>,
 }
 
 struct Client {
@@ -371,7 +373,8 @@ impl PeerClient for Client {
         }
         let top = answers.tops.get(&peer.ip()).copied().unwrap_or(0);
         let last = top.min(request.from_height + request.block_limit);
-        let heights = (request.from_height + 1)..=last;
+        let late = u32::from(answers.late.contains(&peer.ip()));
+        let heights = (request.from_height + 1 + late)..=last;
         Ok(heights
             .map(|height| stub_block(height, peer.ip()))
             .collect())
@@ -1120,6 +1123,32 @@ async fn throttled_peers_and_peers_with_a_violation_are_no_download_source() {
         .await;
     assert!(blocks.is_empty());
     assert_eq!(net.monitor.chunk_size(), 40);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_peer_that_served_a_refused_block_is_no_longer_a_source() {
+    let net = serving(2, 400);
+    net.monitor.refused_block(ip(1));
+    let violations = net.repository.get(ip(1)).unwrap().snapshot().violations;
+    assert_eq!(violations.len(), 1);
+    let blocks = download(&net, 0).await;
+    assert_eq!(heights(&blocks).len(), 400);
+    assert_eq!(net.client.blocks_calls(), [(ip(2), 0, 400)]);
+    // An address that is no peer is left as it is.
+    net.monitor.refused_block(ip(9));
+    assert!(!net.repository.has(ip(9)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_reply_that_does_not_start_after_the_height_asked_goes_to_the_next_peer() {
+    let net = serving(2, 400);
+    net.answers().late.push(ip(1));
+    let blocks = download(&net, 0).await;
+    assert_eq!(heights(&blocks), (1..=400).collect::<Vec<_>>());
+    assert_eq!(
+        net.client.blocks_calls(),
+        [(ip(1), 0, 400), (ip(2), 0, 400)]
+    );
 }
 
 #[tokio::test(start_paused = true)]

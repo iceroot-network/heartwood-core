@@ -131,4 +131,8 @@ where
     fn complete_cold_start(&self) {
         NetworkMonitor::complete_cold_start(&self.0);
     }
+
+    fn refused_block(&self, ip: IpAddr) {
+        NetworkMonitor::refused_block(&self.0, ip);
+    }
 }

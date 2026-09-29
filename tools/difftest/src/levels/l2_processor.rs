@@ -2150,6 +2150,7 @@ mod tests {
                 result,
                 applied: None,
                 unchained: None,
+                fault: false,
             },
             line: None,
         }
@@ -2229,6 +2230,7 @@ mod tests {
                 result: BlockProcessorResult::Rejected,
                 applied: None,
                 unchained: None,
+                fault: false,
             },
             line: None,
         };
@@ -2237,6 +2239,7 @@ mod tests {
             committed: 0,
             clear_queue: false,
             end: JobEnd::Clear,
+            faulty: None,
         };
         let chain = ChainState {
             last_downloaded: Some(ChainLink {
@@ -2272,6 +2275,7 @@ mod tests {
                 committed: 0,
                 clear_queue: false,
                 end: JobEnd::Clear,
+                faulty: None,
             },
             seen: vec![seen],
             value,
@@ -2297,6 +2301,7 @@ mod tests {
                 committed: 0,
                 clear_queue: false,
                 end: JobEnd::Clear,
+                faulty: None,
             },
             seen: vec![seen.clone()],
             value,

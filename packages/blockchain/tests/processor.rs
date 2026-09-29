@@ -443,6 +443,99 @@ fn a_block_that_fails_its_verification_is_rejected() {
     assert_eq!(node.process_at(&block, at_limit).handler, Handler::Accept);
 }
 
+/// A refusal is a fault of the peer that served the block when no honest peer serves such a
+/// block: a verification failure other than the timestamp, a wrong reward, conflicting
+/// transactions, a refused apply, or any refusal of a block by a key that is no delegate's. A
+/// nonce out of order, a generator out of its slot, a transaction already forged and a block that
+/// does not chain can come from an honest peer on another branch.
+#[test]
+fn only_a_refusal_no_honest_peer_causes_is_a_fault() {
+    let mut node = Node::at_tip();
+    let fault = |node: &mut Node, block: &Block| node.process(block).processed.fault;
+    let bad_signature = node.forge(Forge {
+        bad_signature: true,
+        ..Forge::default()
+    });
+    assert!(fault(&mut node, &bad_signature));
+    let right = node.forge(Forge::default());
+    let wrong_reward = node.forge(Forge {
+        reward: Some(right.header().reward + 1),
+        ..Forge::default()
+    });
+    assert!(fault(&mut node, &wrong_reward));
+    let from = key("genesis-1");
+    let (first, second) = (
+        node.vote(from, "genesis_3", 0),
+        node.vote(from, "genesis_4", 1),
+    );
+    let conflicting = node.forge(Forge {
+        transactions: vec![first, second],
+        ..Forge::default()
+    });
+    assert!(fault(&mut node, &conflicting));
+    let balance = node
+        .state
+        .wallets()
+        .find_by_address(&from.address)
+        .unwrap()
+        .balance();
+    let overspend = node.transfer(from, key("genesis-2"), balance, 0);
+    let refused_apply = node.forge(Forge {
+        transactions: vec![overspend],
+        ..Forge::default()
+    });
+    assert!(fault(&mut node, &refused_apply));
+    // A key that is no delegate's.
+    static STRANGER: LazyLock<KeyPair> =
+        LazyLock::new(|| KeyPair::from_passphrase("processor test: no delegate").unwrap());
+    let stranger = node.forge(Forge {
+        signer: Some(&STRANGER),
+        ..Forge::default()
+    });
+    assert!(fault(&mut node, &stranger));
+
+    // A timestamp too far ahead of our clock.
+    let block = node.forge(Forge::default());
+    let early = FIXTURE.epoch_ms + (i64::from(block.header().timestamp) - 9) * 1_000;
+    let traced = node.process_at(&block, early);
+    assert_eq!(traced.handler, refused(Refusal::VerificationFailed));
+    assert!(!traced.processed.fault);
+    // A delegate out of its slot.
+    let other = FIXTURE
+        .keys
+        .iter()
+        .filter(|k| k.role.starts_with("delegate/"))
+        .map(|k| &k.keys)
+        .find(|k| k.public_key().to_compressed() != block.header().generator_public_key)
+        .unwrap();
+    let out_of_slot = node.forge(Forge {
+        signer: Some(other),
+        ..Forge::default()
+    });
+    assert!(!fault(&mut node, &out_of_slot));
+    let gap = node.transfer(from, key("genesis-2"), 1_000, 1);
+    let nonce = node.forge(Forge {
+        transactions: vec![gap],
+        ..Forge::default()
+    });
+    assert!(!fault(&mut node, &nonce));
+    let transfer = node.transfer(from, key("genesis-2"), 1_000, 0);
+    let forged = node.forge(Forge {
+        transactions: vec![transfer.clone()],
+        ..Forge::default()
+    });
+    node.forged.0.insert(*transfer.id());
+    assert!(!fault(&mut node, &forged));
+    let unchained = node.forge(Forge {
+        previous: Some([7; 32]),
+        ..Forge::default()
+    });
+    assert!(!fault(&mut node, &unchained));
+    // Accepted.
+    node.forged.0.clear();
+    assert!(!fault(&mut node, &forged));
+}
+
 #[test]
 fn nonces_must_follow_each_sender_s_wallet_nonce() {
     let mut node = Node::at_tip();
