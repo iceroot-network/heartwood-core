@@ -25,6 +25,8 @@ struct Node {
     banned: bool,
     idle_socket: &'static str,
     post: Value,
+    /// The attestations its status carries (a relay without a forger has none).
+    signers: usize,
 }
 
 fn node(name: &'static str, ip: &'static str) -> Node {
@@ -39,6 +41,7 @@ fn node(name: &'static str, ip: &'static str) -> Node {
         banned: true,
         idle_socket: "open",
         post: json!([]),
+        signers: 2,
     }
 }
 
@@ -57,16 +60,18 @@ fn records(n: &Node) -> Vec<Value> {
         .iter()
         .map(|h| json!({"id": format!("b{h}"), "height": h}))
         .collect();
+    let keys: Vec<String> = (0..n.signers).map(|i| format!("k{i}")).collect();
+    let signatures: Vec<String> = (0..n.signers).map(|i| format!("s{i}")).collect();
     let status = json!({
         "state": {"height": 40, "currentSlot": n.slot, "forgingAllowed": true},
         "config": {"version": n.version, "network": {"name": "devnet"}},
-        "publicKeys": ["k1", "k2"], "signatures": ["s1", "s2"],
+        "publicKeys": keys, "signatures": signatures,
     });
     vec![
         json!({"case": "hello", "kind": "hello", "ip": n.ip,
                "hello": {"socketId": n.socket_id, "heartbeat": 20000}}),
         json!({"case": "ping", "kind": "ping", "ip": n.ip, "configValid": true,
-               "attestations": {"signed": 2, "verified": 2}, "calls": [call(STATUS, status)]}),
+               "attestations": {"signed": n.signers, "verified": n.signers}, "calls": [call(STATUS, status)]}),
         json!({"case": "get-peers", "kind": "call", "ip": n.ip, "accepted": true, "socket": "open",
                "calls": [call(PEERS, Value::Array(peers))]}),
         json!({"case": "blocks", "kind": "call", "ip": n.ip, "accepted": true, "socket": "open",
@@ -102,6 +107,15 @@ fn topology() -> Value {
     })
 }
 
+/// The two probed relays alone, each reaching the other.
+fn two_nodes() -> Value {
+    json!({
+        "addresses": {"left": "10.0.0.1", "right": "10.0.0.2"},
+        "reach": {"left": ["right"], "right": ["left"]},
+        "expected": [],
+    })
+}
+
 fn run(left: &Node, right: &Node, topology: Option<Value>) -> Report {
     let scratch = ScratchDir::new("p2p-compare").unwrap();
     let root = scratch.path().join("p2p");
@@ -133,10 +147,11 @@ fn failing(report: &Report) -> Vec<&str> {
 #[test]
 fn a_masked_version_passes() {
     let mut left = node("left", "10.0.0.1");
-    left.version = "4.3.1-heartwood.b7";
+    left.version = "4.3.1-heartwood.0.1.0";
     left.socket_id = "heartwood:7";
     left.slot = 41;
-    let report = run(&left, &node("right", "10.0.0.2"), None);
+    left.signers = 0;
+    let report = run(&left, &node("right", "10.0.0.2"), Some(two_nodes()));
     assert_eq!(failing(&report), Vec::<&str>::new());
 }
 
@@ -184,7 +199,7 @@ fn a_target_listing_itself_fails() {
 fn a_changed_block_listing_fails() {
     let mut left = node("left", "10.0.0.1");
     left.blocks = vec![1, 2];
-    let report = run(&left, &node("right", "10.0.0.2"), None);
+    let report = run(&left, &node("right", "10.0.0.2"), Some(two_nodes()));
     assert_eq!(failing(&report), ["blocks"]);
 }
 
@@ -192,7 +207,7 @@ fn a_changed_block_listing_fails() {
 fn a_missing_ban_fails() {
     let mut left = node("left", "10.0.0.1");
     left.banned = false;
-    let report = run(&left, &node("right", "10.0.0.2"), None);
+    let report = run(&left, &node("right", "10.0.0.2"), Some(two_nodes()));
     assert_eq!(failing(&report), ["refuse"]);
 }
 
@@ -200,19 +215,56 @@ fn a_missing_ban_fails() {
 fn a_closed_socket_where_the_other_kept_it_open_fails() {
     let mut left = node("left", "10.0.0.1");
     left.idle_socket = "closed";
-    let report = run(&left, &node("right", "10.0.0.2"), None);
+    let report = run(&left, &node("right", "10.0.0.2"), Some(two_nodes()));
     assert_eq!(failing(&report), ["idle"]);
 }
 
 #[test]
 fn a_status_false_where_the_other_terminated_all_fails() {
+    let (left, right) = (node("left", "10.0.0.1"), node("right", "10.0.0.2"));
+    let scratch = ScratchDir::new("p2p-compare").unwrap();
+    let root = scratch.path().join("p2p");
+    write_node(&root, &left);
+    write_node(&root, &right);
+    fs::write(root.join("topology.json"), two_nodes().to_string()).unwrap();
+    // The oversized postBlock: the reference terminates the socket and bans the caller; the left
+    // node answers `{status: false}`, keeps the socket open and does not ban.
+    let terminated = json!({"case": "refuse-post-block", "kind": "refusal", "ip": "10.0.0.2",
+        "socket": "closed", "banned": true, "disconnects": [{"code": 1006}],
+        "outcome": {"answered": false, "error": {"type": "disconnect"}},
+        "calls": [{"endpoint": "p2p.blocks.postBlock", "requestSha256": "cc",
+                   "error": {"type": "disconnect", "message": "Request failed - server disconnected"}}]});
+    let answered = json!({"case": "refuse-post-block", "kind": "refusal", "ip": "10.0.0.1",
+        "socket": "open", "banned": false, "disconnects": [],
+        "outcome": {"answered": true},
+        "calls": [{"endpoint": "p2p.blocks.postBlock", "requestSha256": "cc", "verdict": "valid",
+                   "answer": {"status": false}}]});
+    for (name, record) in [("left", answered), ("right", terminated)] {
+        let file = root.join(name).join("cases.jsonl");
+        let mut text = fs::read_to_string(&file).unwrap();
+        text.push_str(&format!("{record}\n"));
+        fs::write(file, text).unwrap();
+    }
+    let report = compare(scratch.path(), "left", "right").unwrap();
+    assert_eq!(failing(&report), ["refuse-post-block"]);
+    let Outcome::Mismatch(differences) = outcome(&report, "refuse-post-block") else {
+        panic!("not a mismatch");
+    };
+    // The socket, the ban and the answer all differ.
+    assert!(differences.len() >= 3, "{differences:?}");
+}
+
+#[test]
+fn a_getpeers_case_without_a_topology_fails() {
     let mut left = node("left", "10.0.0.1");
-    left.post = json!({"status": false});
+    left.peers = vec!["10.0.0.2", "10.0.0.3"];
     let mut right = node("right", "10.0.0.2");
-    right.post = json!({"terminated": "all"});
-    let report = run(&left, &right, None);
-    assert_eq!(failing(&report), ["post"]);
-    assert!(matches!(outcome(&report, "post"), Outcome::Mismatch(_)));
+    right.peers = vec!["10.0.0.1", "10.0.0.3"];
+    assert_eq!(failing(&run(&left, &right, None)), ["get-peers"]);
+    // A topology without a route set for one of the two targets fails the same way.
+    let mut partial = two_nodes();
+    partial["reach"] = json!({"left": ["right"]});
+    assert_eq!(failing(&run(&left, &right, Some(partial))), ["get-peers"]);
 }
 
 #[test]
@@ -229,6 +281,7 @@ fn a_case_one_side_lacks_fails() {
         lines.join("\n") + "\n",
     )
     .unwrap();
+    fs::write(root.join("topology.json"), two_nodes().to_string()).unwrap();
     let report = compare(scratch.path(), "left", "right").unwrap();
     assert_eq!(failing(&report), ["refuse"]);
 }

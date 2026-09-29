@@ -11,6 +11,10 @@
 //!  "notAtTip": ["node6"], "expected": ["node2", "node3"]}
 //! ```
 //!
+//! Without it, or without a route set for a compared node, a getPeers case fails: the rule cannot
+//! be applied, and a comparison of the two answers alone would pass a peer that neither target
+//! should list.
+//!
 //! The right node's records are the expected side and the left node's the actual one, as in the
 //! other comparisons.
 
@@ -30,6 +34,8 @@ const GET_PEERS: &str = "p2p.peer.getPeers";
 /// The run's routes, as the recipe recorded them.
 #[derive(Debug, Default)]
 struct Topology {
+    /// Whether the run wrote one.
+    found: bool,
     addresses: BTreeMap<String, String>,
     reach: BTreeMap<String, BTreeSet<String>>,
     not_at_tip: BTreeSet<String>,
@@ -51,6 +57,7 @@ impl Topology {
         let text = |v: &Value| v.as_str().map(str::to_owned);
         let object = |key: &str| v.get(key).and_then(Value::as_object).into_iter().flatten();
         Ok(Topology {
+            found: true,
             addresses: object("addresses")
                 .filter_map(|(k, v)| Some((k.clone(), text(v)?)))
                 .collect(),
@@ -96,8 +103,18 @@ fn peers_rule(
     right: &Side,
 ) -> (Vec<String>, Vec<String>, Vec<Difference>) {
     let mut problems = Vec::new();
+    if !topology.found {
+        problems.push(problem("topology", json!("topology.json"), json!(null)));
+    }
     for side in [left, right] {
         let route_set = topology.reach.get(side.name);
+        if topology.found && route_set.is_none() {
+            problems.push(problem(
+                &format!("{}.route set", side.name),
+                json!("a route set"),
+                json!(null),
+            ));
+        }
         for ip in &side.peers {
             let own = ip == side.ip;
             let outside =
@@ -136,6 +153,13 @@ fn peers_rule(
     };
     let (l, r) = (mask(left), mask(right));
     if let Some(expected) = &topology.expected {
+        for name in expected.iter().filter(|n| topology.address(n).is_none()) {
+            problems.push(problem(
+                &format!("expected.{name}"),
+                json!("an address"),
+                json!(null),
+            ));
+        }
         let want: BTreeSet<String> = expected
             .iter()
             .filter_map(|n| topology.address(n))
