@@ -222,7 +222,7 @@ impl Chain {
 
 /// A full archive of the committed chain in the devnet tooling's format. With `tweak`, one round
 /// row's balance differs from the chain's.
-fn build_archive(chain: &Chain, dir: &Path, tweak: bool) {
+fn build_archive(chain: &Chain, dir: &Path, tweak: bool, to: u32) {
     let corpus = &chain.corpus;
     let meta: BTreeMap<u64, Value> = read_jsonl(&committed().join("reference/meta.jsonl"))
         .into_iter()
@@ -230,7 +230,7 @@ fn build_archive(chain: &Chain, dir: &Path, tweak: bool) {
         .collect();
     let mut blocks = String::new();
     let mut transactions = 0u64;
-    for h in 1..=corpus.tip() {
+    for h in 1..=to {
         let (bytes, id) = if h == 1 {
             (corpus.genesis.encode(), corpus.genesis.id().to_hex())
         } else {
@@ -273,7 +273,7 @@ fn build_archive(chain: &Chain, dir: &Path, tweak: bool) {
                             "username": extra.get("username").cloned().unwrap_or(json!("genesis_1"))}})
         ));
     }
-    let blocks_file = format!("blocks/{:09}-{:09}.jsonl", 1, corpus.tip());
+    let blocks_file = format!("blocks/{:09}-{:09}.jsonl", 1, to);
     write(&dir.join(&blocks_file), blocks);
     for name in ["network", "milestones", "genesisBlock", "exceptions"] {
         let rel = format!("crypto/{name}.json");
@@ -317,9 +317,9 @@ fn build_archive(chain: &Chain, dir: &Path, tweak: bool) {
     let manifest = json!({
         "format": corpus::ARCHIVE_FORMAT,
         "chain": corpus.meta["chain"],
-        "range": {"from": 1, "to": corpus.tip(), "blocks": corpus.tip(),
+        "range": {"from": 1, "to": to, "blocks": to,
                   "transactions": transactions,
-                  "lastId": corpus.block_id(corpus.tip()).unwrap().to_hex()},
+                  "lastId": corpus.block_id(to).unwrap().to_hex()},
         "previous": null,
         "problems": [],
         "files": files,
@@ -337,7 +337,9 @@ fn archive_template(tweak: bool) -> &'static Path {
     let (_, dir) = cell.get_or_init(|| {
         let scratch = ScratchDir::new("live-mixed-archive").unwrap();
         let dir = scratch.path().join("archive");
-        build_archive(&chain(), &dir, tweak);
+        let chain = chain();
+        let tip = chain.corpus.tip();
+        build_archive(&chain, &dir, tweak, tip);
         (scratch, dir)
     });
     dir
@@ -711,6 +713,14 @@ fn build_run(chain: &Chain, kind: &Kind, run: &Path) {
                     &format!("Accepted new peer {}:6002", ip(relay)),
                 ));
             }
+        }
+        if n == 5 {
+            // Node 5 reaches node 4 alone.
+            log.push_str(&line(
+                450.0,
+                "INFO",
+                &format!("Accepted new peer {}:6002", ip(4)),
+            ));
         }
         write(&reference_log(run, &name), log);
     }
@@ -1371,61 +1381,205 @@ fn the_two_runs_may_hold_different_transaction_counts() {
 // The backfill of the slots before block 2
 // ---------------------------------------------------------------------------------------------
 
-/// Put run w0's block 2 into slot 3 (two slots before its own) and the two missed rows of those
-/// slots, which the reference writes at height 2, into its corpus.
-fn backfill_corpus(f: &Fixture) {
-    let dir = f.root.join("live-w0");
+/// Put block 2 of run `run`'s chain into slot 3: the reference's productivity backfill then adds
+/// the rows of slots 1 and 2 at height 2 at a start whose store holds no missed row, which no live
+/// node writes.
+fn move_block_2_to_slot_3(f: &Fixture, run: &str) {
+    let dir = f.root.join(format!("live-{run}"));
     let path = dir.join("blocks.jsonl");
     let mut rows = read_jsonl(&path);
     let block = rows.iter_mut().find(|r| r["h"] == 2).unwrap();
     let hex = block["hex"].as_str().unwrap().to_owned();
     block["hex"] = json!(format!("{}{}{}", &hex[..8], "18000000", &hex[16..]));
     write(&path, jsonl(&rows));
-    let missed = dir.join("reference/missed-blocks.jsonl");
-    let mut text = std::fs::read_to_string(&missed).unwrap();
-    let first = json!({"timestamp": 8, "height": 2, "username": "genesis_1"});
-    let second = json!({"timestamp": 16, "height": 2, "username": "genesis_2"});
-    text = format!("{first}\n{second}\n{text}");
-    write(&missed, text);
     corpus::write_manifest(&dir).unwrap();
 }
 
-/// Add two to the missed rows of every summary the reference's side holds.
-fn backfill_prediction(f: &Fixture) {
-    let cache = f.w0.join("predictions/rollback-160-133.json");
-    let mut prediction: Value = serde_json::from_slice(&std::fs::read(&cache).unwrap()).unwrap();
-    let missed = prediction["summary"]["missed"].as_u64().unwrap();
-    prediction["summary"]["missed"] = json!(missed + 2);
-    write(&cache, prediction.to_string());
+/// Run w's rollback as run w0's: given 133 from its tip 180, it lands on 106 and leaves no missed
+/// row, so the reference's start after it runs the backfill.
+fn roll_w_back_to_106(f: &Fixture) {
+    let chain = chain();
+    let sum = |round: u64| chain.sum_at(106, round, &chain.missed);
+    assert_eq!(sum(2).missed, 0);
+    edit_step(&f.w, "rollback-node6", |step| {
+        step["detail"] = json!({"height": 133, "target": 106});
+    });
+    edit_step(&f.w, "summary-after-rollback", |step| {
+        step["detail"]["summary"] = sum(2).json(true);
+    });
+    edit_step(&f.w, "summary-after-start", |step| {
+        step["detail"]["summary"] = sum(3).json(true);
+    });
+    write(
+        &f.w.join("predictions/rollback-180-133.json"),
+        json!({"target": 106, "summary": sum(2).json(false)}).to_string(),
+    );
+}
+
+/// Set the missed rows of node 6's summary after the start in `run`.
+fn missed_after_start(run: &Path, missed: u64) {
+    edit_step(run, "summary-after-start", |step| {
+        let summary = &mut step["detail"]["summary"];
+        let key = if summary.get("missedRows").is_some() {
+            "missedRows"
+        } else {
+            "missed"
+        };
+        summary[key] = json!(missed);
+    });
 }
 
 #[test]
-fn the_backfill_of_a_later_first_block_is_recorded_and_passes() {
+fn heartwoods_start_without_the_backfilled_rows_is_recorded_when_block_2_is_not_in_slot_1() {
     let f = fixture();
-    backfill_corpus(&f);
-    backfill_prediction(&f);
-    let report = check_run(&f, &f.w0);
+    roll_w_back_to_106(&f);
+    move_block_2_to_slot_3(&f, "w");
+    let report = check_run(&f, &f.w);
     let found = cases_of(&report, "recovery", "the summary");
     assert!(
         found
             .iter()
             .any(|(_, label, _)| label.starts_with("recorded:")
+                && label.contains("the summary after the start")
                 && label.contains("2 more missed rows than node 6")),
         "{found:#?}"
     );
     assert!(found.iter().all(|(failed, ..)| !failed), "{found:#?}");
+    // Any other difference fails.
+    missed_after_start(&f.w, 1);
+    let report = check_run(&f, &f.w);
+    assert_fails(
+        &report,
+        "recovery",
+        "the summary after the start",
+        "1 missed rows against the oracle's 2",
+    );
 }
 
 #[test]
 fn the_same_difference_on_a_chain_whose_block_2_is_in_slot_1_fails() {
     let f = fixture();
-    backfill_prediction(&f);
+    roll_w_back_to_106(&f);
+    let report = check_run(&f, &f.w);
+    assert_passes(&report, "recovery", "the summary after the start");
+    // Two rows apart from the reference's start, which adds none on this chain.
+    missed_after_start(&f.w, 2);
+    let report = check_run(&f, &f.w);
+    assert_fails(
+        &report,
+        "recovery",
+        "the summary after the start",
+        "2 missed rows against the oracle's 0",
+    );
+}
+
+#[test]
+fn the_references_start_must_hold_the_backfilled_rows() {
+    let f = fixture();
+    move_block_2_to_slot_3(&f, "w0");
+    // Run w0's node 6 is the reference: without the two rows its start differs from the oracle's.
+    let report = check_run(&f, &f.w0);
+    assert_fails(
+        &report,
+        "recovery",
+        "the summary after the start",
+        "0 missed rows against the oracle's 2",
+    );
+    missed_after_start(&f.w0, 2);
+    let report = check_run(&f, &f.w0);
+    assert_passes(&report, "recovery", "the summary after the start");
+    assert!(
+        cases_of(&report, "recovery", "more missed rows").is_empty(),
+        "the reference's own rows are no caveat"
+    );
+}
+
+#[test]
+fn the_backfill_excuses_no_difference_before_the_start() {
+    let f = fixture();
+    move_block_2_to_slot_3(&f, "w0");
+    missed_after_start(&f.w0, 2);
+    // The oracle's rollback counting two more rows than node 6 is a difference: nothing started.
+    let cache = f.w0.join("predictions/rollback-160-133.json");
+    let mut prediction: Value = serde_json::from_slice(&std::fs::read(&cache).unwrap()).unwrap();
+    prediction["summary"]["missed"] = json!(2);
+    write(&cache, prediction.to_string());
     let report = check_run(&f, &f.w0);
     assert_fails(
         &report,
         "recovery",
         "the summary after the rollback",
-        "missed rows",
+        "0 missed rows against the oracle's 2",
+    );
+}
+
+#[test]
+fn a_transport_line_outside_every_window_fails_even_when_the_baseline_has_one() {
+    let f = fixture();
+    for run in [&f.w, &f.w0] {
+        append(&reference_log(run, "node1"), &ban(700.0, &ip(4), CLOSED));
+    }
+    let report = check_run(&f, &f.w);
+    assert_fails(&report, "mixed", "reference logs", "transport in outside");
+}
+
+#[test]
+fn the_fresh_node_accepts_the_one_relay_it_reaches() {
+    let f = fixture();
+    let report = check_run(&f, &f.w);
+    assert_passes(&report, "mixed", "node5 accepts node4");
+    // Node 5 reaches node 4 alone: nothing is asked of it about node 6.
+    assert!(cases_of(&report, "mixed", "node5 accepts node6").is_empty());
+    write(
+        &reference_log(&f.w, "node5"),
+        line(1.0, "INFO", "Blockchain 100% in sync"),
+    );
+    let report = check_run(&f, &f.w);
+    assert_fails(&report, "mixed", "node5 accepts node4", "never logged");
+}
+
+#[test]
+fn a_relay_whose_api_port_no_poll_records_fails() {
+    let f = fixture();
+    edit_jsonl(&f.w.join("peers.jsonl"), |polls| {
+        for p in polls.iter_mut() {
+            if let Some(peers) = p["peers"].as_array_mut() {
+                for e in peers.iter_mut() {
+                    if let Some(ip) = e.get("ip").and_then(Value::as_str) {
+                        *e = json!(format!("{ip}:6002"));
+                    }
+                }
+            }
+        }
+    });
+    let report = check_run(&f, &f.w);
+    assert_fails(&report, "mixed", "node4's API port", "is not shown");
+}
+
+#[test]
+fn the_process_reports_need_no_round_the_run_does_not_reach() {
+    let f = fixture();
+    // The run stops in round 4: a report of round 2 alone is enough.
+    edit_jsonl(&f.w.join("processes.jsonl"), |reports| {
+        reports.retain(|r| r["round"] == 2);
+    });
+    let report = check_run(&f, &f.w);
+    assert_passes(&report, "mixed", "relays listen on their own address only");
+    assert_clean(&report, &SECTIONS);
+}
+
+#[test]
+fn a_fresh_archive_that_ends_below_the_paused_tip_fails() {
+    let f = fixture();
+    let dir = f.w.join("archives/node5/20260928T100000Z");
+    std::fs::remove_dir_all(&dir).unwrap();
+    build_archive(&chain(), &dir, false, 200);
+    let report = check_run(&f, &f.w);
+    assert_fails(
+        &report,
+        "fresh",
+        "node5: its block ids",
+        "ends at height 200, below the serving chain's paused tip 265",
     );
 }
 
