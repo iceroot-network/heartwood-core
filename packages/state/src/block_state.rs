@@ -39,9 +39,9 @@ pub fn apply_transaction<H: TransactionHandlers>(
     transaction: &Transaction,
     handlers: &H,
 ) -> Result<TxUndo, TransactionFailure<H::Error>> {
-    let undo = handlers
-        .apply(ctx, wallets, transaction)
-        .map_err(TransactionFailure::Refused)?;
+    let applied = handlers.apply(ctx, wallets, transaction);
+    wallets.defer_reindex(transaction);
+    let undo = applied.map_err(TransactionFailure::Refused)?;
     if let Err(error) = refresh_vote_balances(wallets, transaction) {
         rolled_back(
             "transaction",
@@ -63,9 +63,9 @@ pub fn revert_transaction<H: TransactionHandlers>(
     undo: &TxUndo,
     handlers: &H,
 ) -> Result<(), TransactionFailure<H::Error>> {
-    handlers
-        .revert(ctx, wallets, transaction, undo)
-        .map_err(TransactionFailure::Refused)?;
+    let reverted = handlers.revert(ctx, wallets, transaction, undo);
+    wallets.defer_reindex(transaction);
+    reverted.map_err(TransactionFailure::Refused)?;
     if let Err(error) = refresh_vote_balances(wallets, transaction) {
         rolled_back(
             "reverted transaction",
@@ -83,8 +83,23 @@ pub fn revert_transaction<H: TransactionHandlers>(
 /// documentation for the one exception).
 ///
 /// The forger is the wallet that has bound the block's generator key; it must be a registered
-/// delegate before any transaction of the block is applied.
+/// delegate before any transaction of the block is applied. Last, the senders and recipients of
+/// the transactions applied or refused are re-indexed, as the reference's handlers do after a
+/// block.
 pub fn apply_block<H: TransactionHandlers>(
+    wallets: &mut WalletRepository,
+    totals: &mut Totals,
+    block: &Block,
+    milestones: &Milestones,
+    handlers: &H,
+) -> Result<BlockUndo, ApplyError<H::Error>> {
+    let applied = apply_block_steps(wallets, totals, block, milestones, handlers);
+    wallets.reindex_deferred();
+    applied
+}
+
+/// [`apply_block`] before the re-indexing.
+fn apply_block_steps<H: TransactionHandlers>(
     wallets: &mut WalletRepository,
     totals: &mut Totals,
     block: &Block,
@@ -137,8 +152,22 @@ pub fn apply_block<H: TransactionHandlers>(
 }
 
 /// Revert the forger's payout of the block of `undo`, then its transactions in reverse order,
-/// and restore `totals`. On an error the wallets and `totals` are unchanged.
+/// and restore `totals`. On an error the wallets and `totals` are unchanged. Last, the wallets
+/// queued for a re-index are re-indexed (see [`apply_block`]).
 pub fn revert_block<H: TransactionHandlers>(
+    wallets: &mut WalletRepository,
+    totals: &mut Totals,
+    undo: &BlockUndo,
+    milestones: &Milestones,
+    handlers: &H,
+) -> Result<(), RevertError<H::Error>> {
+    let reverted = revert_block_steps(wallets, totals, undo, milestones, handlers);
+    wallets.reindex_deferred();
+    reverted
+}
+
+/// [`revert_block`] before the re-indexing.
+fn revert_block_steps<H: TransactionHandlers>(
     wallets: &mut WalletRepository,
     totals: &mut Totals,
     undo: &BlockUndo,

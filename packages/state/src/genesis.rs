@@ -124,6 +124,10 @@ pub fn build<H: TransactionHandlers>(
                     rejected,
                 })?;
             let sender = Address::from_public_key(&data.sender_public_key, params.network());
+            // The reference's bootstrap of a resignation re-indexes its sender.
+            if kind == TransactionType::DelegateResignation {
+                wallets.reindex(&sender);
+            }
             let (count, pays) = senders.entry(sender).or_default();
             *count = count.saturating_add(1);
             *pays = pays
