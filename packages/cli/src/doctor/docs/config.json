@@ -13,13 +13,17 @@
         "the configuration"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The role's configuration loads through the node's own loader with no start warning.",
+        "warn": "It loads, and the relay's start would warn about settings it does not read or honour; each warning is listed as untrusted text.",
+        "fail": "The loader refuses the configuration: the role will not start.",
+        "unknown": "The loader was not run: the configuration directory can be written by other users (keys.dir), or the process could not read it.",
+        "skipped": "The role does not run on this host."
       },
-      "advice": {},
+      "advice": {
+        "loads": "The {role}'s configuration loads with no warning.",
+        "warnings": "The {role}'s start warns about {count} settings it does not read or honour (listed as untrusted text). Remove them, or make sure the {role} does what you expect without them.",
+        "refused": "The {role}'s configuration is refused, so the {role} will not start. Run `heartwood {role} run` in a terminal to read the loader's message, fix the file it names, then start the {role}."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#config-load"
     },
     {
@@ -34,12 +38,15 @@
         "the configuration"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The file logger writes info lines or more detail.",
+        "warn": "The file logger writes only notice or more severe lines: the doctor cannot see slots, quorum or forks.",
+        "unknown": "The configuration could not be loaded (see config.load and keys.dir).",
+        "skipped": "The role does not run on this host."
       },
-      "advice": {},
+      "advice": {
+        "detailed": "The {role}'s file log level is {level}.",
+        "too-high": "The {role}'s file log level is '{level}', so the doctor cannot see the {role}'s decisions. Set CORE_LOG_LEVEL_FILE=info in the {role}'s .env and restart it."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#config-log-level"
     },
     {
@@ -54,12 +61,17 @@
         "/proc"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet."
+        "pass": "The run directory is owned by this user with no permission for group or others, or it does not exist yet.",
+        "warn": "Group or others have a permission on it; the node narrows it to 0700 at its next start.",
+        "fail": "It belongs to another user: the node will not start.",
+        "unknown": "Its metadata could not be read."
       },
-      "advice": {},
+      "advice": {
+        "private": "The run directory {path} is private (mode {mode}).",
+        "absent": "The run directory {path} does not exist yet; the node creates it, private, at its first start.",
+        "open": "The run directory {path} can be read by other users (mode {mode}) until the node's next start narrows it. Run `chmod 700 {path}`.",
+        "owner": "The run directory {path} belongs to another user, so the node will not start. Run the node as that directory's owner."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#config-run-dir"
     },
     {
@@ -74,13 +86,21 @@
         "/proc"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "delegates.json is a regular file owned by this user with no permission for group or others. Its metadata is read; the file is never opened.",
+        "warn": "It is a symbolic link, or it has an owner execute bit.",
+        "fail": "It is missing on a forger's host; it has any permission for group or others, read or write (the forger refuses it at its next start); it belongs to another user; or it is not a regular file.",
+        "unknown": "Its metadata could not be read.",
+        "skipped": "No forger runs on this host."
       },
-      "advice": {},
+      "advice": {
+        "private": "The key file {path} is private (mode {mode}).",
+        "missing": "This host runs a forger, but its key file {path} is missing. The forger will not start without it.",
+        "open": "{path} can be read or changed by other users on this host (mode {mode}). Run `chmod 600 {path}`. The forger refuses to start with this file.",
+        "owner": "{path} belongs to another user. Run the forger as the key file's owner, or give the file to the forger's user.",
+        "not-file": "{path} is not a regular file. The forger reads its keys only from a regular file.",
+        "link": "{path} is a symbolic link. Keep the key file itself in the configuration directory, so that the owner and mode checked are its own.",
+        "exec": "{path} has an execute bit (mode {mode}). Run `chmod 600 {path}`."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#keys-file"
     },
     {
@@ -94,11 +114,14 @@
         "the node's files"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet."
+        "pass": "Neither the configuration directory nor its parent can be written by group or others (a parent with the sticky bit, such as /tmp, counts as not writable).",
+        "fail": "Group or others can write to either. While this fails, the doctor runs none of the node's loaders and reads no file in that directory, and the configuration checks report unknown.",
+        "unknown": "Their metadata could not be read."
       },
-      "advice": {},
+      "advice": {
+        "private": "The configuration directory {path} and its parent cannot be written by other users.",
+        "open": "Other users can write to {path} (mode {mode}), so they could replace the key file or the configuration. Run `chmod go-w {path}`. Until then the doctor does not load the node's configuration."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#keys-dir"
     },
     {
@@ -114,12 +137,16 @@
         "the node's files"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "There is no key file, or a forger of the instance runs or has run on this host.",
+        "warn": "A key file is on a host where no forger of the instance runs or has run.",
+        "unknown": "The key file's metadata or the process table could not be read.",
+        "skipped": "No relay runs on this host."
       },
-      "advice": {},
+      "advice": {
+        "none": "No forger key file is on this relay's host.",
+        "forger": "The key file belongs to this host's forger.",
+        "stray": "This host holds a forger key file ({path}), but no forger of this instance runs here. The relay never reads it. Keep keys only on the forger's host."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#keys-stray"
     }
   ]
