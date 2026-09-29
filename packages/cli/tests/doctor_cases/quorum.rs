@@ -6,7 +6,7 @@ use std::net::IpAddr;
 use heartwood_cli::Role;
 use heartwood_cli::doctor::DoctorOptions;
 use heartwood_cli::doctor::report::{Basis, Status};
-use heartwood_cli::doctor::seams::Subject;
+use heartwood_cli::doctor::seams::{RoleState, Subject};
 use heartwood_cli::doctor::sources::api::ApiPeers;
 use heartwood_cli::doctor::sources::logs::LineKind;
 use heartwood_cli::doctor::sources::procfs::{SocketRow, TcpState};
@@ -185,6 +185,25 @@ pub fn cases() -> Vec<Case> {
             &[(F, Status::Unknown, "unknown")],
         ),
     ];
+    for (name, events, status, key) in [
+        (
+            "forging: nothing logged, the forger does not run",
+            Vec::new(),
+            Status::Unknown,
+            "unknown",
+        ),
+        (
+            "forging: a refusal logged before the forger stopped",
+            vec![refused(63)],
+            Status::Warn,
+            "quorum",
+        ),
+    ] {
+        let mut stopped = with_log(events);
+        let facts = process(RoleState::Stopped, at(400));
+        stopped.processes.insert(Role::Forger, Ok(facts));
+        cases.push(case(name, check, stopped, &[(F, status, key)]));
+    }
 
     // quorum.attestation
     let check = "quorum.attestation";

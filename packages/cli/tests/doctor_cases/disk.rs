@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use heartwood_cli::Role;
 use heartwood_cli::doctor::registry::{CheckInput, ENTRIES};
 use heartwood_cli::doctor::report::{Fact, Status};
-use heartwood_cli::doctor::seams::{FsStats, Subject};
+use heartwood_cli::doctor::seams::{FsStats, RoleState, Subject};
 use heartwood_cli::doctor::sources::api::ApiBlock;
 use heartwood_cli::doctor::sources::logs::{Covered, LineKind, LogEvent, LogWindow};
 use heartwood_cli::doctor::sources::procfs::{BlockDevice, MountRow};
@@ -15,6 +15,7 @@ use heartwood_kernel::log::Level;
 
 use super::Case;
 use super::net::{base, case, denied, ex, file_of, presence, relay, resolve};
+use super::slots::process;
 use crate::doctor_support::FakeView;
 
 const HOST: Subject = Subject::Host;
@@ -545,6 +546,25 @@ fn slow_writes() -> Vec<Case> {
     let mut view = slow_view(&[]);
     view.roles_present = Ok(presence(true, false));
     add("no forger here", view, Status::Skipped, "skipped-absent");
+    let stopped = |millis: &[u64]| {
+        let mut view = slow_view(millis);
+        let facts = process(RoleState::Stopped, 1_600_000_000_000);
+        view.processes.insert(Role::Forger, Ok(facts));
+        view
+    };
+    let (quiet, slow) = (stopped(&[]), stopped(&[300]));
+    add(
+        "the forger does not run",
+        quiet,
+        Status::Skipped,
+        "skipped-absent",
+    );
+    add(
+        "a slow write before the forger stopped",
+        slow,
+        Status::Warn,
+        "slow",
+    );
     cases
 }
 

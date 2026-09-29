@@ -293,6 +293,36 @@ pub fn cases() -> Vec<Case> {
         quiet,
         &[(F, Status::Unknown, "unknown")],
     ));
+    let mut warnings = history(Vec::new());
+    let mut level = super::slots::log(Role::Forger, Vec::new());
+    level.file_level = Some(Level::Warning);
+    warnings.logs.insert(Role::Forger, Ok(level));
+    cases.push(case(
+        "history: the log level hides info lines",
+        "forger.link-history",
+        warnings,
+        &[(F, Status::Unknown, "unknown")],
+    ));
+    for (name, events, status, key) in [
+        (
+            "history: nothing logged, the forger does not run",
+            Vec::new(),
+            Status::Unknown,
+            "unknown",
+        ),
+        (
+            "history: a failure logged before the forger stopped",
+            vec![(NOW_MS - 1_200_000, LineKind::WaitingForHost)],
+            Status::Warn,
+            "failures",
+        ),
+    ] {
+        let mut stopped = history(events);
+        let facts = process(RoleState::Stopped, NOW_MS - 7_200_000);
+        stopped.processes.insert(Role::Forger, Ok(facts));
+        let expect = [(F, status, key)];
+        cases.push(case(name, "forger.link-history", stopped, &expect));
+    }
 
     let mut refused = view();
     let loader = unknown(Source::Config, Reason::KeysDirUnsafe);
