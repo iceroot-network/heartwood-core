@@ -90,7 +90,7 @@ mod tests {
     use super::*;
     use std::path::Path;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -174,23 +174,32 @@ mod tests {
         let path = data.join("run/relay.lock");
         fs::write(&path, "").unwrap();
         let stop = Arc::new(AtomicBool::new(false));
-        let probing = Arc::clone(&stop);
-        let probe_path = path.clone();
+        let probes = Arc::new(AtomicU32::new(0));
+        let (probing, counted, probe_path) = (Arc::clone(&stop), Arc::clone(&probes), path.clone());
         // `status` in a loop: a shared lock taken and released at once, over and over.
         let probe = std::thread::spawn(move || {
-            let mut probes = 0_u32;
             while !probing.load(Ordering::Relaxed) {
                 is_locked(&probe_path).unwrap();
-                probes += 1;
+                counted.fetch_add(1, Ordering::Relaxed);
             }
-            probes
         });
-        for _ in 0..50 {
+        // The starts overlap the probes whatever the number of cores: they begin once the probe
+        // runs, and go on until it has probed 50 times among them (the probe's thread may not
+        // run at all during 50 quick starts on a small machine).
+        while probes.load(Ordering::Relaxed) == 0 && !probe.is_finished() {
+            std::thread::yield_now();
+        }
+        let before = probes.load(Ordering::Relaxed);
+        let probed = || probes.load(Ordering::Relaxed) - before;
+        let mut starts = 0;
+        while starts < 50 || (probed() < 50 && !probe.is_finished()) {
             let lock = ProcessLock::test(&data, "relay").expect("a probe never refuses a start");
             drop(lock);
+            starts += 1;
         }
         stop.store(true, Ordering::Relaxed);
-        assert!(probe.join().unwrap() > 0);
+        probe.join().unwrap();
+        assert!(probed() >= 50);
         fs::remove_dir_all(&data).unwrap();
     }
 }
