@@ -13,6 +13,7 @@
 //! exist); this one applies the reference's settings as they are meant.
 
 use std::collections::HashMap;
+use std::net::{IpAddr, Ipv6Addr};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -26,6 +27,23 @@ use crate::server::{Semaphore, SemaphoreLevel};
 
 /// The windows kept before the ended ones are dropped; the bound doubles with the live ones.
 const PRUNE_AT: usize = 4_096;
+/// The most windows kept: beyond, every new client shares one window. The reference keeps one per
+/// key, and any text was a key behind a trusted proxy.
+pub(crate) const MAX_WINDOWS: usize = 100_000;
+/// The key of the window every client beyond [`MAX_WINDOWS`] shares.
+const SHARED: &str = "*";
+
+/// The window key of the client at `address`: the address, or the /64 of an IPv6 address, which
+/// one host holds whole. The reference keys each IPv6 address.
+pub(crate) fn key_of(address: &str) -> String {
+    match address.parse::<IpAddr>() {
+        Ok(IpAddr::V6(v6)) => {
+            let prefix = u128::from(v6) & !u128::from(u64::MAX);
+            format!("{}/64", Ipv6Addr::from(prefix))
+        }
+        _ => address.to_owned(),
+    }
+}
 
 /// The fixed-window rate limit of the API, per client address.
 #[derive(Debug)]
@@ -56,12 +74,20 @@ impl RateLimiter {
             self.prune_at = PRUNE_AT.max(self.windows.len().saturating_mul(2));
         }
         let fresh = (self.duration.map(|duration| now + duration), 0);
+        let known = self.windows.contains_key(key) || self.windows.len() < MAX_WINDOWS;
+        let key = if known { key } else { SHARED };
         let window = self.windows.entry(key.to_owned()).or_insert(fresh);
         if window.0.is_some_and(|ends| now >= ends) {
             *window = fresh;
         }
         window.1 = window.1.saturating_add(1);
         window.1 <= u64::from(self.points)
+    }
+
+    /// How many windows are kept.
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.windows.len()
     }
 }
 

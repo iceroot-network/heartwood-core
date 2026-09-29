@@ -42,9 +42,22 @@ pub(super) async fn read(headers: &HeaderMap, body: Body) -> Result<Value, ApiEr
         return Err(unsupported());
     }
     let bytes = to_bytes(body, MAX_BODY).await.map_err(|_| too_large())?;
-    let bytes = match text_of(header::CONTENT_ENCODING).as_deref() {
-        Some("gzip") => gunzip(&bytes)?,
-        Some("deflate") => inflate(ZlibDecoder::new(&bytes[..]), Vec::new())?,
+    let encoding = text_of(header::CONTENT_ENCODING);
+    // The decompression and the parse run on a blocking thread: a body of many gzip members costs
+    // CPU time that would hold one of the API runtime's workers, and its accept loop with it.
+    let work = move || decode(&bytes, encoding.as_deref(), &mime);
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| ApiError::internal())?
+}
+
+/// The payload of `bytes` with the `content-encoding` `encoding` and the media type `mime`.
+fn decode(bytes: &[u8], encoding: Option<&str>, mime: &str) -> Result<Value, ApiError> {
+    let refused = |message: &str| ApiError::unprocessable(message);
+    let unsupported = || refused("Unsupported Media Type");
+    let bytes = match encoding {
+        Some("gzip") => gunzip(bytes)?,
+        Some("deflate") => inflate(ZlibDecoder::new(bytes), Vec::new())?,
         _ => bytes.to_vec(),
     };
     // The body is read as UTF-8 text, a sequence that is not UTF-8 becoming U+FFFD.
@@ -54,7 +67,7 @@ pub(super) async fn read(headers: &HeaderMap, body: Body) -> Result<Value, ApiEr
     let json = json.and_then(|subtype| subtype.strip_suffix("json"));
     let json =
         json.is_some_and(|middle| middle.is_empty() || middle.len() > 1 && middle.ends_with('+'));
-    match mime.as_str() {
+    match mime {
         _ if (json || mime == "application/octet-stream") && bytes.is_empty() => Ok(Value::Null),
         _ if json => match serde_json::from_str::<Value>(&text) {
             Ok(value) if !names_proto(&value) => Ok(value),
