@@ -1,9 +1,7 @@
 //! The history routes that the store's ready readers answer, over the committed chain's store:
 //! the delegates of a round, the first block, the votes and a wallet's sent, received and vote
-//! transactions.
-//!
-//! The rounds, the raw and the single answers run in any build; the lists and the transformed
-//! resources run with the whole crate (`integration`).
+//! transactions. They read the round, block and transaction readers only, so they run in every
+//! build.
 
 mod history_fixture;
 
@@ -146,7 +144,6 @@ async fn the_first_block_is_the_block_at_height_one() {
 }
 
 #[tokio::test]
-#[ignore = "integration"]
 async fn the_first_block_is_transformed_by_default() {
     let fixture = fixture();
     let data = first(json!({"transform": true})).await;
@@ -207,7 +204,6 @@ async fn a_vote_shows_raw_and_a_transaction_of_another_kind_is_not_found() {
 }
 
 #[tokio::test]
-#[ignore = "integration"]
 async fn a_transformed_vote_has_no_timestamp_and_no_confirmations() {
     let fixture = fixture();
     let mut shown = 0;
@@ -233,7 +229,6 @@ async fn votes_index(query: Value) -> ApiReply {
 }
 
 #[tokio::test]
-#[ignore = "integration"]
 async fn the_votes_list_every_vote_of_both_kinds_newest_first() {
     let fixture = fixture();
     let all = newest_first(fixture, is_vote);
@@ -264,7 +259,6 @@ async fn the_votes_list_every_vote_of_both_kinds_newest_first() {
 }
 
 #[tokio::test]
-#[ignore = "integration"]
 async fn the_votes_narrow_with_each_criterion() {
     let fixture = fixture();
     let (block, _, one) = fixture
@@ -319,7 +313,6 @@ async fn wallet_route(route: RouteId, id: &str, query: Value) -> Result<ApiReply
 }
 
 #[tokio::test]
-#[ignore = "integration"]
 async fn a_wallets_sent_transactions_are_the_ones_its_address_sent() {
     let fixture = fixture();
     let route = RouteId::WalletsTransactionsSent;
@@ -384,7 +377,6 @@ fn only_paid(fixture: &Fixture) -> String {
 }
 
 #[tokio::test]
-#[ignore = "integration"]
 async fn a_wallet_without_a_public_key_has_an_empty_page_of_sent_and_of_votes() {
     let fixture = fixture();
     let paid = only_paid(fixture);
@@ -419,7 +411,6 @@ async fn a_wallet_without_a_public_key_has_an_empty_page_of_sent_and_of_votes() 
 }
 
 #[tokio::test]
-#[ignore = "integration"]
 async fn a_wallets_votes_are_the_vote_transactions_it_sent() {
     let fixture = fixture();
     let route = RouteId::WalletsVotes;
@@ -449,7 +440,6 @@ async fn a_wallets_votes_are_the_vote_transactions_it_sent() {
 }
 
 #[tokio::test]
-#[ignore = "integration"]
 async fn a_wallets_received_transactions_are_the_transfers_paying_it() {
     let fixture = fixture();
     let route = RouteId::WalletsTransactionsReceived;
@@ -474,7 +464,6 @@ async fn a_wallets_received_transactions_are_the_transfers_paying_it() {
 }
 
 #[tokio::test]
-#[ignore = "integration"]
 async fn an_unknown_wallet_is_refused_or_has_nothing() {
     let fixture = fixture();
     for route in [
