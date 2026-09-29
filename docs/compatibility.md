@@ -337,8 +337,10 @@ serves both implementations:
 - `config::floor`: the node's own version against the milestones' `p2p.minimumVersions`. The floor
   in force at the stored tip (height 1 at a first start) must admit the node's version, or the
   start stops and names the height; a later milestone whose floor would refuse the node is a
-  warning with its height, since the network cuts the node off there. The reference checks no
-  floor against its own version.
+  warning with its height, since the network cuts the node off there. A forger checks it at the
+  height its relay's first round names, but no higher than one block per slot of the shortest
+  block time since the epoch allows, so a relay reporting a height the chain cannot have reached
+  does not stop it. The reference checks no floor against its own version.
 - `bus`: the event bus, with the reference's event names, to every subscriber in the order the
   node emitted them. Nothing in a relay consumes it beyond the node's own ordered listeners; the
   external payloads (webhooks, the API's socket) come with their first consumer.
