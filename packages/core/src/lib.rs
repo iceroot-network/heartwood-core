@@ -31,6 +31,7 @@ pub mod config;
 #[cfg(feature = "difftest")]
 pub mod harness;
 pub mod lock;
+pub mod markers;
 pub mod network;
 pub mod options;
 pub mod signals;

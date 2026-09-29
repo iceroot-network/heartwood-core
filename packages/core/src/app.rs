@@ -6,9 +6,10 @@
 //! the API stops accepting connections, the blockchain service stops the queue after its job, and
 //! the node thread flushes the pool, writes the online record, and closes the store.
 //!
-//! The reference's marker files are honoured at the start: `clear-saved-states.lock` in the temp
-//! directory restores the state by a replay (and is removed once it is done), and
-//! `clear-pool.lock` clears the pool's storage when the pool opens. So are its reset variables:
+//! The reference's marker files are honoured at the start, when they are the relay's user's alone
+//! ([`crate::markers`]): `clear-saved-states.lock` in the temp directory restores the state by a
+//! replay (and is removed once it is done), and `clear-pool.lock` clears the pool's storage when
+//! the pool opens. So are its reset variables:
 //! `CORE_RESET_DATABASE` empties the store (the start is a first start) and the pool, and
 //! `CORE_RESET_POOL` empties the pool, at every start while they are set.
 
@@ -116,13 +117,8 @@ pub fn run_relay(run: &RelayRun) -> Result<(), RelayError> {
 /// Run the relay of `relay`, whose flags are `run`.
 pub fn start(relay: RelayConfig, run: &RelayRun) -> Result<(), RelayError> {
     let paths = &relay.paths;
-    for dir in [
-        &paths.config,
-        &paths.data,
-        &paths.cache,
-        &paths.log,
-        &paths.temp,
-    ] {
+    // The temp directory is not made: the relay only reads the reference's markers there.
+    for dir in [&paths.config, &paths.data, &paths.cache, &paths.log] {
         fs::create_dir_all(dir).map_err(|error| config(format!("{}: {error}", dir.display())))?;
     }
     let _lock = ProcessLock::acquire(&paths.data)?;
@@ -385,7 +381,7 @@ pub fn restored(relay: &RelayConfig) -> Result<(ChainStore, Restored), RelayErro
         store.database_mut().reset().map_err(component)?;
     }
     let marker = relay.replay_marker();
-    let mode = if marker.exists() {
+    let mode = if crate::markers::honoured(&marker, &relay.paths.data) {
         RestoreMode::Replay
     } else {
         RestoreMode::Auto
@@ -401,7 +397,9 @@ pub fn restored(relay: &RelayConfig) -> Result<(ChainStore, Restored), RelayErro
 /// while `CORE_RESET_DATABASE` or `CORE_RESET_POOL` is set, as the reference's pool flushes itself
 /// at its boot.
 pub fn open_pool(relay: &RelayConfig, options: PoolOptions) -> Result<Pool, RelayError> {
-    let mut pool = Pool::open(options, Some(&relay.pool_marker())).map_err(component)?;
+    let marker =
+        Some(relay.pool_marker()).filter(|m| crate::markers::honoured(m, &relay.paths.data));
+    let mut pool = Pool::open(options, marker.as_deref()).map_err(component)?;
     if ["CORE_RESET_DATABASE", "CORE_RESET_POOL"]
         .iter()
         .any(|name| relay.env.is_set(name))

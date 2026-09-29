@@ -466,8 +466,11 @@ fn the_blockchain_options_are_read_as_the_reference_schema_reads_them() {
 
 #[test]
 fn a_replay_marker_restores_by_the_replay_path_and_is_removed() {
+    use std::os::unix::fs::PermissionsExt;
     let setup = Setup::new("markers", "");
     let config = load(&setup, "--network testnet", &[]).unwrap();
+    // The run directory the process lock makes: the markers' user is its user.
+    fs::create_dir_all(config.paths.data.join("run")).unwrap();
     fs::create_dir_all(&config.paths.temp).unwrap();
     let (_, first) = restored(&config).unwrap();
     assert_eq!(first.path, RestorePath::FirstStart);
@@ -477,6 +480,13 @@ fn a_replay_marker_restores_by_the_replay_path_and_is_removed() {
     let (_, replayed) = restored(&config).unwrap();
     assert_eq!(replayed.path, RestorePath::Replay(ReplayReason::Requested));
     assert!(!config.replay_marker().exists());
+    // A marker that others may write is not the relay's: ignored, and left.
+    fs::write(config.replay_marker(), "").unwrap();
+    let wide = fs::Permissions::from_mode(0o666);
+    fs::set_permissions(config.replay_marker(), wide).unwrap();
+    let (_, ignored) = restored(&config).unwrap();
+    assert_eq!(ignored.path, RestorePath::Table);
+    assert!(config.replay_marker().exists());
     assert_eq!(
         config.pool_marker(),
         setup.root.join("temp/clear-pool.lock")
