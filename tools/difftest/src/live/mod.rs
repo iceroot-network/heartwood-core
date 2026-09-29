@@ -1008,7 +1008,28 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
             e.to_string(),
         ),
         Ok(Ok(report)) => {
-            let (compared, failed) = (report.compared(), report.failed());
+            // One line per corpus: the first (`api/`), then each of `apiExtra`.
+            let main = (left.as_str(), right.as_str(), api::RUN_ANSWERS_DIR);
+            let extra = (manifest.api_extra.iter())
+                .map(|e| (e.left.as_str(), e.right.as_str(), e.dir.as_str()));
+            for (left, right, dir) in std::iter::once(main).chain(extra) {
+                let dir = run_dir.join(dir);
+                let (mut compared, mut failed) = (0, 0);
+                for r in (report.results.iter()).filter(|r| Path::new(&r.file).starts_with(&dir)) {
+                    compared += usize::from(r.outcome.is_compared());
+                    failed += usize::from(r.outcome.is_failure());
+                }
+                let label = format!("the route corpus, {left} against {right}");
+                if compared == 0 {
+                    cases.fail(
+                        "api",
+                        label,
+                        format!("no answer judged under {}", dir.display()),
+                    );
+                } else if failed == 0 {
+                    cases.pass("api", format!("{label}: {compared} queries compared"));
+                }
+            }
             for r in report.results {
                 if r.outcome != Outcome::Pass {
                     cases.push(
@@ -1018,14 +1039,6 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
                         r.outcome,
                     );
                 }
-            }
-            if failed == 0 {
-                cases.pass(
-                    "api",
-                    format!(
-                        "the route corpus, {left} against {right}: {compared} queries compared"
-                    ),
-                );
             }
         }
     }
@@ -1380,6 +1393,7 @@ mod tests {
             pair: None,
             minority: Some((vec!["node3".into(), "node4".into()], "minority".into())),
             api: None,
+            api_extra: Vec::new(),
             window_seconds: 30,
             status: "complete".into(),
             relay_image: None,

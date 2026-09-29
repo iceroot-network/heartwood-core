@@ -60,6 +60,18 @@ pub struct Node {
     pub under_test: bool,
 }
 
+/// A route corpus a run recorded: the node under test, the control and the run's directory of
+/// its answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiCorpus {
+    /// The node under test.
+    pub left: String,
+    /// The control node.
+    pub right: String,
+    /// The directory of its `answers.jsonl`, relative to the run.
+    pub dir: String,
+}
+
 /// A run's `run.json`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Manifest {
@@ -89,6 +101,8 @@ pub struct Manifest {
     pub minority: Option<(Vec<String>, String)>,
     /// The nodes of the route corpus (under test, control), when the run records one.
     pub api: Option<(String, String)>,
+    /// The route corpora the run recorded after that one (`apiExtra`).
+    pub api_extra: Vec<ApiCorpus>,
     /// Seconds a fault window lasts after its recovery.
     pub window_seconds: i64,
     /// `running`, `complete` or `failed`.
@@ -214,6 +228,19 @@ impl Manifest {
         let api = v
             .get("api")
             .and_then(|a| Some((text(a, "left")?, text(a, "right")?)));
+        let api_extra = (v
+            .get("apiExtra")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten())
+        .filter_map(|a| {
+            Some(ApiCorpus {
+                left: text(a, "left")?,
+                right: text(a, "right")?,
+                dir: text(a, "dir")?,
+            })
+        })
+        .collect();
         Ok(Manifest {
             run: need("run")?,
             network: need("network")?,
@@ -228,6 +255,7 @@ impl Manifest {
             pair: text(&v, "pair"),
             minority,
             api,
+            api_extra,
             window_seconds: v
                 .get("faultWindowSeconds")
                 .and_then(Value::as_i64)
@@ -788,6 +816,7 @@ mod tests {
                 "live-p-minority".into(),
             )),
             api: None,
+            api_extra: Vec::new(),
             window_seconds: 30,
             status: "complete".into(),
             relay_image: None,
