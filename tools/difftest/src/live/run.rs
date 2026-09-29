@@ -440,6 +440,29 @@ pub fn window_at<'w>(windows: &'w [Window], node: &str, t: i64) -> Option<&'w Wi
 /// The class of a line between two nodes the run's route table kept apart ([`kept_apart`]).
 pub const UNREACHABLE: &str = "unreachable";
 
+/// The window of a partition's minority after the heal: from the `heal` step's start to
+/// `window_seconds` after the end of the `converged` step, for the nodes of `run.json`'s `minority`.
+///
+/// A partition leaves each side with the other side's nodes gone from its peer lists, and a
+/// reference node rechecks the network only when its peers attest a majority of the delegates
+/// ("Not enough peers available to check network health"). So the minority can keep its side of
+/// the fork, unlisted by the majority's nodes, until a node of it falls back to its seeds (in run
+/// `p`, the scripted restart of node 3's relay, which the recipe does 120 s after the heal when
+/// the tips still differ). Its blocks and its listing in that span are the heal's, not a relay's
+/// behaviour. Its class, `minority`, is one the baseline never has: its log lines are recorded,
+/// as the partition's are.
+pub fn minority_window(manifest: &Manifest, steps: &[Step]) -> Option<Window> {
+    let (members, _) = manifest.minority.as_ref()?;
+    let heal = steps.iter().find(|s| s.name == "heal")?.start?;
+    let converged = steps.iter().find(|s| s.name == "converged")?.time("end")?;
+    (converged >= heal).then(|| Window {
+        fault: "minority".to_owned(),
+        nodes: members.clone(),
+        start: heal,
+        end: converged.saturating_add(manifest.window_seconds.saturating_mul(1_000)),
+    })
+}
+
 /// A span of a node's reach-only routes (`routes.jsonl`, written by the tooling's `reach-only`
 /// and `reach-all`): the nodes it could reach from `start` to `end`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -721,6 +744,70 @@ mod tests {
         assert_eq!(step.number("kept"), Some(1));
         assert_eq!(step.text("outcome").as_deref(), Some("refused"));
         assert_eq!(step.text("missing"), None);
+    }
+
+    fn step_at(name: &str, start: &str, end: &str) -> Step {
+        Step {
+            name: name.into(),
+            node: "all".into(),
+            ok: true,
+            start: parse_time(start),
+            record: serde_json::json!({"step": name, "start": start, "end": end}),
+        }
+    }
+
+    fn minority_manifest(run: &str) -> Manifest {
+        Manifest {
+            run: run.into(),
+            network: "b7-p".into(),
+            dry_run: false,
+            seed: "solar-devnet".into(),
+            round_length: 53,
+            block_time: 8,
+            stop_height: 159,
+            control: "node1".into(),
+            nodes: Vec::new(),
+            corpora: BTreeMap::new(),
+            pair: None,
+            minority: Some((
+                vec!["node3".into(), "node4".into(), "node5".into()],
+                "live-p-minority".into(),
+            )),
+            api: None,
+            window_seconds: 30,
+            status: "complete".into(),
+            relay_image: None,
+            relay_binary_sha256: None,
+            worktree: None,
+        }
+    }
+
+    #[test]
+    fn the_minority_holds_a_window_from_the_heal_until_the_tips_converged() {
+        let steps = [
+            step_at(
+                "heal",
+                "2026-09-29T18:30:41.409Z",
+                "2026-09-29T18:30:48.614Z",
+            ),
+            step_at(
+                "converged",
+                "2026-09-29T18:30:48.630Z",
+                "2026-09-29T18:33:41.666Z",
+            ),
+        ];
+        let w = minority_window(&minority_manifest("p"), &steps).expect("a window");
+        assert_eq!(w.class(), "minority");
+        assert_eq!(w.nodes, ["node3", "node4", "node5"]);
+        assert_eq!(Some(w.start), parse_time("2026-09-29T18:30:41.409Z"));
+        assert_eq!(Some(w.end), parse_time("2026-09-29T18:34:11.666Z"));
+        assert!(!w.concerns("node1") && w.concerns("node4"));
+        // No window without a heal, a convergence or a minority.
+        assert_eq!(minority_window(&minority_manifest("p"), &steps[..1]), None);
+        assert_eq!(minority_window(&minority_manifest("p"), &steps[1..]), None);
+        let mut none = minority_manifest("p");
+        none.minority = None;
+        assert_eq!(minority_window(&none, &steps), None);
     }
 
     fn routes_file(lines: &[&str]) -> crate::store::ScratchDir {

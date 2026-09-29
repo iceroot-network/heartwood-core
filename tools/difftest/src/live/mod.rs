@@ -260,7 +260,10 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
         run: manifest.run.clone(),
         results: Vec::new(),
     };
-    let windows = run::windows(run_dir, manifest.window_seconds)?;
+    let mut windows = run::windows(run_dir, manifest.window_seconds)?;
+    if MIXED_RUNS.contains(&manifest.run.as_str()) {
+        windows.extend(run::minority_window(&manifest, &run::steps(run_dir)?));
+    }
     // The route corpus first: whether its judge is built in this tree decides how a failed
     // recording of it counts.
     let mut api_cases = Cases {
@@ -636,13 +639,57 @@ fn check_run(
 /// How the minority of a partition rejoined after the heal. The recipe restarts node 3's relay
 /// when there is no single tip 120 s after the heal (`reconnect-minority`): node 3 keeps its side
 /// of the fork while it holds a peer, which a reference relay as node 4 is (a dry run). A Heartwood
-/// node 4 has no listener, so it is no peer of node 3, which then falls back to its seeds by
-/// itself; a run with a Heartwood relay in the minority must converge without that restart.
+/// relay without a listener is no peer of node 3, which then falls back to its seeds by itself; a
+/// run with such a relay in the minority must converge without that restart. The relay of the
+/// mixed runs listens, so it keeps node 3 on its side as a reference relay does: there the restart
+/// of node 3 (a reference relay) and the reconnect of a reference node are the recipe's recorded
+/// workarounds, and a Heartwood node the recipe had to reconnect (`reconnect-<node>`) fails.
 fn check_reconnect(manifest: &Manifest, steps: &[run::Step], cases: &mut Cases) {
     if !steps.iter().any(|s| s.name == "converged") {
         return;
     }
     let restarted = steps.iter().any(|s| s.name == "reconnect-minority");
+    if MIXED_RUNS.contains(&manifest.run.as_str()) {
+        for s in steps {
+            let Some(node) = s
+                .name
+                .strip_prefix("reconnect-")
+                .and_then(|n| manifest.node(n))
+            else {
+                continue;
+            };
+            if node.implementation == Implementation::Heartwood && !manifest.dry_run {
+                cases.fail(
+                    "run",
+                    format!(
+                        "{} followed the heal without a scripted reconnect",
+                        node.name
+                    ),
+                    format!(
+                        "the recipe reconnected {}, a Heartwood relay ({})",
+                        node.name, s.name
+                    ),
+                );
+            } else {
+                cases.record(
+                    "run",
+                    format!(
+                        "{} was reconnected by the recipe after the heal (a reference relay)",
+                        node.name
+                    ),
+                );
+            }
+        }
+        cases.record(
+            "run",
+            if restarted {
+                "the minority rejoined the majority after the scripted restart of node 3's relay (a relay in the minority, of either implementation, keeps node 3 on its side)"
+            } else {
+                "the minority rejoined the majority after the heal by itself"
+            },
+        );
+        return;
+    }
     let heartwood = !manifest.dry_run
         && manifest.minority.as_ref().is_some_and(|(members, _)| {
             members.iter().any(|m| {
@@ -1382,5 +1429,49 @@ mod tests {
         );
         // A run without a partition has nothing to record.
         assert!(judged(Implementation::Heartwood, false, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_mixed_minority_records_node_3_restart_and_fails_a_heartwood_reconnect() {
+        let judged = |steps: &[Step]| {
+            let mut m = manifest(Implementation::Heartwood, false);
+            m.run = "p".into();
+            m.nodes.push(Node {
+                name: "node5".into(),
+                ip: String::new(),
+                implementation: Implementation::Reference,
+                forger: false,
+                under_test: false,
+            });
+            let mut cases = Cases {
+                run: "p".into(),
+                results: Vec::new(),
+            };
+            check_reconnect(&m, steps, &mut cases);
+            cases.results
+        };
+        // A Heartwood relay in the minority listens, as a reference relay does: node 3's restart
+        // (a reference relay) is the recipe's recorded workaround, as is node 5's reconnect.
+        let restarted = judged(&[
+            step("reconnect-node5"),
+            step("reconnect-minority"),
+            step("converged"),
+        ]);
+        assert!(
+            !restarted.is_empty() && restarted.iter().all(|r| !r.outcome.is_failure()),
+            "{restarted:?}"
+        );
+        assert!(
+            restarted.iter().any(|r| r.label.contains("node 3")),
+            "{restarted:?}"
+        );
+        // A Heartwood node the recipe had to reconnect fails the run.
+        let touched = judged(&[step("reconnect-node4"), step("converged")]);
+        assert!(
+            touched
+                .iter()
+                .any(|r| r.outcome.is_failure() && r.label.contains("node4")),
+            "{touched:?}"
+        );
     }
 }
