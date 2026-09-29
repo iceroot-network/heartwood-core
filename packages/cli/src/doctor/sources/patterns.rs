@@ -16,7 +16,7 @@ use std::net::{IpAddr, SocketAddr};
 use heartwood_kernel::log::Level::{self, Debug, Error, Info, Warning};
 
 use crate::doctor::report::{Id, IdKind};
-use crate::doctor::sources::logs::{LineKind, StartError};
+use crate::doctor::sources::logs::{LineKind, StartError, carries_outside};
 use crate::seams::Role::{self, Forger, Relay};
 
 /// One template.
@@ -175,27 +175,42 @@ pub fn classify(role: Role, level: Level, message: &str) -> Option<LineKind> {
         .filter(|t| t.role == role && t.level == level);
     same.into_iter().find_map(|template| {
         let text = match template.emoji {
-            Some(emoji) => message.strip_suffix(emoji)?.strip_suffix(' ')?,
+            Some(emoji) => body(message, emoji)?,
             None => message,
         };
         build(template.kind, &split(template.pieces, text)?)
     })
 }
 
+/// The message before its trailing `emoji`, or before the spaces its codes leave when the
+/// logger's `emojify` option is off (the codes are then removed, not replaced).
+fn body<'a>(message: &'a str, emoji: &str) -> Option<&'a str> {
+    if let Some(text) = message
+        .strip_suffix(emoji)
+        .and_then(|t| t.strip_suffix(' '))
+    {
+        return Some(text);
+    }
+    let cut = message.len().checked_sub(1 + emoji.matches(' ').count())?;
+    let spaces = message.get(cut..)?.bytes().all(|b| b == b' ');
+    spaces.then(|| message.get(..cut)).flatten()
+}
+
 /// The emoji that ends the message of a line that is the start of a longer one: it has the shape
-/// of a template that ends in an emoji, but not the emoji, so its message goes on in the lines
-/// that follow (text of a peer or a relay that an older build wrote raw).
+/// of a template whose capture holds outside text and that ends in an emoji, up to that capture,
+/// but not the emoji, so its message goes on in the lines that follow (text of a peer or a relay
+/// that an older build wrote raw). The template's last piece is on the message's last line.
 pub fn continues(role: Role, level: Level, message: &str) -> Option<&'static str> {
+    let carrier = |kind| plain(kind).is_some_and(|(line, bare)| !bare && carries_outside(&line));
     let same = TEMPLATES
         .iter()
-        .filter(|t| t.role == role && t.level == level);
+        .filter(|t| t.role == role && t.level == level && carrier(t.kind));
     same.into_iter().find_map(|template| {
-        let emoji = template.emoji.filter(|emoji| !message.ends_with(emoji))?;
-        let opened = template
-            .pieces
-            .first()
-            .is_some_and(|first| !first.is_empty());
-        (opened && split(template.pieces, message).is_some()).then_some(emoji)
+        let emoji = template.emoji.filter(|e| body(message, e).is_none())?;
+        let (_, head) = template.pieces.split_last()?;
+        let opened = head.first().is_some_and(|first| !first.is_empty());
+        let open: Vec<&str> = head.iter().copied().chain([""]).collect();
+        (opened && split(&open, message).is_some()).then_some(emoji)
     })
 }
 
@@ -215,6 +230,32 @@ fn count(text: &str) -> Option<u32> {
 fn user(text: &str) -> Option<Id> {
     Id::new(IdKind::Username, text)
 }
+
+/// A delegate as the signer names it: its public key (or a name).
+fn delegate(text: &str) -> Option<Id> {
+    Id::new(IdKind::PublicKey, text).or_else(|| user(text))
+}
+
+/// The node's own message that a slot is more than one away from the forger's clock, with
+/// whole numbers for its slots. Only that exact shape counts: the rest of a refusal can quote a
+/// relay's text.
+fn far(pieces: &[&str], text: Option<&&str>) -> bool {
+    let captures = text.and_then(|text| split(pieces, text));
+    captures.is_some_and(|c| c.iter().all(|slot| slot.parse::<i64>().is_ok()))
+}
+
+/// The signer's refusal of a slot too far from the forger's clock.
+const FAR_SIGN: &[&str] = &[
+    "slot ",
+    " is more than one slot away from this forger's slot ",
+    "",
+];
+/// The attester's refusal of a status whose slot is too far from the forger's clock.
+const FAR_STATUS: &[&str] = &[
+    "the offered status's slot ",
+    " is more than one slot away from slot ",
+    "",
+];
 
 /// The names of a list (`a, b and c`) that pass the username grammar.
 fn users(text: &str) -> Vec<Id> {
@@ -315,8 +356,6 @@ fn build(kind: &str, c: &[&str]) -> Option<LineKind> {
     let n = |i: usize| num(c.get(i)?);
     let user_at = |i: usize| user(c.get(i)?);
     let ip = |i: usize| c.get(i)?.parse::<IpAddr>().ok();
-    let says = |i: usize, text: &str| c.get(i).is_some_and(|c| c.contains(text));
-    let far = "more than one slot away";
     let named = |i: usize| Id::new(IdKind::Name, c.get(i)?);
     Some(match kind {
         "RelayStarted" | "ForgerStarted" => {
@@ -378,14 +417,14 @@ fn build(kind: &str, c: &[&str]) -> Option<LineKind> {
             transactions: count(c.get(2)?)?,
         },
         "SendsAgain" => K::SendsAgain {
-            username: user_at(0)?,
+            username: delegate(c.first()?)?,
             block_id: Id::new(IdKind::Hex64, c.get(1)?)?,
             height: n(2)?,
             slot: c.get(3)?.parse().ok()?,
         },
         "WillNotSign" => K::WillNotSign {
-            username: user_at(0)?,
-            far_slot: says(1, far),
+            username: delegate(c.first()?)?,
+            far_slot: far(FAR_SIGN, c.get(1)),
         },
         "ForgedOnAnotherNode" => K::ForgedOnAnotherNode {
             username: user_at(0)?,
@@ -410,7 +449,7 @@ fn build(kind: &str, c: &[&str]) -> Option<LineKind> {
             username: user_at(0)?,
         },
         "NotAttesting" => K::NotAttesting {
-            far_slot: says(0, far),
+            far_slot: far(FAR_STATUS, c.first()),
         },
         "SigningRecordSlow" => K::SigningRecordSlow {
             millis: c.first()?.parse().ok()?,
