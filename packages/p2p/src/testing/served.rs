@@ -133,7 +133,8 @@ impl Row {
                 id: self.id.clone(),
                 version: header.version,
                 timestamp: header.timestamp,
-                previous_block: (header.height > 1).then(|| hex::encode(&header.previous_block)),
+                // The store keeps every block's previous id, the genesis block's zeros included.
+                previous_block: Some(hex::encode(&header.previous_block)),
                 height: header.height,
                 number_of_transactions: header.number_of_transactions,
                 total_amount: Amount::new(header.total_amount.into()),

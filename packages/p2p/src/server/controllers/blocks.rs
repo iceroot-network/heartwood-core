@@ -47,13 +47,9 @@ pub async fn get_blocks(
     let blocks = (parts.node.blocks_for_download(from, limit, headers_only)).map_err(internal)?;
     // The estimate counts the transactions' hex text, as the store gives them to the reference.
     let (mut estimate, mut sent) = (0_usize, Vec::new());
-    for mut block in blocks {
+    for block in blocks {
         if estimate >= MAX_ESTIMATE {
             break;
-        }
-        // The reference's rows name the genesis block's previous block as an id of zeros.
-        if block.height == 1 && block.previous_block.is_none() {
-            block.previous_block = Some("0".repeat(64));
         }
         let hex = block
             .transactions
