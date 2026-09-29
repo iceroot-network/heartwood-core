@@ -3,9 +3,11 @@
 // server-fuzz-seeds.js: seed the corpus of the server's nes_server_session fuzz target from a
 // vector directory.
 //
-//   node tools/server-fuzz-seeds.js VECTOR_DIR CORPUS_DIR [MAX_BYTES]
+//   node tools/server-fuzz-seeds.js VECTOR_DIR CORPUS_DIR [MAX_BYTES [PROBE_DIR]]
 //
-// Reads the class V31-server of VECTOR_DIR, when present. Each p2p.serveRequest record becomes
+// Reads the class V31-server of VECTOR_DIR, when present, and the reference-client probe's records
+// under PROBE_DIR (each NODE/cases.jsonl: every request the probe sent, once from the forger's
+// address and once from another). Each p2p.serveRequest record becomes
 // one script of the target (fuzz/fuzz_targets/nes_server_session.rs):
 //
 //   byte 0   0 when the record's caller is in its remoteAccess (the target's forger address),
@@ -99,28 +101,54 @@ function script(record) {
     return Buffer.concat([Buffer.from([remote ? 0 : 1, input.booted ? 1 : 0]), ...steps]);
 }
 
+/** The scripts of the requests a probe's records hold: each from the forger's address and not. */
+function probeScripts(probeDir) {
+    const scripts = [];
+    const files = [path.join(probeDir, "cases.jsonl")];
+    for (const entry of fs.existsSync(probeDir) ? fs.readdirSync(probeDir) : []) {
+        files.push(path.join(probeDir, entry, "cases.jsonl"));
+    }
+    for (const file of files.filter((f) => fs.existsSync(f))) {
+        for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+            if (!line) continue;
+            for (const call of JSON.parse(line).calls || []) {
+                if (typeof call.endpoint !== "string" || typeof call.requestHex !== "string") continue;
+                for (const remote of [true, false]) {
+                    const input = { route: call.endpoint, hex: call.requestHex, ip: "a", booted: true };
+                    input.remoteAccess = remote ? ["a"] : [];
+                    scripts.push(script({ input }));
+                }
+            }
+        }
+    }
+    return scripts;
+}
+
 function main() {
-    const [vectorDir, corpusDir, maxArg] = process.argv.slice(2);
+    const [vectorDir, corpusDir, maxArg, probeDir] = process.argv.slice(2);
     if (!vectorDir || !corpusDir) {
-        console.error("usage: server-fuzz-seeds.js VECTOR_DIR CORPUS_DIR [MAX_BYTES]");
+        console.error("usage: server-fuzz-seeds.js VECTOR_DIR CORPUS_DIR [MAX_BYTES [PROBE_DIR]]");
         process.exit(2);
     }
     const max = maxArg ? Number(maxArg) : 65536;
     const file = path.join(vectorDir, CLASS);
-    if (!fs.existsSync(file)) {
+    const scripts = [];
+    if (fs.existsSync(file)) {
+        for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+            if (!line) continue;
+            const record = JSON.parse(line);
+            if (record.op === "p2p.serveRequest") scripts.push(script(record));
+        }
+    } else {
         console.log(`server-fuzz-seeds: no ${CLASS} in ${vectorDir}`);
-        return;
     }
+    if (probeDir) scripts.push(...probeScripts(probeDir));
     const dir = path.join(corpusDir, TARGET);
     fs.mkdirSync(dir, { recursive: true });
     let seeds = 0;
     let written = 0;
     let leftOut = 0;
-    for (const line of fs.readFileSync(file, "utf8").split("\n")) {
-        if (!line) continue;
-        const record = JSON.parse(line);
-        if (record.op !== "p2p.serveRequest") continue;
-        const data = script(record);
+    for (const data of scripts) {
         if (data === null || data.length > max) {
             leftOut++;
             continue;
