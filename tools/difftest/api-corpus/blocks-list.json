@@ -291,6 +291,26 @@
   "documented": "estimatedCount"
  },
  {
+  "name": "blocks-list/criteria/height-beyond-integer",
+  "path": "/api/blocks",
+  "query": "height.to=2147483648"
+ },
+ {
+  "name": "blocks-list/criteria/height-beyond-integer-raw",
+  "path": "/api/blocks",
+  "query": "height.to=2147483648&transform=false"
+ },
+ {
+  "name": "blocks-list/criteria/version-beyond-smallint-raw",
+  "path": "/api/blocks",
+  "query": "version=32768&transform=false"
+ },
+ {
+  "name": "blocks-list/criteria/timestamp-list-beyond-integer",
+  "path": "/api/blocks",
+  "query": "timestamp=0,2147483648"
+ },
+ {
   "name": "blocks-list/criteria/transform-false-username",
   "path": "/api/blocks",
   "query": "transform=false&username=${gName}",

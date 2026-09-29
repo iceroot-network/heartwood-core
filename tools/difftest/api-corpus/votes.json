@@ -229,10 +229,9 @@
   "query": "orderBy=nonce:asc,id:asc"
  },
  {
-  "name": "votes/order/timestamp:asc",
+  "name": "votes/order/timestamp:asc,sequence:desc",
   "path": "/api/votes",
-  "query": "orderBy=timestamp:asc",
-  "documented": "tieOrder"
+  "query": "orderBy=timestamp:asc,sequence:desc"
  },
  {
   "name": "votes/order/fee:asc",

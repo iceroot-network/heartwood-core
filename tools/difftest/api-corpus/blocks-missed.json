@@ -64,6 +64,16 @@
   "query": "height=181"
  },
  {
+  "name": "blocks-missed/criteria/height-beyond-integer",
+  "path": "/api/blocks/missed",
+  "query": "height.to=2147483648"
+ },
+ {
+  "name": "blocks-missed/criteria/timestamp-beyond-integer",
+  "path": "/api/blocks/missed",
+  "query": "timestamp.to=2147483648"
+ },
+ {
   "name": "blocks-missed/criteria/height-list",
   "path": "/api/blocks/missed",
   "query": "height=154,160,207"

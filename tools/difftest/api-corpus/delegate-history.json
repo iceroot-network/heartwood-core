@@ -265,6 +265,16 @@
   "query": "transform=false&height.from=2&limit=5"
  },
  {
+  "name": "delegate-history/blocks/criteria/raw-height-beyond-integer",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "transform=false&height.to=2147483648"
+ },
+ {
+  "name": "delegate-history/missed/criteria/timestamp-beyond-integer",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "timestamp.to=2147483648"
+ },
+ {
   "name": "delegate-history/blocks/criteria/empty-list",
   "path": "/api/delegates/${gName}/blocks",
   "query": "height=,"
