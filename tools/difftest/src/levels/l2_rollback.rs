@@ -4,8 +4,11 @@
 //! target and deleted rows compared with the oracle's `chain.rollback` on the same corpus; the
 //! next start, which must take the replay path for want of a state and write the rows of the round
 //! after the target as the oracle's restart saves them; then the blocks above the target imported
-//! again, every line equal to the continuous line and the store's anchors holding. A refusal must
-//! leave the store as it was, byte for byte.
+//! again, every line equal to the continuous line and the store's anchors holding. When the
+//! rollback left no missed-slot row, the start writes the rows of the slots before block 2 as the
+//! reference's start does (its summary gives their number, compared with the oracle's); they must
+//! still be there after the re-sync, and the anchors, whose node never started with an empty
+//! table, are read without them. A refusal must leave the store as it was, byte for byte.
 //!
 //! The rollbacks are those of the vector class (`tools/oracle/lib/vectors/rollback.js`): every
 //! refusal, `--height` at the first, a middle and the last block of rounds 2 to 5, `--number` 1 and
@@ -766,6 +769,15 @@ fn replay_one(
         target,
         equal(&theirs["restart"]["summary"], &started.restart["summary"]),
     );
+    // The rows the start wrote when the rollback left no missed row: the productivity backfill of
+    // the slots before block 2, whose number the summary above compared with the oracle's start.
+    // The node whose rows the anchors hold never started with an empty table, so it lacks them.
+    let backfill = if ours.answer["summary"]["missed"] == 0 {
+        let rows = started.node.store.database().missed_blocks();
+        rows.map_err(|e| Error::Oracle(format!("Heartwood's missed rows: {e}")))?
+    } else {
+        Vec::new()
+    };
     let resynced = resync(started.node, corpus, &ours.scratch)?;
     let mismatch = resynced.lines.iter().find_map(|line| {
         let line = digests::line_value(line);
@@ -792,7 +804,21 @@ fn replay_one(
     let round_length = u32::try_from(corpus.milestones.at(1).active_delegates()).unwrap_or(0);
     let last_round = store::last_round(corpus.tip(), round_length);
     match store::read_rows(resynced.store.database(), corpus.tip(), last_round) {
-        Ok(rows) => {
+        Ok(mut rows) => {
+            let kept = rows.missed.len();
+            rows.missed.retain(|row| !backfill.contains(row));
+            if !backfill.is_empty() {
+                let label = format!(
+                    "{name}: after the re-sync, the start's {} backfilled rows are still there",
+                    backfill.len()
+                );
+                let outcome = if kept - rows.missed.len() == backfill.len() {
+                    Outcome::Pass
+                } else {
+                    Outcome::HarnessError(format!("{} of them", kept - rows.missed.len()))
+                };
+                out.push(label, corpus.tip(), outcome);
+            }
             for (label, outcome) in store::anchors(&corpus.dir, &rows, corpus.tip(), last_round) {
                 out.push(
                     format!("{name}: after the re-sync, {label}"),

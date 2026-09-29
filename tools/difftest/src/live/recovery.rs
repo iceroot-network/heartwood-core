@@ -94,18 +94,6 @@ impl Summary {
     }
 }
 
-/// How two counts of missed rows compare.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Missed {
-    /// Equal.
-    Equal,
-    /// The oracle's count is above node 6's by exactly the rows the reference backfills at height
-    /// 2 when the first block is not in slot 1, which Heartwood does not write.
-    Backfill(u64),
-    /// Anything else.
-    Differ,
-}
-
 /// The rows a chain's first block leaves behind it in the reference's backfill: one per slot
 /// before the block's own, the slot 0 being the genesis block's.
 pub(super) fn backfilled(corpus: &Corpus, block_time: u32) -> u64 {
@@ -116,18 +104,6 @@ pub(super) fn backfilled(corpus: &Corpus, block_time: u32) -> u64 {
         return 0;
     };
     (u64::from(decoded.header().timestamp) / u64::from(block_time.max(1))).saturating_sub(1)
-}
-
-/// The missed-row count of the oracle (`oracle`) against node 6's (`ours`), given the rows the
-/// backfill of height 2 adds.
-pub(super) fn compare_missed(oracle: u64, ours: u64, backfill: u64) -> Missed {
-    if oracle == ours {
-        Missed::Equal
-    } else if backfill > 0 && oracle == ours + backfill {
-        Missed::Backfill(backfill)
-    } else {
-        Missed::Differ
-    }
 }
 
 /// The summary of the corpus cut at `cut`, from its blocks and its reference rows: the tip, the
@@ -385,14 +361,12 @@ const BEFORE: (&str, &str) = ("summary-before", "before");
 const ROLLED_BACK: (&str, &str) = ("summary-rolled-back", "rolled-back");
 const RESTARTED: (&str, &str) = ("summary-restarted", "restarted");
 
-/// One summary against another: the fields that differ, as a problem list; the missed rows by the
-/// backfill caveat, which a run records instead of failing.
+/// One summary against another: the fields that differ, as a problem list.
 fn differences(
     cases: &mut Cases,
     label: &str,
     theirs: &Summary,
     ours: &Summary,
-    backfill: u64,
     theirs_name: &str,
 ) -> bool {
     let mut problems = Vec::new();
@@ -414,18 +388,11 @@ fn differences(
             ours.transactions, theirs.transactions
         ));
     }
-    match compare_missed(theirs.missed, ours.missed, backfill) {
-        Missed::Equal => {}
-        Missed::Backfill(n) => cases.record(
-            SECTION,
-            format!(
-                "{label}: {theirs_name} counts {n} more missed rows than node 6, the rows the reference writes for the slots before block 2, which Heartwood does not"
-            ),
-        ),
-        Missed::Differ => problems.push(format!(
+    if theirs.missed != ours.missed {
+        problems.push(format!(
             "{} missed rows against {theirs_name}'s {}",
             ours.missed, theirs.missed
-        )),
+        ));
     }
     if problems.is_empty() {
         true
@@ -480,7 +447,7 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
     let cut_summary = cut_summary(&corpus, &last.dir, cut, length)?;
     let label = "node6: the summary before the rollback equals the corpus cut at its tip";
     // Neither side has started since the chain began: no backfilled row on either.
-    if differences(cases, label, &cut_summary, &before, 0, "the cut") {
+    if differences(cases, label, &cut_summary, &before, "the cut") {
         cases.pass(SECTION, format!("{label} ({})", before.describe()));
     }
     // The oracle's rollback over the cut: node 6's summary after the command.
@@ -507,14 +474,13 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
                 after.tip, predicted.target
             ),
         );
-    } else if differences(cases, &label, &predicted.summary, &after, 0, "the oracle") {
+    } else if differences(cases, &label, &predicted.summary, &after, "the oracle") {
         cases.pass(SECTION, format!("{label} ({})", after.describe()));
     }
     // The start after it, as the reference's start after that rollback: the same tip and
     // transactions, the next round's rows saved, and, when the rollback left no missed row, the
-    // productivity backfill's rows for the slots before block 2 (none when block 2 is in slot 1).
-    // The reference (run w0) must hold them; Heartwood (run w) does not write them, which is
-    // recorded; any other difference fails.
+    // productivity backfill's rows for the slots before block 2 (none when block 2 is in slot 1),
+    // which both the reference (run w0) and Heartwood (run w) write; any difference fails.
     let label =
         "node6: the summary after the start equals the oracle's restart after that rollback";
     let adds = if predicted.summary.missed == 0 {
@@ -529,7 +495,6 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
         derived.missed += adds;
         derived
     });
-    let allowed = if heartwood_node6(run) { adds } else { 0 };
     if started.round != wanted.round {
         cases.fail(
             SECTION,
@@ -539,7 +504,7 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
                 wanted.round, started.round
             ),
         );
-    } else if differences(cases, label, &wanted, &started, allowed, "the oracle") {
+    } else if differences(cases, label, &wanted, &started, "the oracle") {
         cases.pass(SECTION, format!("{label} ({})", started.describe()));
     }
     Ok(())
@@ -875,14 +840,5 @@ mod tests {
             })
         );
         assert_eq!(Summary::of(&json!({"tip": 1})), None);
-    }
-
-    #[test]
-    fn the_backfill_explains_only_its_own_rows() {
-        assert_eq!(compare_missed(8, 8, 3), Missed::Equal);
-        assert_eq!(compare_missed(11, 8, 3), Missed::Backfill(3));
-        assert_eq!(compare_missed(11, 8, 0), Missed::Differ);
-        assert_eq!(compare_missed(10, 8, 3), Missed::Differ);
-        assert_eq!(compare_missed(5, 8, 3), Missed::Differ);
     }
 }
