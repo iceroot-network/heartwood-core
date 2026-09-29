@@ -11,7 +11,7 @@
 
 use heartwood_crypto::{Block, Milestones};
 use heartwood_database::{ChainMeta, Chunk, Database, MilestoneEntryRow, Settings, StateRow};
-use heartwood_kernel::calculate_round;
+use heartwood_kernel::{calculate_round, is_new_round};
 use heartwood_state::machine::{Applied, Reverted};
 use heartwood_state::persist::{STATE_FORMAT, UndoRecord};
 use heartwood_state::{Delegate, State, Wallet, WalletRepository};
@@ -189,21 +189,30 @@ impl ChunkWriter<'_> {
         self.write_state(state, state.height(), true)
     }
 
-    /// At a start whose tip ends a round (`is_new_round(tip + 1)`, the reference's condition being
-    /// `height == 1 || isNewRound(height + 1)`), write the rows of round N, the round that starts
-    /// after the tip, from `state`, as the reference's start does (`RoundState.restore`: its
-    /// `deleteRound(N)`, then `applyRound(tip)`, which saves round N's rows): the chunk's
-    /// `delete_above(state.height(), N - 1)`, which at the tip removes round N's rows and any above
-    /// and nothing else, then `save_round` of round N's rows. Whether they were written. After an
-    /// ordinary stop at a round end the rows are there already and equal; after a rollback, or a
-    /// revert to a round end followed by a stop, they are not, and this writes them again.
+    /// At a start whose tip ends a round (`is_new_round(tip + 1)`), or is the genesis block, as the
+    /// reference's condition `height == 1 || isNewRound(height + 1)` reads, write the rows of round
+    /// N, the round of the state's forging list, from `state`, as the reference's start does
+    /// (`RoundState.restore`: its `deleteRound` of the rounds above the tip's, then
+    /// `applyRound(tip)`, which saves round N's rows): the chunk's `delete_above(tip, the tip's
+    /// round)`, which at the tip removes the round rows above the tip's round and nothing else,
+    /// then `save_round` of round N's rows. Whether they were written. After an ordinary stop at a
+    /// round end the rows are there already and equal; after a rollback, or a revert to a round
+    /// end followed by a stop, they are not, and this writes them again.
     pub fn next_round_at_start(
         &mut self,
         state: &State,
         milestones: &Milestones,
     ) -> Result<bool, StoreError> {
-        let _ = (state, milestones);
-        Ok(false)
+        let tip = state.height();
+        if tip != 1 && !is_new_round(tip.saturating_add(1), milestones) {
+            return Ok(false);
+        }
+        let round = state.round();
+        let tip_round = calculate_round(tip, milestones).round;
+        self.chunk.delete_above(tip, tip_round)?;
+        self.chunk
+            .save_round(&round_rows(round.info().round, round.round_delegates()))?;
+        Ok(true)
     }
 
     /// Write the wallets that changed since the chunk's last block (every wallet when `all`), a

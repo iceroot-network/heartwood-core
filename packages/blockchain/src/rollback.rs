@@ -13,6 +13,8 @@
 //! online record are not touched.
 
 use heartwood_crypto::Milestones;
+use heartwood_crypto::utils::js::to_locale_integer;
+use heartwood_kernel::calculate_round;
 use heartwood_kernel::log::Level;
 
 use crate::commit::ChainStore;
@@ -55,7 +57,30 @@ impl RollbackRefusal {
     /// block on height `<round_height>`" (error), which is the first line of the stack the reference
     /// logs.
     pub fn lines(&self) -> Vec<(Level, String)> {
-        todo!("the refusal's lines")
+        let refused = |text: String| vec![(Level::Info, START.into()), (Level::Error, text)];
+        match *self {
+            RollbackRefusal::NoRequest => vec![(Level::Error, NO_REQUEST.into())],
+            RollbackRefusal::Invalid { height } => {
+                refused(format!("Rollback height {} is invalid", locale(height)))
+            }
+            RollbackRefusal::NotBelowCurrent { height, current } => refused(format!(
+                "Rollback height {} is not less than the current height {}",
+                locale(height),
+                locale(current)
+            )),
+            RollbackRefusal::NoBlock {
+                round_height,
+                current,
+            } => vec![
+                (Level::Info, START.into()),
+                (Level::Info, last_height(current)),
+                (Level::Error, "Rollback failed".into()),
+                (
+                    Level::Error,
+                    format!("Error: Cannot find block on height {round_height}"),
+                ),
+            ],
+        }
     }
 }
 
@@ -81,8 +106,34 @@ pub fn plan(
     current: u32,
     milestones: &Milestones,
 ) -> Result<RollbackPlan, RollbackRefusal> {
-    let _ = (height, number, current, milestones);
-    todo!("the reference's target and refusals")
+    let given = |flag: Option<i64>| flag.filter(|&value| value != 0);
+    let requested = match (given(height), given(number)) {
+        (Some(height), _) => height,
+        (None, Some(number)) => i64::from(current).saturating_sub(number),
+        (None, None) => return Err(RollbackRefusal::NoRequest),
+    };
+    if requested <= 0 {
+        return Err(RollbackRefusal::Invalid { height: requested });
+    }
+    let below = u32::try_from(requested).ok().filter(|&h| h < current);
+    let Some(height) = below else {
+        let height = requested;
+        return Err(RollbackRefusal::NotBelowCurrent { height, current });
+    };
+    let info = calculate_round(height, milestones);
+    let round_height = u32::try_from(info.round_height).unwrap_or(u32::MAX);
+    match round_height.checked_sub(1).filter(|&target| target >= 1) {
+        Some(target) => Ok(RollbackPlan {
+            current,
+            requested,
+            round: info.round,
+            target,
+        }),
+        None => Err(RollbackRefusal::NoBlock {
+            round_height,
+            current,
+        }),
+    }
 }
 
 /// What a rollback deleted.
@@ -111,14 +162,51 @@ pub fn rollback(
     plan: &RollbackPlan,
     milestones: &Milestones,
 ) -> Result<Rolled, StoreError> {
-    let _ = (store, plan, milestones);
-    todo!("the store change in one transaction")
+    let round = calculate_round(plan.target, milestones).round;
+    let mut chunk = store.database_mut().begin()?;
+    let deleted = chunk.row_counts(plan.target, round)?;
+    chunk.delete_above(plan.target, round)?;
+    chunk.delete_state()?;
+    chunk.commit()?;
+    // The store's next start sets the committed view again from what it restores.
+    store.committed = None;
+    Ok(Rolled {
+        from: plan.current,
+        target: plan.target,
+        round: plan.round,
+        blocks: u32::try_from(deleted.blocks).unwrap_or(u32::MAX),
+        transactions: deleted.transactions,
+        missed: deleted.missed,
+        round_rows: deleted.round_rows,
+    })
 }
 
 /// The three info lines of a rollback that was made: "Rolling back the blockchain", "Last block
 /// height is: `<c>`", "Rolling back blockchain to last finished round `<r>` with last block height
 /// `<h>`".
 pub fn lines(plan: &RollbackPlan, rolled: &Rolled) -> [String; 3] {
-    let _ = (plan, rolled);
-    todo!("the rollback's lines")
+    [
+        START.into(),
+        last_height(plan.current),
+        format!(
+            "Rolling back blockchain to last finished round {} with last block height {}",
+            locale(rolled.round),
+            locale(rolled.target)
+        ),
+    ]
+}
+
+/// The first line of a rollback that is not refused before it starts.
+const START: &str = "Rolling back the blockchain";
+/// The command's line when neither flag asks for a rollback.
+const NO_REQUEST: &str = "Please specify either a height or number of blocks to roll back";
+
+/// The line of the stored tip, logged before the rollback looks up its target.
+fn last_height(current: u32) -> String {
+    format!("Last block height is: {}", locale(current))
+}
+
+/// A number as the reference's `toLocaleString()` writes it.
+fn locale(value: impl Into<i128>) -> String {
+    to_locale_integer(value.into())
 }
