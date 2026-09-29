@@ -840,8 +840,9 @@ reference lacks, which no honest peer that reads its socket meets:
   the bytes that waited at the check before still unwritten drops the socket, whatever the peer
   sends (a nes ping included), so a peer that stops reading is dropped 15 to 30 s after its
   writes stall; a slow reader keeps its socket;
-- the writes still queued when a session ends stop 30 s later, the WebSocket library's close
-  timeout;
+- a socket that closes, or whose stream ends, with more than 64 KiB unwritten is dropped at once,
+  as a peer that closes reads no more answers; the writes left when a session ends stop 30 s
+  later, the WebSocket library's close timeout;
 - the ban list drops its expired bans once it holds more than 10,000 addresses, where the
   reference keeps an expired ban until its address connects again.
 

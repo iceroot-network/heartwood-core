@@ -16,8 +16,9 @@
 //!   close reason ends it without a reason.
 //! - Frames are written unmasked, in order, by a task of their own, which tells the session how
 //!   many bytes it has written, for the heartbeat's liveness check. A socket whose unwritten bytes
-//!   pass [`MAX_BACKLOG`] is dropped by its session, and the writes go on after the session ends
-//!   for at most [`DRAIN_TIMEOUT`], where the reference buffers without a bound.
+//!   pass [`MAX_BACKLOG`] is dropped by its session, and so is one that closes with more than
+//!   [`CLOSE_BACKLOG`] unwritten; the writes go on after the session ends for at most
+//!   [`DRAIN_TIMEOUT`], where the reference buffers without a bound.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -46,6 +47,9 @@ pub const MAX_BACKLOG: u64 = 2 * MAX_MESSAGE as u64;
 /// How long the writes may go on once the session has ended: the WebSocket library's close
 /// timeout, after which it destroys the socket.
 pub const DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
+/// The most unwritten bytes a socket that closes still has written, its close frame after them:
+/// a peer that closes reads no more answers, so a larger backlog is dropped with the socket.
+pub const CLOSE_BACKLOG: u64 = 64 * 1024;
 
 /// How the HTTP exchange before the WebSocket ended.
 pub enum Upgrade {

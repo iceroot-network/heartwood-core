@@ -240,20 +240,82 @@ async fn a_pinging_peer_that_never_reads_is_dropped_once_its_writes_stall() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_writes_after_the_clients_close_end_within_the_close_timeout() {
+async fn a_peer_that_closes_with_answers_unread_is_dropped_at_once() {
     let bench = Bench::new().await;
-    let mut raw = reader_of_answers(&bench, peer(2), 1024 * 1024).await;
-    for id in 2..5 {
-        raw.request(id, RouteId::GetStatus, status_request(VERSION))
-            .await;
+    // By a close frame, or by the end of its stream (a half-close, its reading side open).
+    for (ip, half) in [(peer(2), false), (peer(3), true)] {
+        let mut raw = reader_of_answers(&bench, ip, 1024 * 1024).await;
+        for id in 2..5 {
+            raw.request(id, RouteId::GetStatus, status_request(VERSION))
+                .await;
+        }
+        sleep(ms(100)).await;
+        match half {
+            false => raw.frame(0x88, &1000_u16.to_be_bytes()).await,
+            true => raw.half_close().await,
+        }
+        sleep(ms(100)).await;
+        assert!(closed(&bench, ip));
+        // Within the close timeout, the peer reads what the pipe holds and no answer.
+        assert!(raw.bytes_until_the_end().await <= 64 * 1024);
     }
+}
+
+/// A raw client from `ip` over a pipe of 64 KiB, whose one answer of 96 KiB waits in part.
+async fn one_answer_waiting(bench: &Bench, ip: std::net::IpAddr) -> Raw {
+    let mut raw = reader_of_answers(bench, ip, 96 * 1024).await;
+    raw.request(2, RouteId::GetStatus, status_request(VERSION))
+        .await;
     sleep(ms(100)).await;
     raw.frame(0x88, &1000_u16.to_be_bytes()).await;
     sleep(ms(100)).await;
-    assert!(closed(&bench, peer(2)));
-    // The answers still queued are dropped 30 s after the close.
-    sleep(ms(31_000)).await;
-    assert_eq!(answers_until_the_end(&mut raw).await, 0);
+    assert!(closed(bench, ip));
+    raw
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_peer_that_closes_with_little_unread_still_gets_it_and_the_close_echo() {
+    let bench = Bench::new().await;
+    let mut raw = one_answer_waiting(&bench, peer(2)).await;
+    let answer = raw.next().await;
+    assert!(
+        matches!(answer, Sent::Binary(Message { id: 2, ref payload, .. }) if payload.len() == 96 * 1024)
+    );
+    assert_eq!(
+        raw.next().await,
+        Sent::Close(1000_u16.to_be_bytes().to_vec())
+    );
+    assert_eq!(raw.next().await, Sent::Ended);
+}
+
+#[tokio::test(start_paused = true)]
+async fn close_and_reconnect_cycles_from_one_address_hold_less_than_two_backlogs() {
+    let bench = Bench::new().await;
+    let mut ended = Vec::new();
+    for cycle in 0..4 {
+        let mut raw = reader_of_answers(&bench, peer(2), 4 * 1024 * 1024).await;
+        // Nine answers of 4 MiB, under the cap, which the peer never reads; then it closes, by a
+        // close frame or a half-close, and connects again.
+        for id in 2..11 {
+            raw.request(id, RouteId::GetStatus, status_request(VERSION))
+                .await;
+            sleep(ms(200)).await;
+        }
+        match cycle % 2 {
+            0 => raw.frame(0x88, &1000_u16.to_be_bytes()).await,
+            _ => raw.half_close().await,
+        }
+        sleep(ms(100)).await;
+        ended.push(raw);
+    }
+    // Everything the closed sockets still get within the close timeout: the relay holds it.
+    let mut held = 0;
+    for raw in &mut ended {
+        held += raw.bytes_until_the_end().await;
+    }
+    let max_backlog = heartwood_p2p::server::listener::MAX_BACKLOG as usize;
+    assert!(held < 2 * max_backlog, "{held} bytes held");
+    assert!(held <= 4 * 64 * 1024, "{held} bytes held");
 }
 
 #[tokio::test(start_paused = true)]

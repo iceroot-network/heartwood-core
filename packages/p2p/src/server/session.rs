@@ -18,8 +18,9 @@
 //!   before, nor a request in progress, nor a message being written to a peer that reads (bytes
 //!   written since the check before). Dropped without a reason, as peers that do not read: a
 //!   socket whose unwritten bytes pass [`super::listener::MAX_BACKLOG`]; one whose bytes that
-//!   waited at the check before are still unwritten, whatever it sends. The reference keeps such
-//!   sockets, and their unwritten messages, without a bound.
+//!   waited at the check before are still unwritten, whatever it sends; one that closes, or whose
+//!   stream ends, with more than [`CLOSE_BACKLOG`] unwritten. The reference keeps such sockets,
+//!   and their unwritten messages, without a bound.
 //! - A WebSocket ping or pong frame ends the socket ("Malicious ping frame received", "Malicious
 //!   pong frame received"), and so does a frame fault, with the WebSocket library's text.
 //!
@@ -40,7 +41,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until, timeout};
 
-use super::listener::{Frame, FrameReader, FrameWriter, MAX_BACKLOG, Writes};
+use super::listener::{CLOSE_BACKLOG, Frame, FrameReader, FrameWriter, MAX_BACKLOG, Writes};
 use super::plugins::{Answer, Plugins};
 use super::seams::SessionId;
 use crate::scoring::Violation;
@@ -228,6 +229,14 @@ impl ServerSession {
                     }
                 }
             }
+        };
+        let stop = match (stop, writer.backlog()) {
+            (Stop::Close(_) | Stop::Echo(_) | Stop::Ended, backlog) if backlog > CLOSE_BACKLOG => {
+                let ip = self.parts.ip;
+                debug!("Dropped the socket of {ip}, which closes with {backlog} bytes to read");
+                Stop::Terminate(None)
+            }
+            (stop, _) => stop,
         };
         match stop {
             Stop::Terminate(reason) => {

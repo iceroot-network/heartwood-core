@@ -273,6 +273,18 @@ impl Raw {
         self.stream.write_all(bytes).await.unwrap();
     }
 
+    /// End the stream's writing side, the reading side left open (a TCP half-close).
+    pub async fn half_close(&mut self) {
+        self.stream.shutdown().await.unwrap();
+    }
+
+    /// Everything the stream still gives before it ends, in bytes (with those read before and
+    /// not taken as frames).
+    pub async fn bytes_until_the_end(&mut self) -> usize {
+        while self.read_some(1024 * 1024).await {}
+        self.buffer.len()
+    }
+
     /// Send a nes message as a binary frame.
     pub async fn send(&mut self, message: &Message) {
         self.frame(0x82, &message.encode().unwrap()).await;
