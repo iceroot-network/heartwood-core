@@ -20,7 +20,9 @@
 //!   (`submittedAt`, else the step's start).
 //! - The oracle's prediction of the rollback is read from `predictions/rollback-<cut>-<height>.json`
 //!   in the run's directory when the file is there (the oracle's `chain.rollback` result: `target`
-//!   and `summary`), and asked of the oracle otherwise.
+//!   and `summary`; the start after it is then derived by the reference's rules), and asked of the
+//!   oracle otherwise: the chain cut at node 6's tip given block by block, `chain.rollback`, and the
+//!   start after it (`chain.restart`), whose summary is the prediction after node 6's start.
 //! - Node 6's own log: `logs/node6` when the node is a reference node.
 
 use std::path::Path;
@@ -35,7 +37,7 @@ use super::run::{self, Step};
 use super::{Cases, MixedRun};
 use crate::corpus::{self, Corpus};
 use crate::errors::{Error, Result};
-use crate::levels::l2;
+use crate::levels::{l2, l2_rollback};
 use crate::store::{self, ScratchDir};
 
 const SECTION: &str = "recovery";
@@ -151,39 +153,43 @@ fn cut_summary(corpus: &Corpus, dir: &Path, cut: u32, round_length: u32) -> Resu
     })
 }
 
-/// The oracle's `chain.rollback` for a cut of the run's chain: read from the run's predictions
-/// when the file is there, else asked of the oracle.
+/// The oracle's `chain.rollback` for a cut of the run's chain, and its start after it: read from
+/// the run's predictions when the file is there, else asked of the oracle.
 struct Prediction {
     /// The height the rollback lands on.
     target: u64,
     /// The store after it.
     summary: Summary,
+    /// The store after the start that follows it (`chain.restart`), when the oracle was asked.
+    restart: Option<Summary>,
 }
 
-/// The prediction of the rollback `asked` over the corpus in `dir` cut at `cut`.
+/// The prediction of the rollback `asked` over the corpus in `dir` cut at `cut`. The oracle gets
+/// the cut chain block by block, as the rollback replay gives it, so a container sees no path of
+/// the host: the rollback, then the start after it (`rebuild`, as the node's start after a
+/// rollback replays).
 fn prediction(run: &MixedRun<'_>, dir: &Path, cut: u32, asked: u64) -> Result<Prediction> {
     let cache = run
         .run_dir
         .join("predictions")
         .join(format!("rollback-{cut}-{asked}.json"));
-    let result = if cache.exists() {
-        run::read_json(&cache)?
+    let (result, restart) = if cache.exists() {
+        (run::read_json(&cache)?, None)
     } else {
+        let corpus = Corpus::load(dir)?.cut(cut)?;
         let oracle = (run.oracle)()?;
         let mut server = oracle.server()?;
-        let opened = l2::call(
+        let session = l2_rollback::oracle_open(&mut server, &corpus)?;
+        let height = i64::try_from(asked).unwrap_or(i64::MAX);
+        let answer = l2_rollback::oracle_rollback(
             &mut server,
-            "chain.open",
-            1,
-            &json!({"corpus": dir.display().to_string(), "height": cut}),
+            &session,
+            l2_rollback::Flags::height(height),
+            "rebuild",
         )?;
-        let session = opened.get("session").cloned().unwrap_or(Value::Null);
-        l2::call(
-            &mut server,
-            "chain.rollback",
-            1,
-            &json!({"session": session, "height": asked}),
-        )?
+        l2::call(&mut server, "chain.close", 1, &json!({"session": session}))?;
+        let restart = answer.pointer("/restart/summary").and_then(Summary::of);
+        (answer["rollback"].clone(), restart)
     };
     if let Some(lines) = result.get("refused") {
         return Err(Error::Oracle(format!(
@@ -199,7 +205,11 @@ fn prediction(run: &MixedRun<'_>, dir: &Path, cut: u32, asked: u64) -> Result<Pr
         .get("target")
         .and_then(Value::as_u64)
         .unwrap_or(summary.tip);
-    Ok(Prediction { target, summary })
+    Ok(Prediction {
+        target,
+        summary,
+        restart,
+    })
 }
 
 /// Whether node 6 is a Heartwood relay (run `w`; in a dry run of the recipe it is a reference
@@ -512,9 +522,13 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
     } else {
         0
     };
-    let mut wanted = predicted.summary;
-    wanted.round = predicted.target / u64::from(length.max(1)) + 1;
-    wanted.missed += adds;
+    // The oracle's own start after the rollback, else the same derived by the reference's rules.
+    let wanted = predicted.restart.unwrap_or_else(|| {
+        let mut derived = predicted.summary;
+        derived.round = predicted.target / u64::from(length.max(1)) + 1;
+        derived.missed += adds;
+        derived
+    });
     let allowed = if heartwood_node6(run) { adds } else { 0 };
     if started.round != wanted.round {
         cases.fail(
