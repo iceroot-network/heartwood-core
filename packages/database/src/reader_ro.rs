@@ -4,19 +4,26 @@
 //! The connection is opened with `SQLITE_OPEN_READ_ONLY` (unlike [`crate::reader::Readers`], which
 //! must recover a crashed writer's WAL index and so opens read-write) and `query_only`, and each
 //! statement is interrupted after its timeout. It must be opened only while the relay's lock is
-//! held: with no writer, opening a WAL store would create its `-wal` and `-shm` files. The two
-//! queries select by `height` in one read transaction, each capped at a row count. The node itself
-//! never uses this module.
+//! held: with no writer, opening a WAL store would create its `-wal` and `-shm` files, so
+//! [`ReadOnlyStore::open`] refuses a store whose two files are not there. The two queries select
+//! by `height` in one read transaction, each capped at a row count. The node itself never uses
+//! this module.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
-use rusqlite::Connection;
+use rusqlite::config::DbConfig;
+use rusqlite::types::ToSql;
+use rusqlite::{Connection, ErrorCode, OpenFlags, Row};
 
-use crate::connection::Settings;
+use crate::connection::{SCHEMA_VERSION, Settings};
 use crate::errors::DatabaseError;
 
 /// The most rows either window query returns.
 pub const MAX_ROWS: usize = 5_000;
+
+/// The virtual machine steps between two checks of a statement's deadline.
+const CHECK_EVERY: i32 = 1000;
 
 /// One row of `missed_blocks`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,19 +62,85 @@ pub struct WindowRows {
     pub capped: bool,
 }
 
+/// Why the store could not be opened or read.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ReadOnlyError {
+    /// The store's `-wal` or `-shm` file is missing: no writer has it open, and an open would
+    /// create them. Nothing was opened.
+    #[error("no writer has the store open")]
+    NoWriter,
+    /// A statement ran past the timeout, or waited that long for a lock, and was given up.
+    #[error("the store did not answer within its timeout")]
+    TimedOut,
+    /// The store could not be opened or read.
+    #[error(transparent)]
+    Database(#[from] DatabaseError),
+}
+
+impl From<rusqlite::Error> for ReadOnlyError {
+    fn from(error: rusqlite::Error) -> ReadOnlyError {
+        match error.sqlite_error_code() {
+            Some(ErrorCode::OperationInterrupted | ErrorCode::DatabaseBusy) => {
+                ReadOnlyError::TimedOut
+            }
+            _ => ReadOnlyError::Database(error.into()),
+        }
+    }
+}
+
 /// A read-only connection to a store that a running node writes.
 #[derive(Debug)]
 pub struct ReadOnlyStore {
-    connection: Option<Connection>,
+    connection: Connection,
+    timeout: Duration,
 }
 
 impl ReadOnlyStore {
-    /// Open the store of `settings` read-only, each statement interrupted after `timeout`.
-    pub fn open(settings: &Settings, timeout: Duration) -> Result<ReadOnlyStore, DatabaseError> {
-        let _ = (settings, timeout);
-        Err(DatabaseError::Sqlite(
-            "the read-only opener is not built".into(),
-        ))
+    /// Open the store of `settings` read-only, each statement interrupted after `timeout`;
+    /// refused with [`ReadOnlyError::NoWriter`], before any open, when its `-wal` or `-shm` file
+    /// is missing.
+    pub fn open(settings: &Settings, timeout: Duration) -> Result<ReadOnlyStore, ReadOnlyError> {
+        let beside = |suffix: &str| {
+            let mut path = settings.path.clone().into_os_string();
+            path.push(suffix);
+            PathBuf::from(path).is_file()
+        };
+        if !beside("-wal") || !beside("-shm") {
+            return Err(ReadOnlyError::NoWriter);
+        }
+        // No SQLITE_OPEN_CREATE and no URI file names: the path is an existing file.
+        let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let connection = Connection::open_with_flags(&settings.path, flags)?;
+        connection.busy_timeout(timeout)?;
+        connection.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
+        connection.set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
+        connection.pragma_update(None, "query_only", true)?;
+        let store = ReadOnlyStore {
+            connection,
+            timeout,
+        };
+        store.arm()?;
+        let version: i64 =
+            (store.connection).pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if version != i64::from(SCHEMA_VERSION) {
+            let found = version.to_string();
+            let expected = SCHEMA_VERSION;
+            return Err(DatabaseError::SchemaVersion { found, expected }.into());
+        }
+        Ok(store)
+    }
+
+    /// Interrupt the statements that run from now on once the timeout has passed.
+    #[expect(
+        clippy::disallowed_types,
+        reason = "the deadline bounds how long another process's read runs; no stored value \
+                  depends on it"
+    )]
+    fn arm(&self) -> Result<(), ReadOnlyError> {
+        let deadline = std::time::Instant::now().checked_add(self.timeout);
+        let expired = move || deadline.is_none_or(|at| std::time::Instant::now() > at);
+        let handler = Some(expired);
+        Ok(self.connection.progress_handler(CHECK_EVERY, handler)?)
     }
 
     /// In one read transaction: the missed rows of `usernames` and the blocks, both from
@@ -76,10 +149,59 @@ impl ReadOnlyStore {
         &self,
         usernames: &[String],
         from_height: u32,
-    ) -> Result<WindowRows, DatabaseError> {
-        let _ = (&self.connection, usernames, from_height);
-        Err(DatabaseError::Sqlite(
-            "the read-only opener is not built".into(),
-        ))
+    ) -> Result<WindowRows, ReadOnlyError> {
+        self.arm()?;
+        let read = self.connection.unchecked_transaction()?;
+        // One row more than the cap, to know whether it cut the list.
+        let limit = MAX_ROWS as i64 + 1;
+        let blocks = "SELECT height, timestamp, id, generator_public_key, username FROM blocks \
+                      WHERE height >= ?1 ORDER BY height LIMIT ?2";
+        let mut blocks = rows(&read, blocks, &[&from_height, &limit], |row| {
+            Ok(WindowBlock {
+                height: row.get(0)?,
+                timestamp: row.get(1)?,
+                id: row.get(2)?,
+                generator_public_key: row.get(3)?,
+                username: row.get(4)?,
+            })
+        })?;
+        let mut missed = Vec::new();
+        if !usernames.is_empty() {
+            let marks = vec!["?"; usernames.len()].join(", ");
+            let sql = format!(
+                "SELECT timestamp, height, username FROM missed_blocks WHERE height >= ? \
+                 AND username IN ({marks}) ORDER BY height, timestamp LIMIT ?"
+            );
+            let mut values: Vec<&dyn ToSql> = vec![&from_height];
+            values.extend(usernames.iter().map(|name| name as &dyn ToSql));
+            values.push(&limit);
+            missed = rows(&read, &sql, &values, |row| {
+                Ok(WindowMissed {
+                    timestamp: row.get(0)?,
+                    height: row.get(1)?,
+                    username: row.get(2)?,
+                })
+            })?;
+        }
+        let capped = blocks.len() > MAX_ROWS || missed.len() > MAX_ROWS;
+        blocks.truncate(MAX_ROWS);
+        missed.truncate(MAX_ROWS);
+        Ok(WindowRows {
+            missed,
+            blocks,
+            capped,
+        })
     }
+}
+
+/// The rows of `sql` with `values`, each read by `read`.
+fn rows<T>(
+    connection: &Connection,
+    sql: &str,
+    values: &[&dyn ToSql],
+    read: impl FnMut(&Row<'_>) -> rusqlite::Result<T>,
+) -> Result<Vec<T>, ReadOnlyError> {
+    let mut statement = connection.prepare(sql)?;
+    let rows = statement.query_map(values, read)?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
