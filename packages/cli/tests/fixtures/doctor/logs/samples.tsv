@@ -1,0 +1,91 @@
+# role, level, kind and message (without its trailing emoji) of one sample line each
+relay	info	RelayStarted	Heartwood Core 4.3.1-heartwood.0.1.0: a relay of solar on testnet
+relay	info	InSync	Blockchain 100% in sync
+relay	info	ForkRecoveryStarted	Starting fork recovery
+relay	warning	ForkDetected	Fork detected - rolling back 3 blocks to fork at height 1,234 (192.0.2.7: 2, 192.0.2.8: 1)
+relay	info	PeersRefreshedAfterFork	Refreshing 3 peers after fork
+relay	info	PeersRefreshedAfterFork	Refreshing 1 peer after fork
+relay	info	BlocksRemoved	Removing 5 blocks. Reset to height 1,200
+relay	warning	DownloadedBlockNotAccepted	Downloaded block not accepted
+relay	info	NoBlocksFromAnyPeer	Could not download any blocks from any peer from height 1,200
+relay	error	NoPeersToDownload	Could not download blocks: we have 0 peers
+relay	info	DownloadFailed	Failed to download blocks 1,201-1,300 from 192.0.2.7:4001: timeout
+relay	info	DownloadFailed	Giving up on trying to download blocks 1,201-1,300: another download job failed
+relay	info	FallingBackToSeeds	Couldn't find enough peers. Falling back to seed peers
+relay	info	NotEnoughPeersForHealth	Not enough peers available to check network health
+relay	info	NoVerifiedPeersForHealth	No verified peers available to check network health
+relay	info	MedianNetworkHeight	Median Network Height: 1,300
+relay	info	NetworkMissingBlocks	Network keeps missing blocks
+relay	info	NetworkMissingBlocks	Tried to sync 3 times to different nodes, looks like the network is missing blocks
+relay	info	DiscardedFutureSlot	Discarded block 1,301 because it takes a future slot
+relay	error	DiscardedFutureSlot	Discarded block 1,301 because it takes a future slot
+relay	info	DiscardedReceivedLate	Discarded block 1,301 because it was received too late
+relay	info	DiscardedProcessedLate	Discarded block 1,301 because it was processed too late
+relay	error	StateCorrupted	Shutting down app, because state is corrupted
+relay	warning	StateMightBeCorrupted	Shutting down app, because state might be corrupted
+relay	error	NodeStops	The node stops: the store cannot be written
+relay	warning	DoubleForgingDetected	Detected double forging by alice
+relay	warning	AttestationSessionReplaced	A new attestation session from 192.0.2.4 replaces the session from 192.0.2.5
+relay	warning	AttestationKeysRepeated	The attestation session from 192.0.2.4 declares 2 keys again; each copy counts as a delegate on this node
+relay	info	BlockReceived	Received new block forged by delegate alice (#12) at height 1,301 with 3 TOKEN reward
+relay	warning	RemoteAccessNoMatch	The remoteAccess entry 198.51.100.0/24 matches no address: it admits no forger
+relay	warning	RemoteAccessEmpty	remoteAccess admits no address: no forger can reach this relay's internal routes
+relay	warning	RemoteAccessEmpty	remoteAccess is empty: no forger can reach this relay's internal routes
+relay	info	ApiDisabled	The API is disabled
+relay	error	StartErrorP2pCannotListen	the P2P server cannot listen on 192.0.2.10:4001: address in use
+relay	error	StartErrorApiCannotListen	the API cannot listen on 192.0.2.10:4003: address in use
+relay	error	StartErrorApiHttps	CORE_API_SSL is set, but this relay serves no HTTPS: serve its API through a reverse proxy that terminates TLS
+relay	error	StartErrorApiHttps	the API does not serve HTTPS (CORE_API_SSL is set): serve it behind a reverse proxy that terminates TLS
+relay	error	StartErrorVersionFloor	this node's version 4.3.1 is below the minimum versions >=4.4.0 in force at height 100
+relay	error	ApiNotStarted	the address is not available: the API is not started
+relay	warning	FloorLaterRefuses	From height 5,000 the minimum versions are >=4.4.0, which this node's version 4.3.1 does not satisfy
+forger	info	ForgerStarted	Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
+forger	info	ForgerManagerStarted	Forger Manager started
+forger	info	DelegatesLoaded	Loaded 3 active delegates: alice, bob and carol
+forger	info	ActivePositionEntered	Delegate alice is now in an active forging position
+forger	info	ActivePositionEntered	Delegates alice and bob are now in active forging positions
+forger	info	ActivePositionLeft	Delegate alice is no longer in an active forging position
+forger	info	ActivePositionLeft	Delegates alice and bob are no longer in active forging positions
+forger	info	DueToForge	Delegate alice is due to forge in 4 seconds from now
+forger	info	Forged	Delegate alice forged a new block at height 1,301 with 3 transactions
+forger	info	SendsAgain	Delegate 02cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd sends block abababababababababababababababababababababababababababababababab at height 1301 of slot 77 again
+forger	warning	WillNotSign	Delegate 02cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd will not sign: slot 80 is more than one slot away from this forger's slot 77
+forger	warning	ForgedOnAnotherNode	Not going to forge because delegate alice has already forged on another node
+forger	warning	AlreadyForgedThisRound	Delegate alice already forged a block. Will not forge
+forger	info	NotEnoughQuorum	Not enough quorum to forge next block. Will not forge
+forger	info	NotPeeredEnough	Not peered with enough delegates to get quorum. Will not forge
+forger	info	ColdStartSkip	Skipping slot because of cold start. Will not forge
+forger	info	NoNetworkState	Failed to get network state from client. Will not forge
+forger	info	OverheightHeaders	Detected 3 distinct overheight block headers
+forger	warning	HeightsOutOfSync	The NetworkState height (1,300) and round height (1,299) are out of sync. This indicates delayed blocks on the network
+forger	warning	TooLittleTime	Failed to forge new block by delegate alice, because there were 120ms left in the current slot (less than 500ms)
+forger	warning	AlreadyNextSlot	Failed to forge new block by delegate alice, because already in next slot
+forger	warning	WaitingForHost	Waiting for a responsive host
+forger	info	WaitingForRelayReady	Waiting for relay to become ready
+forger	debug	NoOpenSocket	No open socket connection to any host: 192.0.2.7
+forger	warning	RelayRequestFailed	Request to 192.0.2.7 failed, because of 'timeout'
+forger	warning	HostsDidNotRespond	192.0.2.7 didn't respond. Trying again later
+forger	error	SyncCheckFailed	Could not sync check: timeout
+forger	error	BroadcastFailed	Broadcast block failed: timeout
+forger	error	EmitFailed	Failed to emit "block.forged" to "192.0.2.7"
+forger	error	NoLocalHosts	emitEvent: unable to find any local hosts
+forger	error	SessionError	socket hang up
+forger	warning	NotAttesting	Not attesting the relay's status: the offered status's slot 90 is more than one slot away from slot 77
+forger	debug	NoStatusToAttest	The relay gave no status to attest: timeout
+forger	debug	AttestationsNotDelivered	The status attestations were not delivered: timeout
+forger	warning	PoolUnavailable	Could not get unconfirmed transactions from pool
+forger	warning	SigningRecordSlow	Writing the signing record took 250 ms
+forger	warning	KeyListedTwice	delegates.json lists the key of delegate 02cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd twice
+forger	warning	RelayHeightBeyondClock	The relay reports height 1,400, beyond height 1,300 that this forger's clock allows; the version floor is checked at 1,300
+forger	error	StartErrorKeyFileMissing	The delegates.json file does not exist
+forger	error	StartErrorNoKeys	Unable to detect any private keys
+forger	error	StartErrorKeyFileTooOpen	delegates.json is open to its group or to others (mode 644); make it private (chmod 600)
+forger	error	StartErrorKeyFileSecrets	delegates.json lists passphrases in `secrets`, which Heartwood does not read: give the delegates' private keys in `keys`
+forger	error	StartErrorSigningRecordOtherNetwork	the signing record signing.json is for the network devnet, not testnet
+forger	error	StartErrorSigningRecordInvalid	the signing record signing.json is not valid: unexpected end
+forger	error	StartErrorSigningRecordInvalid	the signing record signing.json cannot be written or read: permission denied
+forger	error	StartErrorForgerOption	the forger option aux is not valid: not a number
+forger	error	StartErrorKeyFileInvalid	delegates.json is not valid: unexpected end
+forger	error	StartErrorKeyFileInvalid	delegates.json cannot be read: permission denied
+forger	error	StartErrorVersionFloor	this node's version 4.3.1 is below the minimum versions >=4.4.0 in force at height 100
+forger	warning	FloorLaterRefuses	From height 5,000 the minimum versions are >=4.4.0, which this node's version 4.3.1 does not satisfy

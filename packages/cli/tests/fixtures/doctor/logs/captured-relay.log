@@ -1,0 +1,10 @@
+[2026-10-02 13:00:00.384] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a relay of node2 on devnet
+[2026-10-02 13:00:00.769] INFO: Median Network Height: 0
+[2026-10-02 13:00:01.677] INFO: Blockchain 100% in sync 💯
+[2026-10-02 13:00:01.770] INFO: Couldn't find enough peers. Falling back to seed peers 🔥
+[2026-10-02 13:00:02.066] INFO: Received new block forged by delegate genesis_41 (#16) at height 2 with 1.9 dRT reward 📦
+[2026-10-02 13:00:03.350] INFO: Could not download any blocks from any peer from height 175 ⚠️
+[2026-10-02 13:00:04.107] INFO: Tried to sync 3 times to different nodes, looks like the network is missing blocks ☂️
+[2026-10-02 13:00:05.007] INFO: Failed to download blocks [158, 158] from 198.51.100.13:6002: Peer did not return any block ‼️
+[2026-10-02 13:00:06.155] WARNING: Fork detected - rolling back 24 blocks to fork at height 133 (0 vs 53) 🔁
+[2026-10-02 13:00:06.155] INFO: Removing 24 blocks. Reset to height 133 ⚠️
