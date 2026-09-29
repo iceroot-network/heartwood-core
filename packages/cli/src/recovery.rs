@@ -238,15 +238,17 @@ pub fn request(
 }
 
 /// The confirmation on standard input: the question and `(y/N)` on standard output, then a line
-/// read from standard input (the reference's prompt reads a pipe as it reads a terminal); no
-/// answer when nothing can be read.
+/// read from standard input (the reference's prompt reads a pipe as it reads a terminal). As the
+/// reference's prompt, the first `y` or `n` typed decides, in either case, other characters are
+/// ignored, and the end of the line before either is a no; no answer when nothing can be read.
 impl Confirm for io::Stdin {
     fn confirm(&mut self, question: &str) -> Option<bool> {
         print!("{question} (y/N) ");
         io::stdout().flush().ok()?;
         let mut line = String::new();
         let read = self.read_line(&mut line).ok()?;
-        (read > 0).then(|| matches!(line.trim().to_lowercase().as_str(), "y" | "yes"))
+        let key = line.chars().find(|c| "yYnN\n\r".contains(*c));
+        (read > 0).then_some(matches!(key, Some('y' | 'Y')))
     }
 }
 

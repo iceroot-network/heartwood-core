@@ -297,6 +297,31 @@ fn the_commands_ask_the_references_questions_and_write_the_markers() {
 }
 
 #[test]
+fn the_first_y_or_n_typed_decides_as_the_references_prompt_does() {
+    let mut args = vec!["pool", "clear"];
+    args.extend(NAMES);
+    let marker = |root: &Path| temp_of(root).join("clear-pool.lock");
+    // The reference's confirm prompt submits at the first y or n, whatever the case, ignores any
+    // other key, and takes the return key before either as a no.
+    for (name, input) in [("yeah", "yeah\n"), ("upper", "Y\n"), ("after", "ok y\n")] {
+        let root = node(&format!("typed-{name}"));
+        let out = heartwood(&root, &args, input);
+        assert_eq!(out.status.code(), Some(0), "{input:?}");
+        assert!(marker(&root).is_file(), "{input:?}");
+    }
+    for (name, input) in [
+        ("nope", "nope\n"),
+        ("upper-n", "N y\n"),
+        ("other", "x\ny\n"),
+    ] {
+        let root = node(&format!("typed-{name}"));
+        let out = heartwood(&root, &args, input);
+        assert_eq!(out.status.code(), Some(1), "{input:?}");
+        assert!(!marker(&root).exists(), "{input:?}");
+    }
+}
+
+#[test]
 fn force_writes_the_marker_in_silence_and_a_blocked_directory_is_exit_1() {
     let root = node("force");
     let mut args = vec!["pool", "clear", "--force"];
