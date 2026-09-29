@@ -3,8 +3,9 @@
 //! the state tables, and after a restart that replays the chain, against the reference's live,
 //! saved-state and StateBuilder orders and its order of a replay without reverts.
 //!
-//! The replay runs through a store, as a node's does ([`crate::levels::l2::Walker`]), so that the
-//! table path reads the rows the node's commits wrote. The orders are read through the
+//! The replay runs through a store, as a node's does (the store's writes of each applied and
+//! reverted block, committed in chunks), so that the table path reads the rows the node's commits
+//! wrote. The orders are read through the
 //! repository's iterators that the API lists wallets by
 //! ([`WalletRepository::by_address_index`] and its two siblings).
 //!
@@ -21,23 +22,28 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use heartwood_blockchain::RestoreMode;
+use heartwood_crypto::Block;
 use heartwood_crypto::crypto::hash::sha256;
 use heartwood_crypto::identities::PublicKey;
 use heartwood_crypto::utils::hex;
 use heartwood_state::{Wallet, WalletRepository};
+use heartwood_transactions::Handlers;
 use serde_json::{Value, json};
 
 use super::{Env, Outcome, Run, failed, text};
 use crate::corpus::Corpus;
-use crate::levels::l2::{Walker, actions};
+use crate::levels::l2::{Action, actions};
 use crate::restart::HeartwoodMode;
-use crate::store::took_its_path;
+use crate::store::{
+    ScratchDir, StartProblem, StoreNode, crypto_files, restore_mode, took_its_path,
+};
 use crate::subject::{Case, Documented, Verdict};
 
 /// The operations of this module.
 pub(super) const OPS: &[(&str, Run)] = &[("state.indexOrders", index_orders)];
 
-/// The steps a store keeps in memory before it commits them.
+/// The steps written in one commit.
 const CHUNK: usize = 64;
 
 /// The three orders of `wallets`, in the oracle's shape.
@@ -86,34 +92,8 @@ fn index_orders(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         .and_then(|taken| steps.get(..taken))
         .ok_or_else(|| failed("input.line is not a line of the corpus's replay"))?;
 
-    let mut walker = Walker::with_store(&corpus, CHUNK)
-        .map_err(|e| failed(format!("{name}: {}", e.into_error())))?;
-    for action in taken {
-        if !walker.step(*action) {
-            let problems = &walker.replay.problems;
-            return Err(failed(format!("{name}: the replay stopped: {problems:?}")));
-        }
-    }
-    let height = walker.state().height();
-    let live = orders(walker.state().wallets());
-    let mut restarted = |mode: HeartwoodMode| -> Outcome<Value> {
-        let path = (walker.restart(mode)).map_err(|e| {
-            failed(format!(
-                "{name}: the {} restart: {}",
-                mode.name(),
-                e.into_error()
-            ))
-        })?;
-        if !took_its_path(mode, &path) {
-            return Err(failed(format!(
-                "{name}: the {} restart took {path:?}",
-                mode.name()
-            )));
-        }
-        Ok(orders(walker.state().wallets()))
-    };
-    let saved = restarted(HeartwoodMode::Table)?;
-    let replayed = restarted(HeartwoodMode::Replay)?;
+    let (height, [live, saved, replayed]) =
+        store_orders(&corpus, taken).map_err(|e| failed(format!("{name}: {e}")))?;
     let ours = json!({
         "height": height,
         "live": live,
@@ -130,6 +110,55 @@ fn index_orders(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
             verdict: Box::new(Verdict::Output(ours)),
         }),
     })
+}
+
+/// The height and the orders after `taken`, the first steps of `corpus`'s replay, run through a
+/// new store as a node applies, reverts and commits them; then the orders after a restart from the
+/// state tables and after a replay restart of that store.
+fn store_orders(corpus: &Corpus, taken: &[Action]) -> Result<(u32, [Value; 3]), String> {
+    let problem = |e: StartProblem| e.into_error().to_string();
+    let files = crypto_files(corpus).map_err(problem)?;
+    let scratch = ScratchDir::new("state-index").map_err(|e| e.to_string())?;
+    let start = |mode| StoreNode::start(scratch.path(), &files, mode).map_err(problem);
+    let (mut store, mut state, _) = start(RestoreMode::Auto)?.into_parts();
+    let milestones = &corpus.milestones;
+    let mut writer = store.chunk().map_err(|e| e.to_string())?;
+    for (done, action) in (1..).zip(taken) {
+        let written = match *action {
+            Action::Revert => {
+                let reverted = (state.revert_block(milestones, &Handlers))
+                    .map_err(|e| format!("a revert at {}: {e}", state.height()))?;
+                writer.reverted(&state, &reverted, milestones)
+            }
+            Action::Apply(height) | Action::Reapply(height) => {
+                let bytes = &corpus.block(height).ok_or("a block past the tip")?.bytes;
+                let block = Block::receive(bytes, milestones).map_err(|e| e.to_string())?;
+                let applied = (state.apply_block(&block, milestones, &Handlers))
+                    .map_err(|e| format!("block {height}: {e}"))?;
+                writer.applied(&state, &block, &applied, milestones)
+            }
+        };
+        written.map_err(|e| e.to_string())?;
+        if done % CHUNK == 0 {
+            writer.commit().map_err(|e| e.to_string())?;
+            writer = store.chunk().map_err(|e| e.to_string())?;
+        }
+    }
+    writer.commit().map_err(|e| e.to_string())?;
+    drop(store);
+    let restarted = |mode: HeartwoodMode| -> Result<Value, String> {
+        let node = start(restore_mode(mode))?;
+        if !took_its_path(mode, &node.path) {
+            return Err(format!("the {} restart took {:?}", mode.name(), node.path));
+        }
+        Ok(orders(node.state.wallets()))
+    };
+    let live = orders(state.wallets());
+    let table = restarted(HeartwoodMode::Table)?;
+    Ok((
+        state.height(),
+        [live, table, restarted(HeartwoodMode::Replay)?],
+    ))
 }
 
 /// The reference's answer `theirs` with its restart orders replaced by Heartwood's (`ours`), when
