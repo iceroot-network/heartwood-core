@@ -3,13 +3,17 @@
 //! pools (`p2p.controller`); and the property's reach: each public route and the getBlocks cut
 //! reached often enough.
 //!
-//! The chain is the harness's own: blocks 2 to 16, signed by four delegates, the first ones
-//! carrying transfers. A case names its tip and keeps the blocks up to it as the store's rows.
+//! The chains are the harness's own, blocks 2 to 16 signed by four delegates with transfers in
+//! some of them, and prefixes of the corpus chains: the committed one-node chain and, when they
+//! are under the workspace's `target/corpus`, `c2-faults` cut at 265 and `c4-restarts`, as P13
+//! reads them. A case names its tip and keeps rows up to it as the store's; a corpus case keeps
+//! at most [`WINDOW`] rows below its tip and carries the corpus's milestones.
 //! The cases stay away from the answers Heartwood gives differently on purpose: no IPv4-mapped
 //! address, no peer without a latency, and no block whose header the schema refuses.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::path::Path;
+use std::sync::{Arc, LazyLock};
 
 use heartwood_crypto::blocks::factory::{self, BlockDraft};
 use heartwood_crypto::blocks::serialiser;
@@ -18,7 +22,7 @@ use heartwood_crypto::crypto::slots;
 use heartwood_crypto::transactions::builders::TransactionBuilder;
 use heartwood_crypto::transactions::types::{Memo, TransferItem};
 use heartwood_crypto::utils::hex;
-use heartwood_crypto::{Aux, Network};
+use heartwood_crypto::{Aux, Block, Milestones, Network};
 use heartwood_p2p_wire::RouteId;
 use heartwood_p2p_wire::codecs::blocks::{
     get_blocks_decode_request, get_blocks_encode_request, post_block_encode_request,
@@ -41,6 +45,8 @@ use serde_json::{Value, json};
 use super::kernel::OpCase;
 use super::keys;
 use super::transactions::{AUX, TxContext, TxSpec};
+use crate::corpus::Corpus;
+use crate::levels::l2::corpus_crypto;
 use crate::report::{CaseResult, Outcome};
 use crate::vectors::Expected;
 
@@ -62,6 +68,10 @@ const SYNTHETIC_FROM: u32 = 2;
 const SYNTHETIC_ROWS: u32 = 12;
 /// The reference's default block limit of getBlocks.
 const DEFAULT_LIMIT: u32 = 400;
+/// The corpora beside the committed one, under the workspace's `target/corpus`, with their cuts.
+const OTHER_CORPORA: [(&str, Option<u32>); 2] = [("c2-faults", Some(265)), ("c4-restarts", None)];
+/// The most rows below its tip a corpus case's store holds.
+const WINDOW: u32 = 12;
 
 /// A block of the chain.
 struct Made {
@@ -70,6 +80,7 @@ struct Made {
     header_hex: String,
     generator: String,
     transactions: Vec<Vec<u8>>,
+    timestamp: u32,
 }
 
 /// What the cases are made of.
@@ -144,6 +155,7 @@ impl World {
                         .iter()
                         .map(|tx| tx.bytes().to_vec())
                         .collect(),
+                    timestamp: block.header().timestamp,
                 },
             ))
         };
@@ -201,14 +213,7 @@ impl World {
     /// The store of a node at `tip` that keeps the rows from `low` below it, with `memory`
     /// heights in memory.
     fn store(&self, tip: u32, low: u32, memory: u32) -> Value {
-        let mut store = json!({
-            "tip": self.block(tip).hex,
-            "blocks": (low..tip).map(|h| self.block(h).hex.clone()).collect::<Vec<_>>(),
-        });
-        if memory != 100 {
-            store["memory"] = json!(memory);
-        }
-        store
+        store_of(&self.chain, tip, low, memory)
     }
 
     /// The synthetic store: the last block of the chain as the tip and rows of full blocks.
@@ -221,6 +226,20 @@ impl World {
             },
         })
     }
+}
+
+/// The store of a node at `tip` of `blocks` (the block at height `h` at index `h − 2`) that keeps
+/// the rows from `low` below it, with `memory` heights in memory.
+fn store_of(blocks: &[Made], tip: u32, low: u32, memory: u32) -> Value {
+    let block = |height: u32| &blocks[(height - FIRST) as usize];
+    let mut store = json!({
+        "tip": block(tip).hex,
+        "blocks": (low..tip).map(|h| block(h).hex.clone()).collect::<Vec<_>>(),
+    });
+    if memory != 100 {
+        store["memory"] = json!(memory);
+    }
+    store
 }
 
 /// The input of a route: the request's bytes and the caller, with `fields` of the input.
@@ -303,7 +322,7 @@ fn get_peers(world: &Arc<World>) -> BoxedStrategy<OpCase> {
 
 fn get_common_blocks(world: &Arc<World>) -> BoxedStrategy<OpCase> {
     let world = world.clone();
-    tip()
+    let harness = tip()
         .prop_flat_map(|t| (Just(t), store_shape(t)))
         .prop_flat_map(|(t, shape)| {
             (
@@ -320,23 +339,7 @@ fn get_common_blocks(world: &Arc<World>) -> BoxedStrategy<OpCase> {
             )
         })
         .prop_map(move |((t, (low, memory)), ip, ids)| {
-            let ids: Vec<String> = ids
-                .into_iter()
-                .enumerate()
-                .map(|(i, (height, capitals, unknown))| {
-                    if unknown {
-                        format!("{:064x}", i + 1)
-                    } else if capitals {
-                        world.block(height).id.to_uppercase()
-                    } else {
-                        world.block(height).id.clone()
-                    }
-                })
-                .collect();
-            let request = get_common_blocks_encode_request(&GetCommonBlocksRequest {
-                ids,
-                ..GetCommonBlocksRequest::default()
-            });
+            let request = common_request(&world.chain, ids);
             let fields = json!({"store": world.store(t, low, memory)});
             (
                 "p2p.controller",
@@ -344,32 +347,43 @@ fn get_common_blocks(world: &Arc<World>) -> BoxedStrategy<OpCase> {
                 input(RouteId::GetCommonBlocks, &request, &ip, fields),
             )
         })
-        .boxed()
+        .boxed();
+    with_corpus(harness, corpus_common_blocks())
+}
+
+/// The peer configuration of a status: the API's plugin, then the webhooks'.
+fn peer_config(network: &Network) -> Value {
+    json!({
+        "version": "4.3.1",
+        "network": {
+            "version": network.pub_key_hash, "name": network.name,
+            "nethash": network.nethash, "explorer": network.explorer,
+            "token": {"name": network.token, "symbol": network.symbol},
+        },
+        "plugins": {
+            "@solar-network/api": {"enabled": true, "port": 6003, "estimateTotalCount": true},
+            "@solar-network/webhooks": {"enabled": false, "port": 6004},
+        },
+    })
+}
+
+/// When in its slot a status is asked for: early, late, or anywhere.
+fn slot_offset() -> impl Strategy<Value = i64> {
+    prop_oneof![1 => 0i64..1_000, 1 => 4_000i64..5_000, 4 => 0i64..8_000]
 }
 
 fn get_status(world: &Arc<World>) -> BoxedStrategy<OpCase> {
+    let corpus = corpus_status(&world.network);
     let world = world.clone();
-    (
+    let harness = (
         tip(),
         caller(),
-        prop_oneof![1 => 0i64..1_000, 1 => 4_000i64..5_000, 4 => 0i64..8_000],
+        slot_offset(),
         prop::collection::vec(0usize..4, 0..=4),
     )
         .prop_map(move |(t, ip, offset, registered)| {
             let request = get_status_encode_request(&GetStatusRequest::default());
-            let network = &world.network;
-            let config = json!({
-                "version": "4.3.1",
-                "network": {
-                    "version": network.pub_key_hash, "name": network.name,
-                    "nethash": network.nethash, "explorer": network.explorer,
-                    "token": {"name": network.token, "symbol": network.symbol},
-                },
-                "plugins": {
-                    "@solar-network/api": {"enabled": true, "port": 6003, "estimateTotalCount": true},
-                    "@solar-network/webhooks": {"enabled": false, "port": 6004},
-                },
-            });
+            let config = peer_config(&world.network);
             let keys: Vec<&String> = registered.iter().map(|&i| &world.delegates[i].0).collect();
             let fields = json!({"status": {
                 "tip": {"hex": world.block(t).hex},
@@ -382,20 +396,33 @@ fn get_status(world: &Arc<World>) -> BoxedStrategy<OpCase> {
                 input(RouteId::GetStatus, &request, &ip, fields),
             )
         })
-        .boxed()
+        .boxed();
+    with_corpus(harness, corpus)
+}
+
+/// A getBlocks request's bytes.
+fn blocks_request(last: u32, limit: Option<u32>, only: Option<bool>) -> Vec<u8> {
+    get_blocks_encode_request(&GetBlocksRequest {
+        last_block_height: Some(last),
+        block_limit: limit,
+        headers_only: only,
+        ..GetBlocksRequest::default()
+    })
+}
+
+/// A getBlocks request's `blockLimit`: absent, the default, small, or 0 (the default again).
+fn block_limit() -> impl Strategy<Value = Option<u32>> + Clone {
+    prop_oneof![3 => Just(None), 2 => Just(Some(400u32)), 3 => (1u32..=6).prop_map(Some), 1 => Just(Some(0u32))]
+}
+
+/// A getBlocks request's `headersOnly`.
+fn headers_only() -> impl Strategy<Value = Option<bool>> + Clone {
+    prop_oneof![3 => Just(None), 3 => Just(Some(false)), 2 => Just(Some(true))]
 }
 
 fn get_blocks(world: &Arc<World>) -> BoxedStrategy<OpCase> {
-    let request = |last: u32, limit: Option<u32>, only: Option<bool>| {
-        get_blocks_encode_request(&GetBlocksRequest {
-            last_block_height: Some(last),
-            block_limit: limit,
-            headers_only: only,
-            ..GetBlocksRequest::default()
-        })
-    };
-    let limit = prop_oneof![3 => Just(None), 2 => Just(Some(400u32)), 3 => (1u32..=6).prop_map(Some), 1 => Just(Some(0u32))];
-    let only = prop_oneof![3 => Just(None), 3 => Just(Some(false)), 2 => Just(Some(true))];
+    let request = blocks_request;
+    let (limit, only) = (block_limit(), headers_only());
     let small = {
         let world = world.clone();
         tip()
@@ -439,7 +466,10 @@ fn get_blocks(world: &Arc<World>) -> BoxedStrategy<OpCase> {
                 )
             })
     };
-    prop_oneof![7 => small, 3 => cut].boxed()
+    match corpus_get_blocks() {
+        Some(corpus) => prop_oneof![5 => small, 3 => cut, 2 => corpus].boxed(),
+        None => prop_oneof![7 => small, 3 => cut].boxed(),
+    }
 }
 
 /// The transactions of `picks` from the chain, and their ids as the processor knows them.
@@ -523,6 +553,24 @@ enum Posted {
     TooMany(u32),
 }
 
+/// The postBlock request of `block`, its header alone when `header`, with its number of
+/// transactions replaced by `too_many` when given.
+fn posted_request(block: &Made, header: bool, too_many: Option<u32>) -> Vec<u8> {
+    let text = if header {
+        &block.header_hex
+    } else {
+        &block.hex
+    };
+    let mut bytes = hex::decode(text).unwrap_or_default();
+    if let (Some(count), Some(field)) = (too_many, bytes.get_mut(44..48)) {
+        field.copy_from_slice(&count.to_le_bytes());
+    }
+    post_block_encode_request(&PostBlockRequest {
+        block: Some(bytes),
+        ..PostBlockRequest::default()
+    })
+}
+
 fn post_block(world: &Arc<World>) -> BoxedStrategy<OpCase> {
     let world = world.clone();
     let kind = prop_oneof![
@@ -533,7 +581,7 @@ fn post_block(world: &Arc<World>) -> BoxedStrategy<OpCase> {
         1 => Just(Posted::HeaderOnly),
         1 => (151u32..=400).prop_map(Posted::TooMany),
     ];
-    (
+    let harness = (
         prop_oneof![1 => Just(FIRST), 9 => FIRST..=TIP_TOP - 2],
         caller(),
         kind,
@@ -551,19 +599,11 @@ fn post_block(world: &Arc<World>) -> BoxedStrategy<OpCase> {
                     Posted::HeaderOnly => (world.block(t + 1), true),
                     Posted::Next | Posted::TooMany(_) => (world.block(t + 1), false),
                 };
-                let mut bytes = hex::decode(if header {
-                    &block.header_hex
-                } else {
-                    &block.hex
-                })
-                .unwrap_or_default();
-                if let Posted::TooMany(count) = kind {
-                    bytes[44..48].copy_from_slice(&count.to_le_bytes());
-                }
-                let request = post_block_encode_request(&PostBlockRequest {
-                    block: Some(bytes),
-                    ..PostBlockRequest::default()
-                });
+                let too_many = match kind {
+                    Posted::TooMany(count) => Some(count),
+                    _ => None,
+                };
+                let request = posted_request(block, header, too_many);
                 let mut fields = json!({
                     "store": world.store(t, FIRST, 100),
                     "pinged": pinged, "alreadyForged": forged,
@@ -589,10 +629,297 @@ fn post_block(world: &Arc<World>) -> BoxedStrategy<OpCase> {
                 )
             },
         )
-        .boxed()
+        .boxed();
+    with_corpus(harness, corpus_post_block())
 }
 
-/// The cases of P20. A context whose milestones cannot make the chain gives no case at all.
+// ---- the corpus chains ------------------------------------------------------------------------
+
+/// A corpus chain the cases draw from: its blocks from height 2 and its milestones.
+struct CorpusChain {
+    /// The block at height `h` at index `h − 2`.
+    blocks: Vec<Made>,
+    /// The milestones as the case's `milestones` text.
+    text: String,
+    milestones: Milestones,
+    epoch_ms: i64,
+    /// The heights of a round.
+    round: u32,
+}
+
+impl CorpusChain {
+    fn block(&self, height: u32) -> &Made {
+        &self.blocks[(height - FIRST) as usize]
+    }
+
+    /// The chain's last height.
+    fn last(&self) -> u32 {
+        FIRST + u32::try_from(self.blocks.len()).unwrap_or(0) - 1
+    }
+
+    /// The fields of a case at `tip` whose store keeps the rows from `low`.
+    fn fields(&self, tip: u32, low: u32, memory: u32) -> Value {
+        json!({"store": store_of(&self.blocks, tip, low, memory), "milestones": self.text})
+    }
+
+    /// The most transactions a block may carry at `height` and the height after it.
+    fn max_transactions(&self, height: u32) -> u32 {
+        let at = |h: u32| self.milestones.at(h).max_transactions().unwrap_or(0);
+        at(height).max(at(height + 1))
+    }
+}
+
+/// The corpus chains, read on first use; a corpus that is not there, or does not read, is left
+/// out (P13 reports the same corpora).
+static CORPORA: LazyLock<Vec<CorpusChain>> = LazyLock::new(|| {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut dirs = vec![(root.join("corpus/txgen-one-node"), None)];
+    for (name, cut) in OTHER_CORPORA {
+        dirs.push((root.join("../../target/corpus").join(name), cut));
+    }
+    let loaded = dirs
+        .into_iter()
+        .filter(|(dir, _)| dir.join("corpus.json").exists());
+    loaded
+        .filter_map(|(dir, cut)| corpus_chain(&dir, cut))
+        .collect()
+});
+
+/// The chain of the corpus in `dir`, cut at `cut`.
+fn corpus_chain(dir: &Path, cut: Option<u32>) -> Option<CorpusChain> {
+    let mut corpus = Corpus::load(dir).ok()?;
+    if let Some(to) = cut {
+        corpus = corpus.cut(to).ok()?;
+    }
+    let text = corpus_crypto(&corpus).ok()?.get("milestones")?.to_string();
+    let milestones = corpus.milestones.clone();
+    let epoch_ms = slots::epoch_unix_ms(milestones.at(1).epoch())?;
+    let round = u32::try_from(milestones.at(1).active_delegates()).ok()?;
+    let mut blocks = Vec::new();
+    for (stored, height) in corpus.blocks.iter().zip(FIRST..) {
+        if stored.height != height {
+            return None;
+        }
+        let block = Block::decode(&stored.bytes, &milestones).ok()?;
+        blocks.push(Made {
+            id: block.id().to_hex(),
+            hex: hex::encode(&stored.bytes),
+            header_hex: hex::encode(&serialiser::serialise_header(block.header(), true)),
+            generator: block.header().generator_public_key.to_hex(),
+            transactions: (block.transactions().iter())
+                .map(|tx| tx.bytes().to_vec())
+                .collect(),
+            timestamp: block.header().timestamp,
+        });
+    }
+    (blocks.len() >= 3 && round > 0).then_some(CorpusChain {
+        blocks,
+        text,
+        milestones,
+        epoch_ms,
+        round,
+    })
+}
+
+/// A corpus case's chain (its index in [`CORPORA`]), its tip (below the chain's last block, so
+/// that a next block exists), the lowest row its store keeps and the heights in memory.
+fn corpus_shape() -> Option<BoxedStrategy<(usize, u32, u32, u32)>> {
+    if CORPORA.is_empty() {
+        return None;
+    }
+    let shape = (0..CORPORA.len()).prop_flat_map(|k| {
+        let chain = &CORPORA[k];
+        let top = chain.last() - 1;
+        let ends = (top / chain.round).max(1);
+        let round_end = (1..=ends, 0u32..=1).prop_map({
+            let round = chain.round;
+            move |(n, after)| (n * round + after).clamp(FIRST, top)
+        });
+        let tip = prop_oneof![4 => FIRST..=top, 1 => Just(top), 2 => round_end];
+        (
+            Just(k),
+            tip,
+            0..=WINDOW,
+            prop_oneof![7 => Just(100u32), 3 => 1u32..=6],
+        )
+    });
+    let shape = shape.prop_map(|(k, tip, depth, memory)| {
+        let low = tip.saturating_sub(depth).max(FIRST);
+        (k, tip, low, memory)
+    });
+    Some(shape.boxed())
+}
+
+/// `harness`, and the corpus cases `corpus` beside it when there are corpora.
+fn with_corpus(
+    harness: BoxedStrategy<OpCase>,
+    corpus: Option<BoxedStrategy<OpCase>>,
+) -> BoxedStrategy<OpCase> {
+    match corpus {
+        Some(corpus) => prop_oneof![7 => harness, 3 => corpus].boxed(),
+        None => harness,
+    }
+}
+
+/// getBlocks on a corpus chain: from a little below the store's rows to past the tip.
+fn corpus_get_blocks() -> Option<BoxedStrategy<OpCase>> {
+    let cases = (
+        corpus_shape()?,
+        caller(),
+        0..=WINDOW + 3,
+        block_limit(),
+        headers_only(),
+    );
+    let cases = cases.prop_map(|((k, t, low, memory), ip, pick, limit, only)| {
+        let chain = &CORPORA[k];
+        let last = (low.saturating_sub(2) + pick).min(t + 1);
+        let request = blocks_request(last, limit, only);
+        let fields = chain.fields(t, low, memory);
+        (
+            "p2p.controller",
+            u64::from(t),
+            input(RouteId::GetBlocks, &request, &ip, fields),
+        )
+    });
+    Some(cases.boxed())
+}
+
+/// The getCommonBlocks request of the ids of `blocks` at `ids`' heights (`h − 2`), each in
+/// capitals or replaced by an unknown id when its flags say so.
+fn common_request(blocks: &[Made], ids: Vec<(u32, bool, bool)>) -> Vec<u8> {
+    let ids = (ids.into_iter().enumerate())
+        .map(|(i, (height, capitals, unknown))| {
+            let id = &blocks[(height - FIRST) as usize].id;
+            if unknown {
+                format!("{:064x}", i + 1)
+            } else if capitals {
+                id.to_uppercase()
+            } else {
+                id.clone()
+            }
+        })
+        .collect();
+    get_common_blocks_encode_request(&GetCommonBlocksRequest {
+        ids,
+        ..GetCommonBlocksRequest::default()
+    })
+}
+
+/// getCommonBlocks on a corpus chain: ids from below the store's rows to past the tip.
+fn corpus_common_blocks() -> Option<BoxedStrategy<OpCase>> {
+    let shape = corpus_shape()?;
+    let cases = shape.prop_flat_map(|(k, t, low, memory)| {
+        let chain = &CORPORA[k];
+        let (from, to) = (
+            t.saturating_sub(2 * WINDOW).max(FIRST),
+            (t + 3).min(chain.last()),
+        );
+        let ids = (
+            from..=to,
+            prop::bool::weighted(0.1),
+            prop::bool::weighted(0.1),
+        );
+        (
+            Just((k, t, low, memory)),
+            caller(),
+            prop::collection::vec(ids, 0..=10),
+        )
+    });
+    let cases = cases.prop_map(|((k, t, low, memory), ip, ids)| {
+        let chain = &CORPORA[k];
+        let request = common_request(&chain.blocks, ids);
+        let fields = chain.fields(t, low, memory);
+        (
+            "p2p.controller",
+            u64::from(t),
+            input(RouteId::GetCommonBlocks, &request, &ip, fields),
+        )
+    });
+    Some(cases.boxed())
+}
+
+/// getStatus on a corpus chain, with the generators of the store's rows registered or not.
+fn corpus_status(network: &Network) -> Option<BoxedStrategy<OpCase>> {
+    let config = peer_config(network);
+    let cases = (corpus_shape()?, caller(), slot_offset(), 0usize..=3);
+    let cases = cases.prop_map(move |((k, t, low, _), ip, offset, every)| {
+        let chain = &CORPORA[k];
+        let request = get_status_encode_request(&GetStatusRequest::default());
+        let tip = chain.block(t);
+        let registered: Vec<&String> = (low..=t)
+            .filter(|h| every > 0 && h % 4 < u32::try_from(every).unwrap_or(0) + 1)
+            .map(|h| &chain.block(h).generator)
+            .collect();
+        let fields = json!({"milestones": chain.text, "status": {
+            "tip": {"hex": tip.hex},
+            "now": chain.epoch_ms + i64::from(tip.timestamp) * 1_000 + offset,
+            "peerConfig": config, "registered": registered, "forgerKeys": [],
+        }});
+        (
+            "p2p.controller",
+            u64::from(t),
+            input(RouteId::GetStatus, &request, &ip, fields),
+        )
+    });
+    Some(cases.boxed())
+}
+
+/// postBlock on a corpus chain: the chain's next block, one past it, the tip itself, the next
+/// block's header, and the next block above the milestone's `maxTransactions`.
+fn corpus_post_block() -> Option<BoxedStrategy<OpCase>> {
+    let kind = prop_oneof![
+        8 => Just(Posted::Next),
+        2 => Just(Posted::Skipping),
+        2 => Just(Posted::Old),
+        1 => Just(Posted::HeaderOnly),
+        1 => (1u32..=250).prop_map(Posted::TooMany),
+    ];
+    let cases = (
+        corpus_shape()?,
+        caller(),
+        kind,
+        prop::option::weighted(0.75, prop::option::weighted(0.9, 1u32..=60)),
+        prop::bool::weighted(0.2),
+        prop::bool::weighted(0.5),
+        0..=WINDOW,
+    );
+    let cases = cases.prop_map(
+        |((k, t, low, memory), ip, kind, registered, pinged, forged, back)| {
+            let chain = &CORPORA[k];
+            let (height, header, too_many) = match kind {
+                Posted::Skipping if t + 2 <= chain.last() => (t + 2, false, None),
+                Posted::Old => (t, false, None),
+                Posted::HeaderOnly => (t + 1, true, None),
+                Posted::TooMany(more) => (t + 1, false, Some(chain.max_transactions(t) + more)),
+                _ => (t + 1, false, None),
+            };
+            let block = chain.block(height);
+            let request = posted_request(block, header, too_many);
+            let mut fields = chain.fields(t, low, memory);
+            fields["pinged"] = json!(pinged);
+            fields["alreadyForged"] = json!(forged);
+            if let Some(rank) = registered {
+                let rank = rank.map_or(Value::Null, |rank| json!(rank));
+                fields["delegates"] = json!([
+                    {"publicKey": block.generator, "username": "corpus_delegate", "rank": rank}
+                ]);
+            }
+            let older = t.saturating_sub(back).max(FIRST);
+            if older < t {
+                fields["lastDownloaded"] = json!(chain.block(older).hex);
+            }
+            (
+                "p2p.controller",
+                u64::from(t),
+                input(RouteId::PostBlock, &request, &ip, fields),
+            )
+        },
+    );
+    Some(cases.boxed())
+}
+
+/// The cases of P20. A context whose milestones cannot make the harness's chain gives one case
+/// with no route, which both sides refuse, so that the run fails as a harness error.
 pub fn served_cases(context: &Arc<TxContext>) -> BoxedStrategy<OpCase> {
     let Some(world) = World::new(context).map(Arc::new) else {
         return Just(("p2p.controller", 2, json!({}))).boxed();
@@ -703,4 +1030,57 @@ pub fn reach_checks(
         height: 0,
         outcome,
     }]
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
+
+    use super::*;
+
+    fn context() -> Arc<TxContext> {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/crypto/tests/vectors");
+        let set = crate::vectors::VectorSet::load(&dir).unwrap();
+        let devnet = crate::subjects::Devnet::from_vectors(&set)
+            .unwrap()
+            .unwrap();
+        let text = crate::levels::l1::devnet_milestones(&set).unwrap();
+        Arc::new(TxContext::new(devnet.network, text).unwrap())
+    }
+
+    #[test]
+    fn the_cases_reach_every_route_on_the_harness_chain_and_the_committed_corpus() {
+        assert!(!CORPORA.is_empty(), "the committed corpus does not load");
+        let mut runner = TestRunner::deterministic();
+        let strategy = served_cases(&context());
+        let (mut routes, mut corpus_routes) = (BTreeSet::new(), BTreeSet::new());
+        for _ in 0..1_000 {
+            let (op, height, input) = strategy.new_tree(&mut runner).unwrap().current();
+            assert_eq!(op, "p2p.controller");
+            let route = input["route"].as_str().unwrap().to_owned();
+            if input.get("milestones").is_some() {
+                let rows = input["store"]["blocks"].as_array().map_or(0, Vec::len);
+                assert!(rows <= WINDOW as usize, "{rows} rows below the tip");
+                assert!(height >= u64::from(FIRST), "{height}");
+                corpus_routes.insert(route.clone());
+            }
+            routes.insert(route);
+        }
+        assert_eq!(routes.len(), PUBLIC.len(), "{routes:?}");
+        let chained = [
+            RouteId::GetBlocks,
+            RouteId::GetCommonBlocks,
+            RouteId::GetStatus,
+            RouteId::PostBlock,
+        ];
+        for route in chained {
+            assert!(
+                corpus_routes.contains(route.id()),
+                "{route:?}: {corpus_routes:?}"
+            );
+        }
+    }
 }
