@@ -597,10 +597,7 @@ fn excerpts_are_capped_at_512_bytes_at_a_character_and_the_latest_are_kept() {
     // The oldest were dropped for the latest.
     let last = window.excerpts.last().expect("an excerpt");
     assert!(last.text.contains("number 99"), "{last:?}");
-    let first = read(
-        Role::Relay,
-        &text.lines().next().unwrap_or_default().to_owned(),
-    );
+    let first = read(Role::Relay, text.lines().next().unwrap_or_default());
     let excerpt = &first.excerpts[0];
     assert!(excerpt.text.len() <= MAX_EXCERPT);
     assert!(excerpt.text.chars().all(|c| c != '\u{fffd}'));
