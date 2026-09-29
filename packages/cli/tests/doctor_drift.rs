@@ -6,7 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use heartwood_cli::doctor::sources::logs::carries_outside;
+use heartwood_cli::Role;
+use heartwood_cli::doctor::sources::logs::{LineKind, carries_outside};
 use heartwood_cli::doctor::sources::patterns::{TEMPLATES, classify};
 use heartwood_kernel::log::Level;
 
@@ -284,13 +285,80 @@ fn sites(source: &str) -> Vec<Site> {
     found
 }
 
-/// The emoji codes of a glyph (several codes can name one), its variation selector ignored.
+/// The logger's emoji table: code and glyph.
+fn table() -> impl Iterator<Item = (&'static str, &'static str)> {
+    let lines = EMOJI.lines().filter(|line| !line.starts_with('#'));
+    lines.filter_map(|line| line.split_once('\t'))
+}
+
+/// The emoji codes of a glyph (several codes can name one), byte for byte: the reader matches
+/// the glyph the logger writes exactly, variation selector included.
 fn codes(glyph: &str) -> Vec<String> {
-    let plain = |text: &str| text.replace('\u{fe0f}', "");
-    let table = EMOJI.lines().filter(|line| !line.starts_with('#'));
-    let table = table.filter_map(|line| line.split_once('\t'));
-    let found = table.filter(|(_, emoji)| plain(emoji) == plain(glyph));
+    let found = table().filter(|(_, emoji)| *emoji == glyph);
     found.map(|(code, _)| format!(":{code}:")).collect()
+}
+
+/// `text` with each emoji code the table knows replaced by its glyph, as the logger writes it.
+fn glyphs(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some((before, after)) = rest.split_once(':') {
+        out.push_str(before);
+        let known = after.split_once(':').and_then(|(code, tail)| {
+            let glyph = table().find(|(name, _)| *name == code)?.1;
+            Some((glyph, tail))
+        });
+        match known {
+            Some((glyph, tail)) => {
+                out.push_str(glyph);
+                rest = tail;
+            }
+            None => {
+                out.push(':');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Whether the message of `literal` (a call's format string, or a whole message the node builds
+/// before its call) has the whole shape of the template, as the reader matches it: the first piece
+/// starts it, the last piece ends it before its emoji, the pieces between follow in order with a
+/// placeholder or text between each two, and the emoji the logger writes for its codes ends it.
+fn anchored(literal: &str, pieces: &[&str], emoji: Option<&str>) -> bool {
+    let message = glyphs(literal);
+    let body = match emoji {
+        Some(emoji) => message
+            .strip_suffix(emoji)
+            .and_then(|m| m.strip_suffix(' ')),
+        None => Some(message.as_str()),
+    };
+    let Some(mut text) = body else {
+        return false;
+    };
+    let Some((first, rest)) = pieces.split_first() else {
+        return false;
+    };
+    let Some(after) = text.strip_prefix(first) else {
+        return false;
+    };
+    text = after;
+    let Some((last, inner)) = rest.split_last() else {
+        return text.is_empty();
+    };
+    let Some(before) = text.strip_suffix(last) else {
+        return false;
+    };
+    text = before;
+    inner.iter().all(|piece| match text.split_once(piece) {
+        Some((_, after)) => {
+            text = after;
+            true
+        }
+        None => false,
+    })
 }
 
 /// Whether `text` holds `pieces` in order, and then the trailing `emoji` glyphs as codes in
@@ -393,10 +461,15 @@ fn every_template_is_found_piece_by_piece_in_the_node_s_source() {
     let mut stale = Vec::new();
     for template in TEMPLATES {
         let sites = sites(source_of(template.source));
-        let in_a_call = sites
-            .iter()
-            .filter(|site| site.level == template.level)
+        let same_level = sites.iter().filter(|site| site.level == template.level);
+        let in_a_call = same_level
+            .clone()
             .any(|site| holds(&site.text, template.pieces, template.emoji));
+        // The call's own format string, not only its pieces somewhere in it.
+        let whole_call = same_level.clone().any(|site| {
+            let format = site.text.split('\u{1}').next().unwrap_or_default();
+            anchored(format, template.pieces, template.emoji)
+        });
         let literals = literals(source_of(template.source));
         let described = format!(
             "{} in {}: {:?}",
@@ -414,11 +487,11 @@ fn every_template_is_found_piece_by_piece_in_the_node_s_source() {
         } else if is_literal(template.kind) {
             let one = literals
                 .iter()
-                .any(|literal| holds(literal, template.pieces, template.emoji));
-            if !in_a_call && !one {
+                .any(|literal| anchored(literal, template.pieces, template.emoji));
+            if !whole_call && !one {
                 missing.push(described);
             }
-        } else if !in_a_call {
+        } else if !whole_call {
             missing.push(described);
         }
     }
@@ -488,6 +561,40 @@ fn the_check_finds_pieces_in_order_and_fails_a_reworded_or_reordered_call() {
         text,
         &["Delegate ", " will not sign: ", ""],
         Some("🎉")
+    ));
+    // The whole call's shape: text added before the first piece or after the last is drift.
+    let format = text.split('\u{1}').next().unwrap_or_default();
+    assert!(anchored(
+        format,
+        &["Delegate ", " will not sign: ", ""],
+        Some("💣")
+    ));
+    // Without an emoji, a last piece must end the message.
+    assert!(!anchored(
+        "Blockchain 100% in sync :100:",
+        &["Blockchain 100% in sync"],
+        None
+    ));
+    assert!(!anchored(
+        "The Delegate {name} will not sign: {refused} :bomb:",
+        &["Delegate ", " will not sign: ", ""],
+        Some("💣")
+    ));
+    assert!(!anchored(
+        "Blockchain 100% in sync now :100:",
+        &["Blockchain 100% in sync"],
+        Some("💯")
+    ));
+    assert!(anchored(
+        "Blockchain 100% in sync :100:",
+        &["Blockchain 100% in sync"],
+        Some("💯")
+    ));
+    // A glyph without its variation selector is not the one the logger writes.
+    assert!(!anchored(
+        "Removing {n}. Reset to height {h} :warning:",
+        &["Removing ", ". Reset to height ", ""],
+        Some("\u{26a0}")
     ));
     // Doubled braces are single ones in the message.
     let braces = sites(r#"info!("{{braced}} {x}");"#);
@@ -830,4 +937,41 @@ fn no_untyped_call_has_a_template_that_would_classify_its_message() {
         });
         assert!(!matched, "{file}: {first}");
     }
+}
+
+/// `text` with each placeholder (`{slot}`) filled with a whole number.
+fn filled(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some((before, after)) = rest.split_once('{') {
+        out.push_str(before);
+        out.push_str("80");
+        rest = after.split_once('}').map_or("", |(_, tail)| tail);
+    }
+    out.push_str(rest);
+    out
+}
+
+#[test]
+fn the_slot_refusals_the_reader_calls_far_are_the_node_s_own_messages() {
+    // The signer's and the attester's refusal of a slot too far from the forger's clock, as the
+    // forger's error types word them; the reader takes "far" from these exact shapes only.
+    const KEY: &str = "02cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+    let errors = literals(source_of("packages/forger/src/errors.rs"));
+    let far: Vec<String> = (errors.iter())
+        .filter(|literal| literal.contains("more than one slot away"))
+        .map(|literal| filled(literal))
+        .collect();
+    assert_eq!(far.len(), 2, "{far:?}");
+    let signs = far.iter().filter(|text| {
+        let line = format!("Delegate {KEY} will not sign: {text}");
+        let kind = classify(Role::Forger, Level::Warning, &line);
+        matches!(kind, Some(LineKind::WillNotSign { far_slot: true, .. }))
+    });
+    let attests = far.iter().filter(|text| {
+        let line = format!("Not attesting the relay's status: {text}");
+        let kind = classify(Role::Forger, Level::Warning, &line);
+        matches!(kind, Some(LineKind::NotAttesting { far_slot: true }))
+    });
+    assert_eq!((signs.count(), attests.count()), (1, 1), "{far:?}");
 }
