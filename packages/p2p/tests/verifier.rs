@@ -659,17 +659,19 @@ async fn a_later_bogus_reply_keeps_the_common_block_found_before_it() {
         })),
     ];
     let peer = a_peer();
-    // The first probe found 166; the segment from 167 is our chain, then the peer's branch.
+    // The first probe found 166, and the bogus reply ended the search there. The segment from 167
+    // is our chain up to the peer's branch at 181: the reference verifies the peer as forked at
+    // 166, Heartwood refuses it.
     assert_eq!(
         run(200, &link, &chain, &peer).await,
-        verified(200, 190, 166)
+        Outcome::Refused(Refusal::OwnSegment)
     );
     assert_eq!(link.asked().last(), Some(&Asked::Headers(166, 24)));
     assert_eq!(violations(&peer), 1);
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_lower_common_block_than_the_peer_has_is_accepted() {
+async fn a_common_block_below_where_the_peer_leaves_our_chain_is_refused() {
     let chain = peer_chain(180, 190);
     let mut link = Link::serving(&chain);
     link.script = vec![Reply::Answer(Some(CommonBlock {
@@ -677,10 +679,44 @@ async fn a_lower_common_block_than_the_peer_has_is_accepted() {
         id: C1.id(25).to_hex(),
     }))];
     let peer = a_peer();
-    // The search goes on in [26, 47], where the peer has everything; round 1 ends at 53.
-    assert_eq!(run(200, &link, &chain, &peer).await, verified(200, 190, 47));
+    // The search goes on in [26, 47], where the peer has everything; round 1 ends at 53. The
+    // peer's block 48 is ours, so 47 is not its highest common block: the reference verifies it
+    // as forked at 47, Heartwood refuses it. A probe of an honest peer that failed leads here
+    // too, so it is no violation.
+    assert_eq!(
+        run(200, &link, &chain, &peer).await,
+        Outcome::Refused(Refusal::OwnSegment)
+    );
     assert_eq!(link.asked().last(), Some(&Asked::Headers(47, 6)));
     assert_eq!(violations(&peer), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_peer_on_our_chain_cannot_pass_as_forked_below_it() {
+    // Our chain to 200 and a block 201 signed by a key that is no delegate's: the peer is not
+    // forked, but claims so with a low first common block.
+    let mut chain = peer_chain(200, 201);
+    let top = chain.pop().expect("a block");
+    chain.push(signed_by(top, &stranger()));
+    let mut link = Link::serving(&chain);
+    // The first probe asks about 1, 26, 51, ... 200.
+    link.script = vec![Reply::Answer(Some(CommonBlock {
+        height: 26,
+        id: C1.id(26).to_hex(),
+    }))];
+    let peer = a_peer();
+    assert_eq!(
+        run(200, &link, &chain, &peer).await,
+        Outcome::Refused(Refusal::OwnSegment)
+    );
+    assert_eq!(violations(&peer), 0);
+    // Without the low reply it is ahead on our chain: its block 201 is what is verified, and a
+    // key that is no delegate's stops the ping.
+    let link = Link::serving(&chain);
+    assert_eq!(
+        run(200, &link, &chain, &peer).await,
+        Outcome::Stopped(VerificationStopped::Header)
+    );
 }
 
 /// A change to a listed header.

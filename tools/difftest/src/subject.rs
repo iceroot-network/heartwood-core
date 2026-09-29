@@ -96,6 +96,8 @@ pub enum Documented {
     StrictSchema,
     /// A peer's fork segment whose fetched headers do not chain (previous id, height + 1).
     UnlinkedForkSegment,
+    /// A peer's fork segment whose first header is our own block at its height.
+    OwnForkSegment,
     /// A block refused in its apply after a gap of missed slots: the reference has written the
     /// gap's missed rows before it validated the block.
     MissedRowsOfRefusedBlock,
@@ -222,6 +224,12 @@ impl Documented {
                  header's signature, height and round delegate only, Heartwood also requires each \
                  to chain to the one before it and refuses the peer (crafted peers only; every \
                  honest segment chains)"
+            }
+            Documented::OwnForkSegment => {
+                "a fork segment whose first header is our own block: the common block found is not \
+                 the peer's highest one (a low probe answer, or a later probe that failed), and \
+                 the reference verifies the peer as forked there; Heartwood refuses the peer \
+                 without a violation, so a peer on our chain cannot pass as forked below it"
             }
             Documented::MissedRowsOfRefusedBlock => {
                 "a block refused in its apply after missed slots: the reference writes the missed \

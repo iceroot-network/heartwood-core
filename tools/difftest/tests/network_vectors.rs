@@ -83,10 +83,11 @@ fn the_network_vectors_pass_l0() {
     eprintln!("{CLASS}: records per area {per_area:?}\n{report}");
     assert!(report.is_success(), "{report}");
     assert_eq!(report.skipped(), 0, "{report}");
-    // Besides the unlinked fork segment, a listed block may hold a transaction of a removed
-    // type or with a memo that is not UTF-8, which the transaction reader refuses.
+    // Besides the unlinked and own fork segments, a listed block may hold a transaction of a
+    // removed type or with a memo that is not UTF-8, which the transaction reader refuses.
     let allowed = [
         Documented::UnlinkedForkSegment,
+        Documented::OwnForkSegment,
         Documented::RemovedType,
         Documented::NonUtf8Memo,
     ]

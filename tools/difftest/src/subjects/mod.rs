@@ -496,6 +496,7 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
         | Documented::OnlineView
         | Documented::StrictSchema
         | Documented::UnlinkedForkSegment
+        | Documented::OwnForkSegment
         | Documented::MissedRowsOfRefusedBlock
         | Documented::Api(_) => false,
     }
