@@ -139,9 +139,8 @@ impl ReadOnlyStore {
     fn arm(&self) -> Result<(), ReadOnlyError> {
         let deadline = std::time::Instant::now().checked_add(self.timeout);
         let expired = move || deadline.is_none_or(|at| std::time::Instant::now() > at);
-        Ok(self
-            .connection
-            .progress_handler(CHECK_EVERY, Some(expired))?)
+        let handler = Some(expired);
+        Ok(self.connection.progress_handler(CHECK_EVERY, handler)?)
     }
 
     /// In one read transaction: the missed rows of `usernames` and the blocks, both from
@@ -153,9 +152,8 @@ impl ReadOnlyStore {
     ) -> Result<WindowRows, ReadOnlyError> {
         self.arm()?;
         let read = self.connection.unchecked_transaction()?;
-        let limit = i64::try_from(MAX_ROWS)
-            .unwrap_or(i64::MAX)
-            .saturating_add(1);
+        // One row more than the cap, to know whether it cut the list.
+        let limit = MAX_ROWS as i64 + 1;
         let blocks = "SELECT height, timestamp, id, generator_public_key, username FROM blocks \
                       WHERE height >= ?1 ORDER BY height LIMIT ?2";
         let mut blocks = rows(&read, blocks, &[&from_height, &limit], |row| {
