@@ -13,12 +13,19 @@
         "the node's files"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet."
+        "pass": "The clock is synchronized, and chrony's offset (when it gives one) is under 100 ms.",
+        "warn": "The offset is 100 to 499 ms, or the clock is synchronized while the time service is switched off.",
+        "fail": "The clock is not synchronized, or the offset is 500 ms or more.",
+        "unknown": "Neither timedatectl, chrony nor the time-sync marker could be read."
       },
-      "advice": {},
+      "advice": {
+        "synchronized": "The clock is synchronized.",
+        "synchronized-offset": "The clock is synchronized, {offset_ms} ms from network time.",
+        "ntp-off": "The clock is synchronized, but the time service is switched off, so it may drift. Start one (sudo systemctl enable --now chrony). More: https://docs.iceroot.com/validators/doctor/#clock-sync",
+        "offset": "The clock is {offset_ms} ms from network time. Validators keep a 2,000 ms margin inside an 8 s slot, so a few hundred milliseconds matter. Check chrony's sources (chronyc sources). More: https://docs.iceroot.com/validators/doctor/#clock-sync",
+        "offset-large": "The clock is {offset_ms} ms from network time, which is enough to miss slots. Fix the time service (chronyc sources, then chronyc makestep). More: https://docs.iceroot.com/validators/doctor/#clock-sync",
+        "not-synchronized": "The clock is not synchronized. Install and start chrony (sudo apt install chrony). Validators need a synchronized clock to forge in time. More: https://docs.iceroot.com/validators/doctor/#clock-sync"
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#clock-sync"
     },
     {
@@ -33,13 +40,18 @@
         "the relay's store"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The median of (receipt time minus slot start) over at least 10 blocks in the window is between 0 and 2 s, allowing for up to 99 ms early.",
+        "warn": "The median is 100 to 499 ms early, or 2 s or more late.",
+        "fail": "The median is 500 ms or more early.",
+        "unknown": "Fewer than 10 blocks with a receipt line and a known slot, or a source could not be read.",
+        "skipped": "The relay does not run on this host."
       },
-      "advice": {},
+      "advice": {
+        "in-step": "Blocks reach this relay a median {median_ms} ms after their slot begins (over {blocks} blocks).",
+        "early": "Blocks reach this relay a median {early_ms} ms before their slot begins by this host's clock, so this clock is at least {early_ms} ms behind. See clock.sync. More: https://docs.iceroot.com/validators/doctor/#clock-vs-chain",
+        "late": "Blocks reach this relay a median {median_ms} ms after their slot begins by this host's clock: this clock may be ahead, or blocks arrive late. See clock.sync and peers.count. More: https://docs.iceroot.com/validators/doctor/#clock-vs-chain",
+        "too-few": "Only {blocks} blocks in the window can be compared; {needed} are needed for a median. Try a longer --window."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#clock-vs-chain"
     },
     {
@@ -55,13 +67,18 @@
         "the forger's log"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "No block was discarded for its slot, no late forging attempt was counted outside a forger's first slot, and no slot far from the clock was refused.",
+        "warn": "One or two such events in the window.",
+        "fail": "Three or more, or any refusal of a slot more than one away from the forger's clock.",
+        "unknown": "The log could not be read, or its level hides the lines needed.",
+        "skipped": "The role does not run on this host."
       },
-      "advice": {},
+      "advice": {
+        "clean": "No sign of a wrong clock in the log.",
+        "discarded": "The relay discarded {count} blocks as coming from a future slot, or as received or processed too late. That usually means this clock is off: behind when blocks seem to come from a future slot, ahead when they seem late. See clock.sync. More: https://docs.iceroot.com/validators/doctor/#clock-symptoms",
+        "late": "The forger failed {count} attempts because too little of the slot was left, or the next slot had begun. That usually means this clock is off, or the host is slow. See clock.sync. More: https://docs.iceroot.com/validators/doctor/#clock-symptoms",
+        "refused": "A slot more than one away from this clock was refused {count} times. Fix the clock first: see clock.sync. More: https://docs.iceroot.com/validators/doctor/#clock-symptoms"
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#clock-symptoms"
     }
   ]
