@@ -122,7 +122,7 @@ pub struct Recorded {
 
 /// The chain's milestones, from the control node's crypto files.
 fn milestones(dir: &Path, manifest: &Manifest) -> Result<Milestones> {
-    let crypto = dir.join("nodes").join(&manifest.control).join("crypto");
+    let crypto = run::crypto_dir(dir, &dir.join("nodes").join(&manifest.control));
     let read = |name: &str| {
         let p = crypto.join(name);
         std::fs::read_to_string(&p).map_err(|e| Error::io(p, e))

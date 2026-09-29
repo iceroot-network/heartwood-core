@@ -596,6 +596,20 @@ pub fn archives(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
+/// The directory of the crypto files of the node whose files are in `node_dir`, a directory of the
+/// run in `run_dir`: its own `crypto/` (a node of the tooling's native runs), else its archived
+/// configuration's `config/crypto/` (a node in a container), else the run's copy of the generated
+/// network's, `network/crypto/`.
+pub fn crypto_dir(run_dir: &Path, node_dir: &Path) -> PathBuf {
+    [
+        node_dir.join("crypto"),
+        node_dir.join("config").join("crypto"),
+    ]
+    .into_iter()
+    .find(|d| d.join("network.json").is_file())
+    .unwrap_or_else(|| run_dir.join("network").join("crypto"))
+}
+
 /// Milliseconds since the Unix epoch of a UTC time `YYYY-MM-DDTHH:MM:SS[.fff]Z` (also with a space
 /// for the `T`); `None` when `text` is not one.
 pub fn parse_time(text: &str) -> Option<i64> {
@@ -846,5 +860,29 @@ mod tests {
         assert_eq!(windows[0].nodes, ["node2", "node6"]);
         assert_eq!(windows[1].nodes, ["node6"]);
         assert!(reach_windows(&reaches, &["node2".to_owned()], &["node3".to_owned()]).is_empty());
+    }
+
+    #[test]
+    fn a_node_reads_its_own_crypto_files_first() {
+        let dir = crate::store::ScratchDir::new("live-crypto").unwrap();
+        let run = dir.path();
+        let put = |d: &Path| {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("network.json"), "{}").unwrap();
+        };
+        assert_eq!(
+            crypto_dir(run, &run.join("nodes/node1")),
+            run.join("network/crypto")
+        );
+        put(&run.join("nodes/node1/config/crypto"));
+        assert_eq!(
+            crypto_dir(run, &run.join("nodes/node1")),
+            run.join("nodes/node1/config/crypto")
+        );
+        put(&run.join("nodes/node1/crypto"));
+        assert_eq!(
+            crypto_dir(run, &run.join("nodes/node1")),
+            run.join("nodes/node1/crypto")
+        );
     }
 }
