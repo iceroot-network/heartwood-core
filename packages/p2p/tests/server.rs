@@ -152,6 +152,88 @@ async fn a_response_still_being_written_keeps_a_silent_socket_open() {
     assert_eq!((pings, Instant::now() - start), (5, ms(80_000)));
 }
 
+/// A raw client from `ip` over a pipe of 64 KiB, whose getStatus the server answers with `size`
+/// bytes, its hello done.
+async fn reader_of_answers(bench: &Bench, ip: std::net::IpAddr, size: usize) -> Raw {
+    let body = StubAnswer::Payload(vec![7; size]);
+    bench.fakes.handlers.answer(RouteId::GetStatus, body);
+    let (client, served) = tokio::io::duplex(64 * 1024);
+    bench.server.accept(Box::new(served), ip);
+    let mut raw = Raw::open(client).await.unwrap();
+    raw.hello().await;
+    raw
+}
+
+/// Whether the server closed the socket of `ip`.
+fn closed(bench: &Bench, ip: std::net::IpAddr) -> bool {
+    let events = bench.fakes.events.events();
+    events.iter().any(|(_, from, open)| *from == ip && !*open)
+}
+
+/// The answers `raw` reads before its stream ends.
+async fn answers_until_the_end(raw: &mut Raw) -> usize {
+    let mut answers = 0;
+    loop {
+        match raw.next().await {
+            Sent::Binary(Message { id: 2.., .. }) => answers += 1,
+            Sent::Ended => return answers,
+            _ => {}
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_peer_that_asks_and_never_reads_is_dropped_once_its_backlog_passes_the_cap() {
+    let bench = Bench::new().await;
+    let mut raw = reader_of_answers(&bench, peer(2), 4 * 1024 * 1024).await;
+    // Five getStatus a second, within the inbound limit, each answered with 4 MiB that the peer
+    // never reads: the eleventh answer takes the unwritten bytes past 40 MiB.
+    let mut asked = 0;
+    while asked < 20 && !closed(&bench, peer(2)) {
+        raw.request(asked + 2, RouteId::GetStatus, status_request(VERSION))
+            .await;
+        asked += 1;
+        sleep(ms(200)).await;
+    }
+    assert_eq!(asked, 11, "the socket is still open");
+    assert_eq!(bench.server.ban_reason(peer(2)), None);
+    assert!(answers_until_the_end(&mut raw).await < 11);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_peer_that_stops_reading_is_closed_by_the_heartbeat_and_its_writes_end() {
+    let bench = Bench::new().await;
+    let mut raw = reader_of_answers(&bench, peer(2), 1024 * 1024).await;
+    for id in 2..5 {
+        raw.request(id, RouteId::GetStatus, status_request(VERSION))
+            .await;
+    }
+    // The check at 20 s finds the requests; the one at 35 s finds that no byte was written since,
+    // and closes; the close frame is never written, and the writes end with the close's 30 s.
+    sleep(ms(64_000)).await;
+    assert!(!closed(&bench, peer(2)));
+    sleep(ms(2_000)).await;
+    assert!(closed(&bench, peer(2)), "the socket is still open");
+    assert_eq!(answers_until_the_end(&mut raw).await, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_writes_after_the_clients_close_end_within_the_close_timeout() {
+    let bench = Bench::new().await;
+    let mut raw = reader_of_answers(&bench, peer(2), 1024 * 1024).await;
+    for id in 2..5 {
+        raw.request(id, RouteId::GetStatus, status_request(VERSION))
+            .await;
+    }
+    sleep(ms(100)).await;
+    raw.frame(0x88, &1000_u16.to_be_bytes()).await;
+    sleep(ms(100)).await;
+    assert!(closed(&bench, peer(2)));
+    // The answers still queued are dropped 30 s after the close.
+    sleep(ms(31_000)).await;
+    assert_eq!(answers_until_the_end(&mut raw).await, 0);
+}
+
 #[tokio::test(start_paused = true)]
 async fn requests_on_one_socket_are_answered_as_they_finish() {
     let bench = Bench::new().await;

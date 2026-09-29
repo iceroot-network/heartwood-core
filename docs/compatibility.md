@@ -826,6 +826,17 @@ configuration, except the last, which needs a transaction that no honest wallet 
   that peer's whole getBlocks reply, and the monitor asks the next peer, since the reader refuses
   both (see L0 below).
 
+The server keeps the reference's heartbeat, bans and one socket per address, with bounds the
+reference lacks, which no honest peer that reads its socket meets:
+
+- a socket whose queued and unwritten bytes pass 40 MiB (twice the largest message) is dropped,
+  without a ban;
+- the heartbeat counts an answer being written as the socket's activity only while its bytes
+  move, so a peer that stops reading is closed at the second check after its last message, where
+  the reference keeps it while anything waits to be written; a slow reader keeps its socket;
+- the writes still queued when a session ends stop 30 s later, the WebSocket library's close
+  timeout.
+
 ```sh
 make test-p2p                   # clippy and tests of heartwood-p2p alone, without and with difftest
 cargo test -p heartwood-p2p --all-features -- --include-ignored   # also the integration tests

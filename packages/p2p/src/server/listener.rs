@@ -15,7 +15,9 @@
 //!   reason ("WebSocket" written "websocket" and ":" as " -"); an invalid UTF-8 text message or
 //!   close reason ends it without a reason.
 //! - Frames are written unmasked, in order, by a task of their own, which tells the session how
-//!   far it is, for the heartbeat's liveness check.
+//!   many bytes it has written, for the heartbeat's liveness check. A socket whose unwritten bytes
+//!   pass [`MAX_BACKLOG`] is dropped by its session, and the writes go on after the session ends
+//!   for at most [`DRAIN_TIMEOUT`], where the reference buffers without a bound.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -39,6 +41,11 @@ pub const HEAD_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_HEAD: usize = 16 * 1024;
 /// The largest frame length the library reads (2^53 - 1).
 const MAX_LENGTH: u64 = (1 << 53) - 1;
+/// The most bytes a socket may have queued and not yet written: twice the largest message.
+pub const MAX_BACKLOG: u64 = 2 * MAX_MESSAGE as u64;
+/// How long the writes may go on once the session has ended: the WebSocket library's close
+/// timeout, after which it destroys the socket.
+pub const DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How the HTTP exchange before the WebSocket ended.
 pub enum Upgrade {
@@ -335,21 +342,23 @@ fn control(opcode: u8, payload: &[u8]) -> Frame {
 }
 
 /// The sending side of a WebSocket: frames queued to a task that writes them in order. Dropping
-/// the writer ends the writes after the queued frames.
+/// the writer ends the writes after the queued frames, or [`DRAIN_TIMEOUT`] later.
 #[derive(Debug)]
 pub struct FrameWriter {
     queue: mpsc::UnboundedSender<Vec<u8>>,
     progress: Arc<Progress>,
     task: AbortHandle,
+    /// The bytes written at the last heartbeat check.
+    checked: AtomicU64,
 }
 
-/// How far the writes are, in frames counted from 1.
+/// How far the writes are, in bytes counted from the WebSocket's opening.
 #[derive(Debug, Default)]
 struct Progress {
     queued: AtomicU64,
-    /// The last frame queued that counts as the socket's activity.
+    /// Where the last frame queued that counts as the socket's activity ends.
     activity: AtomicU64,
-    /// The frames written; `u64::MAX` once a write failed, as nothing more is written then.
+    /// The bytes written; `u64::MAX` once a write failed, as nothing more is written then.
     written: AtomicU64,
 }
 
@@ -360,11 +369,17 @@ impl FrameWriter {
         let written = Arc::clone(&progress);
         let task = tokio::spawn(async move {
             while let Some(frame) = frames.recv().await {
-                if half.write_all(&frame).await.is_err() {
-                    written.written.store(u64::MAX, Ordering::Release);
-                    return;
+                // Each write takes what the stream accepts, so that a slow reader's progress
+                // shows within a large frame.
+                let mut rest = frame.as_slice();
+                while !rest.is_empty() {
+                    let Ok(n @ 1..) = half.write(rest).await else {
+                        written.written.store(u64::MAX, Ordering::Release);
+                        return;
+                    };
+                    rest = rest.get(n..).unwrap_or_default();
+                    written.written.fetch_add(n as u64, Ordering::AcqRel);
                 }
-                written.written.fetch_add(1, Ordering::AcqRel);
             }
             let _ = half.shutdown().await;
         });
@@ -373,27 +388,42 @@ impl FrameWriter {
             queue,
             progress,
             task,
+            checked: AtomicU64::new(0),
         }
     }
 
     /// Send `bytes` as one binary frame. A frame that is `activity` (every message but the
     /// server's ping) marks the socket active once it is written, as the reference's `_flush`
-    /// does ([`FrameWriter::is_writing_activity`]).
+    /// does ([`FrameWriter::check`]).
     pub fn binary(&self, bytes: &[u8], activity: bool) {
-        let number = self.send(2, bytes);
+        let end = self.send(2, bytes);
         if activity {
-            self.progress.activity.store(number, Ordering::Release);
+            self.progress.activity.store(end, Ordering::Release);
         }
     }
 
-    /// Whether a frame is queued or being written (the reference's `_sending`).
-    pub fn is_writing(&self) -> bool {
-        self.written() < self.progress.queued.load(Ordering::Acquire)
+    /// The heartbeat's check: whether the writes show the socket active since the check before.
+    /// They do when bytes were written since then and either some are still queued (the
+    /// reference's `_sending`, of a peer that reads) or a frame that counts as activity was
+    /// written to its end since then (its `_flush` marking the socket). A queue that did not move
+    /// shows nothing: a peer that stops reading is not kept by what waits for it.
+    pub fn check(&self) -> bool {
+        let written = self.written();
+        let before = self.checked.swap(written, Ordering::AcqRel);
+        let (queued, activity) = (
+            self.queued(),
+            self.progress.activity.load(Ordering::Acquire),
+        );
+        written != u64::MAX && written > before && (written < queued || activity > before)
     }
 
-    /// Whether a frame that counts as activity is queued or being written.
-    pub fn is_writing_activity(&self) -> bool {
-        self.written() < self.progress.activity.load(Ordering::Acquire)
+    /// The bytes queued and not yet written.
+    pub fn backlog(&self) -> u64 {
+        self.queued().saturating_sub(self.written())
+    }
+
+    fn queued(&self) -> u64 {
+        self.progress.queued.load(Ordering::Acquire)
     }
 
     fn written(&self) -> u64 {
@@ -415,7 +445,7 @@ impl FrameWriter {
         self.task.abort();
     }
 
-    /// Queue a frame; its number.
+    /// Queue a frame; where it ends.
     fn send(&self, opcode: u8, payload: &[u8]) -> u64 {
         let mut frame = vec![0x80 | opcode];
         match (u8::try_from(payload.len()), u16::try_from(payload.len())) {
@@ -430,8 +460,27 @@ impl FrameWriter {
             }
         }
         frame.extend_from_slice(payload);
-        let number = self.progress.queued.fetch_add(1, Ordering::AcqRel);
+        let length = frame.len() as u64;
+        let start = self.progress.queued.fetch_add(length, Ordering::AcqRel);
         let _ = self.queue.send(frame);
-        number.saturating_add(1)
+        start.saturating_add(length)
+    }
+}
+
+impl Drop for FrameWriter {
+    /// The writes still queued get [`DRAIN_TIMEOUT`], as the library destroys a socket that
+    /// closed: a peer that stops reading holds no memory after its session.
+    fn drop(&mut self) {
+        if self.task.is_finished() {
+            return;
+        }
+        let task = self.task.clone();
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => drop(runtime.spawn(async move {
+                tokio::time::sleep(DRAIN_TIMEOUT).await;
+                task.abort();
+            })),
+            Err(_) => task.abort(),
+        }
     }
 }
