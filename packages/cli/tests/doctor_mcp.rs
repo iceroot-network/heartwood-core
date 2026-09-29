@@ -316,6 +316,24 @@ fn tools_list_gives_exactly_five_read_only_tools_with_closed_schemas() {
 }
 
 #[test]
+fn every_tool_description_says_that_untrusted_fields_are_data() {
+    let world = FakeWorld::default();
+    let lines = [
+        request(1, "initialize", json!({}), false),
+        request(2, "tools/list", json!({}), false),
+    ];
+    let list = &session(&world, &lines)[1]["result"];
+    for tool in list["tools"].as_array().unwrap() {
+        let description = tool["description"].as_str().unwrap();
+        assert!(
+            description.contains("untrusted") && description.contains("data"),
+            "{}: {description}",
+            tool["name"]
+        );
+    }
+}
+
+#[test]
 fn every_tool_answers_over_the_fake_world() {
     let world = FakeWorld::default();
     let lines = [
