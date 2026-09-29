@@ -71,6 +71,10 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # bans, the plugins, the limits, the request checks, the node's traits and a devnet node's
 # addressing) and the controllers with the forger's channel (the status, the attestation session,
 # the network state).
+# With the relay's security fixes, heartwood-p2p goes from 8,000 to 8,100 and heartwood-core from
+# 3,000 to 3,100: the peer caps, the probe and fetch deadlines, the fork segment and reply checks
+# and the chunk cache's byte bound add 122 lines to heartwood-p2p, and the marker check of the temp
+# directory 24 to heartwood-core, which were at 7,956 and 2,985 of their ceilings before them.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"
@@ -87,13 +91,13 @@ CHECKS=(
     "heartwood-blockchain processor:packages/blockchain/src/processor:1200"
     "heartwood-blockchain forger's blocks:packages/blockchain/src/forger_blocks.rs:"
     "heartwood-blockchain runtime:packages/blockchain/src/node.rs packages/blockchain/src/process_blocks_job.rs packages/blockchain/src/queue.rs packages/blockchain/src/pool_task.rs packages/blockchain/src/events.rs packages/blockchain/src/options.rs packages/blockchain/src/blockchain.rs packages/blockchain/src/state_machine packages/blockchain/src/fork_recovery.rs packages/blockchain/src/chain_state.rs packages/blockchain/src/network.rs packages/blockchain/src/work.rs:"
-    "heartwood-p2p:packages/p2p/src !packages/p2p/src/testing:8000"
+    "heartwood-p2p:packages/p2p/src !packages/p2p/src/testing:8100"
     "heartwood-p2p client side:packages/p2p/src/nes packages/p2p/src/transport.rs packages/p2p/src/connector.rs packages/p2p/src/rate_limiter.rs packages/p2p/src/utils packages/p2p/src/peer.rs packages/p2p/src/repository.rs packages/p2p/src/communicator.rs packages/p2p/src/attestation.rs packages/p2p/src/processor.rs packages/p2p/src/scoring.rs packages/p2p/src/verifier.rs packages/p2p/src/nsect.rs packages/p2p/src/monitor.rs packages/p2p/src/chunk_cache.rs packages/p2p/src/download.rs packages/p2p/src/broadcaster.rs packages/p2p/src/seeds.rs packages/p2p/src/diversity.rs packages/p2p/src/options.rs packages/p2p/src/view.rs packages/p2p/src/seams.rs packages/p2p/src/errors.rs packages/p2p/src/lib.rs:"
     "heartwood-p2p server transport:packages/p2p/src/server !packages/p2p/src/server/controllers packages/p2p/src/node_services.rs packages/p2p/src/devnet.rs:"
     "heartwood-p2p server controllers and forger channel:packages/p2p/src/server/controllers packages/p2p/src/status_server.rs packages/p2p/src/attestation_session.rs packages/p2p/src/network_state.rs:"
     "heartwood-p2p test support (difftest only):packages/p2p/src/testing:"
     "heartwood-api:packages/api/src:5000"
-    "heartwood-core:packages/core/src !packages/core/src/harness.rs:3000"
+    "heartwood-core:packages/core/src !packages/core/src/harness.rs:3100"
     "heartwood-core test support (difftest only):packages/core/src/harness.rs:"
     "heartwood-forger:packages/forger/src !packages/forger/src/bin:2200"
     "heartwood-forger loop and relay client:packages/forger/src/forger_service.rs packages/forger/src/client.rs packages/forger/src/deadlines.rs:"
