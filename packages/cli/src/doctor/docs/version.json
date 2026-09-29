@@ -15,13 +15,18 @@
         "this build"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "No version floor refuses the running version at the relay's height or later.",
+        "warn": "A later milestone will refuse the running version.",
+        "fail": "The version floor refuses the running version now.",
+        "unknown": "The floor or the relay's height could not be read.",
+        "skipped": "This host does not run a relay."
       },
-      "advice": {},
+      "advice": {
+        "ok": "The version {version} is accepted at height {height}.",
+        "refused": "The network no longer accepts the version {version} at height {height}. Install the current release. See https://docs.iceroot.com/validators/updating/.",
+        "later": "The version {version} stops being accepted at height {from}, in about {days} days and {hours} hours. Plan the update. See https://docs.iceroot.com/validators/updating/.",
+        "later-height": "The version {version} stops being accepted at height {from}, and the relay is at {height}. Plan the update. See https://docs.iceroot.com/validators/updating/."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#version-floor"
     },
     {
@@ -38,12 +43,15 @@
         "this build"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "The role runs the version that is installed.",
+        "warn": "The role runs a version other than the installed one.",
+        "unknown": "The role's version could not be read.",
+        "skipped": "The role is not running here."
       },
-      "advice": {},
+      "advice": {
+        "same": "The {role} runs {running}, the installed version.",
+        "restart-pending": "The {role} runs {running} and {installed} is installed. Restart the {role} to use it. See https://docs.iceroot.com/validators/updating/."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#version-installed"
     },
     {
@@ -57,10 +65,13 @@
         "this build"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "fail": "Not built yet."
+        "pass": "This build has no test-only code. A devnet build passes.",
+        "fail": "This build has test-only code."
       },
-      "advice": {},
+      "advice": {
+        "release-build": "This build has no test-only code.",
+        "test-build": "This build has test-only code and is not for a real node. Install a release build. See https://docs.iceroot.com/validators/updating/."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#version-build"
     },
     {
@@ -75,12 +86,15 @@
         "this build"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "unknown": "Not built yet.",
-        "skipped": "Not built yet."
+        "pass": "At most half of the peers run a newer release than this build.",
+        "warn": "More than half of the peers run a newer release.",
+        "unknown": "The peer list is empty or could not be read.",
+        "skipped": "This host does not run a relay."
       },
-      "advice": {},
+      "advice": {
+        "current": "{newer} of {total} peers run a newer release.",
+        "mostly-newer": "{newer} of {total} peers run a newer release. Update when you can. See https://docs.iceroot.com/validators/updating/."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#version-peers"
     }
   ]
