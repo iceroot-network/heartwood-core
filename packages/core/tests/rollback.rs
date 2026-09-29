@@ -1,11 +1,12 @@
 //! `heartwood snapshot rollback` as its operators run it, on a relay's store of the committed
 //! one-node chain (tip 265, rounds of 53): it refuses while the relay runs, with the reference's
 //! text and the instance's name, and holds the relay's lock while it runs, so that a relay started
-//! meanwhile refuses; each of the reference's refusals prints the reference's lines, leaves the
-//! store as it was and exits with 1; a rollback to 133 lands on 106, prints the reference's three
-//! lines and exits with 0, and the relay's next start replays the chain for want of a state and
-//! writes round 3's rows again; the colon spelling is the same command; a data directory without a
-//! store, or with another network's store, is refused.
+//! meanwhile refuses, and removes the pid file a dead relay left, so that neither `relay status`
+//! nor `relay stop` reads it meanwhile; each of the reference's refusals prints the reference's
+//! lines, leaves the store as it was and exits with 1; a rollback to 133 lands on 106, prints the
+//! reference's three lines and exits with 0, and the relay's next start replays the chain for want
+//! of a state and writes round 3's rows again; the colon spelling is the same command; a data
+//! directory without a store, or with another network's store, is refused.
 
 mod common;
 
@@ -186,6 +187,51 @@ fn a_rollback_refuses_while_the_relay_runs_and_holds_the_lock_while_it_runs() {
     assert_eq!(status.code(), Some(0));
     assert_eq!(relay.stored(), (106, false, 2));
     assert!(!is_locked(&relay.lock()).unwrap());
+}
+
+#[test]
+fn a_stale_pid_file_goes_so_that_status_and_stop_during_the_rollback_read_no_pid() {
+    let relay = Relay::new("stale-pid");
+    // The pid file of a relay that died without removing it, naming a live process.
+    let pid_file = relay.data().join("run/relay.pid");
+    fs::create_dir_all(relay.data().join("run")).unwrap();
+    let mut other = Command::new("sleep").arg("60").spawn().unwrap();
+    fs::write(&pid_file, format!("{}\n", other.id())).unwrap();
+    // The store held by another writer, so that the command waits inside its run.
+    let mut writer = Database::open(&Settings::in_data_dir(&relay.data())).unwrap();
+    let chunk = writer.begin().unwrap();
+    let mut rollback = relay
+        .command(&["snapshot", "rollback", "--height", "133"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut waits = 0;
+    while !is_locked(&relay.lock()).unwrap() || pid_file.exists() {
+        waits += 1;
+        assert!(
+            waits < 400,
+            "no lock, or the pid file still there, after 4 s"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Neither `relay status` nor `relay stop` reads the stale pid, so the process is untouched.
+    let status = relay.run(&["relay", "status"]);
+    let listed = String::from_utf8_lossy(&status.stdout).into_owned();
+    assert!(!listed.contains(&other.id().to_string()), "{listed}");
+    let stop = relay.run(&["relay", "stop"]);
+    assert_eq!(stop.status.code(), Some(1), "{}", stderr(&stop));
+    assert!(
+        other.try_wait().unwrap().is_none(),
+        "the process was signalled"
+    );
+    drop(chunk);
+    drop(writer);
+    let done = rollback.wait_with_output().unwrap();
+    assert_eq!(done.status.code(), Some(0), "{}", stderr(&done));
+    assert_eq!(relay.stored(), (106, false, 2));
+    other.kill().unwrap();
+    other.wait().unwrap();
 }
 
 #[test]

@@ -4,7 +4,8 @@
 //! command: the snapshot formats are not built.
 //!
 //! The command resolves the relay's instance, refuses while the relay runs (the reference's text,
-//! with the instance's name), takes the relay's lock, reads the relay's configuration and crypto
+//! with the instance's name), takes the relay's lock (and removes the pid file a relay that died
+//! left, so that `relay stop` meanwhile signals nothing), reads the relay's configuration and crypto
 //! files, and opens the store only when the data directory holds one of the configured network.
 //! It logs the reference's lines through the logger (`<token>-<network>-snapshot` in the log
 //! directory) and exits with 0 when it rolled back, 1 on every refusal. The next start of the
@@ -73,6 +74,9 @@ fn roll_back(flags: &RollbackFlags) -> Result<bool, String> {
     let _lock = take_lock(&instance.lock_path())
         .map_err(text)?
         .ok_or(running)?;
+    // The lock is held, so a pid file that is there names no running relay but one that died
+    // without removing it; it goes, so that `relay stop` never signals the process it names.
+    let _ = std::fs::remove_file(instance.pid_path());
     let names = (Some(&*instance.token), Some(&*instance.network));
     let base = Base::load(Role::Relay, names, None, (&process, &home, &cwd))?;
     let files = crypto::load(&base.paths.config.join("crypto")).map_err(text)?;
