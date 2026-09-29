@@ -168,11 +168,54 @@ async fn serve(forger: ForgerConfig, signals: Signals) -> Result<(), ForgerError
 }
 
 /// The highest height a chain can have at `now_ms`: its genesis block, one block per slot of its
-/// shortest block time since the epoch, and one slot more for the clocks' drift.
+/// shortest block time since the epoch (none before it), and one slot more for the clocks' drift.
 fn reachable_height(milestones: &Milestones, now_ms: i64) -> u32 {
     let epoch = slots::epoch_unix_ms(milestones.at(1).epoch()).unwrap_or_default();
     let block_time = (milestones.all().iter()).map(|params| params.block_time());
     let shortest = i64::try_from(block_time.min().unwrap_or(1).max(1)).unwrap_or(i64::MAX);
     let slots = now_ms.saturating_sub(epoch) / shortest.saturating_mul(1_000);
-    u32::try_from(slots.saturating_add(2)).unwrap_or(u32::MAX)
+    u32::try_from(slots.max(0).saturating_add(2)).unwrap_or(u32::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+
+    use heartwood_crypto::{Milestones, Network};
+
+    use super::*;
+
+    /// The committed corpus's milestones: an epoch and a block time of 8 s.
+    fn milestones() -> (Milestones, i64) {
+        let crypto = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/difftest/corpus/txgen-one-node/crypto");
+        let read = |file: &str| fs::read_to_string(crypto.join(file)).unwrap();
+        let network = Network::load(&read("network.json")).unwrap();
+        let milestones = Milestones::load(&read("milestones.json"), &network).unwrap();
+        let epoch = slots::epoch_unix_ms(milestones.at(1).epoch()).unwrap();
+        (milestones, epoch)
+    }
+
+    #[test]
+    fn the_reachable_height_is_a_block_per_slot_since_the_epoch_and_two_more() {
+        let (milestones, epoch) = milestones();
+        let at = |ms: i64| reachable_height(&milestones, epoch + ms);
+        assert_eq!(at(0), 2);
+        assert_eq!(at(7_999), 2);
+        assert_eq!(at(8_000), 3);
+        assert_eq!(at(80_000), 12);
+    }
+
+    #[test]
+    fn before_the_epoch_the_chain_can_hold_its_genesis_block_only() {
+        let (milestones, epoch) = milestones();
+        for before in [1, 8_000, 16_000, 16_001, 24_000, 3_600_000, epoch] {
+            assert_eq!(
+                reachable_height(&milestones, epoch - before),
+                2,
+                "{before} ms"
+            );
+        }
+    }
 }
