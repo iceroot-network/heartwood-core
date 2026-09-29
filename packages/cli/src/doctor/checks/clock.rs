@@ -68,11 +68,24 @@ pub fn vs_chain(input: &CheckInput<'_>) -> Vec<Finding> {
             _ => None,
         };
         let receipts: Vec<(u32, i64)> = log.events.iter().filter_map(received).collect();
-        let lowest = receipts.iter().map(|receipt| receipt.0).min();
-        let Some(lowest) = lowest.filter(|_| receipts.len() >= MIN_RECEIPTS) else {
-            return Ok(few(receipts.len()));
+        let mut heights: Vec<u32> = receipts.iter().map(|receipt| receipt.0).collect();
+        heights.sort_unstable();
+        let (Some(&lowest), Some(&middle)) = (heights.first(), heights.get(heights.len() / 2))
+        else {
+            return Ok(few(0));
         };
-        let window = input.view.store_window(&[], lowest)?;
+        if receipts.len() < MIN_RECEIPTS {
+            return Ok(few(receipts.len()));
+        }
+        // From the median height back by the window's slots: a false receipt of an old height
+        // must not move the store's read back past its row cap.
+        let window = input.view.window();
+        let slot_ms = i64::from(config.chain.block_time_s.max(1)).saturating_mul(1000);
+        let span = window.to_ms.saturating_sub(window.from_ms) / slot_ms + 1;
+        let span = u32::try_from(span).unwrap_or(u32::MAX);
+        let window = input
+            .view
+            .store_window(&[], lowest.max(middle.saturating_sub(span)))?;
         let offset = |&(height, at): &(u32, i64)| {
             let block = window.blocks.iter().find(|block| block.height == height)?;
             let slot_ms = i64::from(block.timestamp).saturating_mul(1000);
@@ -108,17 +121,26 @@ fn symptoms_of(input: &CheckInput<'_>, role: Role) -> Vec<Finding> {
         let block_time =
             block_time.or_else(|_| input.view.relay_config().map(|c| c.chain.block_time_s));
         let slot_ms = i64::from(block_time.unwrap_or(8)).saturating_mul(1000);
+        // The starts: the log's start lines (info, so a warning level hides them) and the
+        // supervisor's record of the last start.
+        let started = |e: &LogEvent| {
+            let start = matches!(
+                e.kind,
+                LineKind::ForgerStarted | LineKind::ForgerManagerStarted
+            );
+            start.then_some(e.at_ms)
+        };
+        let process = input.view.process(role).ok();
+        let supervised = process.and_then(|p| p.supervisor.as_ref()?.started_at_ms);
+        let starts: Vec<i64> = log
+            .events
+            .iter()
+            .filter_map(started)
+            .chain(supervised)
+            .collect();
         let first_slot = |at: i64| {
-            let started = |kind: &LineKind| {
-                matches!(
-                    kind,
-                    LineKind::ForgerStarted | LineKind::ForgerManagerStarted
-                )
-            };
-            let in_slot = |start: i64| (0..slot_ms).contains(&at.saturating_sub(start));
-            log.events
-                .iter()
-                .any(|e| started(&e.kind) && in_slot(e.at_ms))
+            let in_slot = |start: &i64| (0..slot_ms).contains(&at.saturating_sub(*start));
+            starts.iter().any(in_slot)
         };
         let (mut late, mut far) = (0_u32, 0_u32);
         for event in &log.events {

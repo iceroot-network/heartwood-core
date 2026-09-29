@@ -1,12 +1,16 @@
 //! The cases of the clock checks: the host's synchronization, the relay's clock against the chain's
 //! slots, and the symptoms of a wrong clock in the logs.
 
-use heartwood_cli::Role;
+use std::time::Duration;
+
+use heartwood_cli::doctor::registry::{CheckInput, ENTRIES};
 use heartwood_cli::doctor::report::{Id, IdKind, Status};
-use heartwood_cli::doctor::seams::{StoreWindow, StoredBlock, Subject};
+use heartwood_cli::doctor::seams::{RoleState, StoreWindow, StoredBlock, Subject, SupervisorFacts};
 use heartwood_cli::doctor::sources::logs::{Covered, LineKind, LogEvent, LogWindow};
 use heartwood_cli::doctor::sources::probes::{ChronyTracking, LeapStatus, NtpState};
+use heartwood_cli::doctor::view::ProcessFacts;
 use heartwood_cli::doctor::view::{NodeFile, Reason, Source, Unknown};
+use heartwood_cli::{Role, StatusRow, SupervisedStatus};
 use heartwood_kernel::log::Level;
 
 use super::Case;
@@ -384,6 +388,29 @@ fn started() -> (i64, LineKind) {
     (EPOCH_MS, LineKind::ForgerStarted)
 }
 
+/// A forger process its supervisor last started at `started_at_ms`.
+fn supervised_since(started_at_ms: i64) -> ProcessFacts {
+    ProcessFacts {
+        row: StatusRow {
+            pid: Some(4242),
+            name: "node1-devnet-forger".into(),
+            version: "4.3.1-heartwood.0.1.0".into(),
+            status: SupervisedStatus::Online,
+            uptime: Some(Duration::from_secs(60)),
+            restarts: 1,
+            cpu_percent: None,
+            rss_bytes: None,
+        },
+        state: RoleState::Running { supervised: true },
+        supervisor: Some(SupervisorFacts {
+            started_at_ms: Some(started_at_ms),
+            restarts: 1,
+            unstable: 0,
+            version: "4.3.1-heartwood.0.1.0".into(),
+        }),
+    }
+}
+
 /// The symptoms of a wrong clock.
 fn symptoms() -> Vec<Case> {
     let id = "clock.symptoms";
@@ -540,6 +567,19 @@ fn symptoms() -> Vec<Case> {
         Status::Warn,
         "late",
     );
+    let mut view = symptoms_view(Vec::new(), vec![too_little(100)], 8);
+    if let Some(Ok(window)) = view.logs.get_mut(&Role::Forger) {
+        window.file_level = Some(Level::Warning);
+    }
+    view.processes
+        .insert(Role::Forger, Ok(supervised_since(EPOCH_MS)));
+    add(
+        "first slot after a start the log's level hides",
+        view,
+        FORGER,
+        Status::Pass,
+        "clean",
+    );
     let before = vec![started(), too_little(-1)];
     add(
         "an attempt before the start line",
@@ -609,4 +649,56 @@ pub fn cases() -> Vec<Case> {
 #[test]
 fn every_clock_advice_has_its_template_and_its_values() {
     resolve("clock", cases());
+}
+
+/// The heights `clock.vs-chain` asks the store for, over `view`.
+fn store_bound(view: &FakeView) -> u32 {
+    let entry = ENTRIES.iter().find(|e| e.id == "clock.vs-chain").unwrap();
+    let options = Default::default();
+    let input = CheckInput {
+        entry,
+        view,
+        options: &options,
+    };
+    let findings = (entry.run)(&input);
+    assert!(
+        findings.iter().all(|f| f.status == Status::Pass),
+        "{findings:#?}"
+    );
+    view.store_calls.borrow().first().unwrap().1
+}
+
+#[test]
+fn a_false_receipt_of_an_old_height_does_not_move_the_store_read_back() {
+    const HIGH: u32 = 1_000_000;
+    let mut view = receipts_view(&[0; 12], 1_000);
+    if let Some(Ok(window)) = view.logs.get_mut(&Role::Relay) {
+        for event in &mut window.events {
+            if let LineKind::BlockReceived { height, .. } = &mut event.kind {
+                *height += HIGH;
+            }
+        }
+        let kind = LineKind::BlockReceived {
+            username: name(),
+            rank: 1,
+            height: 1,
+        };
+        let at_ms = EPOCH_MS;
+        let false_receipt = LogEvent {
+            kind,
+            level: Level::Info,
+            at_ms,
+            offset: 99,
+            rotated: false,
+        };
+        window.events.push(false_receipt);
+    }
+    if let Ok(store) = &mut view.store_window {
+        for block in &mut store.blocks {
+            block.height += HIGH;
+        }
+    }
+    let from = store_bound(&view);
+    assert!(from > HIGH - 1_000, "the store is read from height {from}");
+    assert!(from <= HIGH + 100, "the store is read from height {from}");
 }

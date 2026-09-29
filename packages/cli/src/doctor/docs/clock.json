@@ -75,7 +75,7 @@
       },
       "advice": {
         "clean": "No sign of a wrong clock in the log.",
-        "discarded": "The relay discarded {count} blocks as coming from a future slot, or as received or processed too late. That usually means this clock is behind. See clock.sync. More: https://docs.iceroot.com/validators/doctor/#clock-symptoms",
+        "discarded": "The relay discarded {count} blocks as coming from a future slot, or as received or processed too late. That usually means this clock is off: behind when blocks seem to come from a future slot, ahead when they seem late. See clock.sync. More: https://docs.iceroot.com/validators/doctor/#clock-symptoms",
         "late": "The forger failed {count} attempts because too little of the slot was left, or the next slot had begun. That usually means this clock is off, or the host is slow. See clock.sync. More: https://docs.iceroot.com/validators/doctor/#clock-symptoms",
         "refused": "A slot more than one away from this clock was refused {count} times. Fix the clock first: see clock.sync. More: https://docs.iceroot.com/validators/doctor/#clock-symptoms"
       },
