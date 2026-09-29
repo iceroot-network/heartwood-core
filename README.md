@@ -54,6 +54,27 @@ target/release/heartwood relay run --network <name>
 
 `heartwood relay run` (or `relay:run`) takes the reference's flags and reads the reference's configuration of the network: `app.json`, `peers.json`, `.env` and the four `crypto/*.json` files in the node's config directory (`~/.config/<token>-core/<network>` on Linux, token `solar` unless `--token` or `config.json` names another; the `CORE_PATH_*` variables move each directory). It keeps its store in the data directory and serves the public API on `CORE_API_PORT` (4003). The relay follows the network as a client of its peers, and its peer-to-peer server (`CORE_P2P_PORT`, 4002) takes the blocks and transactions its peers push and serves its forger. SIGINT or SIGTERM stops it gracefully after the current job. [Compatibility and testing](docs/compatibility.md#heartwood-core) lists the settings it honours and where it differs from a reference relay.
 
+## Run a forger
+
+```sh
+target/release/heartwood forger run --network <name>
+```
+
+`heartwood forger run` (or `forger:run`) holds the delegates' keys and forges their blocks through its relays; it opens no listening socket. It reads the same config directory as the relay: the forger's profile of `app.json`, whose forger component lists the relays in `hosts` (in order; the relay at `127.0.0.1` on `CORE_P2P_PORT` by default), `delegates.json` with the delegates' private keys (`{"keys": [...]}`; a file its group or others can read or write is refused) and the four crypto files. Each relay must list the forger's address in its p2p `remoteAccess`, and it serves its forger only from those addresses. A signing record in the data directory keeps the forger from signing two different blocks for one slot, across restarts too. SIGINT or SIGTERM lets a block post in flight finish, then stops it.
+
+`heartwood relay start` and `heartwood forger start` run a role under the built-in supervisor, as a daemon unless `--daemon false` is given, and `stop`, `restart`, `status` and `log` manage it. `heartwood network generate --network <name> --seed <text> --out <dir>` writes a new network's crypto files, its keys and one node's configuration.
+
+## Run a local devnet
+
+```sh
+target/release/heartwood devnet --dir <dir> init --validators 5
+target/release/heartwood devnet --dir <dir> start
+target/release/heartwood devnet --dir <dir> status
+target/release/heartwood devnet --dir <dir> stop
+```
+
+`heartwood devnet` runs a devnet on one Linux host: each validator node is a relay and a forger under their supervisors, each node at its own loopback address (node k at `127.0.0.(10 + k)`, P2P on port 6002, the API on 6003; `init --address-prefix` puts a devnet on other addresses, so that devnets can run side by side). `init` generates the chain from a seed and writes each node's configuration and share of the delegates' keys; `status` shows the processes, the heights and whether every relay has the same chain, and `stop-node`, `start-node`, `restart-node`, `reset`, `wait`, `logs` and `env` act on the nodes. A node refuses to start outside a network named `devnet` or on an address that is not loopback.
+
 ## Components
 
 | Path | Purpose |
@@ -81,7 +102,7 @@ The current implementation uses the retained reference cryptography and transact
 
 ## Compatibility
 
-The reference is [solar-core-ref](https://github.com/iceroot-network/solar-core-ref), based on Solar Core 4.3.1 with a documented patch series. Over the ten crates that hold vector classes, the committed L0 vectors give 8,643 equal comparisons and 177 documented differences, with no record skipped. L1 (random cases against the reference, one call each), L2 (reference devnet chains replayed block by block through the store and through the block processor, with a state digest at every height and restarts by every start path), L3 (one scenario on a reference devnet, observed by a reference relay and by a Heartwood relay) and L4 (reference devnets with Heartwood relays: restarts, a sync from an empty store, a partition and its heal) run as well.
+The reference is [solar-core-ref](https://github.com/iceroot-network/solar-core-ref), based on Solar Core 4.3.1 with a documented patch series. Over the eleven crates that hold vector classes, the committed L0 vectors give 9,082 equal comparisons and 183 documented differences, with no record skipped. L1 (random cases against the reference, one call each), L2 (reference devnet chains replayed block by block through the store and through the block processor, with a state digest at every height and restarts by every start path, and every block rebuilt by the other side's forger), L3 (one scenario on a reference devnet, observed by a reference relay and by a Heartwood relay; and one scenario on a devnet of reference nodes and on a devnet of Heartwood relays and forgers, with a Heartwood devnet through faults and forger failover) and L4 (reference devnets with Heartwood relays: restarts, a sync from an empty store, a partition and its heal) run as well.
 
 See [compatibility and testing](docs/compatibility.md) for exact boundaries, oracle prerequisites, vector classes, release requirements and regeneration instructions. Oracle runs are isolated from the network. Standard Rust checks use committed vectors and do not require the reference checkout or Docker.
 
