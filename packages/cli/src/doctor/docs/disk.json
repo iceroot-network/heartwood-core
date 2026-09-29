@@ -118,7 +118,7 @@
       },
       "advice": {
         "none": "No slow write of the signing record in the window.",
-        "slow": "Writing the signing record took {millis} ms at its slowest. The forger writes it before each block leaves, so a slow disk can make it miss its slot. Move the data directory to a faster disk. More: https://docs.iceroot.com/validators/doctor/#disk-slow-writes"
+        "slow": "Writing the signing record took {millis} ms at its slowest. The forger writes it before each block leaves, so a slow disk can make it miss its slot. The time comes from the forger's log: see whether the disk under the data directory (disk.type) or other work on this host keeps it busy. More: https://docs.iceroot.com/validators/doctor/#disk-slow-writes"
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#disk-slow-writes"
     }
