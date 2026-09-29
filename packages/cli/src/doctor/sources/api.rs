@@ -230,6 +230,7 @@ pub fn read_syncing(context: &ApiContext<'_>) -> Result<ApiSyncing, Unknown> {
 pub fn read_configuration(context: &ApiContext<'_>) -> Result<ApiConfiguration, Unknown> {
     let data = read(context, "/api/node/configuration")?;
     shaped(&data, |data| {
+        data.as_object()?;
         let constants = data.get("constants");
         Some(ApiConfiguration {
             core_version: data
