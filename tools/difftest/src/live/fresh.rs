@@ -101,6 +101,9 @@ pub(super) fn expected(
 /// refused) equal.
 pub(super) fn row_problems(ours: &Rows, want: &Expected, tip: u32) -> Vec<String> {
     let mut problems = Vec::new();
+    if ours.rounds.is_empty() {
+        problems.push("the archive holds no round rows to compare".to_owned());
+    }
     for (round, rows) in &ours.rounds {
         match want.rounds.get(round) {
             Some(w) if w == rows => {}
@@ -162,11 +165,20 @@ pub(super) fn check(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
             let chains = mixed::chains(run)?;
             let last = chains.last();
             let theirs = Corpus::load(&last.dir)?;
-            // Its block ids: the serving chain's at every height.
-            let first_differing = (1..=mine.tip()).find(|h| {
+            // Its block ids: the serving chain's at every height, to the paused tip.
+            let first_differing = (1..=mine.tip().max(theirs.tip())).find(|h| {
                 mine.block_id(*h).map(|i| i.to_hex()) != theirs.block_id(*h).map(|i| i.to_hex())
             });
             match first_differing {
+                Some(h) if h > mine.tip() => cases.fail(
+                    SECTION,
+                    format!("{fresh}: its block ids"),
+                    format!(
+                        "its archive ends at height {}, below the serving chain's paused tip {}",
+                        mine.tip(),
+                        theirs.tip()
+                    ),
+                ),
                 None => cases.pass(
                     SECTION,
                     format!(
@@ -238,12 +250,35 @@ pub(super) fn check(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
     )
 }
 
-/// The fresh node's peer list holds the serving relay alone.
+/// Until when the fresh node's peer list must hold the serving relay alone: run `w`'s node 5 for
+/// the whole run; run `s`'s node 4 until its routes were opened (`Err` when the run records no
+/// such step).
+pub(super) fn alone_until(run: &str, steps: &[run::Step]) -> std::result::Result<i64, String> {
+    if run != "s" {
+        return Ok(i64::MAX);
+    }
+    mixed::step(steps, "open-routes-node4")
+        .and_then(|s| s.start)
+        .ok_or_else(|| "the run records no open-routes-node4 step with its start".to_owned())
+}
+
+/// The fresh node's peer list holds the serving relay alone until its routes changed.
 fn peers(run: &MixedRun<'_>, cases: &mut Cases, fresh: &str, serving: &str) -> Result<()> {
     let label = format!("{fresh}: its peer list");
     let ip = mixed::ip_of(run.manifest, serving).unwrap_or("").to_owned();
+    let steps = run::steps(run.run_dir)?;
+    let until = match alone_until(&run.manifest.run, &steps) {
+        Ok(t) => t,
+        Err(why) => {
+            cases.fail(SECTION, label, why);
+            return Ok(());
+        }
+    };
     let polls = mixed::polls(run.run_dir)?;
-    let mine: Vec<&Poll> = polls.iter().filter(|p| p.node == fresh).collect();
+    let mine: Vec<&Poll> = polls
+        .iter()
+        .filter(|p| p.node == fresh && p.at < until)
+        .collect();
     if mine.is_empty() {
         cases.fail(SECTION, label, format!("no poll of {fresh}'s peer list"));
         return Ok(());
@@ -322,4 +357,47 @@ fn catch_up(run: &MixedRun<'_>, cases: &mut Cases, fresh: &str, serving: &str) -
         ),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn the_observer_of_run_s_is_alone_only_until_its_routes_open() {
+        assert_eq!(alone_until("w", &[]), Ok(i64::MAX));
+        assert!(alone_until("s", &[]).is_err());
+        let opened = run::Step {
+            name: "open-routes-node4".into(),
+            node: "node4".into(),
+            ok: true,
+            start: Some(9_000),
+            record: json!({"step": "open-routes-node4"}),
+        };
+        assert_eq!(alone_until("s", &[opened]), Ok(9_000));
+    }
+
+    #[test]
+    fn an_archive_without_round_rows_is_no_evidence() {
+        let empty = Rows {
+            blocks: BTreeMap::new(),
+            meta: BTreeMap::new(),
+            rounds: BTreeMap::new(),
+            missed: Vec::new(),
+            refused: BTreeSet::new(),
+        };
+        let want = Expected {
+            rounds: BTreeMap::new(),
+            missed: Vec::new(),
+            refused: BTreeSet::new(),
+            from: "node 1's archive".into(),
+        };
+        let found = row_problems(&empty, &want, 10);
+        assert!(
+            found.iter().any(|p| p.contains("no round rows")),
+            "{found:?}"
+        );
+    }
 }
