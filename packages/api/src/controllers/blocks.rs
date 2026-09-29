@@ -605,7 +605,10 @@ mod tests {
         let below = at(-(INTEGER as i64) - 2);
         // A criteria that starts at the window's start fails the reference's listing.
         assert_eq!(narrowed(&json!({}), below).unwrap(), None);
-        assert_eq!(narrowed(&json!({"timestamp": {"to": 9}}), below).unwrap(), None);
+        assert_eq!(
+            narrowed(&json!({"timestamp": {"to": 9}}), below).unwrap(),
+            None
+        );
         // One that keeps its own start or its exact value does not.
         let kept = narrowed(&json!({"timestamp": {"from": 300}}), below).unwrap();
         assert_eq!(kept.unwrap().timestamp, [range(300)]);
