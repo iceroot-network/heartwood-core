@@ -349,10 +349,18 @@ fn the_run_directory_is_made_private_a_wider_one_narrowed_and_a_file_refused() {
 /// `test-child supervise`, for `heartwood supervise`.
 #[cfg(feature = "test-child")]
 mod with_child {
-    use std::ffi::OsString;
-    use std::process::{Command, Stdio};
+    use std::ffi::{CString, OsString};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+    use std::process::Command;
     use std::thread;
     use std::time::Instant;
+
+    use nix::spawn::{PosixSpawnAttr, PosixSpawnFileActions, PosixSpawnFlags, posix_spawnp};
+    use nix::sys::signal::SigSet;
+    use nix::sys::signal::Signal::SIGINT;
+    use nix::sys::wait::{WaitStatus, waitpid};
+    use nix::unistd::Pid;
 
     use heartwood_cli::seams::{Env, ProcessOps};
     use heartwood_cli::supervisor::VERSION;
@@ -515,36 +523,105 @@ mod with_child {
         process::stop(&forger).unwrap();
     }
 
-    #[test]
-    fn a_node_without_a_supervisor_is_online_unsupervised_and_stop_signals_it() {
-        let root = scratch("unsupervised");
+    /// Where `SIGINT` is ignored, as a background job of a non-interactive shell has it and
+    /// every child inherits it: the variable that tells the test below it runs under such a shell.
+    const IGNORED: &str = "HW_TEST_SIGINT_IGNORED";
+
+    /// The test child started as a node without a supervisor, its output at `/dev/null` and its
+    /// `SIGINT` at the default whatever the caller ignores: a `Command` leaves an ignored signal
+    /// ignored, and `pre_exec` is unsafe, which the workspace forbids.
+    fn spawn_unsupervised(relay: &Instance) -> Pid {
+        let args = [CHILD, "relay", "run"].map(|arg| CString::new(arg).unwrap());
+        let paths = path_env(relay);
+        let inherited = std::env::vars_os().filter(|(key, _)| !paths.iter().any(|(k, _)| k == key));
+        let pair = |(key, value): (OsString, OsString)| {
+            CString::new([key.as_bytes(), b"=", value.as_bytes()].concat()).unwrap()
+        };
+        let env: Vec<CString> = inherited.chain(paths.clone()).map(pair).collect();
+        let mut actions = PosixSpawnFileActions::init().unwrap();
+        let null = fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+            .unwrap();
+        for fd in [1, 2] {
+            actions.add_dup2(null.as_raw_fd(), fd).unwrap();
+        }
+        let mut attributes = PosixSpawnAttr::init().unwrap();
+        attributes.set_sigdefault(&SigSet::from(SIGINT)).unwrap();
+        attributes
+            .set_flags(PosixSpawnFlags::POSIX_SPAWN_SETSIGDEF)
+            .unwrap();
+        posix_spawnp(&args[0], &actions, &attributes, &args, &env).unwrap()
+    }
+
+    /// A node started without a supervisor, which `stop` ends with `SIGINT`, named after
+    /// `scratch_name`.
+    fn an_unsupervised_node_is_stopped_by_sigint(scratch_name: &str) {
+        let root = scratch(scratch_name);
         let relay = instance(&root, Role::Relay);
         let _cleanup = Cleanup(&relay);
         fs::create_dir_all(relay.run_dir()).unwrap();
-        let mut node = Command::new(CHILD)
-            .args(["relay", "run"])
-            .envs(path_env(&relay))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let node = spawn_unsupervised(&relay);
         wait_for("the node's lock", || is_locked(&relay.lock_path()).unwrap());
         wait_for("the pid file", || relay.pid_path().exists());
         let row = process::status(&relay).unwrap();
         assert_eq!(
             (row.status, row.pid),
-            (SupervisedStatus::OnlineUnsupervised, Some(node.id()))
+            (
+                SupervisedStatus::OnlineUnsupervised,
+                Some(node.as_raw() as u32)
+            )
         );
         assert!(row.rss_bytes.is_some() && row.uptime.is_none());
         let refused = process::start(&relay, &argv(&["run"]), &env(&[]), true);
         assert!(matches!(refused, Err(ProcessError::AlreadyRunning { .. })));
         process::stop(&relay).unwrap();
-        use std::os::unix::process::ExitStatusExt;
-        assert_eq!(node.wait().unwrap().signal(), Some(2));
+        let ended = waitpid(node, None).unwrap();
+        assert!(
+            matches!(ended, WaitStatus::Signaled(_, SIGINT, _)),
+            "{ended:?}"
+        );
         assert_eq!(
             process::status(&relay).unwrap().status,
             SupervisedStatus::Stopped
         );
+    }
+
+    #[test]
+    fn a_node_without_a_supervisor_is_online_unsupervised_and_stop_signals_it() {
+        an_unsupervised_node_is_stopped_by_sigint("unsupervised");
+    }
+
+    #[test]
+    fn stop_ends_a_node_by_sigint_although_the_caller_ignores_it() {
+        let name = "with_child::stop_ends_a_node_by_sigint_although_the_caller_ignores_it";
+        if std::env::var_os(IGNORED).is_none() {
+            // Run again, alone, under a shell that ignores SIGINT before it starts the test.
+            let shell = "trap '' INT; exec \"$0\" \"$@\"";
+            let run = Command::new("sh")
+                .args(["-c", shell])
+                .arg(std::env::current_exe().unwrap())
+                .args([name, "--exact"])
+                .env(IGNORED, "1")
+                .output()
+                .unwrap();
+            let out = String::from_utf8_lossy(&run.stdout);
+            let err = String::from_utf8_lossy(&run.stderr);
+            assert!(
+                run.status.success() && out.contains("1 passed"),
+                "{out}{err}"
+            );
+            return;
+        }
+        let status = fs::read_to_string("/proc/self/status").unwrap();
+        let ignored = status.lines().find_map(|line| line.strip_prefix("SigIgn:"));
+        let ignored = u64::from_str_radix(ignored.unwrap().trim(), 16).unwrap();
+        assert_ne!(
+            ignored & (1 << 1),
+            0,
+            "SIGINT is not ignored under the shell"
+        );
+        an_unsupervised_node_is_stopped_by_sigint("unsupervised-ignored");
     }
 
     #[test]
