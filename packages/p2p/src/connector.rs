@@ -120,9 +120,11 @@ impl Connector {
         Ok(session)
     }
 
-    /// Terminate and forget the session to `ip`.
+    /// Terminate and forget the session to `ip`, and its last error (the reference keeps that on
+    /// the peer, which goes with it).
     pub fn disconnect(&self, ip: IpAddr) {
         self.shared.remove(ip, None, None);
+        lock(&self.shared.errors).swap_remove(&ip);
     }
 
     /// The class of the last recorded error of `ip`.
@@ -137,7 +139,7 @@ impl Connector {
 
     /// Forget the last error of `ip`.
     pub fn forget_error(&self, ip: IpAddr) {
-        lock(&self.shared.errors).shift_remove(&ip);
+        lock(&self.shared.errors).swap_remove(&ip);
     }
 }
 
