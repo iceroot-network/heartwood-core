@@ -25,6 +25,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use heartwood_kernel::Clock;
+use heartwood_kernel::SystemClock;
+use heartwood_kernel::timestamp::UtcDateTime;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
@@ -62,6 +65,30 @@ pub enum Upgrade {
     Failed,
 }
 
+/// The HTTP date of `unix_ms`, as the HTTP server writes it: `Mon, 28 Sep 2026 21:27:48 GMT`.
+fn http_date(unix_ms: i64) -> String {
+    const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let Some(at) = UtcDateTime::from_unix_ms(unix_ms) else {
+        return String::new();
+    };
+    // 1970-01-01 was a Thursday.
+    let day = usize::try_from((unix_ms.div_euclid(86_400_000) + 4).rem_euclid(7)).unwrap_or(0);
+    let month = usize::from(at.month).saturating_sub(1);
+    format!(
+        "{}, {:02} {} {:04} {:02}:{:02}:{:02} GMT",
+        DAYS.get(day).unwrap_or(&""),
+        at.day,
+        MONTHS.get(month).unwrap_or(&""),
+        at.year,
+        at.hour,
+        at.minute,
+        at.second
+    )
+}
+
 /// Read the request head from `stream` and answer it.
 pub async fn upgrade(mut stream: Box<dyn Stream>) -> Upgrade {
     let mut buffer = Vec::new();
@@ -96,7 +123,11 @@ pub async fn upgrade(mut stream: Box<dyn Stream>) -> Upgrade {
             .any(|part| part.trim().eq_ignore_ascii_case(token))
     };
     if head.header("upgrade").is_none() || !token("connection", "upgrade") {
-        let answer = "HTTP/1.1 404 Not Found\r\nconnection: close\r\ncontent-length: 0\r\n\r\n";
+        let date = http_date(SystemClock.now_ms());
+        let answer = format!(
+            "HTTP/1.1 404 Not Found\r\nconnection: close\r\ncache-control: no-cache\r\n\
+             content-length: 0\r\nDate: {date}\r\n\r\n"
+        );
         let _ = stream.write_all(answer.as_bytes()).await;
         return Upgrade::NotWebSocket;
     }
@@ -511,5 +542,23 @@ impl Drop for FrameWriter {
             })),
             Err(_) => task.abort(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::http_date;
+
+    #[test]
+    fn a_date_is_written_as_the_http_server_writes_it() {
+        assert_eq!(http_date(0), "Thu, 01 Jan 1970 00:00:00 GMT");
+        assert_eq!(
+            http_date(1_790_630_868_000),
+            "Mon, 28 Sep 2026 21:27:48 GMT"
+        );
+        assert_eq!(
+            http_date(1_835_395_200_000),
+            "Tue, 29 Feb 2028 00:00:00 GMT"
+        );
     }
 }
