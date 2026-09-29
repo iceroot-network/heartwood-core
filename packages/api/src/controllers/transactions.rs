@@ -104,15 +104,24 @@ pub(crate) async fn listing(
     criteria: Option<TransactionCriteria>,
     shape: Shape,
 ) -> Result<ApiReply, ApiError> {
+    filtered(ctx, request, criteria.map(TransactionFilter::of), shape).await
+}
+
+/// The listing of `request` for `filter` (`None`: criteria that match nothing), as `shape`.
+pub(crate) async fn filtered(
+    ctx: &Arc<ApiContext>,
+    request: &ApiRequest,
+    filter: Option<TransactionFilter>,
+    shape: Shape,
+) -> Result<ApiReply, ApiError> {
     let pagination = Pagination::of(&request.query);
     let page = Page {
         offset: pagination.offset,
         limit: pagination.limit,
     };
     let order = order(&request.query);
-    let (rows, total) = match criteria {
-        Some(criteria) => {
-            let filter = TransactionFilter::of(criteria);
+    let (rows, total) = match filter {
+        Some(filter) => {
             let listing = read(ctx, move |reader| {
                 reader.transactions(&filter, &order, page)
             })
@@ -354,7 +363,7 @@ fn invalid(key: &str) -> ApiError {
 }
 
 /// The values of `key` as texts.
-fn texts(key: &str, values: &[Value]) -> Result<Vec<String>, ApiError> {
+pub(crate) fn texts(key: &str, values: &[Value]) -> Result<Vec<String>, ApiError> {
     values
         .iter()
         .map(|value| {
@@ -367,7 +376,7 @@ fn texts(key: &str, values: &[Value]) -> Result<Vec<String>, ApiError> {
 }
 
 /// The values of `key` as whole numbers from 0.
-fn integers(key: &str, values: &[Value]) -> Result<Vec<u64>, ApiError> {
+pub(crate) fn integers(key: &str, values: &[Value]) -> Result<Vec<u64>, ApiError> {
     values
         .iter()
         .map(|value| integer(value).ok_or_else(|| invalid(key)))
@@ -375,7 +384,7 @@ fn integers(key: &str, values: &[Value]) -> Result<Vec<u64>, ApiError> {
 }
 
 /// The values of `key` as numbers or ranges (`{from, to}`, either end open).
-fn numerics(key: &str, values: &[Value]) -> Result<Vec<Numeric>, ApiError> {
+pub(crate) fn numerics(key: &str, values: &[Value]) -> Result<Vec<Numeric>, ApiError> {
     values
         .iter()
         .map(|value| match value {
