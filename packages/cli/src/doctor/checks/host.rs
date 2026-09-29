@@ -104,19 +104,19 @@ pub fn user(input: &CheckInput<'_>) -> Vec<Finding> {
     single(input, Host, |view| {
         let uid = view.own_uid()?;
         let data = view.file(NodeFile::Dir(NodeDir::Data))?;
-        let owner = data
+        let holder = data
             .ok_or(Unknown::new(Source::Files, Reason::Missing))?
             .own
             .uid;
-        let verdict = match (uid, owner) {
+        let verdict = match (uid, holder) {
             (0, _) => (Warn, "root"),
-            (uid, owner) if uid != owner => (Warn, "other-user"),
+            (uid, holder) if uid != holder => (Warn, "other-user"),
             _ => (Pass, "node-user"),
         };
         Ok((
             System,
             verdict,
-            vec![("uid", int(uid)), ("owner", int(owner))],
+            vec![("uid", int(uid)), ("holder", int(holder))],
         ))
     })
 }

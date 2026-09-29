@@ -59,14 +59,14 @@
         "the node's files"
       ],
       "rules": {
-        "pass": "The doctor runs as the user who owns the data directory, and not as root.",
-        "warn": "The doctor runs as root, or as a user other than the data directory's owner.",
+        "pass": "The doctor runs as the user who holds the data directory, and not as root.",
+        "warn": "The doctor runs as root, or as a user other than the one the data directory belongs to.",
         "unknown": "The user or the data directory could not be read."
       },
       "advice": {
-        "node-user": "The doctor runs as user {uid}, who owns the data directory.",
+        "node-user": "The doctor runs as user {uid}, who holds the data directory.",
         "root": "The doctor runs as root. Run the node and the doctor as an ordinary user. See https://docs.iceroot.com/validators/running/.",
-        "other-user": "The doctor runs as user {uid}, and the data directory belongs to user {owner}. Run it as the node's user. See https://docs.iceroot.com/validators/running/."
+        "other-user": "The doctor runs as user {uid}, and the data directory belongs to user {holder}. Run it as the node's user. See https://docs.iceroot.com/validators/running/."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#host-user"
     }

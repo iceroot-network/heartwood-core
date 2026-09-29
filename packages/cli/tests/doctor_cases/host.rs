@@ -69,24 +69,24 @@ fn memory(name: &'static str, view: FakeView, status: Status, advice: &'static s
     case(name, "host.memory", view, HOST, status, advice)
 }
 
-/// A view whose doctor runs as `uid` and whose data directory belongs to `owner`.
-fn owned(uid: u32, owner: Option<u32>) -> FakeView {
+/// A view whose doctor runs as `uid` and whose data directory belongs to `holder`.
+fn owned(uid: u32, holder: Option<u32>) -> FakeView {
     let mut view = FakeView::new();
     view.own_uid = Ok(uid);
-    let meta = |owner| Meta {
+    let meta = |holder| Meta {
         kind: FileKind::Dir,
         mode: 0o700,
-        uid: owner,
-        gid: owner,
+        uid: holder,
+        gid: holder,
         size: 4096,
         dev: 1,
         ino: 2,
         nlink: 2,
         modified_ms: 0,
     };
-    let facts = owner.map(|owner| FileFacts {
+    let facts = holder.map(|holder| FileFacts {
         path: "/nodes/node1/data".into(),
-        own: meta(owner),
+        own: meta(holder),
         target: None,
         link_target: None,
     });
@@ -256,13 +256,13 @@ pub fn cases() -> Vec<Case> {
         ),
         user("user: root", owned(0, Some(1000)), Status::Warn, "root"),
         user(
-            "user: root owns the data",
+            "user: root holds the data",
             owned(0, Some(0)),
             Status::Warn,
             "root",
         ),
         user(
-            "user: another user owns the data",
+            "user: another user holds the data",
             owned(1000, Some(1001)),
             Status::Warn,
             "other-user",
