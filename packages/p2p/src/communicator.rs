@@ -70,6 +70,10 @@ const SHORT: Duration = Duration::from_secs(5);
 const LONG: Duration = Duration::from_secs(10);
 /// The error class of a reply that fails its schema.
 const VALIDATION: &str = "CoreValidationError";
+/// The longest pause of one getBlocks reply while the node is idle. The reference pauses a
+/// millisecond after each transaction, so a reply of many blocks held its idle poll for minutes;
+/// half a second (the poll's period) covers any honest block.
+const MAX_IDLE_PAUSE: Duration = Duration::from_millis(500);
 
 /// A getBlocks request as the communicator's callers give it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,15 +362,18 @@ where
             );
         }
         let params = self.milestone();
-        let mut downloaded = Vec::with_capacity(listed.len());
+        let (mut downloaded, mut paused) = (Vec::with_capacity(listed.len()), Duration::ZERO);
         for mut header in listed {
             let mut transactions = Vec::with_capacity(header.transactions.len());
             let listed = std::mem::take(&mut header.transactions);
+            // The raw list the codec read the transactions from is not kept.
+            header.header.transactions = Some(Vec::new());
             for bytes in listed.into_iter().filter(|_| !headers_only) {
                 let source = match Transaction::decode_trusted(&bytes, params) {
                     Ok(transaction) => {
                         transactions.push(transaction);
-                        if parts.chain.is_idle() {
+                        if parts.chain.is_idle() && paused < MAX_IDLE_PAUSE {
+                            paused = paused.saturating_add(Duration::from_millis(1));
                             sleep(Duration::from_millis(1)).await;
                         }
                         continue;

@@ -1099,6 +1099,37 @@ async fn downloaded_transactions_are_read_as_the_reference_reads_them() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn an_idle_download_pauses_half_a_second_at_most_and_keeps_no_raw_list() {
+    let fixture = Fixture::new();
+    let client = &fixture.communicator;
+    let peer = stored(&fixture, 1);
+    fixture
+        .chain
+        .idle
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    // 4 blocks of 250 transactions: the reference would pause for a second.
+    let transfer = transfer_bytes(1);
+    let blocks: Vec<ListedBlock> = (6..10)
+        .map(|height| listed(height, vec![transfer.clone(); 250]))
+        .collect();
+    fixture
+        .transport
+        .answer(RouteId::GetBlocks, Answer::Bytes(blocks_reply(&blocks)));
+    let started = Instant::now();
+    let downloaded = client
+        .get_peer_blocks(&peer, BlocksRequest::after(5))
+        .await
+        .unwrap();
+    assert_eq!(started.elapsed(), Duration::from_millis(500));
+    assert_eq!(downloaded.len(), 4);
+    for block in &downloaded {
+        assert_eq!(block.transactions.as_ref().map(Vec::len), Some(250));
+        // The reply's raw list is not kept beside the transactions read from it.
+        assert_eq!(block.header.header.transactions.as_deref(), Some(&[][..]));
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn an_amount_beyond_128_bits_is_read_before_it_is_refused() {
     let fixture = Fixture::new();
     let peer = stored(&fixture, 1);

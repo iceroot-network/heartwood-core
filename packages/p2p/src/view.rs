@@ -65,7 +65,8 @@ pub trait ChainView: Send + Sync {
     fn is_synced(&self) -> bool;
 
     /// Whether the node's state machine is idle; the reference then pauses for a millisecond
-    /// after each downloaded transaction it reads.
+    /// after each downloaded transaction it reads, and the communicator does too, for at most
+    /// half a second per reply.
     fn is_idle(&self) -> bool;
 
     /// The last block ping, if a block has been received.
