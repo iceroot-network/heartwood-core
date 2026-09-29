@@ -210,22 +210,34 @@ pub(super) fn check(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                     .map(|(h, l)| (*h, l.clone()))
                     .collect(),
             };
-            let digest = digest::read(&run.run_dir.join("nodes").join(serving).join("difftest"))?;
-            let result = digest::judge(&digest, std::slice::from_ref(&judged));
-            if result.problems.is_empty() {
-                cases.pass(
+            let heartwood = mixed::heartwood(m).iter().any(|n| n.name == serving);
+            let result = if heartwood {
+                let digest =
+                    digest::read(&run.run_dir.join("nodes").join(serving).join("difftest"))?;
+                Some(digest::judge(&digest, std::slice::from_ref(&judged)))
+            } else {
+                cases.record(
+                    SECTION,
+                    format!("{serving} is a reference relay (a dry run of the recipe): it writes no digest lines to compare"),
+                );
+                None
+            };
+            if let Some(result) = result {
+                if result.problems.is_empty() {
+                    cases.pass(
                     SECTION,
                     format!(
                         "{fresh}: the judge's lines over its chain are {serving}'s ({} compared)",
                         result.compared.values().sum::<usize>()
                     ),
                 );
-            } else {
-                cases.fail(
-                    SECTION,
-                    format!("{fresh}: the judge's lines"),
-                    result.problems[0].clone(),
-                );
+                } else {
+                    cases.fail(
+                        SECTION,
+                        format!("{fresh}: the judge's lines"),
+                        result.problems[0].clone(),
+                    );
+                }
             }
             // Its round and missed rows.
             let want = expected(run, serving, &last.dir, last.tip)?;

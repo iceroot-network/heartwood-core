@@ -177,43 +177,49 @@ fn record_time(v: &Value) -> Option<i64> {
     t.as_i64().or_else(|| t.as_str().and_then(run::parse_time))
 }
 
-/// The peer lists of `peers.jsonl`: `{t, node, peers: [ip | {ip, port?, ports?}]}` per poll.
+/// The file of the recipe's peer polls.
+pub(super) const PEER_POLLS: &str = "peer-polls.jsonl";
+
+/// The peer lists of [`PEER_POLLS`]: `{t, node, ok, peers: [ip | {ip, port?, ports?}]}` per poll,
+/// with the machine's load beside them. A poll that got no list (`ok` false, or no `peers`: the
+/// node was down or did not answer) is no poll of its list and is left out.
 pub(super) fn polls(run_dir: &Path) -> Result<Vec<Poll>> {
     let mut out = Vec::new();
-    for v in run::read_lines(&run_dir.join("peers.jsonl"))? {
+    for v in run::read_lines(&run_dir.join(PEER_POLLS))? {
         let (Some(at), Some(node)) = (record_time(&v), v.get("node").and_then(Value::as_str))
         else {
             continue;
         };
-        let peers = v
-            .get("peers")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(|p| {
-                        if let Some(ip) = p.as_str() {
-                            let ip = ip.split(':').next().unwrap_or(ip);
-                            return Some(PeerEntry {
-                                ip: ip.to_owned(),
-                                api: Vec::new(),
-                            });
-                        }
-                        let ip = p.get("ip").and_then(Value::as_str)?.to_owned();
-                        let api = p
-                            .get("ports")
-                            .and_then(Value::as_object)
-                            .map(|o| {
-                                o.iter()
-                                    .filter(|(k, _)| k.to_ascii_lowercase().contains("api"))
-                                    .filter_map(|(_, v)| v.as_u64())
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        Some(PeerEntry { ip, api })
+        if v.get("ok") == Some(&Value::Bool(false)) {
+            continue;
+        }
+        let Some(listed) = v.get("peers").and_then(Value::as_array) else {
+            continue;
+        };
+        let peers = listed
+            .iter()
+            .filter_map(|p| {
+                if let Some(ip) = p.as_str() {
+                    let ip = ip.split(':').next().unwrap_or(ip);
+                    return Some(PeerEntry {
+                        ip: ip.to_owned(),
+                        api: Vec::new(),
+                    });
+                }
+                let ip = p.get("ip").and_then(Value::as_str)?.to_owned();
+                let api = p
+                    .get("ports")
+                    .and_then(Value::as_object)
+                    .map(|o| {
+                        o.iter()
+                            .filter(|(k, _)| k.to_ascii_lowercase().contains("api"))
+                            .filter_map(|(_, v)| v.as_u64())
+                            .collect()
                     })
-                    .collect()
+                    .unwrap_or_default();
+                Some(PeerEntry { ip, api })
             })
-            .unwrap_or_default();
+            .collect();
         out.push(Poll {
             at,
             node: node.to_owned(),
@@ -256,20 +262,19 @@ pub(super) fn baseline(run: &MixedRun<'_>) -> Result<Option<Baseline>> {
 // One chain
 // ---------------------------------------------------------------------------------------------
 
-/// The height node 6's rollback command was given: the step's `height` (or `requested`), else the
-/// plan's 133.
+/// The height node 6's rollback command was given: the `rollback` step's `height` (or
+/// `requested`), else the plan's 133.
 pub(super) fn rollback_asked(steps: &[Step]) -> u64 {
-    let step = step(steps, "rollback-node6");
+    let step = step(steps, "rollback");
     step.and_then(|s| s.number("height").or_else(|| s.number("requested")))
         .unwrap_or(133)
 }
 
-/// The height node 6's rollback lands on: the step's `target`, else derived from the height the
-/// command was given (the last block of the round before that height's round).
+/// The height node 6's rollback lands on, derived from the height the command was given: the last
+/// block of the round before that height's round, as the reference's rollback does. The step's
+/// own record is not read for it, so a record that names the height it was given `target` cannot
+/// be taken for the landing.
 pub(super) fn rollback_target(steps: &[Step], round_length: u32) -> u32 {
-    if let Some(t) = step(steps, "rollback-node6").and_then(|s| s.number("target")) {
-        return u32::try_from(t).unwrap_or(0);
-    }
     let l = u64::from(round_length.max(1));
     u32::try_from((rollback_asked(steps).saturating_sub(1) / l) * l).unwrap_or(0)
 }
@@ -623,8 +628,8 @@ pub(super) fn propagation(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                     }
                 }
             }
-            let lag_step = format!("lag-{fresh}");
-            let from = step(&steps, &lag_step).and_then(|s| s.start).unwrap_or(0);
+            // The blocks are timed from S-21's batch on, which follows the node's sync.
+            let from = step(&steps, &batch).and_then(|s| s.start).unwrap_or(0);
             let label = format!("{fresh}: every block within {LAG_LIMIT_SECONDS} s of node 1's");
             let arrivals = steps::arrivals(&run.run_dir.join("propagation.jsonl"))?;
             let mut all = run.windows.to_vec();
@@ -756,9 +761,27 @@ pub(super) fn fork(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                     ),
                 );
             }
-            // Its peer list: node 4 alone.
+            // Its peer list: node 4 alone, until the recipe reopened its routes after the heal (a
+            // reference node 5 left on the minority's tip: `reconnect-node5`, recorded).
+            let steps = run::steps(run.run_dir)?;
+            for s in steps.iter().filter(|s| s.name.starts_with("reconnect-")) {
+                if heartwood(m).iter().any(|n| n.name == s.node) {
+                    cases.fail(
+                        SECTION,
+                        "the sides converged after the heal",
+                        format!(
+                            "the recipe had to reconnect the Heartwood relay {} ({})",
+                            s.node, s.name
+                        ),
+                    );
+                }
+            }
+            let reopened = step(&steps, "reconnect-node5").and_then(|s| s.start);
             let polls = polls(run.run_dir)?;
-            let mine: Vec<&Poll> = polls.iter().filter(|p| p.node == "node5").collect();
+            let mine: Vec<&Poll> = polls
+                .iter()
+                .filter(|p| p.node == "node5" && reopened.is_none_or(|t| p.at < t))
+                .collect();
             let odd: BTreeSet<&str> = mine
                 .iter()
                 .flat_map(|p| p.peers.iter().map(|e| e.ip.as_str()))
@@ -785,7 +808,6 @@ pub(super) fn fork(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                 );
             }
             // The heal: both sides on the final tip.
-            let steps = run::steps(run.run_dir)?;
             match step(&steps, "converged") {
                 Some(s) if s.ok => cases.pass(SECTION, "the sides converged after the heal"),
                 Some(_) => cases.fail(
@@ -822,6 +844,14 @@ pub(super) fn fork(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                 }
             }
             // Node 4's lines hold both chains.
+            if !heartwood(m).iter().any(|n| n.name == "node4") {
+                cases.record(
+                    SECTION,
+                    "node 4 is a reference relay (a dry run of the recipe): it has no digest lines, and its archive is judged by the node checks",
+                );
+                rejections(run, cases, &chains)?;
+                return conflict(run, cases, &steps, &last.dir);
+            }
             let read = digest::read(&run.run_dir.join("nodes/node4/difftest"))?;
             let judged = digest::judge(&read, &[last.chain.clone(), minority.chain.clone()]);
             let on_minority: usize = judged
@@ -849,6 +879,8 @@ pub(super) fn fork(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
 }
 
 /// Node 5's refused and undone blocks: none of the final chain's; the undone are the minority's.
+/// A line without the block's id (the reference logs "Undoing block <height>") is judged by its
+/// height: an undone height is one where the minority's chain holds a block of its own.
 fn rejections(run: &MixedRun<'_>, cases: &mut Cases, chains: &Chains) -> Result<()> {
     let path = run.run_dir.join("rejections/node5.jsonl");
     let Ok(lines) = run::read_lines(&path) else {
@@ -872,7 +904,20 @@ fn rejections(run: &MixedRun<'_>, cases: &mut Cases, chains: &Chains) -> Result<
             .and_then(Value::as_u64)
             .and_then(|h| u32::try_from(h).ok())
             .unwrap_or(0);
-        if chains.last().chain.holds(h, id) {
+        if id.is_empty() {
+            let own = chains.minority().is_some_and(|m| {
+                m.chain
+                    .forward
+                    .get(&h)
+                    .and_then(|l| l.get("id").and_then(Value::as_str))
+                    .is_some_and(|mid| !chains.last().chain.holds(h, mid))
+            });
+            if kind != "undone" || !own {
+                problems.push(format!(
+                    "node 5 {kind} a block at {h}, where the minority's chain holds no block of its own"
+                ));
+            }
+        } else if chains.last().chain.holds(h, id) {
             problems.push(format!(
                 "node 5 {kind} block {id} at {h}, which the final chain holds"
             ));
@@ -907,7 +952,18 @@ fn conflict(run: &MixedRun<'_>, cases: &mut Cases, steps: &[Step], dir: &Path) -
         return Ok(());
     };
     let _ = run;
-    let (Some(majority), Some(minority)) = (s.text("majority"), s.text("minority")) else {
+    // The ids the step names, else the recipe's conflict step: `a` submitted through node 1 (the
+    // majority's side), `b` through node 5 (the minority's).
+    let submitted = |side: &str| {
+        step(steps, "conflict")
+            .and_then(|c| c.record.pointer(&format!("/detail/{side}/id")))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let (Some(majority), Some(minority)) = (
+        s.text("majority").or_else(|| submitted("a")),
+        s.text("minority").or_else(|| submitted("b")),
+    ) else {
         cases.fail(
             SECTION,
             label,
@@ -931,73 +987,114 @@ fn conflict(run: &MixedRun<'_>, cases: &mut Cases, steps: &[Step], dir: &Path) -
 // The processes
 // ---------------------------------------------------------------------------------------------
 
-/// The problems of the process reports `reports` for the Heartwood `nodes`: in every report each
-/// node's relay process (`role` "relay", or no role) listens, and only on the node's own address;
-/// a node that forges (run `s`) also has its forger process (`role` "forger"), which listens on
-/// nothing. A run with no report has no evidence.
-pub(super) fn listener_problems(nodes: &[&Node], reports: &[Value]) -> Vec<String> {
-    let mut problems = Vec::new();
-    if reports.is_empty() {
-        problems.push("no report of the processes and their listeners".to_owned());
-    }
-    for report in reports {
-        let round = report.get("round").and_then(Value::as_u64).unwrap_or(0);
-        let listed = report
-            .get("processes")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        for node in nodes {
-            let of = |role: &str| {
-                listed.iter().find(|p| {
-                    p.get("node").and_then(Value::as_str) == Some(node.name.as_str())
-                        && p.get("role").and_then(Value::as_str).unwrap_or("relay") == role
-                })
-            };
-            let listeners = |p: &Value| {
-                p.get("listeners")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default()
-            };
-            match of("relay") {
-                None => problems.push(format!("round {round}: no relay process of {}", node.name)),
-                Some(entry) => {
-                    let found = listeners(entry);
-                    if found.is_empty() {
-                        problems.push(format!(
-                            "round {round}: {}'s relay listens on nothing",
-                            node.name
-                        ));
-                    }
-                    for l in &found {
-                        let ip = l.get("ip").and_then(Value::as_str).unwrap_or("");
-                        let port = l.get("port").and_then(Value::as_u64).unwrap_or(0);
-                        if ip != node.ip || port == 0 {
-                            problems.push(format!(
-                                "round {round}: {} listens on {ip}:{port}, not on its own address",
-                                node.name
-                            ));
-                        }
-                    }
-                }
+/// The relay's peer-to-peer port.
+const P2P_PORT: u64 = 6002;
+
+/// The address of Docker's embedded name server, which listens in every container's namespace from
+/// a socket no process of the container holds.
+const DOCKER_DNS: &str = "127.0.0.11";
+
+/// What one Heartwood node's process report shows: the problems, and what is recorded.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct Listening {
+    /// What fails the check.
+    pub problems: Vec<String>,
+    /// What is recorded without a gate.
+    pub records: Vec<String>,
+}
+
+/// Judge the process report of the Heartwood node `node`: the recipe's scan of its container
+/// (`processes/<node>.jsonl`), one line per process (`{"kind": "process", "pid", "ppid",
+/// "cmdline"}`) and per listening socket (`{"kind": "listener", "addr", "port", "pid"}`). The relay
+/// process (`heartwood relay run`, with its children) listens on the peer-to-peer port, and a
+/// relay-only node only on its own address there; a forging node's forger process (`heartwood
+/// forger run`) exists and listens on nothing; no socket is held by no process but Docker's name
+/// server. A forging node's relay listens on every address so that its forger reaches it over the
+/// loopback (recorded), and the relay's other listeners (the API) are recorded.
+pub(super) fn listening(node: &Node, lines: &[Value]) -> Listening {
+    let mut out = Listening::default();
+    let name = &node.name;
+    let mut parents: BTreeMap<u64, (u64, String)> = BTreeMap::new();
+    let mut listeners: Vec<(String, u64, u64)> = Vec::new();
+    for l in lines {
+        let number = |k: &str| l.get(k).and_then(Value::as_u64).unwrap_or(0);
+        match l.get("kind").and_then(Value::as_str) {
+            Some("process") => {
+                let cmdline = l.get("cmdline").and_then(Value::as_str).unwrap_or("");
+                parents.insert(number("pid"), (number("ppid"), cmdline.to_owned()));
             }
-            if node.forger {
-                match of("forger") {
-                    None => {
-                        problems.push(format!("round {round}: no forger process of {}", node.name))
-                    }
-                    Some(entry) if !listeners(entry).is_empty() => problems.push(format!(
-                        "round {round}: {}'s forger listens on {} sockets",
-                        node.name,
-                        listeners(entry).len()
-                    )),
-                    Some(_) => {}
-                }
+            Some("listener") => {
+                let addr = l.get("addr").and_then(Value::as_str).unwrap_or("");
+                listeners.push((addr.to_owned(), number("port"), number("pid")));
             }
+            _ => {}
         }
     }
-    problems
+    if parents.is_empty() {
+        out.problems
+            .push(format!("{name}: no process in its report"));
+        return out;
+    }
+    // The role of a process: the first of it and its ancestors that runs a role.
+    let role = |pid: u64| -> Option<&'static str> {
+        let mut at = pid;
+        for _ in 0..64 {
+            let (parent, cmdline) = parents.get(&at)?;
+            let words: Vec<&str> = cmdline.split_whitespace().collect();
+            if words.contains(&"run") {
+                if words.contains(&"forger") {
+                    return Some("forger");
+                }
+                if words.contains(&"relay") {
+                    return Some("relay");
+                }
+            }
+            at = *parent;
+        }
+        None
+    };
+    let has = |wanted: &str| parents.keys().any(|pid| role(*pid) == Some(wanted));
+    if !has("relay") {
+        out.problems.push(format!("{name}: no relay process"));
+    }
+    if node.forger && !has("forger") {
+        out.problems.push(format!("{name}: no forger process"));
+    }
+    let mut p2p = Vec::new();
+    for (addr, port, pid) in &listeners {
+        match (*pid, role(*pid)) {
+            (0, _) if addr == DOCKER_DNS => {}
+            (0, _) => out.problems.push(format!(
+                "{name}: a socket on {addr}:{port} that no process of the container holds"
+            )),
+            (_, Some("forger")) => out
+                .problems
+                .push(format!("{name}: its forger listens on {addr}:{port}")),
+            (_, Some("relay")) if *port == P2P_PORT => p2p.push(addr.clone()),
+            (_, Some("relay")) => out
+                .records
+                .push(format!("{name}: its relay also listens on {addr}:{port}")),
+            _ => {}
+        }
+    }
+    if p2p.is_empty() {
+        out.problems.push(format!(
+            "{name}: its relay does not listen on the peer-to-peer port {P2P_PORT}"
+        ));
+    } else if node.forger {
+        out.records.push(format!(
+            "{name}: its relay listens on {} port {P2P_PORT}, where its forger reaches it over the loopback",
+            p2p.join(", ")
+        ));
+    } else {
+        for addr in p2p.iter().filter(|a| **a != node.ip) {
+            out.problems.push(format!(
+                "{name}: its relay listens on {addr}:{P2P_PORT}, not on its own address {} only",
+                node.ip
+            ));
+        }
+    }
+    out
 }
 
 /// Every Heartwood relay listens on its node address only; run `s`'s forgers listen on nothing.
@@ -1015,19 +1112,31 @@ pub(super) fn processes(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                 );
                 return Ok(());
             }
-            let reports = run::read_lines(&run.run_dir.join("processes.jsonl"))?;
-            let problems = listener_problems(&nodes, &reports);
+            let mut problems = Vec::new();
+            for node in &nodes {
+                let path = run
+                    .run_dir
+                    .join("processes")
+                    .join(format!("{}.jsonl", node.name));
+                let lines = match run::read_lines(&path) {
+                    Ok(lines) => lines,
+                    Err(e) => {
+                        problems.push(format!("{}: no process report ({e})", node.name));
+                        continue;
+                    }
+                };
+                let judged = listening(node, &lines);
+                problems.extend(judged.problems);
+                for r in judged.records {
+                    cases.record(SECTION, r);
+                }
+            }
             if problems.is_empty() {
-                let rounds: BTreeSet<u64> = reports
-                    .iter()
-                    .filter_map(|r| r.get("round").and_then(Value::as_u64))
-                    .collect();
                 cases.pass(
                     SECTION,
                     format!(
-                        "{} Heartwood nodes' relays listen on their own address only (and their forgers on nothing), in {} reports (rounds {rounds:?})",
-                        nodes.len(),
-                        reports.len()
+                        "{} Heartwood nodes: each relay listens on the peer-to-peer port (a relay-only node on its own address only), each forger on nothing",
+                        nodes.len()
                     ),
                 );
             } else {
@@ -1077,14 +1186,14 @@ pub(super) fn recorded(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                 format!("node 5 synced from an empty store in {s} s{w0}"),
             );
         }
-        if let Some(s) = seconds(&steps, "resync-node6") {
-            let w0 = against(&|st| seconds(st, "resync-node6").map(|v| format!("{v} s")));
+        if let Some(s) = seconds(&steps, "rollback-open") {
+            let w0 = against(&|st| seconds(st, "rollback-open").map(|v| format!("{v} s")));
             cases.record(SECTION, format!("node 6 re-synced to the tip in {s} s{w0}"));
         }
         let mut lag_nodes: Vec<String> = heartwood(m).iter().map(|n| n.name.clone()).collect();
         lag_nodes.extend(fresh_node(m).map(str::to_owned));
         for node in lag_nodes {
-            let from = step(&steps, &format!("lag-{node}"))
+            let from = step(&steps, &format!("batch-{node}"))
                 .and_then(|s| s.start)
                 .unwrap_or(0);
             let ours = lag_stats(run.run_dir, m, run.windows, &node, serving_node(m), from)?;
@@ -1168,9 +1277,13 @@ pub(super) fn recorded(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
             }
         }
         for s in &steps {
-            if s.name == "reconnect-minority" || s.record.get("workaround").is_some() {
+            if s.name == "reconnect-minority"
+                || s.name.starts_with("reconnect-node")
+                || s.record.get("workaround").is_some()
+            {
                 let why = s
                     .text("workaround")
+                    .or_else(|| s.text("note"))
                     .unwrap_or_else(|| "the recipe reconnected the minority".to_owned());
                 cases.record(
                     SECTION,
@@ -1198,47 +1311,109 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_forging_node_has_a_listening_relay_and_a_silent_forger() {
-        let one = node("node1", "10.84.0.11", true);
-        let nodes = [&one];
-        let report = |forger_listeners: Value| {
-            vec![json!({"round": 2, "processes": [
-                {"node": "node1", "role": "relay", "listeners": [{"ip": "10.84.0.11", "port": 6002}]},
-                {"node": "node1", "role": "forger", "listeners": forger_listeners}]})]
-        };
-        assert_eq!(
-            listener_problems(&nodes, &report(json!([]))),
-            Vec::<String>::new()
-        );
-        let found = listener_problems(&nodes, &report(json!([{"ip": "10.84.0.11", "port": 4000}])));
-        assert!(
-            found.iter().any(|p| p.contains("forger listens on 1")),
-            "{found:?}"
-        );
-        let relay_only = vec![json!({"round": 2, "processes": [
-            {"node": "node1", "role": "relay", "listeners": [{"ip": "10.84.0.11", "port": 6002}]}]})];
-        let found = listener_problems(&nodes, &relay_only);
-        assert!(
-            found.iter().any(|p| p.contains("no forger process")),
-            "{found:?}"
-        );
-        let found = listener_problems(&nodes, &[]);
-        assert!(found.iter().any(|p| p.contains("no report")), "{found:?}");
+    fn process(pid: u64, ppid: u64, cmdline: &str) -> Value {
+        json!({"kind": "process", "pid": pid, "ppid": ppid, "comm": "x", "cmdline": cmdline})
+    }
+
+    fn listener(addr: &str, port: u64, pid: u64) -> Value {
+        json!({"kind": "listener", "proto": "tcp", "addr": addr, "port": port, "pid": pid})
+    }
+
+    /// A container's report: the entrypoint, the relay, and the forger when `forger`.
+    fn report(forger: bool, extra: &[Value]) -> Vec<Value> {
+        let mut out = vec![
+            process(1, 0, "/usr/bin/tini -s -- /opt/heartwood/entrypoint.sh"),
+            process(7, 1, "bash /opt/heartwood/entrypoint.sh"),
+            process(34, 7, "heartwood relay run --token solar --network testnet"),
+            listener("127.0.0.11", 42373, 0),
+            listener("0.0.0.0", 6003, 34),
+        ];
+        if forger {
+            out.push(process(
+                112,
+                7,
+                "heartwood forger run --token solar --network testnet",
+            ));
+        }
+        out.extend_from_slice(extra);
+        out
     }
 
     #[test]
-    fn a_relay_without_a_role_listens_on_its_own_address() {
+    fn a_forging_node_has_a_listening_relay_and_a_silent_forger() {
+        let one = node("node1", "10.84.0.11", true);
+        let judged = listening(&one, &report(true, &[listener("0.0.0.0", 6002, 34)]));
+        assert_eq!(judged.problems, Vec::<String>::new());
+        assert!(
+            judged
+                .records
+                .iter()
+                .any(|r| r.contains("over the loopback")),
+            "{judged:?}"
+        );
+        let judged = listening(
+            &one,
+            &report(
+                true,
+                &[
+                    listener("0.0.0.0", 6002, 34),
+                    listener("127.0.0.1", 4000, 112),
+                ],
+            ),
+        );
+        assert!(
+            judged
+                .problems
+                .iter()
+                .any(|p| p.contains("forger listens on 127.0.0.1:4000")),
+            "{judged:?}"
+        );
+        let judged = listening(&one, &report(false, &[listener("0.0.0.0", 6002, 34)]));
+        assert!(
+            judged
+                .problems
+                .iter()
+                .any(|p| p.contains("no forger process")),
+            "{judged:?}"
+        );
+        assert!(
+            listening(&one, &[]).problems[0].contains("no process"),
+            "an empty report is no evidence"
+        );
+    }
+
+    #[test]
+    fn a_relay_only_node_listens_on_its_own_address() {
         let four = node("node4", "10.82.0.14", false);
-        let nodes = [&four];
-        let at = |ip: &str| {
-            vec![json!({"round": 4, "processes": [
-                {"node": "node4", "listeners": [{"ip": ip, "port": 6002}]}]})]
-        };
-        assert!(listener_problems(&nodes, &at("10.82.0.14")).is_empty());
-        let found = listener_problems(&nodes, &at("0.0.0.0"));
+        let at = |ip: &str| listening(&four, &report(false, &[listener(ip, 6002, 34)]));
+        assert!(at("10.82.0.14").problems.is_empty());
+        let found = at("0.0.0.0").problems;
         assert!(
             found.iter().any(|p| p.contains("not on its own address")),
+            "{found:?}"
+        );
+        let found = listening(&four, &report(false, &[])).problems;
+        assert!(
+            found
+                .iter()
+                .any(|p| p.contains("does not listen on the peer-to-peer port")),
+            "{found:?}"
+        );
+        let found = listening(
+            &four,
+            &report(
+                false,
+                &[
+                    listener("10.82.0.14", 6002, 34),
+                    listener("10.82.0.14", 9000, 0),
+                ],
+            ),
+        )
+        .problems;
+        assert!(
+            found
+                .iter()
+                .any(|p| p.contains("no process of the container holds")),
             "{found:?}"
         );
     }

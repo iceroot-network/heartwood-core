@@ -28,7 +28,8 @@ pub(super) fn check(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                 return Ok(());
             }
             let recorded = run::steps(run.run_dir)?;
-            for name in ["vote-node1-delegate", "vote-node2-delegate"] {
+            // S-18 (a) and (b): the votes for a node-1 and a node-2 delegate through node 4.
+            for name in ["vote-s18a", "vote-s18b"] {
                 let label = format!("{name}: the reference observer admits the vote");
                 match mixed::step(&recorded, name) {
                     Some(s)
@@ -54,6 +55,13 @@ pub(super) fn check(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
 /// Every recorded block's slot had an answer counting a quorum.
 fn quorum(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
     let label = "every forged block's slot had a quorum in the relays' network-state records";
+    if mixed::heartwood(run.manifest).is_empty() {
+        cases.record(
+            SECTION,
+            "no Heartwood relay in this run (a dry run of the recipe): no network-state record to read",
+        );
+        return Ok(());
+    }
     let chains = mixed::chains(run)?;
     let corpus = Corpus::load(&chains.last().dir)?;
     let params = corpus.milestones.at(1);
@@ -120,8 +128,9 @@ fn txgen(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
     let Some(base) = mixed::baseline(run)? else {
         return Ok(());
     };
-    let ours = steps::submissions(run.run_dir)?;
-    let theirs = steps::submissions(&base.dir)?;
+    let once = |dir: &std::path::Path| dir.join("txgen").join("once");
+    let ours = steps::submissions(&once(run.run_dir))?;
+    let theirs = steps::submissions(&once(&base.dir))?;
     let compared = steps::compare_submissions(&ours, &theirs);
     if ours.is_empty() {
         cases.fail(SECTION, label, "no submission recorded");

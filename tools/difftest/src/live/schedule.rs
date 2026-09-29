@@ -35,41 +35,46 @@ const fn planned(name: &'static str, first: u32, last: u32, from: u64) -> Planne
     }
 }
 
-/// The steps the run `run` has beyond the common ones, with their planned rounds and triggers.
-/// `stall` is the serving relay's, which the reference baseline `w0` has no counterpart of.
+/// The steps the run `run` has beyond the common ones, with their planned rounds and triggers, by
+/// the names the recipe records them under. `txgen --once` starts in round 2: its votes need the
+/// attestations round 2's pings give (the step `attest-wait`), and the reference refuses them
+/// before. `stall-node4` is the serving relay's, which the reference baseline `w0` has no
+/// counterpart of.
 pub(super) fn plan(run: &str) -> Vec<Planned> {
     match run {
         "w" | "w0" => {
             let mut steps = vec![
                 planned("txgen-fund", 1, 1, 0),
-                planned("txgen-once", 1, 1, 0),
                 planned("peers-node6", 1, 1, 0),
-                planned("start-node5", 2, 2, 0),
+                planned("start-node5", 2, 2, 54),
+                planned("attest-wait", 2, 2, 0),
+                planned("txgen-once", 2, 2, 55),
                 planned("node5-synced", 2, 2, 0),
                 planned("batch-node5", 2, 2, 0),
-                planned("lag-node5", 2, 2, 0),
                 planned("r1", 2, 3, 0),
                 planned("r2", 2, 3, 0),
                 planned("r3", 2, 3, 0),
-                planned("vote-node6", 2, 3, 0),
+                planned("r3-vote", 2, 3, 0),
                 planned("restart-node4", 3, 3, 130),
                 planned("heal-node6", 3, 3, 107),
-                planned("summary-before-rollback", 4, 4, 160),
-                planned("rollback-node6", 4, 4, 160),
-                planned("summary-after-rollback", 4, 4, 160),
-                planned("summary-after-start", 4, 4, 160),
-                planned("resync-node6", 4, 4, 160),
-                planned("p2p-corpus", 4, 4, 0),
+                planned("rollback-isolate", 4, 4, 160),
+                planned("summary-before", 4, 4, 160),
+                planned("rollback", 4, 4, 160),
+                planned("summary-rolled-back", 4, 4, 160),
+                planned("rollback-start", 4, 4, 160),
+                planned("summary-restarted", 4, 4, 160),
+                planned("rollback-open", 4, 4, 160),
+                planned("p2p-probe", 4, 4, 0),
                 planned("api-corpus", 4, 4, 0),
             ];
             if run == "w" {
-                steps.push(planned("stall", 3, 3, 110));
+                steps.push(planned("stall-node4", 3, 3, 110));
             }
             steps
         }
         "p" => vec![
             planned("txgen-fund", 1, 2, 0),
-            planned("send-txs", 2, 2, 55),
+            planned("light-txgen", 2, 2, 55),
             planned("partition", 2, 2, 80),
             planned("conflict", 2, 3, 0),
             planned("minority-pause", 2, 3, 0),
@@ -80,16 +85,16 @@ pub(super) fn plan(run: &str) -> Vec<Planned> {
         ],
         "s" => vec![
             planned("txgen-fund", 1, 1, 0),
-            planned("txgen-once", 1, 1, 0),
             planned("start-node4", 1, 1, 20),
-            planned("vote-node1-delegate", 1, 1, 0),
+            planned("vote-s18a", 1, 1, 0),
+            planned("attest-wait", 1, 2, 0),
+            planned("txgen-once", 2, 2, 55),
             planned("open-routes-node4", 2, 2, 55),
             planned("peers-node4", 2, 2, 55),
-            planned("vote-node2-delegate", 2, 2, 55),
+            planned("vote-s18b", 2, 2, 55),
             planned("batch-node4", 2, 2, 55),
-            planned("lag-node4", 2, 2, 55),
             planned("restart-node2", 2, 2, 75),
-            planned("p2p-corpus", 2, 2, 0),
+            planned("p2p-probe", 2, 2, 0),
             planned("api-corpus", 2, 2, 0),
         ],
         _ => Vec::new(),
@@ -100,21 +105,24 @@ pub(super) fn plan(run: &str) -> Vec<Planned> {
 pub(super) fn order(run: &str) -> &'static [(&'static str, &'static str)] {
     match run {
         "w" | "w0" => &[
+            ("attest-wait", "txgen-once"),
             ("batch-node5", "r1"),
             ("r1", "r2"),
             ("r2", "r3"),
-            ("r3", "vote-node6"),
-            ("vote-node6", "heal-node6"),
-            ("heal-node6", "rollback-node6"),
-            ("stall", "restart-node4"),
-            ("restart-node4", "rollback-node6"),
-            ("summary-before-rollback", "rollback-node6"),
-            ("rollback-node6", "summary-after-rollback"),
-            ("summary-after-rollback", "summary-after-start"),
-            ("summary-after-start", "resync-node6"),
+            ("r3", "r3-vote"),
+            ("r3-vote", "heal-node6"),
+            ("heal-node6", "rollback-isolate"),
+            ("stall-node4", "restart-node4"),
+            ("restart-node4", "rollback-isolate"),
+            ("rollback-isolate", "summary-before"),
+            ("summary-before", "rollback"),
+            ("rollback", "summary-rolled-back"),
+            ("summary-rolled-back", "rollback-start"),
+            ("rollback-start", "summary-restarted"),
+            ("summary-restarted", "rollback-open"),
         ],
         "p" => &[
-            ("send-txs", "partition"),
+            ("light-txgen", "partition"),
             ("partition", "conflict"),
             ("conflict", "heal"),
             ("minority-pause", "heal"),
@@ -122,9 +130,11 @@ pub(super) fn order(run: &str) -> &'static [(&'static str, &'static str)] {
             ("heal", "converged"),
         ],
         "s" => &[
-            ("vote-node1-delegate", "open-routes-node4"),
+            ("start-node4", "vote-s18a"),
+            ("attest-wait", "txgen-once"),
+            ("vote-s18a", "open-routes-node4"),
             ("open-routes-node4", "peers-node4"),
-            ("open-routes-node4", "vote-node2-delegate"),
+            ("open-routes-node4", "vote-s18b"),
             ("batch-node4", "restart-node2"),
         ],
         _ => &[],
@@ -138,10 +148,10 @@ pub(super) fn waits(run: &str) -> &'static [(&'static str, &'static str)] {
         "w" | "w0" => &[
             ("r1", "r2"),
             ("r2", "r3"),
-            ("vote-node6", "heal-node6"),
-            ("heal-node6", "rollback-node6"),
-            ("restart-node4", "rollback-node6"),
-            ("stall", "restart-node4"),
+            ("r3-vote", "heal-node6"),
+            ("heal-node6", "rollback-isolate"),
+            ("restart-node4", "rollback-isolate"),
+            ("stall-node4", "restart-node4"),
         ],
         _ => &[],
     }
@@ -227,12 +237,13 @@ pub(super) fn problems(run: &str, steps: &[Step], round_length: u32, stop: u32) 
             ));
         }
     }
-    match first("pause").map(|i| steps[i].start_height()) {
+    // The pause step waits for the stop height and records the height the forgers paused at.
+    match first("pause").map(|i| steps[i].number("height").or(steps[i].start_height())) {
         None => out.push("the run records no pause step".into()),
-        Some(None) => out.push("the pause records no start height".into()),
+        Some(None) => out.push("the pause records no height".into()),
         Some(Some(h)) if h > u64::from(stop) || h + LAG_BLOCKS < u64::from(stop) => {
             out.push(format!(
-                "the pause started at height {h}, not at the stop height {stop}"
+                "the forgers paused at height {h}, not at the stop height {stop}"
             ));
         }
         Some(Some(_)) => {}
@@ -291,25 +302,27 @@ mod tests {
         let mut steps = Vec::new();
         for (name, h) in [
             ("txgen-fund", 4),
-            ("txgen-once", 5),
             ("peers-node6", 30),
-            ("start-node5", 56),
+            ("start-node5", 54),
+            ("attest-wait", 55),
+            ("txgen-once", 55),
             ("node5-synced", 60),
             ("batch-node5", 62),
-            ("lag-node5", 64),
             ("r1", 66),
             ("r2", 70),
             ("r3", 76),
-            ("vote-node6", 78),
-            ("stall", 112),
+            ("r3-vote", 78),
+            ("stall-node4", 112),
             ("restart-node4", 131),
             ("heal-node6", 133),
-            ("summary-before-rollback", 160),
-            ("rollback-node6", 161),
-            ("summary-after-rollback", 161),
-            ("summary-after-start", 162),
-            ("resync-node6", 163),
-            ("p2p-corpus", 212),
+            ("rollback-isolate", 160),
+            ("summary-before", 160),
+            ("rollback", 161),
+            ("summary-rolled-back", 161),
+            ("rollback-start", 162),
+            ("summary-restarted", 162),
+            ("rollback-open", 163),
+            ("p2p-probe", 212),
             ("api-corpus", 212),
             ("pause", 212),
         ] {
@@ -328,14 +341,14 @@ mod tests {
     fn a_step_out_of_its_round_or_order_is_a_problem() {
         // The rollback in round 3.
         let mut steps = kept();
-        for name in ["summary-before-rollback", "rollback-node6"] {
+        for name in ["rollback-isolate", "summary-before", "rollback"] {
             let i = steps.iter().position(|s| s.name == name).unwrap();
             steps[i].record["startHeight"] = json!(150);
         }
         let found = problems("w", &steps, 53, 212);
         assert!(
             found.iter().any(|p| p.contains(
-                "step rollback-node6 started at height 150, in round 3; it is planned in round 4"
+                "step rollback started at height 150, in round 3; it is planned in round 4"
             )),
             "{found:?}"
         );
@@ -362,13 +375,13 @@ mod tests {
     fn a_window_that_had_not_closed_and_a_short_pause_are_problems() {
         let mut steps = kept();
         // The heal starts before r3's window ended.
-        let i = steps.iter().position(|s| s.name == "vote-node6").unwrap();
+        let i = steps.iter().position(|s| s.name == "r3-vote").unwrap();
         steps[i].record["end"] = json!("2100-01-01T00:00:00.000Z");
         let found = problems("w", &steps, 53, 212);
         assert!(
             found
                 .iter()
-                .any(|p| p.contains("heal-node6 started before the window of step vote-node6")),
+                .any(|p| p.contains("heal-node6 started before the window of step r3-vote")),
             "{found:?}"
         );
         // A pause inside the last round but short of the stop height.
@@ -379,9 +392,12 @@ mod tests {
         assert!(
             found
                 .iter()
-                .any(|p| p.contains("the pause started at height 170, not at the stop height 212")),
+                .any(|p| p.contains("the forgers paused at height 170, not at the stop height 212")),
             "{found:?}"
         );
+        // The pause step starts waiting before the stop height: the height it paused at counts.
+        steps[i].record["height"] = json!(212);
+        assert!(problems("w", &steps, 53, 212).is_empty());
         steps.remove(i);
         assert!(
             problems("w", &steps, 53, 212)
@@ -395,12 +411,15 @@ mod tests {
     fn a_step_is_placed_by_its_own_height_and_needs_its_time() {
         // A later record of a step that started lower is still in its own round.
         let mut steps = kept();
-        let i = steps.iter().position(|s| s.name == "lag-node5").unwrap();
-        let lag = steps.remove(i);
-        let j = steps.iter().position(|s| s.name == "stall").unwrap();
-        steps.insert(j + 1, lag);
+        let i = steps.iter().position(|s| s.name == "node5-synced").unwrap();
+        let synced = steps.remove(i);
+        let j = steps.iter().position(|s| s.name == "stall-node4").unwrap();
+        steps.insert(j + 1, synced);
         let found = problems("w", &steps, 53, 212);
-        assert!(!found.iter().any(|p| p.contains("lag-node5")), "{found:?}");
+        assert!(
+            !found.iter().any(|p| p.contains("node5-synced")),
+            "{found:?}"
+        );
         // A step without its start time is named.
         let mut steps = kept();
         let i = steps.iter().position(|s| s.name == "r2").unwrap();
@@ -418,7 +437,7 @@ mod tests {
     fn the_heal_of_run_p_waits_for_the_partitions_end() {
         let steps: Vec<Step> = [
             ("txgen-fund", 5),
-            ("send-txs", 56),
+            ("light-txgen", 56),
             ("partition", 80),
             ("conflict", 90),
             ("minority-pause", 100),
@@ -443,7 +462,7 @@ mod tests {
     #[test]
     fn the_baseline_has_no_stall_and_a_missing_height_is_named() {
         let mut steps = kept();
-        steps.retain(|s| s.name != "stall");
+        steps.retain(|s| s.name != "stall-node4");
         assert!(problems("w0", &steps, 53, 212).is_empty());
         let i = steps.iter().position(|s| s.name == "r1").unwrap();
         steps[i].record = json!({"step": "r1"});

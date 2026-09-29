@@ -646,8 +646,8 @@ mod tests {
                 .any(|p| p.contains("kill-node4-KILL ran 0 times, the schedule has it 3"))
         );
         // The mixed runs have their schedules' steps; the baseline has no stall.
-        assert!(required("w").contains(&"stall".to_owned()));
-        assert!(!required("w0").contains(&"stall".to_owned()));
+        assert!(required("w").contains(&"stall-node4".to_owned()));
+        assert!(!required("w0").contains(&"stall-node4".to_owned()));
         assert!(required("s").contains(&"restart-node2".to_owned()));
         assert!(
             problems("s", &[])

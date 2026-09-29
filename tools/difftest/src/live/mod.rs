@@ -213,6 +213,11 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
         .and_then(Path::file_name)
         .map(|name| name.to_string_lossy().into_owned());
     let pair = named.or_else(|| std::env::var(COMPARE).ok().filter(|p| !p.is_empty()));
+    // A mixed run's baseline is the run `--compare` names: its manifest's `pair` does not make it
+    // a pair of runs `h` and `r`, whose submissions and wallets are compared one for one.
+    if MIXED_RUNS.contains(&manifest.run.as_str()) {
+        manifest.pair = None;
+    }
     let mut baseline = None;
     if let Some(pair) = pair {
         match (manifest.run.as_str(), pair.as_str()) {

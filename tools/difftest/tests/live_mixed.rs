@@ -7,7 +7,9 @@
 //! runs: the chain of both is that corpus (tip 265; the manifests' stop height is the planned
 //! 212, which only the schedule check reads), the Heartwood relays' digest lines are the judge's,
 //! the fresh node's and the re-synced node's archives are genuine archives of that chain, and the
-//! rollback's predictions are written as the files the oracle's answer is cached in. Every test
+//! rollback's predictions are written as the files the oracle's answer is cached in. The records
+//! have the devnet recipe's names and shapes (its step names, `peer-polls.jsonl`, node 6's
+//! `summaries/`, each container's `processes/<node>.jsonl`). Every test
 //! begins from the two runs passing in every section of the mixed checks, changes one record or
 //! adds a few log lines, and reads what that section then reports.
 //!
@@ -120,6 +122,38 @@ fn edit_step(run: &Path, name: &str, f: impl FnOnce(&mut Value)) {
             .unwrap_or_else(|| panic!("no step {name}"));
         f(step);
     });
+}
+
+/// Node 6's store summary of `phase` (`before`, `rolled-back`, `restarted`) in the recipe's file,
+/// `summaries/<phase>-node6.json`.
+fn summary_path(run: &Path, phase: &str) -> PathBuf {
+    run.join("summaries").join(format!("{phase}-node6.json"))
+}
+
+/// Write node 6's summary of `phase` as the recipe does: the reference's from `psql`, a Heartwood
+/// relay's from `difftest store summary`.
+fn write_summary(run: &Path, phase: &str, sum: &Sum, heartwood: bool) {
+    let (implementation, source) = if heartwood {
+        ("heartwood", "difftest store summary")
+    } else {
+        ("reference", "psql")
+    };
+    write(
+        &summary_path(run, phase),
+        json!({"phase": phase, "node": "node6", "impl": implementation, "source": source,
+               "ok": true, "tip": {"height": sum.tip, "id": "ab".repeat(32)},
+               "highestRound": sum.round, "missedRows": sum.missed,
+               "transactions": sum.transactions})
+        .to_string(),
+    );
+}
+
+/// Change node 6's summary of `phase` in `run`.
+fn edit_summary(run: &Path, phase: &str, f: impl FnOnce(&mut Value)) {
+    let path = summary_path(run, phase);
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    f(&mut value);
+    write(&path, value.to_string());
 }
 
 /// A node's log of a reference run, and a Heartwood relay's file log.
@@ -437,23 +471,23 @@ fn faults(kind: &Kind) -> Vec<(&'static str, &'static str, f64, f64)> {
     }
     all.push(("sigterm", "node4", 1_195.0, 1_210.0));
     all.push(("rollback", "node6", 1_805.0, 1_845.0));
+    all.push(("pause", "node1", 2_600.0, 2_650.0));
     all
 }
 
 /// The steps of the schedule: name, node, start, end, start height and detail.
 fn schedule(chain: &Chain, kind: &Kind) -> Vec<(String, &'static str, f64, f64, u64, Value)> {
-    let target = kind.target();
-    let l = u64::from(ROUND);
-    let sum = |height: u32, round: u64| chain.sum_at(height, round, &chain.missed);
+    let _ = chain;
     let batch: serde_json::Map<String, Value> = [1, 2, 3, 4, 6]
         .iter()
         .map(|n| (format!("node{n}"), json!({"seenAllMs": 2_000})))
         .collect();
     let mut steps = vec![
         ("txgen-fund", "node1", 10.0, 15.0, 4, json!({})),
-        ("txgen-once", "node1", 20.0, 25.0, 5, json!({})),
         ("peers-node6", "node6", 30.0, 32.0, 30, json!({})),
-        ("start-node5", "node5", 440.0, 445.0, 56, json!({})),
+        ("start-node5", "node5", 440.0, 445.0, 54, json!({})),
+        ("attest-wait", "node4", 442.0, 446.0, 55, json!({})),
+        ("txgen-once", "node4", 446.0, 448.0, 55, json!({})),
         (
             "node5-synced",
             "node5",
@@ -470,7 +504,6 @@ fn schedule(chain: &Chain, kind: &Kind) -> Vec<(String, &'static str, f64, f64, 
             62,
             json!({"relays": batch}),
         ),
-        ("lag-node5", "node5", 470.0, 475.0, 64, json!({})),
         (
             "r1",
             "node6",
@@ -489,61 +522,64 @@ fn schedule(chain: &Chain, kind: &Kind) -> Vec<(String, &'static str, f64, f64, 
         ),
         ("r3", "node6", 560.0, 590.0, 76, json!({"replayPath": true})),
         (
-            "vote-node6",
+            "r3-vote",
             "node6",
             600.0,
             610.0,
             78,
-            json!({"admitted": kind.heartwood, "submittedAt": iso(605.0)}),
+            json!({"outcome": if kind.heartwood { "accepted" } else { "rejected" },
+                   "submittedAt": iso(605.0)}),
         ),
     ];
     if kind.heartwood {
-        steps.push(("stall", "node4", 1_120.0, 1_140.0, 112, json!({})));
+        steps.push(("stall-node4", "node4", 1_120.0, 1_140.0, 112, json!({})));
     }
     steps.extend([
         ("restart-node4", "node4", 1_200.0, 1_230.0, 131, json!({})),
         ("heal-node6", "node6", 1_250.0, 1_280.0, 133, json!({})),
         (
-            "summary-before-rollback",
+            "rollback-isolate",
             "node6",
-            1_800.0,
-            1_802.0,
-            181,
-            json!({"summary": sum(kind.cut, u64::from(kind.cut) / l + 1).json(kind.heartwood)}),
+            1_795.0,
+            1_798.0,
+            180,
+            json!({}),
         ),
+        ("summary-before", "node6", 1_800.0, 1_802.0, 181, json!({})),
         (
-            "rollback-node6",
+            "rollback",
             "node6",
             1_810.0,
             1_840.0,
             181,
-            json!({"height": kind.asked, "target": target}),
+            json!({"height": kind.asked}),
         ),
         (
-            "summary-after-rollback",
+            "summary-rolled-back",
             "node6",
             1_850.0,
             1_852.0,
             182,
-            json!({"summary": sum(target, u64::from(target) / l).json(kind.heartwood)}),
+            json!({}),
         ),
+        ("rollback-start", "node6", 1_860.0, 1_890.0, 183, json!({})),
         (
-            "summary-after-start",
+            "summary-restarted",
             "node6",
             1_900.0,
             1_902.0,
             190,
-            json!({"summary": sum(target, u64::from(target) / l + 1).json(kind.heartwood)}),
+            json!({}),
         ),
         (
-            "resync-node6",
+            "rollback-open",
             "node6",
             1_950.0,
             1_990.0,
             195,
-            json!({"seconds": 40}),
+            json!({"synced": "yes", "seconds": 40}),
         ),
-        ("p2p-corpus", "node1", 2_100.0, 2_110.0, 210, json!({})),
+        ("p2p-probe", "node1", 2_100.0, 2_110.0, 210, json!({})),
         ("api-corpus", "node1", 2_200.0, 2_210.0, 211, json!({})),
     ]);
     steps
@@ -576,12 +612,13 @@ fn step_records(chain: &Chain, kind: &Kind) -> Vec<Value> {
             json!({"startHeight": height, "detail": detail}),
         ));
     }
+    // The pause step waits for the stop height and records the height the forgers paused at.
     out.push(plain(
         "pause",
         "all",
-        2_600.0,
+        1_995.0,
         2_650.0,
-        json!({"startHeight": 212}),
+        json!({"startHeight": 196, "height": 212, "stopHeight": 212}),
     ));
     out.push(plain("check-chain", "node1", 2_660.0, 2_665.0, json!({})));
     out.push(plain("tips", "all", 2_670.0, 2_672.0, json!({})));
@@ -590,8 +627,9 @@ fn step_records(chain: &Chain, kind: &Kind) -> Vec<Value> {
     out
 }
 
-/// Every poll's peer list: nodes 1 to 3 list both relays (as text, or as an object with its API
-/// port), and in run `w` the fresh node lists node 4 alone.
+/// Every poll's peer list, as the recipe writes it with the machine's load: nodes 1 to 3 list both
+/// relays (as text, or as an object with the reference's `ports`), and in run `w` the fresh node
+/// lists node 4 alone once it has started; its polls before then failed.
 fn polls(kind: &Kind) -> Vec<Value> {
     let mut out = Vec::new();
     let mut t = 100.0;
@@ -601,20 +639,56 @@ fn polls(kind: &Kind) -> Vec<Value> {
                 .iter()
                 .map(|p| {
                     if n == 2 {
-                        json!({"ip": ip(*p), "ports": {"p2p": 6002, "api": 6003}})
+                        json!({"ip": ip(*p), "port": 6002,
+                               "ports": {"@solar-network/api": 6003, "@solar-network/webhooks": -1}})
                     } else {
                         json!(format!("{}:6002", ip(*p)))
                     }
                 })
                 .collect();
-            out.push(json!({"t": iso(t), "node": format!("node{n}"), "peers": peers}));
+            out.push(
+                json!({"t": iso(t), "node": format!("node{n}"), "ok": true, "load1": 1.5,
+                            "status": 200, "count": peers.len(), "peers": peers}),
+            );
         }
         if kind.heartwood && t >= 500.0 {
-            out.push(json!({"t": iso(t), "node": "node5", "peers": [ip(4)]}));
+            out.push(
+                json!({"t": iso(t), "node": "node5", "ok": true, "load1": 1.5,
+                            "peers": [ip(4)]}),
+            );
+        } else if kind.heartwood {
+            out.push(
+                json!({"t": iso(t), "node": "node5", "ok": false, "load1": 1.5,
+                            "error": "fetch failed"}),
+            );
         }
         t += 50.0;
     }
     out
+}
+
+/// The process report of a relay-only Heartwood node's container, as the recipe's scan writes it:
+/// the entrypoint, the relay (listening on `address` for its peers and on every address for its
+/// API) and Docker's name server.
+fn container(address: &str) -> Vec<Value> {
+    vec![
+        json!({"kind": "process", "pid": 1, "ppid": 0, "comm": "tini",
+               "cmdline": "/usr/bin/tini -s -- /opt/heartwood/entrypoint.sh"}),
+        json!({"kind": "process", "pid": 7, "ppid": 1, "comm": "bash",
+               "cmdline": "bash /opt/heartwood/entrypoint.sh"}),
+        json!({"kind": "process", "pid": 34, "ppid": 7, "comm": "heartwood",
+               "cmdline": "heartwood relay run --token solar --network testnet"}),
+        json!({"kind": "listener", "proto": "tcp", "family": "4", "addr": "127.0.0.11",
+               "port": 42373, "pid": 0, "comm": ""}),
+        json!({"kind": "listener", "proto": "tcp", "family": "4", "addr": "0.0.0.0",
+               "port": 6003, "pid": 34, "comm": "heartwood"}),
+        json!({"kind": "listener", "proto": "tcp", "family": "4", "addr": address,
+               "port": 6002, "pid": 34, "comm": "heartwood"}),
+    ]
+}
+
+fn process_report(run: &Path, node: &str) -> PathBuf {
+    run.join("processes").join(format!("{node}.jsonl"))
 }
 
 /// Every block reached every node ten seconds after the one before, node 5 half a second after
@@ -681,7 +755,25 @@ fn build_run(chain: &Chain, kind: &Kind, run: &Path) {
         .collect();
     write(&run.join("faults.jsonl"), jsonl(&windows));
     write(&run.join("steps.jsonl"), jsonl(&step_records(chain, kind)));
-    write(&run.join("peers.jsonl"), jsonl(&polls(kind)));
+    write(&run.join("peer-polls.jsonl"), jsonl(&polls(kind)));
+    // Node 6's store summaries around its rollback.
+    let target = kind.target();
+    let l = u64::from(ROUND);
+    let sum = |height: u32, round: u64| chain.sum_at(height, round, &chain.missed);
+    let cut = sum(kind.cut, u64::from(kind.cut) / l + 1);
+    write_summary(run, "before", &cut, kind.heartwood);
+    write_summary(
+        run,
+        "rolled-back",
+        &sum(target, u64::from(target) / l),
+        kind.heartwood,
+    );
+    write_summary(
+        run,
+        "restarted",
+        &sum(target, u64::from(target) / l + 1),
+        kind.heartwood,
+    );
     write(&run.join("propagation.jsonl"), jsonl(&arrivals()));
     let tips: serde_json::Map<String, Value> = (1..=6)
         .map(|n| (format!("node{n}"), json!({"height": tip, "id": tip_id})))
@@ -730,19 +822,12 @@ fn build_run(chain: &Chain, kind: &Kind, run: &Path) {
             archive_template(false),
             &run.join("archives/node5/20260928T100000Z"),
         );
-        write(
-            &run.join("processes.jsonl"),
-            jsonl(
-                &[2u64, 5]
-                    .iter()
-                    .map(|round| {
-                        json!({"round": round, "processes": [
-                            {"node": "node4", "listeners": [{"ip": ip(4), "port": 6002}]},
-                            {"node": "node6", "listeners": [{"ip": ip(6), "port": 6002}]}]})
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-        );
+        for n in [4u32, 6] {
+            write(
+                &process_report(run, &format!("node{n}")),
+                jsonl(&container(&ip(n))),
+            );
+        }
         for node in ["node4", "node6"] {
             write(
                 &relay_log(run, node),
@@ -974,7 +1059,7 @@ fn a_validation_error_fails() {
 #[test]
 fn the_fresh_nodes_peer_list_holds_the_serving_node_alone() {
     let f = fixture();
-    edit_jsonl(&f.w.join("peers.jsonl"), |polls| {
+    edit_jsonl(&f.w.join("peer-polls.jsonl"), |polls| {
         let poll = polls
             .iter_mut()
             .filter(|p| p["node"] == "node5")
@@ -1112,7 +1197,7 @@ fn rotated_logs_are_read() {
 
 /// The polls of `node` that hold the nodes in `peers` from `from` on, as the fixture writes them.
 fn drop_polls(run: &Path, node: &str, from: f64) {
-    edit_jsonl(&run.join("peers.jsonl"), |polls| {
+    edit_jsonl(&run.join("peer-polls.jsonl"), |polls| {
         polls.retain(|p| {
             p["node"] != node || parse_time(p["t"].as_str().unwrap()).unwrap() < at(from)
         });
@@ -1123,8 +1208,8 @@ fn drop_polls(run: &Path, node: &str, from: f64) {
 fn a_poll_inside_the_polling_nodes_isolation_may_miss_the_relay() {
     let f = fixture();
     // Node 2 was cut off from the network from 300 s to 320 s: a poll at 310 s misses node 4.
-    edit_jsonl(&f.w.join("peers.jsonl"), |polls| {
-        polls.push(json!({"t": iso(310.0), "node": "node2", "peers": [ip(6)]}));
+    edit_jsonl(&f.w.join("peer-polls.jsonl"), |polls| {
+        polls.push(json!({"t": iso(310.0), "node": "node2", "ok": true, "peers": [ip(6)]}));
     });
     // Without the reader's own line of it accepting the relay again, the poll fails.
     let report = check_run(&f, &f.w);
@@ -1198,8 +1283,9 @@ fn a_fresh_node_that_lags_the_control_fails_outside_its_windows() {
 #[test]
 fn a_heartwood_relay_listening_on_every_address_fails() {
     let f = fixture();
-    edit_jsonl(&f.w.join("processes.jsonl"), |reports| {
-        reports[1]["processes"][0]["listeners"] = json!([{"ip": "0.0.0.0", "port": 6002}]);
+    edit_jsonl(&process_report(&f.w, "node4"), |lines| {
+        lines.retain(|l| l["port"] != 6002);
+        lines.push(json!({"kind": "listener", "addr": "0.0.0.0", "port": 6002, "pid": 34}));
     });
     let report = check_run(&f, &f.w);
     assert_fails(
@@ -1293,8 +1379,8 @@ fn a_start_without_the_rounds_save_fails() {
 fn the_productivity_calculation_belongs_to_a_start_that_left_no_missed_row() {
     let f = fixture();
     // Node 6 reports one missed row left after the rollback, and the log still calculates.
-    edit_step(&f.w0, "summary-after-rollback", |step| {
-        step["detail"]["summary"]["missed"] = json!(1);
+    edit_summary(&f.w0, "rolled-back", |summary| {
+        summary["missedRows"] = json!(1);
     });
     let report = check_run(&f, &f.w0);
     assert_fails(
@@ -1321,8 +1407,8 @@ fn a_loader_that_refused_a_state_at_or_below_the_target_fails() {
 #[test]
 fn a_summary_after_the_start_without_the_next_rounds_rows_fails() {
     let f = fixture();
-    edit_step(&f.w0, "summary-after-start", |step| {
-        step["detail"]["summary"]["round"] = json!(2);
+    edit_summary(&f.w0, "restarted", |summary| {
+        summary["highestRound"] = json!(2);
     });
     let report = check_run(&f, &f.w0);
     assert_fails(
@@ -1353,8 +1439,8 @@ fn a_prediction_that_differs_from_node_6s_summary_fails() {
 #[test]
 fn a_corpus_cut_that_differs_from_node_6s_summary_before_the_command_fails() {
     let f = fixture();
-    edit_step(&f.w0, "summary-before-rollback", |step| {
-        step["detail"]["summary"]["transactions"] = json!(1);
+    edit_summary(&f.w0, "before", |summary| {
+        summary["transactions"] = json!(1);
     });
     let report = check_run(&f, &f.w0);
     assert_fails(
@@ -1401,15 +1487,11 @@ fn roll_w_back_to_106(f: &Fixture) {
     let chain = chain();
     let sum = |round: u64| chain.sum_at(106, round, &chain.missed);
     assert_eq!(sum(2).missed, 0);
-    edit_step(&f.w, "rollback-node6", |step| {
-        step["detail"] = json!({"height": 133, "target": 106});
+    edit_step(&f.w, "rollback", |step| {
+        step["detail"] = json!({"height": 133});
     });
-    edit_step(&f.w, "summary-after-rollback", |step| {
-        step["detail"]["summary"] = sum(2).json(true);
-    });
-    edit_step(&f.w, "summary-after-start", |step| {
-        step["detail"]["summary"] = sum(3).json(true);
-    });
+    write_summary(&f.w, "rolled-back", &sum(2), true);
+    write_summary(&f.w, "restarted", &sum(3), true);
     write(
         &f.w.join("predictions/rollback-180-133.json"),
         json!({"target": 106, "summary": sum(2).json(false)}).to_string(),
@@ -1418,14 +1500,8 @@ fn roll_w_back_to_106(f: &Fixture) {
 
 /// Set the missed rows of node 6's summary after the start in `run`.
 fn missed_after_start(run: &Path, missed: u64) {
-    edit_step(run, "summary-after-start", |step| {
-        let summary = &mut step["detail"]["summary"];
-        let key = if summary.get("missedRows").is_some() {
-            "missedRows"
-        } else {
-            "missed"
-        };
-        summary[key] = json!(missed);
+    edit_summary(run, "restarted", |summary| {
+        summary["missedRows"] = json!(missed);
     });
 }
 
@@ -1541,7 +1617,7 @@ fn the_fresh_node_accepts_the_one_relay_it_reaches() {
 #[test]
 fn a_relay_whose_api_port_no_poll_records_fails() {
     let f = fixture();
-    edit_jsonl(&f.w.join("peers.jsonl"), |polls| {
+    edit_jsonl(&f.w.join("peer-polls.jsonl"), |polls| {
         for p in polls.iter_mut() {
             if let Some(peers) = p["peers"].as_array_mut() {
                 for e in peers.iter_mut() {
@@ -1557,15 +1633,27 @@ fn a_relay_whose_api_port_no_poll_records_fails() {
 }
 
 #[test]
-fn the_process_reports_need_no_round_the_run_does_not_reach() {
+fn a_relay_without_its_process_report_fails() {
     let f = fixture();
-    // The run stops in round 4: a report of round 2 alone is enough.
-    edit_jsonl(&f.w.join("processes.jsonl"), |reports| {
-        reports.retain(|r| r["round"] == 2);
-    });
     let report = check_run(&f, &f.w);
-    assert_passes(&report, "mixed", "relays listen on their own address only");
-    assert_clean(&report, &SECTIONS);
+    assert_passes(
+        &report,
+        "mixed",
+        "a relay-only node on its own address only",
+    );
+    // The API listens on every address: recorded.
+    assert!(
+        !cases_of(&report, "mixed", "also listens on 0.0.0.0:6003").is_empty(),
+        "{report:#?}"
+    );
+    std::fs::remove_file(process_report(&f.w, "node6")).unwrap();
+    let report = check_run(&f, &f.w);
+    assert_fails(
+        &report,
+        "mixed",
+        "the processes and their listeners",
+        "node6: no process in its report",
+    );
 }
 
 #[test]
@@ -1590,7 +1678,7 @@ fn a_fresh_archive_that_ends_below_the_paused_tip_fails() {
 #[test]
 fn a_vote_after_the_contact_with_node_3_is_recorded_as_not_shown_live() {
     let f = fixture();
-    edit_step(&f.w0, "vote-node6", |step| {
+    edit_step(&f.w0, "r3-vote", |step| {
         step["detail"]["submittedAt"] = json!(iso(700.0));
     });
     let report = check_run(&f, &f.w0);
@@ -1634,7 +1722,7 @@ fn a_failed_attempt_to_reach_node_3_is_no_contact() {
     assert!(cases_of(&report, "recovery", "not shown live").is_empty());
     assert_passes(&report, "recovery", "was refused before node 6's contact");
     // A contact the recipe recorded before the vote makes it not shown live.
-    edit_step(&f.w0, "vote-node6", |step| {
+    edit_step(&f.w0, "r3-vote", |step| {
         step["detail"]["contactNode3At"] = json!(iso(565.0));
     });
     let report = check_run(&f, &f.w0);
@@ -1644,7 +1732,7 @@ fn a_failed_attempt_to_reach_node_3_is_no_contact() {
 #[test]
 fn a_vote_before_the_contact_that_was_admitted_fails() {
     let f = fixture();
-    edit_step(&f.w0, "vote-node6", |step| {
+    edit_step(&f.w0, "r3-vote", |step| {
         step["detail"]["admitted"] = json!(true);
     });
     let report = check_run(&f, &f.w0);

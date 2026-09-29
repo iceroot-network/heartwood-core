@@ -5,15 +5,19 @@
 //!
 //! What the checks read of the recipe's records (the reading contract):
 //!
-//! - `steps.jsonl`: `summary-before-rollback`, `summary-after-rollback` and `summary-after-start`
-//!   each hold a `summary` object (in the record or its `detail`) with the store's `tip` (or
-//!   `height`), highest `round` (or `highestRound`), `missed` rows (`missedRows`, `missedSlots`) and
-//!   `transactions` (`transactionCount`). The transactions are those of every stored block,
-//!   the genesis block's included. The step `rollback-node6` may hold the command's `height` (133
-//!   when it does not) and the `target` it landed on.
-//! - `r1`, `r2`, `r3` and `resync-node6` must be `ok`; a flag they name (`admitted`, `pooled`,
-//!   `keptAcrossRestart`; `goneAfterClear`; `replayPath`) must not be `false`.
-//! - `vote-node6`: `admitted`, and when it was submitted (`submittedAt`, else the step's start).
+//! - `steps.jsonl`: `summary-before`, `summary-rolled-back` and `summary-restarted`, around the
+//!   step `rollback`; each summary is the step's `summary` object (in the record or its `detail`)
+//!   or else the file `summaries/<before|rolled-back|restarted>-node6.json`, with the store's `tip`
+//!   (a height, or an object with its `height`), highest `round` (or `highestRound`), `missed` rows
+//!   (`missedRows`, `missedSlots`) and `transactions` (`transactionCount`). The transactions are
+//!   those of every stored block, the genesis block's included. A summary file whose `ok` is false
+//!   is no summary. The step `rollback` may hold the command's `height` (133 when it does not);
+//!   where it lands is derived from that height.
+//! - `r1`, `r2`, `r3` and `rollback-open` (the isolation lifted and the re-sync) must be `ok`; a
+//!   flag they name (`admitted`, `pooled`, `keptAcrossRestart`; `goneAfterClear`; `replayPath`)
+//!   must not be `false`.
+//! - `r3-vote`: `admitted`, or its `outcome` (`accepted`, or `rejected`), and when it was submitted
+//!   (`submittedAt`, else the step's start).
 //! - The oracle's prediction of the rollback is read from `predictions/rollback-<cut>-<height>.json`
 //!   in the run's directory when the file is there (the oracle's `chain.rollback` result: `target`
 //!   and `summary`), and asked of the oracle otherwise.
@@ -54,8 +58,12 @@ impl Summary {
     /// The summary an object holds, under the keys the recipe and the oracle use.
     fn of(v: &Value) -> Option<Summary> {
         let number = |keys: &[&str]| keys.iter().find_map(|k| v.get(*k).and_then(Value::as_u64));
+        let tip = v
+            .get("tip")
+            .and_then(|t| t.as_u64().or_else(|| t.get("height")?.as_u64()))
+            .or_else(|| number(&["height"]));
         Some(Summary {
-            tip: number(&["tip", "height"])?,
+            tip: tip?,
             round: number(&["round", "highestRound"])?,
             missed: number(&["missed", "missedRows", "missedSlots"])?,
             transactions: number(&["transactions", "transactionCount"])?,
@@ -194,6 +202,14 @@ fn prediction(run: &MixedRun<'_>, dir: &Path, cut: u32, asked: u64) -> Result<Pr
     Ok(Prediction { target, summary })
 }
 
+/// Whether node 6 is a Heartwood relay (run `w`; in a dry run of the recipe it is a reference
+/// relay, which the checks judge as run `w0`'s).
+fn heartwood_node6(run: &MixedRun<'_>) -> bool {
+    mixed::heartwood(run.manifest)
+        .iter()
+        .any(|n| n.name == "node6")
+}
+
 /// A flag a step recorded, in its record or its `detail`.
 fn flag(step: &Step, key: &str) -> Option<bool> {
     step.record
@@ -294,22 +310,70 @@ fn transfer(steps: &[Step], cases: &mut Cases) {
 // The store summaries
 // ---------------------------------------------------------------------------------------------
 
-/// A summary a step recorded, or a failed case.
-fn recorded(steps: &[Step], name: &str, cases: &mut Cases, label: &str) -> Option<Summary> {
+/// The summary step `name` recorded, in its record or in the file `summaries/<phase>-node6.json`,
+/// or a failed case.
+fn recorded(
+    run: &MixedRun<'_>,
+    steps: &[Step],
+    (name, phase): (&str, &str),
+    cases: &mut Cases,
+    label: &str,
+) -> Option<Summary> {
     let Some(step) = mixed::step(steps, name) else {
         cases.fail(SECTION, label, format!("no {name} step"));
         return None;
     };
-    let summary = Summary::of_step(step);
+    if !step.ok {
+        cases.fail(
+            SECTION,
+            label,
+            format!("the {name} step did not meet its expectation"),
+        );
+        return None;
+    }
+    if let Some(summary) = Summary::of_step(step) {
+        return Some(summary);
+    }
+    let path = summary_file(run, phase);
+    let file = match run::read_json(&path) {
+        Ok(v) => v,
+        Err(e) => {
+            cases.fail(
+                SECTION,
+                label,
+                format!("the {name} step records no store summary, and {e}"),
+            );
+            return None;
+        }
+    };
+    let summary = (file.get("ok") != Some(&Value::Bool(false)))
+        .then(|| Summary::of(&file))
+        .flatten();
     if summary.is_none() {
         cases.fail(
             SECTION,
             label,
-            format!("the {name} step records no store summary (tip, round, missed, transactions)"),
+            format!(
+                "{} holds no store summary (tip, round, missed, transactions): {}",
+                path.display(),
+                file.get("note").and_then(Value::as_str).unwrap_or("")
+            ),
         );
     }
     summary
 }
+
+/// The file the recipe writes node 6's summary of `phase` into.
+fn summary_file(run: &MixedRun<'_>, phase: &str) -> std::path::PathBuf {
+    run.run_dir
+        .join("summaries")
+        .join(format!("{phase}-node6.json"))
+}
+
+/// The summary steps and their phases: before the rollback, after it and after the start.
+const BEFORE: (&str, &str) = ("summary-before", "before");
+const ROLLED_BACK: (&str, &str) = ("summary-rolled-back", "rolled-back");
+const RESTARTED: (&str, &str) = ("summary-restarted", "restarted");
 
 /// One summary against another: the fields that differ, as a problem list; the missed rows by the
 /// backfill caveat, which a run records instead of failing.
@@ -366,20 +430,23 @@ fn differences(
 fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()> {
     let length = run.manifest.round_length;
     let before = recorded(
+        run,
         steps,
-        "summary-before-rollback",
+        BEFORE,
         cases,
         "node6: the summary before the rollback",
     );
     let after = recorded(
+        run,
         steps,
-        "summary-after-rollback",
+        ROLLED_BACK,
         cases,
         "node6: the summary after the rollback",
     );
     let started = recorded(
+        run,
         steps,
-        "summary-after-start",
+        RESTARTED,
         cases,
         "node6: the summary after the start",
     );
@@ -448,7 +515,7 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
     let mut wanted = predicted.summary;
     wanted.round = predicted.target / u64::from(length.max(1)) + 1;
     wanted.missed += adds;
-    let allowed = if run.manifest.run == "w" { adds } else { 0 };
+    let allowed = if heartwood_node6(run) { adds } else { 0 };
     if started.round != wanted.round {
         cases.fail(
             SECTION,
@@ -473,18 +540,22 @@ fn node6_log(run: &MixedRun<'_>) -> Option<Vec<nodes::LogLine>> {
     nodes::read_logs(&run.run_dir.join("logs").join("node6")).ok()
 }
 
-/// The vote for the delegate node 6 had recorded as attested: admitted in run w; in run w0 refused when
-/// it was submitted before node 6's first contact with node 3 after r3's start (`contactNode3At`
-/// of the vote's or r3's record, else node 6's first "Accepted new peer" line for node 3), and
-/// otherwise not shown live.
+/// The vote for the delegate node 6 had recorded as attested: admitted by a Heartwood node 6 (run
+/// w); by a reference node 6 (run w0) refused when it was submitted before node 6's first contact
+/// with node 3 after r3's start (`contactNode3At` of the vote's or r3's record, else node 6's first
+/// "Accepted new peer" line for node 3), and otherwise not shown live.
 fn vote(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()> {
     let label = "node6: the vote after the state clear";
-    let Some(step) = mixed::step(steps, "vote-node6") else {
-        cases.fail(SECTION, label, "no vote-node6 step");
+    let Some(step) = mixed::step(steps, "r3-vote") else {
+        cases.fail(SECTION, label, "no r3-vote step");
         return Ok(());
     };
-    let admitted = flag(step, "admitted");
-    if run.manifest.run == "w" {
+    let admitted = flag(step, "admitted").or_else(|| match step.text("outcome").as_deref() {
+        Some("accepted") => Some(true),
+        Some("rejected" | "refused") => Some(false),
+        _ => None,
+    });
+    if heartwood_node6(run) {
         if step.ok && admitted != Some(false) {
             cases.pass(SECTION, format!("{label} was admitted"));
         } else {
@@ -558,10 +629,10 @@ struct Marker {
 /// the productivity calculation only when no missed row was left, and the round's start and save.
 fn start_lines(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()> {
     let label = "node6: the lines of the start after the rollback";
-    if run.manifest.run != "w0" {
+    if heartwood_node6(run) {
         cases.record(
             SECTION,
-            "the lines of the start after the rollback are the reference's: run w0 shows them, and run w's node 6 is judged by its digest lines",
+            "the lines of the start after the rollback are the reference's: a reference node 6 shows them, and a Heartwood node 6 is judged by its digest lines",
         );
         return Ok(());
     }
@@ -569,11 +640,17 @@ fn start_lines(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<
     let lines = nodes::read_logs(&dir)?;
     let target = u64::from(mixed::rollback_target(steps, run.manifest.round_length));
     let round = target / u64::from(run.manifest.round_length.max(1)) + 1;
-    let since = mixed::step(steps, "rollback-node6")
+    let since = mixed::step(steps, "rollback")
         .and_then(|s| s.start)
         .unwrap_or(i64::MIN);
-    let left = mixed::step(steps, "summary-after-rollback")
+    let left = mixed::step(steps, ROLLED_BACK.0)
         .and_then(Summary::of_step)
+        .or_else(|| {
+            run::read_json(&summary_file(run, ROLLED_BACK.1))
+                .ok()
+                .as_ref()
+                .and_then(Summary::of)
+        })
         .map_or(0, |s| s.missed);
     let tip_line = format!("Last block in database: {target}");
     let Some(begin) = lines
@@ -684,15 +761,15 @@ fn start_lines(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<
 /// node) its round rows equal to node 1's for every round.
 fn resync(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()> {
     let label = "node6: re-synced to the tip";
-    let Some(step) = mixed::step(steps, "resync-node6") else {
-        cases.fail(SECTION, label, "no resync-node6 step");
+    let Some(step) = mixed::step(steps, "rollback-open") else {
+        cases.fail(SECTION, label, "no rollback-open step");
         return Ok(());
     };
-    if !step.ok {
+    if !step.ok || step.text("synced").is_some_and(|s| s != "yes") {
         cases.fail(
             SECTION,
             label,
-            "the resync-node6 step did not meet its expectation",
+            "the rollback-open step did not meet its expectation",
         );
         return Ok(());
     }
@@ -763,6 +840,17 @@ mod tests {
     #[test]
     fn a_summary_is_read_under_either_spelling() {
         let v = json!({"height": 265, "highestRound": 5, "missedSlots": 8, "transactionCount": 41});
+        let file = json!({"tip": {"height": 106, "id": "ab"}, "highestRound": 2, "missedRows": 0,
+            "transactions": 149, "ok": true});
+        assert_eq!(
+            Summary::of(&file),
+            Some(Summary {
+                tip: 106,
+                round: 2,
+                missed: 0,
+                transactions: 149
+            })
+        );
         assert_eq!(
             Summary::of(&v),
             Some(Summary {

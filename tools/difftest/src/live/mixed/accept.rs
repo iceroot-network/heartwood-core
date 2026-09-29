@@ -97,7 +97,15 @@ pub(in crate::live) fn acceptance(run: &MixedRun<'_>, cases: &mut Cases) -> Resu
             let readers: Vec<&Node> = references(m);
             let polls = polls(run.run_dir)?;
             let steps = run::steps(run.run_dir)?;
-            let paused = step(&steps, "pause").and_then(|s| s.start);
+            // The forgers' pause: its window's start (the pause step starts waiting for the stop
+            // height well before it), else the step's start.
+            let paused = run
+                .windows
+                .iter()
+                .filter(|w| w.fault == "pause")
+                .map(|w| w.start)
+                .min()
+                .or_else(|| step(&steps, "pause").and_then(|s| s.start));
             // The final pause's window is not followed by any poll.
             let closing = |w: &Window| w.fault == "pause" || paused.is_some_and(|p| w.start >= p);
             let mut api_seen: BTreeSet<&str> = BTreeSet::new();
