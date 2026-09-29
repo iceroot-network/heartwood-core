@@ -5,15 +5,16 @@
 //! ([`heartwood_cli::supervisor::run_dir`], mode 0700 and refused when another user owns it;
 //! [`take_lock`], which tries again past the short shared locks of the commands' probes, so a node
 //! started while `status` looks at its lock does not refuse). The pid file is always a new private
-//! file (a link left in its place is removed, never followed).
+//! file (a link left in its place is removed, never followed), made and removed in the run
+//! directory as it was checked and is held ([`RunDir`]), so a directory swapped for a link
+//! meanwhile receives none of the files and loses none.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::File;
 use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
-use heartwood_cli::supervisor::run_dir;
-use heartwood_cli::supervisor::signals::take_lock;
+use heartwood_cli::supervisor::RunDir;
+use heartwood_cli::supervisor::signals::take_lock_in;
 use heartwood_cli::{Instance, Role};
 use heartwood_kernel::paths::Paths;
 use thiserror::Error;
@@ -38,6 +39,7 @@ pub enum LockError {
 #[derive(Debug)]
 pub struct ProcessLock {
     file: File,
+    dir: RunDir,
     pid: PathBuf,
 }
 
@@ -45,19 +47,17 @@ impl ProcessLock {
     /// Take the lock of `instance`'s role, and write its pid file.
     pub fn acquire(instance: &Instance) -> Result<ProcessLock, LockError> {
         let io = |error: &dyn std::fmt::Display| LockError::Io(error.to_string());
-        run_dir(instance).map_err(|e| io(&e))?;
+        let dir = RunDir::open(instance).map_err(|e| io(&e))?;
         let (path, role) = (instance.lock_path(), instance.role.name());
-        let file = take_lock(&path).map_err(|e| io(&e))?;
+        let file = take_lock_in(&dir, &path).map_err(|e| io(&e))?;
         let file = file.ok_or(LockError::Held { role, path })?;
         // The lock is held, so a pid file that is there names no running process of the role.
         let pid = instance.pid_path();
-        let _ = fs::remove_file(&pid);
+        let _ = dir.remove(&pid);
         let failed = |error: std::io::Error| LockError::Io(format!("{}: {error}", pid.display()));
-        let mut created = (OpenOptions::new().write(true).create_new(true).mode(0o600))
-            .open(&pid)
-            .map_err(failed)?;
+        let mut created = dir.create(&pid, 0o600).map_err(failed)?;
         writeln!(created, "{}", std::process::id()).map_err(failed)?;
-        Ok(ProcessLock { file, pid })
+        Ok(ProcessLock { file, dir, pid })
     }
 
     /// The lock file, held open.
@@ -70,7 +70,7 @@ impl Drop for ProcessLock {
     fn drop(&mut self) {
         // The lock itself goes with the file; a pid file that cannot be removed names no running
         // process, since liveness is the lock's.
-        let _ = fs::remove_file(&self.pid);
+        let _ = self.dir.remove(&self.pid);
     }
 }
 
@@ -88,6 +88,7 @@ pub fn instance(role: Role, token: &str, network: &str, paths: &Paths) -> Instan
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::Path;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -164,6 +165,37 @@ mod tests {
         assert!(pid.is_file());
         assert_eq!(fs::metadata(&run).unwrap().mode() & 0o777, 0o700);
         drop(lock);
+        fs::remove_dir_all(&data).unwrap();
+    }
+
+    #[test]
+    fn a_relay_lock_link_is_refused() {
+        let data = scratch("lock-file-link");
+        let run = data.join("run");
+        fs::create_dir_all(&run).unwrap();
+        let target = data.join("elsewhere");
+        fs::write(&target, "kept").unwrap();
+        std::os::unix::fs::symlink(&target, run.join("relay.lock")).unwrap();
+        let refused = ProcessLock::test(&data, "relay");
+        assert!(matches!(refused, Err(LockError::Io(_))), "{refused:?}");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "kept");
+        assert!(!run.join("relay.pid").exists());
+        fs::remove_dir_all(&data).unwrap();
+    }
+
+    #[test]
+    fn the_pid_file_is_removed_from_the_directory_that_was_checked() {
+        let data = scratch("lock-swap");
+        let lock = ProcessLock::test(&data, "relay").unwrap();
+        let (run, moved, other) = (data.join("run"), data.join("moved"), data.join("other"));
+        fs::create_dir(&other).unwrap();
+        fs::write(other.join("relay.pid"), "kept").unwrap();
+        // The run directory is swapped for a link to another directory while the lock is held.
+        fs::rename(&run, &moved).unwrap();
+        std::os::unix::fs::symlink(&other, &run).unwrap();
+        drop(lock);
+        assert!(!moved.join("relay.pid").exists());
+        assert_eq!(fs::read_to_string(other.join("relay.pid")).unwrap(), "kept");
         fs::remove_dir_all(&data).unwrap();
     }
 

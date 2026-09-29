@@ -29,7 +29,7 @@ use std::fs::{self, DirBuilder, File, Permissions};
 use std::io::{BufRead, BufReader, ErrorKind, PipeReader, Read};
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -38,11 +38,13 @@ use std::time::{Duration, Instant};
 
 use heartwood_kernel::paths::resolve_paths;
 use heartwood_kernel::{Clock, SystemClock};
+use nix::fcntl::{OFlag, openat, renameat};
 use nix::spawn::{PosixSpawnAttr, PosixSpawnFileActions, PosixSpawnFlags, posix_spawnp};
 use nix::sys::signal::SigSet;
 use nix::sys::signal::Signal::{self, SIGHUP, SIGINT, SIGKILL, SIGPIPE, SIGQUIT, SIGTERM};
+use nix::sys::stat::Mode;
 use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid, waitpid};
-use nix::unistd::Pid;
+use nix::unistd::{Pid, UnlinkatFlags, unlinkat};
 
 use self::logs::{Capture, ROTATE_AT};
 use self::restart::{AfterExit, Restarts};
@@ -142,29 +144,102 @@ fn serve(instance: Instance, argv: Vec<OsString>, daemon: bool) -> ! {
 }
 
 /// Create `instance`'s run directory with mode 0700 (its parents with the default mode), or
-/// narrow an existing one to 0700; refused when another user owns it.
+/// narrow an existing one to 0700; refused when another user owns it. The directory is checked
+/// and dropped: what makes files in it should hold it ([`RunDir::open`]).
 pub fn run_dir(instance: &Instance) -> Result<PathBuf, ProcessError> {
-    let dir = instance.run_dir();
-    if let Some(parent) = dir.parent() {
-        at(parent, fs::create_dir_all(parent))?;
+    RunDir::open(instance).map(|dir| dir.path)
+}
+
+/// A run directory held open. The files of a lock, a pid and a state are opened, made, renamed and
+/// removed relative to its descriptor, so a directory swapped for a link, or for another user's,
+/// after its checks is never where they land. Each method takes a file's path, as [`Instance`]
+/// names it, and uses its last component within the directory held.
+#[derive(Debug)]
+pub struct RunDir {
+    dir: File,
+    path: PathBuf,
+}
+
+impl RunDir {
+    /// Make `instance`'s run directory as [`run_dir`] does and hold it: opened without following
+    /// a link, and narrowed to 0700 through the descriptor, which only its owner may do.
+    pub fn open(instance: &Instance) -> Result<RunDir, ProcessError> {
+        let path = instance.run_dir();
+        if let Some(parent) = path.parent() {
+            at(parent, fs::create_dir_all(parent))?;
+        }
+        // Made private as it is made, so it is never there with a wider mode.
+        match DirBuilder::new().mode(0o700).create(&path) {
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+            made => at(&path, made)?,
+        }
+        let held = at(&path, RunDir::hold(&path))?;
+        at(
+            &path,
+            held.dir.set_permissions(Permissions::from_mode(0o700)),
+        )?;
+        Ok(held)
     }
-    // A run directory that is a link would put the lock, state and captures elsewhere.
-    if fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_symlink()) {
-        let link = std::io::Error::other("is a symbolic link, not a directory");
-        return at(&dir, Err(link));
+
+    /// The directory of the file at `path`, held without following a link.
+    pub fn beside(path: &Path) -> Result<RunDir, ProcessError> {
+        let dir = directory_of(path);
+        at(dir, RunDir::hold(dir))
     }
-    // Made private as it is made, so it is never there with a wider mode.
-    match DirBuilder::new().mode(0o700).create(&dir) {
-        Err(e) if e.kind() == ErrorKind::AlreadyExists => at(&dir, fs::create_dir_all(&dir))?,
-        made => at(&dir, made)?,
+
+    /// [`RunDir::beside`]; `None` when the directory is not there.
+    pub(crate) fn beside_if_there(path: &Path) -> Result<Option<RunDir>, ProcessError> {
+        let dir = directory_of(path);
+        match RunDir::hold(dir) {
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+            held => at(dir, held).map(Some),
+        }
     }
-    // Only the user a directory belongs to may change its mode, so this also refuses one of
-    // another user.
-    at(
-        &dir,
-        fs::set_permissions(&dir, Permissions::from_mode(0o700)),
-    )?;
-    Ok(dir)
+
+    fn hold(path: &Path) -> std::io::Result<RunDir> {
+        let flags = (OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW).bits();
+        let dir = File::options().read(true).custom_flags(flags).open(path)?;
+        Ok(RunDir {
+            dir,
+            path: path.to_path_buf(),
+        })
+    }
+
+    /// The file `path` names, opened in the directory, never through a link.
+    fn file(&self, path: &Path, flags: OFlag, mode: u32) -> std::io::Result<File> {
+        let flags = flags | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
+        let name = path.file_name().unwrap_or_default();
+        Ok(openat(&self.dir, name, flags, Mode::from_bits_truncate(mode))?.into())
+    }
+
+    /// A new file with `mode`, for writing; refused when there is one.
+    pub fn create(&self, path: &Path, mode: u32) -> std::io::Result<File> {
+        self.file(path, OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL, mode)
+    }
+
+    /// Remove the file.
+    pub fn remove(&self, path: &Path) -> std::io::Result<()> {
+        let name = path.file_name().unwrap_or_default();
+        Ok(unlinkat(&self.dir, name, UnlinkatFlags::NoRemoveDir)?)
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        let names = (from.file_name(), to.file_name());
+        let (from, to) = (names.0.unwrap_or_default(), names.1.unwrap_or_default());
+        Ok(renameat(&self.dir, from, &self.dir, to)?)
+    }
+
+    fn read(&self, path: &Path) -> std::io::Result<String> {
+        let mut text = String::new();
+        (self.file(path, OFlag::O_RDONLY, 0)?).read_to_string(&mut text)?;
+        Ok(text)
+    }
+}
+
+/// The directory `path` is in: `.` for a name alone.
+fn directory_of(path: &Path) -> &Path {
+    let parent = path.parent().filter(|dir| !dir.as_os_str().is_empty());
+    parent.unwrap_or(Path::new("."))
 }
 
 /// `result`, its error said to be about `path`.
@@ -188,6 +263,7 @@ struct Supervisor {
     /// Whether the node leads a process group of its own: always, unless the supervisor leads its
     /// session (a daemon).
     own_group: bool,
+    dir: RunDir,
     _lock: File,
 }
 
@@ -203,8 +279,8 @@ impl Supervisor {
             message: e.to_string(),
         })?;
         let name = instance.name();
-        run_dir(&instance)?;
-        let lock = signals::take_lock(&instance.supervisor_lock_path())?;
+        let dir = RunDir::open(&instance)?;
+        let lock = signals::take_lock_in(&dir, &instance.supervisor_lock_path())?;
         let lock = lock.ok_or_else(|| ProcessError::AlreadyRunning { name: name.clone() })?;
         signals::record_pid(&lock, &instance.supervisor_lock_path())?;
         let argv: Option<Vec<String>> = argv.into_iter().map(|a| a.into_string().ok()).collect();
@@ -243,6 +319,7 @@ impl Supervisor {
             restarts: Restarts::default(),
             created: Instant::now(),
             own_group: !signals::leads_session(pid),
+            dir,
             _lock: lock,
         })
     }
@@ -344,7 +421,8 @@ impl Supervisor {
         self.state.pid = pid;
         self.state.restarts = self.restarts.total;
         self.state.unstable = self.restarts.unstable;
-        if let Err(e) = self.state.write(&self.instance.state_path()) {
+        let written = self.state.write_in(&self.dir, &self.instance.state_path());
+        if let Err(e) = written {
             self.line(&e.to_string());
         }
         self.line(&format!("status {}", status.name()));

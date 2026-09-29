@@ -10,8 +10,9 @@ use std::time::Duration;
 use heartwood_cli::process::{Supervisors, path_env, tail};
 use heartwood_cli::process_table::{self, render};
 use heartwood_cli::seams::{Instance, Role, StatusRow, SupervisedStatus};
-use heartwood_cli::supervisor::signals::take_lock;
+use heartwood_cli::supervisor::signals::{is_locked, take_lock, take_lock_in};
 use heartwood_cli::supervisor::state::SupervisorState;
+use heartwood_cli::supervisor::{RunDir, run_dir};
 use heartwood_kernel::paths::Paths;
 use heartwood_kernel::{Clock, SystemClock};
 
@@ -230,6 +231,57 @@ fn the_devnet_runs_each_role_as_heartwood_role_run_with_its_directories() {
             .map(|(kind, dir)| (format!("CORE_PATH_{kind}"), root.join(dir)))
             .collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn the_run_files_are_made_in_the_directory_that_was_checked() {
+    let root = scratch("swapped-run-dir");
+    let relay = instance(&root, Role::Relay);
+    let held = RunDir::open(&relay).unwrap();
+    let run = run_dir(&relay).unwrap();
+    // The checked directory is swapped for a link to another directory.
+    let (checked, elsewhere) = (root.join("checked"), root.join("elsewhere"));
+    fs::create_dir(&elsewhere).unwrap();
+    fs::rename(&run, &checked).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &run).unwrap();
+    let state = SupervisorState {
+        name: "node1-devnet-relay".into(),
+        status: SupervisedStatus::Online,
+        supervisor_pid: 41,
+        pid: Some(42),
+        argv: vec!["heartwood".into()],
+        started_at_ms: None,
+        restarts: 0,
+        unstable: 0,
+        last_exit: None,
+        version: "4.3.1-heartwood.0.1.0".into(),
+    };
+    // By path, no file is made through the link.
+    assert!(take_lock(&relay.lock_path()).is_err());
+    assert!(state.write(&relay.state_path()).is_err());
+    assert!(is_locked(&relay.lock_path()).is_err());
+    // By the directory held, the files are made in the directory that was checked.
+    let lock = take_lock_in(&held, &relay.lock_path()).unwrap().unwrap();
+    state.write_in(&held, &relay.state_path()).unwrap();
+    assert!(checked.join("relay.lock").is_file() && checked.join("relay.state.json").is_file());
+    drop(lock);
+    let landed: Vec<_> = fs::read_dir(&elsewhere).unwrap().collect();
+    assert!(
+        landed.is_empty(),
+        "files landed in the link's target: {landed:?}"
+    );
+}
+
+#[test]
+fn a_lock_left_as_a_link_is_refused_and_its_target_left_alone() {
+    let root = scratch("lock-link");
+    let relay = instance(&root, Role::Relay);
+    let run = run_dir(&relay).unwrap();
+    let target = root.join("target");
+    fs::write(&target, "kept").unwrap();
+    std::os::unix::fs::symlink(&target, run.join("relay.lock")).unwrap();
+    assert!(take_lock(&relay.lock_path()).is_err());
+    assert_eq!(fs::read_to_string(&target).unwrap(), "kept");
 }
 
 #[test]
@@ -492,6 +544,33 @@ mod with_child {
         assert_eq!(
             process::status(&relay).unwrap().status,
             SupervisedStatus::Stopped
+        );
+    }
+
+    #[test]
+    fn a_supervisor_keeps_to_the_run_directory_it_checked() {
+        let root = scratch("supervisor-swap");
+        let relay = instance(&root, Role::Relay);
+        let _cleanup = Cleanup(&relay);
+        process::start(&relay, &argv(&["run"]), &env(&[]), true).unwrap();
+        online(&relay);
+        let state = SupervisorState::read(&relay.state_path()).unwrap().unwrap();
+        // The directory is swapped for a link to another while the supervisor runs.
+        let (run, checked) = (relay.run_dir(), root.join("checked"));
+        let elsewhere = root.join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        fs::rename(&run, &checked).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &run).unwrap();
+        let supervisor = nix::unistd::Pid::from_raw(state.supervisor_pid.try_into().unwrap());
+        nix::sys::signal::kill(supervisor, nix::sys::signal::SIGTERM).unwrap();
+        let lock = checked.join("relay.supervisor.lock");
+        wait_for("the supervisor's stop", || !is_locked(&lock).unwrap());
+        let stopped = SupervisorState::read(&checked.join("relay.state.json"));
+        assert_eq!(stopped.unwrap().unwrap().status, SupervisedStatus::Stopped);
+        let landed: Vec<_> = fs::read_dir(&elsewhere).unwrap().collect();
+        assert!(
+            landed.is_empty(),
+            "files landed in the link's target: {landed:?}"
         );
     }
 
