@@ -54,6 +54,13 @@ impl CoreNodeView {
         CoreNodeView { process, home, cwd }
     }
 
+    /// The home directory; a start without one is refused, as the roles' starts refuse it.
+    fn home(&self) -> Result<&Path, NodeViewError> {
+        let (kind, file) = (LoadRefusal::Other, None);
+        let home = Some(self.home.as_path()).filter(|home| !home.as_os_str().is_empty());
+        home.ok_or(NodeViewError::Refused { kind, file })
+    }
+
     /// The process's variables with `instance`'s five directories as its `CORE_PATH_*`.
     fn vars(&self, instance: &Instance) -> Vec<(String, String)> {
         let p = &instance.paths;
@@ -94,7 +101,7 @@ impl CoreNodeView {
     fn load_relay(&self, relay: &Instance) -> Result<(RelayConfig, P2pOptions), NodeViewError> {
         let mut run = RelayRun::default();
         (run.token, run.network) = (Some(relay.token.clone()), Some(relay.network.clone()));
-        let loaded = RelayConfig::load(&run, &self.vars(relay), &self.home, &self.cwd);
+        let loaded = RelayConfig::load(&run, &self.vars(relay), self.home()?, &self.cwd);
         let config = loaded.map_err(|_| self.refusal(relay, config::Role::Relay))?;
         let p2p = options::p2p(&config.entry(Package::P2p), &config.env);
         let p2p = p2p.map_err(|_| options_refused(&config.paths.config))?;
@@ -190,7 +197,7 @@ impl NodeView for CoreNodeView {
     fn forger(&self, forger: &Instance) -> Result<ForgerFacts, NodeViewError> {
         let mut run = ForgerRun::default();
         (run.token, run.network) = (Some(forger.token.clone()), Some(forger.network.clone()));
-        let loaded = ForgerConfig::load(&run, &self.vars(forger), &self.home, &self.cwd);
+        let loaded = ForgerConfig::load(&run, &self.vars(forger), self.home()?, &self.cwd);
         let config = loaded.map_err(|_| self.refusal(forger, config::Role::Forger))?;
         let paths = &config.base.paths;
         let env = |name: &str| config.base.env.get(name).map(str::to_owned);

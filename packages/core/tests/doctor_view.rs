@@ -222,6 +222,22 @@ fn a_refused_configuration_names_its_kind_and_the_file() {
         refused(&node, Role::Forger),
         (LoadRefusal::EnvFile, node.config().join(".env"))
     );
+    // No home directory: the roles' starts refuse to run, and so do their loaders here.
+    let homeless = CoreNodeView {
+        home: PathBuf::new(),
+        ..node.view()
+    };
+    let other = NodeViewError::Refused {
+        kind: LoadRefusal::Other,
+        file: None,
+    };
+    for role in Role::ALL {
+        let found = match role {
+            Role::Relay => homeless.relay(&node.instance(role)).map(drop),
+            Role::Forger => homeless.forger(&node.instance(role)).map(drop),
+        };
+        assert_eq!(found, Err(other.clone()));
+    }
     let node = Node::new("view-refused-options", ENV);
     node.app(json!(["127.0.0.1"]), json!({"aux": "not hex"}));
     assert_eq!(refused(&node, Role::Forger).0, LoadRefusal::Options);
