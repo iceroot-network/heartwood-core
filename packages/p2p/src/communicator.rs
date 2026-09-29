@@ -42,8 +42,9 @@ use heartwood_p2p_wire::errors::{DecodeError, ReplyRefused, RequestError};
 use heartwood_p2p_wire::replies::{CommonBlock, PeerAddress};
 use heartwood_p2p_wire::requests::{ClientRequest, CommonBlockIds, Headers};
 use heartwood_p2p_wire::status::{self, CheckedStatus};
+use indexmap::IndexSet;
 use tokio::sync::mpsc;
-use tokio::time::{Instant, sleep};
+use tokio::time::{Instant, sleep, timeout};
 
 use crate::attestation::{self, AttestContext, Holder, current_slot};
 use crate::download::DownloadedBlock;
@@ -74,6 +75,12 @@ const VALIDATION: &str = "CoreValidationError";
 /// millisecond after each transaction, so a reply of many blocks held its idle poll for minutes;
 /// half a second (the poll's period) covers any honest block.
 const MAX_IDLE_PAUSE: Duration = Duration::from_millis(500);
+/// How long one plugin port probe may take in all: its connection and its status line, each within
+/// the reference's idle timeout. The reference bounds only each read, so a server that sent a
+/// byte at a time held a probe, and the acceptance waiting for it, for hours.
+pub const PROBE_DEADLINE: Duration = Duration::from_secs(3);
+/// The most distinct ports of one peer that a probe round asks; the peer's other plugins stay -1.
+pub const MAX_PROBED_PORTS: usize = 8;
 
 /// A getBlocks request as the communicator's callers give it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -560,32 +567,46 @@ where
         Ok(Some(state))
     }
 
+    /// The reference's port probes, with three bounds of its own: the record holds the plugins the
+    /// peer lists now (the reference keeps every name it saw), each distinct port is asked once and
+    /// at most [`MAX_PROBED_PORTS`] of them, and a probe ends after [`PROBE_DEADLINE`].
     async fn ping_ports(&self, peer: &SharedPeer) {
         let plugins: Vec<(String, u32)> = peer.with(|peer| {
             let listed = peer.plugins.iter();
             let listed: Vec<_> = listed
                 .map(|(name, plugin)| (name.to_owned(), plugin.and_then(|p| p.port).unwrap_or(0)))
                 .collect();
-            for (name, _) in &listed {
-                peer.ports.insert(name.clone(), -1);
-            }
+            peer.ports = listed.iter().map(|(name, _)| (name.clone(), -1)).collect();
             listed
         });
         // The reference writes the probe's URL as `http://<ip>:<port>/`, which for an IPv6
         // address names another host, so an IPv6 peer's ports always stay -1.
         let ip = peer.ip();
-        let probe = |port: u32| async move {
-            match (ip, u16::try_from(port)) {
-                (IpAddr::V4(_), Ok(port)) if port != 0 => {
-                    self.shared.parts.probe.head(ip, port).await == Some(200)
-                }
-                _ => false,
-            }
+        let asked: IndexSet<u16> = match ip {
+            IpAddr::V4(_) => plugins
+                .iter()
+                .filter_map(|(_, port)| u16::try_from(*port).ok().filter(|&port| port != 0))
+                .collect(),
+            IpAddr::V6(_) => IndexSet::new(),
         };
-        let open = join_all(plugins.iter().map(|(_, port)| probe(*port))).await;
+        let asked: Vec<u16> = asked.into_iter().take(MAX_PROBED_PORTS).collect();
+        let probe = |port: u16| async move {
+            let head = self.shared.parts.probe.head(ip, port);
+            timeout(PROBE_DEADLINE, head).await == Ok(Some(200))
+        };
+        let open = join_all(asked.iter().map(|port| probe(*port))).await;
+        let open: Vec<u16> = asked
+            .into_iter()
+            .zip(open)
+            .filter(|(_, open)| *open)
+            .map(|(port, _)| port)
+            .collect();
         peer.with(|peer| {
-            for ((name, port), _) in plugins.into_iter().zip(open).filter(|(_, open)| *open) {
-                peer.ports.insert(name, i32::try_from(port).unwrap_or(-1));
+            for (name, port) in plugins {
+                let open = u16::try_from(port).is_ok_and(|port| open.contains(&port));
+                if let Some(entry) = peer.ports.get_mut(&name).filter(|_| open) {
+                    *entry = i32::try_from(port).unwrap_or(-1);
+                }
             }
         });
     }

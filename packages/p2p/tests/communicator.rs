@@ -744,6 +744,52 @@ async fn a_ping_verifies_the_peer_and_records_its_state() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn port_probes_end_by_their_deadline_and_ask_each_port_once() {
+    use heartwood_p2p_wire::messages::peer::Plugin;
+    let fixture = Fixture::new();
+    let client = &fixture.communicator;
+    let peer = stored(&fixture, 1);
+    fixture.probe.open.lock().unwrap().insert(4003);
+    fixture.probe.silent.lock().unwrap().insert(4004);
+    let plugin = |port| {
+        Some(Plugin {
+            port: Some(port),
+            ..Plugin::default()
+        })
+    };
+    peer.with(|p| {
+        p.ports.insert("dropped".to_owned(), 4000);
+        p.plugins.insert("api".to_owned(), plugin(4003));
+        p.plugins.insert("api-again".to_owned(), plugin(4003));
+        p.plugins.insert("silent".to_owned(), plugin(4004));
+        for n in 0..20 {
+            p.plugins.insert(format!("other-{n}"), plugin(5000 + n));
+        }
+    });
+    let started = Instant::now();
+    let probes = tokio::time::timeout(Duration::from_secs(60), client.ping_ports(&peer));
+    probes.await.expect("the probes end");
+    assert_eq!(started.elapsed(), Duration::from_secs(3));
+    let ports = peer.snapshot().ports;
+    // The names the peer lists now, each port asked once, at most 8 distinct ports.
+    assert_eq!(ports.len(), 23);
+    assert!(!ports.contains_key("dropped"));
+    assert_eq!(ports.get("api"), Some(&4003));
+    assert_eq!(ports.get("api-again"), Some(&4003));
+    assert_eq!(ports.get("silent"), Some(&-1));
+    assert_eq!(ports.get("other-19"), Some(&-1));
+    let probed: Vec<u16> = fixture
+        .probe
+        .probed
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|p| p.1)
+        .collect();
+    assert_eq!(probed, [4003, 4004, 5000, 5001, 5002, 5003, 5004, 5005]);
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_ping_skips_ignored_and_recently_pinged_peers() {
     let fixture = Fixture::new();
     let client = &fixture.communicator;
