@@ -322,8 +322,8 @@ fn internal_route(route: &str) -> bool {
         .any(|r| r.name() == route && r.is_internal())
 }
 
-/// What a client of the route does when the wait passes its timeout (the plan of the server's
-/// wait: only the 10 s routes and the download can still take a late answer).
+/// What a client of the route does when the wait passes its timeout: only the 10 s routes and a
+/// download can still take a late answer.
 fn client_class(route: &str) -> &'static str {
     match route {
         "postBlock" | "postTransactions" | "getUnconfirmedTransactions" => {
