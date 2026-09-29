@@ -22,8 +22,8 @@ use serde_json::{Map, Value};
 
 use crate::context::{ApiContext, ApiReply, ApiRequest, Route, RouteId};
 use crate::controllers::transactions::{
-    Shape, criteria, decode, integers, is_lowercase_hex, listing, numerics, order, read, texts,
-    transform,
+    INTEGER, SMALLINT, Shape, criteria, decode, fits, integers, is_lowercase_hex, listing,
+    numerics, order, read, texts, transform,
 };
 use crate::errors::ApiError;
 use crate::pagination::{Pagination, envelope};
@@ -254,22 +254,9 @@ pub(crate) fn block_criteria(query: &Value) -> Result<Option<BlockCriteria>, Api
     Ok(Some(criteria))
 }
 
-/// The largest values of PostgreSQL's `integer` and `smallint`, the types of the reference's block
-/// and missed-slot columns that are not `bigint` or text.
-const INTEGER: u64 = 2_147_483_647;
-const SMALLINT: u64 = 32_767;
-
-/// Whether every value of `numerics` fits a column whose largest value is `max`. The reference's
-/// store refuses a value beyond its column's type, and the listing that fails answers an empty
-/// page.
-fn fits(numerics: &[Numeric], max: u64) -> bool {
-    numerics.iter().all(|numeric| match *numeric {
-        Numeric::Equal(value) => value <= max,
-        Numeric::Range { from, to } => [from, to].into_iter().flatten().all(|end| end <= max),
-    })
-}
-
-/// Whether the reference's store takes every value of the block criteria `criteria`.
+/// Whether the reference's store takes every value of the block criteria `criteria`: `smallint`
+/// for the version, `integer` for the timestamp, the height, the number of transactions and the
+/// payload's length.
 pub(crate) fn storable(criteria: &BlockCriteria) -> bool {
     criteria.version.iter().all(|version| *version <= SMALLINT)
         && [

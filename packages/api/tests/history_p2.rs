@@ -577,3 +577,57 @@ async fn a_criterion_beyond_its_columns_type_gives_the_failed_listings_empty_pag
         assert_eq!(page_of(&reply), empty, "{criteria}");
     }
 }
+
+#[tokio::test]
+async fn a_transaction_criterion_beyond_its_columns_type_gives_an_empty_page() {
+    // `smallint` for the version, the sequence and the type, `integer` for the block height, the
+    // timestamp and the type group: beyond, the reference's listing fails and answers an empty
+    // page, which a range or a list would otherwise fill.
+    let fixture = fixture();
+    let voter = fixture
+        .transactions()
+        .into_iter()
+        .find(|t| is_vote(t.2))
+        .map(|(_, _, t)| sender(fixture, t))
+        .unwrap();
+    let empty = (json!([]), json!(0), json!(false));
+    for criteria in [
+        json!({"blockHeight": {"from": 1, "to": 2_147_483_648_u64}}),
+        json!({"timestamp": {"to": 2_147_483_648_u64}}),
+        json!({"sequence": {"to": 32_768}}),
+        json!({"version": [2, 3, 32_768]}),
+    ] {
+        let reply = votes_index(query(criteria.clone())).await;
+        assert_eq!(page_of(&reply), empty, "{criteria}");
+        for route in [
+            RouteId::WalletsTransactionsSent,
+            RouteId::WalletsTransactionsReceived,
+            RouteId::WalletsVotes,
+        ] {
+            let reply = wallet_route(route, &voter, query(criteria.clone()))
+                .await
+                .unwrap();
+            assert_eq!(page_of(&reply), empty, "{criteria} {route:?}");
+        }
+    }
+    // The kind of a sent transaction too; the vote routes replace the query's kind, so theirs
+    // never reaches the store.
+    let votes = newest_first(fixture, |t| is_vote(t) && sender(fixture, t) == voter);
+    for criteria in [
+        json!({"type": [2, 32_768]}),
+        json!({"typeGroup": [1, 2, 2_147_483_648_u64]}),
+    ] {
+        let sent = wallet_route(
+            RouteId::WalletsTransactionsSent,
+            &voter,
+            query(criteria.clone()),
+        );
+        assert_eq!(page_of(&sent.await.unwrap()), empty, "{criteria}");
+        let reply = wallet_route(RouteId::WalletsVotes, &voter, query(criteria.clone()));
+        assert_eq!(ids(&reply.await.unwrap()), votes, "{criteria}");
+    }
+    // At the types' ends the lists are whole.
+    let within = json!({"blockHeight": {"to": 2_147_483_647}, "sequence": {"to": 32_767}});
+    let all = newest_first(fixture, is_vote);
+    assert_eq!(ids(&votes_index(query(within)).await), all);
+}

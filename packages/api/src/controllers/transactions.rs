@@ -107,7 +107,9 @@ pub(crate) async fn listing(
     filtered(ctx, request, criteria.map(TransactionFilter::of), shape).await
 }
 
-/// The listing of `request` for `filter` (`None`: criteria that match nothing), as `shape`.
+/// The listing of `request` for `filter` (`None`: criteria that match nothing), as `shape`. A value
+/// beyond its column's type in the reference's store matches nothing too: the reference's listing
+/// fails on it and answers an empty page with the same count flag.
 pub(crate) async fn filtered(
     ctx: &Arc<ApiContext>,
     request: &ApiRequest,
@@ -120,7 +122,7 @@ pub(crate) async fn filtered(
         limit: pagination.limit,
     };
     let order = order(&request.query);
-    let (rows, total) = match filter {
+    let (rows, total) = match filter.filter(storable) {
         Some(filter) => {
             let listing = read(ctx, move |reader| {
                 reader.transactions(&filter, &order, page)
@@ -360,6 +362,36 @@ fn cast_limit(error: CastLimit) -> ApiError {
 /// A criteria value of an unexpected shape: the validated query never has one.
 fn invalid(key: &str) -> ApiError {
     ApiError::unprocessable(format!("\"{key}\" is not valid"))
+}
+
+/// The largest values of PostgreSQL's `integer` and `smallint`, the types of the reference's
+/// numeric columns that are not `bigint`.
+pub(crate) const INTEGER: u64 = 2_147_483_647;
+pub(crate) const SMALLINT: u64 = 32_767;
+
+/// Whether every value of `numerics` fits a column whose largest value is `max`. The reference's
+/// store refuses a value beyond its column's type, and the listing that fails answers an empty
+/// page.
+pub(crate) fn fits(numerics: &[Numeric], max: u64) -> bool {
+    numerics.iter().all(|numeric| match *numeric {
+        Numeric::Equal(value) => value <= max,
+        Numeric::Range { from, to } => [from, to].into_iter().flatten().all(|end| end <= max),
+    })
+}
+
+/// Whether the reference's store takes every value of `filter`: `smallint` columns for the
+/// version, the sequence and the type, `integer` ones for the block height, the timestamp and the
+/// type group.
+fn storable(filter: &TransactionFilter) -> bool {
+    let small = |values: &[u64], max: u64| values.iter().all(|value| *value <= max);
+    filter.groups.iter().flatten().all(|criteria| {
+        small(&criteria.version, SMALLINT)
+            && small(&criteria.kind, SMALLINT)
+            && small(&criteria.type_group, INTEGER)
+            && fits(&criteria.sequence, SMALLINT)
+            && fits(&criteria.block_height, INTEGER)
+            && fits(&criteria.timestamp, INTEGER)
+    })
 }
 
 /// The values of `key` as texts.
