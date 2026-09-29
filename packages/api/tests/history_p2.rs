@@ -350,7 +350,7 @@ async fn a_wallets_sent_transactions_are_the_ones_its_address_sent() {
     let reply = wallet_route(route, address, query_with_id(one))
         .await
         .unwrap();
-    assert_eq!(ids(&reply), [one.clone()]);
+    assert_eq!(ids(&reply), std::slice::from_ref(one));
     // The raw models.
     let raw = query(json!({"transform": false}));
     let reply = wallet_route(route, address, raw).await.unwrap();
