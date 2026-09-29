@@ -1,0 +1,41 @@
+{
+  "settleMs": 500,
+  "refusalWaitMs": 11000,
+  "cases": [
+    { "id": "hello", "kind": "hello" },
+    { "id": "ping", "kind": "ping" },
+    { "id": "ping-ports", "kind": "pingPorts" },
+    { "id": "get-peers", "kind": "call", "method": "getPeers" },
+
+    { "id": "common-genesis", "kind": "call", "method": "hasCommonBlocks", "args": [["$genesis.id"]] },
+    { "id": "common-tip", "kind": "call", "method": "hasCommonBlocks", "args": [["$tip.id"]] },
+    { "id": "common-unknown", "kind": "call", "method": "hasCommonBlocks", "args": [["$unknown.id"]] },
+    { "id": "common-three", "kind": "call", "method": "hasCommonBlocks", "args": [["$genesis.id", "$tip.id", "$unknown.id"]] },
+    { "id": "common-ten", "kind": "call", "method": "hasCommonBlocks", "args": [["$ten.ids"]] },
+
+    { "id": "blocks-from-1", "kind": "call", "method": "getPeerBlocks", "args": [{ "fromBlockHeight": 1, "blockLimit": 400 }] },
+    { "id": "blocks-mid-1", "kind": "call", "method": "getPeerBlocks", "args": [{ "fromBlockHeight": { "$": "tip.height", "div": 2 }, "blockLimit": 1 }] },
+    { "id": "blocks-mid-400", "kind": "call", "method": "getPeerBlocks", "args": [{ "fromBlockHeight": { "$": "tip.height", "div": 2 }, "blockLimit": 400 }] },
+    { "id": "blocks-headers", "kind": "call", "method": "getPeerBlocks", "args": [{ "fromBlockHeight": { "$": "tip.height", "div": 2 }, "blockLimit": 400, "headersOnly": true }] },
+    { "id": "blocks-from-tip", "kind": "call", "method": "getPeerBlocks", "args": [{ "fromBlockHeight": "$tip.height", "blockLimit": 400 }] },
+    { "id": "blocks-beyond-tip", "kind": "call", "method": "getPeerBlocks", "args": [{ "fromBlockHeight": { "$": "tip.height", "add": 50 }, "blockLimit": 400 }] },
+
+    { "id": "unconfirmed", "kind": "call", "method": "getUnconfirmedTransactions", "args": [[]] },
+
+    { "id": "post-fresh-transfer", "kind": "call", "method": "postTransactions", "transaction": "fresh" },
+    { "id": "post-forged-transfer", "kind": "call", "method": "postTransactions", "transaction": "forged" },
+    { "id": "unconfirmed-after-post", "kind": "call", "method": "getUnconfirmedTransactions", "args": [[]] },
+    { "id": "post-block-tip", "kind": "call", "method": "postBlock" },
+
+    { "id": "idle-35s", "kind": "idle", "seconds": 35 },
+
+    { "id": "refuse-count-only", "kind": "refusal", "path": "p2p.transactions.getUnconfirmedTransactions", "body": { "exclude": [], "countOnly": true } },
+    { "id": "refuse-internal-route", "kind": "refusal", "path": "p2p.internal.getCurrentRound", "body": {} },
+    { "id": "refuse-bad-version", "kind": "refusal", "path": "p2p.peer.getStatus", "body": {}, "headers": { "port": 6002, "version": "1.0.0" } },
+    { "id": "refuse-block-limit-401", "kind": "refusal", "path": "p2p.blocks.getBlocks", "body": { "lastBlockHeight": 1, "blockLimit": 401, "headersOnly": false, "serialised": true } },
+    { "id": "refuse-unknown-route", "kind": "refusal", "path": "p2p.peer.nothing", "payloadHex": "00" },
+    { "id": "refuse-undecodable-payload", "kind": "refusal", "path": "p2p.peer.getStatus", "payloadHex": "ffffffffffffffff" },
+    { "id": "refuse-text-frame", "kind": "refusal", "frame": "text" },
+    { "id": "refuse-post-block-too-many", "kind": "refusal", "path": "p2p.blocks.postBlock", "postBlockOversized": true }
+  ]
+}

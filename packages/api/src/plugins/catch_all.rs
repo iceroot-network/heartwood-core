@@ -7,7 +7,7 @@
 //! hapi's 400, before the route's lifecycle (so not charged). The handler serves the documentation
 //! for a path of fewer than 20 characters, and inert then refuses (403) a selection that leads
 //! above the documentation's directory. The relay does not build the documentation, so every
-//! other path is 404.
+//! other path is 404, except the root, which answers with a page that names the base path.
 
 use super::percent_decode;
 
@@ -18,6 +18,8 @@ pub(super) enum CatchAll {
     Undecodable,
     /// inert's 403: the selection leads above the documentation's directory.
     Forbidden,
+    /// The documentation's root: a page naming the base path (the relay serves no other file).
+    Root,
     /// 404.
     NotFound,
 }
@@ -29,6 +31,9 @@ const DIRECTORY: [&str; 4] = ["packages", "api", "dist", "www"];
 /// The catch-all route's answer to a `GET` of `path` (as the request gives it).
 pub(super) fn answer(path: &str) -> CatchAll {
     let path = hapi_path(path);
+    if path == "/" {
+        return CatchAll::Root;
+    }
     let Some(selection) = percent_decode(path.get(1..).unwrap_or_default()) else {
         return CatchAll::Undecodable;
     };
@@ -162,7 +167,10 @@ mod tests {
             ("/a/..%2F..%2Fx", CatchAll::Forbidden),
             ("/abcdefghi/..%2F..", CatchAll::Forbidden),
             ("/..%2Fx/", CatchAll::Forbidden),
-            ("/a%zz/..", CatchAll::NotFound),
+            // The root, however the path reaches it.
+            ("/", CatchAll::Root),
+            ("//", CatchAll::Root),
+            ("/a%zz/..", CatchAll::Root),
             // Twenty characters or more: the handler's own 404.
             ("/..%2Fxxxxxxxxxxxxxxxxxxxxxxxxxx", CatchAll::NotFound),
             ("/abcdefghijk..%2Fx", CatchAll::NotFound),
