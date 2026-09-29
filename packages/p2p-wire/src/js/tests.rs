@@ -1,44 +1,11 @@
-use super::*;
+use heartwood_crypto::utils::js::stringify;
+use serde_json::Value;
 
-#[test]
-fn bigint_reads_text_as_javascript_does() {
-    let ok = |text: &str| parse_bigint(text);
-    assert_eq!(ok(""), Ok(0));
-    assert_eq!(ok(" \t\n\u{FEFF}\u{3000}"), Ok(0));
-    assert_eq!(ok(" 12\n"), Ok(12));
-    assert_eq!(ok("-0"), Ok(0));
-    assert_eq!(ok("+5"), Ok(5));
-    assert_eq!(ok("-5"), Ok(-5));
-    assert_eq!(ok("0x10"), Ok(16));
-    assert_eq!(ok("0XfF"), Ok(255));
-    assert_eq!(ok("0o17"), Ok(15));
-    assert_eq!(ok("0b101"), Ok(5));
-    assert_eq!(ok("007"), Ok(7));
-    assert_eq!(
-        ok("-170141183460469231731687303715884105728"),
-        Ok(i128::MIN)
-    );
-    assert_eq!(ok("170141183460469231731687303715884105727"), Ok(i128::MAX));
-    for bad in [
-        "1.5", "1e3", "-0x10", "+0x1", "0x", "0b2", "--1", "+", "-", "1 2", "1_000", "\u{85}1",
-        "Infinity", "0n",
-    ] {
-        assert_eq!(ok(bad), Err(BigIntError::Syntax), "{bad:?}");
-    }
-    assert_eq!(
-        ok("170141183460469231731687303715884105728"),
-        Err(BigIntError::TooWide)
-    );
-    assert_eq!(
-        ok(&format!("0x{}", "f".repeat(40))),
-        Err(BigIntError::TooWide)
-    );
-    // A syntax error later in the text wins over the width.
-    assert_eq!(
-        ok(&format!("{}x", "9".repeat(60))),
-        Err(BigIntError::Syntax)
-    );
-}
+use super::*;
+use crate::status::{
+    NetworkConfig, PeerConfig, PluginConfig, SignedState, StatusHeaderData, TokenConfig,
+    signing_preimage,
+};
 
 #[test]
 fn utf16_lengths_order_and_cuts() {
@@ -58,15 +25,65 @@ fn utf16_lengths_order_and_cuts() {
     assert_eq!(utf8_lossy(&[0x61, 0xff, 0xfe]), "a\u{FFFD}\u{FFFD}");
 }
 
+/// The status preimage of a configuration whose version is `version` and whose one plugin is
+/// named `plugin`.
+fn preimage(version: &str, plugin: &str) -> String {
+    let header = StatusHeaderData {
+        id: "1".repeat(64),
+        version: 0,
+        timestamp: 1,
+        previous_block: "2".repeat(64),
+        height: 2,
+        number_of_transactions: 0,
+        total_amount: 0,
+        total_fee: 0,
+        reward: 0,
+        payload_length: 0,
+        payload_hash: "3".repeat(64),
+        generator_public_key: "4".repeat(66),
+        block_signature: "5".repeat(128),
+    };
+    let state = SignedState {
+        height: 2,
+        forging_allowed: true,
+        current_slot: 1,
+        header,
+    };
+    let token = TokenConfig {
+        name: "t".into(),
+        symbol: "T".into(),
+    };
+    let network = NetworkConfig {
+        version: 30,
+        name: "n".into(),
+        nethash: "6".repeat(64),
+        explorer: String::new(),
+        token,
+    };
+    let port = PluginConfig {
+        enabled: true,
+        port: 4003,
+        estimate_total_count: None,
+    };
+    let config = PeerConfig {
+        version: version.to_owned(),
+        network,
+        plugins: vec![(plugin.to_owned(), port)],
+    };
+    String::from_utf8(signing_preimage(&state, &config)).expect("UTF-8")
+}
+
 #[test]
-fn json_strings_are_escaped_as_json_stringify_does() {
-    let mut out = String::new();
-    json_string(
-        &mut out,
-        "a\"\\\u{08}\t\n\u{0B}\u{0C}\r\u{1F}\u{7F}\u{2028}\u{e9}",
-    );
-    assert_eq!(
-        out,
-        "\"a\\\"\\\\\\b\\t\\n\\u000b\\f\\r\\u001f\u{7F}\u{2028}\u{e9}\""
-    );
+fn the_status_json_writes_every_code_point_below_u0080_as_stringify_does() {
+    let plain = preimage("VERSION", "PLUGIN");
+    let quoted = |text: &str| stringify(&Value::String(text.to_owned()), 0);
+    for c in (0..0x80).filter_map(char::from_u32) {
+        let text = format!("a{c}z");
+        let expected = (plain.replacen("\"VERSION\"", &quoted(&text), 1)).replacen(
+            "\"PLUGIN\"",
+            &quoted(&text),
+            1,
+        );
+        assert_eq!(preimage(&text, &text), expected, "U+{:04X}", u32::from(c));
+    }
 }

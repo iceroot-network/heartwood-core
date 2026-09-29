@@ -178,7 +178,7 @@ pub(crate) fn header_passes(header: &StatusHeader, amounts: [Amount; 3]) -> bool
         && header.height >= Some(1)
         && header.id.as_deref().is_some_and(|id| is_hex(id, Some(64)))
         && header.previous_block.as_deref().is_some_and(|previous| {
-            (genesis && reads_as_zero(previous)) || is_hex(previous, Some(64))
+            (genesis && js::reads_as_zero(previous)) || is_hex(previous, Some(64))
         })
         && total(total_amount)
         && total(total_fee)
@@ -219,17 +219,6 @@ pub(crate) fn is_hex(text: &str, length: Option<usize>) -> bool {
     !text.is_empty()
         && text.bytes().all(|b| b.is_ascii_hexdigit())
         && length.is_none_or(|length| text.len() == length)
-}
-
-/// `!text || Number(text) === 0`: empty or white space, a zero in any base, or a decimal literal
-/// whose double value is 0.
-fn reads_as_zero(text: &str) -> bool {
-    let text = text.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{FEFF}');
-    js::parse_bigint(text) == Ok(0)
-        || (text
-            .bytes()
-            .all(|b| b.is_ascii_digit() || b".+-eE".contains(&b))
-            && text.parse::<f64>() == Ok(0.0))
 }
 
 /// The bytes the verifier checks the signatures against: the canonical JSON of `{state, config}`
