@@ -311,3 +311,23 @@ fn a_getblocks_limit_is_1_to_400() {
         assert_eq!(written.block_limit, Some(held));
     }
 }
+
+/// A limit converts from a `u32` as the `NonZeroU32` it replaced does, so a caller's
+/// `400.try_into()` still builds.
+#[test]
+fn a_getblocks_limit_converts_from_a_u32() {
+    let request = ClientRequest::GetBlocks {
+        last_block_height: 100.try_into().unwrap(),
+        block_limit: 400.try_into().unwrap(),
+        headers_only: false,
+    };
+    assert!(
+        matches!(request, ClientRequest::GetBlocks { block_limit, .. } if block_limit.get() == 400)
+    );
+    assert_eq!(BlockLimit::try_from(1).map(BlockLimit::get), Ok(1));
+    for refused in [0, 401, u32::MAX] {
+        let error = BlockLimit::try_from(refused).unwrap_err();
+        assert_eq!(error.0, refused);
+        assert!(error.to_string().contains("1 to 400"), "{error}");
+    }
+}

@@ -111,6 +111,20 @@ impl BlockLimit {
     }
 }
 
+/// A limit that is not a getBlocks request's (0, or more than [`BlockLimit::MAX`]), with its value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("a getBlocks request asks for 1 to 400 blocks, got {0}")]
+pub struct BlockLimitError(pub u32);
+
+/// As [`BlockLimit::new`], for a caller that converts a `u32` as it would to a `NonZeroU32`.
+impl TryFrom<u32> for BlockLimit {
+    type Error = BlockLimitError;
+
+    fn try_from(limit: u32) -> Result<BlockLimit, BlockLimitError> {
+        BlockLimit::new(limit).ok_or(BlockLimitError(limit))
+    }
+}
+
 /// A request of the reference's client.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientRequest {
