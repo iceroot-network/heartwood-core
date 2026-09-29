@@ -1,7 +1,8 @@
 //! The attester: the offers it signs (the reference's status preimages of vector class V04) and
-//! those it refuses (a text that is not a status tree or not its canonical form, another height
-//! in the header, a slot away from the forger's clock, another network, a key it does not hold),
-//! its signatures and the offer's name, and its long poll.
+//! those it refuses (a text that is not a status tree or not its canonical form, or too long,
+//! another height in the header, a slot away from the forger's clock, another network, a key it
+//! does not hold or offered more often than declared, a malformed challenge), its signatures,
+//! its proofs of the session's challenge and the offer's name, and its long poll.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -18,7 +19,7 @@ use heartwood_forger::{
 use heartwood_kernel::ManualClock;
 use heartwood_p2p_wire::errors::PreimageError;
 use heartwood_p2p_wire::internal::{StatusSignatures, StatusToSignResponse};
-use heartwood_p2p_wire::status::verify_attestation;
+use heartwood_p2p_wire::status::{session_proof, verify_attestation};
 use serde_json::Value;
 
 const BLOCK_TIME: i64 = 8;
@@ -82,6 +83,8 @@ fn make_attester(passphrases: &[&str], nethash: &str, slot: i64) -> (Attester, A
 }
 
 const ZERO: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+/// A session's challenge.
+const CHALLENGE: &str = "5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed";
 
 #[test]
 fn the_references_statuses_are_signed_with_every_offered_key_in_order() {
@@ -95,19 +98,25 @@ fn the_references_statuses_are_signed_with_every_offered_key_in_order() {
             public("delegate a"),
             public("delegate b"),
         ];
-        let signed = attester.sign_offer(&status, &offered).unwrap();
+        let signed = attester.sign_offer(&status, &offered, CHALLENGE).unwrap();
         assert_eq!(signed.offer, hex::encode(&sha256(status.as_bytes())));
         assert_eq!(signed.offer, offer_hash(&status));
         assert_eq!(signed.signatures.len(), 3);
         for (key, signature) in offered.iter().zip(&signed.signatures) {
             assert!(verify_attestation(status.as_bytes(), key, signature));
         }
+        // Each key also signs the session's challenge, in the same order.
+        let proof = session_proof(CHALLENGE).unwrap();
+        assert_eq!(signed.proofs.len(), 3);
+        for (key, proven) in offered.iter().zip(&signed.proofs) {
+            assert!(verify_attestation(&proof, key, proven));
+        }
         // The legacy scheme is deterministic: a key declared and offered twice signs the same
         // signature twice.
         assert_eq!(signed.signatures[0], signed.signatures[2]);
         assert!(
             attester
-                .sign_offer(&status, &[])
+                .sign_offer(&status, &[], CHALLENGE)
                 .unwrap()
                 .signatures
                 .is_empty()
@@ -120,7 +129,7 @@ fn a_text_that_is_not_a_canonical_status_is_refused() {
     let (slot, status) = preimages().remove(0);
     let (attester, _) = make_attester(&["delegate a"], ZERO, slot);
     let keys = [public("delegate a")];
-    let refused = |text: &str| attester.sign_offer(text, &keys).unwrap_err();
+    let refused = |text: &str| attester.sign_offer(text, &keys, CHALLENGE).unwrap_err();
     assert_eq!(
         refused("{}"),
         AttestError::Preimage(PreimageError::Shape {
@@ -150,7 +159,7 @@ fn a_status_whose_height_is_not_its_headers_is_refused() {
     // The state's height is the last key of the text; the header's is inside it.
     let other = format!("{}3}}}}", status.strip_suffix("2}}").unwrap());
     assert_eq!(
-        attester.sign_offer(&other, &[public("delegate a")]),
+        attester.sign_offer(&other, &[public("delegate a")], CHALLENGE),
         Err(AttestError::Height {
             state: 3,
             header: 2
@@ -165,21 +174,24 @@ fn a_status_more_than_one_slot_from_the_forgers_clock_is_refused() {
     let keys = [public("delegate a")];
     for own in [1, 2, 3] {
         let (attester, _) = make_attester(&["delegate a"], ZERO, own);
-        assert!(attester.sign_offer(&status, &keys).is_ok(), "{own}");
+        assert!(
+            attester.sign_offer(&status, &keys, CHALLENGE).is_ok(),
+            "{own}"
+        );
     }
     for own in [0, 4, -5] {
         let (attester, _) = make_attester(&["delegate a"], ZERO, own);
         assert_eq!(
-            attester.sign_offer(&status, &keys),
+            attester.sign_offer(&status, &keys, CHALLENGE),
             Err(AttestError::Slot { offered: 2, own })
         );
     }
     // The clock moves: the same offer is refused two slots later.
     let (attester, clock) = make_attester(&["delegate a"], ZERO, 2);
-    assert!(attester.sign_offer(&status, &keys).is_ok());
+    assert!(attester.sign_offer(&status, &keys, CHALLENGE).is_ok());
     clock.advance(2 * BLOCK_TIME * 1_000);
     assert!(matches!(
-        attester.sign_offer(&status, &keys),
+        attester.sign_offer(&status, &keys, CHALLENGE),
         Err(AttestError::Slot { .. })
     ));
 }
@@ -189,7 +201,7 @@ fn a_status_of_another_network_or_for_a_key_it_does_not_hold_is_refused() {
     let (slot, status) = preimages().remove(0);
     let (attester, _) = make_attester(&["delegate a"], &"11".repeat(32), slot);
     assert_eq!(
-        attester.sign_offer(&status, &[public("delegate a")]),
+        attester.sign_offer(&status, &[public("delegate a")], CHALLENGE),
         Err(AttestError::Network {
             offered: ZERO.into(),
             own: "11".repeat(32)
@@ -198,16 +210,28 @@ fn a_status_of_another_network_or_for_a_key_it_does_not_hold_is_refused() {
     let (attester, _) = make_attester(&["delegate a"], ZERO, slot);
     let stranger = public("delegate c");
     assert_eq!(
-        attester.sign_offer(&status, &[public("delegate a"), stranger.clone()]),
+        attester.sign_offer(
+            &status,
+            &[public("delegate a"), stranger.clone()],
+            CHALLENGE
+        ),
         Err(AttestError::ForeignKey {
             public_key: stranger
         })
     );
     let upper = public("delegate a").to_uppercase();
     assert!(matches!(
-        attester.sign_offer(&status, &[upper]),
+        attester.sign_offer(&status, &[upper], CHALLENGE),
         Err(AttestError::ForeignKey { .. })
     ));
+    // A challenge of another form is refused before anything is signed.
+    let keys = [public("delegate a")];
+    for challenge in ["", &CHALLENGE[1..], &CHALLENGE.to_uppercase()] {
+        assert!(matches!(
+            attester.sign_offer(&status, &keys, challenge),
+            Err(AttestError::Challenge { .. })
+        ));
+    }
 }
 
 #[test]
@@ -217,13 +241,13 @@ fn an_offer_of_a_key_more_often_than_declared_or_of_an_oversized_status_is_refus
     let (a, b) = (public("delegate a"), public("delegate b"));
     assert!(
         attester
-            .sign_offer(&status, &[b.clone(), a.clone()])
+            .sign_offer(&status, &[b.clone(), a.clone()], CHALLENGE)
             .is_ok()
     );
     // Each declared key signs at most as often as it is declared.
     let copies = vec![a.clone(); 1_000];
     assert_eq!(
-        attester.sign_offer(&status, &copies),
+        attester.sign_offer(&status, &copies, CHALLENGE),
         Err(AttestError::Repeated { public_key: a })
     );
     // A canonical status whose explorer text is 1 MiB is refused before it is read.
@@ -233,7 +257,7 @@ fn an_offer_of_a_key_more_often_than_declared_or_of_an_oversized_status_is_refus
     let large = format!("{}{explorer}{}", &status[..at], &status[end..]);
     assert!(heartwood_p2p_wire::status::parse_preimage(large.as_bytes()).is_ok());
     assert_eq!(
-        attester.sign_offer(&large, std::slice::from_ref(&b)),
+        attester.sign_offer(&large, std::slice::from_ref(&b), CHALLENGE),
         Err(AttestError::Oversized {
             length: large.len()
         })
@@ -281,6 +305,7 @@ async fn the_long_poll_answers_each_good_offer_and_stops_at_the_shutdown() {
         Ok(StatusToSignResponse::Offer {
             status: status.into(),
             public_keys: vec![public("delegate a")],
+            challenge: CHALLENGE.into(),
         })
     };
     let relay = ScriptedRelay::default();

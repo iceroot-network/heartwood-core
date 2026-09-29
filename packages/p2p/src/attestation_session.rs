@@ -5,11 +5,14 @@
 //! order, duplicates kept. A session ends with its socket, with its replacement, or when no poll
 //! has been pending for 15 s; its attested set is then empty.
 //!
-//! An offer holds the status text and the keys to sign it with: the declared keys that are
-//! registered delegates, in declared order. An offer without such a key is never sent; its
-//! status is served with no attestation at once. The status server waits for an offer's
-//! signatures ([`AttestationSession::signatures`]); after one wait that ran out, the same offer
-//! is served unsigned without another.
+//! An offer holds the status text, the keys to sign it with (the declared keys that are
+//! registered delegates, in declared order) and the session's challenge, 32 random bytes drawn
+//! when the session begins. A key is attested only when the session also signs the challenge
+//! with it ([`heartwood_p2p_wire::status::session_proof`]): the served status's signatures are
+//! public, so a signature of the status alone does not show that the session holds the key. An
+//! offer without such a key is never sent; its status is served with no attestation at once. The
+//! status server waits for an offer's signatures ([`AttestationSession::signatures`]); after one
+//! wait that ran out, the same offer is served unsigned without another.
 
 use std::collections::HashSet;
 use std::net::IpAddr;
@@ -21,7 +24,7 @@ use heartwood_crypto::utils::hex;
 use heartwood_crypto::{PublicKeyBytes, Signature};
 use heartwood_kernel::{Clock, debug, warning};
 use heartwood_p2p_wire::internal::{StatusSignatures, StatusToSignRequest, StatusToSignResponse};
-use heartwood_p2p_wire::status::{Attestation, verify_attestation};
+use heartwood_p2p_wire::status::{Attestation, session_proof, verify_attestation};
 use tokio::sync::watch;
 use tokio::time::{Instant, timeout_at};
 
@@ -63,6 +66,8 @@ struct Session {
     id: SessionId,
     ip: IpAddr,
     declared: Vec<PublicKeyBytes>,
+    /// The challenge its keys sign, in hex.
+    challenge: String,
     polls: usize,
     idle_since_ms: i64,
     /// The number of the last offer a poll answered.
@@ -146,11 +151,12 @@ impl AttestationSession {
                     .filter(|offer| offer.number > delivered);
                 if let Some(offer) = fresh.filter(|offer| !offer.keys.is_empty()) {
                     let public_keys = offer.keys.iter().map(PublicKeyBytes::to_hex).collect();
-                    let status = offer.status.clone();
+                    let (status, challenge) = (offer.status.clone(), current.challenge.clone());
                     current.delivered = offer.number;
                     return Ok(StatusToSignResponse::Offer {
                         status,
                         public_keys,
+                        challenge,
                     });
                 }
             }
@@ -161,9 +167,10 @@ impl AttestationSession {
     }
 
     /// postStatusSignatures from `session`: the signatures of the offer they name, verified and
-    /// attached in the offered order; signatures of another offer, or of a session that is not
-    /// the current one, are dropped. They are verified without the session's lock, and attached
-    /// only if their offer is still the current one then.
+    /// attached in the offered order, each key's with its proof of the session's challenge;
+    /// signatures of another offer, or of a session that is not the current one, are dropped.
+    /// They are verified without the session's lock, and attached only if their offer is still
+    /// the current one then.
     pub fn post_signatures(
         &self,
         session: SessionId,
@@ -180,26 +187,36 @@ impl AttestationSession {
             let named =
                 |offer: &&Offer| offer.name == signatures.offer && offer.number <= delivered;
             let offer = current.offer.as_ref().filter(named);
-            offer.map(|offer| (offer.number, offer.status.clone(), offer.keys.clone()))
+            let proof = session_proof(&current.challenge).unwrap_or_default();
+            offer.map(|offer| {
+                (
+                    offer.number,
+                    offer.status.clone(),
+                    offer.keys.clone(),
+                    proof,
+                )
+            })
         };
-        let Some((number, status, keys)) = named else {
+        let Some((number, status, keys, proof)) = named else {
             debug!("Dropping status signatures for a status that is no longer offered");
             return Ok(());
         };
-        let verified = keys
-            .iter()
-            .zip(&signatures.signatures)
-            .filter_map(|(key, text)| {
-                let signature = Signature::from_hex(text).ok();
-                let valid = verify_attestation(status.as_bytes(), &key.to_hex(), text);
-                if !valid {
-                    debug!("The status signature of {} did not verify", key.to_hex());
-                }
-                signature.filter(|_| valid).map(|signature| Attestation {
-                    public_key: *key,
-                    signature,
-                })
-            });
+        let (texts, proofs) = (&signatures.signatures, &signatures.proofs);
+        let verified = (keys.iter().zip(texts).zip(proofs)).filter_map(|((key, text), proven)| {
+            let signature = Signature::from_hex(text).ok();
+            let valid = verify_attestation(status.as_bytes(), &key.to_hex(), text)
+                && verify_attestation(&proof, &key.to_hex(), proven);
+            if !valid {
+                debug!(
+                    "The status signature or proof of {} did not verify",
+                    key.to_hex()
+                );
+            }
+            signature.filter(|_| valid).map(|signature| Attestation {
+                public_key: *key,
+                signature,
+            })
+        });
         let verified: Vec<Attestation> = verified.collect();
         let mut inner = self.lock();
         let current = inner.session.as_mut().filter(|s| s.id == session);
@@ -312,6 +329,7 @@ impl AttestationSession {
                 id: session,
                 ip,
                 declared,
+                challenge: hex::encode(&rand::random::<[u8; 32]>()),
                 polls,
                 idle_since_ms: now,
                 delivered: 0,

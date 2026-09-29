@@ -36,6 +36,7 @@ async fn each_call_has_its_route_codec_and_headers() {
     let offer = StatusToSignResponse::Offer {
         status: "{}".into(),
         public_keys: vec![hex(1)],
+        challenge: "0c".repeat(32),
     };
     let script = Script::new()
         .on(
@@ -88,6 +89,7 @@ async fn each_call_has_its_route_codec_and_headers() {
     let signatures = StatusSignatures {
         offer: "ff".into(),
         signatures: vec!["00".into()],
+        proofs: vec!["01".into()],
     };
     assert_eq!(client.post_signatures(signatures).await, Ok(()));
 
@@ -109,7 +111,7 @@ async fn each_call_has_its_route_codec_and_headers() {
     assert_eq!(payload(RouteId::GetStatusToSign, 0), keys);
     assert_eq!(
         payload(RouteId::PostStatusSignatures, 0),
-        r#"{"offer":"ff","signatures":["00"]}"#
+        r#"{"offer":"ff","signatures":["00"],"proofs":["01"]}"#
     );
     let sent = |route| {
         requests
@@ -280,6 +282,7 @@ async fn every_call_gives_up_at_its_deadline() {
     let signatures = StatusSignatures {
         offer: String::new(),
         signatures: Vec::new(),
+        proofs: Vec::new(),
     };
     assert!(timed_out(
         client.post_signatures(signatures).await.unwrap_err()

@@ -284,16 +284,18 @@ fn the_small_bodies_round_trip_in_the_reference_forms() {
         StatusToSignResponse::Offer {
             status: r#"{"config":{}}"#.into(),
             public_keys: vec!["02aa".into()],
+            challenge: "0c".into(),
         },
-        r#"{"status":"{\"config\":{}}","publicKeys":["02aa"]}"#,
+        r#"{"status":"{\"config\":{}}","publicKeys":["02aa"],"challenge":"0c"}"#,
     );
     both(StatusToSignResponse::Unchanged, r#"{"unchanged":true}"#);
     both(
         StatusSignatures {
             offer: "ff".into(),
             signatures: vec!["00".into()],
+            proofs: vec!["01".into()],
         },
-        r#"{"offer":"ff","signatures":["00"]}"#,
+        r#"{"offer":"ff","signatures":["00"],"proofs":["01"]}"#,
     );
     assert_eq!(decode::<SlotNumber>(b"12.0").unwrap(), SlotNumber(12));
     assert!(decode::<NetworkStateRequest>(b"{\"log\":1}").unwrap().log);
@@ -314,7 +316,15 @@ fn the_small_bodies_round_trip_in_the_reference_forms() {
         (br#"{"unchanged":false}"#, RouteId::GetStatusToSign),
         (br#"{"status":"x"}"#, RouteId::GetStatusToSign),
         (
+            br#"{"status":"x","publicKeys":[],"challenge":1}"#,
+            RouteId::GetStatusToSign,
+        ),
+        (
             br#"{"offer":"ff","signatures":"00"}"#,
+            RouteId::PostStatusSignatures,
+        ),
+        (
+            br#"{"offer":"ff","signatures":["00"]}"#,
             RouteId::PostStatusSignatures,
         ),
         (br#"{"body":{}}"#, RouteId::EmitEvent),

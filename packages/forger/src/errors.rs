@@ -256,6 +256,12 @@ pub enum AttestError {
         /// The key, as offered.
         public_key: String,
     },
+    /// The session's challenge is not 64 lowercase hex digits.
+    #[error("the offer's session challenge {challenge:?} is not 64 lowercase hex digits")]
+    Challenge {
+        /// The challenge, as offered (its first 80 characters).
+        challenge: String,
+    },
     /// The offered text is longer than any status.
     #[error("the offered status is {length} bytes long, more than a status can be")]
     Oversized {

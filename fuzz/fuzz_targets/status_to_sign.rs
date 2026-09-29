@@ -19,11 +19,13 @@ use heartwood_forger::{Attester, DelegateKeys};
 use heartwood_kernel::ManualClock;
 use heartwood_p2p_wire::status::{
     NetworkConfig, PeerConfig, PluginConfig, SignedState, StatusHeaderData, TokenConfig,
-    parse_preimage, signing_preimage, verify_attestation,
+    parse_preimage, session_proof, signing_preimage, verify_attestation,
 };
 use libfuzzer_sys::fuzz_target;
 
 const NETHASH: &str = "c9b03ab996ef3ac216a2ac53eaee71118cbf7995fa44449a7fb7f94bbe18bcca";
+/// The session's challenge.
+const CHALLENGE: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
 /// The slot of the attester's clock.
 const OWN_SLOT: i64 = 1_000;
 
@@ -181,7 +183,7 @@ fuzz_target!(|offer: Offer| {
             (text, valid)
         }
     };
-    match setup.attester.sign_offer(&text, &keys) {
+    match setup.attester.sign_offer(&text, &keys, CHALLENGE) {
         Ok(signed) => {
             let (state, config) = parse_preimage(text.as_bytes()).expect("a signed offer reads");
             assert_eq!(signing_preimage(&state, &config), text.as_bytes());
@@ -193,6 +195,11 @@ fuzz_target!(|offer: Offer| {
             assert_eq!(signed.signatures.len(), keys.len());
             for (key, signature) in keys.iter().zip(&signed.signatures) {
                 assert!(verify_attestation(text.as_bytes(), key, signature));
+            }
+            let proof = session_proof(CHALLENGE).expect("a challenge");
+            assert_eq!(signed.proofs.len(), keys.len());
+            for (key, proven) in keys.iter().zip(&signed.proofs) {
+                assert!(verify_attestation(&proof, key, proven));
             }
         }
         Err(error) => assert!(!valid, "a valid offer was refused: {error}"),

@@ -288,6 +288,7 @@ async fn the_attestation_routes_follow_the_selection() {
     let offer = StatusToSignResponse::Offer {
         status: "{}".into(),
         public_keys: vec![hex(1)],
+        challenge: "0c".repeat(32),
     };
     let first = rounds(1)
         .on(

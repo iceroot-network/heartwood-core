@@ -688,7 +688,9 @@ transport are in `heartwood-p2p`, which uses the codec.
 - **signed peer status**: the tree a relay signs over its last block and its configuration, its
   canonical JSON, the slot before the network epoch (negative in the signed text, wrapped on the
   wire), the attestations (legacy Schnorr over the text, one per key; a key listed twice is signed
-  twice), and what a node does with a status it receives: the reply check with the changes it
+  twice), the text a forger signs with each key to show its relay that it holds the key on one
+  attestation session (a fixed prefix and the session's random challenge, Heartwood's own), and
+  what a node does with a status it receives: the reply check with the changes it
   makes to the value (plugin names outside 4 to 64 characters removed, the generator key
   lowercased), the text the sender signed, and the signature checks. Only the reply check makes a
   `CheckedStatus`, the one input the signed text is rebuilt from, so an unchecked reply cannot
@@ -906,7 +908,9 @@ pool, the store, the chain or the API. `heartwood forger run` runs it (see heart
 - **the key file**: `delegates.json`, with the reference's messages for a missing file and a file
   without keys.
 - **the attester**: signs the status its relay offers over the forger's own session, one
-  signature per offered key, naming the offer by the SHA-256 of its text.
+  signature per offered key, naming the offer by the SHA-256 of its text, and signs the
+  session's challenge with each key; the relay counts a key as attested only with both, since
+  the status signatures it serves are public.
 
 Where Heartwood differs on purpose, none of which an honest relay on the same host shows except the
 first (the bytes a slot gets stay the reference's):

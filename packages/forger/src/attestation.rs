@@ -8,7 +8,9 @@
 //!   network's, and whose keys are its own, each offered at most as often as it is declared.
 //! - It answers one legacy Schnorr signature per offered key, in the offer's order (a key declared
 //!   and offered twice signs twice, as the reference signs its duplicates), naming the offer by
-//!   the SHA-256 of its bytes.
+//!   the SHA-256 of its bytes, and with each key a signature of the session's challenge
+//!   ([`heartwood_p2p_wire::status::session_proof`]), which shows the relay that this session
+//!   holds the key.
 //! - After an `Unchanged` answer it polls again [`UNCHANGED_FLOOR`] after the poll's start at the
 //!   earliest, so that a relay answering at once cannot make it spin.
 
@@ -24,7 +26,7 @@ use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Milestones, PublicKeyBytes};
 use heartwood_kernel::{Clock, debug, warning};
 use heartwood_p2p_wire::internal::{StatusSignatures, StatusToSignResponse};
-use heartwood_p2p_wire::status::{attest, parse_preimage};
+use heartwood_p2p_wire::status::{attest, parse_preimage, session_proof};
 
 use crate::errors::AttestError;
 use crate::keys::DelegateKeys;
@@ -61,13 +63,17 @@ impl Attester {
         }
     }
 
-    /// The signatures of an offer: `status`, the offered text, signed with each of `public_keys`,
-    /// after the checks above.
+    /// The signatures of an offer: `status`, the offered text, and the session's `challenge`,
+    /// signed with each of `public_keys`, after the checks above.
     pub fn sign_offer(
         &self,
         status: &str,
         public_keys: &[String],
+        challenge: &str,
     ) -> Result<StatusSignatures, AttestError> {
+        let proof = session_proof(challenge).ok_or_else(|| AttestError::Challenge {
+            challenge: challenge.chars().take(80).collect(),
+        })?;
         if status.len() > MAX_STATUS {
             return Err(AttestError::Oversized {
                 length: status.len(),
@@ -104,12 +110,15 @@ impl Attester {
             let key = self.keys.key(&unused.swap_remove(at).1);
             keys.push(key.ok_or(AttestError::ForeignKey { public_key })?);
         }
-        let signatures = (keys.into_iter())
-            .map(|key| Ok(attest(status.as_bytes(), key)?.signature.to_hex()))
-            .collect::<Result<_, AttestError>>()?;
+        let sign = |text: &[u8]| {
+            (keys.iter())
+                .map(|key| Ok(attest(text, key)?.signature.to_hex()))
+                .collect::<Result<Vec<_>, AttestError>>()
+        };
         Ok(StatusSignatures {
             offer: offer_hash(status),
-            signatures,
+            signatures: sign(status.as_bytes())?,
+            proofs: sign(&proof)?,
         })
     }
 
@@ -124,7 +133,8 @@ impl Attester {
                     Ok(StatusToSignResponse::Offer {
                         status,
                         public_keys,
-                    }) => Some(self.sign_offer(&status, &public_keys)),
+                        challenge,
+                    }) => Some(self.sign_offer(&status, &public_keys, &challenge)),
                     Ok(StatusToSignResponse::Unchanged) => {
                         if let Some(floor) = floor {
                             tokio::time::sleep_until(floor).await;
