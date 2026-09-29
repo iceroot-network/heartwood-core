@@ -1,0 +1,370 @@
+[
+ {
+  "name": "wallets/list/all",
+  "path": "/api/wallets"
+ },
+ {
+  "name": "wallets/list/address",
+  "path": "/api/wallets",
+  "query": "address=${txSender}"
+ },
+ {
+  "name": "wallets/list/address-list",
+  "path": "/api/wallets",
+  "query": "address=${txSender},${voter},${delegateAddress}"
+ },
+ {
+  "name": "wallets/list/address-unknown",
+  "path": "/api/wallets",
+  "query": "address=dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2"
+ },
+ {
+  "name": "wallets/list/address-prefix",
+  "path": "/api/wallets",
+  "query": "address=${txSender|head:4}%25"
+ },
+ {
+  "name": "wallets/list/address-suffix",
+  "path": "/api/wallets",
+  "query": "address=%25a"
+ },
+ {
+  "name": "wallets/list/address-invalid",
+  "path": "/api/wallets",
+  "query": "address=zz"
+ },
+ {
+  "name": "wallets/list/address-upper-pattern",
+  "path": "/api/wallets",
+  "query": "address=D%25"
+ },
+ {
+  "name": "wallets/list/public-key",
+  "path": "/api/wallets",
+  "query": "publicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets/list/public-key-prefix",
+  "path": "/api/wallets",
+  "query": "publicKey=02%25"
+ },
+ {
+  "name": "wallets/list/public-key-prefix-3",
+  "path": "/api/wallets",
+  "query": "publicKey=03%25"
+ },
+ {
+  "name": "wallets/list/public-key-invalid",
+  "path": "/api/wallets",
+  "query": "publicKey=zz"
+ },
+ {
+  "name": "wallets/list/balance-exact",
+  "path": "/api/wallets",
+  "query": "balance=0"
+ },
+ {
+  "name": "wallets/list/balance-list",
+  "path": "/api/wallets",
+  "query": "balance=0,1"
+ },
+ {
+  "name": "wallets/list/balance-from",
+  "path": "/api/wallets",
+  "query": "balance.from=1"
+ },
+ {
+  "name": "wallets/list/balance-to",
+  "path": "/api/wallets",
+  "query": "balance.to=1"
+ },
+ {
+  "name": "wallets/list/balance-range",
+  "path": "/api/wallets",
+  "query": "balance.from=1&balance.to=100000000000000"
+ },
+ {
+  "name": "wallets/list/balance-negative",
+  "path": "/api/wallets",
+  "query": "balance=-1"
+ },
+ {
+  "name": "wallets/list/balance-invalid-bound",
+  "path": "/api/wallets",
+  "query": "balance.from=1&balance.to=x"
+ },
+ {
+  "name": "wallets/list/nonce-exact",
+  "path": "/api/wallets",
+  "query": "nonce=1"
+ },
+ {
+  "name": "wallets/list/nonce-from",
+  "path": "/api/wallets",
+  "query": "nonce.from=2"
+ },
+ {
+  "name": "wallets/list/nonce-zero",
+  "path": "/api/wallets",
+  "query": "nonce=0"
+ },
+ {
+  "name": "wallets/list/nonce-negative",
+  "path": "/api/wallets",
+  "query": "nonce=-1"
+ },
+ {
+  "name": "wallets/list/attr-username",
+  "path": "/api/wallets",
+  "query": "attributes.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/list/attr-username-list",
+  "path": "/api/wallets",
+  "query": "attributes.delegate.username=${delegateName},${gName}"
+ },
+ {
+  "name": "wallets/list/attr-username-pattern",
+  "path": "/api/wallets",
+  "query": "attributes.delegate.username=genesis%25"
+ },
+ {
+  "name": "wallets/list/attr-produced",
+  "path": "/api/wallets",
+  "query": "attributes.delegate.producedBlocks=0"
+ },
+ {
+  "name": "wallets/list/attr-produced-range",
+  "path": "/api/wallets",
+  "query": "attributes.delegate.producedBlocks.from=1&attributes.delegate.producedBlocks.to=100"
+ },
+ {
+  "name": "wallets/list/attr-rank",
+  "path": "/api/wallets",
+  "query": "attributes.delegate.rank=1"
+ },
+ {
+  "name": "wallets/list/attr-resigned",
+  "path": "/api/wallets",
+  "query": "attributes.delegate.resigned=permanent"
+ },
+ {
+  "name": "wallets/list/attr-version",
+  "path": "/api/wallets",
+  "query": "attributes.delegate.version=4.3.1"
+ },
+ {
+  "name": "wallets/list/attr-last-block",
+  "path": "/api/wallets",
+  "query": "attributes.delegate.lastBlock=${tipId}"
+ },
+ {
+  "name": "wallets/list/attr-vote-balance",
+  "path": "/api/wallets",
+  "query": "attributes.delegate.voteBalance.from=1"
+ },
+ {
+  "name": "wallets/list/attr-second-key",
+  "path": "/api/wallets",
+  "query": "attributes.secondPublicKey=${txSenderKey}"
+ },
+ {
+  "name": "wallets/list/attr-second-key-range",
+  "path": "/api/wallets",
+  "query": "attributes.secondPublicKey.from=1&attributes.secondPublicKey.to=2"
+ },
+ {
+  "name": "wallets/list/attr-username-range",
+  "path": "/api/wallets",
+  "query": "attributes.delegate.username.from=a"
+ },
+ {
+  "name": "wallets/list/attr-object",
+  "path": "/api/wallets",
+  "query": "attributes.delegate=x"
+ },
+ {
+  "name": "wallets/list/attr-unknown",
+  "path": "/api/wallets",
+  "query": "attributes.nosuch=1"
+ },
+ {
+  "name": "wallets/list/voting-for",
+  "path": "/api/wallets",
+  "query": "votingFor=x"
+ },
+ {
+  "name": "wallets/list/unknown-key",
+  "path": "/api/wallets",
+  "query": "nosuchkey=1"
+ },
+ {
+  "name": "wallets/list/order-balance-asc",
+  "path": "/api/wallets",
+  "query": "orderBy=balance:asc"
+ },
+ {
+  "name": "wallets/list/order-nonce",
+  "path": "/api/wallets",
+  "query": "orderBy=nonce:desc"
+ },
+ {
+  "name": "wallets/list/order-address",
+  "path": "/api/wallets",
+  "query": "orderBy=address:desc"
+ },
+ {
+  "name": "wallets/list/order-public-key",
+  "path": "/api/wallets",
+  "query": "orderBy=publicKey:asc"
+ },
+ {
+  "name": "wallets/list/order-attr-username",
+  "path": "/api/wallets",
+  "query": "orderBy=attributes.delegate.username"
+ },
+ {
+  "name": "wallets/list/order-attr-produced",
+  "path": "/api/wallets",
+  "query": "orderBy=attributes.delegate.producedBlocks:desc"
+ },
+ {
+  "name": "wallets/list/order-attr-vote-balance",
+  "path": "/api/wallets",
+  "query": "orderBy=attributes.delegate.voteBalance:desc"
+ },
+ {
+  "name": "wallets/list/order-attr-second-key",
+  "path": "/api/wallets",
+  "query": "orderBy=attributes.secondPublicKey"
+ },
+ {
+  "name": "wallets/list/order-attr-version",
+  "path": "/api/wallets",
+  "query": "orderBy=attributes.delegate.version:desc"
+ },
+ {
+  "name": "wallets/list/order-attr-unknown",
+  "path": "/api/wallets",
+  "query": "orderBy=attributes.nosuch"
+ },
+ {
+  "name": "wallets/list/order-attributes",
+  "path": "/api/wallets",
+  "query": "orderBy=attributes"
+ },
+ {
+  "name": "wallets/list/order-unknown",
+  "path": "/api/wallets",
+  "query": "orderBy=nosuch"
+ },
+ {
+  "name": "wallets/list/order-two",
+  "path": "/api/wallets",
+  "query": "orderBy=balance:desc,nonce:asc"
+ },
+ {
+  "name": "wallets/list/order-key-address",
+  "path": "/api/wallets",
+  "query": "orderBy=balance:asc,publicKey:desc"
+ },
+ {
+  "name": "wallets/list/page-limit",
+  "path": "/api/wallets",
+  "query": "limit=5"
+ },
+ {
+  "name": "wallets/list/page-second",
+  "path": "/api/wallets",
+  "query": "limit=5&page=2"
+ },
+ {
+  "name": "wallets/list/page-third",
+  "path": "/api/wallets",
+  "query": "limit=10&page=3"
+ },
+ {
+  "name": "wallets/list/page-offset",
+  "path": "/api/wallets",
+  "query": "offset=7&limit=4"
+ },
+ {
+  "name": "wallets/list/page-beyond",
+  "path": "/api/wallets",
+  "query": "page=999"
+ },
+ {
+  "name": "wallets/list/page-zero-limit",
+  "path": "/api/wallets",
+  "query": "limit=0"
+ },
+ {
+  "name": "wallets/list/page-over-limit",
+  "path": "/api/wallets",
+  "query": "limit=101"
+ },
+ {
+  "name": "wallets/list/page-max",
+  "path": "/api/wallets",
+  "query": "limit=100&page=1"
+ },
+ {
+  "name": "wallets/list/page-with-criteria",
+  "path": "/api/wallets",
+  "query": "balance.from=1&limit=5&page=2"
+ },
+ {
+  "name": "wallets/top/all",
+  "path": "/api/wallets/top"
+ },
+ {
+  "name": "wallets/top/limit",
+  "path": "/api/wallets/top",
+  "query": "limit=5"
+ },
+ {
+  "name": "wallets/top/second",
+  "path": "/api/wallets/top",
+  "query": "limit=5&page=2"
+ },
+ {
+  "name": "wallets/top/order-balance",
+  "path": "/api/wallets/top",
+  "query": "orderBy=balance:asc"
+ },
+ {
+  "name": "wallets/top/balance-from",
+  "path": "/api/wallets/top",
+  "query": "balance.from=1"
+ },
+ {
+  "name": "wallets/top/order-nonce",
+  "path": "/api/wallets/top",
+  "query": "orderBy=nonce:asc&limit=8"
+ },
+ {
+  "name": "wallets/top/beyond",
+  "path": "/api/wallets/top",
+  "query": "page=999"
+ },
+ {
+  "name": "wallets/top/address",
+  "path": "/api/wallets/top",
+  "query": "address=${txSender}"
+ },
+ {
+  "name": "wallets/top/attr-username",
+  "path": "/api/wallets/top",
+  "query": "attributes.delegate.username=${delegateName}"
+ },
+ {
+  "name": "wallets/top/limit-over",
+  "path": "/api/wallets/top",
+  "query": "limit=101"
+ },
+ {
+  "name": "wallets/top/unknown-key",
+  "path": "/api/wallets/top",
+  "query": "nosuchkey=1"
+ }
+]
