@@ -13,7 +13,8 @@ use heartwood_api::context::SubmitError;
 use heartwood_api::context::SubmitFuture;
 use heartwood_api::server::{RateLimit, Semaphore, SemaphoreLevel};
 use heartwood_api::{
-    ApiConfig, ApiContext, ApiRequest, NodeInfo, NodeStatus, PeerList, RouteId, SubmitTransactions,
+    ApiConfig, ApiContext, ApiError, ApiRequest, ChainTotals, NodeInfo, NodeStatus, PeerList,
+    Productivity, ProductivityTable, RouteId, SubmitTransactions,
 };
 use heartwood_blockchain::{ChainStore, RestoreMode, restore};
 use heartwood_crypto::utils::hex;
@@ -160,6 +161,7 @@ fn build() -> Fixture {
         peers: Arc::new(NoPeers),
         history: Arc::new(Readers::open(&settings, 2).unwrap()),
         submit: Arc::new(NoSubmissions),
+        productivity: Arc::new(NoProductivity),
         node: Arc::new(NodeInfo {
             crypto: files,
             version: "4.3.1-heartwood.0.1.0".into(),
@@ -203,10 +205,25 @@ fn config() -> ApiConfig {
         trust_proxy: false,
         base_path: "/api".into(),
         estimate_total_count: false,
+        missed_blocks_lookback: heartwood_api::server::MISSED_BLOCKS_LOOKBACK,
     }
 }
 
 /// A node that knows no peer.
+/// A node without productivity: the routes that read it are not served in these tests, so each
+/// call is a 500.
+struct NoProductivity;
+
+impl Productivity for NoProductivity {
+    fn table(&self, _tip: &Block) -> Result<Arc<ProductivityTable>, ApiError> {
+        Err(ApiError::internal())
+    }
+
+    fn totals(&self, _tip: &Block) -> Result<ChainTotals, ApiError> {
+        Err(ApiError::internal())
+    }
+}
+
 struct NoPeers;
 
 impl PeerList for NoPeers {

@@ -408,6 +408,15 @@ pub(crate) fn is_lowercase_hex(text: &str) -> bool {
     text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// `GET /transactions/schemas`: the schemas of the activated handlers' types.
+///
+/// Not served yet: until its handler is written, the route answers what an unmatched path
+/// answers, 404 "Not Found".
+pub async fn schemas(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
+    let _ = (ctx, request);
+    Err(ApiError::not_found("Not Found"))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;

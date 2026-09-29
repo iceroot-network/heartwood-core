@@ -30,6 +30,8 @@
 //! - [`api`]: the route corpus, its projections and `difftest api compare`.
 //! - [`live`]: `difftest live check`, the comparisons of a live run on a devnet.
 //! - [`levels`]: L0 to L4; L0, L1 and L2 run, L3 and L4 plug in with the node's processes.
+//! - [`lockstep`]: `difftest lockstep make`, chains forged by Heartwood while the reference
+//!   applies every block and judges every transaction beside it.
 //! - [`genesis`]: the devnet chain-definition driver (`difftest genesis`).
 //! - [`forger_kill`]: the forger's crash test (`difftest forger crash`).
 //! - [`network_generate`]: `heartwood network generate` against the genesis vectors.
@@ -52,6 +54,7 @@ pub mod forger_kill;
 pub mod genesis;
 pub mod levels;
 pub mod live;
+pub mod lockstep;
 pub mod network_generate;
 pub mod oracle;
 pub mod p2p_compare;

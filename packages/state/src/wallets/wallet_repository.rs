@@ -178,6 +178,26 @@ impl WalletRepository {
             .usernames()
             .filter_map(|(_, address)| self.find_by_address(address))
     }
+
+    /// Every wallet in the reference's address index order: the order the addresses were first
+    /// used.
+    pub fn by_address_index(&self) -> impl Iterator<Item = &Wallet> {
+        self.iter()
+    }
+
+    /// Every wallet with a public key, in the reference's public-key index order.
+    pub fn by_public_key_index(&self) -> impl Iterator<Item = &Wallet> {
+        self.indexes
+            .public_keys_in_order()
+            .filter_map(|(_, address)| self.find_by_address(address))
+    }
+
+    /// Every delegate's wallet, in the reference's username index order.
+    pub fn by_username_index(&self) -> impl Iterator<Item = &Wallet> {
+        self.indexes
+            .usernames_in_order()
+            .filter_map(|(_, address)| self.find_by_address(address))
+    }
 }
 
 /// The repository read back from the store, and what changed since the last commit.

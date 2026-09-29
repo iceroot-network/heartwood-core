@@ -9,6 +9,12 @@
 //! accepted keys, ranges and defaults, and values converted (numbers and booleans from text). A
 //! failure is 422 with a message in Joi's style, whose text is not part of the contract; an unknown
 //! query key is 422 on the routes whose schema lists their keys, and ignored on the others.
+//!
+//! The listing and history routes' schemas live in their own files, which [`validate_query`] and
+//! [`validate_params`] dispatch to: [`state_criteria`] (the delegate and wallet listings),
+//! [`history_criteria`] (the block, missed-block, round and vote routes, and a wallet's sent,
+//! received and vote transactions) and [`chain_routes`] (`/blockchain`, its search, the fee
+//! statistics and the transaction schemas).
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
@@ -19,6 +25,50 @@ use serde_json::{Map, Value};
 
 use crate::context::RouteId;
 use crate::errors::ApiError;
+
+pub mod chain_routes;
+pub mod history_criteria;
+pub mod state_criteria;
+
+/// The file whose schemas validate a route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SchemaFile {
+    /// This module: the routes served before the listings.
+    Served,
+    /// [`state_criteria`].
+    State,
+    /// [`history_criteria`].
+    History,
+    /// [`chain_routes`].
+    Chain,
+}
+
+/// The file whose schemas validate `route`.
+fn schema_file(route: RouteId) -> SchemaFile {
+    match route {
+        RouteId::DelegatesIndex
+        | RouteId::DelegatesShow
+        | RouteId::DelegatesVoters
+        | RouteId::WalletsIndex
+        | RouteId::WalletsTop => SchemaFile::State,
+        RouteId::BlocksIndex
+        | RouteId::BlocksMissed
+        | RouteId::BlocksFirst
+        | RouteId::DelegatesBlocks
+        | RouteId::DelegatesMissedBlocks
+        | RouteId::RoundsDelegates
+        | RouteId::VotesIndex
+        | RouteId::VotesShow
+        | RouteId::WalletsTransactionsSent
+        | RouteId::WalletsTransactionsReceived
+        | RouteId::WalletsVotes => SchemaFile::History,
+        RouteId::BlockchainIndex
+        | RouteId::BlockchainSearch
+        | RouteId::NodeFees
+        | RouteId::TransactionsSchemas => SchemaFile::Chain,
+        _ => SchemaFile::Served,
+    }
+}
 
 /// The key under which [`validate_query`] keeps the query as parsed, beside the validated keys, on
 /// the routes that paginate. No parsed query can hold it, because the grammar nests every name
@@ -641,6 +691,12 @@ fn query_schema(route: RouteId) -> Option<(&'static [Key], bool)> {
 /// throw ([`parse_query`]'s `null`) is 500 on every route, and so is a query that the schema
 /// accepts with a value [`parse_query`] did not write out whole.
 pub fn validate_query(route: RouteId, query: &Value) -> Result<Value, ApiError> {
+    match schema_file(route) {
+        SchemaFile::State => return state_criteria::validate_query(route, query),
+        SchemaFile::History => return history_criteria::validate_query(route, query),
+        SchemaFile::Chain => return chain_routes::validate_query(route, query),
+        SchemaFile::Served => {}
+    }
     let Value::Object(input) = query else {
         return Err(ApiError::internal());
     };
@@ -703,6 +759,12 @@ fn invalid(name: &str) -> ApiError {
 
 /// Validate the path parameters of `route`.
 pub fn validate_params(route: RouteId, params: &Map<String, Value>) -> Result<(), ApiError> {
+    match schema_file(route) {
+        SchemaFile::State => return state_criteria::validate_params(route, params),
+        SchemaFile::History => return history_criteria::validate_params(route, params),
+        SchemaFile::Chain => return chain_routes::validate_params(route, params),
+        SchemaFile::Served => {}
+    }
     const BLOCK: [Rule; 2] = [Rule::Text(Text::Hex(64)), MIN_1];
     const WALLET: [Rule; 3] = [
         Rule::Text(Text::Address),

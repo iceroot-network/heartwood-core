@@ -1,13 +1,20 @@
 //! The queries of the served routes, on a [`Reader`]: blocks by id or height, the transactions of
 //! the criteria with the reference's orders and pages, a transaction by id, a block's
-//! transactions, and a round's rows; the peer-to-peer server's reads are in [`download`].
+//! transactions, and a round's rows; the peer-to-peer server's reads are in [`download`]. The
+//! listing routes' readers are [`blocks_list`] (the blocks), [`missed`] (the missed slots),
+//! [`productivity`], [`fees`] (the fee statistics) and [`totals`] (the burned totals).
 //!
 //! A listing counts every match (`totalCount`) and reads the page in one read transaction, so both
 //! see the same chain. Ties of the requested order are broken by the unique key (block height and
 //! sequence), so a page is the same on every call. A statement interrupted after
 //! [`crate::READ_TIMEOUT`] is a [`DatabaseError`], which the API answers with a logged 500.
 
+pub mod blocks_list;
 pub mod download;
+pub mod fees;
+pub mod missed;
+pub mod productivity;
+pub mod totals;
 
 use heartwood_crypto::{BlockId, TransactionId};
 use rusqlite::types::Value as SqlValue;

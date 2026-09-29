@@ -201,3 +201,12 @@ pub fn genesis_as_held(genesis: &Value) -> Value {
     }
     genesis
 }
+
+/// `GET /node/fees`: the fee statistics of the kept types.
+///
+/// Not served yet: until its handler is written, the route answers what an unmatched path
+/// answers, 404 "Not Found".
+pub async fn fees(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
+    let _ = (ctx, request);
+    Err(ApiError::not_found("Not Found"))
+}

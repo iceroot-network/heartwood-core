@@ -134,7 +134,8 @@ fn has_json_form(difference: Documented, json: &Value) -> bool {
         | Documented::EscapedLogText
         | Documented::Api(_)
         | Documented::OverHeightOwnBlock
-        | Documented::RoundWallets => false,
+        | Documented::RoundWallets
+        | Documented::ReplayIndexOrder => false,
     }
 }
 

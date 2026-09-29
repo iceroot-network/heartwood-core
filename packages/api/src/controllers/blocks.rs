@@ -181,3 +181,30 @@ fn raw(row: &BlockRow) -> Value {
     );
     Value::Object(out)
 }
+
+/// `GET /blocks`: the blocks matching the criteria, sorted and paginated.
+///
+/// Not served yet: until its handler is written, the route answers what an unmatched path
+/// answers, 404 "Not Found".
+pub async fn index(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
+    let _ = (ctx, request);
+    Err(ApiError::not_found("Not Found"))
+}
+
+/// `GET /blocks/missed`: the missed slots matching the criteria.
+///
+/// Not served yet: until its handler is written, the route answers what an unmatched path
+/// answers, 404 "Not Found".
+pub async fn missed(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
+    let _ = (ctx, request);
+    Err(ApiError::not_found("Not Found"))
+}
+
+/// `GET /blocks/first`: the genesis block.
+///
+/// Not served yet: until its handler is written, the route answers what an unmatched path
+/// answers, 404 "Not Found".
+pub async fn first(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
+    let _ = (ctx, request);
+    Err(ApiError::not_found("Not Found"))
+}

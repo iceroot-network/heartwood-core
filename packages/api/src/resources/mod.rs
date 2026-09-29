@@ -1,6 +1,15 @@
 //! The response shapes of the served routes, as the reference's resources write them, keys in the
 //! reference's order. A key whose value the reference leaves `undefined` is left out, as
 //! `JSON.stringify` leaves it out; amounts are decimal strings.
+//!
+//! The listings' resources are in their own modules: [`delegate`], [`wallet_search`],
+//! [`missed_block`], [`round`] and [`fee_statistics`].
+
+pub mod delegate;
+pub mod fee_statistics;
+pub mod missed_block;
+pub mod round;
+pub mod wallet_search;
 
 use heartwood_crypto::transactions::types::Asset;
 use heartwood_crypto::utils::burn::burned_fee;

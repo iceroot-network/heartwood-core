@@ -113,6 +113,10 @@ pub enum Documented {
     /// The wallets of a relay's getCurrentRound answer: their fields, and the order of
     /// `allDelegates`.
     RoundWallets,
+    /// The address, public-key and username index orders after a restart that replays the chain:
+    /// the reference's StateBuilder rebuilds them in its handlers' order, Heartwood's replay in
+    /// the order the chain set them.
+    ReplayIndexOrder,
 }
 
 /// A served route's documented difference from the reference.
@@ -136,6 +140,40 @@ pub enum ApiDifference {
     /// Pagination links under another base path than `/api`: the reference strips a hard-coded
     /// `/api`; Heartwood strips the configured base path.
     BasePathLinks,
+    /// A round's delegates (`GET /rounds/{id}/delegates`): the reference's query has no order;
+    /// Heartwood lists them in their stored order (balance descending, then public key).
+    RoundOrder,
+    /// A listing's `totalCount` where the reference reports an estimate: the reference counts
+    /// with its planner's estimate; Heartwood counts exactly and keeps `totalCountIsEstimate`.
+    EstimatedCount,
+    /// `GET /node/fees` without `days`: the reference lists every registered type, the removed
+    /// ones with zeros; Heartwood lists the kept types.
+    FeeTypes,
+    /// `GET /api.json`: the reference's document lists every registered route and type, the
+    /// removed ones included; Heartwood's lists the kept ones.
+    SpecKeptOnly,
+}
+
+impl ApiDifference {
+    /// The documented differences a route-corpus case may name, by the name it gives.
+    pub const NAMED: [(&'static str, ApiDifference); 8] = [
+        ("heightAboveTip", ApiDifference::HeightAboveTip),
+        ("storeFailure", ApiDifference::StoreFailure),
+        ("peersIpFilter", ApiDifference::PeersIpFilter),
+        ("tieOrder", ApiDifference::TieOrder),
+        ("roundOrder", ApiDifference::RoundOrder),
+        ("estimatedCount", ApiDifference::EstimatedCount),
+        ("feeTypes", ApiDifference::FeeTypes),
+        ("specKeptOnly", ApiDifference::SpecKeptOnly),
+    ];
+
+    /// The difference a route-corpus case names `name`.
+    pub fn named(name: &str) -> Option<ApiDifference> {
+        let mut named = ApiDifference::NAMED.iter();
+        named
+            .find(|(n, _)| *n == name)
+            .map(|&(_, difference)| difference)
+    }
 }
 
 impl Documented {
@@ -261,6 +299,13 @@ impl Documented {
                  verifies the header's signature and does not forge (the same key forging on two \
                  nodes only)"
             }
+            Documented::ReplayIndexOrder => {
+                "the index orders after a restart that replays the chain: the reference's \
+                 StateBuilder rebuilds its address, public-key and username indexes in its \
+                 handlers' order, Heartwood's replay sets them in the chain's order, as the live \
+                 node did; only a tie of a listing sorted by index order shows it, on a node \
+                 restarted by a replay"
+            }
             Documented::RoundWallets => {
                 "the wallets of the relay's round answer: the reference writes its wallet data \
                  (the attribute map with its known attributes, and for the round's delegates the \
@@ -301,6 +346,22 @@ impl ApiDifference {
                 "pagination links under another base path: the reference strips a hard-coded \
                  /api, Heartwood strips the configured base path"
             }
+            ApiDifference::RoundOrder => {
+                "a round's delegates: the reference's query has no order and usually returns the \
+                 stored one, Heartwood always lists them by balance descending, then public key"
+            }
+            ApiDifference::EstimatedCount => {
+                "a listing's count where the reference reports an estimate: the reference counts \
+                 with its planner's estimate, Heartwood counts exactly and keeps the estimate flag"
+            }
+            ApiDifference::FeeTypes => {
+                "the fee statistics without days: the reference lists every registered type, the \
+                 removed ones with zeros, Heartwood lists the kept types with the same values"
+            }
+            ApiDifference::SpecKeptOnly => {
+                "the OpenAPI document: the reference lists every registered route and transaction \
+                 type, the removed ones included, Heartwood lists the kept ones"
+            }
         }
     }
 }
@@ -315,7 +376,8 @@ const STACK_OVERFLOW: &str = "Maximum call stack size exceeded";
 impl Documented {
     /// Whether the oracle's answer `expected` shows the reference's side of this difference: a
     /// `true` note in the output's `notes` (`pluginsPrototype`, `stackOverflow`, `wideAmount`,
-    /// `fullPoolEviction`, `savedStateUsername`, `roundRowsMissing`, `locale`), or, for deep
+    /// `fullPoolEviction`, `savedStateUsername`, `roundRowsMissing`, `locale`, `rebuildOrder`: a
+    /// StateBuilder order that differs from the live one), or, for deep
     /// groups, a `RangeError` for the overflow of the Node stack. A replaced prototype is shown
     /// only with the reply check's refusal of the plugins, the one step it changes. The
     /// differences that Heartwood checks on the input ([`Verdict::RefusedByDesign`]) are never
@@ -341,6 +403,7 @@ impl Documented {
             Documented::SavedStateUsername => note("savedStateUsername"),
             Documented::RoundRowsAfterRevert => note("roundRowsMissing"),
             Documented::Locale => note("locale"),
+            Documented::ReplayIndexOrder => note("rebuildOrder"),
             _ => false,
         }
     }

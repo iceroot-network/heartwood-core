@@ -18,14 +18,16 @@
 //!   whole pool (the order of equal priorities is the order of arrival).
 //!
 //! A case marked with a documented difference (`heightAboveTip`, `storeFailure`, `peersIpFilter`,
-//! `tieOrder`, `decodeReason`) passes as documented when the answers differ and the node under
-//! test shows the documented behaviour. A mark excuses the status and the body only: the headers
+//! `tieOrder`, `decodeReason`, `roundOrder`, `estimatedCount`, `feeTypes`, `specKeptOnly`)
+//! passes as documented when the answers differ and the node under test shows the documented
+//! behaviour. A mark excuses the status and the body only: the headers
 //! are judged as for any case, apart from those that follow the status (`accept-ranges`) when the
 //! statuses differ. For `tieOrder`, both pages must hold the same sequence of the sorted
 //! column's values, as the list's items show them; a transaction both pages hold must be the same
 //! on both, and one that only one page holds must have the sorted value of the page's first or
 //! last item (a tie that the page's start or end cuts).
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use heartwood_api::RouteId;
@@ -440,8 +442,96 @@ fn documented(
             (left_status == right_status && reasons(left) == reasons(right))
                 .then(|| Documented::DecodeReason.reason())
         }
+        "roundOrder" => {
+            // The same delegates on both pages, Heartwood's in the stored order.
+            let (ours, theirs) = (left["data"].as_array()?, right["data"].as_array()?);
+            let stored = ours.windows(2).all(|pair| match pair {
+                [a, b] => round_order(a, b) != Ordering::Greater,
+                _ => true,
+            });
+            let same = as_set(ours) == as_set(theirs);
+            (left_status == 200 && right_status == 200 && same && stored)
+                .then(|| ApiDifference::RoundOrder.reason())
+        }
+        "estimatedCount" => {
+            // The same page; the counts, and what follows from them, apart.
+            let counted = |body: &Value| {
+                let mut body = body.clone();
+                for key in ["totalCount", "pageCount", "last", "next"] {
+                    remove(&mut body, &["meta", key]);
+                }
+                body
+            };
+            let exact = left["meta"]["totalCount"].as_u64()?;
+            let shown = u64::try_from(left["data"].as_array().map_or(0, Vec::len)).ok()?;
+            let same = counted(left) == counted(right);
+            (left_status == 200 && right_status == 200 && same && exact >= shown)
+                .then(|| ApiDifference::EstimatedCount.reason())
+        }
+        "feeTypes" => {
+            // Heartwood's types are the reference's, with the same values; the reference's others
+            // hold zeros only.
+            let (ours, theirs) = (left["data"].as_object()?, right["data"].as_object()?);
+            let kept = ours.iter().all(|(group, types)| {
+                let types = types.as_object().into_iter().flatten();
+                types
+                    .into_iter()
+                    .all(|(name, value)| &right["data"][group][name] == value)
+            });
+            let others = theirs.iter().all(|(group, types)| {
+                let types = types.as_object().into_iter().flatten();
+                types.into_iter().all(|(name, value)| {
+                    ours.get(group).and_then(|g| g.get(name)).is_some() || zeros(value)
+                })
+            });
+            let meta = left["meta"] == right["meta"];
+            (left_status == 200 && right_status == 200 && meta && kept && others)
+                .then(|| ApiDifference::FeeTypes.reason())
+        }
+        "specKeptOnly" => {
+            // Heartwood's paths are some of the reference's, each the same; the rest of the
+            // document but its components is the same.
+            let (ours, theirs) = (left["paths"].as_object()?, right["paths"].as_object()?);
+            let kept = ours
+                .iter()
+                .all(|(path, item)| theirs.get(path) == Some(item));
+            let rest = |body: &Value| {
+                let mut body = body.clone();
+                remove(&mut body, &["paths"]);
+                remove(&mut body, &["components"]);
+                body
+            };
+            (left_status == 200 && right_status == 200 && kept && rest(left) == rest(right))
+                .then(|| ApiDifference::SpecKeptOnly.reason())
+        }
         _ => None,
     }
+}
+
+/// The order of a round's stored rows: votes descending, then the public key.
+fn round_order(a: &Value, b: &Value) -> Ordering {
+    let votes = |item: &Value| {
+        let text = item["votes"].as_str().unwrap_or_default().to_owned();
+        (text.len(), text)
+    };
+    let key = |item: &Value| item["publicKey"].as_str().unwrap_or_default().to_owned();
+    votes(b).cmp(&votes(a)).then_with(|| key(a).cmp(&key(b)))
+}
+
+/// The items of a list as a sorted list of their JSON texts.
+fn as_set(items: &[Value]) -> Vec<String> {
+    let mut texts: Vec<String> = items.iter().map(Value::to_string).collect();
+    texts.sort();
+    texts
+}
+
+/// Whether every statistic of a type's fees is zero.
+fn zeros(value: &Value) -> bool {
+    value.as_object().is_some_and(|stats| {
+        stats
+            .values()
+            .all(|v| v == "0" || v.as_u64() == Some(0) || v.as_f64() == Some(0.0))
+    })
 }
 
 #[cfg(test)]
@@ -487,6 +577,95 @@ mod tests {
 
     fn is_tie(outcome: &Outcome) -> bool {
         matches!(outcome, Outcome::Documented(r) if r == ApiDifference::TieOrder.reason())
+    }
+
+    /// A recorded request of `path`, marked `documented`.
+    fn case(path: &str, documented: &str, left: Reply, right: Reply) -> Recorded {
+        let mut line = list("", documented, left, right);
+        if let Some(request) = &mut line.request {
+            request.path = path.into();
+        }
+        line
+    }
+
+    fn is(outcome: &Outcome, difference: ApiDifference) -> bool {
+        matches!(outcome, Outcome::Documented(r) if r == difference.reason())
+    }
+
+    #[test]
+    fn the_listing_differences_are_judged_by_what_they_change() {
+        // A round's delegates: the same set, Heartwood's in the stored order.
+        let a = json!({"publicKey": "02aa", "votes": "900"});
+        let b = json!({"publicKey": "02bb", "votes": "1000"});
+        let c = json!({"publicKey": "02cc", "votes": "900"});
+        let round = |l: Value, r: Value| {
+            outcome(&case(
+                "/api/rounds/3/delegates",
+                "roundOrder",
+                answer(200, json!({"data": l})),
+                answer(200, json!({"data": r})),
+            ))
+        };
+        let order = ApiDifference::RoundOrder;
+        assert!(is(&round(json!([b, a, c]), json!([b, c, a])), order));
+        assert!(round(json!([a, b, c]), json!([b, c, a])).is_failure());
+        assert!(round(json!([b, a]), json!([b, c, a])).is_failure());
+        // A count the reference estimates: the same page, another count.
+        let counted = |total: u64| {
+            json!({"meta": {"count": 1, "totalCount": total,
+            "pageCount": total, "totalCountIsEstimate": true}, "data": [a]})
+        };
+        let estimated = |l: Value, r: Value| {
+            outcome(&case(
+                "/api/blocks",
+                "estimatedCount",
+                answer(200, l),
+                answer(200, r),
+            ))
+        };
+        let estimate = ApiDifference::EstimatedCount;
+        assert!(is(&estimated(counted(3), counted(9)), estimate));
+        let other = json!({"meta": {"count": 1, "totalCount": 9, "pageCount": 9,
+            "totalCountIsEstimate": true}, "data": [b]});
+        assert!(estimated(counted(3), other).is_failure());
+        // The fee statistics: the reference's extra types hold zeros only.
+        let zero = json!({"avg": "0", "burned": "0", "max": "0", "min": "0", "sum": "0"});
+        let paid = json!({"avg": "5", "burned": "1", "max": "9", "min": "1", "sum": "10"});
+        let fees = |l: Value, r: Value| {
+            outcome(&case(
+                "/api/node/fees",
+                "feeTypes",
+                answer(200, json!({"meta": {}, "data": l})),
+                answer(200, json!({"meta": {}, "data": r})),
+            ))
+        };
+        let types = ApiDifference::FeeTypes;
+        let ours = json!({"1": {"transfer": paid}});
+        assert!(is(
+            &fees(
+                ours.clone(),
+                json!({"1": {"transfer": paid, "htlcLock": zero}})
+            ),
+            types
+        ));
+        assert!(fees(ours, json!({"1": {"transfer": paid, "htlcLock": paid}})).is_failure());
+        // The document: Heartwood's paths are some of the reference's.
+        let spec = |paths: Value| json!({"openapi": "3.0.0", "paths": paths, "components": {}});
+        let documents = |l: Value, r: Value| {
+            outcome(&case(
+                "/api.json",
+                "specKeptOnly",
+                answer(200, l),
+                answer(200, r),
+            ))
+        };
+        let kept = ApiDifference::SpecKeptOnly;
+        let both = json!({"/blocks": {"get": {}}, "/locks": {"get": {}}});
+        assert!(is(
+            &documents(spec(json!({"/blocks": {"get": {}}})), spec(both.clone())),
+            kept
+        ));
+        assert!(documents(spec(json!({"/votes": {"get": {}}})), spec(both)).is_failure());
     }
 
     #[test]

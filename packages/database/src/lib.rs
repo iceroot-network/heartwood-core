@@ -5,8 +5,9 @@
 //! `missed_blocks`), the state tables (`wallets`, `state`, `undo`), `meta`, the digests of the
 //! applied milestone entries (`milestone_entries`) and the node-local delegate versions
 //! (`delegate_versions`). Schema version 2 ([`connection::SCHEMA_2`]) adds the recipients side
-//! table (`transaction_recipients`), which the API's address criteria read; a file of version 1 is
-//! upgraded at open.
+//! table (`transaction_recipients`), which the API's address criteria read, and version 3
+//! ([`connection::SCHEMA_3`]) the indices of the listing routes' queries; a file of version 1 or 2
+//! is upgraded at open.
 //!
 //! - [`connection`]: [`Database`], the one writer connection, and [`Chunk`], one SQLite
 //!   transaction per chunk of blocks with a [`Savepoint`] per block.
@@ -59,8 +60,15 @@ mod values;
 pub use crate::blocks::{BlockRow, StoredBlock};
 pub use crate::connection::{Chunk, Database, SCHEMA_VERSION, Savepoint, Settings};
 pub use crate::errors::DatabaseError;
-pub use crate::filters::{Numeric, TransactionCriteria, TransactionFilter};
+pub use crate::filters::{
+    BlockCriteria, BlockFilter, MissedBlockCriteria, MissedBlockFilter, Numeric,
+    TransactionCriteria, TransactionFilter,
+};
+pub use crate::history::blocks_list::{CountFlag, ListedBlock};
 pub use crate::history::download::DownloadBlockRow;
+pub use crate::history::fees::FeeStatisticsRow;
+pub use crate::history::productivity::ProductivityRow;
+pub use crate::history::totals::BurnedTotals;
 pub use crate::history::{BlockSelector, Direction, Listing, Order, Page, TransactionRecord};
 pub use crate::integrity::{IntegrityProblem, IntegrityReport};
 pub use crate::meta::{ChainMeta, MilestoneEntryRow};

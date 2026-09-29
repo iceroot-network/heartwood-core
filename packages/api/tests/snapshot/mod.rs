@@ -8,9 +8,9 @@ use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-use heartwood_api::ApiContext;
 use heartwood_api::context::{NodeInfo, NodeStatus, PeerList, SubmitFuture, SubmitTransactions};
 use heartwood_api::server::{ApiConfig, ServerHandle, serve};
+use heartwood_api::{ApiContext, ApiError, ChainTotals, Productivity, ProductivityTable};
 use heartwood_crypto::blocks::factory;
 use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Block, BlockId, Milestones, Network, Transaction};
@@ -183,6 +183,20 @@ impl PeerList for Peers {
 }
 
 /// A pool processor that admits every entry of a submission, by index.
+/// A node without productivity: the routes that read it are not served in these tests, so each
+/// call is a 500.
+pub struct NoProductivity;
+
+impl Productivity for NoProductivity {
+    fn table(&self, _tip: &Block) -> Result<Arc<ProductivityTable>, ApiError> {
+        Err(ApiError::internal())
+    }
+
+    fn totals(&self, _tip: &Block) -> Result<ChainTotals, ApiError> {
+        Err(ApiError::internal())
+    }
+}
+
 pub struct AdmitAll;
 
 impl SubmitTransactions for AdmitAll {
@@ -232,6 +246,7 @@ pub fn context(name: &str, pool: PoolView, peers: Vec<PeerInfo>, config: ApiConf
         peers: Arc::new(Peers(peers)),
         history: Arc::new(Readers::open(&settings, 2).unwrap()),
         submit: Arc::new(AdmitAll),
+        productivity: Arc::new(NoProductivity),
         node: Arc::new(NodeInfo {
             crypto: chain.files.clone(),
             version: "4.3.1-heartwood.0.1.0".into(),

@@ -33,6 +33,19 @@ impl Indexes {
             .map(|(username, address)| (username.as_str(), address))
     }
 
+    /// Every bound public key with its address, in the reference's public-key index order: the
+    /// order the keys were set, a key forgotten and set again moving to the end.
+    pub fn public_keys_in_order(&self) -> impl Iterator<Item = (&PublicKeyBytes, &Address)> {
+        std::iter::from_fn(|| todo!("the public-key index in the order the keys were set"))
+    }
+
+    /// Every delegate name with its address, in the reference's username index order: the order
+    /// the names were set, a name forgotten and set again moving to the end. [`Indexes::usernames`]
+    /// keeps the name order for the ranking, the round and their checks.
+    pub fn usernames_in_order(&self) -> impl Iterator<Item = (&str, &Address)> {
+        std::iter::from_fn(|| todo!("the username index in the order the names were set"))
+    }
+
     pub(crate) fn set_public_key(&mut self, public_key: PublicKeyBytes, address: Address) {
         self.public_keys.insert(public_key, address);
     }

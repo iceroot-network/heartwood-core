@@ -95,16 +95,34 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # - heartwood-cli goes from 3,500 to 3,600: it measured 3,347; the recovery commands (the markers,
 #   the question, the temp directory's trust rule and the clears' bodies, up to 175 lines) and
 #   their colon spellings (4) join it. The recovery commands are listed on their own.
+# With the listing routes over the state and the store (each ceiling is the crate's count with the
+# listings' seams, plus the work planned for them and a quarter of it, plus the recovery commands'
+# work not yet spent in the same crate, rounded up to the next 100):
+# - heartwood-api goes from 5,000 to 8,200: it measured 5,046 with the route table, the
+#   productivity seam, the search signatures and the handlers' stubs; the delegate and wallet
+#   listings with their criteria (up to 650 lines), the pagination through the reference's tree
+#   (400), the wallet search with its collation and sort (450), the productivity over the store
+#   (150), the history routes (500) and the chain routes with the fee statistics, the schemas and
+#   the OpenAPI document (350) add about 2,500, a quarter of it 625, and the API root 20. The
+#   in-memory listings and the store listings are listed on their own.
+# - heartwood-database goes from 3,000 to 3,300: it measured 2,622 with the listings' readers'
+#   signatures, their filters and the index-only schema step; the readers' bodies (up to 450
+#   lines), the saved wallets' order if it must change (20), a quarter of those, and the rollback's
+#   store work (37) join it. The listings' readers are listed on their own.
+# - heartwood-state goes from 3,000 to 3,100: it measured 2,861 with the index-order iterators'
+#   signatures; the indexes kept in the reference's insertion order (up to 120 lines) and a quarter
+#   of it join it.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"
     "heartwood-kernel utils:packages/kernel/src/utils:400"
     "heartwood-logger:packages/logger/src:500"
-    "heartwood-state:packages/state/src:3000"
+    "heartwood-state:packages/state/src:3100"
     "heartwood-state wallets, ranking and rounds:packages/state/src/wallets packages/state/src/dpos packages/state/src/round_state.rs:"
     "heartwood-transactions:packages/transactions/src:2500"
     "heartwood-p2p-wire:packages/p2p-wire/src:3200"
-    "heartwood-database:packages/database/src:3000"
+    "heartwood-database:packages/database/src:3300"
+    "heartwood-database listing readers:packages/database/src/history/blocks_list.rs packages/database/src/history/missed.rs packages/database/src/history/productivity.rs packages/database/src/history/fees.rs packages/database/src/history/totals.rs packages/database/src/filters/block.rs packages/database/src/filters/missed_block.rs:"
     "heartwood-pool:packages/pool/src:2000"
     "heartwood-blockchain:packages/blockchain/src !packages/blockchain/src/difftest.rs:3800"
     "heartwood-blockchain storage and restart:packages/blockchain/src/commit.rs packages/blockchain/src/rows.rs packages/blockchain/src/restore.rs packages/blockchain/src/milestones.rs packages/blockchain/src/online.rs:"
@@ -118,7 +136,9 @@ CHECKS=(
     "heartwood-p2p server transport:packages/p2p/src/server !packages/p2p/src/server/controllers packages/p2p/src/node_services.rs packages/p2p/src/devnet.rs:"
     "heartwood-p2p server controllers and forger channel:packages/p2p/src/server/controllers packages/p2p/src/status_server.rs packages/p2p/src/attestation_session.rs packages/p2p/src/network_state.rs:"
     "heartwood-p2p test support (difftest only):packages/p2p/src/testing:"
-    "heartwood-api:packages/api/src:5000"
+    "heartwood-api:packages/api/src:8200"
+    "heartwood-api in-memory listings:packages/api/src/search:"
+    "heartwood-api store listings:packages/api/src/controllers/delegate_history.rs packages/api/src/controllers/rounds.rs packages/api/src/controllers/votes.rs packages/api/src/controllers/blockchain.rs packages/api/src/resources/missed_block.rs packages/api/src/resources/round.rs packages/api/src/resources/fee_statistics.rs:"
     "heartwood-core:packages/core/src !packages/core/src/harness.rs:3200"
     "heartwood-core test support (difftest only):packages/core/src/harness.rs:"
     "heartwood-forger:packages/forger/src !packages/forger/src/bin:2200"

@@ -82,3 +82,30 @@ pub fn find(state: &StateView, id: &str) -> Result<Wallet, ApiError> {
         _ => Err(ApiError::not_found("Wallet not found")),
     }
 }
+
+/// `GET /wallets/{id}/transactions/sent`: the transactions a wallet sent.
+///
+/// Not served yet: until its handler is written, the route answers what an unmatched path
+/// answers, 404 "Not Found".
+pub async fn sent(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
+    let _ = (ctx, request);
+    Err(ApiError::not_found("Not Found"))
+}
+
+/// `GET /wallets/{id}/transactions/received`: the transactions a wallet received.
+///
+/// Not served yet: until its handler is written, the route answers what an unmatched path
+/// answers, 404 "Not Found".
+pub async fn received(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
+    let _ = (ctx, request);
+    Err(ApiError::not_found("Not Found"))
+}
+
+/// `GET /wallets/{id}/votes`: the vote transactions a wallet sent.
+///
+/// Not served yet: until its handler is written, the route answers what an unmatched path
+/// answers, 404 "Not Found".
+pub async fn votes(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
+    let _ = (ctx, request);
+    Err(ApiError::not_found("Not Found"))
+}

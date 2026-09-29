@@ -13,7 +13,11 @@
 //!   segment takes the first element whose value at the rest of the path the other node's answer
 //!   also has there);
 //! - `documented` (the documented difference the case may show: `heightAboveTip`,
-//!   `storeFailure`, `peersIpFilter`, `tieOrder` or `decodeReason`).
+//!   `storeFailure`, `peersIpFilter`, `tieOrder`, `decodeReason`, `roundOrder` (a round's
+//!   delegates), `estimatedCount` (a count the reference estimates), `feeTypes` (the fee
+//!   statistics' types) or `specKeptOnly` (the OpenAPI document)). `tieOrder` is refused on the
+//!   listings over the state (`/delegates`, `/delegates/{id}/voters`, `/wallets`,
+//!   `/wallets/top`), whose ties follow the index orders both implementations keep.
 //!
 //! `path`, `query`, the header values and `text` may use `${name}`, `${name+1}`, `${name-1}`,
 //! `${name|upper}`, `${name|uri}` (escaped as `encodeURIComponent` does) and `${name|head:N}`
@@ -228,7 +232,10 @@ fn at(value: &Value, segments: &[&str], other: Option<&Value>) -> Option<Value> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use heartwood_api::RouteId;
     use serde_json::json;
+
+    use crate::subject::ApiDifference;
 
     #[test]
     fn variables_expand_with_offsets_and_filters() {
@@ -268,6 +275,63 @@ mod tests {
         assert_eq!(bind("data.5.ip", &right, &left), None);
     }
 
+    /// Whether `case` is a request of a listing over the state, whose ties follow the index
+    /// orders that both implementations keep, so that `tieOrder` may not excuse them.
+    fn ties_are_exact(case: &Case) -> bool {
+        let route = crate::api::judge::route_of(&case.method, &case.path);
+        matches!(
+            route,
+            Some(
+                RouteId::DelegatesIndex
+                    | RouteId::DelegatesVoters
+                    | RouteId::WalletsIndex
+                    | RouteId::WalletsTop
+            )
+        )
+    }
+
+    #[test]
+    fn a_tie_of_a_listing_over_the_state_cannot_be_excused() {
+        let case = |path: &str| Case {
+            name: "case".into(),
+            method: "GET".into(),
+            path: path.into(),
+            query: Some("orderBy=balance:desc".into()),
+            headers: BTreeMap::new(),
+            body: None,
+            text: None,
+            pad_to: None,
+            repeat: None,
+            source: None,
+            bind: BTreeMap::new(),
+            documented: Some("tieOrder".into()),
+        };
+        for path in [
+            "/api/delegates",
+            "/api/delegates/genesis_1/voters",
+            "/api/wallets",
+            "/api/wallets/top/",
+        ] {
+            assert!(ties_are_exact(&case(path)), "{path}");
+        }
+        for path in [
+            "/api/transactions",
+            "/api/delegates/genesis_1/blocks",
+            "/api/blocks",
+        ] {
+            assert!(!ties_are_exact(&case(path)), "{path}");
+        }
+        assert_eq!(
+            ApiDifference::named("roundOrder"),
+            Some(ApiDifference::RoundOrder)
+        );
+        assert_eq!(
+            ApiDifference::named("specKeptOnly"),
+            Some(ApiDifference::SpecKeptOnly)
+        );
+        assert_eq!(ApiDifference::named("decodeReason"), None);
+    }
+
     #[test]
     fn the_committed_corpus_marks_what_its_answers_can_show() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::api::CORPUS_DIR);
@@ -283,18 +347,16 @@ mod tests {
         for case in &cases {
             if let Some(kind) = &case.documented {
                 assert!(
-                    [
-                        "heightAboveTip",
-                        "storeFailure",
-                        "peersIpFilter",
-                        "tieOrder",
-                        "decodeReason"
-                    ]
-                    .contains(&kind.as_str()),
+                    ApiDifference::named(kind).is_some() || kind == "decodeReason",
                     "{}: {kind}",
                     case.name
                 );
             }
+            assert!(
+                !(case.documented.as_deref() == Some("tieOrder") && ties_are_exact(case)),
+                "{}: a tie of a listing over the state is compared exactly",
+                case.name
+            );
         }
         // A store failure a client can cause: a memo pattern that ends with its escape character.
         let failures = marked("storeFailure");

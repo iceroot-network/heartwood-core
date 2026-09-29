@@ -29,7 +29,9 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use heartwood_api::{Api, ApiConfig, ApiContext, NodeInfo, NodeStatus, PeerList};
+use heartwood_api::{
+    Api, ApiConfig, ApiContext, NodeInfo, NodeStatus, PeerList, StoreProductivity,
+};
 use heartwood_blockchain::state_machine::MachineState;
 use heartwood_blockchain::{
     BlockProcessor, Blockchain, BlockchainParts, ChainState, ChainStore, Node, NodeError,
@@ -226,6 +228,10 @@ async fn serve(
     let blockchain_options = options::blockchain(&relay.entry(Package::Blockchain));
     let blockchain_options = Arc::new(blockchain_options.map_err(config)?);
     let mut api_config = api_options(&relay)?;
+    if let Some(api) = api_config.as_mut() {
+        let lookback = blockchain_options.missed_blocks_lookback;
+        api.missed_blocks_lookback = i64::try_from(lookback).unwrap_or(i64::MAX);
+    }
     devnet_guard(&p2p, &relay.crypto.network.name, api_config.as_ref())?;
     let peer_config = peer_config(&relay, api_config.as_ref());
     // The store, the state and the version floor at the stored tip.
@@ -571,13 +577,16 @@ async fn serve_api(
     history: Readers,
     runtime: Handle,
 ) -> Result<Option<Api>, RelayError> {
+    let history = Arc::new(history);
+    let lookback = config.missed_blocks_lookback;
     let context = ApiContext {
         state: handle.state(),
         pool: handle.pool(),
         status: status.clone(),
         peers: Arc::clone(links) as Arc<dyn PeerList>,
-        history: Arc::new(history),
+        history: Arc::clone(&history),
         submit: Arc::new(Submit(handle.clone())),
+        productivity: Arc::new(StoreProductivity::new(history, lookback)),
         node: Arc::new(node),
         config: Arc::new(config),
     };

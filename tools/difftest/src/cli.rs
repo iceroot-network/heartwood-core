@@ -32,7 +32,7 @@ Usage:
   difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR]
                   [--regressions DIR] [--min-reach N] [--decision-reach N]
                   [--served-reach N] [ORACLE]
-                                  random and mutated cases of the properties (P1 to P20, or
+                                  random and mutated cases of the properties (P1 to P23, or
                                   their names; all by default), one oracle call each; 256
                                   cases and seed 1 by default; DIR is a vector set with the
                                   genesis class [packages/crypto/tests/vectors]; the minimal
@@ -68,6 +68,12 @@ Usage:
                                   each target of the rollback class that it reaches, compared
                                   with the oracle's rollback, then started and re-synced
   difftest run l3|l4              later levels (see `difftest levels`)
+  difftest lockstep make --seed S --profile P --rounds R --recipe FILE --out DIR [--long] [ORACLE]
+                                  forge a chain of R rounds (5 at most, 50 with --long) from
+                                  the seed S and the genesis profile P as FILE's recipe says,
+                                  with Heartwood's forger, the reference building every
+                                  transaction and applying every block beside it, into the
+                                  corpus DIR
   difftest corpus import ARCHIVE... --out DIR [--seed TEXT]
                                   join the devnet tooling's archives of one chain (in order)
                                   into a corpus; TEXT is the chain's public key-derivation
@@ -354,6 +360,27 @@ pub enum Command {
         /// The vector set with the genesis class.
         vectors: PathBuf,
     },
+    /// `difftest lockstep make`: a lockstep chain.
+    LockstepMake(LockstepArgs),
+}
+
+/// The arguments of `difftest lockstep make`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockstepArgs {
+    /// Where the oracle runs.
+    pub oracle: OracleArgs,
+    /// The chain's seed: its genesis keys, its wallets' keys and its forger's aux.
+    pub seed: String,
+    /// The genesis profile.
+    pub profile: String,
+    /// The rounds of the chain: at most 5, or 50 for a long chain.
+    pub rounds: u32,
+    /// The recipe file.
+    pub recipe: PathBuf,
+    /// The corpus directory to write.
+    pub out: PathBuf,
+    /// A long chain (more than 5 rounds).
+    pub long: bool,
 }
 
 /// The arguments of `difftest run l2 --processor`.
@@ -583,6 +610,7 @@ pub fn parse(args: &[String]) -> Result<Command> {
         ["network", "generate", dir] => Ok(Command::NetworkGenerate {
             vectors: dir.into(),
         }),
+        ["lockstep", "make", rest @ ..] => parse_lockstep(rest),
         ["corpus", "judge", dir, rest @ ..] => {
             let mut judge = JudgeArgs {
                 oracle: OracleArgs::default(),
@@ -749,6 +777,51 @@ fn heights(list: &str) -> Result<Vec<u32>> {
                 .ok_or_else(|| usage(format!("{h} is not a height")))
         })
         .collect()
+}
+
+fn parse_lockstep(args: &[&str]) -> Result<Command> {
+    use crate::lockstep::{LONG_ROUNDS, SHORT_ROUNDS};
+    let mut oracle = OracleArgs::default();
+    let (mut seed, mut profile, mut recipe, mut out) = (None, None, None, None);
+    let (mut rounds, mut long) = (SHORT_ROUNDS, false);
+    let mut it = args.iter();
+    while let Some(&flag) = it.next() {
+        match flag {
+            "--seed" => seed = Some(value(flag, it.next())?.to_owned()),
+            "--profile" => profile = Some(value(flag, it.next())?.to_owned()),
+            "--recipe" => recipe = Some(PathBuf::from(value(flag, it.next())?)),
+            "--out" => out = Some(PathBuf::from(value(flag, it.next())?)),
+            "--rounds" => {
+                rounds = value(flag, it.next())?
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|r| *r >= 1)
+                    .ok_or_else(|| usage("--rounds needs a number of rounds"))?;
+            }
+            "--long" => long = true,
+            _ => oracle_flag(&mut oracle, flag, it.next())?,
+        }
+    }
+    if rounds > LONG_ROUNDS {
+        return Err(usage(format!(
+            "a lockstep chain has at most {LONG_ROUNDS} rounds"
+        )));
+    }
+    if rounds > SHORT_ROUNDS && !long {
+        return Err(usage(format!(
+            "a chain of more than {SHORT_ROUNDS} rounds is a long chain: pass --long"
+        )));
+    }
+    let need = |what: &str| usage(format!("lockstep make needs {what}"));
+    Ok(Command::LockstepMake(LockstepArgs {
+        oracle,
+        seed: seed.ok_or_else(|| need("--seed S"))?,
+        profile: profile.ok_or_else(|| need("--profile P"))?,
+        rounds,
+        recipe: recipe.ok_or_else(|| need("--recipe FILE"))?,
+        out: out.ok_or_else(|| need("--out DIR"))?,
+        long,
+    }))
 }
 
 fn parse_l1(args: &[&str]) -> Result<Command> {
@@ -1101,6 +1174,21 @@ mod tests {
     fn parses_the_commands() {
         assert_eq!(p("").unwrap(), Command::Help);
         assert_eq!(p("levels").unwrap(), Command::Levels);
+        let lockstep = |line: &str| match p(line).unwrap() {
+            Command::LockstepMake(args) => args,
+            other => panic!("{other:?}"),
+        };
+        let args = lockstep("lockstep make --seed s1 --profile p.json --recipe r.json --out c");
+        assert_eq!(
+            (args.seed.as_str(), args.rounds, args.long),
+            ("s1", 5, false)
+        );
+        assert_eq!(args.recipe, PathBuf::from("r.json"));
+        let args = lockstep(
+            "lockstep make --seed s --profile p --rounds 50 --long --recipe r --out o --image i",
+        );
+        assert_eq!((args.rounds, args.long), (50, true));
+        assert_eq!(args.oracle.image.as_deref(), Some("i"));
         assert_eq!(
             p("run l0 target/vectors").unwrap(),
             Command::Run {
@@ -1377,7 +1465,12 @@ mod tests {
             "run l0",
             "run l2",
             "run l1 --cases 0",
-            "run l1 --property P21",
+            "run l1 --property P24",
+            "lockstep make --seed s --profile p --recipe r --out o --rounds 6",
+            "lockstep make --seed s --profile p --recipe r --out o --rounds 51 --long",
+            "lockstep make --seed s --profile p --recipe r --out o --rounds 0",
+            "lockstep make --seed s --profile p --recipe r",
+            "lockstep make --profile p --recipe r --out o",
             "run l1 --served-reach x",
             "p2p compare r --left a",
             "live check r --compare",

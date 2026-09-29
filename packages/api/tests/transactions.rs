@@ -400,6 +400,7 @@ async fn a_store_failure_is_answered_with_a_logged_500() {
         peers: context.peers.clone(),
         history: std::sync::Arc::new(timed.unwrap()),
         submit: context.submit.clone(),
+        productivity: context.productivity.clone(),
         node: context.node.clone(),
         config: context.config.clone(),
     };
