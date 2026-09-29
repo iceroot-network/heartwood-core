@@ -30,16 +30,25 @@ pub(crate) struct Condition {
 impl Condition {
     /// The condition of `filter`.
     pub(crate) fn of(filter: &TransactionFilter) -> Result<Condition, DatabaseError> {
+        Condition::groups(&filter.groups, Condition::criteria)
+    }
+
+    /// The condition that every group of `groups` holds, and a group holds when one of its
+    /// criteria does, each as `criteria` writes it.
+    pub(crate) fn groups<C>(
+        groups: &[Vec<C>],
+        criteria: impl Fn(&mut Condition, &C) -> Result<String, DatabaseError>,
+    ) -> Result<Condition, DatabaseError> {
         let mut condition = Condition::default();
-        let mut groups = Vec::with_capacity(filter.groups.len());
-        for group in &filter.groups {
-            let criteria = group
+        let mut all_groups = Vec::with_capacity(groups.len());
+        for group in groups {
+            let each = group
                 .iter()
-                .map(|criteria| condition.criteria(criteria))
+                .map(|one| criteria(&mut condition, one))
                 .collect::<Result<Vec<_>, _>>()?;
-            groups.push(any(criteria));
+            all_groups.push(any(each));
         }
-        condition.sql = all(groups);
+        condition.sql = all(all_groups);
         Ok(condition)
     }
 
@@ -118,7 +127,7 @@ impl Condition {
     }
 
     /// `column = value`.
-    fn text(&mut self, column: &str, value: &str) -> String {
+    pub(crate) fn text(&mut self, column: &str, value: &str) -> String {
         self.params.push(SqlValue::Text(value.to_owned()));
         format!("{column} = ?")
     }
@@ -137,7 +146,7 @@ impl Condition {
 
     /// The id starts with `prefix`, as `id LIKE 'prefix%'`: a prefix without wildcards compares
     /// directly (by the index for a whole id), any other goes through the pattern function.
-    fn id_prefix(&mut self, prefix: &str) -> String {
+    pub(crate) fn id_prefix(&mut self, prefix: &str) -> String {
         if prefix.bytes().any(|b| matches!(b, b'%' | b'_' | b'\\')) {
             self.params.push(SqlValue::Text(format!("{prefix}%")));
             return "heartwood_like(?, id)".to_owned();
@@ -151,7 +160,11 @@ impl Condition {
     }
 
     /// `column = value` for each value.
-    fn integers(&mut self, column: &str, values: &[u64]) -> Result<Vec<String>, DatabaseError> {
+    pub(crate) fn integers(
+        &mut self,
+        column: &str,
+        values: &[u64],
+    ) -> Result<Vec<String>, DatabaseError> {
         values
             .iter()
             .map(|&value| {
@@ -162,7 +175,11 @@ impl Condition {
     }
 
     /// The numeric criteria `values` on `column`.
-    fn numerics(&mut self, column: &str, values: &[Numeric]) -> Result<Vec<String>, DatabaseError> {
+    pub(crate) fn numerics(
+        &mut self,
+        column: &str,
+        values: &[Numeric],
+    ) -> Result<Vec<String>, DatabaseError> {
         let mut out = Vec::with_capacity(values.len());
         for value in values {
             let mut bound = |value: u64| -> Result<(), DatabaseError> {
@@ -207,7 +224,7 @@ impl Condition {
 }
 
 /// Every one of `conditions`; true when there is none.
-fn all(conditions: Vec<String>) -> String {
+pub(crate) fn all(conditions: Vec<String>) -> String {
     if conditions.is_empty() {
         "1".to_owned()
     } else {
@@ -216,7 +233,7 @@ fn all(conditions: Vec<String>) -> String {
 }
 
 /// One of `conditions`; false when there is none.
-fn any(conditions: Vec<String>) -> String {
+pub(crate) fn any(conditions: Vec<String>) -> String {
     if conditions.is_empty() {
         "0".to_owned()
     } else {
