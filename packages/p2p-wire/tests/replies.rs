@@ -23,7 +23,7 @@ use heartwood_crypto::{BlockId, TransactionId};
 use heartwood_p2p_wire::codecs::{blocks, peer, transactions};
 use heartwood_p2p_wire::errors::{DecodeError, ReplyRefused};
 use heartwood_p2p_wire::replies::{self, ROUTES};
-use heartwood_p2p_wire::requests::{ClientRequest, CommonBlockIds, Headers};
+use heartwood_p2p_wire::requests::{BlockLimit, ClientRequest, CommonBlockIds, Headers};
 use heartwood_p2p_wire::{RouteId, routes};
 use serde_json::{Value, json};
 
@@ -160,6 +160,7 @@ fn client_request(route: &str, payload: &Value) -> Option<(ClientRequest, Header
         )
     };
     let height = |key: &str| NonZeroU32::new(u32::try_from(payload.get(key)?.as_u64()?).ok()?);
+    let limit = |key: &str| BlockLimit::new(u32::try_from(payload.get(key)?.as_u64()?).ok()?);
     let allowed = |keys: &[&str]| {
         payload
             .keys()
@@ -185,7 +186,7 @@ fn client_request(route: &str, payload: &Value) -> Option<(ClientRequest, Header
             }
             ClientRequest::GetBlocks {
                 last_block_height: height("lastBlockHeight")?,
-                block_limit: height("blockLimit")?,
+                block_limit: limit("blockLimit")?,
                 headers_only,
             }
         }
@@ -286,5 +287,27 @@ fn the_requests_and_replies_match_the_reference() {
     assert!(records.iter().any(|r| r["op"] == "p2p.validateRequest"));
     for record in &records {
         check(record);
+    }
+}
+
+#[test]
+fn a_getblocks_limit_is_1_to_400() {
+    assert_eq!(BlockLimit::MAX, 400);
+    for refused in [0, 401, 1_000, u32::MAX] {
+        assert_eq!(BlockLimit::new(refused), None, "{refused}");
+    }
+    for held in [1, 2, 399, 400] {
+        assert_eq!(BlockLimit::new(held).map(BlockLimit::get), Some(held));
+    }
+    // The limit is written as it is held, at both edges.
+    for held in [1, 400] {
+        let request = ClientRequest::GetBlocks {
+            last_block_height: NonZeroU32::MIN,
+            block_limit: BlockLimit::new(held).unwrap(),
+            headers_only: false,
+        };
+        let bytes = request.encode(&Headers::new("4.3.1", 4000).unwrap());
+        let written = blocks::get_blocks_decode_request(&bytes).unwrap();
+        assert_eq!(written.block_limit, Some(held));
     }
 }
