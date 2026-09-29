@@ -194,6 +194,16 @@
   "query": "id=,"
  },
  {
+  "name": "votes/criteria/block-height-beyond-integer",
+  "path": "/api/votes",
+  "query": "blockHeight.to=2147483648"
+ },
+ {
+  "name": "votes/criteria/sequence-beyond-smallint-raw",
+  "path": "/api/votes",
+  "query": "sequence.to=32768&transform=false"
+ },
+ {
   "name": "votes/order/timestamp:desc,sequence:desc",
   "path": "/api/votes",
   "query": "orderBy=timestamp:desc,sequence:desc"

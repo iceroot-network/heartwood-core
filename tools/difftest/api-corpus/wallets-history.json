@@ -166,6 +166,21 @@
   "query": "id=,"
  },
  {
+  "name": "wallets-history/sent/criteria/timestamp-beyond-integer",
+  "path": "/api/wallets/${txSender}/transactions/sent",
+  "query": "timestamp.to=2147483648"
+ },
+ {
+  "name": "wallets-history/received/criteria/type-list-beyond-smallint",
+  "path": "/api/wallets/${txSender}/transactions/received",
+  "query": "type=0,32768"
+ },
+ {
+  "name": "wallets-history/votes/criteria/block-height-beyond-integer",
+  "path": "/api/wallets/${voter}/votes",
+  "query": "blockHeight.to=2147483648"
+ },
+ {
   "name": "wallets-history/sent/order/timestamp:desc,sequence:desc",
   "path": "/api/wallets/${txSender}/transactions/sent",
   "query": "orderBy=timestamp:desc,sequence:desc"
