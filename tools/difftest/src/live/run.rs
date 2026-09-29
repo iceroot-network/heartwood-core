@@ -348,10 +348,10 @@ impl Step {
         self.record.get("startHeight").and_then(Value::as_u64)
     }
 
-    /// A time the step's record holds under `key` (`end`, `contactNode3At`, ...), in
-    /// milliseconds since the Unix epoch.
+    /// A time the step's record holds under `key` (`end`, `contactNode3At`, ...) in its record or
+    /// in its `detail` object, in milliseconds since the Unix epoch.
     pub fn time(&self, key: &str) -> Option<i64> {
-        text(&self.record, key).and_then(|t| parse_time(&t))
+        self.text(key).and_then(|t| parse_time(&t))
     }
 
     /// A number the step's record holds under `key`, in its record or in its `detail` object.
