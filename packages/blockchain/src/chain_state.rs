@@ -118,6 +118,19 @@ impl ChainState {
         self.last_downloaded = self.last_block().map(|block| ChainLink::of(block));
     }
 
+    /// Record another receipt of the block `id` at `height` at `now_ms`, when it is the pinged
+    /// block; whether it was, as the reference's `pingBlock` answers.
+    pub fn ping_block(&mut self, id: &BlockId, height: u32, now_ms: i64) -> bool {
+        match &mut self.ping {
+            Some(ping) if ping.ping.id == *id && ping.ping.height == height => {
+                ping.count = ping.count.saturating_add(1);
+                ping.ping.last_ms = now_ms;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Start pinging `block`, received at `now_ms`, as the reference's `pushPingBlock` does; the
     /// previous ping, which the reference logs, is returned.
     pub fn push_ping_block(
@@ -143,5 +156,26 @@ impl ChainState {
     /// Forget the forked block.
     pub fn clear_forked_block(&mut self) {
         self.forked_block = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_pinged_block_is_pinged_again() {
+        let mut chain = ChainState::default();
+        let (id, other) = (BlockId::from_array([1; 32]), BlockId::from_array([2; 32]));
+        assert!(!chain.ping_block(&id, 5, 1_000));
+        chain.push_ping_block(id, 5, false, 1_000);
+        assert!(!chain.ping_block(&other, 5, 1_200));
+        assert!(!chain.ping_block(&id, 6, 1_200));
+        assert!(chain.ping_block(&id, 5, 1_300));
+        let ping = chain.ping.unwrap();
+        assert_eq!(
+            (ping.count, ping.ping.first_ms, ping.ping.last_ms),
+            (2, 1_000, 1_300)
+        );
     }
 }

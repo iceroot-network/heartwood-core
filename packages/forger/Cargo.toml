@@ -1,0 +1,53 @@
+[package]
+name = "heartwood-forger"
+description = "The forger of Heartwood Core: the slot loop its relay drives, block signing through a persisted signing record, the key file, and the status attestations, over nes sessions to its relays"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Test seam: the crash test's `forger-child` binary, the kernel's manual clock and the mock peer.
+# Only test code enables it (the harness and tests); a release build never does.
+difftest = ["heartwood-kernel/difftest", "heartwood-p2p/difftest"]
+
+# The forger reaches its relays through the nes client session of heartwood-p2p, built without its
+# `node` feature, so it can call no relay code; it links no state, transaction, pool, store, chain
+# or API crate. It signs blocks with its configured aux (`forger-aux`) and status attestations
+# through the wire crate. Every relay answer is untrusted input.
+[dependencies]
+heartwood-crypto = { workspace = true, features = ["forger-aux"] }
+heartwood-kernel.workspace = true
+# A path dependency, so that the workspace's entry (with the default `node`) is not inherited.
+heartwood-p2p = { path = "../p2p", default-features = false }
+heartwood-p2p-wire.workspace = true
+indexmap.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
+zeroize.workspace = true
+
+# The tests run the loop on tokio's paused clock and the kernel's manual clock, against a scripted
+# relay over the mock peer, with keys derived from the committed devnet's seed, and read the log
+# lines through the logger's line layer.
+[dev-dependencies]
+heartwood-crypto = { workspace = true, features = ["fixed-aux", "genesis"] }
+heartwood-kernel = { workspace = true, features = ["difftest"] }
+heartwood-logger.workspace = true
+heartwood-p2p = { path = "../p2p", default-features = false, features = ["difftest"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "test-util", "time"] }
+tracing-subscriber.workspace = true
+
+# The crash test's child: a forger over a configuration directory against the mock relay, killed
+# at random moments by the harness.
+[[bin]]
+name = "forger-child"
+path = "src/bin/forger-child.rs"
+required-features = ["difftest"]
+test = false
+doc = false

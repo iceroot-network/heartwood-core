@@ -36,7 +36,7 @@ fn heights(outcome: &JobOutcome, chain: &Chain) -> Vec<u32> {
 }
 
 fn broadcast(chain: &Chain, height: u32) -> JobEnd {
-    JobEnd::Broadcast(Arc::new(chain.block(height).clone()))
+    JobEnd::Broadcast(Arc::new(chain.block(height).clone()), false)
 }
 
 #[tokio::test]
@@ -165,6 +165,30 @@ async fn a_block_in_a_future_slot_ends_the_loop() {
     let outcome = node.run(&chain, 2, 6).await;
     assert_eq!(heights(&outcome, &chain), [2, 3]);
     assert_eq!(outcome.end, broadcast(&chain, 3));
+    // An honest block ahead of our clock names no peer.
+    assert_eq!(outcome.faulty, None);
+    node.stop().await.unwrap();
+}
+
+/// A block discarded for its future slot is judged without the clock: the peer that served one
+/// no delegate forged is named, as for a block the processor refuses, so that it is not asked
+/// again and again for a block that is never processed.
+#[tokio::test]
+async fn a_block_in_a_future_slot_that_no_delegate_forged_names_its_peer() {
+    let chain = Chain::load();
+    let node = node_at(&chain, "jobs-future-slot-fault", 1, &[]).await;
+    node.clock
+        .set(at_epoch_seconds(&chain, chain.block(3).header().timestamp));
+    let mut junk = node.enqueued(job(&chain, 2, 6));
+    let signature = junk.blocks[2].block.header.header.block_signature.as_mut();
+    let signature = signature.expect("a signature");
+    let flipped = if signature.starts_with('0') { "1" } else { "0" };
+    signature.replace_range(..1, flipped);
+    junk.blocks[2].block.ip = IpAddr::from([192, 0, 2, 9]);
+    let outcome = node.handle.job(junk).await.unwrap();
+    assert_eq!(heights(&outcome, &chain), [2, 3]);
+    assert_eq!(outcome.end, broadcast(&chain, 3));
+    assert_eq!(outcome.faulty, Some(IpAddr::from([192, 0, 2, 9])));
     node.stop().await.unwrap();
 }
 
@@ -312,6 +336,7 @@ async fn queue_with(name: &str, held: &[u32], clear: Option<u32>, stop: Option<u
                         committed: height,
                         clear_queue: false,
                         end,
+                        faulty: None,
                     };
                     let _ = answer.send(outcome);
                 }
@@ -498,6 +523,8 @@ async fn a_block_enqueued_without_its_delegate_name_is_refused() {
     );
     assert_eq!(heights(&outcome, &chain), [2, 3, 4]);
     assert_eq!((outcome.committed, outcome.end), (2, JobEnd::Clear));
+    // An honest peer serves such a block: it is no fault of the peer.
+    assert_eq!(outcome.faulty, None);
     // Downloaded again, it is named and accepted.
     assert_eq!(node.run(&chain, 4, 5).await.committed, 2);
     node.stop().await.unwrap();
@@ -516,5 +543,41 @@ async fn a_rebuild_failure_through_the_block_processor() {
     let outcome = node.handle.job(node.enqueued(broken)).await.unwrap();
     assert_eq!(heights(&outcome, &chain), [2, 3]);
     assert_eq!((outcome.committed, outcome.end), (2, broadcast(&chain, 3)));
+    // No honest peer serves a block that cannot be rebuilt: the peer is named.
+    assert_eq!(outcome.faulty, Some(IpAddr::from([192, 0, 2, 1])));
+    node.stop().await.unwrap();
+}
+
+/// A block whose signature fails, through the block processor: the job names the peer that
+/// served it, so that the network records the fault and asks another peer.
+#[tokio::test]
+#[ignore = "integration"]
+async fn a_block_no_honest_peer_serves_names_its_peer() {
+    let chain = Chain::load();
+    let dir = scratch("jobs-processor-fault");
+    let scripted = Scripted::through(Arc::new(BlockProcessor));
+    let node = TestNode::start(&chain, &dir, scripted, pool_options(&dir, 2_700));
+    let mut broken = node.enqueued(job(&chain, 2, 6));
+    let signature = broken.blocks[2]
+        .block
+        .header
+        .header
+        .block_signature
+        .as_mut();
+    let signature = signature.expect("a signature");
+    let flipped = if signature.starts_with('0') { "1" } else { "0" };
+    signature.replace_range(..1, flipped);
+    broken.blocks[2].block.ip = IpAddr::from([192, 0, 2, 9]);
+    let outcome = node.handle.job(broken).await.unwrap();
+    let results: Vec<_> = outcome.results.iter().map(|(_, result)| *result).collect();
+    assert_eq!(
+        results,
+        [ACCEPTED, ACCEPTED, BlockProcessorResult::Rejected]
+    );
+    assert_eq!((outcome.committed, outcome.end), (2, JobEnd::Clear));
+    assert_eq!(outcome.faulty, Some(IpAddr::from([192, 0, 2, 9])));
+    // The chain goes on from the good copy of the block.
+    let outcome = node.run(&chain, 4, 6).await;
+    assert_eq!((outcome.committed, outcome.faulty), (3, None));
     node.stop().await.unwrap();
 }

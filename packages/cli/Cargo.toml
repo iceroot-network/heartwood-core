@@ -1,0 +1,44 @@
+[package]
+name = "heartwood-cli"
+description = "The commands of Heartwood Core: the colon aliases, instances, the built-in supervisor and the role commands, network generate, and the local devnet library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["devnet"]
+# The local devnet library (`heartwood devnet ...`), on by default.
+devnet = []
+# Test seam: the `test-child` binary, a child process whose behaviour the supervisor's tests
+# script. Only test code enables it; a release build never does.
+test-child = []
+
+# The commands depend on the crypto crate (the chain definition that `network generate` writes)
+# and the kernel (paths, `.env`, the clock) only, so they never link a node component. Every child
+# process gets an explicit argv, never a shell string; nix gives the supervisor its signals.
+[dependencies]
+clap.workspace = true
+heartwood-crypto = { workspace = true, features = ["genesis"] }
+heartwood-kernel.workspace = true
+indexmap.workspace = true
+nix.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+# The tests drive time with the kernel's manual clock.
+[dev-dependencies]
+heartwood-kernel = { workspace = true, features = ["difftest"] }
+
+# The supervisor's tests run this child: it exits, ignores SIGINT or runs, as its arguments say.
+[[bin]]
+name = "test-child"
+path = "src/bin/test-child.rs"
+required-features = ["test-child"]
+test = false
+doc = false

@@ -192,6 +192,9 @@ async fn the_last_error_is_kept_per_ip() {
     PeerTransport::forget_error(&connector, ip(1));
     assert_eq!(connector.last_error(ip(1)), None);
     assert_eq!(connector.last_error(ip(2)), Some("TypeError"));
+    // A disconnected peer's error goes with it: failed candidates left one each, for good.
+    PeerTransport::disconnect(&connector, ip(2));
+    assert_eq!(connector.last_error(ip(2)), None);
 }
 
 #[tokio::test(start_paused = true)]

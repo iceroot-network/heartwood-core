@@ -14,7 +14,7 @@
 
 use std::io::Read;
 
-use axum::body::{Body, to_bytes};
+use axum::body::{Body, Bytes, to_bytes};
 use axum::http::HeaderMap;
 use axum::http::header::{self, HeaderName};
 use flate2::bufread::GzDecoder;
@@ -27,8 +27,16 @@ use crate::errors::ApiError;
 /// The largest request body, hapi's default.
 const MAX_BODY: usize = 1_048_576;
 
-/// The payload of a request with `headers` and `body`.
-pub(super) async fn read(headers: &HeaderMap, body: Body) -> Result<Value, ApiError> {
+/// A body read up to the limit, with the `content-encoding` and the media type that parse it:
+/// what a request holds while it waits for a place to be parsed and served.
+pub(super) struct Raw {
+    bytes: Bytes,
+    encoding: Option<String>,
+    mime: String,
+}
+
+/// The body of a request with `headers` and `body`, checked and read as hapi reads it.
+pub(super) async fn bytes(headers: &HeaderMap, body: Body) -> Result<Raw, ApiError> {
     let refused = |message: &str| ApiError::unprocessable(message);
     let text_of = |name: HeaderName| node_header(headers, &name);
     let declared = text_of(header::CONTENT_LENGTH).and_then(|text| text.trim().parse::<u64>().ok());
@@ -42,9 +50,30 @@ pub(super) async fn read(headers: &HeaderMap, body: Body) -> Result<Value, ApiEr
         return Err(unsupported());
     }
     let bytes = to_bytes(body, MAX_BODY).await.map_err(|_| too_large())?;
-    let bytes = match text_of(header::CONTENT_ENCODING).as_deref() {
-        Some("gzip") => gunzip(&bytes)?,
-        Some("deflate") => inflate(ZlibDecoder::new(&bytes[..]), Vec::new())?,
+    Ok(Raw {
+        bytes,
+        encoding: text_of(header::CONTENT_ENCODING),
+        mime,
+    })
+}
+
+/// The payload of a body: decompressed and parsed on a blocking thread, since a body of many gzip
+/// members costs CPU time that would hold one of the API runtime's workers, and its accept loop
+/// with it.
+pub(super) async fn parse(raw: Raw) -> Result<Value, ApiError> {
+    let work = move || decode(&raw.bytes, raw.encoding.as_deref(), &raw.mime);
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| ApiError::internal())?
+}
+
+/// The payload of `bytes` with the `content-encoding` `encoding` and the media type `mime`.
+fn decode(bytes: &[u8], encoding: Option<&str>, mime: &str) -> Result<Value, ApiError> {
+    let refused = |message: &str| ApiError::unprocessable(message);
+    let unsupported = || refused("Unsupported Media Type");
+    let bytes = match encoding {
+        Some("gzip") => gunzip(bytes)?,
+        Some("deflate") => inflate(ZlibDecoder::new(bytes), Vec::new())?,
         _ => bytes.to_vec(),
     };
     // The body is read as UTF-8 text, a sequence that is not UTF-8 becoming U+FFFD.
@@ -54,7 +83,7 @@ pub(super) async fn read(headers: &HeaderMap, body: Body) -> Result<Value, ApiEr
     let json = json.and_then(|subtype| subtype.strip_suffix("json"));
     let json =
         json.is_some_and(|middle| middle.is_empty() || middle.len() > 1 && middle.ends_with('+'));
-    match mime.as_str() {
+    match mime {
         _ if (json || mime == "application/octet-stream") && bytes.is_empty() => Ok(Value::Null),
         _ if json => match serde_json::from_str::<Value>(&text) {
             Ok(value) if !names_proto(&value) => Ok(value),

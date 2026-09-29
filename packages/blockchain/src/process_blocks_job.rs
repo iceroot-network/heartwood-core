@@ -18,7 +18,10 @@
 //!    block's rows written right after its apply. The stored transaction ids that the processor
 //!    checks are read once, for all the job's transactions, before the chunk opens.
 //! 5. The end: `Broadcast` when the last result was accepted or discarded but can be broadcast,
-//!    `Fork` when a block was marked as forked, else `Clear` ([`crate::work::JobEnd`]).
+//!    `Fork` when a block was marked as forked, else `Clear` ([`crate::work::JobEnd`]). A block
+//!    that failed its rebuild, that the processor refused for a fault, or that was discarded for
+//!    its future slot when no delegate forged it ([`crate::processor::no_delegate_forged`]), names
+//!    the peer that served it ([`JobOutcome::faulty`]); the reference names none.
 //!
 //! After the commit the node publishes the new snapshot and its events; never between blocks. A
 //! failed write or commit is fatal (the node stops; its next start restores the committed tip),
@@ -41,7 +44,7 @@ use crate::commit::ChainStore;
 use crate::errors::{NodeError, StoreError};
 use crate::events::CommitObserver;
 use crate::pool_task::PoolTask;
-use crate::processor::{BlockProcess, BlockProcessorResult, ForgedIds, ProcessContext};
+use crate::processor::{self, BlockProcess, BlockProcessorResult, ForgedIds, ProcessContext};
 use crate::work::{IncomingBlock, Job, JobEnd, JobOutcome};
 
 /// What a job reads and changes on the node thread.
@@ -80,19 +83,20 @@ impl ForgedIds for BTreeSet<TransactionId> {
 /// corrupted state, are fatal: the node stops, and its next start restores the committed tip.
 pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeError> {
     use BlockProcessorResult::{Accepted, Corrupted, DiscardedButCanBeBroadcasted, Rollback};
-    let outcome = |results, committed, clear_queue, end| JobOutcome {
+    let outcome = |results, committed, clear_queue, end, faulty| JobOutcome {
         results,
         committed,
         clear_queue,
         end,
+        faulty,
     };
-    let dropped = Ok(outcome(Vec::new(), 0, false, JobEnd::Dropped));
+    let nothing = |end| Ok(outcome(Vec::new(), 0, false, end, None));
     let (Some(first), Some(last)) = (job.blocks.first(), job.blocks.last()) else {
-        return dropped;
+        return nothing(JobEnd::Dropped);
     };
     let on = ctx.state.height();
     if first.height() <= on {
-        return dropped;
+        return nothing(JobEnd::Dropped);
     }
     let locale = |height: u32| to_locale_integer(height.into());
     let (from, to) = (locale(first.height()), locale(last.height()));
@@ -100,7 +104,7 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
     debug!("Processing chunk of blocks {span}");
     let tip = ChainLink::of(ctx.state.last_block());
     if is_block_chained(&tip, &link(first), ctx.milestones).is_err() {
-        return Ok(outcome(Vec::new(), 0, false, JobEnd::ForkCheck(job.blocks)));
+        return nothing(JobEnd::ForkCheck(job.blocks));
     }
     let ids = job
         .blocks
@@ -111,12 +115,18 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
     let forged: BTreeSet<TransactionId> = forged.map_err(StoreError::from)?.into_iter().collect();
     let mut chunk = ctx.store.chunk()?;
     let (mut accepted, mut results, mut clear_queue) = (Vec::new(), Vec::new(), false);
-    let (mut last_result, mut last_processed, mut fork) = (None, None, None);
+    let (mut last_result, mut last_processed, mut fork, mut faulty) = (None, None, None, None);
     for incoming in &job.blocks {
         let timestamp = incoming.block.header.header.timestamp.unwrap_or(0);
         if slot(ctx.milestones, timestamp.into()) > current_slot(ctx.milestones, ctx.clock) {
             let height = locale(incoming.height());
             error!("Discarded block {height} because it takes a future slot :crystal_ball:");
+            // Judged without the clock: a block no delegate forged names its peer, as one the
+            // processor refuses does, or the peer would be asked for it again and again.
+            let junk = to_block(&incoming.block, ctx.milestones).map_or(true, |b| {
+                processor::no_delegate_forged(ctx.state, ctx.milestones, &b)
+            });
+            faulty = junk.then_some(incoming.block.ip);
             break;
         }
         let block = match to_block(&incoming.block, ctx.milestones) {
@@ -124,6 +134,7 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
             Err(why) => {
                 error!("Failed to process chunk of block chunk of blocks {span}");
                 error!("{why}");
+                faulty = Some(incoming.block.ip);
                 break;
             }
         };
@@ -152,7 +163,7 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
         clear_queue |= processed.unchained.is_some();
         results.push((*block.id(), processed.result));
         last_result = Some(processed.result);
-        last_processed = Some(Arc::clone(&block));
+        last_processed = Some((Arc::clone(&block), incoming.from_forger));
         match (processed.result, processed.applied) {
             (Accepted, Some(applied)) => {
                 chunk.applied(ctx.state, &block, &applied, ctx.milestones)?;
@@ -168,6 +179,7 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
                 });
             }
             (result, _) => {
+                faulty = processed.fault.then_some(incoming.block.ip);
                 if result == Rollback {
                     lock(ctx.chain).last_downloaded = Some(ChainLink::of(&block));
                     fork = Some(block);
@@ -187,12 +199,12 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
     }
     let broadcast = matches!(last_result, Some(Accepted | DiscardedButCanBeBroadcasted));
     let end = match (last_processed, fork) {
-        (Some(block), _) if broadcast => JobEnd::Broadcast(block),
+        (Some((block, from_forger)), _) if broadcast => JobEnd::Broadcast(block, from_forger),
         (_, Some(block)) => JobEnd::Fork(block),
         _ => JobEnd::Clear,
     };
     let committed = u32::try_from(accepted.len()).unwrap_or(u32::MAX);
-    Ok(outcome(results, committed, clear_queue, end))
+    Ok(outcome(results, committed, clear_queue, end, faulty))
 }
 
 /// The chain link of a downloaded block's header, for the chaining test: its ids as Node reads

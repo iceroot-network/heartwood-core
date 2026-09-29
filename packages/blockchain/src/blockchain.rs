@@ -1,7 +1,8 @@
 //! The blockchain service: the reference's `Blockchain`, which drives the machine, the job queue
 //! and the network around the node thread.
 //!
-//! - Incoming blocks ([`Blockchain::handle_incoming_block`]): a block in a future slot is
+//! - Incoming blocks ([`Blockchain::handle_incoming_block`]): a block of the node's own forger
+//!   received too late is discarded ([`crate::forger_blocks`]); a block in a future slot is
 //!   discarded; the block is pinged; when started, `NEWBLOCK` and the block enqueued; before that,
 //!   "Block disregarded because blockchain is not ready".
 //! - Enqueueing ([`Blockchain::enqueue_blocks`], [`cut_jobs`]): every block of the call is named
@@ -236,6 +237,9 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
     /// it is enqueued; `fire_event` is false for the idle poll's blocks.
     pub async fn handle_incoming_block(self: &Arc<Self>, block: IncomingBlock, fire_event: bool) {
         let _ = fire_event;
+        if block.from_forger && self.received_too_late(&block) {
+            return;
+        }
         let block_time = self.parts.milestones.at(1).block_time();
         let timestamp = i64::from(block.block.header.header.timestamp.unwrap_or(0));
         if slots::slot_number(timestamp, block_time) > slots::slot_number(self.time(), block_time) {
@@ -391,6 +395,24 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
         self.status.subscribe()
     }
 
+    /// Whether the job queue runs a job now.
+    pub fn queue_running(&self) -> bool {
+        self.queue.is_running()
+    }
+
+    /// Another receipt of the pinged block, when it is the block `id` at `height` (the
+    /// reference's `pingBlock`); whether it was.
+    pub fn ping_block(&self, id: &BlockId, height: u32) -> bool {
+        let now = self.parts.clock.now_ms();
+        self.chain().ping_block(id, height, now)
+    }
+
+    /// The reference's `forceWakeup`: the wake-up timer cleared, then `WAKEUP`.
+    pub fn force_wakeup(self: &Arc<Self>) {
+        self.flags().wake_up = None;
+        self.dispatch(MachineEvent::WakeUp);
+    }
+
     /// Stop: `STOP`, the idle loops and the wake-up timer ended, the queue stopped after its
     /// running job.
     pub async fn dispose(self: &Arc<Self>) {
@@ -408,14 +430,21 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
         }
     }
 
-    /// A job's end (see [`JobEnd`]), and the queue cleared when a handler asked for it.
+    /// A job's end (see [`JobEnd`]), the queue cleared when a handler asked for it, and a fault of
+    /// the peer that served a block reported to the network.
     fn job_finished(self: &Arc<Self>, outcome: JobOutcome) {
         if outcome.clear_queue {
             self.queue.clear();
         }
+        if let Some(ip) = outcome.faulty {
+            self.parts.network.refused_block(ip);
+        }
         match outcome.end {
-            JobEnd::Broadcast(block) => {
+            JobEnd::Broadcast(block, from_forger) => {
                 if self.chain().started && self.state() == MachineState::NewBlock {
+                    if from_forger && self.processed_too_late(&block) {
+                        return;
+                    }
                     let service = Arc::clone(self);
                     self.spawn(async move { service.parts.network.broadcast_block(&block).await });
                 }

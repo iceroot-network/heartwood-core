@@ -29,7 +29,9 @@ use crate::fixture::Fixture;
 use crate::oracle::OracleServer;
 use crate::report::{CaseResult, Outcome, Report};
 use crate::strategies::transactions::{TxContext, fee_cases, handler_cases};
-use crate::strategies::{exchange, fixtures, kernel, monitor, state, verifier};
+use crate::strategies::{
+    exchange, fixtures, forger_decide, forging, kernel, monitor, quorum, state, verifier,
+};
 use crate::subject::{Case, Registry};
 use crate::vectors::Expected;
 
@@ -68,11 +70,17 @@ pub enum Property {
     Exchange,
     /// The network monitor's decisions (`monitor.forkDecision`, `monitor.networkHeight`).
     Monitor,
+    /// Forging from a pool session (`forger.collateAndForge`).
+    Forging,
+    /// The network state a relay gives its forger (`quorum.analyze`).
+    Quorum,
+    /// The forger's decisions in a slot (`forger.decide`).
+    Decisions,
 }
 
 impl Property {
     /// Every property.
-    pub const ALL: [Property; 16] = [
+    pub const ALL: [Property; 19] = [
         Property::FeeFloor,
         Property::Rounds,
         Property::Slots,
@@ -89,6 +97,9 @@ impl Property {
         Property::Verifier,
         Property::Exchange,
         Property::Monitor,
+        Property::Forging,
+        Property::Quorum,
+        Property::Decisions,
     ];
 
     /// The property's name on the command line.
@@ -110,10 +121,13 @@ impl Property {
             Property::Verifier => "verifier",
             Property::Exchange => "exchange",
             Property::Monitor => "monitor",
+            Property::Forging => "forging",
+            Property::Quorum => "quorum",
+            Property::Decisions => "decisions",
         }
     }
 
-    /// The property's short name, P1 to P16, which the command line accepts too.
+    /// The property's short name (P1 to P19), which the command line accepts too.
     pub const fn number(self) -> &'static str {
         match self {
             Property::FeeFloor => "P1",
@@ -132,6 +146,9 @@ impl Property {
             Property::Verifier => "P14",
             Property::Exchange => "P15",
             Property::Monitor => "P16",
+            Property::Forging => "P17",
+            Property::Quorum => "P18",
+            Property::Decisions => "P19",
         }
     }
 }
@@ -168,6 +185,9 @@ pub struct L1Options {
     /// How often P13 must reach each reachable result of the processor and each unchained status
     /// in the reference's answers; 0 asks nothing (the counts are reported all the same).
     pub min_reach: u32,
+    /// How often P19 must reach each action and refusal of the reference's forging attempt; 0
+    /// asks nothing (the counts are reported all the same).
+    pub decision_reach: u32,
 }
 
 /// One case of a property, as the oracle takes it.
@@ -240,7 +260,32 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
         Property::Monitor => monitor::monitor_cases(context)
             .prop_map(L1Case::plain)
             .boxed(),
+        Property::Forging => forging::forging_cases(context)
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::Quorum => quorum::quorum_cases(context)
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::Decisions => forger_decide::decision_cases(context)
+            .prop_map(L1Case::plain)
+            .boxed(),
     }
+}
+
+/// The reference's action in a decision case (`decide forged`, `decide stop`, ...), a refusal
+/// with its reason (`decide refused: quorum`), and an error answer by its class.
+fn decision_outcomes(expected: &Expected, seen: &mut BTreeMap<String, usize>) {
+    let key = match expected {
+        Expected::Output(output) => {
+            let action = output["action"].as_str().unwrap_or("?");
+            match output["reason"].as_str() {
+                Some(reason) => format!("decide {action}: {reason}"),
+                None => format!("decide {action}"),
+            }
+        }
+        Expected::Error(error) => format!("decide error: {}", error.class),
+    };
+    *seen.entry(key).or_insert(0) += 1;
 }
 
 /// The outcomes of the reference in a pool session's answer, counted: each error code, an
@@ -357,15 +402,13 @@ fn processor_outcomes(expected: &Expected, seen: &mut BTreeMap<String, usize>) {
     }
 }
 
-/// The reachable processor results and unchained statuses that `seen` counts fewer than
-/// `minimum` times, each with its count.
-pub fn under_reached(seen: &BTreeMap<String, usize>, minimum: u32) -> Vec<(String, usize)> {
+/// The classes of `wanted` that `seen` counts fewer than `minimum` times, each with its count.
+fn reached_fewer(
+    seen: &BTreeMap<String, usize>,
+    minimum: u32,
+    wanted: impl Iterator<Item = String>,
+) -> Vec<(String, usize)> {
     let minimum = usize::try_from(minimum).unwrap_or(usize::MAX);
-    let wanted = (PROCESSOR_RESULTS.iter().map(|r| format!("P13 result {r}"))).chain(
-        UNCHAINED_STATUSES
-            .iter()
-            .map(|u| format!("P13 unchained {u}")),
-    );
     wanted
         .map(|class| {
             let n = seen.get(&class).copied().unwrap_or(0);
@@ -373,6 +416,46 @@ pub fn under_reached(seen: &BTreeMap<String, usize>, minimum: u32) -> Vec<(Strin
         })
         .filter(|(_, n)| *n < minimum)
         .collect()
+}
+
+/// The reachable processor results and unchained statuses that `seen` counts fewer than
+/// `minimum` times, each with its count.
+pub fn under_reached(seen: &BTreeMap<String, usize>, minimum: u32) -> Vec<(String, usize)> {
+    let wanted = (PROCESSOR_RESULTS.iter().map(|r| format!("P13 result {r}"))).chain(
+        UNCHAINED_STATUSES
+            .iter()
+            .map(|u| format!("P13 unchained {u}")),
+    );
+    reached_fewer(seen, minimum, wanted)
+}
+
+/// The outcomes of a forging decision that P19 must reach: each action of the reference's attempt
+/// (`forger-decide.js`), and each reason it refuses for. An answer that is an error is no
+/// action and is not listed.
+pub const DECISION_CLASSES: [&str; 10] = [
+    "decide stop",
+    "decide error",
+    "decide forged",
+    "decide late",
+    "decide sameSlot",
+    "decide refused: unknown",
+    "decide refused: coldStart",
+    "decide refused: belowMinimum",
+    "decide refused: alreadyForged",
+    "decide refused: quorum",
+];
+
+/// The decision actions and refusals that `seen` counts fewer than `minimum` times, each with its
+/// count.
+pub fn decisions_under_reached(
+    seen: &BTreeMap<String, usize>,
+    minimum: u32,
+) -> Vec<(String, usize)> {
+    reached_fewer(
+        seen,
+        minimum,
+        DECISION_CLASSES.iter().map(|c| (*c).to_owned()),
+    )
 }
 
 /// The error class of a refused transaction in an oracle answer (P7).
@@ -395,7 +478,9 @@ pub struct L1Run {
     /// For the handler property: how often each outcome occurred (`applied` or an error class);
     /// for the pool property, each error code of the reference's answers (`pool ERR_...`), the
     /// accepted entries and the full-pool evictions; for the processor property, each result,
-    /// unchained status and handler of the reference's answers (`P13 result ...`).
+    /// unchained status and handler of the reference's answers (`P13 result ...`); for the
+    /// decisions property, each action of the reference's attempt (`decide forged`, ...), a
+    /// refusal with its reason.
     pub classes: BTreeMap<String, usize>,
 }
 
@@ -476,6 +561,9 @@ pub fn run(
             if *property == Property::Processor {
                 processor_outcomes(&answer, &mut seen.borrow_mut());
             }
+            if *property == Property::Decisions {
+                decision_outcomes(&answer, &mut seen.borrow_mut());
+            }
             let judged = super::judge_documented(&request, &answer, registry);
             let failed = judged.is_failure();
             let message = format!("{judged:?}");
@@ -494,9 +582,12 @@ pub fn run(
         if *property == Property::Processor {
             results.extend(processor_checks(&file, &seen, options.min_reach));
         }
+        if *property == Property::Decisions {
+            results.extend(decision_checks(&file, &seen, options.decision_reach));
+        }
         if matches!(
             *property,
-            Property::Handlers | Property::Pool | Property::Processor
+            Property::Handlers | Property::Pool | Property::Processor | Property::Decisions
         ) {
             for (class, n) in seen {
                 *classes.entry(class).or_insert(0) += n;
@@ -575,6 +666,12 @@ pub fn run(
             ));
         }
     }
+    if options.properties.contains(&Property::Decisions) && options.decision_reach > 0 {
+        source.push_str(&format!(
+            "; P19 each action and refusal at least {} times",
+            options.decision_reach
+        ));
+    }
     let report = Report {
         title: super::Level::L1.title().to_string(),
         source,
@@ -618,6 +715,29 @@ fn processor_checks(file: &str, seen: &BTreeMap<String, usize>, min_reach: u32) 
         ));
     }
     out
+}
+
+/// P19's own check: each of the reference's actions and refusals must be reached `min_reach`
+/// times; nothing is checked without a minimum.
+fn decision_checks(file: &str, seen: &BTreeMap<String, usize>, min_reach: u32) -> Vec<CaseResult> {
+    if min_reach == 0 {
+        return Vec::new();
+    }
+    let under = decisions_under_reached(seen, min_reach);
+    let outcome = if under.is_empty() {
+        Outcome::Pass
+    } else {
+        let list: Vec<String> = under.iter().map(|(c, n)| format!("{c} {n}")).collect();
+        Outcome::HarnessError(format!("fewer: {}", list.join(", ")))
+    };
+    vec![CaseResult {
+        file: file.to_owned(),
+        line: 0,
+        op: Property::Decisions.number().to_owned(),
+        label: format!("P19 reached each action and refusal of the reference {min_reach} times"),
+        height: 0,
+        outcome,
+    }]
 }
 
 /// The wallet records where the two sides differ on `case`, by wallet and field, as extra
@@ -719,7 +839,10 @@ mod tests {
             Property::Processor
         );
         assert_eq!("P16".parse::<Property>().unwrap(), Property::Monitor);
-        assert!("P17".parse::<Property>().is_err());
+        assert_eq!("P17".parse::<Property>().unwrap(), Property::Forging);
+        assert_eq!("P18".parse::<Property>().unwrap(), Property::Quorum);
+        assert_eq!("P19".parse::<Property>().unwrap(), Property::Decisions);
+        assert!("P20".parse::<Property>().is_err());
     }
 
     #[test]
@@ -757,6 +880,41 @@ mod tests {
                 .iter()
                 .all(|c| !c.outcome.is_failure())
         );
+    }
+
+    #[test]
+    fn every_decision_action_and_refusal_must_reach_the_minimum() {
+        let mut seen = BTreeMap::new();
+        let output = |action: &str, reason: Option<&str>| {
+            Expected::Output(json!({"action": action, "reason": reason}))
+        };
+        for class in DECISION_CLASSES {
+            let class = class.trim_start_matches("decide ");
+            let (action, reason) = match class.split_once(": ") {
+                Some((action, reason)) => (action, Some(reason)),
+                None => (class, None),
+            };
+            decision_outcomes(&output(action, reason), &mut seen);
+        }
+        assert_eq!(DECISION_CLASSES.len(), 10);
+        let checks = decision_checks("l1/decisions", &seen, 1);
+        assert!(checks.iter().all(|c| !c.outcome.is_failure()), "{checks:?}");
+        assert_eq!(checks.len(), 1);
+        // One action reached once, in a run that asks for two.
+        let checks = decision_checks("l1/decisions", &seen, 2);
+        let Outcome::HarnessError(message) = &checks[0].outcome else {
+            panic!("{checks:?}");
+        };
+        assert!(message.contains("decide sameSlot 1"), "{message}");
+        // One refusal never reached.
+        seen.remove("decide refused: coldStart");
+        let checks = decision_checks("l1/decisions", &seen, 1);
+        let Outcome::HarnessError(message) = &checks[0].outcome else {
+            panic!("{checks:?}");
+        };
+        assert!(message.contains("decide refused: coldStart 0"), "{message}");
+        // A run without a minimum checks nothing.
+        assert!(decision_checks("l1/decisions", &seen, 0).is_empty());
     }
 
     #[test]

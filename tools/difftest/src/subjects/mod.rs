@@ -42,6 +42,18 @@
 //!
 //! The wire's reply checks and the requests the client writes are in `wire`.
 //!
+//! With the forger:
+//!
+//! - `forging`: a delegate's block from its inputs, and from a pool session's collation.
+//! - `forger_decide`: the forger's decisions in a slot, and the internal routes' bodies.
+//!
+//! With the peer-to-peer server:
+//!
+//! - `server`: the plugin chain's verdicts and the inbound rate limiter.
+//! - `relay_round`: the round and slot answers of the forger's internal routes.
+//! - `quorum`: the network state the forger reads.
+//! - `status_serve`: the served status.
+//!
 //! Most operations run under the devnet configuration the oracle was set up with, which the
 //! [`Devnet`] context carries; a case that brings its own milestone file runs under that file.
 
@@ -50,6 +62,8 @@ mod blocks;
 mod config;
 mod config_app;
 mod digest;
+mod forger_decide;
+mod forging;
 mod genesis;
 mod handlers;
 mod job;
@@ -60,8 +74,14 @@ mod peer_rules;
 mod peers;
 mod pool;
 mod processor;
+mod quorum;
+mod relay_round;
+
+pub use relay_round::masked as round_wallets_masked;
+mod server;
 mod signatures;
 mod state;
+mod status_serve;
 mod text;
 mod transactions;
 mod verifier;
@@ -82,6 +102,8 @@ use serde_json::Value;
 use crate::errors::{Error, Result};
 use crate::subject::{Case, Documented, Registry, Subject, SubjectError, Verdict};
 use crate::vectors::VectorSet;
+
+pub(crate) use kernel::escaped_line;
 
 /// The vector class whose chain definition holds the devnet's network and milestone files.
 const GENESIS_CLASS: &str = "V10-genesis";
@@ -312,6 +334,12 @@ fn all_ops() -> impl Iterator<Item = &'static (&'static str, Run)> {
         .chain(job::OPS)
         .chain(api::OPS)
         .chain(config_app::OPS)
+        .chain(forging::OPS)
+        .chain(forger_decide::OPS)
+        .chain(server::OPS)
+        .chain(relay_round::OPS)
+        .chain(quorum::OPS)
+        .chain(status_serve::OPS)
 }
 
 /// Register every operation of [`all_ops`] in `registry`.
@@ -496,8 +524,12 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
         | Documented::OnlineView
         | Documented::StrictSchema
         | Documented::UnlinkedForkSegment
+        | Documented::OwnForkSegment
         | Documented::MissedRowsOfRefusedBlock
-        | Documented::Api(_) => false,
+        | Documented::EscapedLogText
+        | Documented::Api(_)
+        | Documented::OverHeightOwnBlock
+        | Documented::RoundWallets => false,
     }
 }
 

@@ -17,10 +17,12 @@ arbitrary = { version = "1.4.2", features = ["derive"] }
 heartwood-api = { path = "../packages/api" }
 # The fixed aux (a test seam) makes the signatures, and so the ids, of the state targets repeatable.
 heartwood-crypto = { path = "../packages/crypto", features = ["fixed-aux"] }
+# The forger's attester, which reads the status offers of the status_to_sign target.
+heartwood-forger = { path = "../packages/forger" }
 # The manual clock (a test seam) drives the pool's cooldown.
 heartwood-kernel = { path = "../packages/kernel", features = ["difftest"] }
-# The client's session and download path; the test seam gives the session target its scripted
-# peer.
+# The client's session and download path, and the server's session; the test seam gives the
+# session target its scripted peer.
 heartwood-p2p = { path = "../packages/p2p", features = ["difftest"] }
 heartwood-p2p-wire = { path = "../packages/p2p-wire" }
 heartwood-pool = { path = "../packages/pool" }
@@ -114,6 +116,27 @@ bench = false
 [[bin]]
 name = "listed_block"
 path = "fuzz_targets/listed_block.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "internal_body"
+path = "fuzz_targets/internal_body.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "status_to_sign"
+path = "fuzz_targets/status_to_sign.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nes_server_session"
+path = "fuzz_targets/nes_server_session.rs"
 test = false
 doc = false
 bench = false

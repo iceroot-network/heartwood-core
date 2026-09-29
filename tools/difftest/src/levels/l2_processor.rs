@@ -18,9 +18,10 @@
 //! - [`judge_job`]: a job's outcome against the oracle's `chain.job` answer, with the documented
 //!   differences a job can show.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use heartwood_blockchain::chain_state::ChainState;
 use heartwood_blockchain::events::NoObserver;
@@ -408,8 +409,8 @@ impl From<StartProblem> for RigProblem {
 
 /// The block processor with a recorder around it: each answer, and the digest line after each
 /// accepted block with the reward read before it, in the steps the job's blocks are given.
-struct Recorder<'m> {
-    milestones: &'m Milestones,
+pub(crate) struct Recorder<'m> {
+    milestones: Cow<'m, Milestones>,
     log: Mutex<RecorderLog>,
 }
 
@@ -417,6 +418,66 @@ struct RecorderLog {
     seen: Vec<Seen>,
     steps: VecDeque<Step>,
     chain: [u8; 32],
+    /// The lines of the blocks the node reverted since they were last taken.
+    reverts: Vec<DigestLine>,
+}
+
+impl<'m> Recorder<'m> {
+    /// A recorder under `milestones` whose next line follows the chain digest `chain`, taking the
+    /// digest steps `steps` in order for the blocks it sees.
+    pub(crate) fn new(
+        milestones: Cow<'m, Milestones>,
+        chain: [u8; 32],
+        steps: &[Step],
+    ) -> Recorder<'m> {
+        Recorder {
+            milestones,
+            log: Mutex::new(RecorderLog {
+                seen: Vec::new(),
+                steps: steps.iter().copied().collect(),
+                chain,
+                reverts: Vec::new(),
+            }),
+        }
+    }
+
+    fn log(&self) -> MutexGuard<'_, RecorderLog> {
+        self.log.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The digest steps of the next blocks, in order (apply for those beyond them).
+    pub(crate) fn expect_steps(&self, steps: &[Step]) {
+        self.log().steps = steps.iter().copied().collect();
+    }
+
+    /// Every block seen since the last call, in order.
+    pub(crate) fn take_seen(&self) -> Vec<Seen> {
+        std::mem::take(&mut self.log().seen)
+    }
+
+    /// The lines of the blocks the node reverted since the last call, in order.
+    pub(crate) fn take_reverts(&self) -> Vec<DigestLine> {
+        std::mem::take(&mut self.log().reverts)
+    }
+
+    /// The node reverted its last block: the revert line of `state`, which follows the chain
+    /// digest.
+    pub(crate) fn reverted(&self, state: &State) {
+        let mut log = self.log();
+        let line =
+            digest::height_digest(state, &self.milestones, Step::Revert, &[], None, &log.chain);
+        log.chain = line.chain_digest;
+        log.reverts.push(line);
+    }
+
+    /// The recorded log's `seen`, ending the recorder.
+    fn into_seen(self) -> Vec<Seen> {
+        let log = self
+            .log
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner);
+        log.seen
+    }
 }
 
 impl BlockProcess for Recorder<'_> {
@@ -436,12 +497,18 @@ impl BlockProcess for Recorder<'_> {
             .ok()
             .map(|r| r.reward);
         let processed = BlockProcessor.process(ctx, block, name);
-        let mut log = self.log.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut log = self.log();
         let step = log.steps.pop_front().unwrap_or(Step::Apply);
         let line = (processed.result == BlockProcessorResult::Accepted).then(|| {
             let missed = processed.applied.as_ref().map_or(&[][..], |a| &a.missed);
-            let line =
-                digest::height_digest(ctx.state, self.milestones, step, missed, reward, &log.chain);
+            let line = digest::height_digest(
+                ctx.state,
+                &self.milestones,
+                step,
+                missed,
+                reward,
+                &log.chain,
+            );
             log.chain = line.chain_digest;
             line
         });
@@ -467,6 +534,26 @@ pub struct JobRig {
     network: Network,
     clock: ManualClock,
     lines: Vec<DigestLine>,
+}
+
+/// What a [`JobRig`] is made of, for a node of another composition ([`JobRig::into_parts`]).
+pub struct RigParts {
+    /// The store's and the pool's directory, removed when it drops.
+    pub scratch: ScratchDir,
+    /// The state at the tip.
+    pub state: State,
+    /// The store.
+    pub store: ChainStore,
+    /// The chain state at the tip.
+    pub chain: ChainState,
+    /// The pool.
+    pub pool: PoolTask,
+    /// The milestones.
+    pub milestones: Milestones,
+    /// The network.
+    pub network: Network,
+    /// The chain digest of the last line.
+    pub chain_digest: [u8; 32],
 }
 
 impl std::fmt::Debug for JobRig {
@@ -620,6 +707,20 @@ impl JobRig {
         &self.lines
     }
 
+    /// The rig taken apart: the node it stood for, to run in another composition.
+    pub fn into_parts(self) -> RigParts {
+        RigParts {
+            chain_digest: self.lines.last().map_or([0; 32], |l| l.chain_digest),
+            scratch: self.scratch,
+            state: self.state,
+            store: self.store,
+            chain: self.chain,
+            pool: self.pool,
+            milestones: self.milestones,
+            network: self.network,
+        }
+    }
+
     /// The scratch directory of the store and the pool.
     pub fn dir(&self) -> &std::path::Path {
         self.scratch.path()
@@ -754,14 +855,8 @@ impl JobRig {
         }
         self.chain.started = inputs.started;
         self.clock.set(inputs.now_ms);
-        let recorder = Recorder {
-            milestones: &self.milestones,
-            log: Mutex::new(RecorderLog {
-                seen: Vec::new(),
-                steps: steps.iter().copied().collect(),
-                chain: self.lines.last().map_or([0; 32], |l| l.chain_digest),
-            }),
-        };
+        let chain = self.lines.last().map_or([0; 32], |l| l.chain_digest);
+        let recorder = Recorder::new(Cow::Borrowed(&self.milestones), chain, steps);
         // The job locks the chain state block by block, as the node's shared one.
         let chain = Mutex::new(std::mem::take(&mut self.chain));
         let outcome = {
@@ -784,10 +879,7 @@ impl JobRig {
         let outcome = outcome
             .map_err(|store::Unbuilt(m)| RigProblem::Unbuilt(m))?
             .map_err(|e| RigProblem::Failed(format!("the job failed: {e}")))?;
-        let RecorderLog { seen, .. } = recorder
-            .log
-            .into_inner()
-            .unwrap_or_else(PoisonError::into_inner);
+        let seen = recorder.into_seen();
         self.lines
             .extend(seen.iter().filter_map(|s| s.line.clone()));
         match &outcome.end {
@@ -796,7 +888,7 @@ impl JobRig {
                 self.chain.reset_last_downloaded();
             }
             JobEnd::Clear | JobEnd::ForkCheck(_) => self.chain.reset_last_downloaded(),
-            JobEnd::Broadcast(_) | JobEnd::Dropped => {}
+            JobEnd::Broadcast(..) | JobEnd::Dropped => {}
         }
         let value = job_value(&JobParts {
             blocks,
@@ -852,7 +944,7 @@ pub fn job_value(parts: &JobParts<'_>) -> Value {
     out.insert("results".into(), Value::Array(results));
     out.insert("committed".into(), json!(outcome.committed));
     let (end, block) = match &outcome.end {
-        JobEnd::Broadcast(b) => ("broadcast", Some(link(b.height(), b.id()))),
+        JobEnd::Broadcast(b, _) => ("broadcast", Some(link(b.height(), b.id()))),
         JobEnd::Fork(b) => ("fork", Some(link(b.height(), b.id()))),
         JobEnd::Clear => ("clear", None),
         JobEnd::ForkCheck(_) => ("forkCheck", None),
@@ -863,7 +955,7 @@ pub fn job_value(parts: &JobParts<'_>) -> Value {
     if let Some(block) = block {
         out.insert("block".into(), block);
     }
-    let broadcast = matches!(outcome.end, JobEnd::Broadcast(_))
+    let broadcast = matches!(outcome.end, JobEnd::Broadcast(..))
         && inputs.started
         && inputs.machine_state == "newBlock";
     out.insert("broadcast".into(), json!(broadcast));
@@ -1170,7 +1262,7 @@ fn slot_time_ms(header: &BlockHeader, milestones: &Milestones) -> i64 {
 
 fn end_name(end: &JobEnd) -> &'static str {
     match end {
-        JobEnd::Broadcast(_) => "broadcast",
+        JobEnd::Broadcast(..) => "broadcast",
         JobEnd::Fork(_) => "fork",
         JobEnd::Clear => "clear",
         JobEnd::ForkCheck(_) => "forkCheck",
@@ -2150,6 +2242,7 @@ mod tests {
                 result,
                 applied: None,
                 unchained: None,
+                fault: false,
             },
             line: None,
         }
@@ -2168,7 +2261,7 @@ mod tests {
             .map(|b| JobBlock::of(b.bytes.clone()))
             .collect();
         let accepted = [seen(&decoded[0], BlockProcessorResult::Accepted)];
-        let broadcast = JobEnd::Broadcast(Arc::new(decoded[0].clone()));
+        let broadcast = JobEnd::Broadcast(Arc::new(decoded[0].clone()), false);
         let at = |block: &JobBlock| slot_time_ms(&block.parts().unwrap().0, milestones);
         assert_eq!(
             stop_of(&blocks, &accepted, &broadcast, at(&blocks[0]), milestones),
@@ -2229,6 +2322,7 @@ mod tests {
                 result: BlockProcessorResult::Rejected,
                 applied: None,
                 unchained: None,
+                fault: false,
             },
             line: None,
         };
@@ -2237,6 +2331,7 @@ mod tests {
             committed: 0,
             clear_queue: false,
             end: JobEnd::Clear,
+            faulty: None,
         };
         let chain = ChainState {
             last_downloaded: Some(ChainLink {
@@ -2272,6 +2367,7 @@ mod tests {
                 committed: 0,
                 clear_queue: false,
                 end: JobEnd::Clear,
+                faulty: None,
             },
             seen: vec![seen],
             value,
@@ -2297,6 +2393,7 @@ mod tests {
                 committed: 0,
                 clear_queue: false,
                 end: JobEnd::Clear,
+                faulty: None,
             },
             seen: vec![seen.clone()],
             value,

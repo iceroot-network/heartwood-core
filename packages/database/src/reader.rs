@@ -9,8 +9,9 @@
 //! is one connection lent to one request; the history queries are its methods
 //! ([`crate::history`]).
 
+use std::ffi::OsString;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use rusqlite::config::DbConfig;
@@ -35,6 +36,10 @@ const CHECK_EVERY: i32 = 1000;
 /// The prepared statements each connection keeps.
 const STATEMENTS: usize = 32;
 
+/// The size of the log above which [`Readers::relieve_log`] resets it: the writer truncates it to
+/// 16 MiB whenever it can reset it on its own.
+pub const LOG_LIMIT: u64 = 64 * 1024 * 1024;
+
 /// The read-only connections of the API.
 #[derive(Debug)]
 pub struct Readers {
@@ -44,6 +49,21 @@ pub struct Readers {
     rest: Vec<Mutex<ReaderConnection>>,
     /// The next connection to lend.
     next: AtomicUsize,
+    /// The connections lent, and whether a reset of the log holds new reads back.
+    lending: Mutex<Lending>,
+    /// Told when a connection comes back and when a reset of the log ends.
+    changed: Condvar,
+    /// The database's log (`-wal`).
+    log: OsString,
+    /// The statement timeout of the connections.
+    timeout: Duration,
+}
+
+/// The connections lent, and whether a reset of the log holds new reads back.
+#[derive(Debug, Default)]
+struct Lending {
+    lent: usize,
+    draining: bool,
 }
 
 /// One read-only connection and the deadline of its running statement.
@@ -58,6 +78,16 @@ pub(crate) struct ReaderConnection {
 #[derive(Debug)]
 pub struct Reader<'r> {
     connection: MutexGuard<'r, ReaderConnection>,
+    readers: &'r Readers,
+}
+
+impl Drop for Reader<'_> {
+    fn drop(&mut self) {
+        let mut lending = self.readers.lending();
+        lending.lent = lending.lent.saturating_sub(1);
+        drop(lending);
+        self.readers.changed.notify_all();
+    }
 }
 
 impl Readers {
@@ -77,16 +107,73 @@ impl Readers {
         let open = || ReaderConnection::open(settings, timeout).map(Mutex::new);
         let first = open()?;
         let rest = (1..count).map(|_| open()).collect::<Result<Vec<_>, _>>()?;
+        let mut log = settings.path.clone().into_os_string();
+        log.push("-wal");
         Ok(Readers {
             first,
             rest,
             next: AtomicUsize::new(0),
+            lending: Mutex::default(),
+            changed: Condvar::new(),
+            log,
+            timeout,
         })
     }
 
+    fn lending(&self) -> MutexGuard<'_, Lending> {
+        self.lending.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Reset the database's log when it has grown past [`LOG_LIMIT`]; a reader of the API calls
+    /// it before it asks for a connection. SQLite's automatic checkpoint resets the log only when
+    /// no read holds a snapshot older than the last commit, so reads that never pause (a client
+    /// that keeps slow listings running) kept the log growing with every commit. New reads wait
+    /// while the connections lent end (each read within two statement timeouts), then a
+    /// `TRUNCATE` checkpoint runs on one of these connections. The reference's PostgreSQL has no
+    /// such log.
+    pub fn relieve_log(&self) {
+        self.relieve_log_above(LOG_LIMIT);
+    }
+
+    fn relieve_log_above(&self, limit: u64) {
+        if std::fs::metadata(&self.log).map_or(0, |meta| meta.len()) <= limit {
+            return;
+        }
+        let mut lending = self.lending();
+        if std::mem::replace(&mut lending.draining, true) {
+            return;
+        }
+        let wait = self.timeout.saturating_mul(2);
+        let drained = self
+            .changed
+            .wait_timeout_while(lending, wait, |l| l.lent > 0);
+        let (lending, _) = drained.unwrap_or_else(PoisonError::into_inner);
+        let idle = lending.lent == 0;
+        drop(lending);
+        if idle {
+            let connection = self.first.lock().unwrap_or_else(PoisonError::into_inner);
+            let checkpoint = "PRAGMA wal_checkpoint(TRUNCATE)";
+            let done = connection.connection.query_row(checkpoint, [], |_| Ok(()));
+            if let Err(error) = done {
+                heartwood_kernel::warning!("The store's log could not be reset: {error}");
+            }
+        }
+        self.lending().draining = false;
+        self.changed.notify_all();
+    }
+
     /// Lend a connection: a free one, from the next in turn, or else the next in turn once its
-    /// request is done.
+    /// request is done. While [`Readers::relieve_log`] resets the log, it waits first (at most
+    /// four statement timeouts).
     pub fn get(&self) -> Reader<'_> {
+        let lending = self.lending();
+        let wait = self.timeout.saturating_mul(4);
+        let waited = self
+            .changed
+            .wait_timeout_while(lending, wait, |l| l.draining);
+        let (mut lending, _) = waited.unwrap_or_else(PoisonError::into_inner);
+        lending.lent = lending.lent.saturating_add(1);
+        drop(lending);
         let count = self.rest.len() + 1;
         let start = self.next.fetch_add(1, Ordering::Relaxed) % count;
         let nth = |index: usize| {
@@ -101,7 +188,10 @@ impl Readers {
             // transaction when it is dropped.
             nth(start).lock().unwrap_or_else(PoisonError::into_inner)
         });
-        Reader { connection }
+        Reader {
+            connection,
+            readers: self,
+        }
     }
 }
 
@@ -355,6 +445,57 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("readonly"), "{error}");
         drop(reader);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The log's size, 0 when there is none.
+    fn log_size(settings: &Settings) -> u64 {
+        let mut wal = settings.path.clone().into_os_string();
+        wal.push("-wal");
+        std::fs::metadata(wal).map_or(0, |meta| meta.len())
+    }
+
+    #[test]
+    fn a_log_that_reads_kept_from_resetting_is_reset_between_them() {
+        let (mut database, settings, dir) = scratch("log-reset");
+        let readers = Readers::open(&settings, 2).unwrap();
+        let write = |database: &mut Database, n: usize| {
+            let chunk = database.begin().unwrap();
+            let rows =
+                format!("INSERT INTO meta (key, value) VALUES ('k{n}', hex(randomblob(4096)))");
+            chunk.transaction.execute_batch(&rows).unwrap();
+            chunk.commit().unwrap();
+        };
+        // A read holds a snapshot across every commit: the automatic checkpoint cannot reset
+        // the log, which grows with each commit.
+        let held = readers.get();
+        held.connection()
+            .execute_batch("BEGIN; SELECT count(*) FROM blocks;")
+            .unwrap();
+        for n in 0..300 {
+            write(&mut database, n);
+        }
+        let grown = log_size(&settings);
+        assert!(grown > 2 * 1024 * 1024, "{grown}");
+        // Past the limit, new reads wait while the lent ones end, then the log is reset.
+        std::thread::scope(|scope| {
+            let relieve = scope.spawn(|| readers.relieve_log_above(1024 * 1024));
+            std::thread::sleep(Duration::from_millis(200));
+            held.connection().execute_batch("COMMIT").unwrap();
+            drop(held);
+            relieve.join().unwrap();
+        });
+        assert_eq!(log_size(&settings), 0);
+        // Reads go on.
+        let one = readers.get().timed(|connection| {
+            Ok(connection.query_row("SELECT 1", [], |row| row.get::<_, i64>(0))?)
+        });
+        assert_eq!(one, Ok(1));
+        // Under the limit nothing waits and nothing is reset.
+        write(&mut database, 300);
+        let small = log_size(&settings);
+        readers.relieve_log();
+        assert_eq!(log_size(&settings), small);
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -44,10 +44,12 @@ use crate::communicator::BlocksRequest;
 use crate::diversity::{Sampler, round_robin};
 use crate::download::DownloadedBlock;
 use crate::errors::{DownloadError, SeedError};
+use crate::node_services::AttestedKeys;
 use crate::options::P2pOptions;
 use crate::peer::{Peer, SharedPeer, Verification};
 use crate::processor::AcceptOptions;
 use crate::repository::PeerRepository;
+use crate::scoring::{self, Violation};
 use crate::seams::{PeerAcceptor, PeerClient, PeerRules};
 use crate::seeds;
 use crate::view::{BlockPing, ChainView, PeerEvents};
@@ -179,6 +181,8 @@ pub struct MonitorParts<C, A, R> {
     /// The runtime the background work runs on (the network status, the cleanse's pings, the
     /// port probes, `pingAll`), so the monitor's methods can be called from any thread.
     pub runtime: tokio::runtime::Handle,
+    /// The delegates on this node, which the fork health check counts as a local peer.
+    pub attested: Arc<dyn AttestedKeys>,
 }
 
 /// How discovery accepts a candidate.
@@ -488,7 +492,10 @@ where
     }
 
     /// The fork health check: a discovery that pings all first unless `fast`, a forced cleanse,
-    /// then [`fork_decision`] over the peers.
+    /// then [`fork_decision`] over the peers and the local peer. The local peer carries the
+    /// delegates on this node ([`MonitorParts::attested`]) with a verification at our height,
+    /// and those keys are removed from every other peer until its next attestation, as the
+    /// reference reassigns them; without such a delegate it counts nothing.
     pub async fn check_network_health(&self, fast: bool) -> NetworkStatus {
         if !fast {
             self.discover_peers(true, false, false).await;
@@ -500,12 +507,26 @@ where
         let height = chain.last_block().height();
         let active = chain.milestones().at(height).active_delegates();
         let rank_of = |key: &PublicKeyBytes| chain.delegate_by_key(key).and_then(|d| d.rank);
-        let fork_peer = |p: &mut Peer| ForkPeer {
-            active_delegates: active_count(&p.public_keys, rank_of, active),
-            height: p.height(),
-            verification: p.verification,
+        let on_this_node = self.p.attested.attested();
+        let fork_peer = |p: &mut Peer| {
+            p.public_keys.retain(|key| !on_this_node.contains(key));
+            ForkPeer {
+                active_delegates: active_count(&p.public_keys, rank_of, active),
+                height: p.height(),
+                verification: p.verification,
+            }
         };
-        let peers: Vec<ForkPeer> = self.all().iter().map(|p| p.with(fork_peer)).collect();
+        let mut peers: Vec<ForkPeer> = self.all().iter().map(|p| p.with(fork_peer)).collect();
+        let ours = Verification {
+            my_height: height,
+            their_height: height,
+            highest_common_height: height,
+        };
+        peers.push(ForkPeer {
+            active_delegates: active_count(&on_this_node, rank_of, active),
+            height: None,
+            verification: Some(ours),
+        });
         fork_decision(&peers, height, active)
     }
 
@@ -646,9 +667,15 @@ where
             return Ok(blocks);
         }
         let (mut returned, mut printed, log) = (false, String::new(), !request.silent);
+        let first = request.from_height.saturating_add(1);
         for peer in &peers {
             printed = format!("{}:{}", peer.ip(), peer.port());
             let why = match self.p.client.get_peer_blocks(peer, request).await {
+                // Blocks that do not start after the height asked are no answer (the reference
+                // takes them, and its sync then asks the same peer again).
+                Ok(blocks) if blocks.first().is_some_and(|block| block.height() != first) => {
+                    "Peer returned blocks that do not follow the height asked".to_owned()
+                }
                 Ok(blocks) if !blocks.is_empty() || last => {
                     if log {
                         debug!("Downloaded blocks {key} ({}) from {printed}", blocks.len());
@@ -833,6 +860,15 @@ where
             {
                 self.p.client.remove_peer(peer.ip());
             }
+        }
+    }
+
+    /// The peer at `ip`, if the node holds it, served a block that the node refused for a fault
+    /// no honest peer makes (the blockchain's job tells): a violation of the peer, so it is no
+    /// source of blocks while it is in its window. The reference records nothing.
+    pub fn refused_block(&self, ip: IpAddr) {
+        if let Some(peer) = self.p.repository.get(ip) {
+            scoring::record(&peer, Violation::DownloadedBlock, self.p.clock.now_ms());
         }
     }
 

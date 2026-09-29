@@ -2,7 +2,9 @@
 //!
 //! The class is read from `tests/vectors` of the crate, or from the directory in `P2P_VECTORS`
 //! (a relative path is taken from the workspace root), such as a local oracle run in
-//! `target/vectors/local`. A class that is not installed is reported and the test passes.
+//! `target/vectors/local`. The crate's directory must hold the class, where `make vectors-install`
+//! puts it, so a missing class fails the test; a directory named in the environment may lack it,
+//! and the test then says so and passes.
 
 use std::net::IpAddr;
 use std::path::Path;
@@ -18,14 +20,22 @@ use crate::rate_limiter::RateLimiter;
 
 const CLASS: &str = "V25-peer-rules";
 
-/// The class's records without its meta record, or `None` when it is not installed.
+/// The class's records without its meta record, or `None` when the directory `P2P_VECTORS` names
+/// lacks it. The crate's own directory must hold it.
 fn records() -> Option<Vec<Value>> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dir = std::env::var_os("P2P_VECTORS").map_or_else(
+    let named = std::env::var_os("P2P_VECTORS").filter(|dir| !dir.is_empty());
+    let dir = named.as_ref().map_or_else(
         || manifest.join("tests/vectors"),
         |dir| manifest.join("../..").join(dir),
     );
-    let text = std::fs::read_to_string(dir.join(format!("{CLASS}.jsonl"))).ok()?;
+    let file = dir.join(format!("{CLASS}.jsonl"));
+    let text = match std::fs::read_to_string(&file) {
+        Ok(text) => text,
+        // A directory named in the environment may lack the class; the crate's own must hold it.
+        Err(_) if named.is_some() => return None,
+        Err(error) => panic!("{}: {error} (make vectors-install)", file.display()),
+    };
     let mut lines = text
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap());
@@ -139,7 +149,7 @@ fn check(record: &Value) {
 #[test]
 fn the_peer_rules_match_the_reference() {
     let Some(records) = records() else {
-        eprintln!("{CLASS} is not installed (make vectors-install, or P2P_VECTORS=<a vector run>)");
+        eprintln!("{CLASS} is not in the directory P2P_VECTORS names");
         return;
     };
     assert!(!records.is_empty());

@@ -13,6 +13,45 @@ fn ids_paths_and_names_agree() {
 }
 
 #[test]
+fn the_reference_routes_keep_their_order_and_the_attestation_routes_follow() {
+    let reference: Vec<&str> = (RouteId::ALL.into_iter())
+        .filter(|route| route.is_reference())
+        .map(RouteId::id)
+        .collect();
+    assert_eq!(
+        reference,
+        [
+            "p2p.peer.getPeers",
+            "p2p.peer.getCommonBlocks",
+            "p2p.peer.getStatus",
+            "p2p.blocks.getBlocks",
+            "p2p.blocks.postBlock",
+            "p2p.transactions.getUnconfirmedTransactions",
+            "p2p.transactions.postTransactions",
+            "p2p.internal.emitEvent",
+            "p2p.internal.getCurrentRound",
+            "p2p.internal.getSlotNumber",
+            "p2p.internal.getNetworkState",
+            "p2p.internal.syncBlockchain",
+        ]
+    );
+    for (route, id) in [
+        (RouteId::GetStatusToSign, "p2p.internal.getStatusToSign"),
+        (
+            RouteId::PostStatusSignatures,
+            "p2p.internal.postStatusSignatures",
+        ),
+    ] {
+        assert_eq!(RouteId::from_id(id), Some(route));
+        assert!(!route.is_reference());
+        assert!(route.is_internal());
+        assert_eq!(route.kind(), CodecKind::Json);
+        assert_eq!(route.name(), id.rsplit_once('.').unwrap().1);
+    }
+    assert!(RouteId::ALL[..12].iter().all(|route| route.is_reference()));
+}
+
+#[test]
 fn every_public_route_has_two_codecs() {
     for route in RouteId::ALL {
         for direction in [Direction::Request, Direction::Response] {

@@ -15,6 +15,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::pin::{Pin, pin};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
 use std::time::Duration;
 
@@ -26,7 +27,7 @@ use tokio::time::{Instant, sleep_until};
 use crate::errors::{ProtocolError, SessionError};
 use crate::transport::{self, Dial, Reader, Received, Writer};
 
-/// The client's receive limit when no request raises it: 100 KiB.
+/// The receive limit of the connector's sessions when no request raises it: 100 KiB.
 pub const DEFAULT_MAX_PAYLOAD: usize = 100 * 1024;
 /// The request timeout until a request sets one: the connector creates its clients with 10 s.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -48,14 +49,18 @@ pub struct ConnectOptions {
     pub timeout: Duration,
     /// How many automatic reconnects follow a close, in the session's whole life.
     pub retries: u32,
+    /// The receive limit of a new connection, which every received message other than a ping
+    /// restores: the reference's `ws.maxPayload` client option.
+    pub max_payload: usize,
 }
 
 impl Default for ConnectOptions {
-    /// The connector's options: 5 s and one reconnect.
+    /// The connector's options: 5 s, one reconnect and the default receive limit.
     fn default() -> ConnectOptions {
         ConnectOptions {
             timeout: Duration::from_secs(5),
             retries: 1,
+            max_payload: DEFAULT_MAX_PAYLOAD,
         }
     }
 }
@@ -71,6 +76,8 @@ pub type ErrorHook = Arc<dyn Fn(SessionError) + Send + Sync>;
 #[derive(Debug, Clone)]
 pub struct Session {
     commands: mpsc::UnboundedSender<Command>,
+    /// Whether the WebSocket is open, as the session's task last set it.
+    ready: Arc<AtomicBool>,
 }
 
 impl Session {
@@ -90,7 +97,10 @@ impl Session {
     ) {
         let (commands, receiver) = mpsc::unbounded_channel();
         let (caller, answer) = oneshot::channel();
+        let ready = Arc::new(AtomicBool::new(false));
         let mut actor = Actor {
+            ready: Readiness(ready.clone()),
+            max_payload: options.max_payload,
             address,
             dial,
             on_error,
@@ -112,7 +122,15 @@ impl Session {
         actor.start(options.timeout);
         tokio::spawn(actor.run(receiver));
         let connected = async move { answer.await.unwrap_or(Err(SessionError::Disconnect)) };
-        (Session { commands }, connected)
+        (Session { commands, ready }, connected)
+    }
+
+    /// Whether the session's WebSocket is open: the reference's `_isReady`, whose socket's
+    /// `readyState` is `OPEN`. It holds from the upgrade on, while the hello may still be
+    /// unanswered (a request sent then follows the hello on the connection, as in the reference),
+    /// and not while the session connects, waits to reconnect, closes or has ended.
+    pub fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::Acquire)
     }
 
     /// Send a request on `route` with `payload` and wait for its response's payload. Before it is
@@ -212,7 +230,25 @@ impl Link {
     }
 }
 
+/// The session's readiness as its handles see it; false again when the task ends.
+struct Readiness(Arc<AtomicBool>);
+
+impl Readiness {
+    fn set(&self, open: bool) {
+        self.0.store(open, Ordering::Release);
+    }
+}
+
+impl Drop for Readiness {
+    fn drop(&mut self) {
+        self.set(false);
+    }
+}
+
 struct Actor {
+    ready: Readiness,
+    /// The receive limit a received message restores.
+    max_payload: usize,
     address: SocketAddr,
     dial: Dial,
     on_error: ErrorHook,
@@ -274,6 +310,7 @@ impl Actor {
                 Event::Opened(opened) => self.opened(opened),
                 Event::Received(received) => self.received(received),
             }
+            self.ready.set(matches!(self.link, Link::Open(..)));
         }
     }
 
@@ -324,7 +361,7 @@ impl Actor {
     fn opened(&mut self, opened: io::Result<(Reader, Writer)>) {
         match opened {
             Ok((reader, writer)) => {
-                self.link = Link::Open(reader, writer, DEFAULT_MAX_PAYLOAD);
+                self.link = Link::Open(reader, writer, self.max_payload);
                 let id = self.track(None);
                 self.write(&Message::client_hello(id));
             }
@@ -390,7 +427,7 @@ impl Actor {
             return self.write(&Message::ping(id));
         }
         if let Link::Open(_, _, limit) = &mut self.link {
-            *limit = DEFAULT_MAX_PAYLOAD;
+            *limit = self.max_payload;
         }
         let error = (update.status_code >= 400).then(|| {
             let text = update

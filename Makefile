@@ -14,6 +14,8 @@
 #   make pool-bench     the cost of the pool's per-sender views and of the store's commit
 #   make l2-processor   the L2 chains through the processor and the job, as a relay imports them
 #   make relay-image live live-check api-compare   the relay on a devnet, and its comparisons
+#   make fuzz-server binary-tests devnet-smoke   the server's fuzz target, the binary's tests and
+#                       a forging devnet's smoke test
 #
 # Settings for this machine (SOLAR_REPO, LOCAL_SOLAR, TOOLCHAIN_ENV, ...) go in local.mk, which is
 # git-ignored, or on the command line: make e2e SOLAR_REPO=/path/to/solar-core-ref
@@ -46,15 +48,18 @@ GENERATOR_ARG := $(if $(DEVNET_GENERATOR),--devnet-generator '$(DEVNET_GENERATOR
 # The vector classes of each crate: crate=class prefixes. vectors-install writes each crate's
 # classes, with their own MANIFEST.sha256, into packages/<crate>/tests/vectors.
 VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12,V19,V22 kernel=V09-rounds,V16,V23,V28 \
-                 logger=V20 pool=V21 state=V08,V09-shuffle,V15,V18 transactions=V17 p2p-wire=V13,V24 \
-                 p2p=V25,V26 blockchain=V27 api=V28
-# L1: cases per property, the generator's seed, the properties (P1 to P16 or their names, comma
+                 logger=V20 pool=V21 state=V08,V09-shuffle,V15,V18 transactions=V17 p2p-wire=V13,V24,V29 \
+                 p2p=V25,V26,V30,V31 blockchain=V27 api=V28 forger=V29
+# L1: cases per property, the generator's seed, the properties (P1 to P19 or their names, comma
 # separated; all when empty); L1_MIN_REACH, how often P13 must reach each reachable result of the
-# processor and each unchained status (when empty: 20 from 1,000 cases per property, else none).
+# processor and each unchained status (when empty: 20 from 1,000 cases per property, else none);
+# L1_DECISION_REACH, how often P19 must reach each action and refusal of the reference (when
+# empty: 20 from 10,000 cases, else none; its rarest classes come about once in fifty cases).
 L1_CASES      ?= 256
 L1_SEED       ?= 1
 L1_PROPERTY   ?=
 L1_MIN_REACH  ?=
+L1_DECISION_REACH ?=
 # L2: the corpus directory CORPUS/NAME; ARCHIVE the devnet archives to import (in chain order);
 # CORPUS_SEED the chain's public key-derivation seed (difftest's default when empty); DUMP heights
 # whose records the judge writes.
@@ -249,11 +254,13 @@ test-oracle: ## the oracle tests of cargo test (ping, 256 L1 cases per property)
 
 e2e: vectors vectors-local vectors-diff l0 ## end to end: generate, diff, compare (needs oracle-image first)
 
-l1: build ## L1 properties against the oracle (ORACLE_ARGS): L1_CASES, L1_SEED, L1_PROPERTY, L1_MIN_REACH
+l1: build ## L1 properties against the oracle (ORACLE_ARGS): L1_CASES, L1_SEED, L1_PROPERTY, L1_MIN_REACH, L1_DECISION_REACH
 	$(need-image)
-	$(TOOLCHAIN) && reach='$(L1_MIN_REACH)'; \
+	$(TOOLCHAIN) && reach='$(L1_MIN_REACH)'; decisions='$(L1_DECISION_REACH)'; \
 	if [ -z "$$reach" ]; then if [ $(L1_CASES) -ge 1000 ]; then reach=20; else reach=0; fi; fi; \
+	if [ -z "$$decisions" ]; then if [ $(L1_CASES) -ge 10000 ]; then decisions=20; else decisions=0; fi; fi; \
 	$(DIFFTEST) run l1 $(if $(L1_PROPERTY),--property $(L1_PROPERTY)) --min-reach $$reach \
+	    --decision-reach $$decisions \
 	    --cases $(L1_CASES) --seed $(L1_SEED) --regressions target/l1-regressions $(STRICT) $(ORACLE_ARGS)
 
 corpus-import: build ## devnet archives (ARCHIVE='dir ...', in chain order) to the corpus CORPUS/NAME
@@ -485,11 +492,13 @@ replay-p2p: build ## the reply_check and listed_block corpora through the oracle
 # ---- the relay: the processor, the runtime, the API and the node process ----
 # The live runs are orchestrated by the maintainers' devnet tooling, a separate tool that is not
 # published: LIVE_RECIPE (run, steps, archives and the API corpus at the pause, for RUN=r, h, m1 or
-# m2), RELAY_IMAGE_RECIPE (the relay's container image from a binary) and LIVE_RESULTS (the run
-# directories) are set in local.mk. The comparisons of a run are the harness's (live check, api
+# m2), DEVNET_RECIPE (the runs of a forging devnet: t, a reference devnet, and m and f, devnets of
+# this tree's release binary on loopback addresses), RELAY_IMAGE_RECIPE (the relay's container
+# image from a binary) and LIVE_RESULTS (the run directories) are set in local.mk. The comparisons of a run are the harness's (live check, api
 # compare). CHUNKS names one job cut of l2-processor (reference or 1; both when empty); LEFT and
 # RIGHT are two nodes' API URLs for a direct api-compare.
 LIVE_RECIPE        ?=
+DEVNET_RECIPE      ?=
 RELAY_IMAGE_RECIPE ?=
 LIVE_RESULTS       ?=
 RUN                ?=
@@ -497,8 +506,11 @@ CHUNKS             ?=
 LEFT               ?=
 RIGHT              ?=
 API_COMPARE_OUT    ?= target/api-compare
-need-live = $(if $(LIVE_RECIPE),,$(error set LIVE_RECIPE, the devnet tooling's live recipe, in local.mk))
-need-run = $(if $(RUN),,$(error set RUN, the live run: r, h, m1 or m2))
+# The runs of a forging devnet, which DEVNET_RECIPE runs.
+DEVNET_RUNS        := t m f
+recipe-of-run = $(if $(filter $(DEVNET_RUNS),$(RUN)),$(DEVNET_RECIPE),$(LIVE_RECIPE))
+need-live = $(if $(recipe-of-run),,$(error set $(if $(filter $(DEVNET_RUNS),$(RUN)),DEVNET_RECIPE,LIVE_RECIPE), the devnet tooling's recipe, in local.mk))
+need-run = $(if $(RUN),,$(error set RUN, the live run: r, h, m1, m2, t, m or f))
 need-results = $(if $(LIVE_RESULTS),,$(error set LIVE_RESULTS, the live runs' directory, in local.mk))
 
 l2-processor: build ## replay CORPUS/NAME through the processor and the job against the judge's lines (TO, CHUNKS)
@@ -513,15 +525,16 @@ relay-image: relay-binary ## the relay's release binary and its devnet image (RE
 	$(if $(RELAY_IMAGE_RECIPE),,$(error set RELAY_IMAGE_RECIPE, the devnet tooling's image recipe, in local.mk))
 	$(RELAY_IMAGE_RECIPE) $(CURDIR)/target/release/heartwood
 
-# A run with a Heartwood relay (every run but r) tests this tree's release binary: live builds it
-# and its image first, and live-check and api-compare build it again (nothing to do when the tree
-# is unchanged), so that a run of another build fails their check that it is this tree's relay.
-relay-of-run = $(if $(filter-out r,$(RUN)),$(1))
+# A run with a Heartwood relay (every run but r and t) tests this tree's release binary: live
+# builds it (and, for a run in Docker, its image) first, and live-check and api-compare build it
+# again (nothing to do when the tree is unchanged), so that a run of another build fails their
+# check that it is this tree's relay.
+relay-of-run = $(if $(filter-out r t,$(RUN)),$(1))
 
-live: $(call relay-of-run,relay-image) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2, LIVE_RECIPE)
-	$(need-live)
+live: $(if $(filter m f,$(RUN)),relay-binary,$(call relay-of-run,relay-image)) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2 with LIVE_RECIPE, t|m|f with DEVNET_RECIPE)
 	$(need-run)
-	$(LIVE_RECIPE) $(RUN) $(CURDIR)
+	$(need-live)
+	$(recipe-of-run) $(RUN) $(CURDIR)
 
 live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS)
 	$(need-run)
@@ -536,3 +549,124 @@ api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the
 	    $(DIFFTEST) api compare --run $(LIVE_RESULTS)/$(RUN) $(STRICT); \
 	fi
 # ---- end of the relay ----
+
+# ---- heartwood-forger and heartwood-cli: the forger, the commands and the devnet ----
+# The forger's vector class (V29) is installed beside the forger and the wire crate
+# (VECTOR_CRATES), where the crate tests read it; FORGER_VECTORS and WIRE_VECTORS name another
+# vector run for them. The forger's crash test runs the forger-child binary (feature
+# difftest: the forger's loop, relay client and signer) against a mock relay on a loopback
+# address. DIRECTION=oracle makes forge-replay rebuild a chain Heartwood
+# forged with the reference; otherwise Heartwood rebuilds a chain the reference forged.
+FORGER_FUZZ   := internal_body status_to_sign
+# The vector run whose V29 records seed the corpus of internal_body.
+FORGER_SEEDS  ?= $(VECTORS)/local
+FORGER_LOGS   ?= target/forger-fuzz
+FORGER_CHILD  := target/debug/forger-child
+FORGER_AUX    := heartwood-forger
+DIRECTION     ?=
+RELEASE_PACKAGES += heartwood-forger heartwood-cli
+SEAMS         += heartwood-forger:difftest heartwood-cli:test-child
+
+.PHONY: test-forger test-cli forger-features forge-replay forger-crash fuzz-forger
+
+check: test-forger test-cli forger-features
+
+test-forger: ## heartwood-forger alone, and heartwood-p2p without node: clippy (warnings are errors) and cargo test, without and with features
+	$(TOOLCHAIN) && cargo clippy -p heartwood-forger --all-targets --locked -- -D warnings
+	$(TOOLCHAIN) && cargo clippy -p heartwood-forger --all-targets --all-features --locked -- -D warnings
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-forger
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-forger --all-features
+	$(TOOLCHAIN) && cargo clippy -p heartwood-p2p --no-default-features --features difftest --all-targets --locked -- -D warnings
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-p2p --no-default-features --features difftest
+
+test-cli: ## heartwood-cli alone: clippy (warnings are errors) and cargo test, with no feature, the default ones and all
+	$(TOOLCHAIN) && cargo clippy -p heartwood-cli --all-targets --locked -- -D warnings
+	$(TOOLCHAIN) && cargo clippy -p heartwood-cli --all-targets --no-default-features --locked -- -D warnings
+	$(TOOLCHAIN) && cargo clippy -p heartwood-cli --all-targets --all-features --locked -- -D warnings
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-cli
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-cli --all-features
+
+forger-features: ## only FORGER_AUX enables the forger-aux feature of heartwood-crypto
+	@$(TOOLCHAIN) && set -o pipefail && enablers=$$(cargo tree --locked --workspace -e features,normal,build -i heartwood-crypto \
+	        --prefix depth | awk '/^1/ { on = /feature "forger-aux"/ } on && /^2/ { sub(/^2/, ""); print $$1 }' \
+	        | sort -u | tr '\n' ' ') || exit 1; \
+	if [ "$$enablers" != "$(FORGER_AUX) " ]; then \
+	    echo "forger-features: forger-aux is enabled by $$enablers, not by $(FORGER_AUX) only" >&2; exit 1; \
+	fi; \
+	echo "forger-features: forger-aux is enabled by $(FORGER_AUX) only"
+
+forge-replay: build ## the forge replay of CORPUS/NAME (TO=H); DIRECTION=oracle has the reference rebuild a chain Heartwood forged
+	$(need-name)
+	$(if $(filter oracle,$(DIRECTION)),$(need-image))
+	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --forge $(if $(TO),--to $(TO)) \
+	    $(if $(filter oracle,$(DIRECTION)),--oracle $(ORACLE_ARGS)) $(STRICT)
+
+forger-crash: build ## the forger's crash test: forger-child against a mock relay, killed KILLS times (KILL_SEED)
+	$(TOOLCHAIN) && cargo build --locked -p heartwood-forger --features difftest --bin forger-child
+	$(TOOLCHAIN) && $(DIFFTEST) forger crash --kills $(KILLS) --child $(FORGER_CHILD) $(if $(KILL_SEED),--seed $(KILL_SEED)) \
+	    $(STRICT)
+
+# The two targets run at the same time, FUZZ_FORK jobs each, with the wire targets' libFuzzer
+# options, on corpora of their own (git-ignored); internal_body is seeded from the V29 records of
+# FORGER_SEEDS when it exists.
+fuzz-forger: ## the forger's fuzz targets at once, FUZZ_SECONDS each (nightly and cargo-fuzz); logs in FORGER_LOGS
+	@$(TOOLCHAIN) && if [ -d '$(FORGER_SEEDS)' ]; then \
+	    node tools/forger-fuzz-seeds.js '$(FORGER_SEEDS)' $(FUZZ_CORPUS) $(WIRE_SEED_MAX); \
+	else \
+	    echo "fuzz-forger: no seeds: $(FORGER_SEEDS) does not exist"; \
+	fi
+	$(TOOLCHAIN) && for target in $(FORGER_FUZZ); do cargo +nightly fuzz build $$target || exit 1; done
+	@$(TOOLCHAIN) && mkdir -p $(FORGER_LOGS) && pids=; \
+	for target in $(FORGER_FUZZ); do \
+	    mkdir -p $(FUZZ_CORPUS)/$$target; \
+	    cargo +nightly fuzz run $$target -- $(WIRE_LIBFUZZER) > $(FORGER_LOGS)/$$target.log 2>&1 & pids="$$pids $$!"; \
+	done; \
+	echo "fuzz-forger: $(FORGER_FUZZ) running for $(FUZZ_SECONDS) s, $(FUZZ_FORK) jobs each; logs in $(FORGER_LOGS)"; \
+	fail=0; set -- $(FORGER_FUZZ); \
+	for pid in $$pids; do \
+	    target=$$1; shift; \
+	    wait $$pid || { echo "fuzz-forger: $$target stopped with a failure, see $(FORGER_LOGS)/$$target.log" >&2; fail=1; }; \
+	    last=$$(grep -E '^#[0-9]+: cov: ' $(FORGER_LOGS)/$$target.log | tail -n 1); \
+	    files=$$(find $(FUZZ_CORPUS)/$$target -type f | wc -l); \
+	    size=$$(du -sk $(FUZZ_CORPUS)/$$target | cut -f1); \
+	    echo "fuzz-forger: $$target: $${last:-no status line}; corpus $$files files, $$size KiB"; \
+	    case "$$last" in *'oom/timeout/crash: 0/0/0 '*) ;; *) fail=1 ;; esac; \
+	done; \
+	exit $$fail
+# ---- end of heartwood-forger and heartwood-cli ----
+
+# ---- the peer-to-peer server, the node's wiring and the forging devnet ----
+# The server's session target runs on a corpus of its own (git-ignored), with the wire targets'
+# libFuzzer options, seeded from the V31 requests of SERVER_SEEDS (the installed class by default)
+# when it exists. The binary's tests start relays, forgers and supervisors as processes; the
+# devnet smoke test (marked `devnet`) runs a 1-node devnet for 20 blocks, then a 5-node one for a
+# round, on the loopback addresses of DEVNET_PREFIX.
+SERVER_FUZZ   := nes_server_session
+SERVER_SEEDS  ?= packages/p2p/tests/vectors
+SERVER_LOGS   ?= target/server-fuzz
+DEVNET_PREFIX ?= 127.10.0
+
+.PHONY: fuzz-server binary-tests devnet-smoke
+
+fuzz-server: ## the server's fuzz target, FUZZ_SECONDS (nightly and cargo-fuzz); logs in SERVER_LOGS
+	@$(TOOLCHAIN) && if [ -d '$(SERVER_SEEDS)' ]; then \
+	    node tools/server-fuzz-seeds.js '$(SERVER_SEEDS)' $(FUZZ_CORPUS) $(WIRE_SEED_MAX); \
+	else \
+	    echo "fuzz-server: no seeds: $(SERVER_SEEDS) does not exist"; \
+	fi
+	$(TOOLCHAIN) && cargo +nightly fuzz build $(SERVER_FUZZ)
+	@$(TOOLCHAIN) && mkdir -p $(SERVER_LOGS) $(FUZZ_CORPUS)/$(SERVER_FUZZ) && \
+	echo "fuzz-server: $(SERVER_FUZZ) running for $(FUZZ_SECONDS) s, $(FUZZ_FORK) jobs; logs in $(SERVER_LOGS)" && \
+	fail=0; cargo +nightly fuzz run $(SERVER_FUZZ) -- $(WIRE_LIBFUZZER) > $(SERVER_LOGS)/$(SERVER_FUZZ).log 2>&1 || fail=1; \
+	last=$$(grep -E '^#[0-9]+: cov: ' $(SERVER_LOGS)/$(SERVER_FUZZ).log | tail -n 1); \
+	echo "fuzz-server: $(SERVER_FUZZ): $${last:-no status line}"; \
+	case "$$last" in *'oom/timeout/crash: 0/0/0 '*) ;; *) fail=1 ;; esac; \
+	exit $$fail
+
+binary-tests: build ## the heartwood binary's tests, the slow ones too
+	$(TOOLCHAIN) && cargo test --locked -p heartwood-core --all-features --tests -- --include-ignored
+
+devnet-smoke: build ## a forging devnet of this tree's binary: 1 node for 20 blocks, then 5 nodes for a round
+	$(TOOLCHAIN) && HEARTWOOD_DEVNET_PREFIX=$(DEVNET_PREFIX) cargo test --locked -p heartwood-core --all-features \
+	    --test devnet_smoke -- --ignored
+# ---- end of the peer-to-peer server, the node's wiring and the forging devnet ----

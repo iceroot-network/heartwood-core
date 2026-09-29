@@ -6,7 +6,10 @@
 //!    text starts with `0`, or when it is one of the host's own addresses.
 //! 3. Refused while the IP is pending, when the whitelist does not match or the blacklist does
 //!    (the kernel's globs), and when `maxSameSubnetPeers` peers already share its /24, unless it
-//!    is a seed; also refused while the peer has a protocol violation in its window.
+//!    is a seed; also refused while the peer has a protocol violation in its window. Beyond the
+//!    reference, the candidates being pinged count toward that cap, an IPv6 address is capped by
+//!    its /48, the node holds at most [`MAX_PEERS`] peers besides its seeds, and the caps are
+//!    checked again before a new peer is stored.
 //! 4. A known peer is pinged again (and its ports probed when it is stale); nothing else changes.
 //! 5. A new peer is marked pending, pinged with `verifyTimeout` as a race against a timer (a ping
 //!    that loses runs on), its ports probed, stored, logged `Accepted new peer <ip>:<port>
@@ -24,6 +27,10 @@ use crate::peer::{Peer, SharedPeer};
 use crate::repository::PeerRepository;
 use crate::seams::{PeerAcceptor, PeerClient, PeerRules};
 use crate::view::PeerEvents;
+
+/// The most peers the node holds. The reference has no bound: a relay took every peer a peer
+/// list named, each with a session and a socket.
+pub const MAX_PEERS: usize = 1_000;
 
 /// How a candidate is accepted.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -95,8 +102,12 @@ where
         if !parts.repository.try_set_pending(peer.clone()) {
             return;
         }
-        if self.ping(&peer).await {
+        let accepted = self.ping(&peer).await && {
             parts.client.ping_ports(&peer).await;
+            // The caps again, with the peers accepted meanwhile.
+            self.has_room(ip, &parts.repository.peers(), options)
+        };
+        if accepted {
             parts.repository.set(peer.clone());
             if !options.less_verbose {
                 let version = peer.with(|peer| peer.version.clone()).unwrap_or_default();
@@ -110,6 +121,26 @@ where
             parts.repository.keep_violations(&peer);
         }
         parts.repository.forget_pending(ip);
+    }
+}
+
+impl<C, R> PeerProcessor<C, R>
+where
+    C: PeerClient + 'static,
+    R: PeerRules + 'static,
+{
+    /// Whether `known` (the peers, and the candidates being pinged) leave room for `address`: a
+    /// seed always; another candidate while fewer than [`MAX_PEERS`] are known and fewer than
+    /// `maxSameSubnetPeers` share its subnet. The reference counts only the peers it holds, and
+    /// caps IPv4 addresses by /24 only; IPv6 ones are capped by /48 here, as the samples group them.
+    fn has_room(&self, address: IpAddr, known: &[SharedPeer], options: AcceptOptions) -> bool {
+        let together = |other: &&SharedPeer| match (other.ip(), address) {
+            (IpAddr::V6(a), IpAddr::V6(b)) => a.segments().get(..3) == b.segments().get(..3),
+            (a, b) => self.parts.rules.same_subnet(a, b),
+        };
+        let same_subnet = known.iter().filter(together).count();
+        options.seed
+            || (known.len() < MAX_PEERS && same_subnet < self.parts.options.max_same_subnet_peers)
     }
 }
 
@@ -140,14 +171,11 @@ where
             return false;
         };
         let repository = &parts.repository;
-        let known = repository.peers();
-        let same_subnet = known
-            .iter()
-            .filter(|known| parts.rules.same_subnet(known.ip(), address));
+        let known = [repository.peers(), repository.pending()].concat();
         !repository.has_pending(address)
             && ip::is_whitelisted(&config.whitelist, &peer.ip)
             && !ip::is_blacklisted(&config.blacklist, &peer.ip)
-            && (options.seed || same_subnet.count() < config.max_same_subnet_peers)
+            && self.has_room(address, &known, options)
             && !repository.has_violation(address, parts.clock.now_ms())
     }
 

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use crate::errors::{Error, Result};
 use crate::levels::Level;
 use crate::levels::l1::Property;
+use crate::levels::l2_forge::Direction;
 use crate::oracle::{Mode, Oracle};
 
 /// The usage text of the `difftest` binary.
@@ -29,14 +30,17 @@ Usage:
   difftest vectors diff DIR DIR   compare two oracle runs record by record (meta excluded)
   difftest run l0 DIR             compare golden vectors with Heartwood's implementations
   difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR]
-                  [--regressions DIR] [--min-reach N] [ORACLE]
-                                  random and mutated cases of the properties (P1 to P16, or
+                  [--regressions DIR] [--min-reach N] [--decision-reach N]
+                  [ORACLE]
+                                  random and mutated cases of the properties (P1 to P19, or
                                   their names; all by default), one oracle call each; 256
                                   cases and seed 1 by default; DIR is a vector set with the
                                   genesis class [packages/crypto/tests/vectors]; the minimal
                                   case of a failed property is written to --regressions;
                                   --min-reach fails P13 when the reference's answers reach a
-                                  reachable result or an unchained status fewer than N times
+                                  reachable result or an unchained status fewer than N times;
+                                  --decision-reach fails P19 when they reach an action or a
+                                  refusal fewer than N times
   difftest run l2 DIR [--synthetic] [--restart] [--memory] [--to H] [ORACLE]
                                   replay the corpus DIR in Heartwood through a new store and
                                   compare every step with the oracle's digest lines, then the
@@ -52,12 +56,21 @@ Usage:
                                   compare every line with the judge's; both job cuts unless
                                   --chunks names one; --synthetic runs the synthetic processor
                                   and fork cases instead (needs the oracle)
+  difftest run l2 DIR --forge [--oracle] [--to H] [ORACLE]
+                                  the forge replay: every block of the corpus DIR rebuilt by
+                                  Heartwood's forger from its inputs and compared with the
+                                  stored bytes; --oracle has the reference rebuild a chain
+                                  that Heartwood forged instead
   difftest run l3|l4              later levels (see `difftest levels`)
   difftest corpus import ARCHIVE... --out DIR [--seed TEXT]
                                   join the devnet tooling's archives of one chain (in order)
                                   into a corpus; TEXT is the chain's public key-derivation
                                   seed, checked against the genesis block [the devnet
                                   tooling's default seed]
+  difftest corpus from-blocks FILE... --crypto DIR --out DIR [--seed TEXT]
+                                  join a Heartwood relay's block files (one per start, in
+                                  order) into a corpus of the chain whose crypto files are in
+                                  --crypto; TEXT is the chain's public key-derivation seed
   difftest corpus judge DIR [--restarts every|rounds] [--restart-plan FILE] [--to H]
                             [--dump H,...] [--processor] [ORACLE]
                                   run the oracle's judge on the corpus: its digest lines and
@@ -88,6 +101,12 @@ Usage:
   difftest api compare --left URL --right URL [--corpus DIR] --out DIR
                                   send the route corpus to two nodes alternately, record and
                                   judge their answers [tools/difftest/api-corpus]
+  difftest forger crash [--kills N] [--seed S] [--child FILE]
+                                  the forger's crash test: the forger-child binary FILE
+                                  [target/debug/forger-child] against a mock relay, killed
+                                  with SIGKILL N times (200)
+  difftest network generate DIR   heartwood network generate against the genesis records of
+                                  the vector set DIR
   difftest levels                 the five levels and what each one arrives with
   difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--compare DIR]
                                   write the devnet chain definition of a genesis profile for a
@@ -95,9 +114,9 @@ Usage:
                                   --compare checks it against the output of the devnet
                                   generator for the same inputs
 
---strict, with any command that compares (run, oracle replay, store crash, live check, api
-compare): a case that was skipped or has no Rust implementation fails the run too, as a failed
-case does; the Makefile's gate targets pass it.
+--strict, with any command that compares (run, oracle replay, store crash, forger crash, network
+generate, live check, api compare): a case that was skipped or has no Rust implementation fails the run too, as
+a failed case does; the Makefile's gate targets pass it.
 
 ORACLE, where the reference runs (the flags win over the environment):
   --image TAG        in the oracle container                     [$DIFFTEST_IMAGE]
@@ -225,6 +244,17 @@ pub enum Command {
         /// The chain's public key-derivation seed.
         seed: String,
     },
+    /// `difftest corpus from-blocks`: a relay's block files to a corpus.
+    CorpusFromBlocks {
+        /// The block files, in start order.
+        blocks: Vec<PathBuf>,
+        /// The chain's crypto files.
+        crypto: PathBuf,
+        /// The corpus directory to write.
+        out: PathBuf,
+        /// The chain's public key-derivation seed.
+        seed: String,
+    },
     /// `difftest corpus judge`: the oracle's replay of a corpus.
     CorpusJudge(JudgeArgs),
     /// `difftest store replay`: a corpus through the store, one block per chunk.
@@ -270,6 +300,22 @@ pub enum Command {
     },
     /// `difftest api compare`: the route corpus's answers.
     ApiCompare(crate::api::ApiCompareArgs),
+    /// `difftest run l2 DIR --forge`: the forge replay.
+    ForgeReplay(ForgeArgs),
+    /// `difftest forger crash`: the forger's crash test.
+    ForgerCrash {
+        /// The number of kills.
+        kills: u32,
+        /// The seed of the kill moments.
+        seed: u64,
+        /// The `forger-child` binary.
+        child: PathBuf,
+    },
+    /// `difftest network generate`: the CLI's generator against the genesis vectors.
+    NetworkGenerate {
+        /// The vector set with the genesis class.
+        vectors: PathBuf,
+    },
 }
 
 /// The arguments of `difftest run l2 --processor`.
@@ -283,6 +329,19 @@ pub struct L2ProcessorArgs {
     pub chunks: Option<crate::levels::l2_processor::Chunks>,
     /// Run the synthetic processor and fork cases.
     pub synthetic: bool,
+    /// Replay the chain cut at this height.
+    pub to: Option<u32>,
+}
+
+/// The arguments of `difftest run l2 DIR --forge`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgeArgs {
+    /// Where the oracle runs, when one is given on the command line.
+    pub oracle: Option<OracleArgs>,
+    /// The corpus.
+    pub dir: PathBuf,
+    /// Which side rebuilds the blocks.
+    pub direction: Direction,
     /// Replay the chain cut at this height.
     pub to: Option<u32>,
 }
@@ -304,6 +363,8 @@ pub struct L1Args {
     pub regressions: Option<PathBuf>,
     /// How often P13 must reach each reachable result and unchained status (0: no check).
     pub min_reach: u32,
+    /// How often P19 must reach each action and refusal of the reference (0: no check).
+    pub decision_reach: u32,
 }
 
 /// The arguments of `difftest run l2`.
@@ -437,9 +498,14 @@ pub fn parse(args: &[String]) -> Result<Command> {
                 seed,
             })
         }
+        ["corpus", "from-blocks", rest @ ..] => parse_from_blocks(rest),
         ["corpus", "verify", dir] => Ok(Command::CorpusVerify { dir: dir.into() }),
         ["live", "check", dir] => Ok(Command::LiveCheck { dir: dir.into() }),
         ["api", "compare", rest @ ..] => parse_api_compare(rest),
+        ["forger", "crash", rest @ ..] => parse_forger_crash(rest),
+        ["network", "generate", dir] => Ok(Command::NetworkGenerate {
+            vectors: dir.into(),
+        }),
         ["corpus", "judge", dir, rest @ ..] => {
             let mut judge = JudgeArgs {
                 oracle: OracleArgs::default(),
@@ -617,6 +683,7 @@ fn parse_l1(args: &[&str]) -> Result<Command> {
         vectors: None,
         regressions: None,
         min_reach: 0,
+        decision_reach: 0,
     };
     let mut it = args.iter();
     while let Some(&flag) = it.next() {
@@ -645,6 +712,11 @@ fn parse_l1(args: &[&str]) -> Result<Command> {
                     .parse()
                     .map_err(|_| usage("--min-reach needs an unsigned integer"))?;
             }
+            "--decision-reach" => {
+                l1.decision_reach = value(flag, it.next())?
+                    .parse()
+                    .map_err(|_| usage("--decision-reach needs an unsigned integer"))?;
+            }
             _ => oracle_flag(&mut l1.oracle, flag, it.next())?,
         }
     }
@@ -654,6 +726,9 @@ fn parse_l1(args: &[&str]) -> Result<Command> {
 fn parse_l2(args: &[&str]) -> Result<Command> {
     if args.contains(&"--processor") {
         return parse_l2_processor(args);
+    }
+    if args.contains(&"--forge") {
+        return parse_forge(args);
     }
     let Some((dir, rest)) = args.split_first() else {
         return Err(usage(
@@ -760,6 +835,85 @@ fn parse_api_compare(args: &[&str]) -> Result<Command> {
     }
 }
 
+fn parse_forge(args: &[&str]) -> Result<Command> {
+    let Some((dir, rest)) = args.split_first().filter(|(dir, _)| **dir != "--forge") else {
+        return Err(usage(
+            "usage: difftest run l2 DIR --forge [--oracle] [--to H] [ORACLE]",
+        ));
+    };
+    let mut oracle = OracleArgs::default();
+    let (mut direction, mut to) = (Direction::Heartwood, None);
+    let mut it = rest.iter();
+    while let Some(&flag) = it.next() {
+        match flag {
+            "--forge" => {}
+            "--oracle" => direction = Direction::Reference,
+            "--to" => to = Some(height(flag, it.next())?),
+            "--synthetic" | "--restart" | "--memory" => {
+                return Err(usage(format!("{flag} does not go with --forge")));
+            }
+            _ => oracle_flag(&mut oracle, flag, it.next())?,
+        }
+    }
+    let given = oracle != OracleArgs::default();
+    Ok(Command::ForgeReplay(ForgeArgs {
+        oracle: given.then_some(oracle),
+        dir: (*dir).into(),
+        direction,
+        to,
+    }))
+}
+
+/// `corpus from-blocks FILE... --crypto DIR --out DIR [--seed TEXT]`.
+fn parse_from_blocks(rest: &[&str]) -> Result<Command> {
+    let (mut blocks, mut crypto, mut out) = (Vec::new(), None, None);
+    let mut seed = crate::synthetic::DEVNET_SEED.to_string();
+    let mut it = rest.iter();
+    while let Some(&arg) = it.next() {
+        match arg {
+            "--crypto" => crypto = Some(PathBuf::from(value(arg, it.next())?)),
+            "--out" => out = Some(PathBuf::from(value(arg, it.next())?)),
+            "--seed" => seed = value(arg, it.next())?.to_string(),
+            flag if flag.starts_with("--") => return Err(usage(format!("unknown option {flag}"))),
+            file => blocks.push(PathBuf::from(file)),
+        }
+    }
+    if blocks.is_empty() {
+        return Err(usage("corpus from-blocks needs at least one block file"));
+    }
+    Ok(Command::CorpusFromBlocks {
+        blocks,
+        crypto: crypto.ok_or_else(|| usage("corpus from-blocks needs --crypto DIR"))?,
+        out: out.ok_or_else(|| usage("corpus from-blocks needs --out DIR"))?,
+        seed,
+    })
+}
+
+fn parse_forger_crash(args: &[&str]) -> Result<Command> {
+    let (mut kills, mut seed) = (200, 1);
+    let mut child = PathBuf::from("target/debug/forger-child");
+    let mut it = args.iter();
+    while let Some(&flag) = it.next() {
+        match flag {
+            "--kills" => {
+                kills = value(flag, it.next())?
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|k| *k >= 1)
+                    .ok_or_else(|| usage("--kills needs a positive integer"))?;
+            }
+            "--seed" => {
+                seed = value(flag, it.next())?
+                    .parse()
+                    .map_err(|_| usage("--seed needs an unsigned integer"))?;
+            }
+            "--child" => child = PathBuf::from(value(flag, it.next())?),
+            _ => return Err(usage(format!("unknown option {flag}"))),
+        }
+    }
+    Ok(Command::ForgerCrash { kills, seed, child })
+}
+
 fn parse_genesis(args: &[&str]) -> Result<Command> {
     let (mut profile, mut seed, mut epoch, mut out) = (None, None, None, None);
     let mut force = false;
@@ -856,7 +1010,7 @@ mod tests {
         assert_eq!(
             p(
                 "run l1 --property P7 --property digest --cases 9 --seed 20260926 --solar-dir /s \
-               --min-reach 20"
+               --min-reach 20 --decision-reach 30"
             )
             .unwrap(),
             Command::RunL1(L1Args {
@@ -870,6 +1024,7 @@ mod tests {
                 vectors: None,
                 regressions: None,
                 min_reach: 20,
+                decision_reach: 30,
             })
         );
         assert_eq!(
@@ -903,6 +1058,15 @@ mod tests {
                 archives: vec!["a".into(), "b".into()],
                 out: "c".into(),
                 seed: crate::synthetic::DEVNET_SEED.into()
+            }
+        );
+        assert_eq!(
+            p("corpus from-blocks a b --crypto k --out c --seed s").unwrap(),
+            Command::CorpusFromBlocks {
+                blocks: vec!["a".into(), "b".into()],
+                crypto: "k".into(),
+                out: "c".into(),
+                seed: "s".into()
             }
         );
         assert_eq!(
@@ -1067,14 +1231,17 @@ mod tests {
             "run l0",
             "run l2",
             "run l1 --cases 0",
-            "run l1 --property P17",
+            "run l1 --property P20",
             "run l1 --min-reach x",
+            "run l1 --decision-reach x",
             "run l2 c --processor --chunks 2",
             "api compare --left a --right b",
             "api compare --run r --left a",
             "live check",
             "corpus import --out o",
             "corpus import a",
+            "corpus from-blocks a --out o",
+            "corpus from-blocks --crypto k --out o",
             "corpus judge c --dump x",
             "corpus judge c --restarts some",
             "corpus judge c --restarts every --restart-plan p",
@@ -1151,5 +1318,55 @@ mod tests {
             ..OracleArgs::default()
         };
         assert!(both.resolve(env(&[])).is_err());
+    }
+
+    #[test]
+    fn parses_the_forger_commands() {
+        assert_eq!(
+            p("run l2 corpus/c1 --forge --to 265").unwrap(),
+            Command::ForgeReplay(ForgeArgs {
+                oracle: None,
+                dir: "corpus/c1".into(),
+                direction: Direction::Heartwood,
+                to: Some(265),
+            })
+        );
+        assert_eq!(
+            p("run l2 live-m --forge --oracle --image i").unwrap(),
+            Command::ForgeReplay(ForgeArgs {
+                oracle: Some(OracleArgs {
+                    image: Some("i".into()),
+                    ..OracleArgs::default()
+                }),
+                dir: "live-m".into(),
+                direction: Direction::Reference,
+                to: None,
+            })
+        );
+        assert!(p("run l2 --forge").is_err());
+        assert!(p("run l2 c --forge --synthetic").is_err());
+        assert_eq!(
+            p("forger crash --kills 50 --seed 7 --child bin/forger-child").unwrap(),
+            Command::ForgerCrash {
+                kills: 50,
+                seed: 7,
+                child: "bin/forger-child".into(),
+            }
+        );
+        assert_eq!(
+            p("forger crash").unwrap(),
+            Command::ForgerCrash {
+                kills: 200,
+                seed: 1,
+                child: "target/debug/forger-child".into(),
+            }
+        );
+        assert!(p("forger crash --kills 0").is_err());
+        assert_eq!(
+            p("network generate packages/crypto/tests/vectors").unwrap(),
+            Command::NetworkGenerate {
+                vectors: "packages/crypto/tests/vectors".into(),
+            }
+        );
     }
 }

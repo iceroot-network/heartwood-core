@@ -34,7 +34,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use heartwood_crypto::TransactionType;
-use heartwood_crypto::blocks::Verification;
+use heartwood_crypto::blocks::{Verification, VerifyFailure};
 use heartwood_crypto::crypto::slots;
 use heartwood_crypto::utils::js;
 use heartwood_crypto::{Address, Block, Milestones, Params, Transaction, TransactionId};
@@ -155,6 +155,14 @@ pub struct Processed {
     pub applied: Option<Applied>,
     /// The unchained status, when the block did not chain to the tip.
     pub unchained: Option<UnchainedStatus>,
+    /// Whether the block was refused for a fault that no honest peer serves: a verification
+    /// failure other than the timestamp, a wrong reward, conflicting transactions, a refused apply,
+    /// and, of a block that chains to the tip, a nonce out of order, a generator that is not its
+    /// slot's delegate or a key that is no registered delegate's (the shared state decides those,
+    /// so no honest node accepted the block). A timestamp ahead of our clock, a transaction
+    /// already forged, a block that does not chain and a generator whose name the enqueueing did
+    /// not know (registered in an earlier block of the same download) are no fault.
+    pub fault: bool,
 }
 
 /// Which of the reference's handlers decided a block.
@@ -199,22 +207,26 @@ pub fn trace(ctx: &mut ProcessContext<'_>, block: &Block) -> Traced {
 /// block's delegate name: the name its generator key had when the block was enqueued, `None` when
 /// the key named no delegate then; and name the handler that decided it.
 pub fn trace_named(ctx: &mut ProcessContext<'_>, block: &Block, name: Option<&str>) -> Traced {
-    let refused = |ctx: &mut ProcessContext<'_>, refusal| Traced {
+    // A block that chains to the tip is judged on the state it was built on, so a refusal by a
+    // rule of that state is no honest node's block.
+    let tip = ChainLink::of(ctx.state.last_block());
+    let chained = is_block_chained(&tip, &ChainLink::of(block), ctx.milestones).is_ok();
+    let refused = |ctx: &mut ProcessContext<'_>, refusal, fault: bool| Traced {
         processed: Processed {
             result: handlers::refuse(ctx, block, refusal),
             applied: None,
             unchained: None,
+            fault: fault || (chained && delegate_name(ctx.state, block).is_none()),
         },
         handler: Handler::Refused(refusal),
     };
-    if !is_verified(ctx, block) {
-        return refused(ctx, Refusal::VerificationFailed);
+    if let Some(fault) = unverified(ctx, block) {
+        return refused(ctx, Refusal::VerificationFailed, fault);
     }
     if has_nonce_out_of_order(ctx.state, ctx.milestones, block) {
-        return refused(ctx, Refusal::NonceOutOfOrder);
+        return refused(ctx, Refusal::NonceOutOfOrder, chained);
     }
     let generator_valid = is_valid_generator(ctx.state, ctx.milestones, block, name);
-    let tip = ChainLink::of(ctx.state.last_block());
     if is_block_chained(&tip, &ChainLink::of(block), ctx.milestones).is_err() {
         let (result, status) = unchained::handle(ctx, block, name, generator_valid);
         return Traced {
@@ -222,21 +234,25 @@ pub fn trace_named(ctx: &mut ProcessContext<'_>, block: &Block, name: Option<&st
                 result,
                 applied: None,
                 unchained: Some(status),
+                fault: false,
             },
             handler: Handler::Unchained,
         };
     }
+    // Chained: the round's list on the shared state names the slot's delegate. Only a block whose
+    // delegate the enqueueing could not name (registered in an earlier block of the same
+    // download) is refused as an honest peer's.
     if !generator_valid {
-        return refused(ctx, Refusal::InvalidGenerator);
+        return refused(ctx, Refusal::InvalidGenerator, name.is_some());
     }
     if !is_valid_reward(ctx.state, ctx.milestones, block) {
-        return refused(ctx, Refusal::InvalidReward);
+        return refused(ctx, Refusal::InvalidReward, true);
     }
     if has_conflicting_transactions(ctx.milestones, block) {
-        return refused(ctx, Refusal::ConflictingTransactions);
+        return refused(ctx, Refusal::ConflictingTransactions, true);
     }
     if has_forged_transactions(ctx, block) {
-        return refused(ctx, Refusal::AlreadyForged);
+        return refused(ctx, Refusal::AlreadyForged, false);
     }
     Traced {
         processed: handlers::accept(ctx, block),
@@ -281,6 +297,29 @@ pub fn delegate_name<'s>(state: &'s State, block: &Block) -> Option<&'s str> {
         .map(heartwood_state::Delegate::username)
 }
 
+/// Whether `block`, judged without the clock, is one that no honest peer serves: a rule other
+/// than the timestamp fails, or it chains to the tip and its generator is not the delegate of its
+/// slot in its round's list, which the shared state decides. For a block discarded before it is
+/// processed because its slot is in the future by our clock: the reference discards it unjudged,
+/// so a peer needed no key to be asked for it again and again ([`crate::process_blocks_job`]).
+pub fn no_delegate_forged(state: &State, milestones: &Milestones, block: &Block) -> bool {
+    let header = block.header();
+    let failures = block.verify(milestones, i64::MAX).failures;
+    if failures.iter().any(|f| *f != VerifyFailure::Timestamp) {
+        return true;
+    }
+    let tip = ChainLink::of(state.last_block());
+    if is_block_chained(&tip, &ChainLink::of(block), milestones).is_err() {
+        return false;
+    }
+    let forgers = round_forgers(state, header.height, milestones);
+    let info = calculate_forging_info(i64::from(header.timestamp), header.height, milestones);
+    let forger = usize::try_from(info.current_forger)
+        .ok()
+        .and_then(|i| forgers.get(i));
+    forger.is_none_or(|forger| forger.public_key != header.generator_public_key)
+}
+
 /// The forging list of the round of `height`, as the reference's `getActiveDelegates` reads it:
 /// the current forging list for the round of the next block, else the round's saved rows
 /// shuffled for the round, which the undo record of the block that ended the round keeps. A
@@ -320,27 +359,25 @@ fn epoch_now(milestones: &Milestones, clock: &dyn Clock) -> Option<i64> {
     Some(slots::epoch_time(clock.now_ms(), epoch))
 }
 
-/// The block's verification at the current time. A time that cannot be read refuses the block:
-/// its timestamp cannot be judged.
-fn is_verified(ctx: &ProcessContext<'_>, block: &Block) -> bool {
+/// The block's verification at the current time: `None` when it passes, else whether a rule other
+/// than the timestamp failed (the timestamp is judged by our clock). A time that cannot be read
+/// refuses the block: its timestamp cannot be judged.
+fn unverified(ctx: &ProcessContext<'_>, block: &Block) -> Option<bool> {
     let verification =
         epoch_now(ctx.milestones, ctx.clock).map(|now| block.verify(ctx.milestones, now));
     if verification.as_ref().is_some_and(Verification::is_verified) {
-        return true;
+        return None;
     }
     heartwood_kernel::warning!(
         "Block {} ({}) disregarded because verification failed :scroll:",
         locale(block.height()),
         block.id()
     );
-    let failures: Vec<String> = verification
-        .map(|verification| verification.failures)
-        .unwrap_or_default()
-        .iter()
-        .map(ToString::to_string)
-        .collect();
-    heartwood_kernel::warning!("{}", failures.join("; "));
-    false
+    let failures = verification.map(|v| v.failures).unwrap_or_default();
+    let text: Vec<String> = failures.iter().map(ToString::to_string).collect();
+    heartwood_kernel::warning!("{}", text.join("; "));
+    let fault = failures.iter().any(|f| *f != VerifyFailure::Timestamp);
+    Some(fault)
 }
 
 /// Whether a sender's nonces in the block are not consecutive from its wallet's nonce.

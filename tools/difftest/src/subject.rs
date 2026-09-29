@@ -96,11 +96,23 @@ pub enum Documented {
     StrictSchema,
     /// A peer's fork segment whose fetched headers do not chain (previous id, height + 1).
     UnlinkedForkSegment,
+    /// A peer's fork segment whose first header is our own block at its height.
+    OwnForkSegment,
     /// A block refused in its apply after a gap of missed slots: the reference has written the
     /// gap's missed rows before it validated the block.
     MissedRowsOfRefusedBlock,
+    /// A log message with a character the logger escapes: a line break or another control
+    /// character, a line or paragraph separator, or a bidirectional control.
+    EscapedLogText,
     /// A served route's documented difference.
     Api(ApiDifference),
+    /// An over-height header by the forging delegate's own key: the reference verifies it as a
+    /// whole block from its header, which only an empty block passes; Heartwood verifies its
+    /// signature.
+    OverHeightOwnBlock,
+    /// The wallets of a relay's getCurrentRound answer: their fields, and the order of
+    /// `allDelegates`.
+    RoundWallets,
 }
 
 /// A served route's documented difference from the reference.
@@ -223,12 +235,40 @@ impl Documented {
                  to chain to the one before it and refuses the peer (crafted peers only; every \
                  honest segment chains)"
             }
+            Documented::OwnForkSegment => {
+                "a fork segment whose first header is our own block: the common block found is not \
+                 the peer's highest one (a low probe answer, or a later probe that failed), and \
+                 the reference verifies the peer as forked there; Heartwood refuses the peer \
+                 without a violation, so a peer on our chain cannot pass as forked below it"
+            }
             Documented::MissedRowsOfRefusedBlock => {
                 "a block refused in its apply after missed slots: the reference writes the missed \
                  rows before it validates the block and keeps them, Heartwood writes missed rows \
                  only with an applied block (a faulty or adversarial forger only)"
             }
+            Documented::EscapedLogText => {
+                "a log message with a line break, another control character, a line or paragraph \
+                 separator or a bidirectional control: the reference writes it as it is, over \
+                 several lines when it holds line breaks, so outside text in a message can forge \
+                 lines; Heartwood escapes it (\\n, \\uXXXX), so one call writes one line \
+                 (node-local text only)"
+            }
             Documented::Api(difference) => difference.reason(),
+            Documented::OverHeightOwnBlock => {
+                "a peer's header above our height, signed by the forging delegate's own key: the \
+                 reference verifies it as a whole block built from the header alone, which only \
+                 an empty block passes, so it forges again beside a non-empty one; Heartwood \
+                 verifies the header's signature and does not forge (the same key forging on two \
+                 nodes only)"
+            }
+            Documented::RoundWallets => {
+                "the wallets of the relay's round answer: the reference writes its wallet data \
+                 (the attribute map with its known attributes, and for the round's delegates the \
+                 copies it made at the round's start, with the round), and lists allDelegates in \
+                 the order its name index was filled; Heartwood writes the API's wallet shape and \
+                 lists allDelegates by name; the forger reads only each wallet's key and name, \
+                 which agree, as every other field of the answer does"
+            }
         }
     }
 }
@@ -307,10 +347,21 @@ impl Documented {
 
     /// The oracle's answer `expected` without the part this difference changes, when Heartwood's
     /// verdict `ours` and the answer both have that part; the case is then the documented
-    /// difference if `ours` equals what is left. Only the missed rows of a refused block have
-    /// one: the rows the reference recorded for a block both refused, in a `chain.process`
-    /// answer refused by the accept handler, or in each job of a `chain.job` answer.
+    /// difference if `ours` equals what is left. Three differences have one: the missed rows of a
+    /// refused block (the rows the reference recorded for a block both refused, in a
+    /// `chain.process` answer refused by the accept handler, or in each job of a `chain.job`
+    /// answer), the wallets of a round answer (the answer with Heartwood's wallets in the places
+    /// where the key and the name agree, [`crate::subjects::round_wallets_masked`]), and an escaped
+    /// log text (the reference's line with its message escaped).
     pub fn masked(self, expected: &Expected, ours: &Verdict) -> Option<Expected> {
+        if self == Documented::EscapedLogText {
+            return crate::subjects::escaped_line(expected);
+        }
+        if let (Documented::RoundWallets, Expected::Output(theirs), Verdict::Output(ours)) =
+            (self, expected, ours)
+        {
+            return crate::subjects::round_wallets_masked(theirs, ours).map(Expected::Output);
+        }
         let (Documented::MissedRowsOfRefusedBlock, Expected::Output(theirs), Verdict::Output(ours)) =
             (self, expected, ours)
         else {

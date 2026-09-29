@@ -15,6 +15,10 @@
 //! | getUnconfirmedTransactions | 1 | 2 s |
 //! | postTransactions | `rateLimitPostTransactions` (25; 0 also reads as 25) | 1 s |
 //!
+//! The inbound table ([`RateLimiter::inbound`]), which the server applies to each caller's IP,
+//! differs in four rows: postBlock 2 per 2 s, getBlocks, getPeers and getUnconfirmedTransactions
+//! 2 per 1 s.
+//!
 //! A window is kept per IP and limiter. It starts at the first point consumed and ends its
 //! duration later, when the reference's timer deletes it: a point consumed at or after the end
 //! starts a new window. A point consumed beyond the limit is still counted.
@@ -54,6 +58,8 @@ struct Window {
 /// The global limiter and the per-route limiters, keyed by IP.
 #[derive(Debug, Clone)]
 pub struct RateLimiter {
+    /// The server's table instead of the client's.
+    inbound: bool,
     global: u32,
     post_transactions: u32,
     /// The windows by IP and limiter (`None`: the global one).
@@ -66,6 +72,7 @@ impl RateLimiter {
     /// `rate_limit` and `rate_limit_post_transactions`.
     pub fn outgoing(rate_limit: u32, rate_limit_post_transactions: u32) -> RateLimiter {
         RateLimiter {
+            inbound: false,
             global: rate_limit,
             post_transactions: match rate_limit_post_transactions {
                 0 => 25,
@@ -76,17 +83,31 @@ impl RateLimiter {
         }
     }
 
+    /// The server's limiter (`buildRateLimiter` without `isOutgoing`), with the configured
+    /// `rate_limit` and `rate_limit_post_transactions`.
+    pub fn inbound(rate_limit: u32, rate_limit_post_transactions: u32) -> RateLimiter {
+        RateLimiter {
+            inbound: true,
+            ..RateLimiter::outgoing(rate_limit, rate_limit_post_transactions)
+        }
+    }
+
     /// The limit of `route` (`None`: the global limit), or `None` when the route has none.
     pub fn limit(&self, route: Option<RouteId>) -> Option<Limit> {
-        let (points, seconds) = match route {
-            None => (self.global, 1),
-            Some(RouteId::PostBlock) => (2, 4),
-            Some(RouteId::GetBlocks | RouteId::GetUnconfirmedTransactions) => (1, 2),
-            Some(RouteId::GetPeers) => (1, 1),
-            Some(RouteId::GetStatus | RouteId::GetCommonBlocks) => (9, 1),
-            Some(RouteId::PostTransactions) => (self.post_transactions, 1),
-            Some(_) => return None,
-        };
+        let (points, seconds) =
+            match route {
+                None => (self.global, 1),
+                Some(RouteId::PostBlock) if self.inbound => (2, 2),
+                Some(
+                    RouteId::GetBlocks | RouteId::GetUnconfirmedTransactions | RouteId::GetPeers,
+                ) if self.inbound => (2, 1),
+                Some(RouteId::PostBlock) => (2, 4),
+                Some(RouteId::GetBlocks | RouteId::GetUnconfirmedTransactions) => (1, 2),
+                Some(RouteId::GetPeers) => (1, 1),
+                Some(RouteId::GetStatus | RouteId::GetCommonBlocks) => (9, 1),
+                Some(RouteId::PostTransactions) => (self.post_transactions, 1),
+                Some(_) => return None,
+            };
         let duration = Duration::from_secs(seconds);
         Some(Limit { points, duration })
     }

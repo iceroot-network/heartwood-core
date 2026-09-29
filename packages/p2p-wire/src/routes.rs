@@ -2,7 +2,9 @@
 //!
 //! A nes request names its route by id (`p2p.peer.getStatus`). The seven public routes encode
 //! their payloads with protobuf, in both directions ([`Codec`]); the five internal routes, which the
-//! reference serves only to its own forger and to the addresses it allows, use JSON.
+//! reference serves only to its own forger and to the addresses it allows, use JSON. Heartwood adds
+//! two internal JSON routes that a reference relay never serves: the status attestations its
+//! forger signs on request ([`RouteId::is_reference`]).
 
 /// A route of the peer-to-peer port.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -31,6 +33,12 @@ pub enum RouteId {
     GetNetworkState,
     /// `p2p.internal.syncBlockchain`: a request to download blocks.
     SyncBlockchain,
+    /// `p2p.internal.getStatusToSign`: the forger's long poll for a status to attest (Heartwood
+    /// only).
+    GetStatusToSign,
+    /// `p2p.internal.postStatusSignatures`: the forger's attestations of an offered status
+    /// (Heartwood only).
+    PostStatusSignatures,
 }
 
 /// How a route's payloads are encoded.
@@ -47,7 +55,7 @@ pub enum CodecKind {
 const MAX_PAYLOAD: u32 = 20 * 1024 * 1024;
 
 /// The id, the HTTP path and the payload limit of each route, in the order of [`RouteId::ALL`].
-const ROUTES: [(&str, &str, Option<u32>); 12] = [
+const ROUTES: [(&str, &str, Option<u32>); 14] = [
     ("p2p.peer.getPeers", "/p2p/peer/getPeers", Some(1024)),
     (
         "p2p.peer.getCommonBlocks",
@@ -92,11 +100,22 @@ const ROUTES: [(&str, &str, Option<u32>); 12] = [
         "/p2p/internal/syncBlockchain",
         None,
     ),
+    (
+        "p2p.internal.getStatusToSign",
+        "/p2p/internal/getStatusToSign",
+        None,
+    ),
+    (
+        "p2p.internal.postStatusSignatures",
+        "/p2p/internal/postStatusSignatures",
+        None,
+    ),
 ];
 
 impl RouteId {
-    /// Every route: the seven public ones, then the five internal ones.
-    pub const ALL: [RouteId; 12] = [
+    /// Every route: the seven public ones, then the five internal ones of the reference, in the
+    /// reference's order, then Heartwood's two attestation routes.
+    pub const ALL: [RouteId; 14] = [
         RouteId::GetPeers,
         RouteId::GetCommonBlocks,
         RouteId::GetStatus,
@@ -109,6 +128,8 @@ impl RouteId {
         RouteId::GetSlotNumber,
         RouteId::GetNetworkState,
         RouteId::SyncBlockchain,
+        RouteId::GetStatusToSign,
+        RouteId::PostStatusSignatures,
     ];
 
     /// The route's row of the table.
@@ -142,6 +163,15 @@ impl RouteId {
     /// addresses it allows.
     pub fn is_internal(self) -> bool {
         self.max_bytes().is_none()
+    }
+
+    /// Whether a reference relay serves the route: every route but the two attestation routes,
+    /// which only a Heartwood relay serves to its forger.
+    pub fn is_reference(self) -> bool {
+        !matches!(
+            self,
+            RouteId::GetStatusToSign | RouteId::PostStatusSignatures
+        )
     }
 
     /// How the route's payloads are encoded.

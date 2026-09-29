@@ -56,9 +56,10 @@ pub enum SigningDomain {
 /// each signature, which is what a node signs with.
 ///
 /// Reproducible signatures are a test seam. `Aux::fixed`, which takes the 32 bytes, exists only
-/// with the feature `fixed-aux`, which only test code enables; a release build has no way to
-/// choose the aux. The chain-definition builder (feature `genesis`) derives its aux from the seed
-/// inside the crate.
+/// with the feature `fixed-aux`, which only test code enables. The chain-definition builder
+/// (feature `genesis`) derives its aux from the seed inside the crate. The one production path
+/// that chooses the aux is a forger's `aux` option, which the reference's forger has:
+/// `Aux::configured`, with the feature `forger-aux`, which only the forger enables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Aux(AuxSource);
 
@@ -68,7 +69,12 @@ enum AuxSource {
     /// 32 fresh random bytes per signature.
     Random,
     /// These 32 bytes.
-    #[cfg(any(test, feature = "fixed-aux", feature = "genesis"))]
+    #[cfg(any(
+        test,
+        feature = "fixed-aux",
+        feature = "genesis",
+        feature = "forger-aux"
+    ))]
     Fixed([u8; 32]),
 }
 
@@ -84,6 +90,15 @@ impl Aux {
         Aux(AuxSource::Fixed(bytes))
     }
 
+    /// These 32 bytes, from a forger's `aux` option (feature `forger-aux`): every block the
+    /// forger signs takes them, as the reference's forger passes its configured aux to each
+    /// signature. A fixed aux keeps the nonce bound to the key and the message (BIP340); it only
+    /// gives up the hedging that fresh bytes add.
+    #[cfg(feature = "forger-aux")]
+    pub const fn configured(bytes: [u8; 32]) -> Aux {
+        Aux(AuxSource::Fixed(bytes))
+    }
+
     /// These 32 bytes, derived by the chain-definition builder from its seed.
     #[cfg(feature = "genesis")]
     pub(crate) const fn derived(bytes: [u8; 32]) -> Aux {
@@ -93,7 +108,12 @@ impl Aux {
     /// The 32 aux bytes: the fixed ones, or fresh random ones.
     pub(crate) fn resolve(self) -> Result<[u8; 32], SigError> {
         match self.0 {
-            #[cfg(any(test, feature = "fixed-aux", feature = "genesis"))]
+            #[cfg(any(
+                test,
+                feature = "fixed-aux",
+                feature = "genesis",
+                feature = "forger-aux"
+            ))]
             AuxSource::Fixed(bytes) => Ok(bytes),
             AuxSource::Random => {
                 let mut bytes = [0u8; 32];
@@ -112,6 +132,15 @@ impl Aux {
 /// ```
 #[cfg(not(feature = "fixed-aux"))]
 mod no_fixed_aux {}
+
+/// Nor does a build without the feature `forger-aux` have `Aux::configured`: this doctest must fail
+/// to compile, and `cargo test -p heartwood-crypto` (no features) runs it.
+///
+/// ```compile_fail
+/// let _ = heartwood_crypto::Aux::configured([0; 32]);
+/// ```
+#[cfg(not(feature = "forger-aux"))]
+mod no_configured_aux {}
 
 /// A 64-byte Schnorr signature of either scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

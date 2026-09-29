@@ -152,3 +152,52 @@ pub enum RequestError {
     #[error("a getCommonBlocks request asks for 1 to 10 ids, got {0}")]
     CommonBlockIds(usize),
 }
+
+/// The JSON body of an internal route was refused by its reader.
+///
+/// The reference's internal codecs are `JSON.parse` and `JSON.stringify`, and its forger reads the
+/// parsed object's fields where it uses them; Heartwood reads every field it uses when the body
+/// is decoded.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum InternalBodyError {
+    /// The bytes are not JSON text: the reference's `JSON.parse` throws a `SyntaxError`.
+    #[error("an internal body is not JSON text: {0}")]
+    NotJson(String),
+    /// A value the body needs is missing, or is of another JSON type or out of its range.
+    #[error("the internal body's {field} is missing, of the wrong type or out of range")]
+    Field {
+        /// The path of the value, such as `quorumDetails.hasQuorum`.
+        field: String,
+    },
+}
+
+impl InternalBodyError {
+    /// The JavaScript error class the reference raises: `SyntaxError` for text that is not JSON,
+    /// `TypeError` where its code reads a field of a value that is missing or of another type.
+    pub fn js_class(&self) -> &'static str {
+        match self {
+            InternalBodyError::NotJson(_) => "SyntaxError",
+            InternalBodyError::Field { .. } => "TypeError",
+        }
+    }
+}
+
+/// An offered status text that the forger's attester refuses to read as a status preimage.
+///
+/// The attester signs only bytes that are exactly the canonical JSON of a status tree: text that
+/// parses, has the tree's shape with nothing more, and writes back to the same bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum PreimageError {
+    /// The bytes are not UTF-8 JSON text.
+    #[error("the status text is not JSON")]
+    NotJson,
+    /// A key is missing or extra, or a value has the wrong type or is out of range.
+    #[error("the status text's {path} does not have the shape of a signed status")]
+    Shape {
+        /// The path of the first value that does not fit, such as `state.header.height`.
+        path: String,
+    },
+    /// The tree writes back to other bytes: the text is not in canonical form.
+    #[error("the status text is not the canonical form of its tree")]
+    NotCanonical,
+}

@@ -14,9 +14,10 @@ use heartwood_crypto::{Block, BlockId, TransactionId};
 use heartwood_kernel::{Event, ManualClock};
 use heartwood_p2p::communicator::BlocksRequest;
 use heartwood_p2p::errors::{DownloadError, PingError};
+use heartwood_p2p::processor::MAX_PEERS;
 use heartwood_p2p::seams::{PeerAcceptor, PeerClient};
 use heartwood_p2p::{
-    AcceptOptions, DownloadedBlock, P2pOptions, PeerProcessor, PeerRepository, PeerState,
+    AcceptOptions, DownloadedBlock, P2pOptions, Peer, PeerProcessor, PeerRepository, PeerState,
     ProcessorParts, SharedPeer,
 };
 use heartwood_p2p_wire::RouteId;
@@ -442,6 +443,72 @@ async fn the_same_subnet_cap_refuses_all_but_seeds() {
             .processor
             .validate_peer_ip(&mut candidate("2001:db8::3"), PLAIN)
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn ipv6_candidates_are_capped_per_48_and_seeds_are_not() {
+    let accept = acceptance(P2pOptions {
+        max_same_subnet_peers: 2,
+        ..options()
+    });
+    for address in ["2001:db8:1:1::1", "2001:db8:1:2::1"] {
+        let peer = SharedPeer::new(Peer::new(ip(address), 4002));
+        accept.repository.set(peer);
+    }
+    let seed = AcceptOptions {
+        seed: true,
+        less_verbose: true,
+    };
+    let valid = |address: &str, options| {
+        let mut candidate = candidate(address);
+        accept.processor.validate_peer_ip(&mut candidate, options)
+    };
+    // The reference caps no IPv6 address: a /64 held thousands of peers.
+    assert!(!valid("2001:db8:1:ffff::9", PLAIN));
+    assert!(valid("2001:db8:1:ffff::9", seed));
+    assert!(valid("2001:db8:2::1", PLAIN));
+    assert!(valid("192.0.2.1", PLAIN));
+}
+
+#[tokio::test(start_paused = true)]
+async fn candidates_pinged_at_once_count_toward_the_subnet_cap() {
+    let accept = acceptance(P2pOptions {
+        max_same_subnet_peers: 1,
+        ..options()
+    });
+    for last in [1, 2, 3] {
+        let address = ip(&format!("192.0.2.{last}"));
+        accept
+            .client
+            .plan(address, Ping::Answers("4.3.1", Duration::from_millis(50)));
+    }
+    let candidates = ["192.0.2.1", "192.0.2.2", "192.0.2.3"].map(candidate);
+    let accepting = candidates.map(|c| accept.processor.validate_and_accept(c, PLAIN));
+    futures_util::future::join_all(accepting).await;
+    // The reference counts only the peers it holds, so all three were accepted.
+    assert_eq!(accept.repository.len(), 1);
+    assert_eq!(accept.client.pinged(), [ip("192.0.2.1")]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_peers_are_capped_at_a_thousand_but_seeds_are_not() {
+    let accept = acceptance(options());
+    for n in 0..MAX_PEERS {
+        let n = u16::try_from(n).unwrap();
+        let address = IpAddr::from([0x2001, 0xdb8, n, 0, 0, 0, 0, 1]);
+        accept
+            .repository
+            .set(SharedPeer::new(Peer::new(address, 4002)));
+    }
+    let seed = AcceptOptions {
+        seed: true,
+        less_verbose: true,
+    };
+    let mut plain = candidate("192.0.2.1");
+    assert!(!accept.processor.validate_peer_ip(&mut plain, PLAIN));
+    assert!(accept.processor.validate_peer_ip(&mut plain, seed));
+    accept.repository.forget(ip("2001:db8::1"));
+    assert!(accept.processor.validate_peer_ip(&mut plain, PLAIN));
 }
 
 #[tokio::test(start_paused = true)]

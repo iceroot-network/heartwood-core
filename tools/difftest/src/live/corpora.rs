@@ -5,7 +5,9 @@
 //! already imported from the same archives and judged so is used as it is; one judged without the
 //! processor results is judged again; one of an earlier run of the same name is moved aside to
 //! `<name>.replaced` and imported again. Its manifest and `corpus.json` are copied into the run's
-//! `corpus/<name>/`.
+//! `corpus/<name>/`. A chain a Heartwood node recorded (`nodes/<node>`, the node's directory, as
+//! the chain's archives) is imported from the node's block files through
+//! [`crate::corpus_from_blocks`] instead.
 //!
 //! One change to an imported corpus: a random revert of its plan that would return to the last
 //! block of a round reverts one block more. The judge's headless node then deletes the next round's
@@ -35,6 +37,8 @@ pub struct Judged {
     pub anchors_ok: bool,
     /// The anchors' results, for the report.
     pub anchors: Value,
+    /// The anchors that do not apply to this corpus ([`corpus::absent_anchors`]).
+    pub absent: Vec<&'static str>,
     /// The judge's forward lines.
     pub chain: JudgedChain,
     /// The corpus's tip.
@@ -135,14 +139,59 @@ pub fn prepare(
     root: &Path,
     oracle: &dyn Fn() -> Result<Oracle>,
 ) -> Result<Judged> {
-    let dirs = run::archives(&run_dir.join(archives))?;
-    if dirs.is_empty() {
-        return Err(Error::Usage(format!(
-            "{}: no archive of the chain {name}",
-            run_dir.join(archives).display()
-        )));
-    }
-    let end = archive_end(&dirs)?;
+    let source = run_dir.join(archives);
+    // A Heartwood node's directory (`nodes/<node>`) holds its block files under `difftest/`; any
+    // other names a directory of the devnet tooling's archives.
+    let native = source.join("difftest").is_dir();
+    let scratch = ScratchDir::new("live-block-import")?;
+    let staged = scratch.path().join("corpus");
+    let dirs = if native {
+        let records = source.join("difftest");
+        let mut files: Vec<(u32, PathBuf)> = std::fs::read_dir(&records)
+            .map_err(|e| Error::io(&records, e))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter_map(|p| {
+                let n = p
+                    .file_name()?
+                    .to_str()?
+                    .strip_prefix("blocks-")?
+                    .strip_suffix(".bin")?
+                    .parse()
+                    .ok()?;
+                Some((n, p))
+            })
+            .collect();
+        files.sort();
+        let files: Vec<PathBuf> = files.into_iter().map(|(_, p)| p).collect();
+        if files.is_empty() {
+            return Err(Error::Usage(format!(
+                "{}: no block file of the chain {name}",
+                records.display()
+            )));
+        }
+        crate::corpus_from_blocks::from_blocks(&files, &source.join("crypto"), seed, &staged)?;
+        Vec::new()
+    } else {
+        let dirs = run::archives(&source)?;
+        if dirs.is_empty() {
+            return Err(Error::Usage(format!(
+                "{}: no archive of the chain {name}",
+                source.display()
+            )));
+        }
+        dirs
+    };
+    let end = if native {
+        let c = Corpus::load(&staged)?;
+        let id = c
+            .block_id(c.tip())
+            .map(|id| id.to_hex())
+            .ok_or_else(|| Error::Usage(format!("{name}: the imported chain has no tip")))?;
+        let epoch = c.meta.pointer("/chain/epoch").and_then(Value::as_str);
+        (u64::from(c.tip()), id, epoch.unwrap_or("").to_owned())
+    } else {
+        archive_end(&dirs)?
+    };
     let dir = root.join(name);
     let mut imported = false;
     if dir.exists() && !same_chain(&dir, &end) {
@@ -152,7 +201,11 @@ pub fn prepare(
     }
     if !dir.exists() {
         std::fs::create_dir_all(root).map_err(|e| Error::io(root, e))?;
-        corpus::import(&dirs, &dir, seed)?;
+        if native {
+            crate::corpus_from_blocks::copy_dir(&staged, &dir)?;
+        } else {
+            corpus::import(&dirs, &dir, seed)?;
+        }
         adjust_plan(&dir)?;
         imported = true;
     }
@@ -166,6 +219,7 @@ pub fn prepare(
     }
     let (anchors_ok, anchors) = l2::judge_report(&dir)?;
     let loaded = Corpus::load(&dir)?;
+    let absent = corpus::absent_anchors(&anchors, &loaded.meta);
     let forward = store::forward_lines(&loaded)?;
     let copy = run_dir.join("corpus").join(name);
     std::fs::create_dir_all(&copy).map_err(|e| Error::io(&copy, e))?;
@@ -176,6 +230,7 @@ pub fn prepare(
         dir,
         anchors_ok,
         anchors,
+        absent,
         chain: JudgedChain {
             name: name.to_owned(),
             forward,

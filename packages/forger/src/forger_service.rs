@@ -1,0 +1,920 @@
+//! The forger's loop, as the reference's `ForgerService` runs it, driven by its relay.
+//!
+//! - **Boot.** The delegates are deduplicated by public key in file order. The first round is
+//!   loaded; when no relay answers, "Waiting for a responsive host" is logged and the check runs
+//!   after 2 s, else at once.
+//! - **The slot check** (`checkSlot`), at every slot: load the round (at the first load the active
+//!   and inactive delegate lines, `forger.started` and "Forger Manager started"; later, the lines of
+//!   delegates that entered or left the active positions). Before the epoch, wait out the slot. When
+//!   the slot's forger is not one of ours: if the next one is, log "Delegate ... is due to forge in
+//!   ..." and ask the relay to sync; wait until the slot's end by the forger's own clock. When it is
+//!   ours: reset the error counter, start the slot's attempts on their own task, and check again at
+//!   the slot's end. A relay error goes to the graceful error log ("Waiting for relay to become
+//!   ready" once while the relay answers "App is not ready"); any other error sends
+//!   `forger.failed`; the next check is in 2 s. A computed wait of zero or less waits
+//!   [`POLL_FLOOR`] where the reference polls again at once.
+//! - **An attempt** (`forgeNewBlock`): the debug delay; the network state (logged by the relay on
+//!   the first attempt); the round's slot; on the first attempt only, the pool's transactions; the
+//!   block's inputs, from which the block must be made (unsigned: a block the reference cannot
+//!   make errors its attempt here); the time left; the relay's status and slots; the two early
+//!   stops with the "already forged on another node" line; the height line; the quorum's reading;
+//!   then, with at least 2,000 ms left in the round's slot and the delegate still its forger, the
+//!   block from the signer ([`BlockSigner`], which signs a slot once and re-sends it after),
+//!   "Delegate ... forged a new block ...", `postBlock` and the events; else the two "Failed to
+//!   forge new block" lines. Any error marks the attempt errored. After 1,000 ms the round is
+//!   loaded again, and while fewer than `blockTime - 1` attempts in a row errored the next attempt
+//!   runs. The reference signs before its checks; Heartwood signs the same bytes after them,
+//!   through the signing record.
+//! - **The quorum's reading** (`isForgingAllowed`): unknown, cold start and below the minimum
+//!   refuse with the reference's lines; the distinct over-height headers are counted; an
+//!   over-height header by the delegate's own key whose signature verifies refuses ("already forged
+//!   a block"; the reference verifies the header as a whole block, which only an empty block
+//!   passes); a quorum that cannot forge refuses with the debug dump.
+//! - **Shutdown.** Scheduling stops and the relay calls in flight are dropped, but a `postBlock` in
+//!   flight runs to its deadline; then the sessions close.
+
+use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::future::{Future, poll_fn};
+use std::pin::pin;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::task::{Context, Poll, Waker};
+use std::time::Duration;
+
+use heartwood_crypto::blocks::factory;
+use heartwood_crypto::crypto::slots;
+use heartwood_crypto::utils::js;
+use heartwood_crypto::{Block, BlockId, Milestones, PublicKeyBytes, Transaction};
+use heartwood_kernel::Clock;
+use heartwood_kernel::errors::BootError;
+use heartwood_kernel::utils::pluralise::pluralise;
+use heartwood_kernel::{debug, info, warning};
+use heartwood_p2p_wire::RouteId;
+use heartwood_p2p_wire::internal::{
+    CurrentRound, DelegateWallet, InternalBody, NetworkState, NetworkStateStatus,
+};
+use serde_json::Value;
+use tokio::task::JoinSet;
+
+use crate::deadlines::{self, POLL_FLOOR};
+use crate::delegate::Delegate;
+use crate::errors::RelayError;
+use crate::options::Options;
+use crate::seams::{
+    BlockSigner, Deadline, ForgeInputs, ForgerEvent, RelayLink, ShutdownSignal, SignedOutcome,
+};
+
+/// The margin the forger keeps before a slot's end: a block is not sent with less time left.
+pub const MINIMUM_MS: i64 = 2_000;
+/// The wait after a failed slot check.
+pub const RETRY_MS: u64 = 2_000;
+/// The wait between two attempts in a slot.
+pub const ATTEMPT_PAUSE_MS: u64 = 1_000;
+
+/// What a forger service is made of.
+pub struct ForgerParts<L, S> {
+    /// The link to the relays.
+    pub link: Arc<L>,
+    /// The block signer.
+    pub signer: S,
+    /// The delegates' public keys, in the key file's order; the service deduplicates them.
+    pub delegates: Vec<PublicKeyBytes>,
+    /// The component's options (the debug delay).
+    pub options: Options,
+    /// The forger's own milestones: its epoch and block times.
+    pub milestones: Milestones,
+    /// The wall clock.
+    pub clock: Arc<dyn Clock>,
+}
+
+/// How one attempt of a slot ended ([`ForgerService::forge_attempt`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttemptEnd {
+    /// The block was signed and posted.
+    Forged,
+    /// The slot's last block is already in the current slot, or the delegate is no longer the
+    /// slot's forger: the slot's attempts end.
+    Stopped,
+    /// The quorum's reading refused.
+    Refused,
+    /// Less than 2,000 ms were left, or the relay was already in the next slot.
+    Late,
+    /// The block would be in the slot of the relay's last block.
+    SameSlot,
+    /// A relay call failed, or the relay's answers could not make a block.
+    Errored,
+}
+
+/// The forger's loop.
+pub struct ForgerService<L, S> {
+    inner: Arc<Inner<L, S>>,
+}
+
+struct Inner<L, S> {
+    link: Arc<L>,
+    signer: Arc<Mutex<S>>,
+    /// The delegates, deduplicated, with their keys in hex as the relay writes them.
+    delegates: Vec<(PublicKeyBytes, String)>,
+    delay: Duration,
+    milestones: Milestones,
+    clock: Arc<dyn Clock>,
+    epoch_ms: i64,
+    /// The block time (also in milliseconds) and the round length, which the milestones fix from
+    /// height 1.
+    block_time: u64,
+    slot_ms: i64,
+    active_delegates: u32,
+    state: Mutex<State>,
+}
+
+/// What the reference's service keeps between its checks and attempts.
+#[derive(Default)]
+struct State {
+    round: Option<CurrentRound>,
+    /// Usernames by public key: of the round's active delegates, and of every delegate.
+    usernames: HashMap<String, String>,
+    all_usernames: HashMap<String, String>,
+    active: Vec<String>,
+    inactive: Vec<String>,
+    initialised: bool,
+    error_count: u64,
+    log_app_ready: bool,
+    /// The slot's transactions, fetched by its first attempt.
+    transactions: Vec<Transaction>,
+    first_check: Duration,
+    /// What the first round's tip height goes to (the version floor's check), which says whether
+    /// the forger goes on.
+    first_round: Option<Box<dyn FnOnce(u32) -> bool + Send>>,
+}
+
+/// Why a check or an attempt failed: a relay's error, logged gracefully, or any other, whose
+/// message a failed check sends as `forger.failed`.
+enum Failure {
+    Relay(RelayError),
+    Other(String),
+}
+
+impl From<RelayError> for Failure {
+    fn from(error: RelayError) -> Failure {
+        Failure::Relay(error)
+    }
+}
+
+/// What the checks of an attempt concluded: an end, or a block to sign and post.
+enum Prepared {
+    Ended(AttemptEnd),
+    Ready(Ready),
+}
+
+/// A block's inputs, checked for the slot of the round.
+struct Ready {
+    pretty: String,
+    transactions: Vec<Transaction>,
+    previous_id: BlockId,
+    previous_height: u32,
+    timestamp: u32,
+    reward: u64,
+}
+
+/// The reference's `TypeError` where it reads a forger of a round that has none there.
+fn no_forger() -> Failure {
+    Failure::Other("Cannot read properties of undefined (reading 'publicKey')".into())
+}
+
+/// The reference's `assert.defined` failure.
+fn undefined() -> Failure {
+    Failure::Other(r#"Expected value which is "non-null and non-undefined""#.into())
+}
+
+impl<L, S> ForgerService<L, S> {
+    /// The service over `parts`.
+    pub fn new(parts: ForgerParts<L, S>) -> ForgerService<L, S> {
+        let mut delegates: Vec<(PublicKeyBytes, String)> = Vec::new();
+        for key in parts.delegates {
+            if !delegates.iter().any(|(known, _)| *known == key) {
+                delegates.push((key, key.to_hex()));
+            }
+        }
+        let first = parts.milestones.at(1);
+        let inner = Inner {
+            epoch_ms: slots::epoch_unix_ms(first.epoch()).unwrap_or_default(),
+            block_time: first.block_time(),
+            slot_ms: i64::try_from(first.block_time().saturating_mul(1_000)).unwrap_or(i64::MAX),
+            active_delegates: u32::try_from(first.active_delegates()).unwrap_or(u32::MAX),
+            link: parts.link,
+            signer: Arc::new(Mutex::new(parts.signer)),
+            delegates,
+            delay: parts.options.delay,
+            milestones: parts.milestones,
+            clock: parts.clock,
+            state: Mutex::new(State {
+                log_app_ready: true,
+                ..State::default()
+            }),
+        };
+        ForgerService {
+            inner: Arc::new(inner),
+        }
+    }
+}
+
+impl<L, S> ForgerService<L, S>
+where
+    L: RelayLink + 'static,
+    S: BlockSigner + 'static,
+{
+    /// Boot: load the first round (the reference's `boot`). A relay that does not answer is no
+    /// boot failure: the loop waits for it.
+    pub async fn boot(&mut self) -> Result<(), BootError> {
+        let first_check = match self.inner.load_round().await {
+            Ok(_) => Duration::ZERO,
+            Err(_) => {
+                warning!("Waiting for a responsive host :hourglass_flowing_sand:");
+                Duration::from_millis(RETRY_MS)
+            }
+        };
+        self.inner.state().first_check = first_check;
+        Ok(())
+    }
+
+    /// Run the slot loop until `shutdown` is asked for, then let an in-flight `postBlock` finish up
+    /// to its deadline.
+    pub async fn run(&self, shutdown: ShutdownSignal) {
+        let (mut signal, mut attempts) = (shutdown.clone(), JoinSet::new());
+        let mut wait = self.inner.state().first_check;
+        while until(&mut signal, tokio::time::sleep(wait)).await.is_some() && !signal.is_requested()
+        {
+            while attempts.try_join_next().is_some() {}
+            let check = self.inner.check_slot(&mut attempts, &shutdown);
+            match until(&mut signal, check).await {
+                Some(next) => wait = next,
+                None => break,
+            }
+        }
+        while attempts.join_next().await.is_some() {}
+    }
+
+    /// Whether `delegate` may forge on the network state `state` (the reference's
+    /// `isForgingAllowed`), logging its reason when not.
+    pub fn is_forging_allowed(&self, state: &NetworkState, delegate: &PublicKeyBytes) -> bool {
+        self.inner.is_forging_allowed(state, &delegate.to_hex())
+    }
+
+    /// One attempt of `delegate`'s slot on `round`, without the pause and the reload after it: the
+    /// loop's step, which the differential harness runs over a scripted relay.
+    pub async fn forge_attempt(
+        &self,
+        delegate: &PublicKeyBytes,
+        first_attempt: bool,
+        round: &CurrentRound,
+    ) -> AttemptEnd {
+        let (_trigger, mut never) = ShutdownSignal::new();
+        let key = (*delegate, delegate.to_hex());
+        let end = self
+            .inner
+            .attempt(&key, first_attempt, round, &mut never)
+            .await;
+        end.unwrap_or(AttemptEnd::Errored)
+    }
+
+    /// Hand `hook` the height of the relay's tip at the first round loaded, once, before that
+    /// round's lines: where the forger's process checks its version floor. When the hook says
+    /// the forger does not go on (and asks for the shutdown), the forger neither announces its
+    /// start nor checks a slot.
+    pub fn on_first_round(&self, hook: impl FnOnce(u32) -> bool + Send + 'static) {
+        self.inner.state().first_round = Some(Box::new(hook));
+    }
+
+    /// The round last loaded (the reference's `getRound`).
+    pub async fn round(&self) -> Option<CurrentRound> {
+        self.inner.state().round.clone()
+    }
+
+    /// Stop scheduling and close the relay sessions (the reference's `dispose`). The loop of
+    /// [`ForgerService::run`] has ended before, with its `postBlock` finished.
+    pub async fn dispose(&self) {
+        self.inner.link.dispose();
+    }
+}
+
+impl<L, S> Inner<L, S>
+where
+    L: RelayLink + 'static,
+    S: BlockSigner + 'static,
+{
+    fn state(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn is_ours(&self, public_key: &str) -> Option<(PublicKeyBytes, String)> {
+        (self.delegates.iter())
+            .find(|(_, hex)| hex == public_key)
+            .cloned()
+    }
+
+    /// The milliseconds left in the round's slot by the forger's clock (negative once it ended).
+    fn time_left(&self, round: &CurrentRound) -> i64 {
+        let start = self
+            .epoch_ms
+            .saturating_add(round.timestamp.saturating_mul(1_000));
+        start
+            .saturating_add(self.slot_ms)
+            .saturating_sub(self.clock.now_ms())
+    }
+
+    /// The wait until the round's slot ends, at least [`POLL_FLOOR`].
+    fn until_slot_end(&self, round: &CurrentRound) -> Duration {
+        let left = u64::try_from(self.time_left(round)).unwrap_or_default();
+        Duration::from_millis(left).max(POLL_FLOOR)
+    }
+
+    fn deadline(&self, route: RouteId) -> Deadline {
+        let now = self.clock.now_ms();
+        let next_end = deadlines::to_next_slot_end(now, self.epoch_ms, self.block_time);
+        deadlines::deadline(route, next_end)
+    }
+
+    /// The reference's graceful error log.
+    fn graceful(&self, error: &RelayError) {
+        let text = error.to_string();
+        if !text.contains("blockchain isn't ready") && !text.contains("App is not ready") {
+            warning!("{text}");
+        } else if std::mem::replace(&mut self.state().log_app_ready, false) {
+            info!("Waiting for relay to become ready :hourglass_flowing_sand:");
+        }
+    }
+
+    /// Send `event`, as the reference does, without waiting for the relay: its synchronous part
+    /// (the local host rule and its line) runs now, the request after.
+    fn emit(&self, event: ForgerEvent) {
+        let link = self.link.clone();
+        let mut sending = Box::pin(async move { link.emit_event(event).await });
+        let mut context = Context::from_waker(Waker::noop());
+        if sending.as_mut().poll(&mut context).is_pending() {
+            tokio::spawn(sending);
+        }
+    }
+
+    /// `loadRound`: the round, the usernames, and the active and inactive delegates with their
+    /// lines.
+    async fn load_round(&self) -> Result<CurrentRound, Failure> {
+        let round = self.link.get_round().await?;
+        let mut state = self.state();
+        state.round = Some(round.clone());
+        state.all_usernames = usernames(&round.all_delegates);
+        state.usernames = usernames(&round.delegates);
+        let keys = self.delegates.iter().map(|(_, hex)| hex.clone());
+        let (active, inactive): (Vec<String>, Vec<String>) =
+            keys.partition(|hex| state.usernames.contains_key(hex));
+        let old_active = std::mem::replace(&mut state.active, active);
+        let old_inactive = std::mem::replace(&mut state.inactive, inactive);
+        let first = !std::mem::replace(&mut state.initialised, true);
+        let hook = first.then(|| state.first_round.take()).flatten();
+        let named = |hex: &String| name(&state.usernames, hex);
+        let registered = |hex: &String| {
+            let known = state.all_usernames.get(hex).filter(|name| !name.is_empty());
+            known.cloned()
+        };
+        let mut lines = Vec::new();
+        if first {
+            if !state.active.is_empty() {
+                let names: Vec<String> = state.active.iter().map(named).collect();
+                let count = pluralise("active delegate", len(&names), true);
+                lines.push(format!("Loaded {count}: {}", names.join(", ")));
+            }
+            if self.delegates.len() > state.active.len() {
+                let names: Vec<String> = (state.inactive.iter())
+                    .map(|hex| {
+                        let unregistered = || format!("unregistered delegate (public key: {hex})");
+                        registered(hex).unwrap_or_else(unregistered)
+                    })
+                    .collect();
+                let count = pluralise("inactive delegate", len(&names), true);
+                lines.push(format!("Loaded {count}: {}", names.join(", ")));
+            }
+        } else {
+            let entered: Vec<String> = (state.active.iter())
+                .filter(|hex| !old_active.contains(hex))
+                .map(named)
+                .collect();
+            let left: Vec<String> = (state.inactive.iter())
+                .filter(|hex| !old_inactive.contains(hex))
+                .map(|hex| registered(hex).unwrap_or_else(|| hex.clone()))
+                .collect();
+            let entering = [
+                "is now in an active forging position",
+                "are now in active forging positions",
+            ];
+            let leaving = [
+                "is no longer in an active forging position",
+                "are no longer in active forging positions",
+            ];
+            lines.extend(moved(&entered, entering, ":tada:"));
+            lines.extend(moved(&left, leaving, ":cry:"));
+        }
+        drop(state);
+        let goes_on = hook.is_none_or(|hook| hook(round.last_block.height));
+        lines.iter().for_each(|line| info!("{line}"));
+        if first && goes_on {
+            let active_delegates = self.delegates.iter().map(|(_, hex)| hex.clone()).collect();
+            self.emit(ForgerEvent::Started { active_delegates });
+            info!("Forger Manager started :hammer:");
+        }
+        Ok(round)
+    }
+
+    /// `checkSlot`, giving the wait before the next check.
+    async fn check_slot(
+        self: &Arc<Self>,
+        attempts: &mut JoinSet<()>,
+        shutdown: &ShutdownSignal,
+    ) -> Duration {
+        let checked = self.slot(attempts, shutdown).await;
+        if let Err(Failure::Other(error)) = &checked {
+            let error = error.clone();
+            self.emit(ForgerEvent::Failed { error });
+        }
+        self.failed(&checked);
+        checked.unwrap_or(Duration::from_millis(RETRY_MS))
+    }
+
+    async fn slot(
+        self: &Arc<Self>,
+        attempts: &mut JoinSet<()>,
+        shutdown: &ShutdownSignal,
+    ) -> Result<Duration, Failure> {
+        let round = self.load_round().await?;
+        if round.timestamp < 0 {
+            return Ok(self.until_slot_end(&round));
+        }
+        let current = round.current_forger.as_ref().ok_or_else(no_forger)?;
+        let Some(key) = self.is_ours(&current.public_key) else {
+            let next = round.next_forger.as_ref().ok_or_else(no_forger)?;
+            if self.is_ours(&next.public_key).is_some() {
+                let username = name(&self.state().usernames, &next.public_key);
+                let seconds = pluralise("second", i128::from(self.block_time), true);
+                info!("Delegate {username} is due to forge in {seconds} from now :sparkles:");
+                self.link.sync_with_network().await?;
+            }
+            return Ok(self.until_slot_end(&round));
+        };
+        self.state().error_count = 0;
+        if !self.delay.is_zero() {
+            tokio::time::sleep(self.delay).await;
+        }
+        attempts.spawn(self.clone().attempts(key, round.clone(), shutdown.clone()));
+        self.state().log_app_ready = true;
+        Ok(self.until_slot_end(&round))
+    }
+
+    /// The attempts of a slot (the reference's `forgeNewBlock` and its re-runs), the first one
+    /// after the debug delay that the slot check waited.
+    async fn attempts(
+        self: Arc<Self>,
+        key: (PublicKeyBytes, String),
+        mut round: CurrentRound,
+        mut shutdown: ShutdownSignal,
+    ) {
+        let mut first = true;
+        loop {
+            let Some(end) = self.attempt(&key, first, &round, &mut shutdown).await else {
+                return;
+            };
+            if end == AttemptEnd::Stopped {
+                return;
+            }
+            let pause = tokio::time::sleep(Duration::from_millis(ATTEMPT_PAUSE_MS));
+            if shutdown.is_requested() || until(&mut shutdown, pause).await.is_none() {
+                return;
+            }
+            let Some(reloaded) = until(&mut shutdown, self.load_round()).await else {
+                return;
+            };
+            // Both failures are logged, as the reference's two catch blocks log them.
+            let reload_failed = self.failed(&reloaded);
+            let errored = end == AttemptEnd::Errored || reload_failed;
+            let next = {
+                let mut state = self.state();
+                state.error_count = match errored {
+                    true => state.error_count.saturating_add(1),
+                    false => 0,
+                };
+                let again = state.error_count < self.block_time.saturating_sub(1);
+                again.then(|| state.round.clone())
+            };
+            let Some(next) = next else {
+                return;
+            };
+            round = next.unwrap_or(round);
+            first = false;
+            let delay = tokio::time::sleep(self.delay);
+            if !self.delay.is_zero() && until(&mut shutdown, delay).await.is_none() {
+                return;
+            }
+        }
+    }
+
+    /// One attempt to its end, its post never cut short: `None` when the shutdown stopped it.
+    async fn attempt(
+        &self,
+        key: &(PublicKeyBytes, String),
+        first: bool,
+        round: &CurrentRound,
+        shutdown: &mut ShutdownSignal,
+    ) -> Option<AttemptEnd> {
+        let end = match until(shutdown, self.prepare(key, first, round)).await? {
+            Ok(Prepared::Ready(ready)) => self.forge(key, ready).await,
+            Ok(Prepared::Ended(end)) => Ok(end),
+            Err(failure) => Err(failure),
+        };
+        self.failed(&end);
+        Some(end.unwrap_or(AttemptEnd::Errored))
+    }
+
+    /// Whether `result` failed, a relay's error logged gracefully.
+    fn failed<T>(&self, result: &Result<T, Failure>) -> bool {
+        if let Err(Failure::Relay(error)) = result {
+            self.graceful(error);
+        }
+        result.is_err()
+    }
+
+    /// The checks of an attempt, on the relay's answers.
+    async fn prepare(
+        &self,
+        key: &(PublicKeyBytes, String),
+        first: bool,
+        round: &CurrentRound,
+    ) -> Result<Prepared, Failure> {
+        let hex = key.1.as_str();
+        let deadline = |route| self.deadline(route);
+        let state = (self.link)
+            .get_network_state(first, deadline(RouteId::GetNetworkState))
+            .await?;
+        let height = state.node_height.ok_or_else(undefined)?;
+        let slot_of = |timestamp| {
+            self.link
+                .get_slot_number(timestamp, deadline(RouteId::GetSlotNumber))
+        };
+        let round_slot = slot_of(Some(round.timestamp)).await?;
+        if first {
+            let transactions = self.transactions(height).await?;
+            self.state().transactions = transactions;
+        }
+        let transactions = self.state().transactions.clone();
+        let previous_id = (state.last_block_id.as_deref())
+            .and_then(|id| BlockId::from_hex(id).ok())
+            .ok_or_else(undefined)?;
+        let block = (u32::try_from(round.timestamp).ok())
+            .zip(round.reward.parse::<u64>().ok())
+            .ok_or_else(undefined)?;
+        // The reference makes its block here; one it cannot make ends the attempt before the
+        // checks. Heartwood signs only after them.
+        let inputs = ForgeInputs {
+            transactions: &transactions,
+            previous_id,
+            previous_height: height,
+            timestamp: block.0,
+            reward: block.1,
+        };
+        let made = Delegate::check(&key.0, &inputs, &self.milestones);
+        made.map_err(|error| Failure::Other(error.to_string()))?;
+        let time_left = self.time_left(round);
+        let pretty = name(&self.state().usernames, hex);
+        let status = self.link.get_status(deadline(RouteId::GetStatus)).await?;
+        let header = (status.message.state.as_ref()).and_then(|state| state.header.as_ref());
+        let current_slot = slot_of(None).await?;
+        let header_time = header.and_then(|header| header.timestamp).map(i64::from);
+        let last_block_slot = slot_of(header_time).await?;
+        let is_current = || {
+            let current = round.current_forger.as_ref().ok_or_else(no_forger)?;
+            Ok::<bool, Failure>(current.public_key == hex)
+        };
+        if last_block_slot == current_slot || !is_current()? {
+            let generator = header.and_then(|header| header.generator_public_key.as_deref());
+            let by_state = state.last_generator.as_deref() == Some(hex)
+                && state.last_slot_number == Some(round_slot);
+            let by_status = generator == Some(hex) && last_block_slot == round_slot;
+            if first && (by_state || by_status) {
+                warning!(
+                    "Not going to forge because delegate {pretty} has already forged on another node :octagonal_sign:"
+                );
+            }
+            return Ok(Prepared::Ended(AttemptEnd::Stopped));
+        }
+        if height != round.last_block.height {
+            let (ours, theirs) = (locale(height), locale(round.last_block.height));
+            warning!(
+                "The NetworkState height ({ours}) and round height ({theirs}) are out of sync. This indicates delayed blocks on the network :zzz:"
+            );
+        }
+        if !self.is_forging_allowed(&state, hex) {
+            return Ok(Prepared::Ended(AttemptEnd::Refused));
+        }
+        if time_left >= MINIMUM_MS && current_slot == round_slot && is_current()? {
+            if slot_of(Some(round.timestamp)).await? == last_block_slot {
+                return Ok(Prepared::Ended(AttemptEnd::SameSlot));
+            }
+            return Ok(Prepared::Ready(Ready {
+                pretty,
+                transactions,
+                previous_id,
+                previous_height: height,
+                timestamp: block.0,
+                reward: block.1,
+            }));
+        }
+        if time_left > 0 {
+            warning!(
+                "Failed to forge new block by delegate {pretty}, because there were {time_left}ms left in the current slot (less than {MINIMUM_MS}ms) :bangbang:"
+            );
+        } else {
+            warning!(
+                "Failed to forge new block by delegate {pretty}, because already in next slot :bangbang:"
+            );
+        }
+        Ok(Prepared::Ended(AttemptEnd::Late))
+    }
+
+    /// `getTransactionsForForging`: the pool's transactions, read as `fromBytesUnsafe` reads them.
+    async fn transactions(&self, height: u32) -> Result<Vec<Transaction>, Failure> {
+        let deadline = self.deadline(RouteId::GetUnconfirmedTransactions);
+        let Some(answer) = self.link.get_transactions(deadline).await? else {
+            warning!("Could not get unconfirmed transactions from pool :warning:");
+            return Ok(Vec::new());
+        };
+        let params = self.milestones.at(height);
+        let read = (answer.transactions.iter())
+            .map(|bytes| Transaction::decode_trusted(bytes, params))
+            .collect::<Result<Vec<_>, _>>();
+        let transactions = read.map_err(|error| Failure::Other(error.to_string()))?;
+        let received = pluralise("transaction", len(&transactions), true);
+        let total = pluralise("transaction", i128::from(answer.pool_size), true);
+        debug!("Received {received} from the pool containing {total} total :money_with_wings:");
+        Ok(transactions)
+    }
+
+    /// Sign (or re-send) the slot's block, post it and send the events of the block posted. The
+    /// block's slot is the slot of its own timestamp, which the signing record is keyed by and
+    /// checks against the forger's clock, whatever slot the relay answered for it. The post is
+    /// never cut short by a shutdown: it runs to its deadline.
+    async fn forge(
+        &self,
+        key: &(PublicKeyBytes, String),
+        ready: Ready,
+    ) -> Result<AttemptEnd, Failure> {
+        let now = slots::epoch_time(self.clock.now_ms(), self.epoch_ms);
+        let own_slot = slots::slot_number(now, self.block_time);
+        let slot = slots::slot_number(i64::from(ready.timestamp), self.block_time);
+        // The record's write and its fsyncs run off the runtime's one thread, so the attester's
+        // poll and the sessions' heartbeats go on meanwhile; a signer that panicked errs.
+        let (signer, public_key, ready) = (Arc::clone(&self.signer), key.0, ready);
+        let signing = tokio::task::spawn_blocking(move || {
+            let inputs = ForgeInputs {
+                transactions: &ready.transactions,
+                previous_id: ready.previous_id,
+                previous_height: ready.previous_height,
+                timestamp: ready.timestamp,
+                reward: ready.reward,
+            };
+            let mut signer = signer.lock().unwrap_or_else(PoisonError::into_inner);
+            (
+                signer.sign_or_resend(&public_key, &inputs, own_slot, slot),
+                ready,
+            )
+        });
+        let (outcome, ready) = signing.await.map_err(|e| Failure::Other(e.to_string()))?;
+        let outcome = outcome.map_err(|error| Failure::Other(error.to_string()))?;
+        let signed = outcome.signed();
+        let block = Block::decode_trusted(&signed.bytes, &self.milestones).ok();
+        // A re-sent block is the recorded one, whatever the pool holds now.
+        let transactions = match (&outcome, &block) {
+            (SignedOutcome::New(_), _) => &ready.transactions[..],
+            (_, block) => block.as_ref().map_or(&[][..], Block::transactions),
+        };
+        let (pretty, height) = (&ready.pretty, locale(signed.height));
+        let count = pluralise("transaction", len(transactions), true);
+        info!("Delegate {pretty} forged a new block at height {height} with {count} :trident:");
+        let deadline = self.deadline(RouteId::PostBlock);
+        self.link.broadcast_block(&signed.bytes, deadline).await;
+        if let Some(block) = &block {
+            let mut header = block.to_json(&self.milestones);
+            if let Value::Object(fields) = &mut header {
+                fields.shift_remove("transactions");
+            }
+            self.emit(ForgerEvent::BlockForged { header });
+        }
+        let params = self.milestones.at(signed.height);
+        for transaction in transactions {
+            let transaction = transaction.to_json(params);
+            self.emit(ForgerEvent::TransactionForged { transaction });
+        }
+        Ok(AttemptEnd::Forged)
+    }
+
+    /// `isForgingAllowed`, for the delegate whose key is `hex`.
+    fn is_forging_allowed(&self, state: &NetworkState, hex: &str) -> bool {
+        let refusal = match state.status {
+            NetworkStateStatus::Unknown => "Failed to get network state from client",
+            NetworkStateStatus::ColdStart => "Skipping slot because of cold start",
+            NetworkStateStatus::BelowMinimumDelegates => {
+                "Not peered with enough delegates to get quorum"
+            }
+            _ => "",
+        };
+        if !refusal.is_empty() {
+            info!("{refusal}. Will not forge :bomb:");
+            return false;
+        }
+        let headers = js::property_order(&state.quorum_details.over_height_block_headers);
+        let headers: Vec<&Value> = headers.into_iter().map(|(_, header)| header).collect();
+        let distinct = distinct(&headers);
+        if !distinct.is_empty() {
+            let detected = pluralise("distinct overheight block header", len(&distinct), true);
+            info!("Detected {detected} :zzz:");
+            for header in &headers {
+                // Only a header of this delegate's is decoded and verified, as in the reference.
+                let generator = header.get("generatorPublicKey").and_then(Value::as_str);
+                let verified = generator == Some(hex)
+                    && factory::from_json(header, &self.milestones)
+                        .is_ok_and(|block| block.verify_signature());
+                if verified {
+                    let username = name(&self.state().usernames, hex);
+                    warning!("Delegate {username} already forged a block. Will not forge :bomb:");
+                    return false;
+                }
+            }
+        }
+        if !state.can_forge(self.active_delegates) {
+            info!("Not enough quorum to forge next block. Will not forge :bomb:");
+            debug!("Network State: {}", dump(state, distinct));
+            return false;
+        }
+        true
+    }
+}
+
+/// Run `work` until it ends, or until the shutdown is asked for (`None`).
+async fn until<T>(shutdown: &mut ShutdownSignal, work: impl Future<Output = T>) -> Option<T> {
+    let (mut work, mut stop) = (pin!(work), pin!(shutdown.requested()));
+    poll_fn(|context| match work.as_mut().poll(context) {
+        Poll::Ready(value) => Poll::Ready(Some(value)),
+        Poll::Pending => stop.as_mut().poll(context).map(|()| None),
+    })
+    .await
+}
+
+/// A username as the reference reads it from its object of names: `undefined` when missing.
+fn name(names: &HashMap<String, String>, hex: &str) -> String {
+    (names.get(hex).cloned()).unwrap_or_else(|| "undefined".into())
+}
+
+/// The usernames of `wallets` by public key, the last one of a key kept.
+fn usernames(wallets: &[DelegateWallet]) -> HashMap<String, String> {
+    (wallets
+        .iter()
+        .map(|w| (w.public_key.clone(), w.username.clone())))
+    .collect()
+}
+
+/// The line of delegates that entered or left the active positions: `[one, many]` with `emoji`.
+fn moved(names: &[String], [one, many]: [&str; 2], emoji: &str) -> Option<String> {
+    match names {
+        [] => None,
+        [name] => Some(format!("Delegate {name} {one} {emoji}")),
+        _ => Some(format!("Delegates {} {many} {emoji}", and_joined(names))),
+    }
+}
+
+fn len<T>(items: &[T]) -> i128 {
+    i128::try_from(items.len()).unwrap_or(i128::MAX)
+}
+
+/// A count as `toLocaleString` writes it in English.
+fn locale(count: u32) -> String {
+    js::to_locale_integer(i128::from(count))
+}
+
+/// `names` joined with commas, the last comma replaced by " and", as the reference's pattern
+/// replaces it.
+fn and_joined(names: &[String]) -> String {
+    let joined = names.join(", ");
+    match joined.rsplit_once(',') {
+        Some((before, after)) => format!("{before} and{after}"),
+        None => joined,
+    }
+}
+
+/// The over-height headers as the reference's `removeDuplicateBlockHeaders` leaves them: sorted
+/// with its comparator, `a.id > b.id ? 1 : a.id < b.id ? -1 : 0`, as V8 sorts, then a header
+/// dropped when its id is the one before it (the first one too when it has no id, as `lastSeen`
+/// starts unset). Text ids compare by UTF-16 code units; a missing id compares as NaN, equal to
+/// any id, so it stays where the sort leaves it.
+fn distinct<'a>(headers: &[&'a Value]) -> Vec<Value> {
+    let id = |header: &'a Value| header.get("id").and_then(Value::as_str);
+    let text = |a, b| Some(id(a)?.encode_utf16().cmp(id(b)?.encode_utf16()));
+    let mut sorted = headers.to_vec();
+    match sorted.len() {
+        ..64 => sorted = v8_sort(headers, |a, b| text(a, b).unwrap_or(Ordering::Equal)),
+        // V8 merges sorted runs here; while every id is text, any stable sort gives its order.
+        _ => sorted.sort_by(|&a, &b| text(a, b).unwrap_or(id(a).is_some().cmp(&id(b).is_some()))),
+    }
+    let mut seen = None;
+    sorted.retain(|&header| std::mem::replace(&mut seen, header.get("id")) != header.get("id"));
+    sorted.into_iter().cloned().collect()
+}
+
+/// `items` sorted as V8's `Array.prototype.sort` sorts fewer than 64 elements with `order`: the
+/// first run, reversed when it strictly descends, then each later element inserted by V8's
+/// binary search. Where `order`'s "equal" is not transitive, only this gives V8's order.
+fn v8_sort<T: Copy>(items: &[T], order: impl Fn(T, T) -> Ordering) -> Vec<T> {
+    let descending = matches!(items, [first, second, ..] if order(*second, *first).is_lt());
+    let breaks = |pair: &[T]| matches!(pair, [a, b] if order(*b, *a).is_lt() != descending);
+    let run = items.windows(2).position(breaks);
+    let run = run.map_or(items.len(), |at| at.saturating_add(1));
+    let mut sorted: Vec<T> = items.iter().take(run).copied().collect();
+    if descending {
+        sorted.reverse();
+    }
+    for &pivot in items.iter().skip(run) {
+        let (mut left, mut right) = (0, sorted.len());
+        while left < right {
+            let mid = left.midpoint(right);
+            let below = matches!(sorted.get(mid), Some(&item) if order(pivot, item).is_lt());
+            right = if below { mid } else { right };
+            left = if below { left } else { mid.saturating_add(1) };
+        }
+        sorted.insert(left, pivot);
+    }
+    sorted
+}
+
+/// The reference's `networkState.toJson()` after the distinct headers replaced the over-height
+/// ones: the quorum, then the state without its status, with two spaces of indentation.
+fn dump(state: &NetworkState, distinct: Vec<Value>) -> String {
+    let mut json = state.to_json();
+    let mut dumped = serde_json::Map::new();
+    dumped.insert("quorum".into(), Value::from(state.quorum()));
+    if let Value::Object(fields) = &mut json {
+        fields.shift_remove("status");
+        if let Some(details) = (fields.get_mut("quorumDetails")).and_then(Value::as_object_mut) {
+            details.insert("overHeightBlockHeaders".into(), Value::Array(distinct));
+        }
+        dumped.extend(std::mem::take(fields));
+    }
+    js::stringify(&Value::Object(dumped), 2)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// The `k` of each header `distinct` keeps, for headers `k` with the given ids (`None`: no id).
+    fn kept(ids: &[Option<&str>]) -> Vec<u64> {
+        let headers: Vec<Value> = (ids.iter().enumerate())
+            .map(|(k, id)| match id {
+                Some(id) => json!({"k": k, "id": id}),
+                None => json!({"k": k}),
+            })
+            .collect();
+        let headers: Vec<&Value> = headers.iter().collect();
+        (distinct(&headers).iter())
+            .map(|header| header["k"].as_u64().unwrap())
+            .collect()
+    }
+
+    // The expected lists are the reference's `removeDuplicateBlockHeaders` on Node 18.
+    #[test]
+    fn a_header_without_an_id_stays_where_the_sort_leaves_it() {
+        assert_eq!(kept(&[Some("b"), None, Some("a")]), [0, 1, 2]);
+        assert_eq!(
+            kept(&[Some("x"), None, Some("x")]),
+            [0, 1, 2],
+            "apart, both kept"
+        );
+        assert_eq!(
+            kept(&[None, Some("a")]),
+            [1],
+            "the first, as lastSeen starts unset"
+        );
+        assert_eq!(kept(&[None, None]), [] as [u64; 0]);
+        // A plain binary insertion would move the last one to the front.
+        assert_eq!(kept(&[Some("c"), Some("d"), None, Some("a")]), [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn text_ids_sort_by_utf16_code_units_and_a_descending_run_is_reversed() {
+        assert_eq!(
+            kept(&[Some("c"), Some("b"), Some("a"), Some("b")]),
+            [2, 1, 0]
+        );
+        assert_eq!(kept(&[Some("\u{e000}"), Some("\u{10000}")]), [1, 0]);
+        let ids: Vec<Option<String>> = (0..70u32)
+            .map(|k| char::from_digit(10 + k * 7 % 5, 36).map(String::from))
+            .collect();
+        let ids: Vec<Option<&str>> = ids.iter().map(Option::as_deref).collect();
+        assert_eq!(kept(&ids), [0, 3, 1, 4, 2], "64 or more: a stable sort");
+    }
+}

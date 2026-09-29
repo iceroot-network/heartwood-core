@@ -1,8 +1,14 @@
-//! The pool in the follower: two processors (the API's and the download's, each with its own
-//! cooldown), the forged transactions removed during a job, the online record expired at each
-//! round start, then the re-add when a milestone started, then the clean-up, after the job's
-//! commit; the re-add with its checks per drain, the removed blocks' transactions re-added in
-//! chain order, and the online record saved to the store.
+//! The pool in the follower: three processors (the API's, the download's and the peer-to-peer
+//! server's, each with its own cooldown), the collation for getUnconfirmedTransactions, the
+//! forged transactions removed during a job, the online record expired at each round start, then
+//! the re-add when a milestone started, then the clean-up, after the job's commit; the re-add
+//! with its checks per drain, the removed blocks' transactions re-added in chain order, and the
+//! online record saved to the store.
+//!
+//! The delegates on this node ([`OwnKeys`], the forger's attested keys) that are registered
+//! delegates take the node's own version in the online record at each round start and at the
+//! sync's end, before each expiry, as the reference sets `delegate.version` for the keys of its
+//! forger.
 //!
 //! Each processor broadcasts the transactions it admitted that pass the broadcast fee rule to
 //! every peer, as they were admitted (one that a later entry of the batch evicts included), so a
@@ -16,8 +22,11 @@
 //! rule finds nothing to remove, since every addition already keeps the pool within
 //! `maxTransactionsInPool`.
 
-use heartwood_crypto::{Milestones, Network, Params, Transaction};
+use std::sync::Arc;
+
+use heartwood_crypto::{Milestones, Network, Params, Transaction, TransactionId};
 use heartwood_kernel::Clock;
+use heartwood_p2p::node_services::Collation;
 use heartwood_pool::{
     DelegateVersions, Entry, Pool, PoolContext, PoolView, Processor, ProcessorResult, Readded,
     StorageError,
@@ -27,7 +36,7 @@ use heartwood_state::State;
 use crate::commit::ChainStore;
 use crate::errors::NodeError;
 use crate::processor::PoolSteps;
-use crate::work::{Channel, OnlineWork};
+use crate::work::{Channel, OnlineWork, OwnKeys};
 
 /// Where admitted transactions are broadcast: the network monitor in a node, a recorder in
 /// tests.
@@ -68,20 +77,47 @@ pub struct PoolTask {
     online: DelegateVersions,
     api: Processor,
     download: Processor,
+    p2p: Processor,
     /// A storage failure of a pool step during a job, which stops the node after it.
     failure: Option<StorageError>,
+    /// The delegates on this node and the node's version.
+    own: Option<(Arc<dyn OwnKeys>, String)>,
 }
 
 impl PoolTask {
     /// The pool `pool` (opened, not yet re-added) with the restored online record `online`.
     pub fn new(pool: Pool, online: DelegateVersions) -> PoolTask {
-        let (api, download, failure) = (Processor::new(), Processor::new(), None);
+        let (api, download, p2p) = (Processor::new(), Processor::new(), Processor::new());
         PoolTask {
             pool,
             online,
             api,
             download,
-            failure,
+            p2p,
+            failure: None,
+            own: None,
+        }
+    }
+
+    /// Give the delegates on this node, `keys`, the node's `version` in the online record at each
+    /// round start and at the sync's end.
+    pub fn set_own_keys(&mut self, keys: Arc<dyn OwnKeys>, version: String) {
+        self.own = Some((keys, version));
+    }
+
+    /// Set the delegates on this node that are registered delegates in the state of `env` to the
+    /// node's version in `round`: before the expiry at a round start or at the sync's end.
+    pub fn set_own(&mut self, env: &PoolEnv<'_>, round: u64) {
+        if let Some((keys, version)) = &self.own {
+            let wallets = env.state.wallets();
+            let delegate = |key: &_| {
+                wallets
+                    .find_by_public_key(key)
+                    .is_some_and(|w| w.is_delegate())
+            };
+            for key in keys.attested().into_iter().filter(delegate) {
+                self.online.set(key, round, version.clone());
+            }
         }
     }
 
@@ -96,9 +132,28 @@ impl PoolTask {
         let processor = match channel {
             Channel::Api => &mut self.api,
             Channel::Download => &mut self.download,
+            Channel::P2p => &mut self.p2p,
         };
         let ctx = env.context(&self.online);
         processor.process_to_broadcast(&mut self.pool, &ctx, env.clock, entries)
+    }
+
+    /// The collator's candidates at the tip plus one, validated when `validate`, without the
+    /// transactions of `exclude`, with the pool's size; the transactions the collation found
+    /// invalid are removed from the pool, as the reference's collator removes them.
+    pub fn collate(
+        &mut self,
+        env: &PoolEnv<'_>,
+        validate: bool,
+        exclude: &[TransactionId],
+    ) -> Result<Collation, StorageError> {
+        let ctx = env.context(&self.online);
+        let collated = heartwood_pool::collate(&mut self.pool, &ctx, validate, exclude)?;
+        let transactions = collated.candidates.iter();
+        Ok(Collation {
+            pool_size: self.pool.size(),
+            transactions: transactions.map(|t| t.bytes().to_vec()).collect(),
+        })
     }
 
     /// The pool steps after a job's commit: the online record's expiry at the start of each round
@@ -111,6 +166,7 @@ impl PoolTask {
         milestone: bool,
     ) -> Result<(), StorageError> {
         for round in rounds {
+            self.set_own(env, *round);
             self.online.expire(*round);
         }
         if milestone {

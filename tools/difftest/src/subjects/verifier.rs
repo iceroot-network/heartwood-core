@@ -9,7 +9,9 @@
 //! fork segment that Heartwood refuses because its headers do not chain is
 //! `Documented::UnlinkedForkSegment`, which holds when the headers the peer served from the common
 //! height on do not chain (previous id against the id of the block before, as the input's chain
-//! gives it).
+//! gives it). A fork segment that Heartwood refuses because its first header is our own block is
+//! `Documented::OwnForkSegment`, which holds when the peer's block at the first height fetched is
+//! ours.
 //!
 //! The deadline runs on tokio's paused clock, so the case's own work takes no time: the peer
 //! answers the last request allowed only when the deadline has passed, so the verifier finds it
@@ -575,6 +577,13 @@ fn check_state(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
                     holds: unlinked(&log.fetched, &fake.served, &ours_ids, &signed_ids),
                 });
             }
+            Checked::Refused(Refusal::OwnSegment) => {
+                let log = fake.log.lock().unwrap_or_else(PoisonError::into_inner);
+                return Ok(Verdict::RefusedByDesign {
+                    difference: Documented::OwnForkSegment,
+                    holds: own_segment(&log.fetched, &ours_ids, &signed_ids),
+                });
+            }
             Checked::Refused(_) => Value::Null,
             Checked::Stopped(_) => json!("stopped"),
         }
@@ -638,6 +647,21 @@ fn unlinked(
             .and_then(|text| hex::decode_array::<32>(text).ok());
         before.is_some() && previous != before.map(|id| *id.as_bytes())
     })
+}
+
+/// The predicate of the own fork segment: the first header fetched, the peer's block after the
+/// first height asked, is our block at that height.
+fn own_segment(fetched: &[(u32, u32)], ours: &[BlockId], signed: &[BlockId]) -> bool {
+    let Some(&(common, _)) = fetched.first() else {
+        return false;
+    };
+    let at = |ids: &[BlockId]| {
+        usize::try_from(common)
+            .ok()
+            .and_then(|h| ids.get(h))
+            .copied()
+    };
+    at(signed).is_some() && at(signed) == at(ours)
 }
 
 #[cfg(test)]

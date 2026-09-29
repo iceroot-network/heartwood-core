@@ -103,6 +103,25 @@ fn config_json_fills_a_missing_token_or_network_and_never_overrides_a_flag() {
 }
 
 #[test]
+fn a_token_or_network_that_is_no_plain_name_is_refused_as_the_commands_refuse_it() {
+    let setup = Setup::new("names", "");
+    let text = refusal(&setup, "--token ../evil --network net1", &[]);
+    assert_eq!(
+        text,
+        r#"the token "../evil" may hold letters, digits, '-' and '_' only"#
+    );
+    let text = refusal(&setup, "--network ../../evil-net", &[]);
+    assert!(
+        text.starts_with(r#"the network "../../evil-net""#),
+        "{text}"
+    );
+    // A config.json that names such a network is refused too.
+    setup.write("config.json", r#"{"network": "../evil-net"}"#);
+    assert!(refusal(&setup, "", &[]).starts_with(r#"the network "../evil-net""#));
+    assert!(load(&setup, "--network dev_net-2", &[]).is_ok());
+}
+
+#[test]
 fn the_relay_profile_becomes_components_in_rank_order() {
     let setup = Setup::new("profile", "");
     let config = load(&setup, "--network testnet", &[]).unwrap();
@@ -466,8 +485,11 @@ fn the_blockchain_options_are_read_as_the_reference_schema_reads_them() {
 
 #[test]
 fn a_replay_marker_restores_by_the_replay_path_and_is_removed() {
+    use std::os::unix::fs::PermissionsExt;
     let setup = Setup::new("markers", "");
     let config = load(&setup, "--network testnet", &[]).unwrap();
+    // The run directory the process lock makes: the markers' user is its user.
+    fs::create_dir_all(config.paths.data.join("run")).unwrap();
     fs::create_dir_all(&config.paths.temp).unwrap();
     let (_, first) = restored(&config).unwrap();
     assert_eq!(first.path, RestorePath::FirstStart);
@@ -477,6 +499,13 @@ fn a_replay_marker_restores_by_the_replay_path_and_is_removed() {
     let (_, replayed) = restored(&config).unwrap();
     assert_eq!(replayed.path, RestorePath::Replay(ReplayReason::Requested));
     assert!(!config.replay_marker().exists());
+    // A marker that others may write is not the relay's: ignored, and left.
+    fs::write(config.replay_marker(), "").unwrap();
+    let wide = fs::Permissions::from_mode(0o666);
+    fs::set_permissions(config.replay_marker(), wide).unwrap();
+    let (_, ignored) = restored(&config).unwrap();
+    assert_eq!(ignored.path, RestorePath::Table);
+    assert!(config.replay_marker().exists());
     assert_eq!(
         config.pool_marker(),
         setup.root.join("temp/clear-pool.lock")

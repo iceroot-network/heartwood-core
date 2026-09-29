@@ -6,7 +6,8 @@
 //!   `{minimumVersions}` (or removed when the input has none);
 //! - `peer.sameSubnet` `{ip, peers}` -> `{same}`;
 //! - `ratelimit.run` `{limiter, events: [{t, ip, route, op}]}` -> `{answers}`, the events at `t`
-//!   milliseconds after a start.
+//!   milliseconds after a start; the server's inbound limiter answers a case whose
+//!   `limiter.inbound` is true (the `server` subject).
 
 use std::net::IpAddr;
 use std::time::Duration;
@@ -98,8 +99,11 @@ fn same_subnet(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     Ok(Verdict::Output(json!({ "same": same })))
 }
 
-fn rate_limit(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
+fn rate_limit(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let input = case.input;
+    if input["limiter"]["inbound"].as_bool() == Some(true) {
+        return super::server::inbound_rate_limit(env, case);
+    }
     let points = |key: &str| {
         (input["limiter"][key].as_u64())
             .and_then(|n| u32::try_from(n).ok())

@@ -5,12 +5,13 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use heartwood_difftest::cli::{
-    self, Command, GenesisArgs, JudgeArgs, L1Args, L2Args, L2ProcessorArgs, USAGE,
+    self, Command, ForgeArgs, GenesisArgs, JudgeArgs, L1Args, L2Args, L2ProcessorArgs, USAGE,
 };
 use heartwood_difftest::corpus::{self, Corpus};
 use heartwood_difftest::genesis::{self, Built};
 use heartwood_difftest::levels::l1::{self, L1Options, Property};
 use heartwood_difftest::levels::l2::{self, L2Options};
+use heartwood_difftest::levels::l2_forge::{self, ForgeOptions};
 use heartwood_difftest::levels::l2_processor::{self, L2ProcessorOptions};
 use heartwood_difftest::levels::{Level, l0};
 use heartwood_difftest::oracle::GenOptions;
@@ -20,7 +21,10 @@ use heartwood_difftest::store;
 use heartwood_difftest::strategies::transactions::TxContext;
 use heartwood_difftest::subjects::Devnet;
 use heartwood_difftest::vectors::VectorSet;
-use heartwood_difftest::{Error, Result, api, live, replay, runtime_kill, subject};
+use heartwood_difftest::{
+    Error, Result, api, corpus_from_blocks, forger_kill, live, network_generate, replay,
+    runtime_kill, subject,
+};
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -232,6 +236,21 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             );
             Ok(true)
         }
+        Command::CorpusFromBlocks {
+            blocks,
+            crypto,
+            out,
+            seed,
+        } => {
+            corpus_from_blocks::from_blocks(&blocks, &crypto, &seed, &out)?;
+            let loaded = Corpus::load(&out)?;
+            println!(
+                "difftest: corpus {} written: blocks 2 to {}, manifest verified",
+                out.display(),
+                loaded.tip()
+            );
+            Ok(true)
+        }
         Command::CorpusVerify { dir } => {
             let loaded = Corpus::load(&dir)?;
             println!(
@@ -243,6 +262,19 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             Ok(true)
         }
         Command::CorpusJudge(args) => judge(&args, env),
+        Command::ForgeReplay(args) => forge_replay(&args, env, strict),
+        Command::ForgerCrash { kills, seed, child } => {
+            let options = forger_kill::KillOptions { kills, seed, child };
+            let report = built(store::guarded(|| forger_kill::run(&options)))?;
+            print!("{report}");
+            Ok(verdict(&report, strict))
+        }
+        Command::NetworkGenerate { vectors } => {
+            let set = VectorSet::load(&vectors)?;
+            let report = built(store::guarded(|| network_generate::check(&set)))?;
+            print!("{report}");
+            Ok(verdict(&report, strict))
+        }
         Command::StoreReplay { dir, db, to } => {
             let loaded = Corpus::load(&dir)?;
             let tip = store::replay(&loaded, &db, to)?;
@@ -344,6 +376,7 @@ fn run_l1(args: &L1Args, env: impl Fn(&str) -> Option<String>, strict: bool) -> 
             seed: args.seed,
             regressions: args.regressions.clone(),
             min_reach: args.min_reach,
+            decision_reach: args.decision_reach,
         },
     )?;
     print!("{}", run.report);
@@ -411,15 +444,23 @@ fn judge(args: &JudgeArgs, env: impl Fn(&str) -> Option<String>) -> Result<bool>
     if args.processor {
         extra.push("--processor".to_string());
     }
-    let ok = oracle.judge(dir, &work, &extra)?;
-    let recorded = corpus::record_judge(dir, &work)?;
+    // The judge's exit status holds the corpus to every anchor; the recorded verdict reads its
+    // report for this corpus, as the other gate targets do.
+    oracle.judge(dir, &work, &extra)?;
+    let hold = corpus::record_judge(dir, &work)?;
+    let (_, anchors) = l2::judge_report(dir)?;
+    let absent = corpus::absent_anchors(&anchors, &Corpus::load(dir)?.meta);
     println!(
         "difftest: the judge's lines and anchors are in {} (anchors {})",
         dir.display(),
-        if recorded && ok {
-            "hold"
-        } else {
-            "FAILED: see anchors.json"
+        match (hold, absent.is_empty()) {
+            (true, true) => "hold".to_owned(),
+            (true, false) => format!(
+                "hold; {} do not apply to a corpus of relay block files, which has no API \
+                 checkpoint and no archive",
+                absent.join(" and ")
+            ),
+            (false, _) => "FAILED: see anchors.json".to_owned(),
         }
     );
     if args.dump.is_empty() {
@@ -427,7 +468,7 @@ fn judge(args: &JudgeArgs, env: impl Fn(&str) -> Option<String>) -> Result<bool>
     } else {
         println!("  dumps: {}", work.display());
     }
-    Ok(ok && recorded)
+    Ok(hold)
 }
 
 fn run_l2(args: &L2Args, env: impl Fn(&str) -> Option<String>, strict: bool) -> Result<bool> {
@@ -452,7 +493,7 @@ fn run_l2(args: &L2Args, env: impl Fn(&str) -> Option<String>, strict: bool) -> 
         for r in report
             .results
             .iter()
-            .filter(|r| r.file.ends_with("/synthetic"))
+            .filter(|r| heartwood_difftest::synthetic::is_synthetic_file(&r.file))
         {
             let verdict = match &r.outcome {
                 o if o.is_failure() => "FAIL",
@@ -485,6 +526,33 @@ fn run_l2_processor(
         },
         server.as_mut(),
     )?;
+    print!("{report}");
+    Ok(verdict(&report, strict))
+}
+
+/// The result of a part that may still be a stub: its `todo!()` is "not built yet".
+fn built<T>(outcome: std::result::Result<Result<T>, store::Unbuilt>) -> Result<T> {
+    outcome.map_err(|store::Unbuilt(message)| Error::NotYet(format!("not built yet: {message}")))?
+}
+
+/// The forge replay of a corpus, in the direction the arguments give.
+fn forge_replay(
+    args: &ForgeArgs,
+    env: impl Fn(&str) -> Option<String>,
+    strict: bool,
+) -> Result<bool> {
+    let corpus = Corpus::load(&args.dir)?;
+    let mut server = match &args.oracle {
+        Some(oracle) => Some(oracle.resolve(env)?.server()?),
+        None => None,
+    };
+    let options = ForgeOptions {
+        direction: args.direction,
+        to: args.to,
+    };
+    let report = built(store::guarded(|| {
+        l2_forge::run(&corpus, &options, server.as_mut())
+    }))?;
     print!("{report}");
     Ok(verdict(&report, strict))
 }

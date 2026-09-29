@@ -10,10 +10,13 @@
 //! window ([`crate::repository::PeerRepository::has_violation`]), so a violating peer is not
 //! accepted again as soon as discovery names it.
 
+use std::net::IpAddr;
+
 use heartwood_p2p_wire::errors::DecodeError;
 
 use crate::errors::{ProtocolError, SessionError};
 use crate::peer::SharedPeer;
+use crate::repository::PeerRepository;
 
 /// A protocol violation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +35,8 @@ pub enum Violation {
     ForkHeader,
     /// A downloaded block that fails decoding, or a verification rule other than the timestamp.
     DownloadedBlock,
+    /// A request to this node's server that the route's codec refused.
+    RequestDecode,
 }
 
 impl Violation {
@@ -66,10 +71,17 @@ impl Violation {
 /// Record `violation` against `peer` at `now_ms`.
 pub fn record(peer: &SharedPeer, violation: Violation, now_ms: i64) {
     peer.with(|peer| peer.add_violation(now_ms));
-    heartwood_kernel::debug!(
-        "Protocol violation by peer {}: {violation:?} :warning:",
-        peer.ip()
-    );
+    log(peer.ip(), violation);
+}
+
+/// Record `violation` of `ip`, an address that is no peer, in `repository` at `now_ms`.
+pub fn record_address(repository: &PeerRepository, ip: IpAddr, violation: Violation, now_ms: i64) {
+    repository.note_violation(ip, now_ms);
+    log(ip, violation);
+}
+
+fn log(ip: IpAddr, violation: Violation) {
+    heartwood_kernel::debug!("Protocol violation by peer {ip}: {violation:?} :warning:");
 }
 
 #[cfg(test)]

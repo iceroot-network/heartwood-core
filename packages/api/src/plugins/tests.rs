@@ -566,16 +566,16 @@ async fn request_headers_are_read_as_node_gives_them_to_hapi() {
     let small = [latin1[0], ("accept-encoding", &b"gzip"[..])];
     let echoed = raw_header(&pipeline, with("GET", status, &small), origin).await;
     assert_eq!(echoed, (200, b"\xc3\xa9".to_vec()));
-    // The first entry of the joined `X-Forwarded-For`.
+    // The last entry of the joined `X-Forwarded-For`, the one the trusted proxy appended.
     let mut trusting = config();
     trusting.trust_proxy = true;
     let proxied = pipeline_with(trusting, echo);
     let forwarded = [
         ("x-forwarded-for", &b" 10.0.0.5"[..]),
-        ("x-forwarded-for", b"10.0.0.6"),
+        ("x-forwarded-for", b"10.0.0.6 "),
     ];
     let (_, _, body) = call(&proxied, with("GET", status, &forwarded)).await;
-    assert_eq!(body["data"]["client"], "10.0.0.5");
+    assert_eq!(body["data"]["client"], "10.0.0.6");
 }
 
 #[tokio::test]
@@ -665,15 +665,20 @@ async fn the_whitelist_refuses_before_the_router() {
         assert_eq!((status, body), (403, forbidden.clone()), "{uri}");
         assert_eq!(header(&headers, "connection"), Some("close"));
     }
-    // Behind a trusted proxy the first forwarded address is the client's.
+    // Behind a trusted proxy the address it appended, the last, is the client's; the reference
+    // reads the first, which the client writes.
     config.trust_proxy = true;
     let proxied = pipeline(config);
-    let request = Request::get("/api/node/status")
-        .header("x-forwarded-for", " 10.0.0.5 , 198.51.100.1")
-        .body(Body::empty())
-        .unwrap();
-    let (status, _, body) = call(&proxied, request).await;
+    let forwarded = |value: &str| {
+        Request::get("/api/node/status")
+            .header("x-forwarded-for", value)
+            .body(Body::empty())
+            .unwrap()
+    };
+    let (status, _, body) = call(&proxied, forwarded("198.51.100.1 , 10.0.0.5 ")).await;
     assert_eq!((status, &body["data"]["client"]), (200, &json!("10.0.0.5")));
+    let (status, _, body) = call(&proxied, forwarded(" 10.0.0.5 , 198.51.100.1")).await;
+    assert_eq!((status, body), (403, forbidden));
 }
 
 fn post(body: impl Into<Body>, headers: &[(&str, &str)]) -> Request<Body> {
@@ -1616,5 +1621,199 @@ fn the_options_are_the_reference_defaults_and_its_variables() {
             (refused.package, refused.key.as_str()),
             ("@solar-network/api", key)
         );
+    }
+}
+
+#[tokio::test]
+async fn a_compressed_body_is_read_off_the_runtime() {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    // Many empty gzip members: work for the decoder that must not hold the API's workers.
+    let mut member = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    member.write_all(b"").unwrap();
+    let body = member.finish().unwrap().repeat(20_000);
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("content-encoding", "gzip".parse().unwrap());
+    headers.insert("content-type", "application/json".parse().unwrap());
+    let (done, polls) = (AtomicBool::new(false), AtomicUsize::new(0));
+    let read = async {
+        let raw = super::payload::bytes(&headers, Body::from(body)).await;
+        let read = super::payload::parse(raw.unwrap()).await;
+        done.store(true, Ordering::SeqCst);
+        read
+    };
+    let other = async {
+        while !done.load(Ordering::SeqCst) {
+            polls.fetch_add(1, Ordering::SeqCst);
+            tokio::task::yield_now().await;
+        }
+    };
+    let (read, ()) = tokio::join!(read, other);
+    assert_eq!(read.unwrap(), Value::Null);
+    // The runtime ran other work while the body was decoded.
+    assert!(polls.load(Ordering::SeqCst) > 0);
+}
+
+#[test]
+fn a_server_error_line_names_at_most_128_bytes_of_the_path() {
+    let short = super::logged_target("GET", "/api/node/status");
+    assert_eq!(short, "GET /api/node/status");
+    let long = format!("/{}", "x".repeat(16_300));
+    let logged = super::logged_target("GET", &long);
+    assert_eq!(logged, format!("GET /{}... (16301 bytes)", "x".repeat(127)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn server_error_lines_are_written_once_a_second_with_a_count_of_the_rest() {
+    let mut lines = super::ErrorLines::default();
+    let now = tokio::time::Instant::now();
+    assert_eq!(lines.admit(now), Some(0));
+    for _ in 0..5 {
+        assert_eq!(lines.admit(now + Duration::from_millis(500)), None);
+    }
+    assert_eq!(lines.admit(now + Duration::from_millis(999)), None);
+    assert_eq!(lines.admit(now + Duration::from_secs(1)), Some(6));
+    assert_eq!(lines.admit(now + Duration::from_secs(3)), Some(0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn behind_a_trusted_proxy_the_address_it_appended_keys_the_limit() {
+    let mut config = config();
+    config.trust_proxy = true;
+    config.rate_limit.points = 1;
+    let limited = pipeline(config);
+    let forwarded = |value: &str| {
+        Request::get("/api/node/status")
+            .header("x-forwarded-for", value)
+            .body(Body::empty())
+            .unwrap()
+    };
+    // The first entry is the client's to write: it no longer escapes the limit.
+    let (status, _, body) = call(&limited, forwarded("10.0.0.1, 198.51.100.7")).await;
+    assert_eq!(
+        (status, &body["data"]["client"]),
+        (200, &json!("198.51.100.7"))
+    );
+    let (status, _, _) = call(&limited, forwarded("10.0.0.2, 198.51.100.7")).await;
+    assert_eq!(status, 429);
+    // An entry that is no address is the socket's address.
+    let (status, _, body) = call(&limited, forwarded("not an address")).await;
+    assert_eq!(
+        (status, &body["data"]["client"]),
+        (200, &json!("127.0.0.1"))
+    );
+    // The addresses of one IPv6 /64 share one limit.
+    let (status, _, _) = call(&limited, forwarded("2001:db8:0:1::1")).await;
+    assert_eq!(status, 200);
+    let (status, _, _) = call(&limited, forwarded("2001:db8:0:1::2")).await;
+    assert_eq!(status, 429);
+    let (status, _, _) = call(&limited, forwarded("2001:db8:0:2::1")).await;
+    assert_eq!(status, 200);
+}
+
+#[test]
+fn the_limit_keeps_a_bounded_number_of_windows() {
+    let mut limiter = super::limits::RateLimiter::new(1, 60);
+    let now = tokio::time::Instant::now();
+    for n in 0..super::limits::MAX_WINDOWS {
+        assert!(limiter.consume(&n.to_string(), now));
+    }
+    // Every client beyond shares one window.
+    assert!(limiter.consume("new client", now));
+    assert!(!limiter.consume("another new client", now));
+    assert!(!limiter.consume("0", now));
+    assert_eq!(limiter.len(), super::limits::MAX_WINDOWS + 1);
+}
+
+#[test]
+fn a_full_limit_frees_its_ended_windows_for_new_clients() {
+    let mut limiter = super::limits::RateLimiter::new(1, 60);
+    let now = tokio::time::Instant::now();
+    for n in 0..super::limits::MAX_WINDOWS {
+        assert!(limiter.consume(&n.to_string(), now));
+    }
+    // Full: new clients share one window, which the first of them spends.
+    assert!(limiter.consume("late", now));
+    assert!(!limiter.consume("later", now));
+    // The flood's windows ended: the table is pruned for a new client, which has its own window
+    // again, as does the next.
+    let after = now + Duration::from_secs(60);
+    assert!(limiter.consume("one", after));
+    assert!(limiter.consume("two", after));
+    assert_eq!(limiter.len(), 2);
+    // A full table of live windows is scanned once a second at most: within the second, the
+    // clients beyond the bound share one window again.
+    for n in 0..super::limits::MAX_WINDOWS - 2 {
+        assert!(limiter.consume(&format!("again-{n}"), after));
+    }
+    assert_eq!(limiter.len(), super::limits::MAX_WINDOWS);
+    assert!(limiter.consume("three", after + Duration::from_millis(500)));
+    assert!(!limiter.consume("four", after + Duration::from_millis(500)));
+    assert_eq!(limiter.len(), super::limits::MAX_WINDOWS + 1);
+}
+
+/// A body that never ends, as a client that trickles one gives it.
+struct Trickle;
+
+impl hyper::body::Body for Trickle {
+    type Data = axum::body::Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        std::task::Poll::Pending
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_slow_post_body_holds_no_place_of_the_eight() {
+    let pipeline = Arc::new(pipeline(config()));
+    // Eight bodies that never end hold their connections, and nothing else.
+    let stuck: Vec<_> = (0..8)
+        .map(|_| {
+            let pipeline = Arc::clone(&pipeline);
+            tokio::spawn(async move { call(&pipeline, post(Body::new(Trickle), &[])).await.0 })
+        })
+        .collect();
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    // A ninth, whole, is answered: a place is taken once the body is in.
+    let answered = tokio::time::timeout(Duration::from_secs(2), call(&pipeline, post("{}", &[])));
+    assert_eq!(answered.await.expect("answered").0, 200);
+    for task in stuck {
+        task.abort();
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn at_most_eight_posts_are_served_at_once() {
+    let (entered, release) = (
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        Arc::new(Notify::new()),
+    );
+    let (counter, gate) = (Arc::clone(&entered), Arc::clone(&release));
+    let pipeline = Arc::new(pipeline_with(config(), move |route, request| {
+        let (counter, gate) = (Arc::clone(&counter), Arc::clone(&gate));
+        Box::pin(async move {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            gate.notified().await;
+            echo(route, request).await
+        })
+    }));
+    let posts: Vec<_> = (0..9)
+        .map(|_| {
+            let pipeline = Arc::clone(&pipeline);
+            tokio::spawn(async move { call(&pipeline, post("{}", &[])).await.0 })
+        })
+        .collect();
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert_eq!(entered.load(std::sync::atomic::Ordering::SeqCst), 8);
+    release.notify_waiters();
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert_eq!(entered.load(std::sync::atomic::Ordering::SeqCst), 9);
+    release.notify_waiters();
+    for post in posts {
+        assert_eq!(post.await.unwrap(), 200);
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "heartwood-core"
-description = "The heartwood binary of Heartwood Core: a relay's process, with its configuration, composition, process lock, signals and graceful shutdown"
+description = "The heartwood binary of Heartwood Core: the command tree, a relay's and a forger's process, with their configuration, composition, process locks, signals and graceful shutdown, and the node's services for the peer-to-peer server"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,19 +18,29 @@ name = "heartwood"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["devnet"]
+# The local devnet's commands and a devnet node's addressing, on by default.
+devnet = ["heartwood-cli/devnet", "heartwood-p2p/devnet"]
 # Test seam: the harness's flags of `relay run` (`--difftest-digest`, `--difftest-blocks`,
 # `--difftest-seed`) and the test seams of the crates below. Only the harness's builds enable it
 # (the kill test, the end-to-end test and the live runs' image); a release build never does.
-difftest = ["heartwood-blockchain/difftest", "heartwood-kernel/difftest", "heartwood-p2p/difftest"]
+difftest = [
+    "heartwood-blockchain/difftest",
+    "heartwood-forger/difftest",
+    "heartwood-kernel/difftest",
+    "heartwood-p2p/difftest",
+]
 
-# The composition root depends on every crate of the node.
+# The composition roots depend on every crate of the node, the forger and the commands.
 [dependencies]
 clap.workspace = true
+futures-util.workspace = true
 heartwood-api.workspace = true
 heartwood-blockchain.workspace = true
+heartwood-cli.workspace = true
 heartwood-crypto.workspace = true
 heartwood-database.workspace = true
+heartwood-forger.workspace = true
 heartwood-kernel = { workspace = true, features = ["bus"] }
 heartwood-logger.workspace = true
 heartwood-p2p.workspace = true

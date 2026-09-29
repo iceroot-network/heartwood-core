@@ -1,5 +1,6 @@
 //! The network monitor as the blockchain service calls it: [`heartwood_blockchain::Network`] over
-//! the monitor that owns the relay's peers.
+//! the monitor that owns the relay's peers. The first `blockchain.synced` is also noted for the
+//! server, whose socket-close bans start 60 s after it.
 
 use std::future::Future;
 use std::net::IpAddr;
@@ -8,13 +9,21 @@ use std::time::Duration;
 
 use heartwood_blockchain::Network;
 use heartwood_crypto::{Block, Transaction, TransactionId};
+use heartwood_kernel::Clock;
 use heartwood_p2p::errors::{DownloadError, SeedError};
 use heartwood_p2p::monitor::{CleanseOptions, NetworkStatus};
 use heartwood_p2p::seams::{PeerAcceptor, PeerClient, PeerRules};
 use heartwood_p2p::{DownloadedBlock, NetworkMonitor};
 
-/// The relay's network monitor, through the `Arc` that owns it (its background work needs one).
-pub struct Monitored<C, A, R>(pub Arc<NetworkMonitor<C, A, R>>);
+use crate::views::Links;
+
+/// The relay's network monitor, through the `Arc` that owns it (its background work needs one),
+/// with the links where its first sync is noted for the server, and the clock that times it.
+pub struct Monitored<C, A, R>(
+    pub Arc<NetworkMonitor<C, A, R>>,
+    pub Arc<Links>,
+    pub Arc<dyn Clock>,
+);
 
 impl<C, A, R> Network for Monitored<C, A, R>
 where
@@ -113,6 +122,7 @@ where
     }
 
     fn synced(&self) {
+        let _ = self.1.first_synced.set(self.2.now_ms());
         NetworkMonitor::synced(&self.0);
     }
 
@@ -130,5 +140,9 @@ where
 
     fn complete_cold_start(&self) {
         NetworkMonitor::complete_cold_start(&self.0);
+    }
+
+    fn refused_block(&self, ip: IpAddr) {
+        NetworkMonitor::refused_block(&self.0, ip);
     }
 }

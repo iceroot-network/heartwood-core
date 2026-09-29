@@ -27,9 +27,10 @@ impl Drop for Killed {
     }
 }
 
-/// A port nothing listens on now.
+/// A port nothing listens on now, on any address: the relay binds the wildcard address, which
+/// a listener on any other loopback address of the same port refuses.
 fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
+    TcpListener::bind("0.0.0.0:0")
         .unwrap()
         .local_addr()
         .unwrap()
@@ -80,13 +81,6 @@ fn get(port: u16, path: &str) -> Option<(String, Value)> {
 #[test]
 #[ignore = "integration"]
 fn a_relay_imports_the_corpus_from_a_mock_peer_and_serves_its_tip() {
-    let api = free_port();
-    let env = format!(
-        "CORE_API_PORT={api}\nCORE_P2P_PORT={}\nCORE_P2P_MIN_NETWORK_REACH=1\nCORE_LOG_LEVEL=info\n",
-        free_port()
-    );
-    let setup = Setup::new("relay", &env);
-    setup.write("peers.json", r#"{"list": []}"#);
     let mut peer = Command::new(mock_peer())
         .args(["--listen", "127.0.0.1:0", "--chain"])
         .arg(corpus())
@@ -97,6 +91,14 @@ fn a_relay_imports_the_corpus_from_a_mock_peer_and_serves_its_tip() {
     let peer = Killed(peer);
     let listening = lines.next().unwrap().unwrap();
     let address = listening.rsplit(' ').next().unwrap().to_owned();
+    // The relay's ports are taken once the mock peer listens, so that neither is the peer's.
+    let api = free_port();
+    let env = format!(
+        "CORE_API_PORT={api}\nCORE_P2P_PORT={}\nCORE_P2P_MIN_NETWORK_REACH=1\nCORE_LOG_LEVEL=info\n",
+        free_port()
+    );
+    let setup = Setup::new("relay", &env);
+    setup.write("peers.json", r#"{"list": []}"#);
     let digests = setup.root.join("digests.jsonl");
     let mut relay = Command::new(env!("CARGO_BIN_EXE_heartwood"));
     relay
@@ -196,6 +198,52 @@ fn a_relay_whose_api_cannot_listen_stops_with_an_error() {
         .stderr(Stdio::piped());
     let mut relay = Killed(relay.spawn().unwrap());
     // The blockchain starts at once on a new network; at most 120 s.
+    let mut waits = 0;
+    let status = loop {
+        if let Some(status) = relay.0.try_wait().unwrap() {
+            break status;
+        }
+        waits += 1;
+        assert!(waits <= 1200, "the relay did not stop within 120 s");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let mut stderr = String::new();
+    let mut pipe = relay.0.stderr.take().unwrap();
+    pipe.read_to_string(&mut stderr).unwrap();
+    assert_eq!(status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains(&format!("cannot listen on 127.0.0.1:{port}")),
+        "{stderr}"
+    );
+    drop(taken);
+}
+
+/// A temp directory that cannot be made stops no start: the relay reads only the reference's
+/// marker files there. It stops here because its API cannot listen, once its blockchain started.
+#[test]
+#[ignore = "integration"]
+fn a_relay_starts_when_its_temp_directory_cannot_be_made() {
+    let taken = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = taken.local_addr().unwrap().port();
+    let env = format!(
+        "CORE_API_HOST=127.0.0.1\nCORE_API_PORT={port}\nCORE_P2P_PORT={}\n",
+        free_port()
+    );
+    let setup = Setup::new("temp-blocked", &env);
+    let blocked = setup.root.join("a-file");
+    std::fs::write(&blocked, "").unwrap();
+    let temp = blocked.join("temp").display().to_string();
+    let mut relay = Command::new(env!("CARGO_BIN_EXE_heartwood"));
+    relay
+        .args(["relay", "run", "--token", "solar", "--network", "testnet"])
+        .args(["--networkStart", "--skipDiscovery"])
+        .env_clear()
+        .env("HOME", setup.home())
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .envs(setup.process(&[("CORE_PATH_TEMP", &temp)]))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut relay = Killed(relay.spawn().unwrap());
     let mut waits = 0;
     let status = loop {
         if let Some(status) = relay.0.try_wait().unwrap() {

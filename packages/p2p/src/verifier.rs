@@ -13,7 +13,10 @@
 //! - Then the peer's blocks from the common height + 1 to the end of that round (or its claimed
 //!   height), fetched as headers, each rebuilt as `BlockFactory.fromData` rebuilds it, signed by
 //!   its own key, at the height asked, by a delegate of that round, and each chaining to the one
-//!   before it (the first to our common block), which the reference does not check.
+//!   before it (the first to our common block), which the reference does not check. Nor does it
+//!   check that the first differs from our block at its height: a peer on our chain could answer
+//!   a probe with a low block and pass as forked there. Such a segment is refused
+//!   ([`Refusal::OwnSegment`]), without a violation.
 //! - The deadline is checked before every request.
 //!
 //! The reference ends a verification in one of three ways, and [`Outcome`] keeps them apart: the
@@ -74,6 +77,9 @@ pub enum Refusal {
     /// A header of the fork segment does not chain to the block before it; the reference does not
     /// check this.
     Unlinked,
+    /// The fork segment's first header is our own block at its height, so the common block found
+    /// is not the peer's highest one; the reference verifies the peer as forked there.
+    OwnSegment,
 }
 
 /// The peer verifier, over the node's chain and stored blocks.
@@ -328,6 +334,9 @@ impl PeerVerifier {
                     }
                     Ok(true) => {
                         previous = block_id(&rebuilt);
+                        if height == start && self.is_ours(height, previous)? {
+                            return Err(Outcome::Refused(Refusal::OwnSegment));
+                        }
                         continue;
                     }
                 },
@@ -336,6 +345,22 @@ impl PeerVerifier {
             return Err(outcome);
         }
         Ok(())
+    }
+
+    /// Whether `id` is the id of our block at `height`, which is none above our tip. Only a peer
+    /// that answered a common-block probe with a block below its highest common one shows us our
+    /// own block as the first of its fork segment: a peer on our chain that claims a fork, or an
+    /// honest peer whose later probe failed, so it is refused without a violation.
+    fn is_ours(&self, height: u32, id: BlockId) -> Result<bool, Outcome> {
+        if height > self.our_height() {
+            return Ok(false);
+        }
+        let stopped = Outcome::Stopped(VerificationStopped::Lookup);
+        let ours = self
+            .lookup
+            .blocks_by_height(&[height])
+            .map_err(|_| stopped)?;
+        Ok(ours.first().is_some_and(|ours| block_id(ours) == id))
     }
 
     /// `verifyPeerBlock` after the rebuild: the generator must be a registered delegate (the

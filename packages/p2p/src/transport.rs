@@ -11,12 +11,12 @@
 
 use std::future::Future;
 use std::io::{self, Cursor};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
-use tokio::net::TcpStream;
+use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -51,6 +51,32 @@ pub fn tcp() -> Dial {
     Arc::new(|address| {
         Box::pin(async move {
             let stream = TcpStream::connect(address).await?;
+            stream.set_nodelay(true)?;
+            Ok(Box::new(stream) as Box<dyn Stream>)
+        })
+    })
+}
+
+/// Streams over TCP whose sockets are bound to `local` (any port) before they connect, so that the
+/// peer sees `local` as the source: a forger's `localAddress` option, and in a devnet the node's
+/// own loopback address. An address of the other family than `local`'s fails with
+/// [`io::ErrorKind::InvalidInput`]; a `local` that is not an address of this host fails at the
+/// bind.
+pub fn tcp_bound(local: IpAddr) -> Dial {
+    Arc::new(move |address: SocketAddr| {
+        Box::pin(async move {
+            let socket = match (local, address) {
+                (IpAddr::V4(_), SocketAddr::V4(_)) => TcpSocket::new_v4()?,
+                (IpAddr::V6(_), SocketAddr::V6(_)) => TcpSocket::new_v6()?,
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("cannot reach {address} from {local}: the address families differ"),
+                    ));
+                }
+            };
+            socket.bind(SocketAddr::new(local, 0))?;
+            let stream = socket.connect(address).await?;
             stream.set_nodelay(true)?;
             Ok(Box::new(stream) as Box<dyn Stream>)
         })
@@ -118,6 +144,10 @@ pub async fn open(
     Ok((reader, Writer::spawn(write)))
 }
 
+/// The most capacity the read buffer keeps between messages: one large message grew it to twice
+/// its size, which the connection then held for its life.
+const KEPT_BUFFER: usize = 64 * 1024;
+
 /// The receiving side of a connection.
 pub struct Reader {
     half: ReadHalf<Box<dyn Stream>>,
@@ -154,6 +184,7 @@ impl Reader {
             }
             if let Some((header, length)) = self.frame.take_if(|(_, n)| *n <= self.buffer.len()) {
                 let payload: Vec<u8> = self.buffer.drain(..length).collect();
+                self.buffer.shrink_to(KEPT_BUFFER);
                 if let Some(received) = self.complete(&header, payload) {
                     return received;
                 }
@@ -293,5 +324,47 @@ impl Writer {
         let mut frame = Vec::with_capacity(payload.len().saturating_add(14));
         let _ = Frame::from_payload(header, payload.into()).format(&mut frame);
         let _ = self.queue.send(frame);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_large_message_leaves_no_large_buffer_behind() {
+        let (client, mut server) = tokio::io::duplex(64 * 1024);
+        let (half, _write) = tokio::io::split(Box::new(client) as Box<dyn Stream>);
+        let mut reader = Reader {
+            half,
+            buffer: Vec::new(),
+            frame: None,
+            message: Vec::new(),
+            fragmented: None,
+            total: 0,
+        };
+        let length = 4 * 1024 * 1024;
+        tokio::spawn(async move {
+            let mut header = vec![0x82, 127];
+            header.extend_from_slice(&u64::try_from(length).unwrap().to_be_bytes());
+            server.write_all(&header).await.unwrap();
+            server.write_all(&vec![7; length]).await.unwrap();
+            server.write_all(&[0x82, 1, 9]).await.unwrap();
+            // Keep the stream open until the reader is done.
+            std::future::pending::<()>().await;
+        });
+        assert_eq!(
+            reader.next(8 * 1024 * 1024).await,
+            Received::Binary(vec![7; length])
+        );
+        assert!(
+            reader.buffer.capacity() <= KEPT_BUFFER,
+            "{}",
+            reader.buffer.capacity()
+        );
+        assert_eq!(
+            reader.next(8 * 1024 * 1024).await,
+            Received::Binary(vec![9])
+        );
     }
 }

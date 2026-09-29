@@ -71,7 +71,10 @@ impl Transaction {
     ///   `heartwood-blockchain`);
     /// - the pool's re-add of stored and previously forged transactions, and its entry step, which
     ///   reads again the bytes that [`Transaction::decode`] has just verified (`heartwood-pool`);
-    /// - the API's history routes, which read the stored rows (`heartwood-api`).
+    /// - the API's history routes, which read the stored rows (`heartwood-api`);
+    /// - the forger's read of the transactions for forging, which its relay's pool verified at
+    ///   entry (and the relay verifies again in the block the forger posts), and of the block it
+    ///   has just signed, whose transactions are those (`heartwood-forger`).
     ///
     /// Bytes verified again (`heartwood-p2p`):
     /// - the download path (the communicator's getBlocks reply and `download::read_listed`): a

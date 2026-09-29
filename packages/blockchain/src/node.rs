@@ -1,12 +1,13 @@
 //! The node thread: it alone holds the state, the store, the pool and the online record.
 //!
 //! Every change runs here, in the order the work arrives ([`crate::work::Work`]): jobs, pool
-//! entries, the queue's drain, block removals, the online record's changes, and the stop. After
-//! each commit the thread runs the pool's steps (the expiry of the online record at each round
-//! start, a re-add when a milestone starts, and the clean-up), publishes the new snapshots (the
-//! state, the pool, the chain status) through `watch` channels, and tells its listener, never
-//! between two blocks of a job. Network and API tasks send it work through a [`NodeHandle`] and
-//! read the snapshots; nothing else reads or writes the state or the store.
+//! entries, the pool's collations, the queue's drain, block removals, the online record's
+//! changes, and the stop. After each commit the thread runs the pool's steps (the expiry of the
+//! online record at each round start, a re-add when a milestone starts, and the clean-up),
+//! publishes the new snapshots (the state, the pool, the chain status) through `watch` channels,
+//! and tells its listener, never between two blocks of a job. Network and API tasks send it work
+//! through a [`NodeHandle`] and read the snapshots; nothing else reads or writes the state or the
+//! store.
 //!
 //! A job locks the shared chain state for one block at a time, so the service's actions and the
 //! network's reads come between two blocks, and see the tip as it moves. A fatal error ([`NodeError`]) ends the thread at once: the work it was
@@ -35,7 +36,7 @@ use crate::options::BlockchainOptions;
 use crate::pool_task::{PoolEnv, PoolTask, TransactionBroadcast};
 use crate::process_blocks_job::{JobContext, run_job};
 use crate::processor::BlockProcess;
-use crate::work::{ChainStatus, Job, JobOutcome, NodeHandle, Work};
+use crate::work::{ChainStatus, Job, JobOutcome, NodeHandle, OnlineWork, OwnKeys, Work};
 
 /// What the node thread is made of.
 pub struct NodeParts {
@@ -67,6 +68,11 @@ pub struct NodeParts {
     pub observer: Option<Box<dyn CommitObserver>>,
     /// Where admitted transactions are broadcast.
     pub broadcast: Arc<dyn TransactionBroadcast>,
+    /// The delegates on this node, whose own version the online record takes at each round start
+    /// and at the sync's end, before each expiry.
+    pub own_keys: Arc<dyn OwnKeys>,
+    /// The node's version, which the online record gives the delegates on this node.
+    pub version: String,
 }
 
 /// The node thread.
@@ -82,6 +88,8 @@ impl Node {
         let (state, state_view) = watch::channel(Arc::new(parts.state.view()));
         let (pool, pool_view) = watch::channel(Arc::new(parts.pool.view()));
         let (chain, chain_status) = watch::channel(Arc::new(status(&parts.chain)));
+        let own = Arc::clone(&parts.own_keys);
+        parts.pool.set_own_keys(own, parts.version.clone());
         let observer = parts.observer.take();
         let observer = observer.unwrap_or_else(|| Box::new(NoObserver));
         let publish = Publish { state, pool, chain };
@@ -173,6 +181,9 @@ impl NodeThread {
             Work::Job(job, answer) => {
                 let _ = answer.send(self.job(job)?);
             }
+            // A requester that is gone (an API request past its timeout) no longer waits for its
+            // entries: the reference processed them anyway, and a flood queued work without end.
+            Work::PoolEntries(.., answer) if answer.is_closed() => {}
             Work::PoolEntries(channel, entries, answer) => {
                 let (result, admitted) = parts.pool.process(channel, &env!(parts), entries)?;
                 if !admitted.is_empty() {
@@ -200,7 +211,19 @@ impl NodeThread {
                 let _ = answer.send(removed.clone());
                 removed?;
             }
+            Work::Collate {
+                validate,
+                exclude,
+                reply,
+            } => {
+                let collation = parts.pool.collate(&env!(parts), validate, &exclude)?;
+                publish_pool(&parts.pool, &publish.pool);
+                let _ = reply.send(collation);
+            }
             Work::Online(change) => {
+                if let OnlineWork::Expire { round } = change {
+                    parts.pool.set_own(&env!(parts), round);
+                }
                 parts.pool.online(change);
                 let view = parts.pool.view_online(&publish.pool.borrow());
                 publish.pool.send_replace(Arc::new(view));

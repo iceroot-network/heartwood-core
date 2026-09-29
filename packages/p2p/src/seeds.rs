@@ -14,7 +14,10 @@
 //! -1 otherwise. The reference writes the probe's URL as `http://<ip>:<port>/`, which for an IPv6
 //! address names another host, so an IPv6 peer's probe never answers here either.
 //!
-//! Each read and the connection wait at most [`HTTP_TIMEOUT`], the reference's idle timeout.
+//! Each read and the connection wait at most [`HTTP_TIMEOUT`], the reference's idle timeout. The
+//! reference bounds nothing else, so a server that sent a byte at a time held a fetch for hours: a
+//! source's whole fetch ends after [`SOURCE_DEADLINE`], and a port probe after the communicator's
+//! [`crate::communicator::PROBE_DEADLINE`].
 
 use std::future::Future;
 use std::io;
@@ -23,7 +26,7 @@ use std::time::Duration;
 
 use heartwood_p2p_wire::replies::PeerAddress;
 use serde_json::Value;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
@@ -32,6 +35,8 @@ use crate::seams::PortProbe;
 
 /// How long a connection, or one read of a response, may take (the reference's HTTP helper).
 pub const HTTP_TIMEOUT: Duration = Duration::from_millis(1_500);
+/// How long the fetch of a peer source may take in all.
+pub const SOURCE_DEADLINE: Duration = Duration::from_secs(10);
 /// The largest response a peer source may give.
 pub const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
 /// The largest status response a port probe reads.
@@ -71,7 +76,7 @@ pub async fn load_sources(sources: &[String]) -> Result<Vec<PeerAddress>, SeedEr
         std::fs::read(source).map_err(|e| source_error(source, e.to_string()))?
     } else {
         heartwood_kernel::debug!("GET {source}");
-        http_get(source)
+        http_get(source, SOURCE_DEADLINE)
             .await
             .map_err(|e| source_error(source, e))?
     };
@@ -109,9 +114,9 @@ pub fn merge_seeds(list: &[PeerAddress], from_sources: &[PeerAddress]) -> Vec<Pe
     seeds
 }
 
-/// The body of a plain HTTP `GET` of `url`; an error for a response of 400 or more, as the
-/// reference's helper rejects it.
-async fn http_get(url: &str) -> Result<Vec<u8>, String> {
+/// The body of a plain HTTP `GET` of `url` within `deadline`; an error for a response of 400 or
+/// more, as the reference's helper rejects it.
+async fn http_get(url: &str, deadline: Duration) -> Result<Vec<u8>, String> {
     let rest = url
         .strip_prefix("http://")
         .ok_or("only plain HTTP URLs are fetched")?;
@@ -120,7 +125,10 @@ async fn http_get(url: &str) -> Result<Vec<u8>, String> {
     let target = format!("{authority}{}", if default_port { ":80" } else { "" });
     let request =
         format!("GET {path} HTTP/1.0\r\nHost: {authority}\r\nAccept: application/json\r\n\r\n");
-    let response = exchange(&target, &request, MAX_SOURCE_BYTES, HTTP_TIMEOUT, false).await?;
+    let exchange = exchange(&target, &request, MAX_SOURCE_BYTES, HTTP_TIMEOUT, false);
+    let response = timeout(deadline, exchange)
+        .await
+        .map_err(|_| "timed out")??;
     match status_code(&response) {
         Some(status) if status < 400 => {
             let at = response.windows(4).position(|w| w == b"\r\n\r\n");
@@ -151,7 +159,18 @@ async fn exchange(
     wait: Duration,
     status_only: bool,
 ) -> Result<Vec<u8>, String> {
-    let mut stream = within(wait, TcpStream::connect(target)).await?;
+    let stream = within(wait, TcpStream::connect(target)).await?;
+    talk(stream, request, max, wait, status_only).await
+}
+
+/// [`exchange`] over a connected `stream`.
+async fn talk(
+    mut stream: impl AsyncRead + AsyncWrite + Unpin,
+    request: &str,
+    max: usize,
+    wait: Duration,
+    status_only: bool,
+) -> Result<Vec<u8>, String> {
     within(wait, stream.write_all(request.as_bytes())).await?;
     let (mut response, mut chunk) = (Vec::new(), [0u8; 8192]);
     loop {
@@ -185,12 +204,16 @@ fn status_code(response: &[u8]) -> Option<u16> {
 pub struct HttpProbe {
     /// How long the connection, and each read of the response, may take.
     pub timeout: Duration,
+    /// The address the probe's socket binds before it connects: a devnet node's own address in
+    /// mode B ([`crate::devnet::Addressing::bind_address`]); none otherwise.
+    pub bind: Option<IpAddr>,
 }
 
 impl Default for HttpProbe {
     fn default() -> HttpProbe {
         HttpProbe {
             timeout: HTTP_TIMEOUT,
+            bind: None,
         }
     }
 }
@@ -200,9 +223,17 @@ impl PortProbe for HttpProbe {
         if ip.is_ipv6() {
             return None;
         }
-        let target = SocketAddr::new(ip, port).to_string();
+        let address = SocketAddr::new(ip, port);
+        let target = address.to_string();
         let request = format!("HEAD / HTTP/1.0\r\nHost: {target}\r\n\r\n");
-        let response = exchange(&target, &request, MAX_PROBE_BYTES, self.timeout, true).await;
+        let (wait, max) = (self.timeout, MAX_PROBE_BYTES);
+        let response = match self.bind {
+            None => exchange(&target, &request, max, wait, true).await,
+            Some(local) => {
+                let stream = within(wait, crate::transport::tcp_bound(local)(address)).await;
+                talk(stream.ok()?, &request, max, wait, true).await
+            }
+        };
         status_code(&response.ok()?)
     }
 }
@@ -237,6 +268,30 @@ mod tests {
             &[parsed[0].clone(), parsed[1].clone(), parsed[1].clone()],
         );
         assert_eq!(merged, [peer("192.0.2.1", 4000), peer("192.0.2.2", 4003)]);
+    }
+
+    #[tokio::test]
+    async fn a_source_that_trickles_is_given_up_at_its_deadline() {
+        let server = tokio::net::TcpListener::bind("127.22.0.1:0").await.unwrap();
+        let url = format!("http://{}/peers", server.local_addr().unwrap());
+        // A byte every 300 ms, well within each read's timeout, for 4 s.
+        tokio::spawn(async move {
+            let (mut socket, _) = server.accept().await.unwrap();
+            for _ in 0..13 {
+                if socket.write_all(b"H").await.is_err() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+        });
+        let started = tokio::time::Instant::now();
+        let fetched = http_get(&url, Duration::from_secs(1)).await;
+        assert_eq!(fetched, Err("timed out".to_owned()));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

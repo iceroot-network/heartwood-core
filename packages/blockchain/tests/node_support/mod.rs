@@ -171,6 +171,7 @@ impl BlockProcess for Scripted {
             result,
             applied: None,
             unchained,
+            fault: false,
         };
         match script.unwrap_or(Script::Accept) {
             Script::Accept | Script::AcceptWithoutPool | Script::Corrupt => {
@@ -192,6 +193,7 @@ impl BlockProcess for Scripted {
                     result: BlockProcessorResult::Accepted,
                     applied: Some(applied),
                     unchained: None,
+                    fault: false,
                 }
             }
             Script::Reject => {
@@ -316,6 +318,26 @@ impl TestNode {
         store: ChainStore,
         restored: Restored,
     ) -> Self {
+        let own = Arc::new(heartwood_p2p::NoAttestedKeys);
+        TestNode::spawn_with(
+            chain,
+            dir,
+            processor,
+            options,
+            (clock, store, restored),
+            own,
+        )
+    }
+
+    /// [`TestNode::spawn`] with the delegates on this node `own_keys`.
+    pub fn spawn_with(
+        chain: &Chain,
+        dir: &Path,
+        processor: Arc<Scripted>,
+        options: Options,
+        (clock, store, restored): (Arc<ManualClock>, ChainStore, Restored),
+        own_keys: Arc<dyn heartwood_blockchain::OwnKeys>,
+    ) -> Self {
         *lock(&processor.reader) = Some(Database::open(&Settings::in_data_dir(dir)).unwrap());
         let pool = Pool::open(options, None).unwrap();
         let tip = Arc::new(restored.state.last_block().clone());
@@ -338,6 +360,8 @@ impl TestNode {
             listener: events.clone(),
             observer: Some(Box::new(observed.clone())),
             broadcast: broadcasts.clone(),
+            own_keys,
+            version: "4.3.1-heartwood.0.1.0".into(),
         };
         let (node, handle) = Node::spawn(parts).unwrap();
         *lock(&processor.published) = Some(handle.state());

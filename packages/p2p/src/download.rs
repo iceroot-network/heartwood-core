@@ -16,11 +16,13 @@
 use std::net::IpAddr;
 
 use heartwood_crypto::blocks::{factory, serialiser};
+use heartwood_crypto::utils::hex;
 use heartwood_crypto::{
     Block, BlockHeader, Milestones, Params, PublicKeyBytes, Signature, Transaction,
 };
 use heartwood_p2p_wire::codecs::Amount;
 use heartwood_p2p_wire::codecs::blocks::ListedBlock;
+use heartwood_p2p_wire::messages::blocks::BlockHeader as ListedHeader;
 
 use crate::errors::{AssembleError, DownloadError};
 
@@ -41,6 +43,39 @@ impl DownloadedBlock {
     /// The height the header states (0 when absent, which the reply check never accepts).
     pub fn height(&self) -> u32 {
         self.header.header.height.unwrap_or(0)
+    }
+
+    /// A block posted to this node by the peer or the forger at `ip`, as the job reads a
+    /// download: its header's fields as the reference's block data holds them (every field
+    /// present, the id with them), and its transactions. [`to_block`] rebuilds the same block.
+    pub fn from_block(block: &Block, ip: IpAddr) -> DownloadedBlock {
+        let h = block.header();
+        let header = ListedHeader {
+            id: Some(block.id().to_hex()),
+            version: Some(h.version),
+            timestamp: Some(h.timestamp),
+            previous_block: Some(hex::encode(&h.previous_block)),
+            height: Some(h.height),
+            number_of_transactions: Some(h.number_of_transactions),
+            payload_length: Some(h.payload_length),
+            payload_hash: Some(hex::encode(&h.payload_hash)),
+            generator_public_key: Some(h.generator_public_key.to_hex()),
+            block_signature: Some(h.block_signature.to_hex()),
+            ..ListedHeader::default()
+        };
+        let header = ListedBlock {
+            header,
+            total_amount: h.total_amount.into(),
+            total_fee: h.total_fee.into(),
+            reward: h.reward.into(),
+            transactions: Vec::new(),
+        };
+        let transactions = Some(block.transactions().to_vec());
+        DownloadedBlock {
+            header,
+            transactions,
+            ip,
+        }
     }
 }
 

@@ -114,6 +114,29 @@ async fn a_job_frees_the_chain_state_between_its_blocks() {
 }
 
 #[tokio::test]
+async fn pool_entries_whose_requester_is_gone_are_not_processed() {
+    let chain = Chain::load();
+    let node = node_at(&chain, "node-pool-abandoned", 58).await;
+    let entries: Vec<_> = (chain.block(59).transactions().iter())
+        .map(|transaction| Entry::Bytes(transaction.bytes().to_vec()))
+        .collect();
+    // A request that timed out has dropped its answer before the node reached its entries.
+    let (answer, gone) = oneshot::channel();
+    drop(gone);
+    let work = Work::PoolEntries(Channel::Api, entries.clone(), answer);
+    node.handle.submit(work).unwrap();
+    let (answer, drained) = oneshot::channel();
+    node.handle.submit(Work::Drain(answer, true)).unwrap();
+    drained.await.unwrap().unwrap();
+    assert!(pooled(&node).is_empty());
+    assert!(lock(&node.broadcasts.0).is_empty());
+    // Asked by a requester that waits, they are processed.
+    let result = node.handle.pool_entries(Channel::Api, entries).await;
+    assert_eq!(result.unwrap().accept.len(), 4);
+    node.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn the_pool_steps_per_batch_per_applied_block_and_per_drain() {
     let chain = Chain::load();
     let node = node_at(&chain, "node-pool-steps", 58).await;

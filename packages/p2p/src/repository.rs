@@ -1,13 +1,17 @@
 //! The peers and the pending peers, keyed by IP in insertion order, as the reference's maps keep
 //! them: setting a known IP keeps its place, forgetting one and setting it again moves it last.
 //!
-//! The repository also keeps the protocol violations of the peers it no longer holds, for the
-//! rest of their window, so that a violating peer is not accepted again while a violation is in
-//! its window ([`PeerRepository::has_violation`]).
+//! The repository also keeps the latest protocol violation of each address it does not hold (a
+//! forgotten peer, a new peer whose acceptance failed, a caller of the server that is no peer),
+//! for the rest of its window, so that a violating address is not accepted while a violation is
+//! in its window ([`PeerRepository::has_violation`]). It keeps at most [`KEPT_VIOLATIONS`]
+//! addresses, letting the oldest violation go first, and lets each go once its window has passed,
+//! so no caller can grow the table or the cost of a probe.
 //!
 //! The repository is shared by the communicator, the acceptance and the monitor; each call locks
 //! it briefly and never across an `.await`, and never while it holds a peer's lock.
 
+use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::{Mutex, PoisonError};
 
@@ -15,13 +19,65 @@ use indexmap::IndexMap;
 
 use crate::peer::{FAULT_WINDOW_MS, SharedPeer};
 
+/// How many addresses the repository keeps a violation of when it holds no peer at them; past
+/// it, the address whose violation is the oldest is let go first.
+pub const KEPT_VIOLATIONS: usize = 16_384;
+
 /// The tables.
 #[derive(Debug, Default)]
 struct Tables {
     peers: IndexMap<IpAddr, SharedPeer>,
     pending: IndexMap<IpAddr, SharedPeer>,
-    /// The violation times of peers the repository no longer holds.
-    violations: IndexMap<IpAddr, Vec<i64>>,
+    violations: Violations,
+}
+
+/// The latest violation time of each address the repository holds no peer at.
+#[derive(Debug, Default)]
+struct Violations {
+    latest: HashMap<IpAddr, i64>,
+    /// The times as they were noted; one whose address was noted again later is stale.
+    order: VecDeque<(IpAddr, i64)>,
+}
+
+impl Violations {
+    /// Note a violation of `ip` at `time_ms`, then let the expired ones go and keep the bound.
+    fn note(&mut self, ip: IpAddr, time_ms: i64) {
+        if self.latest.get(&ip).is_some_and(|kept| *kept >= time_ms) {
+            return;
+        }
+        self.latest.insert(ip, time_ms);
+        self.order.push_back((ip, time_ms));
+        self.expire(time_ms);
+        let notes = KEPT_VIOLATIONS.saturating_mul(2);
+        while self.latest.len() > KEPT_VIOLATIONS || self.order.len() > notes {
+            self.pop();
+        }
+    }
+
+    /// Whether `ip` has a violation in its window at `now_ms`.
+    fn has(&mut self, ip: IpAddr, now_ms: i64) -> bool {
+        self.expire(now_ms);
+        (self.latest.get(&ip)).is_some_and(|time| in_window(*time, now_ms))
+    }
+
+    fn expire(&mut self, now_ms: i64) {
+        while (self.order.front()).is_some_and(|(_, time)| !in_window(*time, now_ms)) {
+            self.pop();
+        }
+    }
+
+    /// Let the oldest note go, and its address with it unless it was noted again later.
+    fn pop(&mut self) {
+        if let Some((ip, time)) = self.order.pop_front()
+            && self.latest.get(&ip) == Some(&time)
+        {
+            self.latest.remove(&ip);
+        }
+    }
+}
+
+fn in_window(time_ms: i64, now_ms: i64) -> bool {
+    now_ms.saturating_sub(time_ms) <= FAULT_WINDOW_MS
 }
 
 /// The peers and the pending peers.
@@ -66,7 +122,7 @@ impl PeerRepository {
         self.with(|tables| tables.peers.insert(peer.ip(), peer));
     }
 
-    /// Forget the peer at `ip`, if any. Its protocol violations are kept for the rest of their
+    /// Forget the peer at `ip`, if any. Its latest protocol violation is kept for the rest of its
     /// window.
     pub fn forget(&self, ip: IpAddr) {
         if let Some(peer) = self.with(|tables| tables.peers.shift_remove(&ip)) {
@@ -74,25 +130,23 @@ impl PeerRepository {
         }
     }
 
-    /// Keep the protocol violations of `peer`, which the repository does not hold (a new peer
-    /// whose acceptance failed), for the rest of their window.
+    /// Keep the latest protocol violation of `peer`, which the repository does not hold (a new
+    /// peer whose acceptance failed), for the rest of its window.
     pub fn keep_violations(&self, peer: &SharedPeer) {
-        let times = peer.with(|peer| peer.violations.clone());
-        if !times.is_empty() {
-            self.with(|tables| {
-                let kept = tables.violations.entry(peer.ip()).or_default();
-                for time in times {
-                    if !kept.contains(&time) {
-                        kept.push(time);
-                    }
-                }
-            });
+        let latest = peer.with(|peer| peer.violations.iter().max().copied());
+        if let Some(time_ms) = latest {
+            self.note_violation(peer.ip(), time_ms);
         }
     }
 
+    /// Keep a protocol violation at `time_ms` of `ip`, an address the repository holds no peer
+    /// at, for the rest of its window.
+    pub fn note_violation(&self, ip: IpAddr, time_ms: i64) {
+        self.with(|tables| tables.violations.note(ip, time_ms));
+    }
+
     /// Whether the IP has a protocol violation in its window at `now_ms`: the peer held at `ip`,
-    /// or a peer at `ip` that was forgotten. The kept violations outside their window are
-    /// forgotten.
+    /// or a kept violation of `ip`. The kept violations outside their window are let go.
     pub fn has_violation(&self, ip: IpAddr, now_ms: i64) -> bool {
         if self
             .get(ip)
@@ -100,13 +154,7 @@ impl PeerRepository {
         {
             return true;
         }
-        self.with(|tables| {
-            tables.violations.retain(|_, times| {
-                times.retain(|time| now_ms.saturating_sub(*time) <= FAULT_WINDOW_MS);
-                !times.is_empty()
-            });
-            tables.violations.contains_key(&ip)
-        })
+        self.with(|tables| tables.violations.has(ip, now_ms))
     }
 
     /// Whether there is a peer at `ip`.
@@ -213,6 +261,36 @@ mod tests {
         repository.set(slow.clone());
         repository.forget(slow.ip());
         assert!(!repository.has_violation(slow.ip(), 2_000));
+    }
+
+    #[test]
+    fn the_violations_of_addresses_that_are_no_peer_are_bounded() {
+        let repository = PeerRepository::new();
+        let address =
+            |n: u32| IpAddr::from([0x2001, 0xdb8, 0, 0, 0, 0, (n >> 16) as u16, n as u16]);
+        for n in 0..100_000 {
+            let refused = SharedPeer::new(Peer::new(address(n), 4002));
+            refused.with(|peer| peer.add_violation(1_000 + i64::from(n)));
+            repository.keep_violations(&refused);
+        }
+        let kept = repository.with(|tables| tables.violations.latest.len());
+        assert_eq!(kept, KEPT_VIOLATIONS);
+        // The latest are kept, in their window; the oldest were let go first.
+        assert!(repository.has_violation(address(99_999), 101_000));
+        assert!(!repository.has_violation(address(0), 101_000));
+        // An address noted again keeps one entry, with its latest time.
+        let again = address(99_998);
+        repository.note_violation(again, 200_000);
+        repository.note_violation(again, 150_000);
+        assert_eq!(
+            repository.with(|tables| tables.violations.latest.len()),
+            KEPT_VIOLATIONS
+        );
+        assert!(repository.has_violation(again, 800_000));
+        assert!(!repository.has_violation(address(99_999), 800_000));
+        // Past every window, the table is empty.
+        assert!(!repository.has_violation(again, 800_001));
+        assert_eq!(repository.with(|tables| tables.violations.order.len()), 0);
     }
 
     #[test]

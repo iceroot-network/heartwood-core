@@ -60,6 +60,16 @@ pub struct WithTransactions<M> {
     pub transactions: Vec<Vec<u8>>,
 }
 
+/// What the server writes in a getUnconfirmedTransactions response: the pool's size and the
+/// collated transactions, each once.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UnconfirmedListing {
+    /// The number of transactions in the pool.
+    pub pool_size: u32,
+    /// The serialised transactions, in the collator's order.
+    pub transactions: Vec<Vec<u8>>,
+}
+
 /// The getUnconfirmedTransactions request: the ids concatenated as `exclude`, written even when
 /// there is none.
 pub fn get_unconfirmed_transactions_encode_request(request: &UnconfirmedRequestInput) -> Vec<u8> {
@@ -87,6 +97,17 @@ pub fn get_unconfirmed_transactions_encode_response(
     response: &WithTransactions<GetUnconfirmedTransactionsResponse>,
 ) -> Vec<u8> {
     encode_listed(response)
+}
+
+/// The getUnconfirmedTransactions response as the server writes it from `listing`: the bytes
+/// that [`get_unconfirmed_transactions_encode_response`] writes for the same values.
+pub fn get_unconfirmed_transactions_encode_listing(listing: &UnconfirmedListing) -> Vec<u8> {
+    GetUnconfirmedTransactionsResponse {
+        pool_size: Some(listing.pool_size),
+        transactions: Some(list::encode(&listing.transactions)),
+        ..GetUnconfirmedTransactionsResponse::default()
+    }
+    .encode()
 }
 
 /// The getUnconfirmedTransactions response, with its transaction list read.

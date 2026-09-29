@@ -1,4 +1,5 @@
-//! Attestations: signing the preimage, assembling the response, and checking one signature.
+//! Attestations: signing the preimage, assembling the response, checking one signature, and the
+//! text a forger signs to show it holds its keys on one attestation session.
 
 use heartwood_crypto::crypto::sig;
 use heartwood_crypto::errors::SigError;
@@ -67,4 +68,14 @@ pub fn verify_attestation(preimage: &[u8], public_key_hex: &str, signature_hex: 
         &signature,
         &key,
     )
+}
+
+/// The text a forger signs with legacy Schnorr, once per key, to show that it holds the key on
+/// one attestation session (Heartwood only): a fixed prefix and the session's challenge, 64
+/// lowercase hex digits. No status preimage, which is a JSON object, and no 32-byte hash can be
+/// this text. `None` when `challenge` has another form.
+pub fn session_proof(challenge: &str) -> Option<Vec<u8>> {
+    let hex = |b: u8| b.is_ascii_digit() || (b'a'..=b'f').contains(&b);
+    let valid = challenge.len() == 64 && challenge.bytes().all(hex);
+    valid.then(|| format!("Heartwood attestation session {challenge}").into_bytes())
 }

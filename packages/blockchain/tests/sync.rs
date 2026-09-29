@@ -443,6 +443,30 @@ async fn the_idle_loops_poll_blocks_transactions_seeds_and_peers() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_slow_idle_poll_is_not_started_again_while_it_runs() {
+    let h = Harness::new(Setup {
+        tip: 12,
+        now_ms: service::time_of(12) + 1_000,
+        ..Setup::default()
+    });
+    h.service.boot().await.unwrap();
+    h.wait_for(MINUTE, |h| h.state() == "idle").await;
+    h.network.state().poll_delay = Duration::from_secs(5);
+    let start = h.network.calls().len();
+    h.settle(Duration::from_secs(30)).await;
+    let calls = &h.network.calls()[start..];
+    let count = |prefix: &str| calls.iter().filter(|c| c.starts_with(prefix)).count();
+    // A poll of 5 s holds its loop: the next starts at the first tick after it ends.
+    let polls = count("download 12 parallel=10 silent=true timeout=2000 throttle=true");
+    assert!((5..=6).contains(&polls), "{polls} block polls in 30 s");
+    let pulls = count("download_transactions 0");
+    assert!(
+        (3..=4).contains(&pulls),
+        "{pulls} transaction pulls in 30 s"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_block_poll_handles_one_new_block_and_enqueues_several() {
     let h = Harness::new(Setup {
         tip: 12,
@@ -566,6 +590,8 @@ mod through_the_node {
             listener: Arc::new(NoListener),
             observer: None,
             broadcast: Arc::new(Silent),
+            own_keys: Arc::new(heartwood_p2p::NoAttestedKeys),
+            version: "4.3.1-heartwood.0.1.0".into(),
         })
         .unwrap();
         let network = FakeNetwork::default();

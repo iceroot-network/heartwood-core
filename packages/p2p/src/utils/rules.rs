@@ -17,6 +17,8 @@ use heartwood_p2p_wire::requests::{ClientRequest, Headers};
 use tokio::time::Instant;
 
 use super::{is_valid_peer, is_valid_version, npm_semver, subnet};
+use crate::devnet::{self, Addressing};
+use crate::options::P2pOptions;
 use crate::rate_limiter::RateLimiter;
 use crate::seams::PeerRules;
 
@@ -24,10 +26,13 @@ use crate::seams::PeerRules;
 /// `msBeforeReCheck`).
 pub const RECHECK: Duration = Duration::from_secs(1);
 
-/// The peer rules, with the outgoing rate limiter's state.
+/// The peer rules, with the outgoing rate limiter's state and a devnet node's addressing.
 #[derive(Debug)]
 pub struct Rules {
     limiter: Mutex<RateLimiter>,
+    addressing: Addressing,
+    /// The forger's addresses, which are never peers in mode B.
+    remote_access: Vec<IpAddr>,
 }
 
 impl Rules {
@@ -39,6 +44,23 @@ impl Rules {
                 rate_limit,
                 rate_limit_post_transactions,
             )),
+            addressing: Addressing::Off,
+            remote_access: Vec::new(),
+        }
+    }
+
+    /// The rules of `options`: its rate limits, and in mode B its addressing, under which the
+    /// candidates are the loopback addresses other than the node's own and its `remoteAccess`
+    /// addresses ([`crate::devnet::is_candidate`]).
+    pub fn from_options(options: &P2pOptions) -> Rules {
+        let exact = options
+            .remote_access
+            .iter()
+            .filter_map(|entry| entry.parse().ok());
+        Rules {
+            addressing: options.addressing,
+            remote_access: exact.map(|ip: IpAddr| ip.to_canonical()).collect(),
+            ..Rules::new(options.rate_limit, options.rate_limit_post_transactions)
         }
     }
 
@@ -100,8 +122,21 @@ impl PeerRules for Rules {
         self.limiter(|limiter| limiter.has_exceeded(ip, route, now))
     }
 
+    /// The reference's rule, or in mode B the devnet's: the address in its processed form, a
+    /// candidate of [`crate::devnet::is_candidate`], and none of the host's own addresses.
     fn is_valid_peer(&self, ip: &mut String, allow_private: bool, interfaces: &[IpAddr]) -> bool {
-        is_valid_peer::is_valid_peer(ip, allow_private, interfaces)
+        if self.addressing == Addressing::Off {
+            return is_valid_peer::is_valid_peer(ip, allow_private, interfaces);
+        }
+        let Some(processed) = is_valid_peer::process(ip) else {
+            return false;
+        };
+        *ip = processed;
+        let (addressing, remote_access) = (&self.addressing, self.remote_access.as_slice());
+        ip.parse().is_ok_and(|candidate: IpAddr| {
+            devnet::is_candidate(addressing, candidate, remote_access)
+                && !interfaces.contains(&candidate)
+        })
     }
 
     fn is_valid_version(

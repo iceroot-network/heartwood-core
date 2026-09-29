@@ -270,6 +270,8 @@ struct Answers {
     failing: Vec<(IpAddr, u32)>,
     pool: HashMap<IpAddr, Vec<Vec<u8>>>,
     throttled: Vec<(IpAddr, RouteId)>,
+    /// Peers whose getBlocks replies start a height late.
+    late: Vec<IpAddr>,
 }
 
 struct Client {
@@ -371,7 +373,8 @@ impl PeerClient for Client {
         }
         let top = answers.tops.get(&peer.ip()).copied().unwrap_or(0);
         let last = top.min(request.from_height + request.block_limit);
-        let heights = (request.from_height + 1)..=last;
+        let late = u32::from(answers.late.contains(&peer.ip()));
+        let heights = (request.from_height + 1 + late)..=last;
         Ok(heights
             .map(|height| stub_block(height, peer.ip()))
             .collect())
@@ -568,6 +571,7 @@ fn net_with(options: P2pOptions, sampler: Sampler, adds: bool, height: u32) -> N
         clock: Arc::clone(&clock) as Arc<dyn heartwood_kernel::Clock>,
         sampler,
         runtime: tokio::runtime::Handle::current(),
+        attested: Arc::new(heartwood_p2p::NoAttestedKeys),
     }));
     Net {
         monitor,
@@ -1123,6 +1127,32 @@ async fn throttled_peers_and_peers_with_a_violation_are_no_download_source() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_peer_that_served_a_refused_block_is_no_longer_a_source() {
+    let net = serving(2, 400);
+    net.monitor.refused_block(ip(1));
+    let violations = net.repository.get(ip(1)).unwrap().snapshot().violations;
+    assert_eq!(violations.len(), 1);
+    let blocks = download(&net, 0).await;
+    assert_eq!(heights(&blocks).len(), 400);
+    assert_eq!(net.client.blocks_calls(), [(ip(2), 0, 400)]);
+    // An address that is no peer is left as it is.
+    net.monitor.refused_block(ip(9));
+    assert!(!net.repository.has(ip(9)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_reply_that_does_not_start_after_the_height_asked_goes_to_the_next_peer() {
+    let net = serving(2, 400);
+    net.answers().late.push(ip(1));
+    let blocks = download(&net, 0).await;
+    assert_eq!(heights(&blocks), (1..=400).collect::<Vec<_>>());
+    assert_eq!(
+        net.client.blocks_calls(),
+        [(ip(1), 0, 400), (ip(2), 0, 400)]
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_single_block_comes_from_the_named_peer() {
     let net = serving(2, 50);
     let block = net
@@ -1490,6 +1520,7 @@ async fn plugin_ports_are_probed_with_an_http_head() {
     let port = silent.local_addr().unwrap().port();
     let quick = HttpProbe {
         timeout: Duration::from_millis(200),
+        ..HttpProbe::default()
     };
     assert_eq!(quick.head(local, port).await, None);
     // The reference's probe URL of an IPv6 address names another host: never an answer.
@@ -1540,6 +1571,23 @@ fn a_downloaded_block_is_rebuilt_with_the_ids_of_its_canonical_bytes() {
     let rebuilt = to_block(&header_only, &milestones).unwrap();
     assert_eq!(rebuilt.id(), made.id());
     assert!(rebuilt.transactions().is_empty());
+}
+
+#[test]
+fn a_posted_block_is_rebuilt_from_its_downloaded_form() {
+    let milestones = milestones();
+    let params = milestones.at(3).clone();
+    let made = block(3, vec![transfer(1, &params)], &milestones);
+    let posted = DownloadedBlock::from_block(&made, ip(9));
+    assert_eq!((posted.ip, posted.height()), (ip(9), 3));
+    assert_eq!(posted.header.header.id, Some(made.id().to_hex()));
+    assert_eq!(posted.header.header.version, Some(0));
+    let rebuilt = to_block(&posted, &milestones).unwrap();
+    assert_eq!(rebuilt.id(), made.id());
+    assert_eq!(rebuilt.encode(), made.encode());
+    let empty = block(4, Vec::new(), &milestones);
+    let rebuilt = to_block(&DownloadedBlock::from_block(&empty, ip(9)), &milestones).unwrap();
+    assert_eq!(rebuilt.encode(), empty.encode());
 }
 
 #[test]
@@ -1795,6 +1843,7 @@ mod with_the_real_client {
             clock,
             sampler: Sampler::from_os().unwrap(),
             runtime: tokio::runtime::Handle::current(),
+            attested: Arc::new(heartwood_p2p::NoAttestedKeys),
         }));
         let forced = CleanseOptions {
             fast: true,

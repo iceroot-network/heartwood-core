@@ -395,6 +395,7 @@ fn download_plan(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         clock: Arc::new(ManualClock::new(0)) as Arc<dyn Clock>,
         sampler: sampler.clone(),
         runtime: runtime.handle().clone(),
+        attested: Arc::new(heartwood_p2p::NoAttestedKeys),
     }));
     let mut outputs = Vec::new();
     for call in calls {
@@ -524,6 +525,10 @@ fn from_listed(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
                     None => Verdict::Output(json!({ "valid": true, "downloaded": false })),
                 };
                 return Ok(differs(verdict));
+            }
+            // The reader counts no transactions: only the communicator refuses too many.
+            Err(error @ DownloadError::TooManyTransactions { .. }) => {
+                return Err(failed(format!("the reader refused a block: {error}")));
             }
         }
     }

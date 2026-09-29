@@ -38,6 +38,7 @@ mod tests;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
@@ -269,6 +270,54 @@ pub(crate) struct Pipeline {
     grammar: Grammar,
     limiter: Mutex<RateLimiter>,
     gates: Gates,
+    /// The lines of the answers of 500 or more.
+    errors: Mutex<ErrorLines>,
+    /// The `POST`s served at once, from the parse of their body to their answer.
+    posts: tokio::sync::Semaphore,
+}
+
+/// The most `POST`s served at once: each holds its payload, parsed, until the node has processed
+/// it, so a flood of them held memory without a bound. Those beyond wait, with their body read
+/// (a place is taken once the body is in, so a body that comes slowly holds none).
+const POSTS_AT_ONCE: usize = 8;
+
+/// The longest part of a request's path that the line of a server error names.
+const LOGGED_PATH: usize = 128;
+
+/// `method` and `path` as the line of a server error names them: at most [`LOGGED_PATH`] bytes of
+/// the path, with its length when it is longer. The reference names no path; a path of 16 KiB in
+/// every line let a client write its bytes to the log as fast as it sent them.
+pub(crate) fn logged_target(method: &str, path: &str) -> String {
+    let mut end = path.len().min(LOGGED_PATH);
+    while !path.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    match path.get(..end) {
+        Some(cut) if end < path.len() => format!("{method} {cut}... ({} bytes)", path.len()),
+        _ => format!("{method} {path}"),
+    }
+}
+
+/// The lines of the answers of 500 or more: at most one a second, which names how many answers
+/// went without a line since the last one.
+#[derive(Debug, Default)]
+pub(crate) struct ErrorLines {
+    since: Option<Instant>,
+    held: u64,
+}
+
+impl ErrorLines {
+    /// Whether a line may be written at `now`: how many answers went without one since the last,
+    /// or `None` when this one goes without.
+    pub(crate) fn admit(&mut self, now: Instant) -> Option<u64> {
+        let second = Duration::from_secs(1);
+        if self.since.is_some_and(|since| now < since + second) {
+            self.held = self.held.saturating_add(1);
+            return None;
+        }
+        self.since = Some(now);
+        Some(std::mem::take(&mut self.held))
+    }
 }
 
 impl Pipeline {
@@ -300,16 +349,26 @@ impl Pipeline {
             grammar,
             limiter,
             gates,
+            errors: Mutex::default(),
+            posts: tokio::sync::Semaphore::new(POSTS_AT_ONCE),
         }
     }
 
     /// Serve `request` from `peer`.
     pub(crate) async fn handle(&self, request: Request<Body>, peer: SocketAddr) -> Response<Body> {
         let asked = Asked::of(&request);
-        let target = format!("{} {}", request.method(), request.uri().path());
+        let target = logged_target(request.method().as_str(), request.uri().path());
         let answer = self.run(request, peer).await.unwrap_or_else(Answer::from);
-        if answer.status >= 500 {
-            heartwood_kernel::error!("Public API: {target} answered {}", answer.status);
+        let lines = || self.errors.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(held) = (answer.status >= 500)
+            .then(|| lines().admit(Instant::now()))
+            .flatten()
+        {
+            let held = match held {
+                0 => String::new(),
+                held => format!(" ({held} more without a line in the last second)"),
+            };
+            heartwood_kernel::error!("Public API: {target} answered {}{held}", answer.status);
         }
         self.respond(answer, &asked)
     }
@@ -382,9 +441,15 @@ impl Pipeline {
                 CatchAll::Undecodable | CatchAll::NotFound => not_found(),
             });
         };
-        let payload = match method {
-            Method::Post => Some(payload::read(&parts.headers, body).await?),
-            Method::Get => None,
+        let (_post, payload) = match method {
+            Method::Post => {
+                // The body first, then a place: a body that comes slowly holds no place.
+                let raw = payload::bytes(&parts.headers, body).await?;
+                let place = self.posts.acquire().await;
+                let place = place.map_err(|_| ApiError::internal())?;
+                (Some(place), Some(payload::parse(raw).await?))
+            }
+            Method::Get => (None, None),
         };
         if config.rate_limit.enabled && !self.admit(&client) {
             return Err(ApiError::too_many_requests("Too Many Requests"));
@@ -496,7 +561,7 @@ impl Pipeline {
             return listed(&limit.whitelist);
         }
         let mut limiter = self.limiter.lock().unwrap_or_else(PoisonError::into_inner);
-        limiter.consume(client, Instant::now())
+        limiter.consume(&limits::key_of(client), Instant::now())
     }
 
     /// The response of `answer` to the request `asked`, with the headers every response gets.
@@ -615,15 +680,18 @@ fn matches<'p>(
     (pattern.len() == segments.len()).then(|| (pattern.len() - params.len(), params))
 }
 
-/// The client's address as the reference's rate limit and whitelist key it: the socket's, or with
-/// `trust_proxy` the first entry of `X-Forwarded-For` when the request has one.
+/// The client's address as the rate limit and the whitelist key it: the socket's, or with
+/// `trust_proxy` the last entry of `X-Forwarded-For`, the one the trusted proxy appended, when it
+/// is an address. The reference takes the first entry as it is, which the client writes: any text
+/// passed its whitelist and escaped its rate limit.
 fn client_address(headers: &HeaderMap, peer: SocketAddr, trust_proxy: bool) -> String {
     let forwarded = HeaderName::from_static("x-forwarded-for");
-    let Some(forwarded) = node_header(headers, &forwarded).filter(|_| trust_proxy) else {
-        return peer.ip().to_string();
-    };
-    let first = forwarded.split(',').next();
-    first.unwrap_or_default().trim().to_owned()
+    let forwarded = node_header(headers, &forwarded).filter(|_| trust_proxy);
+    let last = forwarded
+        .as_deref()
+        .and_then(|text| text.rsplit(',').next());
+    let address = last.and_then(|last| last.trim().parse::<IpAddr>().ok());
+    address.unwrap_or(peer.ip()).to_string()
 }
 
 /// `text` with its `%XX` escapes decoded, as JavaScript's `decodeURIComponent` decodes them;

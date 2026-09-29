@@ -1,5 +1,5 @@
 //! The mock peer: a tokio listener on one IP that answers the client's requests from a script,
-//! or serves a chain.
+//! serves a chain, or computes each answer.
 //!
 //! The connector keeps one session per IP, so tests that need several peers bind each mock peer
 //! to its own loopback address (127.0.0.1, 127.0.0.2, ...). The peer speaks nes through the wire
@@ -112,6 +112,10 @@ impl Script {
     }
 }
 
+/// An answer computed for each request from its route and payload, for a peer whose replies
+/// depend on the time or on what it has seen.
+pub type Answer = Arc<dyn Fn(RouteId, &[u8]) -> Reply + Send + Sync>;
+
 /// A chain the mock peer serves: getStatus from its last block, getBlocks and getCommonBlocks from
 /// its blocks, getPeers from `peers`; postBlock, postTransactions and getUnconfirmedTransactions
 /// are accepted with empty answers. It pings every 15 s, as the reference's server does.
@@ -167,6 +171,7 @@ impl std::fmt::Debug for MockPeer {
 enum Answers {
     Script(Mutex<IndexMap<RouteId, VecDeque<Reply>>>),
     Chain(Box<ServedChain>, AtomicBool),
+    Computed(Answer),
 }
 
 struct Behaviour {
@@ -198,6 +203,16 @@ impl MockPeer {
     /// Start a peer on `ip`, on a free port, that serves `chain`.
     pub async fn serving(ip: IpAddr, chain: ServedChain) -> Result<MockPeer, MockPeerError> {
         MockPeer::start((ip, 0).into(), Behaviour::serving(chain)).await
+    }
+
+    /// Start a peer on `address` (port 0 for a free one) that answers each request with
+    /// `answer`, and pings every 15 s as the reference's server does.
+    pub async fn answering(address: SocketAddr, answer: Answer) -> Result<MockPeer, MockPeerError> {
+        let behaviour = Behaviour {
+            answers: Answers::Computed(answer),
+            ..Behaviour::pinging()
+        };
+        MockPeer::start(address, behaviour).await
     }
 
     async fn start(address: SocketAddr, behaviour: Behaviour) -> Result<MockPeer, MockPeerError> {
@@ -383,13 +398,21 @@ fn perform(reply: Reply, id: u32, outbox: &Outbox) {
 }
 
 impl Behaviour {
-    fn serving(chain: ServedChain) -> Behaviour {
-        let empty_first = AtomicBool::new(chain.empty_first_get_blocks);
+    /// The reference server's heartbeat and pings, with no answers.
+    fn pinging() -> Behaviour {
         Behaviour {
             heartbeat: Script::default().heartbeat,
             pings: vec![Duration::from_secs(15)],
             repeat: true,
+            answers: Answers::Script(Mutex::default()),
+        }
+    }
+
+    fn serving(chain: ServedChain) -> Behaviour {
+        let empty_first = AtomicBool::new(chain.empty_first_get_blocks);
+        Behaviour {
             answers: Answers::Chain(Box::new(chain), empty_first),
+            ..Behaviour::pinging()
         }
     }
 
@@ -399,6 +422,7 @@ impl Behaviour {
                 let reply = lock(replies).get_mut(&route).and_then(VecDeque::pop_front);
                 return reply.unwrap_or(Reply::Silence);
             }
+            Answers::Computed(answer) => return answer(route, payload),
             Answers::Chain(chain, empty_first) => (chain, empty_first),
         };
         let Some(tip) = chain.blocks.last() else {

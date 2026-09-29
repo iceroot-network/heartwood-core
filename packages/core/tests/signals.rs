@@ -1,6 +1,7 @@
 //! The signals, in a child process (this test binary run again as `signal_child`): the first
 //! SIGINT or SIGTERM starts the graceful shutdown, and a second one exits at once with the status
-//! of a process ended by that signal.
+//! of a process ended by that signal; a signal that comes after the role listens but before
+//! anything waits for it is kept.
 
 use std::io::{BufRead, BufReader, Lines};
 use std::process::{Child, ChildStdout, Command, Stdio};
@@ -16,12 +17,25 @@ fn signal_child() {
     let Ok(mode) = std::env::var(CHILD) else {
         return;
     };
+    if mode == "early" {
+        // Listening, then busy for a while with nothing polling, as a role is while it starts.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let signals = heartwood_core::signals::Signals::listen_in(&runtime, "forger");
+        println!("ready");
+        std::thread::sleep(Duration::from_millis(500));
+        runtime.block_on(signals.requested());
+        println!("graceful");
+        return;
+    }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap();
     runtime.block_on(async {
-        let shutdown = tokio::spawn(heartwood_core::signals::shutdown_requested());
+        let shutdown = tokio::spawn(heartwood_core::signals::shutdown_requested("relay"));
         tokio::time::sleep(Duration::from_millis(200)).await;
         println!("ready");
         shutdown.await.unwrap();
@@ -81,5 +95,16 @@ fn a_second_signal_exits_at_once() {
         wait_for(&mut lines, "graceful");
         signal(&child, name);
         assert_eq!(child.wait().unwrap().code(), Some(code), "{name}");
+    }
+}
+
+#[test]
+fn a_signal_before_the_wait_is_kept_for_it() {
+    for name in ["INT", "TERM"] {
+        let (mut child, mut lines) = spawn("early");
+        wait_for(&mut lines, "ready");
+        signal(&child, name);
+        wait_for(&mut lines, "graceful");
+        assert_eq!(child.wait().unwrap().code(), Some(0), "{name}");
     }
 }

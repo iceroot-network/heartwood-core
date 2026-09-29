@@ -45,11 +45,11 @@ jobs:
           - part: lint
             targets: fmt-check clippy layers lines-if-tokei
           - part: docs
-            targets: build doc release-check wire-features
+            targets: build doc release-check wire-features forger-features
           - part: unit
-            targets: test
+            targets: test test-cli
           - part: integration
-            targets: test-integration test-wire test-p2p
+            targets: test-integration test-wire test-p2p test-forger
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: line-tables-only

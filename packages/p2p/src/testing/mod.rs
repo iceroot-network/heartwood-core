@@ -1,9 +1,11 @@
 //! Test support, behind the `difftest` feature: a scripted mock peer that speaks nes through the
-//! wire crate, for the client's tests and the node's end-to-end and kill tests. A release build
-//! never has it.
+//! wire crate, for the client's tests and the node's end-to-end and kill tests, and fakes of the
+//! server's neighbours (`server`, with `node`). A release build never has it.
 
 pub mod mock_peer;
+#[cfg(feature = "node")]
+pub mod server;
 
 pub use self::mock_peer::{
-    MockFrame, MockPeer, MockPeerError, Reply, Script, ServedChain, upgrade,
+    Answer, MockFrame, MockPeer, MockPeerError, Reply, Script, ServedChain, upgrade,
 };

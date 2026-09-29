@@ -15,8 +15,10 @@
 //! - [`requests`]: the requests a node's client writes, which cannot take a shape a reference
 //!   server bans for.
 //! - [`replies`]: the reply schemas of the routes other than getStatus.
-//! - [`routes`]: the twelve routes with their ids, paths, payload limits and codec kinds, and the
-//!   14 protobuf codec directions.
+//! - [`routes`]: the twelve routes of the reference and Heartwood's two attestation routes, with
+//!   their ids, paths, payload limits and codec kinds, and the 14 protobuf codec directions.
+//! - [`internal`]: the JSON bodies of the internal routes, the network state and the forging
+//!   quorum's counts.
 //! - [`status`]: the signed peer status: the tree a relay signs, its canonical JSON, the
 //!   attestations, and the checks a node applies to a status it receives.
 //! - [`errors`]: the typed errors, each with the JavaScript error class the reference raises.
@@ -52,6 +54,7 @@
 
 pub mod codecs;
 pub mod errors;
+pub mod internal;
 mod js;
 pub mod list;
 pub mod messages;
@@ -63,6 +66,8 @@ pub mod routes;
 pub mod status;
 
 pub use crate::codecs::Amount;
-pub use crate::errors::{DecodeError, FrameError, ReplyRefused, RequestError};
+pub use crate::errors::{
+    DecodeError, FrameError, InternalBodyError, PreimageError, ReplyRefused, RequestError,
+};
 pub use crate::messages::Proto;
 pub use crate::routes::{Codec, CodecKind, Direction, RouteId};

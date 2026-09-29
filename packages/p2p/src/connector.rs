@@ -65,6 +65,15 @@ impl Connector {
         Connector::default()
     }
 
+    /// A connector for a node with `addressing`: in mode B every session's socket binds the
+    /// node's own address before it connects, so that the peers see it as the source.
+    pub fn for_addressing(addressing: &crate::devnet::Addressing) -> Connector {
+        match addressing.bind_address() {
+            Some(local) => Connector::with_dial(transport::tcp_bound(local)),
+            None => Connector::new(),
+        }
+    }
+
     /// A connector whose sessions run on streams from `dial` (a test seam: the mock peer's
     /// in-memory connections, which tokio's paused clock can drive).
     pub fn with_dial(dial: Dial) -> Connector {
@@ -120,9 +129,11 @@ impl Connector {
         Ok(session)
     }
 
-    /// Terminate and forget the session to `ip`.
+    /// Terminate and forget the session to `ip`, and its last error (the reference keeps that on
+    /// the peer, which goes with it).
     pub fn disconnect(&self, ip: IpAddr) {
         self.shared.remove(ip, None, None);
+        lock(&self.shared.errors).swap_remove(&ip);
     }
 
     /// The class of the last recorded error of `ip`.
@@ -137,7 +148,7 @@ impl Connector {
 
     /// Forget the last error of `ip`.
     pub fn forget_error(&self, ip: IpAddr) {
-        lock(&self.shared.errors).shift_remove(&ip);
+        lock(&self.shared.errors).swap_remove(&ip);
     }
 }
 

@@ -166,6 +166,8 @@ pub struct NetState {
     pub minimum: bool,
     /// What `download_transactions` answers.
     pub transactions: Vec<Vec<u8>>,
+    /// How long each throttled download (the idle poll's) and each transaction pull take.
+    pub poll_delay: Duration,
 }
 
 /// A network with scripted answers.
@@ -271,6 +273,10 @@ impl Network for FakeNetwork {
         self.call(format!(
             "download {from} parallel={max_parallel} silent={silent} timeout={ms} throttle={check_throttle}"
         ));
+        let delay = self.state().poll_delay;
+        if check_throttle && !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         let mut state = self.state();
         if let Some(answer) = state.downloads.pop_front() {
             return answer;
@@ -289,6 +295,8 @@ impl Network for FakeNetwork {
 
     async fn download_transactions(&self, exclude: &[TransactionId]) -> Vec<Vec<u8>> {
         self.call(format!("download_transactions {}", exclude.len()));
+        let delay = self.state().poll_delay;
+        tokio::time::sleep(delay).await;
         self.state().transactions.clone()
     }
 
@@ -503,6 +511,7 @@ impl FakeNode {
             committed,
             clear_queue: false,
             end,
+            faulty: None,
         };
         let mut chain = lock(&self.chain);
         let (Some(first), Some(tip)) = (blocks.first(), chain.last_block().cloned()) else {
@@ -539,10 +548,10 @@ impl FakeNode {
                         chain.last_accepted_ms = Some(self.clock.now_ms());
                     }
                     chain.last_stored_height = height;
-                    end = JobEnd::Broadcast(known);
+                    end = JobEnd::Broadcast(known, incoming.from_forger);
                 }
                 BlockProcessorResult::DiscardedButCanBeBroadcasted => {
-                    end = JobEnd::Broadcast(known);
+                    end = JobEnd::Broadcast(known, incoming.from_forger);
                     break;
                 }
                 BlockProcessorResult::Rollback => {
@@ -605,6 +614,10 @@ impl FakeNode {
                     }
                     Work::Online(OnlineWork::Set { round, .. }) => {
                         self.record(format!("set {round}"));
+                    }
+                    Work::Collate { reply, .. } => {
+                        self.record("collate".into());
+                        let _ = reply.send(Default::default());
                     }
                     Work::Stop(answer) => {
                         self.record("stop".into());

@@ -15,16 +15,22 @@
 //! from a checked reply only, turning the slot negative again when the verifier's own slot is;
 //! [`verify_attestation`] checks one pair of key and signature. What a node then does with the
 //! verified keys (the slot window, the delegate list) is not part of the codec.
+//!
+//! Forger side. A Heartwood relay offers its forger the canonical text of each new status to
+//! attest; [`parse_preimage`] reads that text back to its tree, and refuses any text that is not
+//! exactly the canonical form of a status tree, so the forger knows what it signs.
 
 mod attest;
 mod json;
+mod parse;
 mod reply;
 mod tree;
 
 #[cfg(test)]
 mod tests;
 
-pub use self::attest::{Attestation, attest, response, verify_attestation};
+pub use self::attest::{Attestation, attest, response, session_proof, verify_attestation};
+pub use self::parse::parse_preimage;
 pub use self::reply::{
     CheckedStatus, ReceivedStatus, check_reply, decode_response, encode_response,
     verifying_preimage,

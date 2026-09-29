@@ -8,14 +8,18 @@
 use std::sync::Arc;
 
 use heartwood_crypto::identities::PublicKeyBytes;
-use heartwood_crypto::{Block, BlockId};
+use heartwood_crypto::{Block, BlockId, TransactionId};
 use heartwood_p2p::DownloadedBlock;
+use heartwood_p2p::node_services::Collation;
 use heartwood_pool::{Entry, PoolView, ProcessorResult};
 use heartwood_state::{StateView, WalletRepository};
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::errors::{NodeError, NodeStopped};
 use crate::processor::BlockProcessorResult;
+
+/// The delegates on this node: the keys the forger's attestation session verified.
+pub use heartwood_p2p::node_services::AttestedKeys as OwnKeys;
 
 /// A block for a job: downloaded from a peer (whose address it keeps), or from the node's own
 /// forger.
@@ -69,9 +73,10 @@ pub struct Job {
 /// How a job ended, for the blockchain service.
 #[derive(Debug, Clone, PartialEq)]
 pub enum JobEnd {
-    /// The last result allows a broadcast of this block, the last processed one: the service
-    /// broadcasts it when the machine is in `newBlock`.
-    Broadcast(Arc<Block>),
+    /// The last result allows a broadcast of this block, the last processed one, which came from
+    /// the node's own forger when the flag is set: the service broadcasts it when the machine is
+    /// in `newBlock`, after the processing lateness check of a forger's block.
+    Broadcast(Arc<Block>, bool),
     /// A block was marked as forked: the service calls `forkBlock` with it.
     Fork(Arc<Block>),
     /// Neither: the service clears the queue and resets the last downloaded block.
@@ -94,6 +99,10 @@ pub struct JobOutcome {
     pub clear_queue: bool,
     /// How the job ended.
     pub end: JobEnd,
+    /// The peer that served a block no honest peer serves: one the rebuild refused, one the
+    /// processor refused for a fault ([`crate::processor::Processed::fault`]), or one discarded
+    /// for its future slot that no delegate forged ([`crate::processor::no_delegate_forged`]).
+    pub faulty: Option<std::net::IpAddr>,
 }
 
 /// Where pool entries come from; each source has its own processor, and so its own cooldown.
@@ -103,6 +112,8 @@ pub enum Channel {
     Api,
     /// The idle loop's download of unconfirmed transactions.
     Download,
+    /// The peer-to-peer server's postTransactions.
+    P2p,
 }
 
 /// A change of the online record.
@@ -142,6 +153,16 @@ pub enum Work {
     RemoveBlocks(u32, oneshot::Sender<Result<u32, NodeError>>),
     /// Change the online record.
     Online(OnlineWork),
+    /// Collate the pool's candidates at the tip plus one, validated when `validate`, without the
+    /// transactions of `exclude`, and answer them with the pool's size.
+    Collate {
+        /// Validate the candidates (a forger's collation).
+        validate: bool,
+        /// The ids to leave out.
+        exclude: Vec<TransactionId>,
+        /// The answer.
+        reply: oneshot::Sender<Collation>,
+    },
     /// Stop after the work before this one: flush the pool storage, save the online record,
     /// checkpoint and close the store, then answer.
     Stop(oneshot::Sender<()>),
@@ -238,6 +259,21 @@ impl NodeHandle {
         let (answer, result) = oneshot::channel();
         self.submit(Work::RemoveBlocks(count, answer))?;
         result.await.map_err(|_| NodeError::Stopped)?
+    }
+
+    /// Collate the pool's candidates ([`Work::Collate`]) and wait for them.
+    pub async fn collate(
+        &self,
+        validate: bool,
+        exclude: Vec<TransactionId>,
+    ) -> Result<Collation, NodeStopped> {
+        let (reply, collation) = oneshot::channel();
+        self.submit(Work::Collate {
+            validate,
+            exclude,
+            reply,
+        })?;
+        collation.await.map_err(|_| NodeStopped)
     }
 
     /// Change the online record.
