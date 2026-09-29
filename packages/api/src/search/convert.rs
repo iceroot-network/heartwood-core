@@ -127,11 +127,10 @@ impl Big {
     pub(crate) fn parse(text: &str) -> Option<Big> {
         let text = text.trim_matches(is_space);
         if let Some((radix, digits)) = radix_prefix(text) {
-            let mut out = Vec::new();
-            for digit in digits.chars() {
-                mul_add(&mut out, radix, digit.to_digit(radix)?);
-            }
-            return (!digits.is_empty()).then(|| Big::new(false, out));
+            return (!digits.is_empty())
+                .then(|| radix_digits(digits, radix))
+                .flatten()
+                .map(|out| Big::new(false, out));
         }
         let (negative, body) = match text.strip_prefix('-') {
             Some(body) => (true, body),
@@ -219,17 +218,42 @@ impl Big {
     }
 }
 
-/// `digits * base + add`, in decimal.
-fn mul_add(digits: &mut Vec<u8>, base: u32, add: u32) {
-    let mut carry = add;
-    for digit in digits.iter_mut().rev() {
-        let value = u32::from(*digit) * base + carry;
-        (*digit, carry) = ((value % 10) as u8, value / 10);
+/// The decimal digits, most significant first, of `digits` in `radix` (2, 8 or 16); `None` for a
+/// character that is not a digit of the radix.
+///
+/// The value is built in limbs of 18 decimal digits from chunks of at most 60 bits, so a literal as
+/// long as a request allows costs milliseconds: an attribute criterion is read for every wallet.
+fn radix_digits(digits: &str, radix: u32) -> Option<Vec<u8>> {
+    const LIMB: u128 = 1_000_000_000_000_000_000;
+    let values: Vec<u32> = digits
+        .chars()
+        .map(|c| c.to_digit(radix))
+        .collect::<Option<_>>()?;
+    let bits = radix.trailing_zeros().max(1) as usize;
+    // Least significant limb first.
+    let mut limbs: Vec<u128> = Vec::new();
+    for chunk in values.chunks(60 / bits) {
+        let base = 1_u128 << (bits * chunk.len());
+        let mut carry = chunk
+            .iter()
+            .fold(0_u128, |sum, digit| (sum << bits) | u128::from(*digit));
+        for limb in &mut limbs {
+            let value = *limb * base + carry;
+            (*limb, carry) = (value % LIMB, value / LIMB);
+        }
+        while carry > 0 {
+            limbs.push(carry % LIMB);
+            carry /= LIMB;
+        }
     }
-    while carry > 0 {
-        digits.insert(0, (carry % 10) as u8);
-        carry /= 10;
+    let mut text = String::new();
+    for (at, limb) in limbs.iter().rev().enumerate() {
+        match at {
+            0 => text.push_str(&limb.to_string()),
+            _ => text.push_str(&format!("{limb:018}")),
+        }
     }
+    Some(text.bytes().map(|b| b - b'0').collect())
 }
 
 impl std::fmt::Display for Big {
@@ -355,5 +379,38 @@ mod tests {
         assert_eq!(parse("2").divided_by(&parse("0")), None);
         assert!(parse("-5") < parse("3") && parse("-5") < parse("-3") && parse("10") > parse("9"));
         assert_eq!(parse("1000").to_f64(), 1000.0);
+    }
+
+    #[test]
+    #[expect(
+        clippy::disallowed_types,
+        reason = "the test times the reading against the wall clock"
+    )]
+    fn long_radix_literals_read_exactly_and_in_linear_time() {
+        // 16^k and 2^k - 1 against the product and the digits they must give.
+        let sixteen = Big::parse("16").unwrap();
+        let mut power = Big::parse("1").unwrap();
+        for k in 0..80 {
+            assert_eq!(
+                Big::parse(&format!("0x1{}", "0".repeat(k))),
+                Some(power.clone())
+            );
+            power = power.times(&sixteen);
+        }
+        assert_eq!(
+            big(&format!("0b{}", "1".repeat(128))),
+            u128::MAX.to_string()
+        );
+        assert_eq!(big("0o777"), "511");
+        assert_eq!(big("0x00ff"), "255");
+        assert_eq!(big("0xfg"), "throws");
+        // A literal as long as a request head allows reads in a few milliseconds, not in a
+        // second: an attribute criterion is read again for every wallet a listing tests.
+        let long = format!("0x{}", "f".repeat(16_000));
+        let start = std::time::Instant::now();
+        for _ in 0..4 {
+            assert_eq!(Big::parse(&long).map(|big| big.digits.len()), Some(19_266));
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
     }
 }
