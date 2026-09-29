@@ -5,6 +5,7 @@
 //! with the SHA-256 of one line per height (`h round roundHeight nextRound maxDelegates`) and with
 //! the heights that start a round.
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use heartwood_crypto::BlockId;
@@ -23,7 +24,8 @@ use heartwood_logger::format;
 use serde_json::{Map, Value, json};
 
 use super::{Env, Outcome, failed, params, rejected, text};
-use crate::subject::{Case, SubjectError, Verdict};
+use crate::subject::{Case, Documented, SubjectError, Verdict};
+use crate::vectors::Expected;
 
 /// A value of the input that Heartwood's types cannot hold: the case is outside the domain.
 fn outside(what: &str) -> SubjectError {
@@ -252,7 +254,8 @@ pub(super) fn paths(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     })))
 }
 
-/// `logger.format`: the line the logger writes for one message.
+/// `logger.format`: the line the logger writes for one message. A message with a character the
+/// logger escapes is [`Documented::EscapedLogText`], judged against [`escaped_line`].
 pub(super) fn logger_format(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let input = case.input;
     let name = text(input, "level")?;
@@ -263,11 +266,51 @@ pub(super) fn logger_format(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict>
             .ok_or_else(|| failed(format!("input.{key} is not a boolean")))
     };
     let message = text(input, "message")?;
+    let emojified = format::emojify(message, flag("emojify")?);
     let line = if message.is_empty() {
         None
     } else {
-        let message = format::emojify(message, flag("emojify")?);
-        format::line(level, int(input, "time")?, &message, flag("colorize")?)
+        format::line(level, int(input, "time")?, &emojified, flag("colorize")?)
     };
-    Ok(Verdict::Output(json!({ "line": line })))
+    let verdict = Verdict::Output(json!({ "line": line }));
+    Ok(match format::escape(&emojified) {
+        Cow::Owned(_) => Verdict::DiffersWhereShown {
+            difference: Documented::EscapedLogText,
+            verdict: Box::new(verdict),
+        },
+        Cow::Borrowed(_) => verdict,
+    })
+}
+
+/// The reference's `logger.format` answer `expected` with its message escaped as Heartwood's
+/// logger escapes it: the line up to the level as it is, then the message, read back from the
+/// reference's line and escaped, cyan when the line is coloured. The reference's colour library
+/// closes the cyan before each line break and reopens it after, and reopens it after each colour
+/// reset inside the message; that is undone first. `None` when the answer has no line.
+pub(crate) fn escaped_line(expected: &Expected) -> Option<Expected> {
+    const OPEN: &str = "\u{1b}[36m";
+    const CLOSE: &str = "\u{1b}[39m";
+    let Expected::Output(output) = expected else {
+        return None;
+    };
+    let line = output["line"].as_str()?.strip_suffix('\n')?;
+    let (head, body) = line.split_at(line.find(": ")? + 2);
+    // Only a coloured line has an escape code before its message.
+    let coloured = head.contains('\u{1b}');
+    let message = if coloured {
+        body.strip_prefix(OPEN)?
+            .strip_suffix(CLOSE)?
+            .replace(&format!("{CLOSE}\r\n{OPEN}"), "\r\n")
+            .replace(&format!("{CLOSE}\n{OPEN}"), "\n")
+            .replace(&format!("{CLOSE}{OPEN}"), CLOSE)
+    } else {
+        body.to_owned()
+    };
+    let escaped = format::escape(&message);
+    let line = if coloured {
+        format!("{head}{OPEN}{escaped}{CLOSE}\n")
+    } else {
+        format!("{head}{escaped}\n")
+    };
+    Some(Expected::Output(json!({ "line": line })))
 }

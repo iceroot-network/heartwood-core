@@ -101,6 +101,9 @@ pub enum Documented {
     /// A block refused in its apply after a gap of missed slots: the reference has written the
     /// gap's missed rows before it validated the block.
     MissedRowsOfRefusedBlock,
+    /// A log message with a character the logger escapes: a line break or another control
+    /// character, a line or paragraph separator, or a bidirectional control.
+    EscapedLogText,
     /// A served route's documented difference.
     Api(ApiDifference),
     /// An over-height header by the forging delegate's own key: the reference verifies it as a
@@ -243,6 +246,13 @@ impl Documented {
                  rows before it validates the block and keeps them, Heartwood writes missed rows \
                  only with an applied block (a faulty or adversarial forger only)"
             }
+            Documented::EscapedLogText => {
+                "a log message with a line break, another control character, a line or paragraph \
+                 separator or a bidirectional control: the reference writes it as it is, over \
+                 several lines when it holds line breaks, so outside text in a message can forge \
+                 lines; Heartwood escapes it (\\n, \\uXXXX), so one call writes one line \
+                 (node-local text only)"
+            }
             Documented::Api(difference) => difference.reason(),
             Documented::OverHeightOwnBlock => {
                 "a peer's header above our height, signed by the forging delegate's own key: the \
@@ -337,12 +347,16 @@ impl Documented {
 
     /// The oracle's answer `expected` without the part this difference changes, when Heartwood's
     /// verdict `ours` and the answer both have that part; the case is then the documented
-    /// difference if `ours` equals what is left. Two differences have one: the missed rows of a
+    /// difference if `ours` equals what is left. Three differences have one: the missed rows of a
     /// refused block (the rows the reference recorded for a block both refused, in a
     /// `chain.process` answer refused by the accept handler, or in each job of a `chain.job`
-    /// answer), and the wallets of a round answer (the answer with Heartwood's wallets in the
-    /// places where the key and the name agree, [`crate::subjects::round_wallets_masked`]).
+    /// answer), the wallets of a round answer (the answer with Heartwood's wallets in the places
+    /// where the key and the name agree, [`crate::subjects::round_wallets_masked`]), and an escaped
+    /// log text (the reference's line with its message escaped).
     pub fn masked(self, expected: &Expected, ours: &Verdict) -> Option<Expected> {
+        if self == Documented::EscapedLogText {
+            return crate::subjects::escaped_line(expected);
+        }
         if let (Documented::RoundWallets, Expected::Output(theirs), Verdict::Output(ours)) =
             (self, expected, ours)
         {
