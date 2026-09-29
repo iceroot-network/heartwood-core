@@ -577,6 +577,10 @@ the one place where a Heartwood restart and the reference's differ.
   again from the genesis block through the handlers, and the state tables are written again. A
   balance that would go below zero during a replay stops the start with the reference's text,
   "State Generation failed: Wallet with negative balance".
+- A store that holds no missed-slot row (a chain that has never missed a slot, or one rolled back
+  below its first missed slot) then gets the rows of the slots between the genesis block and block
+  2, at height 2 with round 1's forging list, as the reference's start writes them (its
+  productivity backfill); a running node never counts those slots.
 - A milestone entry that the tip has reached is fingerprinted when it is first reached. A start
   refuses a milestone file in which such an entry changed or disappeared, or which adds an entry at
   or below the tip, and names the height to roll back to. `p2p` and `fees.staticFees` are left out
