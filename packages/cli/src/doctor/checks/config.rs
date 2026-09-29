@@ -51,7 +51,7 @@ fn meta(facts: &FileFacts) -> Meta {
     facts.target.unwrap_or(facts.own)
 }
 
-/// Whether others than the owner can replace what a directory holds: a group or other write bit
+/// Whether users other than its own can replace what a directory holds: a group or other write bit
 /// (a parent with the sticky bit keeps others from renaming or removing what is not theirs).
 fn writable(facts: &FileFacts, parent: bool) -> bool {
     let mode = meta(facts).mode;
@@ -133,7 +133,7 @@ pub fn run_dir(input: &CheckInput<'_>) -> Vec<Finding> {
             let meta = meta(&facts);
             let values = path_mode(facts.path, meta.mode);
             match input.view.own_uid() {
-                Ok(uid) if uid != meta.uid => finding(Fail, "owner", values),
+                Ok(uid) if uid != meta.uid => finding(Fail, "other-user", values),
                 _ if meta.mode & 0o077 != 0 => finding(Warn, "open", values),
                 _ => finding(Pass, "private", values),
             }
@@ -152,11 +152,11 @@ pub fn keys_file(input: &CheckInput<'_>) -> Vec<Finding> {
             Ok(Some(facts)) => facts,
         };
         let meta = meta(&facts);
-        let other_owner = input.view.own_uid().is_ok_and(|uid| uid != meta.uid);
+        let other_user = input.view.own_uid().is_ok_and(|uid| uid != meta.uid);
         let values = path_mode(facts.path, meta.mode);
         match meta.kind {
             FileKind::File if meta.mode & 0o077 != 0 => finding(Fail, "open", values),
-            FileKind::File if other_owner => finding(Fail, "owner", values),
+            FileKind::File if other_user => finding(Fail, "other-user", values),
             FileKind::File if facts.own.kind == FileKind::Symlink => finding(Warn, "link", values),
             FileKind::File if meta.mode & 0o100 != 0 => finding(Warn, "exec", values),
             FileKind::File => finding(Pass, "private", values),

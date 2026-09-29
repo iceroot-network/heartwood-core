@@ -298,10 +298,10 @@ fn run_dir_cases() -> Vec<Case> {
             vec![expect(host, Warn, "open")],
         ),
         case(
-            "another owner",
+            "another user's",
             "config.run-dir",
             with(Ok(Some(other))),
-            vec![expect(host, Fail, "owner")],
+            vec![expect(host, Fail, "other-user")],
         ),
         case(
             "unreadable",
@@ -354,7 +354,7 @@ fn key_file_cases() -> Vec<Case> {
             one(Warn, "link"),
         ),
         case(
-            "an owner execute bit",
+            "an execute bit for its user",
             "keys.file",
             with(key(0o700)),
             one(Warn, "exec"),
@@ -402,10 +402,10 @@ fn key_file_cases() -> Vec<Case> {
             one(Fail, "not-file"),
         ),
         case(
-            "another owner",
+            "another user's",
             "keys.file",
             with(Ok(Some(other))),
-            one(Fail, "owner"),
+            one(Fail, "other-user"),
         ),
         case("missing", "keys.file", with(Ok(None)), one(Fail, "missing")),
         case(

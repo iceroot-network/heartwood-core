@@ -70,7 +70,7 @@
         "private": "The run directory {path} is private (mode {mode}).",
         "absent": "The run directory {path} does not exist yet; the node creates it, private, at its first start.",
         "open": "The run directory {path} can be read by other users (mode {mode}) until the node's next start narrows it. Run `chmod 700 {path}`.",
-        "owner": "The run directory {path} belongs to another user, so the node will not start. Run the node as that directory's owner."
+        "other-user": "The run directory {path} belongs to another user, so the node will not start. Run the node as the user that directory belongs to."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#config-run-dir"
     },
@@ -87,7 +87,7 @@
       ],
       "rules": {
         "pass": "delegates.json is a regular file owned by this user with no permission for group or others. Its metadata is read; the file is never opened.",
-        "warn": "It is a symbolic link, or it has an owner execute bit.",
+        "warn": "It is a symbolic link, or it has an execute bit for its user.",
         "fail": "It is missing on a forger's host; it has any permission for group or others, read or write (the forger refuses it at its next start); it belongs to another user; or it is not a regular file.",
         "unknown": "Its metadata could not be read.",
         "skipped": "No forger runs on this host."
@@ -96,9 +96,9 @@
         "private": "The key file {path} is private (mode {mode}).",
         "missing": "This host runs a forger, but its key file {path} is missing. The forger will not start without it.",
         "open": "{path} can be read or changed by other users on this host (mode {mode}). Run `chmod 600 {path}`. The forger refuses to start with this file.",
-        "owner": "{path} belongs to another user. Run the forger as the key file's owner, or give the file to the forger's user.",
+        "other-user": "{path} belongs to another user. Run the forger as the user the key file belongs to, or give the file to the forger's user.",
         "not-file": "{path} is not a regular file. The forger reads its keys only from a regular file.",
-        "link": "{path} is a symbolic link. Keep the key file itself in the configuration directory, so that the owner and mode checked are its own.",
+        "link": "{path} is a symbolic link. Keep the key file itself in the configuration directory, so that the user and mode checked are its own.",
         "exec": "{path} has an execute bit (mode {mode}). Run `chmod 600 {path}`."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#keys-file"
