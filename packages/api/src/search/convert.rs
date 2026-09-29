@@ -34,6 +34,14 @@ pub(crate) fn text(value: &Value) -> String {
     }
 }
 
+/// The JSON number of `number`: an integer where it is one, as JavaScript writes it.
+pub(crate) fn json_number(number: f64) -> Value {
+    if number.fract() == 0.0 && number.abs() <= 9_007_199_254_740_991.0 {
+        return Value::from(format!("{number:.0}").parse::<i64>().unwrap_or(0));
+    }
+    serde_json::Number::from_f64(number).map_or(Value::Null, Value::Number)
+}
+
 /// `Number(value)`.
 pub(crate) fn number(value: &Value) -> f64 {
     match value {

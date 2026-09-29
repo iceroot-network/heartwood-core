@@ -12,7 +12,7 @@ use heartwood_p2p::utils::npm_semver;
 use serde_json::{Map, Value};
 
 use super::convert::{Big, is_space, number, text};
-use super::{BIG_NUMBER, Criteria, marker};
+use super::{BIG_NUMBER, Criteria, Direction, Sorting, marker};
 use crate::errors::ApiError;
 
 type Test = Result<bool, ApiError>;
@@ -32,6 +32,44 @@ const INHERITED: [&str; 11] = [
     "__lookupGetter__",
     "__lookupSetter__",
 ];
+
+/// The criteria of a validated listing query (`getQueryCriteria`): its members but the paging,
+/// the order and the parsed copy.
+pub fn of_query(query: &Value) -> Criteria {
+    let paging = ["orderBy", "page", "limit", "offset", crate::schemas::PARSED];
+    let members = query.as_object().into_iter().flatten();
+    let members = members.filter(|(key, _)| !paging.contains(&key.as_str()));
+    Criteria(
+        members
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    )
+}
+
+/// The sorting of a validated listing query: its `orderBy`, then the route's `tail`.
+pub fn sorting_of(query: &Value, tail: &[(&str, Direction)]) -> Sorting {
+    let given = query
+        .get("orderBy")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    let given = given.filter_map(|order| {
+        let property = order.get("property")?.as_str()?.to_owned();
+        let desc = order.get("direction").and_then(Value::as_str) == Some("desc");
+        Some((
+            property,
+            if desc {
+                Direction::Desc
+            } else {
+                Direction::Asc
+            },
+        ))
+    });
+    let tail = tail
+        .iter()
+        .map(|(property, direction)| ((*property).to_owned(), *direction));
+    Sorting(given.chain(tail).collect())
+}
 
 /// Whether `resource` matches every one of `criterias` (`testStandardCriterias`): each is an
 /// object whose every property matches the resource's, and an array of values is an alternative.
