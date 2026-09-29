@@ -33,8 +33,11 @@ pub(super) fn check(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                 match mixed::step(&recorded, name) {
                     Some(s)
                         if s.ok
-                            && s.record.get("admitted")
-                                != Some(&serde_json::Value::Bool(false)) =>
+                            && s.record
+                                .get("admitted")
+                                .or_else(|| s.record.pointer("/detail/admitted"))
+                                .and_then(serde_json::Value::as_bool)
+                                != Some(false) =>
                     {
                         cases.pass(SECTION, label);
                     }
