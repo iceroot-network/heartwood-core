@@ -178,10 +178,35 @@ impl Tally {
             .map(|((n, c, k), v)| (n.as_str(), c.as_str(), k.as_str(), *v))
     }
 
+    /// Add every count of `other` to this one.
+    pub fn merge(&mut self, other: &Tally) {
+        for (key, v) in &other.counts {
+            *self.counts.entry(key.clone()).or_default() += v;
+        }
+    }
+
+    /// The largest count of each node, class and kind over `tallies` (one tally per source of
+    /// lines: a reader of a log, a peer banned), times `sources`: what `sources` sources may give
+    /// if each gives no more than the one that gave most.
+    pub fn most(tallies: &[Tally], sources: usize) -> Tally {
+        let mut out = Tally::default();
+        for tally in tallies {
+            for (key, v) in &tally.counts {
+                let entry = out.counts.entry(key.clone()).or_default();
+                *entry = (*entry).max(*v);
+            }
+        }
+        for v in out.counts.values_mut() {
+            *v *= sources;
+        }
+        out
+    }
+
     /// Rule on every count against `baseline`, whose own fault windows are `windows`:
     ///
     /// - the stall's lines are left out (they are the await check's evidence);
-    /// - a count outside every window is compared with the baseline's count outside;
+    /// - a count outside every window fails whatever the baseline gave: these lines belong inside
+    ///   a fault window;
     /// - a count in a class the baseline had a window of for the same node is compared with the
     ///   baseline's count in that class;
     /// - a restart count of a node the baseline never restarted is compared with the baseline's
@@ -197,7 +222,9 @@ impl Tally {
             .map(|(node, class, kind, count)| {
                 let ruling = if class == STALL {
                     Ruling::Left("the stall's lines are evidence for the await check")
-                } else if class == OUTSIDE || had(node, class) {
+                } else if class == OUTSIDE {
+                    rule(count, 0)
+                } else if had(node, class) {
                     rule(count, baseline.get(node, class, kind))
                 } else if class == "restart" && had(fallback, class) {
                     rule(count, baseline.get(fallback, class, kind))
@@ -345,7 +372,25 @@ mod tests {
         // Node 6 was never restarted in the baseline: node 4's restart count is the allowance.
         assert_eq!(ruling("node6", "restart"), Ruling::Within(2));
         assert!(matches!(ruling("node4", "partition"), Ruling::Left(_)));
-        assert_eq!(ruling("node3", OUTSIDE), Ruling::Over(1));
+        // Outside every window nothing is allowed, whatever the baseline logged there.
+        assert_eq!(ruling("node3", OUTSIDE), Ruling::Over(0));
         assert!(found[0].describe().contains("lines of node"));
+    }
+
+    #[test]
+    fn the_most_of_one_source_times_the_sources() {
+        let of = |n: usize| {
+            let mut t = Tally::default();
+            for _ in 0..n {
+                t.add("node4", "restart", "transport");
+            }
+            t
+        };
+        let most = Tally::most(&[of(1), of(3), of(2)], 2);
+        assert_eq!(most.get("node4", "restart", "transport"), 6);
+        assert!(Tally::most(&[], 3).is_empty());
+        let mut sum = of(1);
+        sum.merge(&of(2));
+        assert_eq!(sum.get("node4", "restart", "transport"), 3);
     }
 }

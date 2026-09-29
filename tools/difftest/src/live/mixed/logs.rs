@@ -2,8 +2,14 @@
 //!
 //! The reference logs are read for the lines that name a Heartwood relay (item by node named); the
 //! Heartwood logs for the lines that name a reference peer (item by the node that logged them).
-//! A line is counted in the class of the fault window it falls in ([`Window::class`]); a line
-//! outside every window is counted as such.
+//! A line is counted in the class of the fault window it falls in ([`Window::class`]), a window of
+//! either the node the line names or the node that logged it; a line outside every window is
+//! counted as such, and fails.
+//!
+//! A class the baseline's node never had is compared with the baseline's node 4 restart when it is
+//! a restart ([`FALLBACK`]); when the run has no Heartwood relay in node 4's place (run `s`), that
+//! allowance is the most any one source (a reader, a peer) gave of node 4's restart in the
+//! baseline, once for each source of this run.
 
 use std::collections::BTreeMap;
 
@@ -13,6 +19,10 @@ use crate::live::bans::{self, OUTSIDE, Ruling, Tally};
 use crate::live::nodes::{Event, event_of, read_logs};
 use crate::live::run::{Window, window_at};
 use crate::live::{Cases, MixedRun};
+
+/// The node whose restart in the baseline is the allowance of a restart the baseline's node in the
+/// same place never had.
+const FALLBACK: &str = "node4";
 
 /// The class of the window a line at `at` falls in for any of `nodes`, else [`OUTSIDE`].
 fn class_of(windows: &[Window], nodes: &[&str], at: Option<i64>) -> String {
@@ -48,7 +58,7 @@ fn named_by(
             else {
                 continue;
             };
-            let class = class_of(windows, &[name], line.at);
+            let class = class_of(windows, &[name, reader], line.at);
             match &event {
                 Event::Ban { reason, .. } if bans::is_socket_close(reason) => {
                     tally.add(name, &class, "transport");
@@ -150,7 +160,22 @@ pub(in crate::live) fn reference_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
             .iter()
             .filter_map(|(n, _)| ip_of(&base.manifest, n).map(|ip| (n.clone(), ip.to_owned())))
             .collect();
-        let (base_tally, _) = named_by(&base.dir, &readers, &base_named, &base.windows)?;
+        let (mut base_tally, _) = named_by(&base.dir, &readers, &base_named, &base.windows)?;
+        if !named.iter().any(|(n, _)| n == FALLBACK)
+            && let Some(ip) = ip_of(&base.manifest, FALLBACK)
+        {
+            // The baseline's node 4 as each of its readers logged it.
+            let fallback = [(FALLBACK.to_owned(), ip.to_owned())];
+            let mut each = Vec::new();
+            for reader in references(&base.manifest)
+                .iter()
+                .filter(|n| n.name != FALLBACK)
+            {
+                let one = [reader.name.clone()];
+                each.push(named_by(&base.dir, &one, &fallback, &base.windows)?.0);
+            }
+            base_tally.merge(&Tally::most(&each, readers.len()));
+        }
         rule(cases, "reference logs", &tally, &base_tally, &base.windows);
         Ok(())
     })
@@ -247,7 +272,7 @@ pub(in crate::live) fn heartwood_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
                     format!("{n} lines: {what}"),
                 );
             }
-            merge(&mut total, &tally);
+            total.merge(&tally);
             // The baseline's node of the same name, and the same peers.
             let base_log = base.dir.join("logs").join(&relay.name);
             let base_peers: Vec<(String, String)> = peers
@@ -255,17 +280,19 @@ pub(in crate::live) fn heartwood_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
                 .filter_map(|(n, _)| ip_of(&base.manifest, n).map(|ip| (n.clone(), ip.to_owned())))
                 .collect();
             let (t, _) = heartwood_by(&base_log, &relay.name, &base_peers, &[], &base.windows)?;
-            merge(&mut base_total, &t);
+            base_total.merge(&t);
+        }
+        if !heartwood(m).iter().any(|n| n.name == FALLBACK) {
+            // The baseline's node 4's bans, peer by peer.
+            let log = base.dir.join("logs").join(FALLBACK);
+            let mut each = Vec::new();
+            for peer in base.manifest.nodes.iter().filter(|n| n.name != FALLBACK) {
+                let one = [(peer.name.clone(), peer.ip.clone())];
+                each.push(heartwood_by(&log, FALLBACK, &one, &[], &base.windows)?.0);
+            }
+            base_total.merge(&Tally::most(&each, peers.len()));
         }
         rule(cases, "Heartwood logs", &total, &base_total, &base.windows);
         Ok(())
     })
-}
-
-fn merge(into: &mut Tally, from: &Tally) {
-    for (n, c, k, v) in from.iter() {
-        for _ in 0..v {
-            into.add(n, c, k);
-        }
-    }
 }
