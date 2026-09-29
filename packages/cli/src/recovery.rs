@@ -16,8 +16,9 @@
 //! group is the user's own (named as the user, with no other member), as a umask of 002 gives it: a
 //! member of a shared group could rename or link a file of the user into a directory the group may
 //! write. The marker must have no other hard link. The relay ignores a marker that fails the rule,
-//! with a warning; the commands refuse a temp directory that fails it. [`judge`] is the rule itself,
-//! over metadata the caller read, so the tests can give it any owner and mode.
+//! with a warning; the commands refuse a temp directory that fails it, and refuse to run as another
+//! user than the relay's before they make anything. [`judge`] is the rule itself, over metadata the
+//! caller read, so the tests can give it any owner and mode.
 
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, Write};
@@ -188,6 +189,17 @@ pub enum RecoveryError {
     /// The instance could not be resolved.
     #[error(transparent)]
     Instance(#[from] InstanceError),
+    /// The command runs as another user than the relay's: nothing is made, as the relay would
+    /// ignore it, and the command run as the relay's user would refuse it.
+    #[error(
+        "the relay's files belong to user {owner}: run the command as that user, not as user {uid}"
+    )]
+    OtherUser {
+        /// The command's user.
+        uid: u32,
+        /// The relay's user, the owner of `<data>/run`.
+        owner: u32,
+    },
     /// The temp directory, or a marker already in it, fails the trust rule.
     #[error("{}: {why}", path.display())]
     Untrusted {
@@ -266,10 +278,11 @@ fn relay_user(data: &Path) -> Option<u32> {
     Some(fs::metadata(data.join("run")).ok()?.uid())
 }
 
-/// Write `marker` for `instance` (a relay), asking `confirm` unless `force`: the temp directory
-/// created with mode 0700 when it is missing, refused when it fails the trust rule, and the empty
-/// marker created without following a symbolic link (one that exists is kept, and refused when the
-/// relay would ignore it). The marker's path.
+/// Write `marker` for `instance` (a relay), asking `confirm` unless `force`: refused when the
+/// process runs as another user than the relay's, before anything is made (what it made would lock
+/// the relay's user out); the temp directory created with mode 0700 when it is missing, refused
+/// when it fails the trust rule, and the empty marker created without following a symbolic link
+/// (one that exists is kept, and refused when the relay would ignore it). The marker's path.
 pub fn request(
     instance: &Instance,
     marker: Marker,
@@ -278,6 +291,10 @@ pub fn request(
 ) -> Result<PathBuf, RecoveryError> {
     if !force && confirm.confirm(marker.question()) != Some(true) {
         return Err(RecoveryError::NotConfirmed);
+    }
+    let uid = nix::unistd::Uid::current().as_raw();
+    if let Some(owner) = relay_user(&instance.paths.data).filter(|&owner| owner != uid) {
+        return Err(RecoveryError::OtherUser { uid, owner });
     }
     let temp = &instance.paths.temp;
     let made = DirBuilder::new().recursive(true).mode(0o700).create(temp);

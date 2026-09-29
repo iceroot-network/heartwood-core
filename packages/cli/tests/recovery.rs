@@ -410,6 +410,26 @@ fn the_relay_ignores_a_marker_in_a_directory_of_another_group_or_one_hard_linked
 }
 
 #[test]
+fn the_command_run_as_another_user_than_the_relays_makes_nothing() {
+    let home = scratch("other-user");
+    let instance = simple(&home);
+    // The relay's `run` directory is the root directory's, whose owner is user 0.
+    fs::create_dir_all(&instance.paths.data).unwrap();
+    symlink("/", instance.paths.data.join("run")).unwrap();
+    if me() == 0 {
+        eprintln!("skipped: the test runs as user 0, the owner of the relay's files here");
+        return;
+    }
+    let error = request(&instance, Marker::ClearPool, true, &mut Answer::new(None)).unwrap_err();
+    assert!(matches!(
+        error,
+        RecoveryError::OtherUser { owner: 0, uid } if uid == me()
+    ));
+    assert!(error.to_string().contains("run the command as that user"));
+    assert!(!instance.paths.temp.exists());
+}
+
+#[test]
 fn the_rule_judges_kind_then_owner_then_the_world_write_bit() {
     let path = Path::new("/x");
     let bad = |why| Trust::Untrusted {
