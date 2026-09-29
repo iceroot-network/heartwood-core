@@ -485,10 +485,11 @@ impl<'a> Producer<'a> {
     }
 }
 
-/// Refuse a recipe with a step beyond a chain of `rounds` rounds and `tip` blocks, or a step
-/// that cannot run.
+/// Refuse a recipe with a step beyond a chain of `rounds` rounds and `tip` blocks, a step that
+/// cannot run, or a revert back to the last block of a round.
 pub fn check(recipe: &Recipe, rounds: u32, tip: u32) -> Result<(), LockstepError> {
     let bad = |m: String| Err(LockstepError::Recipe(m));
+    let round_length = tip / rounds.max(1);
     let mut rounds_seen = BTreeSet::new();
     for step in &recipe.steps {
         match step {
@@ -526,6 +527,18 @@ pub fn check(recipe: &Recipe, rounds: u32, tip: u32) -> Result<(), LockstepError
             } if *blocks == 0 || *after_height > tip || *blocks >= *after_height => {
                 return bad(format!(
                     "a revert or fork of {blocks} blocks after height {after_height}"
+                ));
+            }
+            // The plan's revert runs again in every replay of the corpus, and a reference node that
+            // reverts to a round's last block deletes the next round's rows without saving them
+            // again, so each later line of the round would differ on the plan, not on the chain.
+            Step::Revert {
+                after_height,
+                blocks,
+            } if round_length > 0 && (after_height - blocks) % round_length == 0 => {
+                return bad(format!(
+                    "a revert of {blocks} blocks after height {after_height} returns to the last \
+                     block of a round; revert one block more or one fewer"
                 ));
             }
             Step::Restart { height } if !(1..=tip).contains(height) => {

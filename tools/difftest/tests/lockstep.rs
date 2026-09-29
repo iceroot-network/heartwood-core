@@ -317,6 +317,45 @@ fn a_five_round_chain_is_reproduced_byte_for_byte() {
     assert_eq!(loaded.meta["seed"], SEED);
     assert_eq!(loaded.meta["forgerAux"].as_str().map(str::len), Some(64));
     assert!(loaded.restart_plan.is_some());
+    // An ordinary corpus's revert plan: every round end and the random reverts of its seed.
+    let seed: u64 = loaded.meta["revertSeed"]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .expect("a revert seed");
+    let generated = corpus::RevertPlan::generate(seed, 265, 53);
+    assert!(!generated.steps.is_empty());
+    assert_eq!(loaded.revert_plan.steps.len(), generated.steps.len());
+    let adjusted = loaded.meta["revertPlanAdjusted"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for step in &generated.steps {
+        let now = adjusted
+            .iter()
+            .find(|a| a["after"] == step.after_height && a["blocks"] == step.blocks)
+            .and_then(|a| a["now"].as_u64())
+            .map_or(step.blocks, |n| u32::try_from(n).expect("a count"));
+        assert!(
+            loaded
+                .revert_plan
+                .steps
+                .iter()
+                .any(|s| s.after_height == step.after_height && s.blocks == now),
+            "{step:?}"
+        );
+    }
+    // None returns to a round's last block, whose next round's rows the judge's node deletes.
+    assert!(
+        loaded
+            .revert_plan
+            .steps
+            .iter()
+            .all(|s| (s.after_height - s.blocks) % 53 != 0)
+    );
+    assert_eq!(
+        loaded.meta["revertSteps"],
+        json!(loaded.revert_plan.steps.len())
+    );
 }
 
 #[test]
@@ -400,14 +439,24 @@ fn a_revert_across_a_round_end_a_missed_pattern_and_a_milestone_go_through() {
     let reapplied = twin.applied.iter().filter(|(_, s)| s == "reapply").count();
     assert_eq!(reapplied, 2);
     let loaded = Corpus::load(&dir).expect("the corpus loads");
-    assert_eq!(loaded.revert_plan.steps.len(), 1);
-    assert_eq!(
-        (
-            loaded.revert_plan.steps[0].after_height,
-            loaded.revert_plan.steps[0].blocks
-        ),
-        (53, 2)
-    );
+    // The recipe's revert joins the round-end and random reverts of an ordinary corpus.
+    let steps: Vec<(u32, u32)> = loaded
+        .revert_plan
+        .steps
+        .iter()
+        .map(|s| (s.after_height, s.blocks))
+        .collect();
+    assert!(steps.contains(&(53, 2)), "{steps:?}");
+    for end in [53, 106, 159, 212, 265] {
+        assert!(steps.contains(&(end, 1)), "{steps:?}");
+    }
+    assert!(steps.windows(2).all(|w| w[0].0 <= w[1].0), "{steps:?}");
+    // The missed slots counted are those of the chain written, not of the blocks a fork replaced.
+    let missed_rows = std::fs::read_to_string(dir.join("reference/missed-blocks.jsonl"))
+        .expect("the missed rows")
+        .lines()
+        .count();
+    assert_eq!(made.missed, missed_rows as u64);
     assert!(
         loaded
             .restart_plan
@@ -500,6 +549,19 @@ fn a_recipe_the_chain_cannot_follow_is_refused_before_anything_is_made() {
     )
     .expect_err("refused");
     assert!(matches!(error, LockstepError::Recipe(m) if m.contains("nobody")));
+    // A revert back to a round's last block: the plan's replay would then run on a judge whose
+    // node deleted the next round's rows.
+    let round_end = recipe(vec![
+        json!({"step": "revert", "afterHeight": 56, "blocks": 3}),
+    ]);
+    let mut twin = Twin::default();
+    let error =
+        make_in(&mut twin, &scratch.path().join("i"), &devnet(), &round_end).expect_err("refused");
+    assert!(
+        matches!(&error, LockstepError::Recipe(m) if m.contains("last block of a round")),
+        "{error}"
+    );
+    assert!(twin.heart.is_none(), "the reference was not started");
 }
 
 #[test]
@@ -653,7 +715,19 @@ fn a_chain_with_reverts_missed_slots_and_a_milestone_goes_through_the_real_refer
     assert!(ok, "{made}");
     let (ok, judged) = difftest(&["corpus", "judge", d, "--processor"], &oracle);
     assert!(ok, "{judged}");
-    assert!(judged.contains("2 reverts, 2 re-applies"), "{judged}");
+    // Every revert of the plan (the recipe's, the round ends' and the random ones) is judged.
+    let plan = Corpus::load(&dir).expect("the corpus").revert_plan;
+    assert!(
+        plan.steps
+            .iter()
+            .any(|s| (s.after_height, s.blocks) == (53, 2))
+    );
+    let reverted: u32 = plan.steps.iter().map(|s| s.blocks).sum();
+    assert!(
+        judged.contains(&format!("({reverted} reverts, {reverted} re-applies)")),
+        "{judged}"
+    );
+    assert!(judged.contains("A1 ok, A2 ok, A3 ok"), "{judged}");
     let (ok, out) = difftest(&["run", "l2", d, "--strict"], &[]);
     assert!(ok, "{out}");
 }

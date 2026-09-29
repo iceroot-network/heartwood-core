@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use super::LockstepError;
 use super::producer::Made;
-use crate::corpus::{self, RevertPlan};
+use crate::corpus::{self, RevertPlan, RevertStep};
 use crate::corpus_from_blocks;
 use crate::restart::{PlanKind, RestartPlan};
 use crate::store::ScratchDir;
@@ -31,8 +31,44 @@ fn pretty(value: &Value) -> String {
     )
 }
 
+/// The revert plan of a chain of `tip` blocks: an ordinary corpus's plan (every round end and
+/// the random reverts of `seed`), with the recipe's `reverts`, which the producer ran on both
+/// sides, joined in height order; and the generated steps it changed. A generated revert that
+/// would return to a round's last block reverts one block more, as a live chain's plan does: the
+/// judge's node deletes the next round's rows there and does not save them again, so the step
+/// would test the plan, not the chain.
+fn revert_plan(
+    seed: u64,
+    tip: u32,
+    round_length: u32,
+    reverts: &[RevertStep],
+) -> (RevertPlan, Vec<Value>) {
+    let mut plan = RevertPlan::generate(seed, tip, round_length);
+    let length = round_length.max(1);
+    let mut adjusted = Vec::new();
+    for step in &mut plan.steps {
+        let to = step.after_height - step.blocks;
+        if to >= length && to % length == 0 {
+            let moved = if step.blocks + 1 < step.after_height {
+                step.blocks + 1
+            } else {
+                step.blocks - 1
+            };
+            adjusted.push(serde_json::json!({"after": step.after_height, "blocks": step.blocks, "now": moved}));
+            step.blocks = moved;
+        }
+    }
+    for step in reverts {
+        if !plan.steps.contains(step) {
+            plan.steps.push(*step);
+        }
+    }
+    plan.steps.sort_by_key(|s| s.after_height);
+    (plan, adjusted)
+}
+
 /// The chain `made`, with the crypto files `crypto` (name and text), from `seed` and the forger's
-/// `aux`, as a corpus in `out` (which must be empty or missing). `tip_id` is the last block's id.
+/// `aux`, as a corpus in `out` (which must be empty or missing).
 pub fn write(
     made: &Made,
     crypto: &[(&str, String)],
@@ -70,13 +106,11 @@ pub fn write(
         .as_str()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    let plan = RevertPlan {
-        seed: revert_seed,
-        round_length,
-        tip,
-        steps: made.reverts.clone(),
-    };
+    let (plan, adjusted) = revert_plan(revert_seed, tip, round_length, &made.reverts);
     meta["revertSteps"] = plan.steps.len().into();
+    if !adjusted.is_empty() {
+        meta["revertPlanAdjusted"] = Value::Array(adjusted);
+    }
     meta["forgerAux"] = hex::encode(aux).into();
     std::fs::write(&meta_path, pretty(&meta)).map_err(|e| io(&meta_path, e))?;
     let plan_path = out.join("revert-plan.json");
@@ -95,4 +129,47 @@ pub fn write(
         &made.restarts,
     );
     corpus::write_restart_plan(out, &restarts).map_err(corpus_error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_generated_revert_to_a_round_end_reverts_one_block_more_and_the_recipe_joins_the_plan() {
+        let landing = |p: &RevertPlan| {
+            p.steps
+                .iter()
+                .any(|s| (s.after_height - s.blocks) % 53 == 0)
+        };
+        let seed = (0..1000)
+            .find(|s| landing(&RevertPlan::generate(*s, 265, 53)))
+            .expect("a seed whose plan returns to a round end");
+        let generated = RevertPlan::generate(seed, 265, 53);
+        let recipe = [RevertStep {
+            after_height: 60,
+            blocks: 7,
+        }];
+        let (plan, adjusted) = revert_plan(seed, 265, 53, &recipe);
+        assert!(!adjusted.is_empty());
+        assert_eq!(plan.steps.len(), generated.steps.len() + 1);
+        assert!(
+            plan.steps.contains(&recipe[0]),
+            "the recipe's revert is kept as it is"
+        );
+        let generated_only: Vec<_> = plan.steps.iter().filter(|s| **s != recipe[0]).collect();
+        assert!(
+            !generated_only
+                .iter()
+                .any(|s| (s.after_height - s.blocks) % 53 == 0)
+        );
+        assert!(
+            plan.steps
+                .windows(2)
+                .all(|w| w[0].after_height <= w[1].after_height)
+        );
+        for a in &adjusted {
+            assert_eq!(a["now"].as_u64(), a["blocks"].as_u64().map(|b| b + 1));
+        }
+    }
 }
