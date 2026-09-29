@@ -405,6 +405,15 @@ fn api_exposure() -> Vec<Case> {
         "exposed",
     );
     let mut view = api_view(Some(public), &[public], true);
+    view.forger_config = Ok(forger(&["203.0.113.7:4001"], None));
+    add(
+        "public api, forger names another host's relay on the same port",
+        view,
+        default,
+        Status::Pass,
+        "no-forger",
+    );
+    let mut view = api_view(Some(public), &[public], true);
     view.forger_config = Err(denied(Source::Config));
     add(
         "public api, forger configuration unreadable",
@@ -491,9 +500,16 @@ fn forger_no_listener() -> Vec<Case> {
     cases
 }
 
-/// A relay with `access`, a forger of this host that reaches it from `local`.
+/// A relay with `access`, a forger of this host that reaches it from `local`. A peer's connection
+/// shows 10.0.0.1 as one of this host's addresses.
 fn access_view(access: Vec<AccessEntry>, hosts: &[&str], local: Option<&str>) -> FakeView {
-    let mut view = relay_view(relay(P2P, None, access), Vec::new());
+    let peer = row(
+        "10.0.0.1:4001",
+        "198.51.100.7:40000",
+        TcpState::Established,
+        10,
+    );
+    let mut view = relay_view(relay(P2P, None, access), vec![peer]);
     view.forger_config = Ok(forger(hosts, local));
     view
 }
@@ -566,6 +582,12 @@ fn remote_access() -> Vec<Case> {
         Status::Pass,
         "none-needed",
     );
+    add(
+        "empty list, forger names another host's relay on the same port",
+        access_view(Vec::new(), &["203.0.113.7:4001"], None),
+        Status::Pass,
+        "none-needed",
+    );
     let entries = vec![address("127.0.0.1"), prefix()];
     add(
         "a prefix beside the forger's address",
@@ -598,6 +620,14 @@ fn remote_access() -> Vec<Case> {
     let mut view = access_view(Vec::new(), &here, None);
     view.roles_present = Ok(presence(true, false));
     add("empty list, no forger", view, Status::Pass, "none-needed");
+    let mut view = access_view(vec![address("fe80::1")], &here, None);
+    view.roles_present = Ok(presence(true, false));
+    add(
+        "a link-local address is not public",
+        view,
+        Status::Pass,
+        "listed",
+    );
     let mut view = access_view(vec![address("10.0.0.5")], &here, None);
     view.roles_present = Ok(presence(true, false));
     view.sockets = Ok(vec![row(

@@ -2,7 +2,7 @@
 //! the host firewall and the reachability the doctor cannot prove. They read the configuration and
 //! the socket table, never the network.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use crate::doctor::DoctorProfile;
 use crate::doctor::registry::CheckInput;
@@ -77,7 +77,10 @@ fn is_public(ip: IpAddr) -> bool {
                 | [172, 16..=31, ..]
                 | [192, 168, ..]
         ),
-        IpAddr::V6(a) => !(a.is_loopback() || a.is_unique_local() || a.is_unspecified()),
+        IpAddr::V6(a) => {
+            !(a.is_loopback() || a.is_unique_local() || a.is_unicast_link_local())
+                && !a.is_unspecified()
+        }
     }
 }
 
@@ -90,18 +93,18 @@ fn listed(relay: &RelayFacts) -> Vec<IpAddr> {
     relay.remote_access.iter().filter_map(plain).collect()
 }
 
-/// Whether (`Some`), and from where (`Some(Some(address))`), a forger uses `relay`: an established connection to the P2P port from a
-/// listed address, or the forger of this host, whose configuration names the relay.
+/// Whether (`Some`), and from where (`Some(Some(address))`), a forger uses `relay`: an established
+/// connection to the P2P port from a listed address, or the forger of this host, whose
+/// configuration names the relay's port on loopback, on the relay's own address or on an address
+/// the socket table shows is this host's.
 fn forger_of(view: &dyn View, relay: &RelayFacts) -> Result<Option<Option<IpAddr>>, Unknown> {
     let (port, listed) = (relay.p2p.port(), listed(relay));
+    let rows = view.sockets().unwrap_or_default();
     let from_listed = |row: &SocketRow| {
         let joined = row.state == TcpState::Established && row.local.port() == port;
         joined && listed.contains(&row.remote.ip().to_canonical())
     };
-    if view
-        .sockets()
-        .is_ok_and(|rows| rows.iter().any(from_listed))
-    {
+    if rows.iter().any(from_listed) {
         return Ok(Some(None));
     }
     if view
@@ -111,7 +114,12 @@ fn forger_of(view: &dyn View, relay: &RelayFacts) -> Result<Option<Option<IpAddr
         return Ok(None);
     }
     let forger = view.forger_config()?;
-    let Some(host) = forger.hosts.iter().find(|host| host.port() == port) else {
+    let ours = |ip: IpAddr| {
+        let own = |row: &SocketRow| row.local.ip().to_canonical() == ip;
+        ip.is_loopback() || ip == relay.p2p.ip().to_canonical() || rows.iter().any(own)
+    };
+    let names = |host: &&SocketAddr| host.port() == port && ours(host.ip().to_canonical());
+    let Some(host) = forger.hosts.iter().find(names) else {
         return Ok(None);
     };
     let loopback = || match host.ip().to_canonical() {
