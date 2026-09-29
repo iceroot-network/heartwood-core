@@ -181,7 +181,7 @@
  {
   "name": "blocks-missed/order/height-first-row",
   "path": "/api/blocks/missed",
-  "query": "orderBy=height:asc&limit=1"
+  "query": "orderBy=height:asc,timestamp:asc&limit=1"
  },
  {
   "name": "blocks-missed/refused/id",

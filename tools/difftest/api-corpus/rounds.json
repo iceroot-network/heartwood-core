@@ -47,11 +47,13 @@
  },
  {
   "name": "rounds/delegates/plus",
-  "path": "/api/rounds/+3/delegates"
+  "path": "/api/rounds/+3/delegates",
+  "documented": "roundOrder"
  },
  {
   "name": "rounds/delegates/exponent",
-  "path": "/api/rounds/1e1/delegates"
+  "path": "/api/rounds/1e1/delegates",
+  "documented": "roundOrder"
  },
  {
   "name": "rounds/delegates/tip-height",
@@ -102,8 +104,9 @@
   "path": "/api/rounds/a.b/delegates"
  },
  {
-  "name": "rounds/refused/float-zero",
-  "path": "/api/rounds/1.0/delegates"
+  "name": "rounds/delegates/float-zero",
+  "path": "/api/rounds/1.0/delegates",
+  "documented": "roundOrder"
  },
  {
   "name": "rounds/refused/infinity",
