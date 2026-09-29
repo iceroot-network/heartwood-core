@@ -437,6 +437,101 @@ pub fn window_at<'w>(windows: &'w [Window], node: &str, t: i64) -> Option<&'w Wi
         .max_by_key(|w| w.start)
 }
 
+/// The class of a line between two nodes the run's route table kept apart ([`kept_apart`]).
+pub const UNREACHABLE: &str = "unreachable";
+
+/// A span of a node's reach-only routes (`routes.jsonl`, written by the tooling's `reach-only`
+/// and `reach-all`): the nodes it could reach from `start` to `end`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reach {
+    /// The node whose routes were limited.
+    pub node: String,
+    /// The nodes it could still reach (none for an isolation).
+    pub allowed: Vec<String>,
+    /// When its routes were limited, in milliseconds since the Unix epoch.
+    pub start: i64,
+    /// `window_seconds` after its routes next changed, as a fault window ends after its
+    /// recovery; the end of time when they never did.
+    pub end: i64,
+}
+
+/// The reach-only spans of the run in `dir`, from `routes.jsonl` (none when it has no such file);
+/// a change the tooling recorded as failed left the routes as they were.
+pub fn reaches(dir: &Path, window_seconds: i64) -> Result<Vec<Reach>> {
+    let path = dir.join("routes.jsonl");
+    let mut out: Vec<Reach> = Vec::new();
+    for record in read_lines(&path)? {
+        if record.get("ok").and_then(Value::as_bool) == Some(false) {
+            continue;
+        }
+        let (Some(node), Some(t)) = (
+            text(&record, "node"),
+            text(&record, "t").and_then(|t| parse_time(&t)),
+        ) else {
+            return Err(bad(
+                &path,
+                format!("a route change without a node or a time: {record}"),
+            ));
+        };
+        let end = t.saturating_add(window_seconds.saturating_mul(1_000));
+        for open in out
+            .iter_mut()
+            .filter(|r| r.node == node && r.end == i64::MAX)
+        {
+            open.end = end;
+        }
+        if text(&record, "action").as_deref() == Some("reach-only") {
+            let allowed = text(&record, "allowed").unwrap_or_default();
+            out.push(Reach {
+                node,
+                allowed: allowed
+                    .split([',', ' '])
+                    .filter(|n| !n.is_empty() && *n != "-")
+                    .map(str::to_owned)
+                    .collect(),
+                start: t,
+                end: i64::MAX,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Whether the route table kept `a` and `b` apart at `t`: a reach-only span of either that leaves
+/// the other out. A line one of them logged of the other then shows the route, not the peer.
+pub fn kept_apart(reaches: &[Reach], a: &str, b: &str, t: i64) -> bool {
+    reaches.iter().any(|r| {
+        r.start <= t
+            && t <= r.end
+            && ((r.node == a && !r.allowed.iter().any(|n| n == b))
+                || (r.node == b && !r.allowed.iter().any(|n| n == a)))
+    })
+}
+
+/// The route table's spans as windows of class [`UNREACHABLE`], for the comparison of a run's
+/// counts with a baseline's: each span of a node of `readers` or `named` concerns the nodes of
+/// `named` it kept apart from a reader (a reader's span: the named nodes it could not reach; a
+/// named node's span: that node).
+pub fn reach_windows(reaches: &[Reach], readers: &[String], named: &[String]) -> Vec<Window> {
+    reaches
+        .iter()
+        .filter_map(|r| {
+            let reader = readers.contains(&r.node);
+            let nodes: Vec<String> = named
+                .iter()
+                .filter(|n| **n == r.node || (reader && !r.allowed.contains(n)))
+                .cloned()
+                .collect();
+            (!nodes.is_empty()).then(|| Window {
+                fault: UNREACHABLE.to_owned(),
+                nodes,
+                start: r.start,
+                end: r.end,
+            })
+        })
+        .collect()
+}
+
 /// The fault windows of the run in `dir`; a fault without a recovery lasts to the end of time.
 pub fn windows(dir: &Path, window_seconds: i64) -> Result<Vec<Window>> {
     let path = dir.join("faults.jsonl");
@@ -626,5 +721,43 @@ mod tests {
         assert_eq!(step.number("kept"), Some(1));
         assert_eq!(step.text("outcome").as_deref(), Some("refused"));
         assert_eq!(step.text("missing"), None);
+    }
+
+    fn routes_file(lines: &[&str]) -> crate::store::ScratchDir {
+        let dir = crate::store::ScratchDir::new("live-routes").unwrap();
+        std::fs::write(dir.path().join("routes.jsonl"), lines.join("\n")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_route_table_keeps_a_reach_only_node_apart_from_the_others() {
+        let dir = routes_file(&[
+            r#"{"t":"1970-01-01T00:00:10.000Z","node":"node4","action":"reach-only","allowed":"node1","height":20,"ok":true}"#,
+            r#"{"t":"1970-01-01T00:01:40.000Z","node":"node4","action":"reach-all","allowed":"all","height":56,"ok":true}"#,
+            r#"{"t":"1970-01-01T00:00:20.000Z","node":"node6","action":"reach-only","allowed":"-","height":21,"ok":true}"#,
+            r#"{"t":"1970-01-01T00:00:30.000Z","node":"node5","action":"reach-only","allowed":"node2","height":22,"ok":false}"#,
+        ]);
+        let reaches = reaches(dir.path(), 30).unwrap();
+        assert_eq!(reaches.len(), 2, "{reaches:?}");
+        assert_eq!(reaches[0].allowed, ["node1"]);
+        // node 4 reaches node 1 only, until 30 s after its routes opened at 100 s
+        assert!(kept_apart(&reaches, "node4", "node2", 50_000));
+        assert!(kept_apart(&reaches, "node2", "node4", 50_000));
+        assert!(!kept_apart(&reaches, "node4", "node1", 50_000));
+        assert!(kept_apart(&reaches, "node4", "node3", 130_000));
+        assert!(!kept_apart(&reaches, "node4", "node3", 130_001));
+        assert!(!kept_apart(&reaches, "node4", "node3", 9_999));
+        // node 6 reaches no one from 20 s to the end; a failed change leaves the routes as they were
+        assert!(kept_apart(&reaches, "node1", "node6", 10_000_000));
+        assert!(!kept_apart(&reaches, "node5", "node3", 40_000));
+        // For a comparison: the named nodes each span leaves a reader of the list without.
+        let readers = ["node1".to_owned(), "node4".to_owned()];
+        let named = ["node2".to_owned(), "node6".to_owned()];
+        let windows = reach_windows(&reaches, &readers, &named);
+        assert_eq!(windows.len(), 2);
+        assert!(windows.iter().all(|w| w.class() == UNREACHABLE));
+        assert_eq!(windows[0].nodes, ["node2", "node6"]);
+        assert_eq!(windows[1].nodes, ["node6"]);
+        assert!(reach_windows(&reaches, &["node2".to_owned()], &["node3".to_owned()]).is_empty());
     }
 }

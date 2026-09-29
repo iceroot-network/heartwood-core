@@ -3,8 +3,12 @@
 //! The reference logs are read for the lines that name a Heartwood relay (item by node named); the
 //! Heartwood logs for the lines that name a reference peer (item by the node that logged them).
 //! A line is counted in the class of the fault window it falls in ([`Window::class`]), a window of
-//! either the node the line names or the node that logged it; a line outside every window is
-//! counted as such, and fails.
+//! either the node the line names or the node that logged it. A line outside every window between
+//! two nodes the run's route table kept apart (a node that reaches one relay only, or reaches
+//! nothing: `routes.jsonl`) is counted as [`run::UNREACHABLE`]: its discovery's failures are the
+//! reference's own, and it is compared with the baseline's count in that class when the baseline
+//! kept a reader of the same run apart from the node too, and left out and recorded otherwise. Any
+//! other line outside every window is counted as such, and fails.
 //!
 //! A class the baseline's node never had is compared with the baseline's node 4 restart when it is
 //! a restart ([`FALLBACK`]); when the run has no Heartwood relay in node 4's place (run `s`), that
@@ -17,40 +21,57 @@ use super::{SECTION, baseline, guard, heartwood, ip_of, references};
 use crate::errors::Result;
 use crate::live::bans::{self, OUTSIDE, Ruling, Tally};
 use crate::live::nodes::{Event, event_of, read_logs};
-use crate::live::run::{Window, window_at};
+use crate::live::run::{self, Reach, Window, window_at};
 use crate::live::{Cases, MixedRun};
 
 /// The node whose restart in the baseline is the allowance of a restart the baseline's node in the
 /// same place never had.
 const FALLBACK: &str = "node4";
 
-/// The class of the window a line at `at` falls in for any of `nodes`, else [`OUTSIDE`].
-fn class_of(windows: &[Window], nodes: &[&str], at: Option<i64>) -> String {
+/// The class of a line at `at` that `reader` logged of `named`: the class of the window it falls in
+/// for either node, else [`run::UNREACHABLE`] when the route table kept the two apart, else
+/// [`OUTSIDE`].
+fn class_of(
+    windows: &[Window],
+    reaches: &[Reach],
+    reader: &str,
+    named: &str,
+    at: Option<i64>,
+) -> String {
     let Some(t) = at else {
         return OUTSIDE.to_owned();
     };
-    nodes
+    [named, reader]
         .iter()
         .filter_map(|n| window_at(windows, n, t))
         .max_by_key(|w| w.start)
-        .map_or_else(|| OUTSIDE.to_owned(), |w| w.class().to_owned())
+        .map(|w| w.class().to_owned())
+        .or_else(|| run::kept_apart(reaches, reader, named, t).then(|| run::UNREACHABLE.to_owned()))
+        .unwrap_or_else(|| OUTSIDE.to_owned())
+}
+
+/// A run's directory, fault windows and route table.
+struct Logged<'a> {
+    dir: &'a std::path::Path,
+    windows: &'a [Window],
+    reaches: Vec<Reach>,
 }
 
 /// Lines that fail wherever they are: what was logged, how often, and by whom.
 type Forbidden = BTreeMap<(String, String), usize>;
 
-/// What the reference nodes `readers` logged of the nodes `named` (name and address): the
-/// transport lines counted per named node and class, and the lines that fail anywhere.
+/// What the reference nodes `readers` logged of the nodes `named` (name and address) in the run
+/// `logged`: the transport lines counted per named node and class, and the lines that fail
+/// anywhere.
 fn named_by(
-    dir: &std::path::Path,
+    logged: &Logged<'_>,
     readers: &[String],
     named: &[(String, String)],
-    windows: &[Window],
 ) -> Result<(Tally, Forbidden)> {
     let mut tally = Tally::default();
     let mut forbidden = Forbidden::new();
     for reader in readers {
-        for line in read_logs(&dir.join("logs").join(reader))? {
+        for line in read_logs(&logged.dir.join("logs").join(reader))? {
             let Some(event) = event_of(&line.text) else {
                 continue;
             };
@@ -58,7 +79,7 @@ fn named_by(
             else {
                 continue;
             };
-            let class = class_of(windows, &[name, reader], line.at);
+            let class = class_of(logged.windows, &logged.reaches, reader, name, line.at);
             match &event {
                 Event::Ban { reason, .. } if bans::is_socket_close(reason) => {
                     tally.add(name, &class, "transport");
@@ -95,9 +116,10 @@ fn named_by(
 }
 
 /// The findings of a comparison as cases: an excess fails, a count within the baseline's is one
-/// passing case, a count left out is recorded.
+/// passing case, a count left out is recorded. `windows` are the baseline's, with its route
+/// table's spans between the same readers and nodes as windows of their own class.
 fn rule(cases: &mut Cases, what: &str, tally: &Tally, base: &Tally, windows: &[Window]) {
-    let found = tally.compare(base, windows, "node4");
+    let found = tally.compare(base, windows, FALLBACK);
     let mut within = 0usize;
     for f in &found {
         match f.ruling {
@@ -138,7 +160,17 @@ pub(in crate::live) fn reference_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
         let base = baseline(run)?
             .ok_or_else(|| crate::errors::Error::Usage("no baseline run given".into()))?;
         let readers: Vec<String> = references(m).iter().map(|n| n.name.clone()).collect();
-        let (tally, forbidden) = named_by(run.run_dir, &readers, &named, run.windows)?;
+        let here = Logged {
+            dir: run.run_dir,
+            windows: run.windows,
+            reaches: run::reaches(run.run_dir, m.window_seconds)?,
+        };
+        let there = Logged {
+            dir: &base.dir,
+            windows: &base.windows,
+            reaches: run::reaches(&base.dir, base.manifest.window_seconds)?,
+        };
+        let (tally, forbidden) = named_by(&here, &readers, &named)?;
         for reader in &readers {
             let mine: Vec<_> = forbidden.iter().filter(|((r, _), _)| r == reader).collect();
             if mine.is_empty() {
@@ -160,7 +192,7 @@ pub(in crate::live) fn reference_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
             .iter()
             .filter_map(|(n, _)| ip_of(&base.manifest, n).map(|ip| (n.clone(), ip.to_owned())))
             .collect();
-        let (mut base_tally, _) = named_by(&base.dir, &readers, &base_named, &base.windows)?;
+        let (mut base_tally, _) = named_by(&there, &readers, &base_named)?;
         if !named.iter().any(|(n, _)| n == FALLBACK)
             && let Some(ip) = ip_of(&base.manifest, FALLBACK)
         {
@@ -172,23 +204,26 @@ pub(in crate::live) fn reference_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
                 .filter(|n| n.name != FALLBACK)
             {
                 let one = [reader.name.clone()];
-                each.push(named_by(&base.dir, &one, &fallback, &base.windows)?.0);
+                each.push(named_by(&there, &one, &fallback)?.0);
             }
             base_tally.merge(&Tally::most(&each, readers.len()));
         }
-        rule(cases, "reference logs", &tally, &base_tally, &base.windows);
+        let names: Vec<String> = named.iter().map(|(n, _)| n.clone()).collect();
+        let mut ruled = base.windows.clone();
+        ruled.extend(run::reach_windows(&there.reaches, &readers, &names));
+        rule(cases, "reference logs", &tally, &base_tally, &ruled);
         Ok(())
     })
 }
 
-/// What the Heartwood node `reader` logged of the reference nodes: the socket-close bans counted
-/// per reason and class, and the lines that fail anywhere.
+/// What the Heartwood node `reader` logged in `log` of the reference nodes, in the run `logged`: the
+/// socket-close bans counted per reason and class, and the lines that fail anywhere.
 fn heartwood_by(
+    logged: &Logged<'_>,
     log: &std::path::Path,
     reader: &str,
     peers: &[(String, String)],
     devnet: &[(String, String)],
-    windows: &[Window],
 ) -> Result<(Tally, Forbidden)> {
     let mut tally = Tally::default();
     let mut forbidden = Forbidden::new();
@@ -196,7 +231,7 @@ fn heartwood_by(
         if let Some(Event::Ban { ip, reason }) = event_of(&line.text) {
             if let Some((peer, _)) = peers.iter().find(|(_, p)| *p == ip) {
                 if bans::is_socket_close(&reason) {
-                    let class = class_of(windows, &[reader, peer], line.at);
+                    let class = class_of(logged.windows, &logged.reaches, reader, peer, line.at);
                     tally.add(reader, &class, &reason);
                 } else {
                     *forbidden
@@ -254,11 +289,21 @@ pub(in crate::live) fn heartwood_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
             .iter()
             .map(|n| (n.name.clone(), n.ip.clone()))
             .collect();
+        let here = Logged {
+            dir: run.run_dir,
+            windows: run.windows,
+            reaches: run::reaches(run.run_dir, m.window_seconds)?,
+        };
+        let there = Logged {
+            dir: &base.dir,
+            windows: &base.windows,
+            reaches: run::reaches(&base.dir, base.manifest.window_seconds)?,
+        };
         let mut total = Tally::default();
         let mut base_total = Tally::default();
-        for relay in relays {
+        for relay in &relays {
             let log = run.run_dir.join("nodes").join(&relay.name).join("log");
-            let (tally, forbidden) = heartwood_by(&log, &relay.name, &peers, &devnet, run.windows)?;
+            let (tally, forbidden) = heartwood_by(&here, &log, &relay.name, &peers, &devnet)?;
             if forbidden.is_empty() {
                 cases.pass(
                     SECTION,
@@ -279,7 +324,7 @@ pub(in crate::live) fn heartwood_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
                 .iter()
                 .filter_map(|(n, _)| ip_of(&base.manifest, n).map(|ip| (n.clone(), ip.to_owned())))
                 .collect();
-            let (t, _) = heartwood_by(&base_log, &relay.name, &base_peers, &[], &base.windows)?;
+            let (t, _) = heartwood_by(&there, &base_log, &relay.name, &base_peers, &[])?;
             base_total.merge(&t);
         }
         if !heartwood(m).iter().any(|n| n.name == FALLBACK) {
@@ -288,11 +333,115 @@ pub(in crate::live) fn heartwood_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
             let mut each = Vec::new();
             for peer in base.manifest.nodes.iter().filter(|n| n.name != FALLBACK) {
                 let one = [(peer.name.clone(), peer.ip.clone())];
-                each.push(heartwood_by(&log, FALLBACK, &one, &[], &base.windows)?.0);
+                each.push(heartwood_by(&there, &log, FALLBACK, &one, &[])?.0);
             }
             base_total.merge(&Tally::most(&each, peers.len()));
         }
-        rule(cases, "Heartwood logs", &total, &base_total, &base.windows);
+        // The counts are keyed by the Heartwood relay that logged them: the route table's spans
+        // between a peer and a relay of this run, as windows of the relays.
+        let peer_names: Vec<String> = peers.iter().map(|(n, _)| n.clone()).collect();
+        let relay_names: Vec<String> = relays.iter().map(|n| n.name.clone()).collect();
+        let mut ruled = base.windows.clone();
+        ruled.extend(run::reach_windows(
+            &there.reaches,
+            &peer_names,
+            &relay_names,
+        ));
+        rule(cases, "Heartwood logs", &total, &base_total, &ruled);
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::live::run::Reach;
+
+    fn reach(node: &str, allowed: &[&str], start: i64, end: i64) -> Reach {
+        Reach {
+            node: node.into(),
+            allowed: allowed.iter().map(|n| (*n).to_owned()).collect(),
+            start,
+            end,
+        }
+    }
+
+    #[test]
+    fn a_line_between_nodes_the_routes_kept_apart_is_unreachable() {
+        let reaches = [reach("node5", &["node4"], 1_000, i64::MAX)];
+        let window = Window {
+            fault: "isolation".into(),
+            nodes: vec!["node6".into()],
+            start: 5_000,
+            end: 9_000,
+        };
+        let windows = [window];
+        // node 5 reaches node 4 only: its lines about node 6 show the route
+        assert_eq!(
+            class_of(&windows, &reaches, "node5", "node6", Some(2_000)),
+            run::UNREACHABLE
+        );
+        assert_eq!(
+            class_of(&windows, &reaches, "node5", "node4", Some(2_000)),
+            OUTSIDE
+        );
+        assert_eq!(
+            class_of(&windows, &reaches, "node1", "node6", Some(2_000)),
+            OUTSIDE
+        );
+        // a fault window of either node decides first
+        assert_eq!(
+            class_of(&windows, &reaches, "node5", "node6", Some(6_000)),
+            "isolation"
+        );
+        assert_eq!(
+            class_of(&windows, &reaches, "node5", "node6", None),
+            OUTSIDE
+        );
+    }
+
+    #[test]
+    fn unreachable_lines_compare_with_the_baselines_readers_and_nodes() {
+        let base_reaches = [reach("node5", &["node4"], 1_000, i64::MAX)];
+        let names = |n: &[&str]| n.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        // Run w: node 5 reaches node 4 only in both runs; its lines about node 6 are compared.
+        let mut tally = Tally::default();
+        let mut base = Tally::default();
+        for _ in 0..33 {
+            tally.add("node6", run::UNREACHABLE, "transport");
+        }
+        for _ in 0..37 {
+            base.add("node6", run::UNREACHABLE, "transport");
+        }
+        let ruled = run::reach_windows(
+            &base_reaches,
+            &names(&["node1", "node2", "node3", "node5"]),
+            &names(&["node4", "node6"]),
+        );
+        let found = tally.compare(&base, &ruled, FALLBACK);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].ruling, Ruling::Within(37));
+        tally.add("node6", run::UNREACHABLE, "transport");
+        tally.add("node6", run::UNREACHABLE, "transport");
+        tally.add("node6", run::UNREACHABLE, "transport");
+        tally.add("node6", run::UNREACHABLE, "transport");
+        tally.add("node6", run::UNREACHABLE, "transport");
+        assert_eq!(
+            tally.compare(&base, &ruled, FALLBACK)[0].ruling,
+            Ruling::Over(37)
+        );
+        // Run s: node 4 reaches node 1 only for a while; the baseline's node 4 never did, so its
+        // lines about node 2 are left out and recorded.
+        let mut s = Tally::default();
+        s.add("node2", run::UNREACHABLE, "transport");
+        let ruled = run::reach_windows(
+            &base_reaches,
+            &names(&["node4"]),
+            &names(&["node1", "node2", "node3"]),
+        );
+        assert!(matches!(
+            s.compare(&Tally::default(), &ruled, FALLBACK)[0].ruling,
+            Ruling::Left(_)
+        ));
+    }
 }
