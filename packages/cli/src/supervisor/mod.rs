@@ -162,7 +162,8 @@ pub struct RunDir {
 
 impl RunDir {
     /// Make `instance`'s run directory as [`run_dir`] does and hold it: opened without following
-    /// a link, and narrowed to 0700 through the descriptor, which only its owner may do.
+    /// a link, and narrowed to 0700 through the descriptor, which succeeds only for the user the
+    /// directory belongs to.
     pub fn open(instance: &Instance) -> Result<RunDir, ProcessError> {
         let path = instance.run_dir();
         if let Some(parent) = path.parent() {

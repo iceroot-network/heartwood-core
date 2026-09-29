@@ -3,7 +3,7 @@
 //! `<data>/run/<role>.pid`, the process's id, removed when the lock is released. The run
 //! directory and the lock are made and taken as the commands make and take theirs
 //! ([`heartwood_cli::supervisor::run_dir`], mode 0700 and refused when another user owns it;
-//! [`take_lock`], which tries again past the short shared locks of the commands' probes, so a node
+//! [`take_lock_in`], which tries again past the short shared locks of the commands' probes, so a node
 //! started while `status` looks at its lock does not refuse). The pid file is always a new private
 //! file (a link left in its place is removed, never followed), made and removed in the run
 //! directory as it was checked and is held ([`RunDir`]), so a directory swapped for a link
