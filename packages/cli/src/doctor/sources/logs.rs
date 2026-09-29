@@ -599,7 +599,9 @@ impl Scan {
             };
             self.earliest.get_or_insert(at_ms);
             let backwards = previous.is_some_and(|before| at_ms < before - BACKWARDS_MS);
-            previous = Some(at_ms);
+            if at_ms <= window.to_ms {
+                previous = Some(at_ms);
+            }
             if backwards {
                 self.untrusted += 1;
                 self.keep(excerpt(source, Some(at_ms), line));
