@@ -75,7 +75,13 @@ fn http_date(unix_ms: i64) -> String {
         return String::new();
     };
     // 1970-01-01 was a Thursday.
-    let day = usize::try_from((unix_ms.div_euclid(86_400_000) + 4).rem_euclid(7)).unwrap_or(0);
+    let day = usize::try_from(
+        unix_ms
+            .div_euclid(86_400_000)
+            .saturating_add(4)
+            .rem_euclid(7),
+    )
+    .unwrap_or(0);
     let month = usize::from(at.month).saturating_sub(1);
     format!(
         "{}, {:02} {} {:04} {:02}:{:02}:{:02} GMT",
