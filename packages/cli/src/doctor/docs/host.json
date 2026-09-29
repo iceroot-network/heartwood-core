@@ -13,11 +13,14 @@
         "the process table"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "unknown": "Not built yet."
+        "pass": "The host has the CPUs and 90% of the memory of the planning estimate for the roles it runs.",
+        "warn": "The host has fewer CPUs, or less memory, than the planning estimate. The estimates are for planning, not requirements, so this never fails.",
+        "unknown": "The CPUs, the memory or the roles could not be read."
       },
-      "advice": {},
+      "advice": {
+        "enough": "The host has {cpus} CPUs and {memory_gb} GiB, enough for {roles}.",
+        "below-estimate": "The host has {cpus} CPUs and {memory_gb} GiB. The planning estimate for {roles} is {need_cpus} CPUs and {need_gb} GiB. These are planning estimates, not requirements. See https://docs.iceroot.com/validators/running/."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#host-resources"
     },
     {
@@ -31,12 +34,17 @@
         "/proc"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "fail": "Not built yet.",
-        "unknown": "Not built yet."
+        "pass": "More than 10% of the memory is available, and no role uses swap.",
+        "warn": "10% or less of the memory is available, or a role has memory in swap.",
+        "fail": "Less than 2% of the memory is available.",
+        "unknown": "The memory or a role's status could not be read."
       },
-      "advice": {},
+      "advice": {
+        "enough": "{percent}% of the memory is available.",
+        "low": "Only {percent}% of the memory is available. Close other programs or add memory. See https://docs.iceroot.com/validators/running/.",
+        "exhausted": "Only {percent}% of the memory is available. The system may stop the node. Add memory now. See https://docs.iceroot.com/validators/running/.",
+        "swap": "The {role} has memory in swap, which slows it. Add memory or close other programs. See https://docs.iceroot.com/validators/running/."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#host-memory"
     },
     {
@@ -51,11 +59,15 @@
         "the node's files"
       ],
       "rules": {
-        "pass": "Not built yet.",
-        "warn": "Not built yet.",
-        "unknown": "Not built yet."
+        "pass": "The doctor runs as the user who owns the data directory, and not as root.",
+        "warn": "The doctor runs as root, or as a user other than the data directory's owner.",
+        "unknown": "The user or the data directory could not be read."
       },
-      "advice": {},
+      "advice": {
+        "node-user": "The doctor runs as user {uid}, who owns the data directory.",
+        "root": "The doctor runs as root. Run the node and the doctor as an ordinary user. See https://docs.iceroot.com/validators/running/.",
+        "other-user": "The doctor runs as user {uid}, and the data directory belongs to user {owner}. Run it as the node's user. See https://docs.iceroot.com/validators/running/."
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#host-user"
     }
   ]
