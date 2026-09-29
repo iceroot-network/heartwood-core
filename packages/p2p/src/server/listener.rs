@@ -2,8 +2,9 @@
 //! WebSocket library (`ws` 7) serve them.
 //!
 //! - The request head is read with the HTTP socket timeout of 2 s between reads; a head still
-//!   unfinished 60 s after the connection opened gets 408 and is destroyed (the server's
-//!   `headersTimeout`, which the reference checks every 30 s, so it cuts at 60 to 90 s). A request
+//!   unfinished 60 s after the connection opened gets a bare `400 Bad Request` and is ended (the
+//!   server's `headersTimeout`, which the reference checks every 30 s, so it cuts at 60 to 90 s,
+//!   answered by the HTTP framework's client error handler rather than Node's 408). A request
 //!   that is no upgrade (no `Upgrade` header with a `Connection: upgrade` token) gets 404, which
 //!   bans the caller "Not a websocket connection". An upgrade to any path but `/` is destroyed; one
 //!   the WebSocket library refuses (not GET, an `Upgrade` header other than `websocket` alone, a
@@ -68,7 +69,7 @@ pub async fn upgrade(mut stream: Box<dyn Stream>) -> Upgrade {
         Ok(Some(end)) => end,
         Ok(None) => return Upgrade::Failed,
         Err(_) => {
-            let answer = "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
+            let answer = "HTTP/1.1 400 Bad Request\r\n\r\n";
             let _ = timeout(SOCKET_TIMEOUT, stream.write_all(answer.as_bytes())).await;
             return Upgrade::Failed;
         }

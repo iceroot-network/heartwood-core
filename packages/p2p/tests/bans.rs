@@ -288,7 +288,7 @@ async fn a_plain_http_request_is_answered_404_and_banned() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_request_head_still_unfinished_after_60_s_is_answered_408_and_banned() {
+async fn a_request_head_still_unfinished_after_60_s_is_answered_400_and_banned() {
     let bench = Bench::new().await;
     bench.fakes.node.set_first_synced(Some(SYNCED));
     let (mut client, served) = tokio::io::duplex(64 * 1024);
@@ -309,12 +309,10 @@ async fn a_request_head_still_unfinished_after_60_s_is_answered_408_and_banned()
     let closed = closed.expect("the server closes the connection");
     let window = Duration::from_secs(60)..=Duration::from_millis(61_500);
     assert!(window.contains(&closed), "{closed:?}");
+    // The HTTP server's client error handler's answer: a bare 400, not Node's own 408.
     let mut answer = Vec::new();
     client.read_to_end(&mut answer).await.unwrap();
-    assert_eq!(
-        answer,
-        b"HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n"
-    );
+    assert_eq!(answer, b"HTTP/1.1 400 Bad Request\r\n\r\n");
     let reason = bench.server.ban_reason(peer(2));
     assert_eq!(
         reason.as_deref(),
