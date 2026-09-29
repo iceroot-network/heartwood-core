@@ -433,8 +433,11 @@ fn judge_stall(
                 run::format_time(r.ended())
             ));
         }
+        // The timer and the drain in the same poll: the tip read after the wait is the new one.
+        let raced =
+            r.after == r.before.saturating_add(1) && (commit..=settled).contains(&r.ended());
         if let Some(pre) = v.pre_tip
-            && (r.before != pre || r.after != pre)
+            && (r.before != pre || (r.after != pre && !raced))
         {
             v.problems.push(format!(
                 "a {} wait ended `bound` on tips {} to {}, not on the tip before the job, {pre} (ended {})",
@@ -1144,6 +1147,35 @@ mod tests {
         assert_eq!((v.bound, v.bound_client), (2, 1));
         let v = judge_stall(&requests, &window(), 30, hold, false, None);
         assert_eq!((v.bound, v.bound_client), (2, 0));
+    }
+
+    #[test]
+    fn a_bound_end_that_raced_the_commit_may_carry_the_new_tip() {
+        // Began 8 s before the hold's end: the timer and the drain fell in one poll at 112 s.
+        let requests = vec![
+            request(100_500, 8_010, End::Bound, 110, 110),
+            request(104_000, 8_000, End::Bound, 110, 111),
+            request(113_000, 0, End::None, 111, 111),
+            request(120_000, 40, End::Drained, 111, 112),
+        ];
+        let v = judge_stall(
+            &requests,
+            &window(),
+            30,
+            Some((100_000, 12_000)),
+            false,
+            None,
+        );
+        assert_eq!(v.problems, Vec::<String>::new());
+        // Before the commit, the new tip is wrong.
+        let early = vec![
+            request(100_500, 8_010, End::Bound, 110, 110),
+            request(101_000, 8_000, End::Bound, 110, 111),
+            request(113_000, 0, End::None, 111, 111),
+            request(120_000, 40, End::Drained, 111, 112),
+        ];
+        let v = judge_stall(&early, &window(), 30, Some((100_000, 12_000)), false, None);
+        assert!(v.problems.iter().any(|p| p.contains("tips 110 to 111")));
     }
 
     #[test]
