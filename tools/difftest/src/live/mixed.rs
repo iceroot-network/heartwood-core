@@ -690,13 +690,53 @@ fn transaction_ids(dir: &Path) -> Result<BTreeSet<String>> {
     Ok(out)
 }
 
-/// Run `p`: the minority's blocks through node 4 only, and both sides on the majority's chain
-/// after the heal.
+/// When node 4 left the fork, recorded beside the steps that reconnected reference nodes after the
+/// heal: the heal passed through node 4 alone only when it came first. A reference node whose peers
+/// are the minority's cannot come first (its health check needs a majority of the attested
+/// delegates among its peers), and a Heartwood relay behaves as it does.
+fn node4_left_the_fork(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()> {
+    let heartwood4 = heartwood(run.manifest).iter().any(|n| n.name == "node4");
+    let dir = match heartwood4 {
+        true => run.run_dir.join("nodes/node4/log"),
+        false => run.run_dir.join("logs/node4"),
+    };
+    let heal = step(steps, "heal").and_then(|s| s.start);
+    let detected = (nodes::read_logs(&dir)?.into_iter())
+        .filter(|l| l.text.contains("Fork detected"))
+        .filter_map(|l| l.at)
+        .find(|&at| heal.is_none_or(|h| at >= h));
+    let Some(at) = detected else {
+        let why = "node 4's log has no \"Fork detected\" line after the heal";
+        cases.fail(SECTION, "node 4 left the minority's chain", why);
+        return Ok(());
+    };
+    let before: Vec<String> = (steps.iter())
+        .filter(|s| s.name.starts_with("reconnect-"))
+        .filter_map(|s| Some((s.name.as_str(), s.start.filter(|&t| t < at)?)))
+        .map(|(name, t)| format!("{name} at {}", run::format_time(t)))
+        .collect();
+    let when = run::format_time(at);
+    cases.record(
+        SECTION,
+        if before.is_empty() {
+            format!("node 4 detected the fork at {when}, before any reconnect step: the heal passed through it")
+        } else {
+            format!(
+                "node 4 detected the fork at {when}, after {}: the heal did not pass through node 4 alone",
+                before.join(" and ")
+            )
+        },
+    );
+    Ok(())
+}
+
+/// Run `p`: the minority's blocks through node 4 only, both sides on the majority's chain after
+/// the heal, and when node 4 left the fork beside the steps that reconnected reference nodes.
 pub(super) fn fork(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
     guard(
         cases,
         SECTION,
-        "the fork healed through a Heartwood relay",
+        "the minority's blocks through a Heartwood relay, and the heal",
         |cases| {
             let m = run.manifest;
             if m.run != "p" {
@@ -821,6 +861,7 @@ pub(super) fn fork(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                     "no converged step",
                 ),
             }
+            node4_left_the_fork(run, &steps, cases)?;
             let final_json = run::read_json(&run.run_dir.join("final.json"))?;
             let want = Corpus::load(&last.dir)?
                 .block_id(last.tip)
