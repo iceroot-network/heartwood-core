@@ -433,3 +433,45 @@ async fn dispose_closes_every_session() {
         internal::decode(json!({"status": 3}).to_string().as_bytes()).unwrap();
     assert!(!parsed.can_forge(53));
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_attestation_routes_go_to_a_relay_on_the_forgers_host_only() {
+    let offer = StatusToSignResponse::Offer {
+        status: "{}".into(),
+        public_keys: vec![hex(1)],
+        challenge: "0c".repeat(32),
+    };
+    let script = Script::new()
+        .on(
+            RouteId::GetCurrentRound,
+            json(&round(72, 9, &[1], &[], Some(0), Some(0))),
+        )
+        .on(RouteId::GetStatusToSign, json(&offer))
+        .on(RouteId::PostStatusSignatures, text("true"));
+    let relay = relay(1, script).await;
+    // A relay configured by an address that is not a loopback one, which the relay's own rule
+    // would refuse as a source: the forger asks it for no status to sign and posts it nothing.
+    let inner = heartwood_p2p::testing::MockPeer::dial(&[&relay]);
+    let dial: heartwood_p2p::transport::Dial =
+        std::sync::Arc::new(move |address| inner(std::net::SocketAddr::new(ip(1), address.port())));
+    let remote = heartwood_forger::options::RelayHost::new("192.0.2.1", PORT).unwrap();
+    let client = client_over(&[remote], dial);
+    assert!(client.get_round().await.is_ok());
+    let refused = client.status_to_sign(&[hex(1)]).await.unwrap_err();
+    assert!(
+        refused.to_string().contains("on the forger's host only"),
+        "{refused}"
+    );
+    let signatures = StatusSignatures {
+        offer: "ff".into(),
+        signatures: vec!["00".into()],
+        proofs: vec!["01".into()],
+    };
+    assert!(client.post_signatures(signatures).await.is_err());
+    let routes: Vec<RouteId> = relay
+        .requests()
+        .into_iter()
+        .map(|(route, _)| route)
+        .collect();
+    assert_eq!(routes, [RouteId::GetCurrentRound]);
+}

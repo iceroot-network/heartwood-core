@@ -373,12 +373,26 @@ impl RelayLink for Client {
     }
 }
 
+impl Client {
+    /// Refuse an attestation route to a relay the forger does not reach over loopback, which the
+    /// relay's own rule would refuse as a source: a remote host gets no signature.
+    fn on_this_host(&self, route: RouteId) -> Result<(), RelayError> {
+        let host = self.selected();
+        let only = "status attestations go to a relay on the forger's host only";
+        let local = host.address.to_canonical().is_loopback();
+        local
+            .then_some(())
+            .ok_or_else(|| RelayError::communication(&host, route, only))
+    }
+}
+
 impl AttestLink for Client {
     async fn status_to_sign(
         &self,
         public_keys: &[String],
     ) -> Result<StatusToSignResponse, RelayError> {
         let route = RouteId::GetStatusToSign;
+        self.on_this_host(route)?;
         let request = internal::encode(&StatusToSignRequest {
             public_keys: public_keys.to_vec(),
         });
@@ -387,7 +401,8 @@ impl AttestLink for Client {
     }
 
     async fn post_signatures(&self, signatures: StatusSignatures) -> Result<(), RelayError> {
-        self.ignored(RouteId::PostStatusSignatures, internal::encode(&signatures))
-            .await
+        let route = RouteId::PostStatusSignatures;
+        self.on_this_host(route)?;
+        self.ignored(route, internal::encode(&signatures)).await
     }
 }

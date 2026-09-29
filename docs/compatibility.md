@@ -902,7 +902,8 @@ pool, the store, the chain or the API. `heartwood forger run` runs it (see heart
 - **the relay client**: one nes session per configured host with a 20 MiB receive limit, the
   reference's host selection (up to ten sweeps 250 ms apart, the first ready host in list order),
   each call with its route's codec and the forger's headers, and the two attestation routes on the
-  selected host.
+  selected host when the forger reaches it over loopback, as the relay attests only a forger on
+  its own host.
 - **blocks**: a delegate's block from the relay's inputs (the collated transactions, the previous
   block, the timestamp and the reward), byte for byte the reference's for the same inputs and aux.
 - **the signing record**: per key, the height, slot, id and bytes of the last block signed,
