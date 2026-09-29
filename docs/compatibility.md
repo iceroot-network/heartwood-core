@@ -1264,7 +1264,9 @@ it:
   (`--networkStart=false`), the `--no-` forms and the reference's global `-v` and `--quiet` are
   refused with a usage error (status 2); `--network` takes any name that has a complete set of
   crypto files, and with neither `--network` nor `config.json` the start is refused, where the
-  reference discovers the one network directory.
+  reference discovers the one network directory; a token or network name, from the flags or
+  `config.json`, holds letters, digits, `-` and `_` only, as the role commands require, where
+  the reference takes any text, `../` included.
 
 Release builds build the package alone, `cargo build --release --locked -p heartwood-core`, since a
 build of the whole workspace turns on the test seams through `heartwood-difftest`. With its feature
