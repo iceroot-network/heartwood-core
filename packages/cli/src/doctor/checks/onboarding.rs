@@ -40,9 +40,12 @@ pub fn sync_proof(input: &CheckInput<'_>) -> Vec<Finding> {
         if addresses.is_empty() {
             return Err(Unknown::new(Source::Sockets, Reason::Missing));
         }
-        let hex = |text: &str| Id::new(IdKind::Hex64, text).map(Fact::Id);
-        facts.extend(hex(&tip.id).map(|id| ("tip_id", id)));
-        facts.extend(block.and_then(|b| hex(&b.id)).map(|id| ("block_2_id", id)));
+        // The proof is its block ids: an id the API gives out of its grammar leaves it unknown.
+        let unparsed = Unknown::new(Source::Api, Reason::Unparsed);
+        let hex = |text: &str| Id::new(IdKind::Hex64, text).map(Fact::Id).ok_or(unparsed);
+        facts.push(("tip_id", hex(&tip.id)?));
+        let block_2 = block.map_or(Err(unparsed), |b| hex(&b.id))?;
+        facts.push(("block_2_id", block_2));
         let loopback = addresses.iter().all(IpAddr::is_loopback);
         let word = if loopback {
             "loopback only"

@@ -75,6 +75,8 @@ pub fn cases() -> Vec<Case> {
     elsewhere.sockets = Ok(vec![listening("0.0.0.0:4001")]);
     let mut no_sockets = proof(100, "0.0.0.0:4003");
     no_sockets.sockets = Err(Unknown::new(Source::Sockets, Reason::NotBuilt));
+    let mut odd_tip = proof(100, "0.0.0.0:4003");
+    odd_tip.api_last_block = Ok(block(100, "{tip_id}"));
     let mut not_here = FakeView::new();
     not_here.roles_present = Ok(RolePresence {
         relay: false,
@@ -146,6 +148,12 @@ pub fn cases() -> Vec<Case> {
         sync_proof(
             "proof: no listener on the API port",
             elsewhere,
+            Status::Unknown,
+            "unknown",
+        ),
+        sync_proof(
+            "proof: a tip id out of its grammar",
+            odd_tip,
             Status::Unknown,
             "unknown",
         ),
