@@ -9,7 +9,9 @@ use std::fs;
 
 use common::{Setup, relay_plugins, run};
 use heartwood_blockchain::{BlockchainOptions, ReplayReason, RestorePath};
-use heartwood_core::app::{RelayError, api_options, open_pool, restored, version_floor};
+use heartwood_core::app::{
+    RelayError, api_options, open_pool, peer_config, restored, version_floor,
+};
 use heartwood_core::config::{Package, RelayConfig};
 use heartwood_core::options;
 use heartwood_crypto::TransactionId;
@@ -596,4 +598,30 @@ fn the_version_floor_in_force_refuses_the_start_and_a_later_one_warns() {
         ),
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn the_status_lists_the_api_before_the_webhooks_whatever_the_configurations_order() {
+    let setup = Setup::new("peer-config", "");
+    let names = |setup: &Setup| -> Vec<String> {
+        let config = load(setup, "--network testnet", &[]).unwrap();
+        let api = api_options(&config).unwrap();
+        peer_config(&config, api.as_ref())
+            .plugins
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+    };
+    let wanted = ["@solar-network/api", "@solar-network/webhooks"];
+    assert_eq!(names(&setup), wanted);
+    // The webhooks listed before the API in app.json: still the API first, in rank order, where
+    // the reference keeps the configuration's order.
+    let mut plugins = relay_plugins();
+    let list = plugins.as_array_mut().unwrap();
+    let webhooks = list.pop().unwrap();
+    let api = list.pop().unwrap();
+    list.push(webhooks);
+    list.push(api);
+    setup.app(plugins);
+    assert_eq!(names(&setup), wanted);
 }
