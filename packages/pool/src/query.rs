@@ -10,6 +10,7 @@
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+use std::sync::Arc;
 
 use heartwood_crypto::identities::Address;
 use heartwood_crypto::transactions::types::Asset;
@@ -49,18 +50,22 @@ impl<'p> Query<'p> {
 
     /// Every transaction, from the lowest priority.
     pub fn from_lowest_priority(&self) -> Vec<&'p Transaction> {
-        merge(
-            self.mempool.senders().map(SenderMempool::from_latest),
-            |fee, sender| Reverse((fee, sender)),
-        )
+        let lists = self.mempool.senders().map(|sender| sender.shared().rev());
+        let merged = merge(lists, |fee, sender| Reverse((fee, sender)));
+        merged.into_iter().map(Arc::as_ref).collect()
     }
 
     /// Every transaction, from the highest priority.
     pub fn from_highest_priority(&self) -> Vec<&'p Transaction> {
-        merge(
-            self.mempool.senders().map(SenderMempool::from_earliest),
-            |fee, sender| (fee, Reverse(sender)),
-        )
+        let merged = self.shared_from_highest_priority();
+        merged.into_iter().map(Arc::as_ref).collect()
+    }
+
+    /// [`Query::from_highest_priority`], as the pool holds the transactions (shared): what a
+    /// published view of the pool lists.
+    pub fn shared_from_highest_priority(&self) -> Vec<&'p Arc<Transaction>> {
+        let lists = self.mempool.senders().map(SenderMempool::shared);
+        merge(lists, |fee, sender| (fee, Reverse(sender)))
     }
 
     /// The transaction of the lowest priority, the first that
@@ -87,13 +92,13 @@ impl<'p> Query<'p> {
 fn merge<'p, I, K>(
     lists: impl Iterator<Item = I>,
     key: impl Fn(u64, usize) -> K,
-) -> Vec<&'p Transaction>
+) -> Vec<&'p Arc<Transaction>>
 where
-    I: Iterator<Item = &'p Transaction>,
+    I: Iterator<Item = &'p Arc<Transaction>>,
     K: Ord,
 {
     let mut lists: Vec<I> = lists.collect();
-    let mut heads: Vec<Option<&'p Transaction>> = Vec::with_capacity(lists.len());
+    let mut heads: Vec<Option<&'p Arc<Transaction>>> = Vec::with_capacity(lists.len());
     let mut heap = BinaryHeap::with_capacity(lists.len());
     for (position, list) in lists.iter_mut().enumerate() {
         let head = list.next();

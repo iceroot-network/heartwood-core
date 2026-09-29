@@ -53,7 +53,7 @@ fn removal_reverts_the_later_transactions_newest_first() {
         .pool
         .remove_transaction(&ctx, &fixture.alice.address, txs[1].id())
         .unwrap();
-    assert_eq!(ids(&removed), [id(&txs[2]), id(&txs[1])]);
+    assert_eq!(shared_ids(&removed), [id(&txs[2]), id(&txs[1])]);
     assert_eq!(
         harness
             .pool
@@ -77,7 +77,7 @@ fn removal_reverts_the_later_transactions_newest_first() {
         .pool
         .remove_transaction(&ctx, &fixture.alice.address, txs[0].id())
         .unwrap();
-    assert_eq!(ids(&removed), [id(&next), id(&txs[0])]);
+    assert_eq!(shared_ids(&removed), [id(&next), id(&txs[0])]);
     assert!(
         harness
             .pool
@@ -99,7 +99,7 @@ fn a_forged_transaction_takes_its_earlier_ones_without_a_revert() {
         .pool
         .remove_forged_transaction(&fixture.alice.address, txs[1].id())
         .unwrap();
-    assert_eq!(ids(&removed), [id(&txs[0]), id(&txs[1])]);
+    assert_eq!(shared_ids(&removed), [id(&txs[0]), id(&txs[1])]);
     assert_eq!(harness.all(), [id(&txs[2])]);
     assert_eq!(harness.stored(), [id(&txs[2])]);
     // The view keeps every applied transaction.
@@ -161,7 +161,10 @@ fn clean_up_removes_old_then_lowest_priority() {
     // At tip 500, rows at height 490 are old: the newest first, each with the sender's later
     // ones (alice's third transaction, stored at 495, goes with them).
     let removed = harness.pool.clean_up(&at(500)).unwrap();
-    assert_eq!(ids(&removed.old), [id(&txs[2]), id(&txs[1]), id(&txs[0])]);
+    assert_eq!(
+        shared_ids(&removed.old),
+        [id(&txs[2]), id(&txs[1]), id(&txs[0])]
+    );
     assert!(removed.lowest_priority.is_empty());
     assert_eq!(harness.all(), [id(&later), id(&lowest)]);
     assert_eq!(harness.stored(), [id(&later), id(&lowest)]);

@@ -21,7 +21,7 @@ use serde_json::Value;
 
 use crate::connection::{SCHEMA_VERSION, Settings};
 use crate::errors::DatabaseError;
-use crate::filters::{contains, jsonb_order_key, like_bytes};
+use crate::filters::{Casts, contains_alternative, jsonb_order_key, like_bytes};
 
 use self::watchdog::Watchdog;
 
@@ -154,8 +154,9 @@ impl Reader<'_> {
 }
 
 /// Register the criteria's SQL functions on `connection`: `heartwood_like(pattern, value)`,
-/// `heartwood_contains(asset, criterion)` and `heartwood_jsonb_order(asset)`. Each is `NULL` when
-/// its stored argument is.
+/// `heartwood_contains(asset, criterion)` (the asset contains one alternative of the `asset`
+/// criteria, [`contains_alternative`]; the criteria and its casts are read once per statement)
+/// and `heartwood_jsonb_order(asset)`. Each is `NULL` when its stored argument is.
 fn register_functions(connection: &Connection) -> Result<(), DatabaseError> {
     let flags = FunctionFlags::SQLITE_UTF8
         | FunctionFlags::SQLITE_DETERMINISTIC
@@ -169,13 +170,16 @@ fn register_functions(connection: &Connection) -> Result<(), DatabaseError> {
             .map_err(|error| rusqlite::Error::UserFunctionError(Box::new(error)))
     })?;
     connection.create_scalar_function("heartwood_contains", 2, flags, |ctx| {
-        let criterion = ctx.get_or_create_aux(1, |value| -> Result<Value, BoxedError> {
-            Ok(serde_json::from_slice(value.as_bytes()?)?)
+        let criterion = ctx.get_or_create_aux(1, |value| -> Result<_, BoxedError> {
+            let criterion: Value = serde_json::from_slice(value.as_bytes()?)?;
+            let casts = Casts::of(&criterion);
+            Ok((criterion, casts))
         })?;
         let Some(asset) = json(ctx, 0)? else {
             return Ok(None);
         };
-        Ok(Some(contains(&asset, &criterion)))
+        let (criterion, casts) = &*criterion;
+        Ok(Some(contains_alternative(&asset, criterion, casts)))
     })?;
     connection.create_scalar_function("heartwood_jsonb_order", 1, flags, |ctx| {
         Ok(json(ctx, 0)?.map(|asset| jsonb_order_key(&asset)))

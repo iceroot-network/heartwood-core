@@ -1,8 +1,8 @@
 //! A [`TransactionFilter`] as an SQL condition on `transactions`, with its parameters.
 //!
 //! The condition uses the reader's SQL functions ([`crate::reader`]): `heartwood_like` for the
-//! memo's pattern and `heartwood_contains` for the asset's containment. Each value is a bound
-//! parameter.
+//! memo's pattern and `heartwood_contains` for the asset's containment of one alternative of a
+//! criteria. Each value is a bound parameter.
 
 use rusqlite::types::Value as SqlValue;
 

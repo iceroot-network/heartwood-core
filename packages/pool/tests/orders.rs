@@ -4,6 +4,8 @@
 
 mod support;
 
+use std::sync::Arc;
+
 use heartwood_crypto::Transaction;
 use heartwood_pool::collate;
 use heartwood_transactions::PoolQuery;
@@ -60,6 +62,34 @@ fn the_query_orders_and_their_ties() {
         heartwood_crypto::TransactionType::Vote
     ));
     assert!(!query.has_pending_username("nobody"));
+}
+
+#[test]
+fn a_view_lists_the_highest_priority_first_and_copies_no_transaction() {
+    let fixture = Fixture::new();
+    let mut harness = Harness::new("view", |_| {});
+    let txs = populate(&fixture, &mut harness);
+    let online = heartwood_pool::DelegateVersions::new();
+    let view = harness.pool.view(&online);
+    let highest = ids(harness.pool.query().from_highest_priority());
+    assert_eq!(shared_ids(&view.by_priority), highest);
+    // Two views hold the same transactions, the pool's own; so does one after the other.
+    let again = harness.pool.view(&online);
+    let after = harness.pool.view_after(&online, &view);
+    for other in [&again, &after] {
+        let pairs = view.by_priority.iter().zip(&other.by_priority);
+        assert!(pairs.clone().count() == 5 && pairs.into_iter().all(|(a, b)| Arc::ptr_eq(a, b)));
+    }
+    // A removal leaves the other transactions shared with the views before it.
+    let ctx = fixture.ctx(&MILESTONES);
+    let removed = harness
+        .pool
+        .remove_transaction(&ctx, &fixture.carol.address, txs[4].id())
+        .unwrap();
+    assert!(Arc::ptr_eq(&removed[0], view.get(txs[4].id()).unwrap()));
+    let later = harness.pool.view_after(&online, &view);
+    assert_eq!(later.len(), 4);
+    assert!((later.by_priority.iter()).all(|t| Arc::ptr_eq(t, view.get(t.id()).unwrap())));
 }
 
 #[test]
@@ -182,7 +212,7 @@ fn a_failed_sender_is_skipped_and_removed() {
         ids(&collated.candidates),
         [id(&txs[2]), id(&txs[3]), id(&txs[4])]
     );
-    assert_eq!(ids(&collated.removed), [id(&txs[1]), id(&txs[0])]);
+    assert_eq!(shared_ids(&collated.removed), [id(&txs[1]), id(&txs[0])]);
     assert_eq!(harness.all(), [id(&txs[3]), id(&txs[2]), id(&txs[4])]);
     assert_eq!(harness.stored(), [id(&txs[2]), id(&txs[3]), id(&txs[4])]);
 }
@@ -205,6 +235,6 @@ fn validation_shares_one_copy_of_the_wallets() {
     assert_eq!(collated.candidates.len(), 3);
     let collated = collate(&mut harness.pool, &ctx, true, &[]).unwrap();
     assert_eq!(ids(&collated.candidates), ids(&resignations[..2]));
-    assert_eq!(ids(&collated.removed), [id(&resignations[2])]);
+    assert_eq!(shared_ids(&collated.removed), [id(&resignations[2])]);
     assert_eq!(harness.pool.size(), 2);
 }

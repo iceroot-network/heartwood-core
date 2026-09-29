@@ -2,6 +2,8 @@
 //! created. A sender mempool that becomes empty is dropped, and a new one for the same sender
 //! goes last.
 
+use std::sync::Arc;
+
 use heartwood_crypto::identities::Address;
 use heartwood_crypto::{Transaction, TransactionId};
 use indexmap::IndexMap;
@@ -110,7 +112,7 @@ impl Mempool {
         ctx: &PoolContext<'_>,
         sender: &Address,
         id: &TransactionId,
-    ) -> Vec<Transaction> {
+    ) -> Vec<Arc<Transaction>> {
         let Some(mempool) = self.senders.get_mut(sender) else {
             return Vec::new();
         };
@@ -125,7 +127,7 @@ impl Mempool {
         &mut self,
         sender: &Address,
         id: &TransactionId,
-    ) -> Vec<Transaction> {
+    ) -> Vec<Arc<Transaction>> {
         let Some(mempool) = self.senders.get_mut(sender) else {
             return Vec::new();
         };

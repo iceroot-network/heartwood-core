@@ -1,5 +1,13 @@
 //! The reference's expansion of an `asset` criteria: a query value is text, while the stored
 //! asset has numbers and booleans, so each text that reads as one also stands for it.
+//!
+//! The reference builds every alternative ([`asset_alternatives`]) and matches the rows that
+//! contain one of them. The store reads the criteria once instead, with its [`Casts`]
+//! ([`crate::filters::contains_alternative`]), so a request holds one copy of the criteria, not
+//! one per alternative (up to 32 of a list of up to 16,384 items), and matches the same rows.
+
+use std::collections::BTreeMap;
+use std::convert::Infallible;
 
 use heartwood_crypto::utils::js::number_to_string;
 use serde_json::{Number, Value};
@@ -15,12 +23,66 @@ const CASTS: u32 = 5;
 #[error("Asset cast property limit reached")]
 pub struct CastLimit;
 
+/// Refuse the `asset` criteria `criterion` when more than five of its texts read as a number or a
+/// boolean, as the reference's expansion does ([`asset_alternatives`]); a text counts at each place
+/// it appears.
+pub fn check_casts(criterion: &Value) -> Result<(), CastLimit> {
+    let mut left = CASTS;
+    each_text(criterion, &mut |text| {
+        if cast(text).is_some() {
+            left = left.checked_sub(1).ok_or(CastLimit)?;
+        }
+        Ok(())
+    })
+}
+
+/// The texts of an `asset` criteria that also stand for a number or a boolean, each with that
+/// value: the choices of the reference's expansion, without its alternatives.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Casts {
+    values: BTreeMap<String, Value>,
+}
+
+impl Casts {
+    /// The casts of the texts of `criterion`, in objects and arrays at any depth.
+    pub fn of(criterion: &Value) -> Casts {
+        let mut values = BTreeMap::new();
+        let Ok(()) = each_text(criterion, &mut |text| {
+            if !values.contains_key(text)
+                && let Some(value) = cast(text)
+            {
+                values.insert(text.to_owned(), value);
+            }
+            Ok::<(), Infallible>(())
+        });
+        Casts { values }
+    }
+
+    /// The number or boolean that the criteria's `text` also stands for, if any.
+    pub fn get(&self, text: &str) -> Option<&Value> {
+        self.values.get(text)
+    }
+}
+
+/// Call `visit` with each text of `value`, in objects and arrays at any depth, until it fails.
+fn each_text<E>(value: &Value, visit: &mut impl FnMut(&str) -> Result<(), E>) -> Result<(), E> {
+    match value {
+        Value::Array(items) => items.iter().try_for_each(|item| each_text(item, visit)),
+        Value::Object(map) => map.values().try_for_each(|inner| each_text(inner, visit)),
+        Value::String(text) => visit(text),
+        _ => Ok(()),
+    }
+}
+
 /// Every value that the `asset` criteria `criterion` stands for, as the reference expands it: a
 /// text that JavaScript reads as a number and writes back unchanged (`String(Number(text)) ===
 /// text`) stands for itself and for that number, `"true"` and `"false"` for themselves and the
 /// boolean, in objects and arrays at any depth, every combination once. A number that is not
 /// finite (`NaN`, `Infinity`) becomes `null`, as the reference's JSON parameter writes it. More
 /// than five such texts are refused.
+///
+/// The store does not build these ([`Casts`]); they are the reference's expansion, which its
+/// reading of a criteria is checked against.
 pub fn asset_alternatives(criterion: &Value) -> Result<Vec<Value>, CastLimit> {
     let mut left = CASTS;
     alternatives(criterion, &mut left)
@@ -221,7 +283,134 @@ mod tests {
     fn more_than_five_casts_are_refused() {
         let five = json!({"a": "1", "b": "2", "c": "3", "d": "true", "e": "false", "f": "x"});
         assert_eq!(asset_alternatives(&five).map(|v| v.len()), Ok(32));
+        assert_eq!(check_casts(&five), Ok(()));
         let six = json!({"a": "1", "b": "2", "c": "3", "d": "true", "e": "false", "f": "6"});
         assert_eq!(asset_alternatives(&six), Err(CastLimit));
+        assert_eq!(check_casts(&six), Err(CastLimit));
+        // A text counts at each place it appears.
+        let repeated = json!({"a": ["1", "1", "1"], "b": {"c": ["1", "1", "1"]}});
+        assert_eq!(asset_alternatives(&repeated), Err(CastLimit));
+        assert_eq!(check_casts(&repeated), Err(CastLimit));
+        assert_eq!(Casts::of(&repeated).get("1"), Some(&json!(1.0)));
+    }
+
+    /// A small generator of JSON values (xorshift), drawn from few texts, numbers and keys so that
+    /// containments hold often.
+    struct Values(u64);
+
+    impl Values {
+        fn below(&mut self, n: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % n
+        }
+
+        /// A criteria: texts (some of which cast), `null`, arrays and objects.
+        fn criterion(&mut self, depth: u32) -> Value {
+            const TEXTS: [&str; 8] = ["1", "2", "1.5", "true", "false", "NaN", "a", "01"];
+            match self.below(if depth == 0 { 3 } else { 5 }) {
+                0 | 1 => json!(TEXTS[self.below(8) as usize]),
+                2 => Value::Null,
+                3 => Value::Array(
+                    (0..self.below(4))
+                        .map(|_| self.criterion(depth - 1))
+                        .collect(),
+                ),
+                _ => self.object(depth, Values::criterion),
+            }
+        }
+
+        /// A stored asset: texts, numbers, booleans, `null`, arrays and objects.
+        fn asset(&mut self, depth: u32) -> Value {
+            const SCALARS: [&str; 12] = [
+                r#""1""#,
+                r#""2""#,
+                r#""1.5""#,
+                r#""true""#,
+                r#""a""#,
+                "1",
+                "2.0",
+                "1.5",
+                "true",
+                "false",
+                "null",
+                r#""NaN""#,
+            ];
+            match self.below(if depth == 0 { 3 } else { 5 }) {
+                0..=2 => serde_json::from_str(SCALARS[self.below(12) as usize]).unwrap(),
+                3 => Value::Array((0..self.below(5)).map(|_| self.asset(depth - 1)).collect()),
+                _ => self.object(depth, Values::asset),
+            }
+        }
+
+        fn object(&mut self, depth: u32, inner: fn(&mut Values, u32) -> Value) -> Value {
+            let mut map = serde_json::Map::new();
+            for _ in 0..self.below(4) {
+                let key = ["a", "b", "c"][self.below(3) as usize].to_owned();
+                let value = inner(self, depth - 1);
+                map.insert(key, value);
+            }
+            Value::Object(map)
+        }
+    }
+
+    #[test]
+    fn a_criteria_read_with_its_casts_matches_as_one_of_its_alternatives() {
+        use crate::filters::{contains, contains_alternative};
+        let mut values = Values(0x9e37_79b9_7f4a_7c15);
+        let (mut compared, mut held, mut by_casts) = (0, 0, 0);
+        while compared < 20_000 {
+            let criterion = values.criterion(3);
+            let Ok(alternatives) = asset_alternatives(&criterion) else {
+                assert_eq!(check_casts(&criterion), Err(CastLimit), "{criterion}");
+                continue;
+            };
+            assert_eq!(check_casts(&criterion), Ok(()), "{criterion}");
+            let casts = Casts::of(&criterion);
+            for _ in 0..4 {
+                let asset = values.asset(3);
+                let expanded = alternatives.iter().any(|one| contains(&asset, one));
+                let read = contains_alternative(&asset, &criterion, &casts);
+                assert_eq!(read, expanded, "{asset} and {criterion}");
+                // The alternatives read again with the casts match as they do.
+                let again = alternatives
+                    .iter()
+                    .any(|one| contains_alternative(&asset, one, &casts));
+                assert_eq!(again, expanded, "{asset} and {criterion}");
+                compared += 1;
+                held += usize::from(expanded);
+                by_casts += usize::from(expanded && !contains(&asset, &criterion));
+            }
+        }
+        // Both answers occur, and some hold only through a cast.
+        assert!((1_000..19_000).contains(&held), "{held} of {compared}");
+        assert!(by_casts >= 200, "{by_casts} of {held}");
+    }
+
+    #[test]
+    fn the_long_list_is_read_once_with_its_five_casts() {
+        use crate::filters::{contains, contains_alternative};
+        let mut items = vec![json!("1"), json!("2"), json!("3"), json!("true")];
+        items.push(json!("false"));
+        items.resize(16_383, Value::Null);
+        items.push(json!("c"));
+        let criterion = json!({"x": items});
+        let casts = Casts::of(&criterion);
+        assert_eq!(casts.values.len(), 5);
+        let alternatives = asset_alternatives(&criterion).unwrap();
+        for asset in [
+            json!({"x": [1, 2.0, "3", true, false, null, "c"]}),
+            json!({"x": [1, 2, 3, true, "false", null, "c", "d"]}),
+            json!({"x": [1, 2, 3, true, false, "c"]}),
+            json!({"x": ["1", "2", "3", "true", "false", null]}),
+        ] {
+            let expanded = alternatives.iter().any(|one| contains(&asset, one));
+            assert_eq!(
+                contains_alternative(&asset, &criterion, &casts),
+                expanded,
+                "{asset}"
+            );
+        }
     }
 }

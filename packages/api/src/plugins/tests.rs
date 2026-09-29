@@ -1153,13 +1153,16 @@ async fn a_long_asset_list_with_casts_is_answered_at_once() {
         }),
     };
     let pipeline = Pipeline::with_parts(RouteId::ALL.to_vec(), host, Grammar::SCHEMAS);
-    // Five casts and a list of 16,384 items from a 40-byte criterion: 32 alternatives.
+    // Five casts and a list of 16,384 items from a 40-byte criterion: 32 alternatives, which the
+    // criteria keeps as the one value the store reads with its casts. This times the query's
+    // parse and cast check; the store's read of the value is timed in heartwood-database's
+    // history tests.
     let id = "a".repeat(64);
     let uri = format!("/api/transactions?id={id}&asset.x=1,2,3,true,false&asset.x.16383=c");
     let started = std::time::Instant::now();
     let (status, _, body) = call(&pipeline, get(&uri)).await;
     let elapsed = started.elapsed();
-    assert_eq!((status, &body["data"]), (200, &json!(32)), "{body}");
+    assert_eq!((status, &body["data"]), (200, &json!(1)), "{body}");
     assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
 }
 

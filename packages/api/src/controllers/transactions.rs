@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use heartwood_crypto::utils::js::is_truthy;
 use heartwood_crypto::{Milestones, Params, Transaction, TransactionId};
-use heartwood_database::filters::{CastLimit, asset_alternatives};
+use heartwood_database::filters::{CastLimit, check_casts};
 use heartwood_database::{
     DatabaseError, Direction, Numeric, Order, Page, Reader, TransactionCriteria, TransactionFilter,
     TransactionRecord, TransactionRow,
@@ -326,9 +326,8 @@ pub(crate) fn criteria(query: &Value) -> Result<Option<TransactionCriteria>, Api
             "burnedFee" => criteria.burned_fee = numerics(key, values)?,
             "asset" => {
                 for value in values {
-                    criteria
-                        .asset
-                        .extend(asset_alternatives(value).map_err(cast_limit)?);
+                    check_casts(value).map_err(cast_limit)?;
+                    criteria.asset.push(value.clone());
                 }
             }
             _ => {}
@@ -447,10 +446,8 @@ mod tests {
                 },
             ],
             memo: vec![b"x%".to_vec()],
-            asset: vec![
-                json!({"votes": {"alice": "1"}}),
-                json!({"votes": {"alice": 1.0}}),
-            ],
+            // The value itself: the store reads its alternatives (`"1"` and `1`) with its casts.
+            asset: vec![json!({"votes": {"alice": "1"}})],
             ..TransactionCriteria::default()
         };
         assert_eq!(criteria(&query), Ok(Some(expected)));
