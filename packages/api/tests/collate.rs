@@ -2,10 +2,10 @@
 //! true})`, over the username alphabet and Base58: single characters, digit runs with and without
 //! leading zeros, strings that tie in the primary weights (case, zeros) and random strings.
 //!
-//! `tests/data/collate.json` is made by `tests/data/generate.js` from Node itself. The `js.
-//! localeCompare` records of the vector class V34 are compared too when the class is at hand: in
-//! `tests/vectors` or in the directory `API_VECTORS` names (a relative path is taken from the
-//! workspace root, such as a local oracle run in `target/vectors/local`).
+//! `tests/data/collate.json` is made by `tests/data/generate.js` from Node itself. The
+//! `js.localeCompare` records of the vector class V34 are compared too: from `tests/vectors`, where
+//! a missing class fails the test, or from the run `API_VECTORS` names (a path from the workspace
+//! root, such as a local oracle run in `target/vectors/local`), held to the class's minimum.
 
 use std::cmp::Ordering;
 
@@ -39,7 +39,6 @@ fn matches_node_on_the_vector_records() {
     let Some(records) = data::vector_records("js.localeCompare") else {
         return;
     };
-    assert!(records.len() >= 60, "{} records", records.len());
     for record in &records {
         let input = &record["input"];
         let (a, b) = (input["a"].as_str().unwrap(), input["b"].as_str().unwrap());
