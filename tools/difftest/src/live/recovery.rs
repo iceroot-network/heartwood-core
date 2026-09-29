@@ -402,7 +402,8 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
     // The corpus cut at node 6's tip.
     let cut_summary = cut_summary(&corpus, &last.dir, cut, length)?;
     let label = "node6: the summary before the rollback equals the corpus cut at its tip";
-    if differences(cases, label, &cut_summary, &before, backfill, "the cut") {
+    // Neither side has started since the chain began: no backfilled row on either.
+    if differences(cases, label, &cut_summary, &before, 0, "the cut") {
         cases.pass(SECTION, format!("{label} ({})", before.describe()));
     }
     // The oracle's rollback over the cut: node 6's summary after the command.
@@ -429,21 +430,25 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
                 after.tip, predicted.target
             ),
         );
-    } else if differences(
-        cases,
-        &label,
-        &predicted.summary,
-        &after,
-        backfill,
-        "the oracle",
-    ) {
+    } else if differences(cases, &label, &predicted.summary, &after, 0, "the oracle") {
         cases.pass(SECTION, format!("{label} ({})", after.describe()));
     }
-    // The start after it: the same tip and transactions, and the next round's rows saved.
+    // The start after it, as the reference's start after that rollback: the same tip and
+    // transactions, the next round's rows saved, and, when the rollback left no missed row, the
+    // productivity backfill's rows for the slots before block 2 (none when block 2 is in slot 1).
+    // The reference (run w0) must hold them; Heartwood (run w) does not write them, which is
+    // recorded; any other difference fails.
     let label =
         "node6: the summary after the start equals the oracle's restart after that rollback";
+    let adds = if predicted.summary.missed == 0 {
+        backfill
+    } else {
+        0
+    };
     let mut wanted = predicted.summary;
     wanted.round = predicted.target / u64::from(length.max(1)) + 1;
+    wanted.missed += adds;
+    let allowed = if run.manifest.run == "w" { adds } else { 0 };
     if started.round != wanted.round {
         cases.fail(
             SECTION,
@@ -453,7 +458,7 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
                 wanted.round, started.round
             ),
         );
-    } else if differences(cases, label, &wanted, &started, backfill, "the oracle") {
+    } else if differences(cases, label, &wanted, &started, allowed, "the oracle") {
         cases.pass(SECTION, format!("{label} ({})", started.describe()));
     }
     Ok(())
