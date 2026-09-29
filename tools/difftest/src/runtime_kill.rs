@@ -3,14 +3,13 @@
 //! random moments; each restart must restore a committed tip whose digest equals the continuous
 //! line, and the import must resume to the end with equal lines.
 //!
-//! In half the kills the mock peer answers its first getBlocks with nothing. That request is the
-//! relay's verification of the seed (a getBlocks of headers only), as in the reference: the
-//! verification fails, the relay drops the seed, falls back to its seeds after the monitor's wait,
-//! and imports in 400-block downloads cut into jobs of 100 as in the other kills. The monitor's
-//! chunk size falls to a tenth only after an empty download of blocks, for one download, and this
-//! mock peer answers no download empty, so the kill test does not import in 40-block downloads.
-//! The report counts the stored tips off the grid of those jobs (a 40-block download would leave
-//! one), which stays 0.
+//! In half the kills the mock peer answers its first getBlocks for full blocks with nothing (its
+//! getBlocks of headers only, the relay's verification of the seed as in the reference, is
+//! answered). The relay's first download is then empty, and the monitor's chunk size falls to a
+//! tenth for the next one: a download of 40 blocks, which leaves a stored tip off the grid of the
+//! jobs of 100 blocks that the 400-block downloads are cut into. The report counts those tips, and
+//! from `GRID_KILLS` kills with an empty first download on, a run with none fails: the kill test
+//! then does not import in 40-block downloads.
 //!
 //! Each kill starts a mock peer (`mock-peer`) serving the corpus and a relay (`heartwood relay
 //! run`, both built next to this program with the harness's features) on the store of the current
@@ -40,6 +39,9 @@ use crate::store::{self, Checked, ScratchDir};
 const START: Duration = Duration::from_secs(60);
 /// How long the last relay may take to import the rest of the corpus.
 const FINISH: Duration = Duration::from_secs(600);
+/// The fewest kills with an empty first download that the grid check needs: with fewer, the random
+/// delays may leave no stored tip off the grid.
+const GRID_KILLS: u32 = 10;
 /// The profiles of `app.json`: the reference's relay components, without the API and the webhooks,
 /// which the import does not need.
 const PLUGINS: [&str; 7] = [
@@ -130,11 +132,12 @@ pub fn crash(
         .filter(|(tip, _)| off_the_job_grid(**tip, corpus.tip()))
         .map(|(_, n)| *n)
         .sum();
+    results.extend(grid_case(kills.saturating_add(2), kills / 2, off_grid));
     Ok(Report {
         title: "L2 kill test: the relay's store after a SIGKILL".into(),
         source: format!(
             "{kills} kills, seed {seed}, delays up to {} ms into the import, {} stores; stored tips \
-             {}; {} kills with an empty first getBlocks (the seed's verification); stored tips off \
+             {}; {} kills with an empty first download; stored tips off \
              the 100-block job grid: {off_grid}",
             max_delay.as_millis(),
             store.saturating_add(1),
@@ -151,6 +154,31 @@ pub fn crash(
 /// cut into; a download of 40 blocks leaves a tip off it.
 fn off_the_job_grid(tip: u32, last: u32) -> bool {
     tip != last && !tip.saturating_sub(1).is_multiple_of(100)
+}
+
+/// The check that the kills with an empty first download imported in 40-block downloads: at least
+/// one stored tip off the job grid, once there were `GRID_KILLS` such kills.
+fn grid_case(line: u32, empty_first: u32, off_grid: u32) -> Option<CaseResult> {
+    if empty_first < GRID_KILLS {
+        return None;
+    }
+    let problems = match off_grid {
+        0 => {
+            vec!["no stored tip is off the job grid: no download of 40 blocks was imported".into()]
+        }
+        _ => Vec::new(),
+    };
+    let label = format!(
+        "{empty_first} kills with an empty first download left {off_grid} stored tips off the grid"
+    );
+    Some(case(
+        line,
+        label,
+        &Judged {
+            tip: None,
+            problems,
+        },
+    ))
 }
 
 /// A relay's directories and configuration, built from a corpus: `config/` with `app.json`,
@@ -195,7 +223,10 @@ impl Node {
             ),
             (
                 ".env",
-                "CORE_P2P_PORT=4000\nCORE_P2P_MIN_NETWORK_REACH=1\nCORE_API_DISABLED=true\n".into(),
+                format!(
+                    "CORE_P2P_PORT={}\nCORE_P2P_MIN_NETWORK_REACH=1\nCORE_API_DISABLED=true\n",
+                    free_port()?
+                ),
             ),
         ];
         for (name, text) in files {
@@ -212,6 +243,15 @@ impl Node {
     fn data(&self, store: u32) -> PathBuf {
         self.root.join(format!("data-{store}"))
     }
+}
+
+/// A port that nothing on this host listens on now, for the relay's P2P server: a fixed port would
+/// clash with any other relay on the host, and fail this run's kills that start on it.
+fn free_port() -> Result<u16> {
+    let listener = std::net::TcpListener::bind(("0.0.0.0", 0));
+    let port = listener.and_then(|listener| listener.local_addr());
+    port.map(|address| address.port())
+        .map_err(|e| Error::Usage(format!("no free port for the relay: {e}")))
 }
 
 fn mkdir(path: &Path) -> Result<()> {
@@ -260,8 +300,8 @@ impl Drop for Guard {
 }
 
 impl Run<'_> {
-    /// Start a mock peer (answering its first getBlocks with nothing when `empty_first`) and a
-    /// relay writing its digest lines to `digest`, and kill both at `stop`.
+    /// Start a mock peer (answering its first getBlocks for full blocks with nothing when
+    /// `empty_first`) and a relay writing its digest lines to `digest`, and kill both at `stop`.
     fn once(&self, digest: &Path, empty_first: bool, stop: Stop) -> Result<Killed> {
         let (mock, seed) = self.start_mock(empty_first)?;
         let data = self.node.data(self.store);
@@ -569,6 +609,18 @@ mod tests {
     }
 
     #[test]
+    fn kills_with_an_empty_first_download_must_leave_a_tip_off_the_grid() {
+        assert!(
+            grid_case(9, GRID_KILLS - 1, 0).is_none(),
+            "too few kills to tell"
+        );
+        let none = grid_case(9, GRID_KILLS, 0).unwrap();
+        assert!(matches!(none.outcome, Outcome::HarnessError(_)), "{none:?}");
+        let some = grid_case(9, GRID_KILLS, 1).unwrap();
+        assert_eq!(some.outcome, Outcome::Pass);
+    }
+
+    #[test]
     fn a_torn_last_line_is_left_out() {
         let dir = ScratchDir::new("runtime-lines").unwrap();
         let path = dir.path().join("digest.jsonl");
@@ -639,6 +691,21 @@ mod tests {
             judge_store(&both(4, 4), Some(4), None, &forward).1,
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn the_relay_listens_on_a_free_port_of_its_own() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let corpus = Corpus::load(&root.join("corpus/txgen-one-node")).unwrap();
+        let dir = ScratchDir::new("runtime-port").unwrap();
+        Node::write(dir.path(), &corpus).unwrap();
+        let env = std::fs::read_to_string(dir.path().join("config/.env")).unwrap();
+        let port: u16 = (env.lines())
+            .find_map(|line| line.strip_prefix("CORE_P2P_PORT="))
+            .and_then(|port| port.parse().ok())
+            .unwrap();
+        assert_ne!(port, 4000, "another relay on this host may hold that port");
+        assert!(std::net::TcpListener::bind(("0.0.0.0", port)).is_ok());
     }
 
     /// The kill test on the committed chain, through the built relay and mock peer: a few kills.

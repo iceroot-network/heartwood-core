@@ -130,7 +130,8 @@ pub struct ServedChain {
     pub signers: Vec<KeyPair>,
     /// The peers getPeers lists.
     pub peers: Vec<PeerAddress>,
-    /// Whether the first getBlocks is answered with no block.
+    /// Whether the first getBlocks for full blocks (not for headers only, which is how a seed is
+    /// verified) is answered with no block.
     pub empty_first_get_blocks: bool,
 }
 
@@ -463,13 +464,15 @@ impl Behaviour {
                     .block_limit
                     .filter(|limit| *limit > 0)
                     .unwrap_or(400);
-                let listed: Vec<ListedBlock> = if empty_first.swap(false, Ordering::Relaxed) {
+                let headers_only = request.headers_only == Some(true);
+                let empty = !headers_only && empty_first.swap(false, Ordering::Relaxed);
+                let listed: Vec<ListedBlock> = if empty {
                     Vec::new()
                 } else {
                     (chain.blocks.iter())
                         .filter(|block| block.height() >= from)
                         .take(usize::try_from(limit).unwrap_or(usize::MAX))
-                        .map(|block| listed(block, request.headers_only == Some(true)))
+                        .map(|block| listed(block, headers_only))
                         .collect()
                 };
                 block_codec::get_blocks_encode_response(&listed)
@@ -621,4 +624,45 @@ fn load_chain(dir: &Path) -> Result<ServedChain, MockPeerError> {
 
 fn hex(text: &str) -> Option<Vec<u8>> {
     heartwood_crypto::utils::hex::decode(text).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use heartwood_p2p_wire::messages::blocks::GetBlocksRequest;
+
+    use super::*;
+
+    fn asked(headers_only: bool) -> Vec<u8> {
+        GetBlocksRequest {
+            last_block_height: Some(1),
+            block_limit: Some(400),
+            headers_only: headers_only.then_some(true),
+            serialised: Some(true),
+            ..GetBlocksRequest::default()
+        }
+        .encode()
+    }
+
+    /// How many blocks the peer lists for a getBlocks of headers only, or of full blocks.
+    fn listed_by(peer: &Behaviour, headers_only: bool) -> usize {
+        match peer.answer(RouteId::GetBlocks, &asked(headers_only)) {
+            Reply::Payload(bytes) => block_codec::get_blocks_decode_response(&bytes)
+                .unwrap()
+                .len(),
+            other => panic!("not a payload: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn only_the_first_getblocks_for_full_blocks_is_answered_empty() {
+        let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/difftest/corpus");
+        let mut chain = load_chain(&corpus.join("txgen-one-node")).unwrap();
+        chain.empty_first_get_blocks = true;
+        let peer = Behaviour::serving(chain);
+        // The seed's check asks for headers first, and gets them.
+        assert_eq!(listed_by(&peer, true), 264);
+        assert_eq!(listed_by(&peer, false), 0);
+        assert_eq!(listed_by(&peer, true), 264);
+        assert_eq!(listed_by(&peer, false), 264);
+    }
 }

@@ -5,11 +5,11 @@
 //! the server refuses.
 //!
 //! Heartwood's side is [`ClientRequest`]: a payload that it cannot express (no headers, an empty or
-//! missing version, `countOnly`, no ids, a zero or missing height or limit, a key the client never
-//! writes) is refused, as the reference's server refuses each of those shapes. A request it
-//! builds is refused only when it is longer than the route's payload limit (413), or when the
-//! server's version gate refuses its version (400): the milestone's floor, else the server's
-//! `minimumVersions` option (the reference's default when the input names none).
+//! missing version, `countOnly`, no ids, a zero or missing height, a limit that is missing, zero or
+//! above 400, a key the client never writes) is refused, as the reference's server refuses each of
+//! those shapes. A request it builds is refused only when it is longer than the route's payload
+//! limit (413), or when the server's version gate refuses its version (400): the milestone's floor,
+//! else the server's `minimumVersions` option (the reference's default when the input names none).
 
 use std::num::NonZeroU32;
 
@@ -17,7 +17,7 @@ use heartwood_crypto::utils::hex;
 use heartwood_crypto::{BlockId, TransactionId};
 use heartwood_p2p::utils::is_valid_version::is_valid_version;
 use heartwood_p2p_wire::RouteId;
-use heartwood_p2p_wire::requests::{ClientRequest, CommonBlockIds, Headers};
+use heartwood_p2p_wire::requests::{BlockLimit, ClientRequest, CommonBlockIds, Headers};
 use serde_json::{Map, Value, json};
 
 use crate::subject::{Case, Verdict};
@@ -159,7 +159,10 @@ fn client_request(
                 Some(Value::Bool(true)) => true,
                 Some(_) => return Ok(None),
             };
-            match (height("lastBlockHeight"), height("blockLimit")) {
+            let limit = (payload.get("blockLimit").and_then(Value::as_u64))
+                .and_then(|n| u32::try_from(n).ok())
+                .and_then(BlockLimit::new);
+            match (height("lastBlockHeight"), limit) {
                 (Some(last_block_height), Some(block_limit)) if serialised => {
                     ClientRequest::GetBlocks {
                         last_block_height,
