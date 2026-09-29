@@ -12,8 +12,8 @@
 #   Dockerfile, check-native.js, oracle/  the image recipe and the oracle scripts
 #   oracle/external       the published vector files that class V11 checks the reference against
 #                         (packages/crypto/tests/vectors/external in this repository)
-#   oracle/corpus         the committed corpora (tools/difftest/corpus), whose chain class V33
-#                         rolls back
+#   oracle/corpus         the committed corpora (tools/difftest/corpus), whose chain class V32
+#                         serves and class V33 rolls back
 #
 # --repo   a clone of the reference implementation, iceroot-network/solar-core-ref, with its tags
 #          [$SOLAR_REPO; one of the two is required]

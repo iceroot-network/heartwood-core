@@ -88,3 +88,8 @@ required-features = ["node"]
 [[test]]
 name = "verifier"
 required-features = ["node"]
+
+# V32, the served answers, against the oracle's records.
+[[test]]
+name = "served"
+required-features = ["node", "difftest"]

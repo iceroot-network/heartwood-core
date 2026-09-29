@@ -4,6 +4,8 @@
 
 pub mod mock_peer;
 #[cfg(feature = "node")]
+pub mod served;
+#[cfg(feature = "node")]
 pub mod server;
 
 pub use self::mock_peer::{
