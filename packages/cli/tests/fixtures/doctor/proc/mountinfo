@@ -1,0 +1,9 @@
+26 32 0:23 / /sys rw,nosuid,nodev,noexec,relatime shared:7 - sysfs sysfs rw
+27 32 0:24 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw
+28 32 0:6 / /dev rw,nosuid,relatime shared:2 - devtmpfs udev rw,size=48941784k,nr_inodes=12235446,mode=755,inode64
+30 32 0:26 / /run rw,nosuid,nodev,noexec,relatime shared:5 - tmpfs tmpfs rw,size=9797392k,mode=755,inode64
+32 2 259:3 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p3 rw,errors=remount-ro
+34 28 0:28 / /dev/shm rw,nosuid,nodev shared:4 - tmpfs tmpfs rw,inode64
+46 32 259:2 / /boot/efi rw,relatime shared:30 - vfat /dev/nvme0n1p2 rw,fmask=0077,dmask=0077,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro
+50 30 0:46 / /run/user/1000 rw,nosuid,nodev,relatime shared:323 - tmpfs tmpfs rw,size=9797388k,nr_inodes=2449347,mode=700,uid=1000,gid=1000,inode64
+327 50 0:50 / /run/user/1000/doc rw,nosuid,nodev,relatime shared:374 - fuse.portal portal rw,user_id=1000,group_id=1000

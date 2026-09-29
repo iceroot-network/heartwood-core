@@ -1,0 +1,5 @@
+101 32 0:61 / /srv/relay rw,relatime shared:60 - nfs4 203.0.113.5:/export/relay rw,vers=4.2
+102 32 0:62 / /srv/share rw,relatime shared:61 - cifs //203.0.113.6/share rw,vers=3.1.1
+103 32 0:63 / /users/user/remote rw,nosuid,nodev,relatime shared:62 - fuse.sshfs user@203.0.113.7:/data rw,user_id=1000,group_id=1000
+104 32 0:64 / /users/user/node\040data rw,relatime shared:63 - tmpfs tmpfs rw,size=1048576k
+105 32 8:1 / /mnt/disk rw,relatime - ext4 /dev/sda1 rw
