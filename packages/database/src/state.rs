@@ -3,10 +3,12 @@
 //! reads; this crate stores them as they are.
 
 use heartwood_crypto::BlockId;
+use rusqlite::Connection;
 
 use crate::connection::{Chunk, Database};
 use crate::errors::DatabaseError;
-use crate::values::Columns;
+use crate::reader::Reader;
+use crate::values::{Columns, int};
 
 /// A row of `wallets`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +28,23 @@ pub struct StateRow {
     pub block_id: BlockId,
     /// The state's record.
     pub record: String,
+}
+
+/// The rows a store holds above a height (blocks, their transactions, missed-slot rows) and above
+/// a round (round rows), with its highest round: what a rollback to that height deletes, and,
+/// above 0, the store's own counts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RowCounts {
+    /// The blocks above the height.
+    pub blocks: u64,
+    /// The transactions of those blocks.
+    pub transactions: u64,
+    /// The missed-slot rows above the height.
+    pub missed: u64,
+    /// The round rows above the round.
+    pub round_rows: u64,
+    /// The highest round with rows in the store, 0 when there is none.
+    pub last_round: u64,
 }
 
 /// A row of `undo`.
@@ -120,7 +139,14 @@ impl Chunk<'_> {
     /// Delete the state row and every wallet row, so that the next start finds no state and
     /// restores by a replay from the genesis block (a rollback's store change).
     pub fn delete_state(&mut self) -> Result<(), DatabaseError> {
-        todo!("delete the state row and every wallet row")
+        self.transaction
+            .execute_batch("DELETE FROM state; DELETE FROM wallets;")?;
+        Ok(())
+    }
+
+    /// The rows above `height` and `round` in this chunk's view of the store.
+    pub fn row_counts(&self, height: u32, round: u64) -> Result<RowCounts, DatabaseError> {
+        row_counts(&self.transaction, height, round)
     }
 
     /// Replace the state row.
@@ -143,4 +169,43 @@ impl Chunk<'_> {
             .execute(rusqlite::params![height, record])?;
         Ok(())
     }
+}
+
+impl Reader<'_> {
+    /// The rows above `height` and `round`, read in one read transaction.
+    pub fn row_counts(&self, height: u32, round: u64) -> Result<RowCounts, DatabaseError> {
+        self.timed(|connection| {
+            let read = connection.unchecked_transaction()?;
+            row_counts(&read, height, round)
+        })
+    }
+}
+
+/// The rows above `height` and `round` that `connection` reads.
+fn row_counts(
+    connection: &Connection,
+    height: u32,
+    round: u64,
+) -> Result<RowCounts, DatabaseError> {
+    let count = |sql: &str, value: i64| -> Result<u64, DatabaseError> {
+        let n: i64 = (connection.prepare_cached(sql)?).query_row([value], |row| row.get(0))?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    };
+    let (height, round) = (i64::from(height), int("rounds.round", round)?);
+    Ok(RowCounts {
+        blocks: count("SELECT COUNT(*) FROM blocks WHERE height > ?1", height)?,
+        transactions: count(
+            "SELECT COUNT(*) FROM transactions WHERE block_height > ?1",
+            height,
+        )?,
+        missed: count(
+            "SELECT COUNT(*) FROM missed_blocks WHERE height > ?1",
+            height,
+        )?,
+        round_rows: count("SELECT COUNT(*) FROM rounds WHERE round > ?1", round)?,
+        last_round: count(
+            "SELECT COALESCE(MAX(round), 0) FROM rounds WHERE round > ?1",
+            0,
+        )?,
+    })
 }
