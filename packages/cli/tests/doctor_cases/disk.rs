@@ -140,6 +140,17 @@ fn space() -> Vec<Case> {
         Status::Pass,
         "ok",
     );
+    let mut view = free(400 * GB);
+    view.fs_stats.insert(
+        NodeDir::Data,
+        Ok(FsStats {
+            total_bytes: 1_000 * GB,
+            available_bytes: 400 * GB,
+            total_inodes: 0,
+            available_inodes: 0,
+        }),
+    );
+    add("a filesystem with no entry count", view, Status::Pass, "ok");
     add("data disk unreadable", base(), Status::Unknown, "unknown");
     add(
         "data disk of no size",
@@ -190,6 +201,14 @@ fn growth_is_the_planning_figure_before_10000_blocks_and_measured_from_then() {
     assert_eq!(how, Fact::Word("measured from the store's size"));
     let (mb, _) = growth_of(&chain_of(20_000, 400 * GB));
     assert_eq!(mb, Fact::Int(10_800));
+    let mut view = chain_of(20_000, 400 * GB);
+    view.api_last_block = Err(denied(Source::Api));
+    let (mb, how) = growth_of(&view);
+    assert_eq!(mb, Fact::Int(95));
+    let Fact::Word(how) = how else {
+        panic!("not a word")
+    };
+    assert!(how.contains("height could not be read"), "{how}");
 }
 
 /// A mount of `major:minor` at `at`.
@@ -317,8 +336,8 @@ fn inodes() -> Vec<Case> {
     add(
         "a filesystem with no entry count",
         view,
-        Status::Unknown,
-        "unknown",
+        Status::Pass,
+        "no-count",
     );
     add("data disk unreadable", base(), Status::Unknown, "unknown");
     cases

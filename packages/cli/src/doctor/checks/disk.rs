@@ -29,13 +29,12 @@ fn percent_of(free: u64, total: u64) -> u64 {
     u64::try_from(u128::from(free) * 100 / u128::from(total.max(1))).unwrap_or(100)
 }
 
-/// The data directory's `statvfs`, when it says how big the filesystem is.
+/// The data directory's `statvfs`, when it says how big the filesystem is. Some filesystems
+/// (btrfs among them) have no fixed count of file entries and report none.
 fn data_stats(view: &dyn View) -> Result<FsStats, Unknown> {
     let stats = view.fs_stats(NodeDir::Data)?;
     let unread = Unknown::new(Source::Files, Reason::Unparsed);
-    (stats.total_bytes > 0 && stats.total_inodes > 0)
-        .then_some(stats)
-        .ok_or(unread)
+    (stats.total_bytes > 0).then_some(stats).ok_or(unread)
 }
 
 /// The mount that holds one of the node's directories.
@@ -62,8 +61,12 @@ fn growth(view: &dyn View) -> (u64, &'static str) {
         let day = u64::try_from(size * u128::from(a_day) / u128::from(height.max(1))).ok();
         day.filter(|day| *day > 0 && height >= MEASURED_FROM)
     };
-    let planning =
-        "the planning figure of about 35 GB a year, used until the chain has 10,000 blocks";
+    let planning = match view.api_last_block() {
+        Ok(_) => {
+            "the planning figure of about 35 GB a year, used until the chain has 10,000 blocks"
+        }
+        Err(_) => "the planning figure of about 35 GB a year: the height could not be read",
+    };
     measured().map_or((PLANNING_PER_DAY, planning), |day| {
         (day, "measured from the store's size")
     })
@@ -123,6 +126,9 @@ pub fn inodes(input: &CheckInput<'_>) -> Vec<Finding> {
     run(input, (None, Basis::System), || {
         let stats = data_stats(input.view)?;
         let (free, total) = (stats.available_inodes, stats.total_inodes);
+        if total == 0 {
+            return Ok((Status::Pass, "no-count", Vec::new()));
+        }
         let (status, key) = graded(under(free, total, 1), under(free, total, 5));
         let values = vec![
             ("percent", int(percent_of(free, total))),

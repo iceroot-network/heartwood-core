@@ -44,8 +44,8 @@
         "skipped": "All three directories are on the data directory's filesystem, which disk.space covers."
       },
       "advice": {
-        "ok": "The {disk} disk has {free_mb} MB free.",
-        "low": "The {disk} disk has {free_mb} MB free. Logs rotate daily; when the disk fills, the node stops writing its log. More: https://docs.iceroot.com/validators/doctor/#disk-other",
+        "ok": "The {disk} disk has {free_mb} MiB free.",
+        "low": "The {disk} disk has {free_mb} MiB free. Logs rotate daily; when the disk fills, the node stops writing its log. More: https://docs.iceroot.com/validators/doctor/#disk-other",
         "same-disk": "The log, temporary and configuration directories share the data directory's filesystem."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#disk-other"
@@ -61,13 +61,14 @@
         "the node's files"
       ],
       "rules": {
-        "pass": "At least 5% of the data filesystem's file entries are free.",
+        "pass": "At least 5% of the data filesystem's file entries are free, or the filesystem has no fixed count of them.",
         "warn": "Under 5% free.",
         "fail": "Under 1% free.",
-        "unknown": "The inode counts could not be read, or the filesystem reports none."
+        "unknown": "The inode counts could not be read."
       },
       "advice": {
         "ok": "The data filesystem has {percent}% of its file entries free.",
+        "no-count": "The data filesystem has no fixed count of file entries (inodes), so it cannot run out of them.",
         "low": "The data filesystem is running out of file entries (inodes), even though space is left: {percent}% ({free} entries) free. More: https://docs.iceroot.com/validators/doctor/#disk-inodes"
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#disk-inodes"
