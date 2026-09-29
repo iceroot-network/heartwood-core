@@ -13,7 +13,9 @@
 //! 5. The replay: the state after the genesis block, then every stored block applied again
 //!    through the one apply path; then the state tables are written again. A replay that would
 //!    take a balance below zero refuses the start with the reference's message.
-//! 6. Every start also loads the node-local online record ([`crate::online`]).
+//! 6. After either, a store that holds no missed-slot row gets the rows of the slots missed
+//!    before block 2, as the reference's start writes them (its productivity backfill).
+//! 7. Every start also loads the node-local online record ([`crate::online`]).
 
 use heartwood_crypto::blocks::factory;
 use heartwood_crypto::{Block, Milestones};
@@ -23,6 +25,7 @@ use heartwood_pool::DelegateVersions;
 use heartwood_state::errors::{ApplyError, GenesisError, WalletError};
 use heartwood_state::genesis;
 use heartwood_state::persist::{RestoreError, STATE_FORMAT, StateRecord, UndoRecord, WalletRecord};
+use heartwood_state::round_state::MissedBlock;
 use heartwood_state::{Rejection, State, TransactionHandlers, Wallet, WalletRepository};
 
 use crate::commit::ChainStore;
@@ -125,6 +128,7 @@ fn restore_state<H: TransactionHandlers>(
     };
     let blocks = (stored.iter().map(|block| stored_block(block, milestones)))
         .collect::<Result<Vec<Block>, StoreError>>()?;
+    let backfill = backfill(database, &genesis, &blocks, milestones, handlers)?;
     store.meta = Some(meta);
     let reason = match mode {
         RestoreMode::Replay => ReplayReason::Requested,
@@ -132,6 +136,7 @@ fn restore_state<H: TransactionHandlers>(
             Ok(state) => {
                 store.committed = Some(state.wallets().clone());
                 let mut chunk = store.chunk()?;
+                chunk.save_missed(&backfill)?;
                 chunk.next_round_at_start(&state, milestones)?;
                 chunk.commit()?;
                 return Ok((state, RestorePath::Table));
@@ -146,9 +151,33 @@ fn restore_state<H: TransactionHandlers>(
     }
     let mut chunk = store.chunk()?;
     chunk.rewrite_state(&state)?;
+    chunk.save_missed(&backfill)?;
     chunk.next_round_at_start(&state, milestones)?;
     chunk.commit()?;
     Ok((state, RestorePath::Replay(reason)))
+}
+
+/// The missed-slot rows the reference's start writes when its store holds none
+/// (`calculateMissedBlocks`): its walk over the stored blocks counts again the slots each block's
+/// apply counted, none in such a store, and also the slots between the genesis block and block 2,
+/// which no apply counts (the count after a block starts after the genesis block). Those are round
+/// 1's slots, with round 1's forging list, and their rows have the height 2.
+fn backfill<H: TransactionHandlers>(
+    database: &Database,
+    genesis: &Block,
+    blocks: &[Block],
+    milestones: &Milestones,
+    handlers: &H,
+) -> Result<Vec<MissedBlock>, StartError<H::Error>> {
+    let Some(second) = blocks.first() else {
+        return Ok(Vec::new());
+    };
+    if database.has_missed_blocks()? {
+        return Ok(Vec::new());
+    }
+    let first = State::from_genesis(genesis, milestones, handlers).map_err(genesis_error)?;
+    let round = first.round();
+    Ok(round.missed_slots(genesis.header(), second.header(), milestones))
 }
 
 /// The first start: the state after the genesis block, written with the chain's identity.

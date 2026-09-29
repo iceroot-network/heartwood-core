@@ -14,6 +14,7 @@ use heartwood_database::{ChainMeta, Chunk, Database, MilestoneEntryRow, Settings
 use heartwood_kernel::{calculate_round, is_new_round};
 use heartwood_state::machine::{Applied, Reverted};
 use heartwood_state::persist::{STATE_FORMAT, UndoRecord};
+use heartwood_state::round_state::MissedBlock;
 use heartwood_state::{Delegate, State, Wallet, WalletRepository};
 
 use crate::errors::StoreError;
@@ -187,6 +188,11 @@ impl ChunkWriter<'_> {
             self.chunk.put_meta(&meta)?;
         }
         self.write_state(state, state.height(), true)
+    }
+
+    /// Save the missed-slot rows that a start counts (see [`crate::restore()`]).
+    pub(crate) fn save_missed(&mut self, missed: &[MissedBlock]) -> Result<(), StoreError> {
+        Ok(self.chunk.save_missed(&missed_rows(missed))?)
     }
 
     /// At a start whose tip ends a round (`is_new_round(tip + 1)`), or is the genesis block, as the

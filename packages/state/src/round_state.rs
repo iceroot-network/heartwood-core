@@ -193,7 +193,22 @@ impl RoundState {
         next: &BlockHeader,
         milestones: &Milestones,
     ) -> Vec<MissedBlock> {
-        if last.height == 1 || self.forging.is_empty() {
+        if last.height == 1 {
+            return Vec::new();
+        }
+        self.missed_slots(last, next, milestones)
+    }
+
+    /// The slots missed between `last` and `next` whatever `last` is, each with the delegate the
+    /// forging list scheduled for it: [`RoundState::detect_missed_blocks`] without its exception
+    /// of the genesis block, as the reference's start counts the slots before block 2.
+    pub fn missed_slots(
+        &self,
+        last: &BlockHeader,
+        next: &BlockHeader,
+        milestones: &Milestones,
+    ) -> Vec<MissedBlock> {
+        if self.forging.is_empty() {
             return Vec::new();
         }
         let block_time = milestones.at(1).block_time();
