@@ -12,10 +12,11 @@
 //!   while the supervisor is under 5 s old, and at the 5th unstable run the status is `errored`
 //!   and the supervisor exits; later short runs are restarted for good, as pm2 does ([`restart`]).
 //! - SIGTERM or SIGINT asks it to stop: it sends SIGINT to the node, SIGKILL after 30 s, and exits
-//!   when the node has ([`signals`]). SIGHUP is ignored. The node leads a process group of its
-//!   own, so that a terminal's SIGINT or hang-up never reaches it except through the supervisor.
-//!   With `--daemon` the supervisor first leaves the caller's session, so that a closing terminal
-//!   never reaches it either.
+//!   when the node has ([`signals`]). SIGHUP is ignored. With `--daemon` it first leaves the
+//!   caller's session, so that a closing terminal never reaches it, and leads a session of its
+//!   own, whose one process group holds its node: `kill` ends both at once. In the foreground the
+//!   node leads a process group of its own instead, so that a terminal's SIGINT or hang-up never
+//!   reaches it except through the supervisor.
 
 pub mod logs;
 pub mod restart;
@@ -184,6 +185,9 @@ struct Supervisor {
     restarts: Restarts,
     /// When the supervisor started: the restart rule's window runs from it.
     created: Instant,
+    /// Whether the node leads a process group of its own: always, unless the supervisor leads its
+    /// session (a daemon).
+    own_group: bool,
     _lock: File,
 }
 
@@ -238,6 +242,7 @@ impl Supervisor {
             signals,
             restarts: Restarts::default(),
             created: Instant::now(),
+            own_group: !signals::leads_session(pid),
             _lock: lock,
         })
     }
@@ -274,7 +279,8 @@ impl Supervisor {
             message,
         };
         self.line(&format!("starting {}", self.state.argv.join(" ")));
-        let (node, out, err) = spawn(&self.state.argv).map_err(|e| failed(e.to_string()))?;
+        let spawned = spawn(&self.state.argv, self.own_group);
+        let (node, out, err) = spawned.map_err(|e| failed(e.to_string()))?;
         let started = Instant::now();
         // The moment the node exits, taken by a thread that waits for it without reaping it, so
         // that the run's uptime does not include the poll below.
@@ -351,11 +357,14 @@ impl Supervisor {
     }
 }
 
-/// Start the node with `argv`: in a process group of its own, its input `/dev/null`, its output
-/// and errors into the pipes returned, no signal blocked, and SIGHUP, SIGINT, SIGQUIT, SIGPIPE and SIGTERM at their
-/// defaults, whatever the supervisor (which blocks them) and its caller (a shell may ignore
-/// SIGINT) had.
-fn spawn(argv: &[String]) -> Result<(Pid, PipeReader, PipeReader), Box<dyn Error>> {
+/// Start the node with `argv`: in a process group of its own when `own_group`, its input
+/// `/dev/null`, its output and errors into the pipes returned, no signal blocked, and SIGHUP,
+/// SIGINT, SIGQUIT, SIGPIPE and SIGTERM at their defaults, whatever the supervisor (which blocks
+/// them) and its caller (a shell may ignore SIGINT) had.
+fn spawn(
+    argv: &[String],
+    own_group: bool,
+) -> Result<(Pid, PipeReader, PipeReader), Box<dyn Error>> {
     let (out, out_writer) = std::io::pipe()?;
     let (err, err_writer) = std::io::pipe()?;
     let null = File::open("/dev/null")?;
@@ -372,15 +381,18 @@ fn spawn(argv: &[String]) -> Result<(Pid, PipeReader, PipeReader), Box<dyn Error
     attributes.set_sigmask(&SigSet::empty())?;
     let defaults = [SIGHUP, SIGINT, SIGQUIT, SIGPIPE, SIGTERM];
     attributes.set_sigdefault(&defaults.into_iter().collect())?;
-    // The node leads a process group of its own, as pm2's detached children do, so that a
-    // terminal's SIGINT (the caller's foreground group) reaches the supervisor alone, which
-    // passes it on once.
-    attributes.set_pgroup(Pid::from_raw(0))?;
-    attributes.set_flags(
-        PosixSpawnFlags::POSIX_SPAWN_SETSIGMASK
-            | PosixSpawnFlags::POSIX_SPAWN_SETSIGDEF
-            | PosixSpawnFlags::POSIX_SPAWN_SETPGROUP,
-    )?;
+    let mut flags =
+        PosixSpawnFlags::POSIX_SPAWN_SETSIGMASK | PosixSpawnFlags::POSIX_SPAWN_SETSIGDEF;
+    if own_group {
+        // In the foreground the node leads a process group of its own, as pm2's detached children
+        // do, so that a terminal's SIGINT (the caller's foreground group) reaches the supervisor
+        // alone, which passes it on once. A daemon has left the terminal's session, and keeps the
+        // node in its own group, so that `kill` ends both at once, even a node just started again
+        // that has not taken its lock yet.
+        attributes.set_pgroup(Pid::from_raw(0))?;
+        flags |= PosixSpawnFlags::POSIX_SPAWN_SETPGROUP;
+    }
+    attributes.set_flags(flags)?;
     let args: Vec<CString> = argv
         .iter()
         .map(|a| CString::new(a.as_str()))

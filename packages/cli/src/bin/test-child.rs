@@ -10,7 +10,9 @@
 //!                                        second SIGINT in that time exits 130, as the node does
 //!   test-child env NAME...               print `NAME=value` for each variable, then run
 //!   test-child relay|forger run [...]    as `run`, holding `$CORE_PATH_DATA/run/<role>.lock` and
-//!                                        writing `<role>.pid` beside it
+//!                                        writing `<role>.pid` beside it; with `--lock-after MS`
+//!                                        it takes the lock MS milliseconds after its start, as a
+//!                                        node that loads its configuration first
 //!   test-child supervise ...             `heartwood supervise`
 
 use std::path::PathBuf;
@@ -61,7 +63,10 @@ fn main() -> ExitCode {
             }
             run_forever()
         }
-        [role @ ("relay" | "forger"), "run", ..] => {
+        [role @ ("relay" | "forger"), "run", rest @ ..] => {
+            let after = rest.iter().position(|word| *word == "--lock-after");
+            let after = after.and_then(|at| rest.get(at + 1)?.parse().ok());
+            thread::sleep(Duration::from_millis(after.unwrap_or(0)));
             let run =
                 PathBuf::from(std::env::var_os("CORE_PATH_DATA").unwrap_or_default()).join("run");
             let lock = match take_lock(&run.join(format!("{role}.lock"))) {

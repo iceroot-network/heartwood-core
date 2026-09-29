@@ -16,7 +16,9 @@
 //! - `log` prints the last lines of the output capture (15 by default), or of the error capture,
 //!   and follows it when asked.
 //!
-//! Every pid is signalled only while its lock is held.
+//! Every pid is signalled only while its lock is held, but for one process group: `kill` ends the
+//! group of the node that a supervisor in the foreground, killed a moment before, named last,
+//! which may not hold its lock yet ([`kill`]).
 
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -32,7 +34,9 @@ use nix::sys::signal::Signal;
 use crate::errors::ProcessError;
 use crate::process_table;
 use crate::seams::{Env, Instance, ProcessOps, StatusRow, SupervisedStatus};
-use crate::supervisor::signals::{KILL_AFTER, held_pid, is_locked, send, signal_if_locked};
+use crate::supervisor::signals::{
+    KILL_AFTER, held_pid, is_locked, leads_group, leads_session, send, send_group, signal_if_locked,
+};
 use crate::supervisor::state::SupervisorState;
 use crate::supervisor::{SuperviseArgs, VERSION, at, run_dir};
 
@@ -151,23 +155,39 @@ pub fn stop(instance: &Instance) -> Result<(), ProcessError> {
 
 /// Kill `instance`'s supervisor and node with SIGKILL, as a crash does, wait until they have
 /// exited, and record the stop in the state file. The supervisor is killed first, so the node is
-/// never restarted, then the node through its own lock.
+/// never restarted. A daemon supervisor leads its session, whose process group holds its node, so
+/// the group is killed: that ends a node the supervisor has just started again and that has not
+/// taken its lock yet. Any other supervisor is killed alone, then the process group of the node
+/// it named last, as it starts each node in a group of its own. Last, the node is killed through
+/// its own lock.
 pub fn kill(instance: &Instance) -> Result<(), ProcessError> {
     let name = instance.name();
     let (supervisor_lock, node_lock) = (instance.supervisor_lock_path(), instance.lock_path());
-    let state = SupervisorState::read(&instance.state_path())?;
     let seconds = EXIT_WAIT.as_secs();
     let timeout = || ProcessError::Timeout {
         name: name.clone(),
         seconds,
     };
     let mut killed = false;
+    // The pid of a supervisor in the foreground, killed alone.
+    let mut foreground = None;
     if let Some(pid) = supervisor_pid(instance)? {
-        let sent = send(pid, Signal::SIGKILL)?;
+        let daemon = leads_session(pid);
+        let sent = if daemon {
+            send_group(pid, Signal::SIGKILL)?
+        } else {
+            send(pid, Signal::SIGKILL)?
+        };
         if sent && !wait_unlocked(&supervisor_lock, EXIT_WAIT)? {
             return Err(timeout());
         }
         killed = sent;
+        foreground = (sent && !daemon).then_some(pid);
+    }
+    // Read once the supervisor has exited, so that it names the last node the supervisor started.
+    let state = SupervisorState::read(&instance.state_path())?;
+    if let Some(pid) = foreground {
+        kill_node_group(state.as_ref(), pid)?;
     }
     let node = read_pid(&instance.pid_path()).or(state.as_ref().and_then(|s| s.pid));
     if let Some(pid) = node
@@ -188,6 +208,20 @@ pub fn kill(instance: &Instance) -> Result<(), ProcessError> {
     state.pid = None;
     state.last_exit = Some("signal: 9 (SIGKILL)".into());
     state.write(&instance.state_path())
+}
+
+/// SIGKILL the process group of the node that `state` names, when `supervisor`, a supervisor in
+/// the foreground killed a moment ago, wrote it: such a supervisor starts each node in a group of
+/// its own, and the last one may not hold its lock yet. The group is signalled only while the
+/// node's pid still leads one.
+fn kill_node_group(state: Option<&SupervisorState>, supervisor: u32) -> Result<(), ProcessError> {
+    let named =
+        state.filter(|state| state.supervisor_pid == supervisor && state.status.is_running());
+    let node = named.and_then(|state| state.pid);
+    if let Some(pid) = node.filter(|&pid| pid != supervisor && leads_group(pid)) {
+        send_group(pid, Signal::SIGKILL)?;
+    }
+    Ok(())
 }
 
 /// Stop `instance`, then start it again with the argv its supervisor ran and `env`.
