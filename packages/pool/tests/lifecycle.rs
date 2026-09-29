@@ -364,8 +364,16 @@ fn crash_options(dir: &std::path::Path) -> heartwood_pool::Options {
     options
 }
 
+/// What the crash test's child prints once its first admitted transaction is stored. With one
+/// test thread, libtest writes `test crash_child ... ` before it on the same line.
+const FIRST_ADMISSION: &str = "crash child: first transaction admitted";
+
+/// How long the crash test waits for that line: a start on a loaded machine takes seconds, and
+/// only a broken child takes this long.
+const FIRST_ADMISSION_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// The child of [`a_crash_leaves_no_row_of_an_unadmitted_transaction`]: submits refused and
-/// admitted transactions one at a time until it is killed.
+/// admitted transactions one at a time until it is killed, and says when it has admitted one.
 #[test]
 #[ignore = "run by the crash test in a child process"]
 fn crash_child() {
@@ -377,19 +385,26 @@ fn crash_child() {
     let mut pool = Pool::open(crash_options(std::path::Path::new(&dir)), None).unwrap();
     let mut processor = heartwood_pool::Processor::new();
     let clock = heartwood_kernel::clock::ManualClock::new(NOW_MS);
+    let mut told = false;
     for nonce in 2..u64::MAX {
         let refused = fixture.dave.transfer(&fixture.bob, nonce, 1, FEE);
         let admitted = fixture.alice.transfer(&fixture.bob, 1, nonce, FEE);
         for tx in [&refused, &admitted] {
-            processor
+            let result = processor
                 .process(&mut pool, &ctx, &clock, vec![bytes(tx)])
                 .unwrap();
+            // An admitted transaction's row is committed when `process` returns.
+            if !told && !result.accept.is_empty() {
+                println!("{FIRST_ADMISSION}");
+                told = true;
+            }
         }
     }
 }
 
 #[test]
 fn a_crash_leaves_no_row_of_an_unadmitted_transaction() {
+    use std::io::{BufRead, BufReader};
     let fixture = Fixture::new();
     let ctx = fixture.ctx(&MILESTONES);
     let dave = fixture.dave.address.to_base58();
@@ -399,13 +414,32 @@ fn a_crash_leaves_no_row_of_an_unadmitted_transaction() {
         let mut child = std::process::Command::new(&exe)
             .args(["--exact", "crash_child", "--ignored", "--nocapture"])
             .env("HEARTWOOD_POOL_CRASH_DIR", &dir)
-            .stdout(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn()
             .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(300 + 97 * round));
+        // The kill comes a while after the child's first admission, however long its start
+        // takes; the reader drains the child's output until it ends.
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        let (tell, told) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            for line in stdout.lines().map_while(Result::ok) {
+                if line.ends_with(FIRST_ADMISSION) {
+                    let _ = tell.send(());
+                }
+            }
+        });
+        let admitted = told.recv_timeout(FIRST_ADMISSION_WAIT);
+        if admitted.is_ok() {
+            std::thread::sleep(std::time::Duration::from_millis(97 * round));
+        }
         child.kill().unwrap();
         child.wait().unwrap();
+        reader.join().unwrap();
+        assert!(
+            admitted.is_ok(),
+            "the child admitted nothing in {FIRST_ADMISSION_WAIT:?}"
+        );
         let mut pool = Pool::open(crash_options(&dir), None).unwrap();
         let stored = pool.stored().unwrap();
         assert!(
