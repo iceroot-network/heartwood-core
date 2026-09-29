@@ -148,7 +148,7 @@ pub enum RecoveryError {
     /// The instance could not be resolved.
     #[error(transparent)]
     Instance(#[from] InstanceError),
-    /// The temp directory fails the trust rule.
+    /// The temp directory, or a marker already in it, fails the trust rule.
     #[error("{}: {why}", path.display())]
     Untrusted {
         /// The directory.
@@ -213,7 +213,8 @@ pub fn temp_trust(temp: &Path, data: &Path) -> Result<Trust, RecoveryError> {
 
 /// Write `marker` for `instance` (a relay), asking `confirm` unless `force`: the temp directory
 /// created with mode 0700 when it is missing, refused when it fails the trust rule, and the empty
-/// marker created without following a symbolic link (one that exists is kept). The marker's path.
+/// marker created without following a symbolic link (one that exists is kept, and refused when the
+/// relay would ignore it). The marker's path.
 pub fn request(
     instance: &Instance,
     marker: Marker,
@@ -234,7 +235,10 @@ pub fn request(
     file.write(true).create(true).truncate(false).mode(0o600);
     file.custom_flags(OFlag::O_NOFOLLOW.bits());
     file.open(&path).map_err(io_at(&path))?;
-    Ok(path)
+    match marker_trust(&path, &instance.paths.data) {
+        Some(Trust::Untrusted { path, why }) => Err(RecoveryError::Untrusted { path, why }),
+        _ => Ok(path),
+    }
 }
 
 /// The confirmation on standard input: the question and `(y/N)` on standard output, then a line

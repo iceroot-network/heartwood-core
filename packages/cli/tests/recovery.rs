@@ -187,6 +187,36 @@ fn a_marker_that_is_a_symbolic_link_is_not_followed() {
 }
 
 #[test]
+fn a_marker_the_relay_would_ignore_is_refused() {
+    let home = scratch("untrusted-marker");
+    let instance = simple(&home);
+    fs::create_dir_all(instance.paths.data.join("run")).unwrap();
+    let path = request(&instance, Marker::ClearPool, true, &mut Answer::new(None)).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o666)).unwrap();
+    let error = request(&instance, Marker::ClearPool, true, &mut Answer::new(None)).unwrap_err();
+    assert!(matches!(
+        error,
+        RecoveryError::Untrusted { why: Untrusted::WorldWritable { mode: 0o666 }, path: ref p }
+            if *p == path
+    ));
+    assert!(error.to_string().contains("any user may write it"));
+}
+
+#[test]
+fn a_temp_directory_that_cannot_be_written_is_an_error_naming_the_marker() {
+    let home = scratch("unwritable");
+    let instance = simple(&home);
+    let tmp = home.join("tmp");
+    fs::create_dir_all(&tmp).unwrap();
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o500)).unwrap();
+    let error = request(&instance, Marker::ClearPool, true, &mut Answer::new(None)).unwrap_err();
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o700)).unwrap();
+    let marker = tmp.join("clear-pool.lock");
+    assert!(matches!(error, RecoveryError::Io { ref path, .. } if *path == marker));
+    assert!(!marker.exists());
+}
+
+#[test]
 fn a_temp_directory_any_user_may_write_is_refused_and_nothing_is_written() {
     let home = scratch("world-writable");
     let instance = simple(&home);
