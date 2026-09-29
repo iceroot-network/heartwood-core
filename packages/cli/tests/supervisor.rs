@@ -2,10 +2,11 @@
 //! 1 s or more, `errored` after 5 unstable runs, SIGINT then SIGKILL after 30 s (a slow test),
 //! signals only while a lock is held, the state file's transitions, a kill during a restart, the
 //! node's environment, the second supervisor's refusal, and the capture files with their rotation
-//! at a small limit.
+//! at a small limit. Every test ends the processes it started, even when it fails.
 
 #![cfg(feature = "test-child")]
 
+use std::cell::RefCell;
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::process::ExitStatusExt;
@@ -34,14 +35,17 @@ fn scratch(test: &str) -> PathBuf {
     dir
 }
 
-/// A relay instance whose directories are under a fresh directory; its processes are killed
-/// when it is dropped, so that a failed test leaves none behind.
-struct Node(Instance);
+/// A relay instance whose directories are under a fresh directory, with the pids of the
+/// supervisors and nodes its state file has named. When it is dropped it kills the instance, then
+/// every process of the test child left of those, or in the process group of one of them (a daemon
+/// supervisor's group holds the node it last started): a failed test, or a `kill` that misses a
+/// process, leaves none behind.
+struct Node(Instance, RefCell<Vec<u32>>);
 
 impl Node {
     fn new(test: &str) -> Node {
         let root = scratch(test);
-        Node(Instance {
+        let instance = Instance {
             token: "t".into(),
             network: "devnet".into(),
             role: Role::Relay,
@@ -52,13 +56,34 @@ impl Node {
                 log: root.join("log"),
                 temp: root.join("temp"),
             },
-        })
+        };
+        Node(instance, RefCell::default())
     }
 
     fn state(&self) -> SupervisorState {
-        SupervisorState::read(&self.0.state_path())
+        let state = SupervisorState::read(&self.0.state_path())
             .unwrap()
-            .unwrap()
+            .unwrap();
+        let mut seen = self.1.borrow_mut();
+        for pid in std::iter::once(state.supervisor_pid).chain(state.pid) {
+            if !seen.contains(&pid) {
+                seen.push(pid);
+            }
+        }
+        state
+    }
+
+    /// The processes of the test child that still run among the pids the state file has named
+    /// and the members of their process groups.
+    fn left_running(&self) -> Vec<u32> {
+        let seen = self.1.borrow();
+        let ours =
+            |pid: u32| seen.contains(&pid) || group_of(pid).is_some_and(|g| seen.contains(&g));
+        let pids = fs::read_dir("/proc").into_iter().flatten().flatten();
+        let pids = pids.filter_map(|entry| entry.file_name().to_str()?.parse().ok());
+        let mut left: Vec<u32> = pids.filter(|&pid| ours(pid) && runs_child(pid)).collect();
+        left.sort_unstable();
+        left
     }
 
     fn out(&self) -> String {
@@ -83,7 +108,26 @@ impl Node {
 impl Drop for Node {
     fn drop(&mut self) {
         let _ = process::kill(&self.0);
+        for pid in self.left_running() {
+            let _ = send(pid, Signal::SIGKILL);
+        }
     }
+}
+
+/// Whether `pid` is a live process of the test child, a supervisor or a node that this file
+/// started, rather than one that has exited (a zombie has no command line) or a reused pid.
+fn runs_child(pid: u32) -> bool {
+    let Ok(cmdline) = fs::read(format!("/proc/{pid}/cmdline")) else {
+        return false;
+    };
+    cmdline.split(|&b| b == 0).next() == Some(CHILD.as_bytes())
+}
+
+/// The process group of `pid`, from `/proc/<pid>/stat` (the third field after the command name).
+fn group_of(pid: u32) -> Option<u32> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let (_, fields) = stat.rsplit_once(')')?;
+    fields.split_whitespace().nth(2)?.parse().ok()
 }
 
 fn argv(args: &[&str]) -> Vec<OsString> {
@@ -267,12 +311,16 @@ fn a_stop_signals_the_pid_the_held_lock_names_not_the_one_a_state_file_left() {
     let mut stale = real.clone();
     stale.supervisor_pid = bystander.id();
     stale.write(&node.0.state_path()).unwrap();
-    process::stop(&node.0).unwrap();
+    let stopped = process::stop(&node.0);
     let alive = bystander.try_wait().unwrap().is_none();
     let _ = bystander.kill();
     let _ = bystander.wait();
+    stopped.unwrap();
     assert!(alive, "the stop signalled a process the lock does not name");
     assert!(!is_locked(&node.0.supervisor_lock_path()).unwrap());
+    // The supervisor the lock named and its node have exited, and no process is left in the
+    // supervisor's group: nothing this test started runs on.
+    assert_eq!(node.left_running(), Vec::<u32>::new(), "left running");
 }
 
 #[test]
