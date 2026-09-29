@@ -530,6 +530,7 @@ pub fn resync(node: StoreNode, corpus: &Corpus, scratch: &ScratchDir) -> Result<
                 milestones,
                 clock: &clock,
                 observer: &mut observer,
+                stall: None,
             };
             run_job(&mut ctx, Job { blocks: incoming })
                 .map_err(|e| Error::Oracle(format!("the job of block {height} failed: {e}")))?
