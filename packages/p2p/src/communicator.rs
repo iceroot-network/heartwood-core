@@ -369,9 +369,21 @@ where
             );
         }
         let params = self.milestone();
+        let most = self.largest(|params| params.max_transactions().map(u64::from));
         let (mut downloaded, mut paused) = (Vec::with_capacity(listed.len()), Duration::ZERO);
         for mut header in listed {
-            let mut transactions = Vec::with_capacity(header.transactions.len());
+            let (height, count) = (header.header.height.unwrap_or(0), header.transactions.len());
+            // No milestone lets a block above the genesis block hold more: no honest peer serves
+            // one, and its transactions are not read.
+            if height > 1 && count > most && most > 0 {
+                scoring::record(peer, Violation::DownloadedBlock, parts.clock.now_ms());
+                return Err(DownloadError::TooManyTransactions {
+                    height,
+                    count,
+                    most,
+                });
+            }
+            let mut transactions = Vec::with_capacity(count);
             let listed = std::mem::take(&mut header.transactions);
             // The raw list the codec read the transactions from is not kept.
             header.header.transactions = Some(Vec::new());
@@ -391,7 +403,6 @@ where
                 if source != heartwood_crypto::errors::DecodeError::InvalidMemo {
                     scoring::record(peer, Violation::DownloadedBlock, parts.clock.now_ms());
                 }
-                let height = header.header.height.unwrap_or(0);
                 return Err(DownloadError::Transaction { height, source });
             }
             let transactions = (!headers_only).then_some(transactions);

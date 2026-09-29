@@ -16,7 +16,7 @@ use std::time::Duration;
 use heartwood_crypto::{BlockId, TransactionId};
 use heartwood_kernel::Event;
 use heartwood_p2p::communicator::BlocksRequest;
-use heartwood_p2p::errors::{PingError, VerificationStopped};
+use heartwood_p2p::errors::{DownloadError, PingError, VerificationStopped};
 use heartwood_p2p::seams::{PeerClient, VerifierLink};
 use heartwood_p2p::{ChainView, DownloadedBlock, P2pOptions, SessionError, Verification};
 use heartwood_p2p_wire::RouteId;
@@ -1146,7 +1146,8 @@ async fn downloaded_transactions_are_read_as_the_reference_reads_them() {
 
 #[tokio::test(start_paused = true)]
 async fn an_idle_download_pauses_half_a_second_at_most_and_keeps_no_raw_list() {
-    let fixture = Fixture::new();
+    let chain = Chain::with(10, milestones_with_max_transactions(1_000, 300));
+    let fixture = Fixture::with(chain, options());
     let client = &fixture.communicator;
     let peer = stored(&fixture, 1);
     fixture
@@ -1173,6 +1174,38 @@ async fn an_idle_download_pauses_half_a_second_at_most_and_keeps_no_raw_list() {
         // The reply's raw list is not kept beside the transactions read from it.
         assert_eq!(block.header.header.transactions.as_deref(), Some(&[][..]));
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_block_with_more_transactions_than_any_milestone_allows_fails_the_download() {
+    let fixture = Fixture::new();
+    let client = &fixture.communicator;
+    let peer = stored(&fixture, 1);
+    let transfer = transfer_bytes(1);
+    // The devnet's blocks hold at most 150 transactions; the reference reads 501 per block.
+    let blocks = [listed(6, vec![transfer.clone(); 151])];
+    fixture
+        .transport
+        .answer(RouteId::GetBlocks, Answer::Bytes(blocks_reply(&blocks)));
+    let failed = client.get_peer_blocks(&peer, BlocksRequest::after(5)).await;
+    assert_eq!(
+        failed,
+        Err(DownloadError::TooManyTransactions {
+            height: 6,
+            count: 151,
+            most: 150
+        })
+    );
+    assert_eq!(peer.snapshot().violations.len(), 1);
+    // As many as a milestone allows are read.
+    let peer = stored(&fixture, 2);
+    let blocks = [listed(6, vec![transfer; 150])];
+    fixture
+        .transport
+        .answer(RouteId::GetBlocks, Answer::Bytes(blocks_reply(&blocks)));
+    let downloaded = client.get_peer_blocks(&peer, BlocksRequest::after(5)).await;
+    assert_eq!(downloaded.map(|blocks| blocks.len()), Ok(1));
+    assert!(peer.snapshot().violations.is_empty());
 }
 
 #[tokio::test(start_paused = true)]
