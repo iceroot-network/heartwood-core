@@ -1000,12 +1000,16 @@ configuration):
   and signs each new status on request, over its own session from an address in `remoteAccess`,
   through two internal routes the reference does not have (the long poll `getStatusToSign` and
   `postStatusSignatures`, each signature bound to its offer by the SHA-256 of the offer's text);
-  the relay never opens the key file. A new status is offered at once (at a new tip, a slot
-  boundary and the half-slot flip), and getStatus waits at most 500 ms for its signatures, then
-  serves the header unsigned and does not cache it. One session attests at a time (a newer one
-  replaces it, with a warning); a session ends with its socket, its replacement, or 15 s without a
-  pending poll. A key the forger declares twice counts twice, as a reference key file that lists it
-  twice does, with a warning;
+  the relay never opens the key file. Each session gets a random challenge with its offers, and a
+  key counts as attested only when the session also signs that challenge with it, since the
+  status signatures the relay serves are public and another caller could post them again. A new
+  status is offered at once (at a new tip, a slot boundary and the half-slot flip), and getStatus
+  waits at most 500 ms for its signatures, then serves the header unsigned and does not cache it.
+  One session attests at a time (a newer one replaces it, with a warning); a session ends with its
+  socket, its replacement, or 15 s without a pending poll. A session that declares more than 256
+  keys gets 499 "An attestation session declares at most 256 keys" and keeps its socket. A key the
+  forger declares twice counts twice, as a reference key file that lists it twice does, with a
+  warning; only the key's holder can do this, and only on its own node;
 - after a relay's first start, or a stop of more than five rounds, the delegates on this node get
   their version at the next round's start, from the attested keys; the reference sets it at the
   sync's end from its forger's live `forger.json`. In that window the pool refuses a vote or a
@@ -1697,8 +1701,9 @@ report also counts the reference's refusals with its `ColdWalletError` text; the
 the reference binds a sender's key before its checks run, so the pool cannot reach that error.
 
 P14 to P16 agree with the reference at 10,000 cases each with the date as the seed. The only
-documented difference among them is P14's fork segment whose headers do not chain (about one case in
-twenty-four), which Heartwood refuses (see heartwood-p2p). P17 to P19 agree with the reference at
+documented differences among them are P14's: a fork segment whose headers do not chain (about one
+case in twenty-seven), and a fork segment that starts with our own block (about one case in fifty),
+both of which Heartwood refuses (see heartwood-p2p). P17 to P19 agree with the reference at
 10,000 cases each with the date as the seed. P17's documented cases are the pool's full-pool
 eviction (about one in eighty); P18 has none. P19's are the over-height header of the delegate's own
 key that is not an empty block and whose signature verifies (about one in sixteen), on which
