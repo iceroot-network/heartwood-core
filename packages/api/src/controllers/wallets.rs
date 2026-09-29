@@ -28,14 +28,18 @@ pub fn routes() -> Vec<Route> {
     ]
 }
 
-/// A wallet.
+/// A wallet; a delegate's missed blocks and productivity from the node's table at the tip.
 pub async fn show(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
     let state = ctx.state();
     let wallet = find(&state, request.param("id").unwrap_or_default())?;
-    Ok(ApiReply::data(crate::resources::wallet(
+    let table = match wallet.delegate() {
+        Some(_) => super::delegates::table(&ctx, &state)?,
+        None => Arc::default(),
+    };
+    Ok(ApiReply::data(crate::resources::wallet_with(
         &wallet,
-        &state,
         &ctx.pool(),
+        &table,
     )))
 }
 
