@@ -7,6 +7,7 @@
 mod doctor_support;
 
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
@@ -237,7 +238,9 @@ fn traced(args: &[&str], vars: &[(String, String)], log: &Path) -> Option<Output
 /// but a metadata read, of the key file; an open for writing, a creation, removal, rename or mode
 /// change under `root`; a connection to an address that is not loopback (`api`, when given, is
 /// the only IP address and port allowed), or to a local socket that is not the system bus's.
-fn broken(log: &Path, root: &Path, api: Option<(&str, u16)>) -> Vec<String> {
+/// While a relay runs, `store` names its store: SQLite's read-only connection opens the store's
+/// existing `-wal` and `-shm` read-write with the create flag, and never truncates them.
+fn broken(log: &Path, root: &Path, api: Option<(&str, u16)>, store: Option<&Path>) -> Vec<String> {
     let text = std::fs::read_to_string(log).unwrap();
     let root = root.display().to_string();
     let metadata = [
@@ -262,7 +265,17 @@ fn broken(log: &Path, root: &Path, api: Option<(&str, u16)>) -> Vec<String> {
         }
         let writes = ["O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC"];
         let opens = name.starts_with("open") || name == "creat";
-        if line.contains(&root) && opens && writes.iter().any(|flag| line.contains(flag)) {
+        let sqlite = store.is_some_and(|store| {
+            let store = store.display();
+            let own = [format!("\"{store}-wal\""), format!("\"{store}-shm\"")];
+            own.iter().any(|file| line.contains(file.as_str()))
+                && line.contains("O_RDWR")
+                && !["O_WRONLY", "O_TRUNC", "O_APPEND", "O_TMPFILE"]
+                    .iter()
+                    .any(|flag| line.contains(flag))
+        });
+        let written = writes.iter().any(|flag| line.contains(flag));
+        if line.contains(&root) && opens && written && !sqlite {
             broken.push(line.to_owned());
         }
         if line.contains(&root) && changes.iter().any(|change| name.starts_with(change)) {
@@ -315,7 +328,7 @@ fn under_strace_it_opens_no_key_file_writes_nothing_and_connects_only_to_loopbac
     };
     clean(&output);
     assert!(report(&output)["findings"].as_array().is_some());
-    let broken = broken(&log, &node.root, None);
+    let broken = broken(&log, &node.root, None, None);
     assert!(broken.is_empty(), "{broken:#?}");
     let text = std::fs::read_to_string(&log).unwrap();
     assert!(text.contains("execve("), "the trace is empty");
@@ -365,10 +378,15 @@ fn on_a_forging_devnet_node_it_reports_and_touches_no_key_under_strace() {
         "5",
     ];
     devnet(&root, &init);
+    let node = root.join("node1");
+    // Whatever the umask, no other user can write the configuration directory or its parent,
+    // so the doctor runs the node's loaders (keys.dir).
+    for dir in [node.clone(), node.join("config")] {
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let _stop = Stop(&root);
     devnet(&root, &["start"]);
     devnet(&root, &["wait", "--height", "3", "--timeout", "150"]);
-    let node = root.join("node1");
     let dirs = ["CONFIG", "DATA", "CACHE", "LOG", "TEMP"];
     let mut vars: Vec<(String, String)> = (dirs.iter())
         .map(|kind| {
@@ -391,12 +409,25 @@ fn on_a_forging_devnet_node_it_reports_and_touches_no_key_under_strace() {
     let found = report(&output);
     assert_eq!(checks(&found), 47);
     assert_eq!(code(&output), expected(&found, false));
+    // The loaders ran: a run that read nothing would pass the trace's rules without showing them.
+    let keys_dir = found["findings"].as_array().unwrap().iter();
+    let keys_dir: Vec<&Value> = keys_dir.filter(|f| f["id"] == "keys.dir").collect();
+    let passed = !keys_dir.is_empty() && keys_dir.iter().all(|f| f["status"] == "pass");
+    assert!(passed, "{keys_dir:?}");
     let log = root.join("doctor.trace");
     if let Some(output) = traced(&args, &vars, &log) {
         assert_eq!(checks(&report(&output)), 47);
         let api = format!("{prefix}.11");
-        let broken = broken(&log, &node, Some((&api, 6003)));
+        let store = node.join("data").join("database").join("blockchain.db");
+        let broken = broken(&log, &node, Some((&api, 6003)), Some(&store));
         assert!(broken.is_empty(), "{broken:#?}");
+        let text = std::fs::read_to_string(&log).unwrap();
+        let to_api = format!("inet_addr(\"{api}\")");
+        let asked = |line: &&str| {
+            line.contains("connect(") && line.contains(&to_api) && line.contains("htons(6003)")
+        };
+        let asked = text.lines().filter(asked).count();
+        assert!(asked > 0, "the doctor never asked its relay's API");
     }
     devnet(&root, &["stop"]);
 }
