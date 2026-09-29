@@ -233,6 +233,22 @@ fn the_devnet_runs_each_role_as_heartwood_role_run_with_its_directories() {
     );
 }
 
+/// The state a supervisor records for a relay that runs.
+fn online_state() -> SupervisorState {
+    SupervisorState {
+        name: "node1-devnet-relay".into(),
+        status: SupervisedStatus::Online,
+        supervisor_pid: 41,
+        pid: Some(42),
+        argv: vec!["heartwood".into()],
+        started_at_ms: None,
+        restarts: 0,
+        unstable: 0,
+        last_exit: None,
+        version: "4.3.1-heartwood.0.1.0".into(),
+    }
+}
+
 #[test]
 fn the_run_files_are_made_in_the_directory_that_was_checked() {
     let root = scratch("swapped-run-dir");
@@ -244,18 +260,7 @@ fn the_run_files_are_made_in_the_directory_that_was_checked() {
     fs::create_dir(&elsewhere).unwrap();
     fs::rename(&run, &checked).unwrap();
     std::os::unix::fs::symlink(&elsewhere, &run).unwrap();
-    let state = SupervisorState {
-        name: "node1-devnet-relay".into(),
-        status: SupervisedStatus::Online,
-        supervisor_pid: 41,
-        pid: Some(42),
-        argv: vec!["heartwood".into()],
-        started_at_ms: None,
-        restarts: 0,
-        unstable: 0,
-        last_exit: None,
-        version: "4.3.1-heartwood.0.1.0".into(),
-    };
+    let state = online_state();
     // By path, no file is made through the link.
     assert!(take_lock(&relay.lock_path()).is_err());
     assert!(state.write(&relay.state_path()).is_err());
@@ -282,6 +287,55 @@ fn a_lock_left_as_a_link_is_refused_and_its_target_left_alone() {
     std::os::unix::fs::symlink(&target, run.join("relay.lock")).unwrap();
     assert!(take_lock(&relay.lock_path()).is_err());
     assert_eq!(fs::read_to_string(&target).unwrap(), "kept");
+}
+
+#[test]
+fn a_fifo_in_place_of_a_run_file_is_refused_without_blocking() {
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    let root = scratch("run-file-fifo");
+    let relay = instance(&root, Role::Relay);
+    run_dir(&relay).unwrap();
+    let (lock, probed, state) = (
+        relay.lock_path(),
+        relay.supervisor_lock_path(),
+        relay.state_path(),
+    );
+    for path in [&lock, &probed, &state, &state.with_extension("json.tmp")] {
+        nix::unistd::mkfifo(path, nix::sys::stat::Mode::S_IRWXU).unwrap();
+    }
+    // An open of a FIFO waits for its other end: each call runs on a thread of its own, on a FIFO
+    // of its own, so a call that blocks is named and hides none of the others.
+    let copy = state.clone();
+    let take = move || take_lock(&lock).is_err();
+    let probe = move || is_locked(&probed).is_err();
+    let read = move || SupervisorState::read(&copy).is_err();
+    let write = move || online_state().write(&state).is_err();
+    type Call = Box<dyn FnOnce() -> bool + Send>;
+    let calls: [(&str, Call); 4] = [
+        ("take_lock", Box::new(take)),
+        ("is_locked", Box::new(probe)),
+        ("read", Box::new(read)),
+        ("write", Box::new(write)),
+    ];
+    let (sender, results) = mpsc::channel();
+    for (name, call) in calls {
+        let sender = sender.clone();
+        std::thread::spawn(move || sender.send((name, call())));
+    }
+    drop(sender);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let left = || deadline.saturating_duration_since(Instant::now());
+    let mut returned: Vec<_> = std::iter::from_fn(|| results.recv_timeout(left()).ok()).collect();
+    returned.sort();
+    let refused = [
+        ("is_locked", true),
+        ("read", true),
+        ("take_lock", true),
+        ("write", true),
+    ];
+    assert_eq!(returned, refused, "a call missing blocked on its FIFO");
 }
 
 #[test]

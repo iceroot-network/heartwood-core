@@ -206,11 +206,18 @@ impl RunDir {
         })
     }
 
-    /// The file `path` names, opened in the directory, never through a link.
+    /// The file `path` names, opened in the directory, never through a link, and refused unless it
+    /// is a regular file. The open does not wait: a FIFO in its place would block it until its
+    /// other end opened.
     fn file(&self, path: &Path, flags: OFlag, mode: u32) -> std::io::Result<File> {
-        let flags = flags | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
+        let flags = flags | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK;
         let name = path.file_name().unwrap_or_default();
-        Ok(openat(&self.dir, name, flags, Mode::from_bits_truncate(mode))?.into())
+        let mode = Mode::from_bits_truncate(mode);
+        let file = File::from(openat(&self.dir, name, flags, mode)?);
+        if !file.metadata()?.is_file() {
+            return Err(std::io::Error::other("not a regular file"));
+        }
+        Ok(file)
     }
 
     /// A new file with `mode`, for writing; refused when there is one.
