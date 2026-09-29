@@ -22,7 +22,8 @@
 //!   before the job, or `closed`; at least one ended `bound`; at least one ended `closed` unless the
 //!   reference nodes' logs show no client reached three timeouts on the relay in the window; waits
 //!   that began later did not end `bound`, and none ended `drained` on the tip before the job;
-//!   requests after the commit carried a later tip and the chain went on;
+//!   requests after the commit carried a later tip and the chain went on; whether the node whose
+//!   only peer the relay is kept or regained it is not checked yet (a case that fails a strict run);
 //! - recorded, not gated: per relay and route the distribution of the waits, the longest honest
 //!   wait beside the machine's load (`load.jsonl`, `{ts, load1}` lines, when the recipe wrote it),
 //!   and what the stall did per route.
@@ -829,6 +830,14 @@ fn stall(run_dir: &Path, manifest: &Manifest, relay: &Relay, window: &Window, ca
         Err(why) => format!("the reference logs could not be counted ({why})"),
     };
     cases.record(SECTION, format!("{name}: {seen}"));
+    // The peer lists of the reference node that reaches only this relay are not read yet, so a
+    // strict run cannot pass the stall without this check.
+    cases.not_built(
+        SECTION,
+        &format!(
+            "{name}: the node whose only peer it is kept or regained it in the stall's window"
+        ),
+    );
 }
 
 /// The distribution of the waits of one relay, per route.

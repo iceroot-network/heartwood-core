@@ -294,6 +294,16 @@ fn an_honest_run_with_a_stall_passes() {
         "{recorded}"
     );
     assert!(recorded.contains("20 ms granularity"), "{recorded}");
+    // The peer check of the stall is not built, which a strict run fails on.
+    assert!(
+        report
+            .results
+            .iter()
+            .any(|r| r.outcome == Outcome::NoSubject
+                && r.label
+                    .contains("kept or regained it in the stall's window (not built)")),
+        "{report:#?}"
+    );
 }
 
 #[test]
