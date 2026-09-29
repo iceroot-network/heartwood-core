@@ -323,6 +323,13 @@ pub(crate) fn missed_criteria(
     ctx: &ApiContext,
     query: &Value,
 ) -> Result<Option<MissedBlockCriteria>, ApiError> {
+    narrowed(query, window_start(ctx))
+}
+
+/// The missed-slot criteria of `query` for a window that starts at `earliest`: no timestamp starts
+/// at `earliest` (at 0 before the epoch); one exact timestamp before it becomes 0; one range that
+/// starts before it, or has no start, starts at it; a list is kept.
+fn narrowed(query: &Value, earliest: i64) -> Result<Option<MissedBlockCriteria>, ApiError> {
     let no_column = BLOCK_KEYS.iter().any(|name| {
         !["timestamp", "height", "username"].contains(name) && query.get(name).is_some()
     });
@@ -333,7 +340,6 @@ pub(crate) fn missed_criteria(
         return Ok(None);
     }
     let one = |name: &str| values(query, name).unwrap_or_default();
-    let earliest = window_start(ctx);
     let start = u64::try_from(earliest).unwrap_or(0);
     let before = |value: u64| i128::from(value) < i128::from(earliest);
     let mut timestamp = numerics("timestamp", one("timestamp"))?;
@@ -358,14 +364,18 @@ pub(crate) fn missed_criteria(
 /// lookback, in seconds since the network epoch (a fractional start counts from the next whole
 /// second).
 fn window_start(ctx: &ApiContext) -> i64 {
-    const DAY: i64 = 86_400;
     let epoch = ctx.node.crypto.milestones.at(1).epoch();
     let epoch_ms = slots::epoch_unix_ms(epoch).unwrap_or(0);
-    let tip = i64::from(ctx.state().last_block.header().timestamp);
-    let unix = (tip * 1000 + epoch_ms).div_euclid(1000);
+    let tip = ctx.state().last_block.header().timestamp;
+    window_from(tip, epoch_ms, ctx.config.missed_blocks_lookback)
+}
+
+/// [`window_start`] for a tip at `tip` seconds after an epoch of `epoch_ms` (Unix milliseconds).
+fn window_from(tip: u32, epoch_ms: i64, lookback: i64) -> i64 {
+    const DAY: i64 = 86_400;
+    let unix = (i64::from(tip) * 1000 + epoch_ms).div_euclid(1000);
     let since_epoch = unix.div_euclid(DAY) * DAY * 1000 - epoch_ms;
-    since_epoch.div_euclid(1000) + i64::from(since_epoch.rem_euclid(1000) > 0)
-        - ctx.config.missed_blocks_lookback
+    since_epoch.div_euclid(1000) + i64::from(since_epoch.rem_euclid(1000) > 0) - lookback
 }
 
 /// The page of missed slots that `criteria` (`None`: nothing) match, in the order and page of the
@@ -401,4 +411,111 @@ pub(crate) async fn missed_listing(
     Ok(ApiReply::ok(envelope(
         request, pagination, total, estimate, data,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn timestamps(query: &Value, earliest: i64) -> Vec<Numeric> {
+        narrowed(query, earliest).unwrap().unwrap().timestamp
+    }
+
+    fn range(from: u64) -> Numeric {
+        Numeric::Range {
+            from: Some(from),
+            to: None,
+        }
+    }
+
+    #[test]
+    fn the_window_starts_at_the_midnight_of_the_tips_day_less_the_lookback() {
+        // An epoch at a midnight: the tip 90 000 seconds in is on the second day.
+        let midnight = 1_700_000_000_000 - 1_700_000_000_000 % 86_400_000;
+        assert_eq!(window_from(90_000, midnight, 1_000), 86_400 - 1_000);
+        assert_eq!(window_from(0, midnight, 0), 0);
+        // An epoch that is not at a midnight: the start is in the epoch's seconds, before it.
+        assert_eq!(window_from(0, midnight + 3_600_000, 0), -3_600);
+        // A fraction of a second rounds up.
+        assert_eq!(window_from(0, midnight + 1_500, 0), -1);
+        assert_eq!(window_from(86_400, midnight, 2_592_000), 86_400 - 2_592_000);
+    }
+
+    #[test]
+    fn a_missed_slot_query_without_a_timestamp_starts_at_the_window() {
+        assert_eq!(timestamps(&json!({}), 100), [range(100)]);
+        assert_eq!(timestamps(&json!({"height": 3}), 100), [range(100)]);
+        // Before the epoch the window starts at 0.
+        assert_eq!(timestamps(&json!({}), -5), [range(0)]);
+    }
+
+    #[test]
+    fn a_timestamp_before_the_window_is_narrowed() {
+        assert_eq!(
+            timestamps(&json!({"timestamp": 50}), 100),
+            [Numeric::Equal(0)]
+        );
+        assert_eq!(
+            timestamps(&json!({"timestamp": 150}), 100),
+            [Numeric::Equal(150)]
+        );
+        let low = json!({"timestamp": {"from": 20, "to": 500}});
+        let narrowed = Numeric::Range {
+            from: Some(100),
+            to: Some(500),
+        };
+        assert_eq!(timestamps(&low, 100), [narrowed]);
+        let open = json!({"timestamp": {"to": 500}});
+        assert_eq!(
+            timestamps(&open, 100),
+            [Numeric::Range {
+                from: Some(100),
+                to: Some(500)
+            }]
+        );
+        let kept = json!({"timestamp": {"from": 300}});
+        assert_eq!(timestamps(&kept, 100), [range(300)]);
+    }
+
+    #[test]
+    fn a_list_of_timestamps_is_kept() {
+        let got = timestamps(&json!({"timestamp": [10, 20]}), 100);
+        assert_eq!(got, [Numeric::Equal(10), Numeric::Equal(20)]);
+    }
+
+    #[test]
+    fn a_block_key_without_a_column_matches_nothing() {
+        for key in ["reward", "id", "generatorPublicKey", "totalFee"] {
+            assert_eq!(narrowed(&json!({key: 1}), 0).unwrap(), None, "{key}");
+        }
+        assert_eq!(narrowed(&json!({"height": []}), 0).unwrap(), None);
+    }
+
+    #[test]
+    fn the_block_criteria_take_each_key_and_an_empty_list_matches_nothing() {
+        let got = block_criteria(&json!({
+            "height": {"from": 2, "to": 9},
+            "username": "genesis_1",
+            "version": [0, 1],
+            "orderBy": ["height:desc"],
+        }))
+        .unwrap()
+        .unwrap();
+        assert_eq!(got.username, ["genesis_1"]);
+        assert_eq!(got.version.len(), 2);
+        assert_eq!(
+            got.height,
+            [Numeric::Range {
+                from: Some(2),
+                to: Some(9)
+            }]
+        );
+        assert!(block_criteria(&json!({"id": []})).unwrap().is_none());
+        assert_eq!(
+            block_criteria(&json!({})).unwrap().unwrap(),
+            BlockCriteria::default()
+        );
+    }
 }
