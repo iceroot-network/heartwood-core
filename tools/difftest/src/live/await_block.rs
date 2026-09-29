@@ -349,6 +349,20 @@ fn client_class(route: &str) -> &'static str {
     }
 }
 
+/// The fault window, if any, that `r` began or ended in and that concerns the relay `relay` or
+/// the node `caller` that sent it (a peer that restarts closes its sockets).
+fn fault_of<'w>(
+    windows: &'w [Window],
+    relay: &str,
+    caller: Option<&str>,
+    r: &Request,
+) -> Option<&'w Window> {
+    windows.iter().find(|w| {
+        let concerned = w.concerns(relay) || caller.is_some_and(|n| w.concerns(n));
+        concerned && (w.contains(r.ended()) || w.contains(r.began()))
+    })
+}
+
 /// The verdict on one stall.
 #[derive(Debug, Default)]
 struct StallVerdict {
@@ -664,9 +678,8 @@ fn checks(run_dir: &Path, manifest: &Manifest, windows: &[Window], cases: &mut C
         let label = format!("{name}: outside the stall every wait ended by the drain");
         let mut problems = Vec::new();
         for r in &honest {
-            let fault = windows
-                .iter()
-                .find(|w| w.concerns(name) && (w.contains(r.ended()) || w.contains(r.began())));
+            let caller = (manifest.nodes.iter()).find(|n| n.ip == r.caller);
+            let fault = fault_of(windows, name, caller.map(|n| n.name.as_str()), r);
             match r.end {
                 End::Bound => problems.push(format!(
                     "a {} wait ended `bound` after {} ms (ended {})",
@@ -675,8 +688,9 @@ fn checks(run_dir: &Path, manifest: &Manifest, windows: &[Window], cases: &mut C
                     run::format_time(r.ended())
                 )),
                 End::Closed if fault.is_none() => problems.push(format!(
-                    "a {} wait ended `closed` outside a fault window (ended {})",
+                    "a {} wait of {} ended `closed` outside a fault window of the relay or of its caller (ended {})",
                     r.route,
+                    r.caller,
                     run::format_time(r.ended())
                 )),
                 _ => {}
@@ -1095,6 +1109,23 @@ mod tests {
         );
         assert_eq!(v.problems, Vec::<String>::new());
         assert_eq!((v.bound, v.closed, v.pre_tip), (2, 1, Some(110)));
+    }
+
+    #[test]
+    fn a_closed_end_in_a_window_of_the_caller_is_excused() {
+        let restart = Window {
+            fault: "restart".into(),
+            nodes: vec!["node2".into()],
+            start: 50_000,
+            end: 80_000,
+        };
+        let windows = [restart];
+        let r = request(60_000, 5, End::Closed, 90, 90);
+        assert!(fault_of(&windows, "node4", Some("node2"), &r).is_some());
+        assert!(fault_of(&windows, "node4", Some("node3"), &r).is_none());
+        assert!(fault_of(&windows, "node4", None, &r).is_none());
+        let later = request(90_000, 5, End::Closed, 90, 90);
+        assert!(fault_of(&windows, "node4", Some("node2"), &later).is_none());
     }
 
     #[test]
