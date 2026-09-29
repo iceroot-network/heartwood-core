@@ -7,12 +7,14 @@
 //! | 1 s | below the minimum network reach: the seeds again |
 //! | 30 s | discovery that adds every candidate, then a cleanse when it added |
 //!
-//! Each tick runs on its own task, as `setInterval` runs its callback: a slow tick does not delay
-//! the next one. The first entry into idle also starts a fast forced cleanse without common
-//! blocks.
+//! Each tick runs on its own task, as `setInterval` runs its callback, but a loop starts no tick
+//! while its last one runs: the reference's ticks overlap, so a peer that kept a poll busy piled
+//! up polls and the replies they held. The first entry into idle also starts a fast forced
+//! cleanse without common blocks.
 
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::time::Duration;
 
 use heartwood_crypto::identities::PublicKeyBytes;
@@ -72,13 +74,13 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
         }
     }
 
-    /// Run `tick` every `period` while idle, each tick on its own task.
+    /// Run `tick` every `period` while idle, each tick on its own task, unless the last one runs.
     fn every<F, T>(self: &Arc<Self>, period: Duration, tick: F)
     where
         F: Fn(Arc<Self>) -> T + Send + 'static,
         T: Future<Output = ()> + Send + 'static,
     {
-        let service = Arc::downgrade(self);
+        let (service, running) = (Arc::downgrade(self), Arc::new(AtomicBool::new(false)));
         let task = self.parts.runtime.spawn(async move {
             let mut interval = tokio::time::interval(period);
             // The first tick is at once; `setInterval` runs its callback first after one period.
@@ -91,8 +93,12 @@ impl<N: Network, Q: Queue> Blockchain<N, Q> {
                 if service.flags().stopped {
                     return;
                 }
-                if service.state().is_idle() {
-                    service.spawn(tick(Arc::clone(&service)));
+                if service.state().is_idle() && !running.swap(true, SeqCst) {
+                    let (tick, running) = (tick(Arc::clone(&service)), Arc::clone(&running));
+                    service.spawn(async move {
+                        tick.await;
+                        running.store(false, SeqCst);
+                    });
                 }
             }
         });
