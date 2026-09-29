@@ -1,0 +1,26 @@
+{
+  "role": "relay",
+  "windowMinutes": 60,
+  "unknown": null,
+  "kinds": [
+    {
+      "kind": "fork-detected",
+      "level": "warning",
+      "count": 1,
+      "first": "2026-10-02T14:02:31.000Z",
+      "last": "2026-10-02T14:02:31.000Z"
+    },
+    {
+      "kind": "in-sync",
+      "level": "info",
+      "count": 2,
+      "first": "2026-10-02T14:02:21.000Z",
+      "last": "2026-10-02T14:03:01.000Z"
+    }
+  ],
+  "otherLines": 12,
+  "untrustedLines": 1,
+  "whole": true,
+  "capped": false,
+  "untrusted": []
+}
