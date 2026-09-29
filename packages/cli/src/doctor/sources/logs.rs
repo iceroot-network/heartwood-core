@@ -242,7 +242,7 @@ pub enum LineKind {
     },
     /// "Delegate D sends block ID at height H of slot S again".
     SendsAgain {
-        /// The delegate.
+        /// The delegate: its public key, as the signer names it.
         username: Id,
         /// The block id.
         block_id: Id,
@@ -253,7 +253,7 @@ pub enum LineKind {
     },
     /// "Delegate D will not sign: ...".
     WillNotSign {
-        /// The delegate.
+        /// The delegate: its public key, as the signer names it.
         username: Id,
         /// The refused slot is more than one away from the forger's clock.
         far_slot: bool,
@@ -589,7 +589,9 @@ impl Scan {
             if let Some((emoji, used)) = open {
                 self.untrusted += 1;
                 self.keep(excerpt(source, previous, line));
-                let ended = line.ends_with(emoji) || used >= MAX_CONTINUED;
+                // The message's last line ends in its emoji, or in the space the emoji's code
+                // leaves when the logger removes codes.
+                let ended = line.ends_with(emoji) || line.ends_with(' ') || used >= MAX_CONTINUED;
                 open = (!ended).then_some((emoji, used + 1));
                 continue;
             }
@@ -679,8 +681,8 @@ fn whole_lines(tail: &Tail) -> (String, u64) {
     )
 }
 
-/// The newest rotated file among `names`, by date then by number, and how many there are.
-fn newest_rotated(stem: &str, names: &[OsString]) -> (Option<String>, usize) {
+/// The newest rotated file among `names`, by date then by number.
+fn newest_rotated(stem: &str, names: &[OsString]) -> Option<String> {
     let key = |name: &str| -> Option<(String, u32)> {
         let middle = name
             .strip_prefix(stem)?
@@ -690,12 +692,11 @@ fn newest_rotated(stem: &str, names: &[OsString]) -> (Option<String>, usize) {
         let dated = date.len() == 10 && date.bytes().all(|b| b.is_ascii_digit() || b == b'-');
         dated.then(|| Some((date.to_owned(), number.parse().ok()?)))?
     };
-    let rotated: Vec<(&str, (String, u32))> = (names.iter())
+    let rotated = (names.iter())
         .filter_map(|name| name.to_str())
-        .filter_map(|name| Some((name, key(name)?)))
-        .collect();
-    let newest = rotated.iter().max_by(|a, b| a.1.cmp(&b.1));
-    (newest.map(|(name, _)| (*name).to_owned()), rotated.len())
+        .filter_map(|name| Some((name, key(name)?)));
+    let newest = rotated.max_by(|a, b| a.1.cmp(&b.1));
+    newest.map(|(name, _)| name.to_owned())
 }
 
 /// The last [`MAX_TAIL`] bytes of what `bytes` inflate to, and how many came before them.
@@ -724,16 +725,12 @@ fn inflate_tail(bytes: &[u8]) -> Option<(Vec<u8>, u64)> {
     Some((kept, before))
 }
 
-/// The newest rotated file of the role, scanned into `scan`; whether it holds the log from its
-/// start and there is no older file.
-fn read_rotated(context: &LogContext<'_>, scan: &mut Scan) -> Option<bool> {
+/// The newest rotated file of the role, scanned into `scan`.
+fn read_rotated(context: &LogContext<'_>, scan: &mut Scan) -> Option<()> {
     let source = source_of(context.role);
     let dir = readable(context, &context.files.dir, source).ok()?;
     let names = context.fs.list(&dir).ok()?;
-    let (name, count) = newest_rotated(&context.files.stem, &names);
-    let Some(name) = name else {
-        return Some(true);
-    };
+    let name = newest_rotated(&context.files.stem, &names)?;
     let file = readable(context, &context.files.dir.join(name), source).ok()?;
     let size = context
         .fs
@@ -752,7 +749,7 @@ fn read_rotated(context: &LogContext<'_>, scan: &mut Scan) -> Option<bool> {
     };
     let (text, base) = whole_lines(&tail);
     scan.lines(context, &text, base, true);
-    Some(before == 0 && count == 1)
+    Some(())
 }
 
 /// The role's log window.
@@ -764,16 +761,18 @@ pub fn read_log(context: &LogContext<'_>) -> Result<LogWindow, Unknown> {
     let mut current = Scan::default();
     current.lines(context, &text, base, false);
     let from = context.window.from_ms;
-    let (mut older, mut nothing_older) = (Scan::default(), None);
+    let mut older = Scan::default();
     let before_window = current.earliest.is_none_or(|first| first > from);
     if tail.start == 0 && before_window {
-        nothing_older = read_rotated(context, &mut older);
+        read_rotated(context, &mut older);
     }
+    // Whole only when a line read is from the window's start or before: a log that starts inside
+    // the window (a new node, a cleared log, a rotated file left unread) covers less.
     let earliest = older.earliest.or(current.earliest);
     let covered = Covered {
         first_ms: older.first.or(current.first),
         last_ms: current.last.or(older.last),
-        whole: earliest.is_some_and(|first| first <= from) || nothing_older == Some(true),
+        whole: earliest.is_some_and(|first| first <= from),
     };
     let mut excerpts = older.excerpts;
     excerpts.extend(current.excerpts);
