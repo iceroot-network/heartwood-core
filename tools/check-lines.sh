@@ -87,7 +87,10 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 #   of the next round's rows after it add up to 95, and the job stall's field 4. The rollback is
 #   listed on its own. Its `difftest` module (the job stall, behind the `difftest` feature, which no
 #   release build enables) is test support: it is left out and listed apart, as the other crates'
-#   are.
+#   are. With the bodies built it goes to 3,900: it measured 3,837, since the rollback took 140
+#   lines where 80 were planned (62 lines of signatures written before its bodies, and 78 of bodies:
+#   the refusals' lines, the plan, the store change with its row counts and the reference's three
+#   lines), the start's write 8 and the job stall's field and call 6.
 # - heartwood-core goes from 3,100 to 3,200: it measured 3,009; the rollback command (up to 60
 #   lines), the two clears' dispatch and their marker check (20), the AwaitBlock record's override
 #   (10) and the three commands' flags and wiring (68) join the command tree. The clears' bodies
@@ -106,7 +109,7 @@ CHECKS=(
     "heartwood-p2p-wire:packages/p2p-wire/src:3200"
     "heartwood-database:packages/database/src:3000"
     "heartwood-pool:packages/pool/src:2000"
-    "heartwood-blockchain:packages/blockchain/src !packages/blockchain/src/difftest.rs:3800"
+    "heartwood-blockchain:packages/blockchain/src !packages/blockchain/src/difftest.rs:3900"
     "heartwood-blockchain storage and restart:packages/blockchain/src/commit.rs packages/blockchain/src/rows.rs packages/blockchain/src/restore.rs packages/blockchain/src/milestones.rs packages/blockchain/src/online.rs:"
     "heartwood-blockchain processor:packages/blockchain/src/processor:1200"
     "heartwood-blockchain forger's blocks:packages/blockchain/src/forger_blocks.rs:"
