@@ -132,7 +132,7 @@ fn the_target_is_the_last_block_of_the_round_before_the_requested_heights_round(
     let milestones = chain.milestones();
     for height in 54..TIP {
         let plan = plan(&chain, Some(i64::from(height)), None, TIP).unwrap();
-        assert!(plan.target < height && plan.target % 53 == 0, "{height}");
+        assert!(plan.target < height && plan.target.is_multiple_of(53), "{height}");
         assert!(height - plan.target <= 53, "{height}");
         let next = heartwood_kernel::calculate_round(plan.target + 1, milestones);
         assert_eq!(next.round, plan.round, "{height}");
