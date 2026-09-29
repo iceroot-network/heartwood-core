@@ -919,7 +919,10 @@ pool, the store, the chain or the API. `heartwood forger run` runs it (see heart
 - **the attester**: signs the status its relay offers over the forger's own session, one
   signature per offered key, naming the offer by the SHA-256 of its text, and signs the
   session's challenge with each key; the relay counts a key as attested only with both, since
-  the status signatures it serves are public.
+  the status signatures it serves are public. A key the key file lists n times is attested and
+  counted n times in the relay's quorum and fork checks, as the reference counts its key file;
+  only its holder can do this, to its own node, at most 256 times (a session's declaration
+  limit).
 
 Where Heartwood differs on purpose, none of which an honest relay on the same host shows except the
 first (the bytes a slot gets stay the reference's):

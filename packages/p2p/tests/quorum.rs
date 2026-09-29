@@ -161,6 +161,24 @@ fn the_local_peer_carries_the_attested_keys_of_the_round_duplicates_kept() {
 }
 
 #[test]
+fn a_key_attested_27_times_passes_the_reach_and_the_quorum_on_its_own() {
+    // A key counts as often as the forger's session proves it, as a key file of the reference
+    // that lists it n times counts it n times: its holder can inflate its own node's counts, at
+    // most 256 times (the declaration limit of a session), and nobody else's.
+    let mut case = Case::new(Vec::new());
+    case.reach = None;
+    case.attested = vec![key(1); 27];
+    let state = case.analyze().state;
+    assert_eq!(state.status, NetworkStateStatus::Default);
+    assert_eq!(state.quorum_details.has_quorum, 27);
+    assert!(state.can_forge(53));
+    case.attested.pop();
+    let state = case.analyze().state;
+    assert_eq!(state.status, NetworkStateStatus::BelowMinimumDelegates);
+    assert!(!state.can_forge(53));
+}
+
+#[test]
 fn a_cold_start_and_too_few_delegates_answer_their_status_with_no_count() {
     let mut case = Case::new(vec![peer(1, &[1, 2, 3], 10)]);
     case.cold_start = true;
