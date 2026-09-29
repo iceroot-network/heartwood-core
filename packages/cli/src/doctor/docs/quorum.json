@@ -16,7 +16,7 @@
         "pass": "No refusal at our slots in the window: the forger logs a refusal at its own slot when the relay's network state forbids forging.",
         "warn": "A refusal at one of our slots (not enough quorum, not peered with enough delegates, no network state, or a cold start more than one round after the relay started); over-height block headers; or the network state's height out of sync with the round.",
         "fail": "Refusals at our last 2 slots.",
-        "unknown": "The forger's log cannot be read, or its file level hides info lines.",
+        "unknown": "The forger's log cannot be read, its file level hides info lines, or it shows no refusal while the forger does not run.",
         "skipped": "No forger runs on this host."
       },
       "advice": {

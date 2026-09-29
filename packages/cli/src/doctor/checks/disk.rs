@@ -172,7 +172,10 @@ pub fn slow_writes(input: &CheckInput<'_>) -> Vec<Finding> {
         let (status, key) = match slowest {
             1000.. => (Status::Fail, "slow"),
             250..=999 => (Status::Warn, "slow"),
-            _ => (Status::Pass, "none"),
+            _ => {
+                super::running(input.view, Role::Forger)?;
+                (Status::Pass, "none")
+            }
         };
         let millis = Fact::Millis(i64::try_from(slowest).unwrap_or(i64::MAX));
         Ok((status, key, vec![("millis", millis)]))

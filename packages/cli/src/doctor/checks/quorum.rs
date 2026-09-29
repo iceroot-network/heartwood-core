@@ -67,7 +67,10 @@ pub fn forging_allowed(input: &CheckInput<'_>) -> Vec<Finding> {
             });
             return match warned {
                 Some((key, at)) => out.one(Warn, Log, key, vec![("time", Fact::Time(at))]),
-                None => out.one(Pass, Log, "none", vec![("slots", int(ours.len()))]),
+                None => {
+                    super::running(view, Role::Forger)?;
+                    out.one(Pass, Log, "none", vec![("slots", int(ours.len()))])
+                }
             };
         };
         let last_two = ours.len() >= 2 && ours.iter().rev().take(2).all(|(_, r)| r.is_some());

@@ -114,7 +114,7 @@
         "warn": "The slowest took 250 to 999 ms.",
         "fail": "The slowest took 1,000 ms or more.",
         "unknown": "The forger's log could not be read, or its level hides the lines needed.",
-        "skipped": "The forger does not run on this host."
+        "skipped": "The forger does not run on this host, or its log shows no slow write while it does not run."
       },
       "advice": {
         "none": "No slow write of the signing record in the window.",

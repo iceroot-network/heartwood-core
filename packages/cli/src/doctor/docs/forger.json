@@ -66,7 +66,7 @@
         "pass": "No link failure in the window: waiting for a responsive host, a relay's error, a relay that did not respond, no open socket, a session error, a failed sync check, broadcast or emit. Waiting for the relay to become ready counts only while the relay is not syncing; the harmless \"unable to find any local hosts\" line never counts.",
         "warn": "Any such failure in the window.",
         "fail": "A failure in the last 5 minutes while the forger holds no connection now; or a failed broadcast of a block it forged at its slot.",
-        "unknown": "The forger's log cannot be read, or its file level hides warnings.",
+        "unknown": "The forger's log cannot be read, its file level hides info lines, or it shows no failure while the forger does not run.",
         "skipped": "No forger runs on this host."
       },
       "advice": {

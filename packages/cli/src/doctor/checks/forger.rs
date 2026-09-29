@@ -100,7 +100,8 @@ pub fn link_history(input: &CheckInput<'_>) -> Vec<Finding> {
     about(input, |out| {
         let view = input.view;
         let log = view.log(Role::Forger)?;
-        log.shows(Level::Warning)?;
+        // "Waiting for relay to become ready" is an info line.
+        log.shows(Level::Info)?;
         // Waiting for the relay counts only once the relay says it is not syncing.
         let ready = view.api_syncing().is_ok_and(|syncing| !syncing.syncing);
         let failures: Vec<&LogEvent> = (log.events.iter())
@@ -113,6 +114,7 @@ pub fn link_history(input: &CheckInput<'_>) -> Vec<Finding> {
             })
             .collect();
         let Some(last) = failures.last() else {
+            super::running(view, Role::Forger)?;
             return out.one(Pass, Log, "none", Vec::new());
         };
         // The forger broadcasts only the block it forged at its own slot.
