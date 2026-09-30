@@ -1,7 +1,7 @@
 {
   "id": "attestation",
   "title": "A vote for a delegate whose node has not reported is refused and accepted after it has, also after the relay restarts",
-  "levels": ["L3"],
+  "levels": ["L3", "L4"],
   "network": "devnet",
   "genesisSeed": "solar-devnet",
   "settleBlocks": 0,
