@@ -154,13 +154,16 @@ impl ProcessOps for Ops {
     fn status(&self, instance: &Instance) -> Result<StatusRow, ProcessError> {
         let name = instance.name();
         let status = self.statuses.borrow().get(&name).copied();
+        let status = status.unwrap_or(SupervisedStatus::Stopped);
         let pid = self.pids.borrow().get(&name).copied();
+        // A running process has run for 12.5 s.
+        let uptime = status.is_running().then_some(Duration::from_millis(12_500));
         Ok(StatusRow {
             pid,
             name,
             version: "0.1.0".to_owned(),
-            status: status.unwrap_or(SupervisedStatus::Stopped),
-            uptime: None,
+            status,
+            uptime,
             restarts: 0,
             cpu_percent: None,
             rss_bytes: None,
@@ -169,11 +172,12 @@ impl ProcessOps for Ops {
 }
 
 /// Relay APIs scripted per address: each answering relay's chain of block ids, from height 1. A
-/// relay lists the others as its peers, each at the address `reports` gives for it, else its own.
+/// relay lists the others as its peers, each at the address and port `reports` gives for it, else
+/// at its own address and port 6002.
 #[derive(Default)]
 struct Api {
     chains: RefCell<BTreeMap<SocketAddr, Vec<String>>>,
-    reports: RefCell<BTreeMap<SocketAddr, String>>,
+    reports: RefCell<BTreeMap<SocketAddr, (String, u16)>>,
     polls: Cell<u32>,
 }
 
@@ -227,13 +231,16 @@ impl NodeApi for Api {
         let chains = self.chains.borrow();
         let others = chains.keys().filter(|other| **other != address);
         let reports = self.reports.borrow();
-        let peer = |a: &SocketAddr| ApiPeer {
-            ip: reports
+        let peer = |a: &SocketAddr| {
+            let (ip, port) = reports
                 .get(a)
                 .cloned()
-                .unwrap_or_else(|| a.ip().to_string()),
-            port: 6002,
-            height: None,
+                .unwrap_or_else(|| (a.ip().to_string(), 6002));
+            ApiPeer {
+                ip,
+                port,
+                height: None,
+            }
         };
         Ok(others.map(peer).collect())
     }
@@ -471,12 +478,12 @@ fn status_json_gives_each_node_its_processes_api_and_the_address_its_peers_repor
         .borrow_mut()
         .insert("node1-devnet-relay".to_owned(), 4242);
     bench.api.every(3, &["genesis", "b2"]);
-    // Node 2's peers know it at another address than its own.
-    bench
-        .api
-        .reports
-        .borrow_mut()
-        .insert(api(2), "127.99.9.9".to_owned());
+    // Node 2's peers know it at another address than its own; node 3's at its own address but
+    // another port, which is the address they report.
+    let mut reports = bench.api.reports.borrow_mut();
+    reports.insert(api(2), ("127.99.9.9".to_owned(), 6002));
+    reports.insert(api(3), (ip(13).to_string(), 4001));
+    drop(reports);
     let full = json(&bench);
     let (a, c) = (ip(11), ip(13));
     let node1 = &full["nodes"][0];
@@ -485,16 +492,18 @@ fn status_json_gives_each_node_its_processes_api_and_the_address_its_peers_repor
     assert_eq!(node1["core"], false);
     assert_eq!(
         node1["processes"][0],
-        json!({ "role": "relay", "status": "online", "pid": 4242, "restarts": 0 })
+        json!({ "role": "relay", "status": "online", "pid": 4242, "uptime": 12.5, "restarts": 0 })
     );
     assert_eq!(node1["processes"][1]["role"], "forger");
+    assert_eq!(full["nodes"][1]["processes"][0]["uptime"], Value::Null);
+    assert_eq!(node1["apiUrl"], format!("http://{a}:6003"));
     assert_eq!(
         node1["api"],
         json!({ "height": 2, "lastBlockId": "b2", "synced": true, "peers": 2 })
     );
     assert_eq!(node1["reportedAddress"], format!("{a}:6002"));
     assert_eq!(full["nodes"][1]["reportedAddress"], Value::Null);
-    assert_eq!(full["nodes"][2]["reportedAddress"], format!("{c}:6002"));
+    assert_eq!(full["nodes"][2]["reportedAddress"], format!("{c}:4001"));
     assert_eq!(full["nodes"][2]["processes"].as_array().unwrap().len(), 1);
     assert_eq!(
         full["chain"],

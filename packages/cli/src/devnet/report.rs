@@ -88,13 +88,13 @@ pub fn status(root: &Path, tools: &Tools<'_>) -> Result<DevnetStatus> {
     })
 }
 
-/// The address at which the other relays list `node`, as `ip:port`: the entry of their peer lists
-/// (`lists`, by node) that has the node's address and its P2P port; `None` when none lists it.
+/// The address at which the other relays list `node`, as `ip:port`: the first entry of their
+/// peer lists (`lists`, by node) with the node's address, at the port it lists; `None` when none
+/// lists it.
 fn reported(node: &ManifestNode, lists: &[(u32, Vec<ApiPeer>)]) -> Option<SocketAddr> {
     let others = lists.iter().filter(|(index, _)| *index != node.index);
     let mut peers = others.flat_map(|(_, list)| list);
-    let peer =
-        peers.find(|peer| peer.ip.parse() == Ok(node.address) && peer.port == node.p2p().port());
+    let peer = peers.find(|peer| peer.ip.parse() == Ok(node.address));
     peer.map(|peer| SocketAddr::new(node.address, peer.port))
 }
 
@@ -149,14 +149,16 @@ impl fmt::Display for DevnetStatus {
     }
 }
 
-/// The machine-readable form of [`status`] (`status --json`): every node's processes, API reads
-/// and the address its peers report for it, the consistency, the counts compared and the
-/// delegates online.
+/// The machine-readable form of [`status`] (`status --json`): every node's processes (role,
+/// status, pid, uptime in seconds, restarts), its API's URL and reads, and the address its peers
+/// report for it; the consistency, the counts compared and the delegates online.
 pub fn status_json(root: &Path, tools: &Tools<'_>) -> Result<Value> {
     let (status, manifest) = (status(root, tools)?, Manifest::read(root)?);
     let row = |role: Role, row: &StatusRow| {
         let (state, pid) = (row.status.name(), row.pid);
-        json!({ "role": role.name(), "status": state, "pid": pid, "restarts": row.restarts })
+        let uptime = row.uptime.map(|time| time.as_secs_f64());
+        json!({ "role": role.name(), "status": state, "pid": pid, "uptime": uptime,
+                "restarts": row.restarts })
     };
     let node = |(node, at): (&NodeStatus, &ManifestNode)| {
         let first = if node.core { Role::Core } else { Role::Relay };
@@ -169,7 +171,8 @@ pub fn status_json(root: &Path, tools: &Tools<'_>) -> Result<Value> {
         });
         let reported = node.reported.map(|address| address.to_string());
         json!({ "node": node.node, "address": at.address.to_string(), "core": node.core,
-                "processes": processes, "api": api, "reportedAddress": reported,
+                "apiUrl": format!("http://{}", at.api()), "processes": processes, "api": api,
+                "reportedAddress": reported,
                 "delegates": node.delegates })
     };
     let nodes: Vec<Value> = status.nodes.iter().zip(&manifest.nodes).map(node).collect();
