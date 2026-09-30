@@ -47,7 +47,7 @@ pub fn answer(context: &ApiContext) -> ApiReply {
         version: context.node.version.clone(),
         missed_blocks_lookback: context.config.missed_blocks_lookback,
     };
-    match base().and_then(|document| patched(document, &patches)) {
+    match document(&patches) {
         Some(document) => ApiReply::ok(document),
         None => internal(),
     }
@@ -78,6 +78,12 @@ fn base() -> Option<&'static Value> {
     PARSED
         .get_or_init(|| serde_json::from_str(DOCUMENT).ok())
         .as_ref()
+}
+
+/// The assets' document with the reference's boot patches, or `None` when it does not parse or
+/// lacks a key they set into.
+pub fn document(patches: &Patches) -> Option<Value> {
+    base().and_then(|document| patched(document, patches))
 }
 
 /// `document` with the reference's boot patches; `None` when a key they set into is not there.
