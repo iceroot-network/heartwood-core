@@ -836,8 +836,8 @@ fn an_entry_needs_a_trigger_and_a_test_that_exists() {
     ));
     let ran = register(&rig, &[]);
     assert!(!ran.ok, "{}", ran.text);
-    assert!(ran.text.contains("E-1     active   ok"), "{}", ran.text);
-    assert!(ran.text.contains("E-2     active   FAIL"), "{}", ran.text);
+    assert!(ran.text.contains("E-1  active   ok"), "{}", ran.text);
+    assert!(ran.text.contains("E-2  active   FAIL"), "{}", ran.text);
     assert!(ran.text.contains("has no trigger"), "{}", ran.text);
     assert!(ran.text.contains("has no test it_shows"), "{}", ran.text);
     assert!(
