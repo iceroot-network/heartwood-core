@@ -275,15 +275,72 @@ fn traced(args: &[&str], vars: &[(String, String)], log: &Path) -> Option<Output
     Some(output)
 }
 
+/// The paths outside the node's directories that the doctor's own process may open: `/proc`,
+/// `/sys`, the firewall's and the clock's files, and what the program itself loads.
+const SYSTEM_READS: [&str; 11] = [
+    "/proc/",
+    "/sys/",
+    "/etc/ufw/ufw.conf",
+    "/run/systemd/timesync/synchronized",
+    "/dev/null",
+    "/dev/urandom",
+    "/etc/ld.so.cache",
+    "/lib/",
+    "/lib64/",
+    "/usr/lib/",
+    "/usr/lib64/",
+];
+
+/// The file a successful open of a trace line opened: the path its descriptor's decoration names
+/// (`= 3</path>`), else the first quoted path.
+fn opened(line: &str) -> Option<String> {
+    let (_, result) = line.rsplit_once(" = ")?;
+    if result.starts_with('-') {
+        return None;
+    }
+    let decorated = result.split_once('<').map(|(_, rest)| rest);
+    let decorated = decorated.map(|rest| rest.strip_suffix('>').unwrap_or(rest));
+    let decorated = decorated.map(|path| path.split("<char ").next().unwrap_or(path));
+    let quoted = || line.split('"').nth(1);
+    decorated.or_else(quoted).map(str::to_owned)
+}
+
 /// The system calls of the trace at `log` that break the doctor's rules: an open, or any call
 /// but a metadata read, of the key file; an open for writing, a creation, removal, rename or mode
-/// change under `root`; a connection to an address that is not loopback (`api`, when given, is
+/// change under `root`; a successful open by the doctor's own process of a file outside `root`
+/// and [`SYSTEM_READS`]; a connection to an address that is not loopback (`api`, when given, is
 /// the only IP address and port allowed), or to a local socket that is not the system bus's.
 /// While a relay runs, `store` names its store: SQLite's read-only connection opens the store's
 /// existing `-wal` and `-shm` read-write with the create flag, and never truncates them.
 fn broken(log: &Path, root: &Path, api: Option<(&str, u16)>, store: Option<&Path>) -> Vec<String> {
     let text = std::fs::read_to_string(log).unwrap();
+    broken_in(&text, root, api, store)
+}
+
+/// [`broken`] over the text of a trace.
+fn broken_in(
+    text: &str,
+    root: &Path,
+    api: Option<(&str, u16)>,
+    store: Option<&Path>,
+) -> Vec<String> {
     let root = root.display().to_string();
+    // The first line is the doctor's own execve.
+    let doctor = text
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().next());
+    let program = env!("CARGO_BIN_EXE_heartwood");
+    let inside = |path: &str| {
+        path.starts_with(&format!("{root}/"))
+            || path == program
+            || SYSTEM_READS
+                .iter()
+                .any(|allowed| match allowed.ends_with('/') {
+                    true => path.starts_with(allowed),
+                    false => path == *allowed,
+                })
+    };
     let metadata = [
         "newfstatat",
         "fstatat64",
@@ -319,6 +376,10 @@ fn broken(log: &Path, root: &Path, api: Option<(&str, u16)>, store: Option<&Path
         if line.contains(&root) && opens && written && !sqlite {
             broken.push(line.to_owned());
         }
+        let own = doctor.is_some_and(|pid| line.split_whitespace().next() == Some(pid));
+        if own && opens && opened(line).is_some_and(|path| !inside(&path)) {
+            broken.push(line.to_owned());
+        }
         if line.contains(&root) && changes.iter().any(|change| name.starts_with(change)) {
             broken.push(line.to_owned());
         }
@@ -345,6 +406,31 @@ fn broken(log: &Path, root: &Path, api: Option<(&str, u16)>, store: Option<&Path
         }
     }
     broken
+}
+
+#[test]
+fn the_trace_rules_catch_a_read_outside_the_node_and_the_system_files() {
+    let root = Path::new("/nodes/node1");
+    let trace = [
+        r#"4100 execve("/usr/local/bin/heartwood", ["heartwood", "doctor"], 0x7ffd /* 3 vars */) = 0"#,
+        r#"4100 openat(AT_FDCWD, "/nodes/node1/config/app.json", O_RDONLY|O_CLOEXEC) = 3</nodes/node1/config/app.json>"#,
+        r#"4100 openat(AT_FDCWD, "/proc/self/status", O_RDONLY|O_CLOEXEC) = 3</proc/4100/status>"#,
+        r#"4100 openat(AT_FDCWD, "/dev/null", O_RDWR|O_CLOEXEC) = 3</dev/null<char 1:3>>"#,
+        r#"4100 openat(AT_FDCWD, "/users/op/.config/solar-core/config.json", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)"#,
+        r#"4101 openat(AT_FDCWD, "/etc/systemd/system.conf", O_RDONLY|O_CLOEXEC) = 3</etc/systemd/system.conf>"#,
+    ];
+    let clean = trace.join("\n");
+    assert_eq!(broken_in(&clean, root, None, None), Vec::<String>::new());
+    let outside = [
+        r#"4100 openat(AT_FDCWD, "/users/op/.ssh/id_ed25519", O_RDONLY|O_CLOEXEC) = 4</users/op/.ssh/id_ed25519>"#,
+        r#"4100 openat(AT_FDCWD, "/etc/shadow", O_RDONLY|O_CLOEXEC) = 4</etc/shadow>"#,
+        r#"4100 openat(AT_FDCWD, "/etc/passwd", O_RDONLY|O_CLOEXEC) = 4</etc/passwd>"#,
+        r#"4100 openat(AT_FDCWD, "/nodes/node1-other/config/app.json", O_RDONLY|O_CLOEXEC) = 4</nodes/node1-other/config/app.json>"#,
+    ];
+    for line in outside {
+        let text = format!("{clean}\n{line}");
+        assert_eq!(broken_in(&text, root, None, None), [line], "{line}");
+    }
 }
 
 #[test]
