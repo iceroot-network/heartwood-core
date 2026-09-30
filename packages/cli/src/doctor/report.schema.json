@@ -79,7 +79,7 @@
         "facts": {
           "type": "object",
           "additionalProperties": {"type": ["string", "integer", "boolean", "null"]},
-          "description": "Typed values only: integers, booleans, fixed words (one word each, such as planning or loopback-only; the advice shows the phrase the check's documentation gives it), ids that passed their grammar, address labels, redacted paths, octal modes, durations in milliseconds (named millis or ending in _ms), sizes in bytes (named with _bytes, such as free_bytes or growth_bytes_per_day) and UTC times."
+          "description": "Typed values only: integers, booleans, fixed words (one word each, such as planning or loopback-only; the advice shows the phrase the check's documentation gives it), ids that passed their grammar, address labels, redacted paths, octal modes, durations in milliseconds (named millis or ending in _ms) or in the unit their name gives (minutes, hours, days), sizes in bytes (named with _bytes, such as free_bytes or growth_bytes_per_day) and UTC times."
         },
         "advice": {"type": "string", "description": "Fixed text from the check's documentation with the facts filled in."},
         "docs": {"type": "string", "description": "The check's page on docs.iceroot.com."},

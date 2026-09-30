@@ -166,9 +166,10 @@ example below is shortened.
 - Keys always come in the order the schema lists them; findings in the order of
   `heartwood doctor checks`, every check once (a finding per role where a check looks at both).
 - Times are UTC. Numbers are integers: a size is a count of bytes under a name that says so
-  (`free_bytes`, `growth_bytes_per_day`, `memory_bytes`), a duration a count of milliseconds
-  (`millis`, or a name that ends in `_ms`). The advice prints sizes in plain units (`100 GiB`,
-  `91.4 MiB`). Modes are octal strings.
+  (`free_bytes`, `growth_bytes_per_day`, `memory_bytes`), a duration a count of milliseconds under
+  `millis` or a name that ends in `_ms`, or a count of the unit its name gives (`minutes`, `hours`,
+  `days`). The advice prints sizes in plain units (`100 GiB`, `91.4 MiB`). Modes are octal
+  strings.
 - `facts` hold typed values only: integers, yes or no, fixed words, ids that passed a strict
   grammar (a 64-digit block id, a 66-digit public key, a delegate name, a variable name, a
   version), address labels, redacted paths, sizes, durations and times. A fixed word is one word

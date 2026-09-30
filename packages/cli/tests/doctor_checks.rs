@@ -75,6 +75,32 @@ fn every_size_is_a_count_of_bytes_under_a_name_that_says_so_and_every_word_is_on
 }
 
 #[test]
+fn every_duration_is_milliseconds_under_millis_or_ms_or_a_count_of_the_unit_its_name_gives() {
+    use heartwood_cli::doctor::report::Fact;
+    // The documented rule: milliseconds under `millis` or a `_ms` name, and nothing else under
+    // them; a duration under another unit's name (`minutes`, `hours`, `days`) is a plain count.
+    let counted = ["seconds", "minutes", "hours", "days"];
+    for case in doctor_cases::all() {
+        let entry = ENTRIES.iter().find(|entry| entry.id == case.check).unwrap();
+        let input = CheckInput {
+            entry,
+            view: &case.view,
+            options: &case.options,
+        };
+        for finding in (entry.run)(&input) {
+            let all = finding.facts.iter().chain(&finding.advice.values);
+            for (name, fact) in all {
+                let what = format!("{}: {} {name} = {fact:?}", case.name, finding.id.as_str());
+                let millis = *name == "millis" || name.ends_with("_ms");
+                assert_eq!(matches!(fact, Fact::Millis(_)), millis, "{what}");
+                let count = counted.contains(name);
+                assert!(!count || matches!(fact, Fact::Int(_)), "{what}");
+            }
+        }
+    }
+}
+
+#[test]
 fn the_registry_walk_finds_a_case_for_every_status_of_every_built_check() {
     let cases = doctor_cases::all();
     let (mut not_built, mut missing) = (Vec::new(), Vec::new());

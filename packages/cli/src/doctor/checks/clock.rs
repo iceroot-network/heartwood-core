@@ -29,7 +29,8 @@ pub fn sync(input: &CheckInput<'_>) -> Vec<Finding> {
             .or(reported)
             .or(marker.then_some(true));
         let offset_ms = chrony.ok().map(|c| c.offset_us.unsigned_abs() / 1000);
-        let values = offset_ms.map_or(Vec::new(), |ms| vec![("offset_ms", int(ms))]);
+        let millis = |ms: u64| Fact::Millis(i64::try_from(ms).unwrap_or(i64::MAX));
+        let values = offset_ms.map_or(Vec::new(), |ms| vec![("offset_ms", millis(ms))]);
         let (status, key) = match (synced, offset_ms, flags.and_then(|n| n.ntp)) {
             (Some(false), _, _) => (Status::Fail, "not-synchronized"),
             (_, Some(ms), _) if ms >= 500 => (Status::Fail, "offset-large"),
