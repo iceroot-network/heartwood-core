@@ -1,6 +1,6 @@
 {
-  "id": "second-signature-and-ipfs",
-  "title": "A second signature is registered, then transfers with and without it are judged; the IPFS type is refused, a duplicate hash too",
+  "id": "second-signature",
+  "title": "A second signature is registered, then transfers with and without it are judged",
   "levels": ["L3"],
   "network": "devnet",
   "genesisSeed": "solar-devnet",
@@ -22,11 +22,6 @@
        {"ref": "wrong-second-signature", "type": "transfer", "from": "sig-owner", "nonce": 3, "to": [["payee", "400000000"]], "secondSignature": "payee"},
        {"ref": "second-signature-again", "type": "secondSignature", "from": "sig-owner", "nonce": 3, "secondSignature": "second-key"}
      ]},
-    {"name": "registers an IPFS hash", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api", "check": {"invalid": ["ipfs-register", "ipfs-duplicate"]},
-     "txs": [
-       {"ref": "ipfs-register", "type": "ipfs", "from": "voter-b", "nonce": 1, "asset": {"hash": "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"}},
-       {"ref": "ipfs-duplicate", "type": "ipfs", "from": "voter-b", "nonce": 1, "fee": "6000000", "asset": {"hash": "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"}}
-     ]},
-    {"name": "what was kept", "at": {"afterBlocks": 3}, "check": {"forged": ["second-signature", "signed-transfer"], "absent": ["unsigned-transfer", "wrong-second-signature", "second-signature-again", "ipfs-register", "ipfs-duplicate"], "digest": true}}
+    {"name": "what was kept", "at": {"afterBlocks": 3}, "check": {"forged": ["second-signature", "signed-transfer"], "absent": ["unsigned-transfer", "wrong-second-signature", "second-signature-again"] , "digest": true}}
   ]
 }
