@@ -112,6 +112,10 @@ module.exports = async function apiSpecVectors({ rec, must, shared }) {
     for (const [choice, query] of QUERIES) {
         await add("api.fuzzQuery", { hex: hex(choice, query) }, `fuzzQuery: route ${choice}, ${JSON.stringify(query)}`);
     }
+    // Nested keys: to the depth the records write out whole, and past it, where they give the depth.
+    for (const levels of [50, 98, 99, 100, 101, 127, 128, 129, 130, 131, 132, 133, 140]) {
+        await add("api.fuzzQuery", { hex: hex(0, `a${".k".repeat(levels - 1)}=1`) }, `fuzzQuery: a key nested ${levels} levels`);
+    }
     await add("api.fuzzQuery", { hex: "" }, "fuzzQuery: no input");
     return out;
 };

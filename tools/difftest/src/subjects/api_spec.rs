@@ -26,37 +26,44 @@ pub(super) const OPS: &[(&str, Run)] = &[
 ];
 
 /// The routes of the query target, in the order of its choice byte: the route, the path of a
-/// request to it (the reference's, with the base path) and whether it lists a page.
-const ROUTES: [(RouteId, &str, bool); 11] = [
-    (RouteId::TransactionsIndex, "/api/transactions", true),
+/// request to it (the reference's, with the base path), whether it lists a page and whether its
+/// handler reads the query (the reference validates none on the others, so no handler looks at
+/// what the plugins wrote).
+const ROUTES: [(RouteId, &str, bool, bool); 11] = [
+    (RouteId::TransactionsIndex, "/api/transactions", true, true),
     (
         RouteId::BlocksTransactions,
         "/api/blocks/12/transactions",
+        true,
         true,
     ),
     (
         RouteId::WalletsTransactions,
         "/api/wallets/genesis_1/transactions",
         true,
+        true,
     ),
-    (RouteId::PeersIndex, "/api/peers", true),
+    (RouteId::PeersIndex, "/api/peers", true, true),
     (
         RouteId::TransactionsUnconfirmed,
         "/api/transactions/unconfirmed",
         true,
+        true,
     ),
-    (RouteId::BlocksShow, "/api/blocks/12", false),
-    (RouteId::NodeStatus, "/api/node/status", false),
-    (RouteId::BlockchainIndex, "/api/blockchain", false),
+    (RouteId::BlocksShow, "/api/blocks/12", false, true),
+    (RouteId::NodeStatus, "/api/node/status", false, false),
+    (RouteId::BlockchainIndex, "/api/blockchain", false, false),
     (
         RouteId::BlockchainSearch,
         "/api/blockchain/search/abc",
         false,
+        false,
     ),
-    (RouteId::NodeFees, "/api/node/fees", false),
+    (RouteId::NodeFees, "/api/node/fees", false, true),
     (
         RouteId::TransactionsSchemas,
         "/api/transactions/schemas",
+        false,
         false,
     ),
 ];
@@ -130,6 +137,18 @@ fn fee_statistics(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     Ok(Verdict::Output(fee_statistics::response(days, &rows)))
 }
 
+/// The deepest query written out whole; the JSON readers of the harness stop at 128 levels.
+const MOST_DEPTH: usize = 100;
+
+/// How many levels of objects and lists `value` has.
+fn depth(value: &Value) -> usize {
+    match value {
+        Value::Object(members) => 1 + members.values().map(depth).max().unwrap_or(0),
+        Value::Array(items) => 1 + items.iter().map(depth).max().unwrap_or(0),
+        _ => 0,
+    }
+}
+
 /// A fuzz input of the query target: `{status: 500}` where the reference's plugins throw, the
 /// route's refusal as `{status}`, else `{status: 200, query}` with the validated query the handler
 /// reads and, for a route that lists a page, its `page` (the list's `meta`); `{}` for an empty
@@ -147,7 +166,7 @@ fn fuzz_query(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     if parsed.is_null() {
         return status(500);
     }
-    let (route, path, paginates) = ROUTES[usize::from(choice) % ROUTES.len()];
+    let (route, path, paginates, reads) = ROUTES[usize::from(choice) % ROUTES.len()];
     let mut query = match validate_query(route, &parsed) {
         Ok(query) => query,
         Err(error) => return status(error.status),
@@ -176,7 +195,15 @@ fn fuzz_query(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     }
     let mut out = Map::new();
     out.insert("status".into(), json!(200));
-    out.insert("query".into(), query);
+    let levels = depth(&query);
+    if reads {
+        let written = if levels > MOST_DEPTH {
+            json!({ "depth": levels })
+        } else {
+            query
+        };
+        out.insert("query".into(), written);
+    }
     if let Some(page) = page {
         out.insert("page".into(), page);
     }

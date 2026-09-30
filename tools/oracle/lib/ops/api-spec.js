@@ -19,7 +19,9 @@
 //   api.fuzzQuery           {hex} -> {status, query?, page?}  (a fuzz input of the api_query
 //                           target: the route's choice byte, then the raw query, which goes as
 //                           request.query through the reference's query plugins, the route's
-//                           validation and the pagination plugin; {} for an empty input)
+//                           validation and the pagination plugin; {} for an empty input; a query
+//                           nested more than 100 levels deep is written as {depth}; a route whose
+//                           handler reads no query has no `query`)
 // Loaded by lib/ops.js.
 
 const fs = require("fs");
@@ -33,20 +35,25 @@ const KEPT = new Set(["1/1", "1/2", "1/6", "1/7", "2/0", "2/2"]);
 const REMOVED_PATHS = ["/locks", "/locks/{id}", "/locks/unlocked"];
 
 // The routes of the query target, in the order of its choice byte: the path a request has (a
-// valid one, since only the query is fuzzed) and whether the route lists a page.
+// valid one, since only the query is fuzzed), whether the route lists a page, and whether its
+// handler reads the query (the reference validates none on the others, so it passes what the
+// plugins wrote and no handler looks at it).
 const ROUTES = [
-    ["/api/transactions", true],
-    ["/api/blocks/12/transactions", true],
-    ["/api/wallets/genesis_1/transactions", true],
-    ["/api/peers", true],
-    ["/api/transactions/unconfirmed", true],
-    ["/api/blocks/12", false],
-    ["/api/node/status", false],
-    ["/api/blockchain", false],
-    ["/api/blockchain/search/abc", false],
-    ["/api/node/fees", false],
-    ["/api/transactions/schemas", false],
+    ["/api/transactions", true, true],
+    ["/api/blocks/12/transactions", true, true],
+    ["/api/wallets/genesis_1/transactions", true, true],
+    ["/api/peers", true, true],
+    ["/api/transactions/unconfirmed", true, true],
+    ["/api/blocks/12", false, true],
+    ["/api/node/status", false, false],
+    ["/api/blockchain", false, false],
+    ["/api/blockchain/search/abc", false, false],
+    ["/api/node/fees", false, true],
+    ["/api/transactions/schemas", false, false],
 ];
+
+// The deepest query written out whole; the JSON readers of the harness stop at 128 levels.
+const MOST_DEPTH = 100;
 
 module.exports = function apiSpecOps({ solar, devnet, cm, atHeight, handlerRegistry, plain }) {
     const apiDir = path.join(solar.solarDir, "packages", "api");
@@ -187,12 +194,15 @@ module.exports = function apiSpecOps({ solar, devnet, cm, atHeight, handlerRegis
         return server;
     }
 
+    // How many levels of objects and lists a value has.
+    const depth = (value) => (value && typeof value === "object" ? 1 + Math.max(0, ...Object.values(value).map(depth)) : 0);
+
     async function fuzzQuery({ hex }) {
         if (typeof hex !== "string" || !/^([0-9a-f]{2})*$/.test(hex)) throw new TypeError("hex must be hexadecimal text");
         const bytes = Buffer.from(hex, "hex");
         if (bytes.length === 0) return {};
         const choice = bytes[0];
-        const [requestPath, paged] = ROUTES[choice % ROUTES.length];
+        const [requestPath, paged, reads] = ROUTES[choice % ROUTES.length];
         const s = await fuzzServer();
         call.raw = Object.assign(Object.create(null), Querystring.parse(bytes.subarray(1).toString("utf8")));
         call.total = choice * 37;
@@ -200,7 +210,10 @@ module.exports = function apiSpecOps({ solar, devnet, cm, atHeight, handlerRegis
         call.query = undefined;
         const response = await s.inject({ method: "GET", url: requestPath });
         if (response.statusCode !== 200) return { status: response.statusCode };
-        const out = { status: 200, query: JSON.parse(JSON.stringify(call.query)) };
+        const query = JSON.parse(JSON.stringify(call.query));
+        // A query nested too deep for the harness's JSON reader is reported by its depth.
+        const out = { status: 200 };
+        if (reads) out.query = depth(query) > MOST_DEPTH ? { depth: depth(query) } : query;
         if (paged) out.page = JSON.parse(response.payload).meta;
         return out;
     }
