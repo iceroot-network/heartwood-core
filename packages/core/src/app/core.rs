@@ -106,12 +106,10 @@ fn forge(forger: ForgerConfig, stopping: oneshot::Receiver<()>, fail: oneshot::S
         Ok(runtime) => runtime.block_on(forger::serve(forger, stopped)),
         Err(error) => Err(ForgerError::Component(error.to_string())),
     };
-    if let Err(error) = &result {
-        heartwood_kernel::error!("The forger stopped: {error}");
-    }
-    let _ = fail.send(
-        result
-            .err()
-            .map_or("the forger stopped".into(), |e| e.to_string()),
-    );
+    // The relay logs the failure as its own, once its node has stopped.
+    let failure = match result {
+        Ok(()) => "the forger stopped".to_owned(),
+        Err(error) => format!("the forger stopped: {error}"),
+    };
+    let _ = fail.send(failure);
 }

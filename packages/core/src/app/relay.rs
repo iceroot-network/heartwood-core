@@ -191,12 +191,13 @@ pub(crate) fn launch(
     let logger = options::logger(&relay.entry(Package::Logger), &relay.env).map_err(config)?;
     let stem = format!("{}-{}-{}", relay.token, relay.network, role.name());
     let _logs = heartwood_logger::init(&logger, &paths.log, &stem).map_err(component)?;
-    heartwood_kernel::info!(
-        "Heartwood Core {VERSION}: a {} of {} on {}",
-        role.name(),
-        relay.token,
-        relay.network
-    );
+    let (token, network) = (&relay.token, &relay.network);
+    match role {
+        Role::Core => {
+            heartwood_kernel::info!("Heartwood Core {VERSION}: a core node of {token} on {network}")
+        }
+        _ => heartwood_kernel::info!("Heartwood Core {VERSION}: a relay of {token} on {network}"),
+    }
     for warning in &relay.warnings {
         heartwood_kernel::warning!("{warning}");
     }
