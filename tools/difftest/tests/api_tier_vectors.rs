@@ -5,7 +5,7 @@
 //!
 //! Every record goes, by its operation, to the subject of its area. A record of an operation this
 //! test does not list fails it, and so does a listed operation with fewer records than its
-//! minimum, which are those of `tools/oracle/vector-minimums.json`.
+//! minimum, as `tools/oracle/vector-minimums.json` gives them (read at run time).
 //!
 //! The class is read from `packages/api/tests/vectors`, where `make vectors-install` puts it and
 //! where it must be: a class that is not installed there fails the test. The directory that
@@ -28,24 +28,33 @@ use heartwood_difftest::vectors::{ClassDir, VectorSet};
 /// The class.
 const CLASS: &str = "V34-api-tiers";
 
-/// The operations of the class with the fewest records of each, as in the oracle's manifest of
-/// minimums (`tools/oracle/vector-minimums.json`).
-const MINIMUMS: [(&str, usize); 14] = [
-    ("state.indexOrders", 24),
-    ("api.delegatesPage", 60),
-    ("api.walletsPage", 40),
-    ("api.delegateResource", 20),
-    ("api.searchPage", 60),
-    ("js.rbTrace", 20),
-    ("api.walletsLike", 40),
-    ("js.localeCompare", 60),
-    ("sql.round2", 50),
-    ("sql.avgInt8", 30),
-    ("sql.productivity", 50),
-    ("api.spec", 2),
-    ("api.transactionSchemas", 1),
-    ("api.feeStatistics", 6),
-];
+/// The oracle's manifest of the fewest records of each operation, per class.
+const MINIMUMS: &str = "tools/oracle/vector-minimums.json";
+
+/// The operations of the class with the fewest records of each, from the oracle's manifest, which
+/// `make vectors-install` checks too.
+fn minimums() -> Vec<(String, usize)> {
+    let path = workspace().join(MINIMUMS);
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{} cannot be read: {error}", path.display()));
+    let manifest: serde_json::Value = serde_json::from_str(&text)
+        .unwrap_or_else(|error| panic!("{} is not JSON: {error}", path.display()));
+    let class = manifest[CLASS]
+        .as_object()
+        .unwrap_or_else(|| panic!("{} lists no {CLASS}", path.display()));
+    let minimums: Vec<(String, usize)> = class
+        .iter()
+        .map(|(op, fewest)| {
+            let fewest = fewest
+                .as_u64()
+                .and_then(|fewest| usize::try_from(fewest).ok())
+                .unwrap_or_else(|| panic!("{op}'s minimum in {} is not a count", path.display()));
+            (op.clone(), fewest)
+        })
+        .collect();
+    assert!(!minimums.is_empty(), "{} lists no operation of {CLASS}", path.display());
+    minimums
+}
 
 /// Operations the class may hold besides the minimums' (records the parts add beyond them).
 const EXTRA: [&str; 1] = ["api.fuzzQuery"];
@@ -78,6 +87,7 @@ fn devnet(set: &VectorSet) -> Devnet {
 
 #[test]
 fn the_api_tier_vectors_pass_l0() {
+    let minimums = minimums();
     let dir = vector_dir();
     let named = matches!(dir, ClassDir::Named(_));
     let Some(mut set) = dir.load(CLASS).expect("the class is installed") else {
@@ -92,20 +102,20 @@ fn the_api_tier_vectors_pass_l0() {
     let mut per_op: BTreeMap<&str, usize> = BTreeMap::new();
     for record in set.files.iter().flat_map(|file| &file.records) {
         assert!(
-            MINIMUMS.iter().any(|(op, _)| *op == record.op) || EXTRA.contains(&record.op.as_str()),
+            minimums.iter().any(|(op, _)| *op == record.op) || EXTRA.contains(&record.op.as_str()),
             "{CLASS} has a record of {}, no operation of this test",
             record.op
         );
         *per_op.entry(record.op.as_str()).or_default() += 1;
     }
-    for (op, fewest) in MINIMUMS {
-        let count = per_op.get(op).copied().unwrap_or(0);
+    for (op, fewest) in &minimums {
+        let count = per_op.get(op.as_str()).copied().unwrap_or(0);
         if named && count == 0 {
             eprintln!("the_api_tier_vectors_pass_l0: the run has no {op} record");
             continue;
         }
         assert!(
-            count >= fewest,
+            count >= *fewest,
             "{CLASS} has {count} {op} records, fewer than {fewest}"
         );
     }
