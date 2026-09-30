@@ -42,7 +42,11 @@ const OTHER_NETWORK: u8 = 30;
 /// cannot be made counts when the input has one, the calls before the block answer, and the
 /// reference's attempt errs. A header without an id counts when the network state has one and
 /// the reference's attempt passed the status refusals to the sort of the distinct headers: it
-/// forged, came late, found its slot taken, or refused for an own header or the quorum.
+/// forged, came late, or refused for an own header or the quorum (outcomes only the forging
+/// check, which sorts, decides), or it wrote the line that follows the sort when a header is
+/// left. A taken slot or another forger returns before the check, so `sameSlot` and an error
+/// count only with that line; a sort that leaves no header (every header lacks an id) writes no
+/// line, and then only the check's own outcomes show it.
 pub fn paths(input: &Value, answer: &Expected, seen: &mut BTreeMap<String, usize>) {
     let Expected::Output(output) = answer else {
         return;
@@ -68,11 +72,23 @@ pub fn paths(input: &Value, answer: &Expected, seen: &mut BTreeMap<String, usize
     }
     let headers = state["quorumDetails"]["overHeightBlockHeaders"].as_object();
     let without_id = headers.is_some_and(|h| h.values().any(|header| header.get("id").is_none()));
-    let sorted = matches!(action, Some("forged" | "late" | "sameSlot"))
+    let checked = matches!(action, Some("forged" | "late"))
         || matches!(reason, Some("alreadyForged" | "quorum"));
+    let lines = output["lines"].as_array();
+    let sorted = checked || lines.is_some_and(|lines| lines.iter().any(detected));
     if without_id && sorted {
         count(PATHS[1]);
     }
+}
+
+/// Whether `line` is the reference's count of the distinct over-height headers, which it writes
+/// right after their sort when a header is left.
+fn detected(line: &Value) -> bool {
+    let message = line[1].as_str().unwrap_or_default();
+    line[0] == "info"
+        && message.starts_with("Detected ")
+        && (message.ends_with(" distinct overheight block header :zzz:")
+            || message.ends_with(" distinct overheight block headers :zzz:"))
 }
 
 /// Delegate `n`'s key pair.
@@ -457,10 +473,54 @@ mod tests {
 
     /// The paths `paths` counts for `input` and the reference's `action` and `reason`.
     fn counted(input: &Value, action: &str, reason: Option<&str>) -> Vec<String> {
-        let answer = Expected::Output(json!({ "action": action, "reason": reason, "lines": [] }));
+        counted_with(input, action, reason, &json!([]))
+    }
+
+    /// The paths `paths` counts when the reference also wrote `lines`.
+    fn counted_with(
+        input: &Value,
+        action: &str,
+        reason: Option<&str>,
+        lines: &Value,
+    ) -> Vec<String> {
+        let answer =
+            Expected::Output(json!({ "action": action, "reason": reason, "lines": lines }));
         let mut seen = BTreeMap::new();
         paths(input, &answer, &mut seen);
         seen.into_keys().collect()
+    }
+
+    #[test]
+    fn a_header_without_an_id_counts_only_where_the_sort_ran() {
+        let header = json!({
+            "networkState": {
+                "quorumDetails": { "overHeightBlockHeaders": { "192.0.2.1": { "height": 101 } } },
+            },
+        });
+        let detected = json!([["info", "Detected 1 distinct overheight block header :zzz:"]]);
+        // A taken slot or another forger returns before the forging check and its sort.
+        assert!(
+            counted(&header, "sameSlot", None).is_empty(),
+            "returned before"
+        );
+        // The block's slot equal to the last block's comes after the sort, which the line shows.
+        assert_eq!(
+            counted_with(&header, "sameSlot", None, &detected),
+            [PATHS[1]]
+        );
+        // So does a failure of the block's slot call.
+        assert_eq!(counted_with(&header, "error", None, &detected), [PATHS[1]]);
+        assert!(counted(&header, "error", None).is_empty());
+        let other = json!([["info", "Detected 1 distinct overheight block header"]]);
+        assert!(
+            counted_with(&header, "stop", None, &other).is_empty(),
+            "not the line"
+        );
+        // The line alone, without a header that lacks an id, is not the path.
+        let mut with_id = header.clone();
+        with_id["networkState"]["quorumDetails"]["overHeightBlockHeaders"]["192.0.2.1"]["id"] =
+            json!("ab");
+        assert!(counted_with(&with_id, "sameSlot", None, &detected).is_empty());
     }
 
     #[test]
