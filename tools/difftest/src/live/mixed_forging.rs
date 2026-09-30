@@ -226,7 +226,9 @@ fn production(run: &ForgingRun<'_>, data: &Data) -> Vec<String> {
 }
 
 /// Every block a Heartwood-hosted delegate forged followed, in its slot, an answer of its own
-/// relay at the height below it that counted the quorum.
+/// relay at the height below it that counted the delegates' reach: the run's
+/// `minimumDelegateReach`, which a partition side with fewer delegates than the full quorum meets
+/// when the run sets it lower.
 fn quorum_before(data: &Data) -> Vec<String> {
     let mut problems = Vec::new();
     for b in data.blocks.values() {
@@ -244,12 +246,12 @@ fn quorum_before(data: &Data) -> Vec<String> {
             a.relay == holder.name
                 && data.slots.at(a.at) == b.slot
                 && a.node_height == Some(u64::from(b.height) - 1)
-                && a.has_quorum >= QUORUM
+                && a.has_quorum >= data.reach
         });
         if !evidence {
             problems.push(format!(
-                "block {} at height {} (slot {}): no answer of {}'s relay in its slot at height {} with hasQuorum at least {QUORUM}",
-                b.id, b.height, b.slot, holder.name, b.height - 1
+                "block {} at height {} (slot {}): no answer of {}'s relay in its slot at height {} with hasQuorum at least {}",
+                b.id, b.height, b.slot, holder.name, b.height - 1, data.reach
             ));
         }
     }
@@ -469,4 +471,49 @@ fn one_tip(run: &ForgingRun<'_>) -> Vec<String> {
         problems.push("the tips step did not find one tip".to_owned());
     }
     problems
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn data(reach: u64, has_quorum: u64) -> Data {
+        let validator = Validator {
+            name: "node2".into(),
+            forger: "192.0.2.2".into(),
+            keys: BTreeMap::from([("k1".to_owned(), "d1".to_owned())]),
+        };
+        let block = Recorded {
+            id: "b".into(),
+            height: 10,
+            slot: 5,
+            key: "k1".into(),
+        };
+        Data {
+            validators: vec![validator],
+            hosted: vec!["node2".into()],
+            blocks: BTreeMap::from([("b".to_owned(), block)]),
+            answers: vec![Answer {
+                relay: "node2".into(),
+                at: 5_500,
+                caller: "192.0.2.2".into(),
+                node_height: Some(9),
+                has_quorum,
+                no_response: None,
+            }],
+            slots: Slots {
+                epoch_ms: 0,
+                slot_ms: 1_000,
+            },
+            reach,
+            problems: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_block_needs_an_answer_that_counted_the_runs_reach() {
+        assert!(quorum_before(&data(15, 21)).is_empty());
+        assert_eq!(quorum_before(&data(27, 21)).len(), 1);
+        assert_eq!(quorum_before(&data(15, 14)).len(), 1);
+    }
 }
