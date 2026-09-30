@@ -377,6 +377,31 @@ impl Criteria {
                 _ => {}
             }
         }
+        for name in self.evidence.keys() {
+            self.no_cycle(name, &mut Vec::new())?;
+        }
+        Ok(())
+    }
+
+    /// Refuse a named list that needs itself, through any chain of lists.
+    fn no_cycle<'a>(
+        &'a self,
+        name: &'a str,
+        path: &mut Vec<&'a str>,
+    ) -> std::result::Result<(), String> {
+        if path.contains(&name) {
+            return Err(format!(
+                "the evidence {name:?} needs itself ({} -> {name})",
+                path.join(" -> ")
+            ));
+        }
+        path.push(name);
+        for need in self.evidence.get(name).into_iter().flatten() {
+            if let Need::Evidence { name: inner } = need {
+                self.no_cycle(inner, path)?;
+            }
+        }
+        path.pop();
         Ok(())
     }
 
@@ -459,5 +484,22 @@ mod tests {
         let mut bad = tiny();
         bad.rows[1].id = "R1".to_owned();
         assert!(bad.check().unwrap_err().contains("twice"));
+    }
+
+    #[test]
+    fn a_list_of_evidence_that_needs_itself_is_refused() {
+        let mut bad = tiny();
+        let needs = |name: &str| {
+            vec![Need::Evidence {
+                name: name.to_owned(),
+            }]
+        };
+        bad.evidence.insert("a".to_owned(), needs("b"));
+        bad.evidence.insert("b".to_owned(), needs("a"));
+        assert!(bad.check().unwrap_err().contains("needs itself"));
+        let mut good = tiny();
+        good.evidence.insert("a".to_owned(), needs("b"));
+        good.evidence.insert("b".to_owned(), Vec::new());
+        assert!(good.check().is_ok());
     }
 }
