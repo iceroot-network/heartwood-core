@@ -74,6 +74,22 @@ impl Drop for ProcessLock {
     }
 }
 
+/// Take the locks of the roles that `instance`'s role also holds ([`Role::also_locks`]), and
+/// remove any pid file of theirs (one there names no running process, since the lock was free).
+/// Those roles' commands see them held, and find no pid to signal.
+pub fn hold_also(instance: &Instance) -> Result<Vec<File>, LockError> {
+    let io = |error: &dyn std::fmt::Display| LockError::Io(error.to_string());
+    let (dir, mut held) = (RunDir::open(instance).map_err(|e| io(&e))?, Vec::new());
+    for role in instance.role.also_locks() {
+        let other = self::instance(*role, &instance.token, &instance.network, &instance.paths);
+        let (path, role) = (other.lock_path(), role.name());
+        let file = take_lock_in(&dir, &path).map_err(|e| io(&e))?;
+        held.push(file.ok_or(LockError::Held { role, path })?);
+        let _ = dir.remove(&other.pid_path());
+    }
+    Ok(held)
+}
+
 /// The instance of `role` of `token` on `network`, whose directories are `paths`.
 pub fn instance(role: Role, token: &str, network: &str, paths: &Paths) -> Instance {
     let (token, network, paths) = (token.to_owned(), network.to_owned(), paths.clone());

@@ -64,6 +64,7 @@ pub fn run(command: ForgerCommand) -> ExitCode {
             let args: Vec<OsString> = args.collect();
             let flags = InstanceFlags { token, network };
             on_instance(Role::Forger, &flags, |i| {
+                super::core::refuse_running(i, &[Role::Core])?;
                 super::start(i, args, start.daemon)
             })
         }
