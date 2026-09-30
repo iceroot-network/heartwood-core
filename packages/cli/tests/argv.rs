@@ -8,38 +8,59 @@ fn words(line: &str) -> Vec<OsString> {
     line.split_whitespace().map(OsString::from).collect()
 }
 
+/// Every colon spelling of the tree, and the words of each.
+const COMMANDS: [&str; 46] = [
+    "relay:run",
+    "relay:start",
+    "relay:stop",
+    "relay:restart",
+    "relay:status",
+    "relay:log",
+    "forger:run",
+    "forger:start",
+    "forger:stop",
+    "forger:restart",
+    "forger:status",
+    "forger:log",
+    "core:run",
+    "core:start",
+    "core:stop",
+    "core:restart",
+    "core:status",
+    "core:log",
+    "network:generate",
+    "snapshot:rollback",
+    "pool:clear",
+    "state:clear",
+    "doctor:checks",
+    "doctor:explain",
+    "doctor:mcp",
+    "env:get",
+    "env:list",
+    "env:set",
+    "env:paths",
+    "config:publish",
+    "config:forger",
+    "config:forger:private-key",
+    "service:install",
+    "service:uninstall",
+    "devnet:init",
+    "devnet:start",
+    "devnet:stop",
+    "devnet:status",
+    "devnet:logs",
+    "devnet:stop-node",
+    "devnet:start-node",
+    "devnet:restart-node",
+    "devnet:reset",
+    "devnet:wait",
+    "devnet:env",
+    "devnet:run",
+];
+
 #[test]
-fn every_colon_spelling_of_a_built_command_is_split() {
-    let commands = [
-        "relay:run",
-        "relay:start",
-        "relay:stop",
-        "relay:restart",
-        "relay:status",
-        "relay:log",
-        "forger:run",
-        "forger:start",
-        "forger:stop",
-        "forger:restart",
-        "forger:status",
-        "forger:log",
-        "network:generate",
-        "snapshot:rollback",
-        "pool:clear",
-        "state:clear",
-        "devnet:init",
-        "devnet:start",
-        "devnet:stop",
-        "devnet:status",
-        "devnet:logs",
-        "devnet:stop-node",
-        "devnet:start-node",
-        "devnet:restart-node",
-        "devnet:reset",
-        "devnet:wait",
-        "devnet:env",
-    ];
-    for command in commands {
+fn every_colon_spelling_of_the_tree_is_split() {
+    for command in COMMANDS {
         let spaced = command.replace(':', " ");
         assert_eq!(
             rewrite(words(&format!(
@@ -58,7 +79,10 @@ fn other_arguments_are_left_as_they_are() {
     for line in [
         "heartwood relay start --token a:b",
         "heartwood relay:share",
-        "heartwood core:start",
+        "heartwood core:begin",
+        "heartwood env:show",
+        "heartwood top:now",
+        "heartwood config:forger:key",
         "heartwood relay:",
         "heartwood :start",
         "heartwood relay:start:now",
