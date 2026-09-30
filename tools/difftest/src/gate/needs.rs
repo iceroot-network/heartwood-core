@@ -266,14 +266,8 @@ impl<'a> Judge<'a> {
             let mut seen = std::collections::BTreeSet::new();
             counted.retain(|i| seen.insert(i.value.variables.clone()));
         }
-        let have = counted.len();
-        if have >= min as usize {
-            return Verdict {
-                status: Status::Pass,
-                detail: format!("{label}: {have} passing record{}", plural(have)),
-            };
-        }
-        // A failed record blocks unless a later record with the same variables passed.
+        // A failed record blocks, however many others passed, unless a later record with the
+        // same variables passed: a failed run never counts and is not outweighed.
         let blocking: Vec<&&Item<GateRecord>> = matching
             .iter()
             .filter(|i| i.validity.counts() && i.value.result == GateResult::Fail)
@@ -295,6 +289,13 @@ impl<'a> Judge<'a> {
                     plural(blocking.len()),
                     first.path.display()
                 ),
+            };
+        }
+        let have = counted.len();
+        if have >= min as usize {
+            return Verdict {
+                status: Status::Pass,
+                detail: format!("{label}: {have} passing record{}", plural(have)),
             };
         }
         let stale: Vec<&&Item<GateRecord>> =

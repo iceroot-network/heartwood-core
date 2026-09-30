@@ -1093,3 +1093,16 @@ fn runs_of_one_seed_count_their_cases_once() {
         plan.text
     );
 }
+
+#[test]
+fn a_failed_record_blocks_its_row_even_beside_enough_passes() {
+    let rig = Rig::new();
+    rig.criteria(&base_criteria());
+    assert!(rig.record("l0", "difftest run l0", 0, "", T1).ok);
+    assert!(rig.record("l0", "difftest run l0", 1, "", T2).ok);
+    let ran = s1(&rig, &[]);
+    assert!(ran.text.contains("R1       FAIL"), "{}", ran.text);
+    assert!(ran.text.contains("failed record"), "{}", ran.text);
+    assert!(rig.record("l0", "difftest run l0", 0, "", T3).ok);
+    assert!(s1(&rig, &[]).text.contains("R1       pass"));
+}
