@@ -10,6 +10,12 @@ use super::record::{GateRecord, GateResult};
 use super::store::{Evidence, Item};
 use super::totals::{self, Totals, group};
 
+/// Whether a record names `term`: one of the words of its variables is `term` (so `RUN=mixed`
+/// does not match `RUN=mixed-short`), or its command contains it.
+pub(super) fn mentions(record: &GateRecord, term: &str) -> bool {
+    record.variables.split_whitespace().any(|word| word == term) || record.command.contains(term)
+}
+
 /// A need's status, worst first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Status {
@@ -249,11 +255,7 @@ impl<'a> Judge<'a> {
             .records
             .iter()
             .filter(|i| i.value.target == target)
-            .filter(|i| {
-                contains.iter().all(|c| {
-                    i.value.variables.contains(c.as_str()) || i.value.command.contains(c.as_str())
-                })
-            })
+            .filter(|i| contains.iter().all(|c| mentions(&i.value, c)))
             .collect();
         let mut counted: Vec<&Item<GateRecord>> = matching
             .iter()
@@ -426,4 +428,32 @@ fn plural(n: usize) -> &'static str {
 
 fn describe(validity: &Validity) -> String {
     validity.describe()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(variables: &str, command: &str) -> GateRecord {
+        serde_json::from_value(serde_json::json!({
+            "format": "heartwood-gate-record/1", "target": "live-check", "command": command,
+            "variables": variables, "head": "0".repeat(40), "dirty": false,
+            "testedPaths": [], "machine": "host-1", "exitStatus": 0, "result": "pass",
+            "started": "2026-10-01T10:00:00Z", "finished": "2026-10-01T10:04:10Z"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_variable_is_named_by_its_whole_word_and_a_command_by_its_text() {
+        let short = record(
+            "RUN=mixed-short SEED=3",
+            "difftest live-check --run mixed-short",
+        );
+        assert!(mentions(&short, "RUN=mixed-short"));
+        assert!(mentions(&short, "SEED=3"));
+        assert!(!mentions(&short, "RUN=mixed"));
+        assert!(!mentions(&short, "SEED=30"));
+        assert!(mentions(&short, "--run mixed-short"));
+    }
 }

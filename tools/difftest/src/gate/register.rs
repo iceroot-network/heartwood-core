@@ -30,6 +30,7 @@ use super::flags::Flags;
 use super::git::Validity;
 use super::make_record::{OwnRecord, write_own};
 use super::names;
+use super::needs::mentions;
 use super::record::{Counts, GateRecord, GateResult};
 use super::s1::setup;
 use super::store::{Evidence, Item, Sources};
@@ -54,10 +55,7 @@ fn defines(text: &str, name: &str) -> bool {
 
 /// Whether the record is the one a record rule or record test names.
 fn matches(record: &GateRecord, target: &str, contains: &[String]) -> bool {
-    record.target == target
-        && contains
-            .iter()
-            .all(|c| record.variables.contains(c.as_str()) || record.command.contains(c.as_str()))
+    record.target == target && contains.iter().all(|c| mentions(record, c))
 }
 
 /// The rule for `record`, the most specific one (the most `contains`) first.
