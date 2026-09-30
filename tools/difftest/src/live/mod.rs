@@ -644,20 +644,63 @@ fn check_run(
     Ok(())
 }
 
+/// How long after a partition's heal the recipe may reconnect a node that has not followed it.
+const RECONNECT_AFTER_MS: i64 = 60_000;
+
+/// How many blocks behind node 1, on another tip, a node the recipe reconnects must be.
+const RECONNECT_BEHIND: u64 = 10;
+
+/// Why the recipe's reconnect `step` (`reconnect-<node>`) is outside its rule, or `None` when it is
+/// inside: 60 s or more after the heal at `heal`, while the node was 10 or more blocks behind
+/// node 1 on another tip. The step records both tips (`height`, `tip`, `node1Height`, `node1Tip`);
+/// a record without them is judged on its time alone.
+fn reconnect_outside_the_rule(step: &run::Step, heal: Option<i64>) -> Option<String> {
+    let (Some(start), Some(heal)) = (step.start, heal) else {
+        return Some("the run records no heal, or the step no start".to_owned());
+    };
+    if start - heal < RECONNECT_AFTER_MS {
+        return Some(format!(
+            "it started {} ms after the heal, before 60 s had passed",
+            start - heal
+        ));
+    }
+    let tips = (
+        step.number("height"),
+        step.text("tip"),
+        step.number("node1Height"),
+        step.text("node1Tip"),
+    );
+    match tips {
+        (Some(height), Some(tip), Some(control), Some(control_tip))
+            if tip == control_tip || control.saturating_sub(height) < RECONNECT_BEHIND =>
+        {
+            Some(format!(
+                "it was at {height} ({tip}) against node 1's {control} ({control_tip}), not 10 or more blocks behind on another tip"
+            ))
+        }
+        _ => None,
+    }
+}
+
 /// How the minority of a partition rejoined after the heal. The recipe restarts node 3's relay
 /// when there is no single tip 120 s after the heal (`reconnect-minority`): node 3 keeps its side
 /// of the fork while it holds a peer, which a reference relay as node 4 is (a dry run). A Heartwood
 /// relay without a listener is no peer of node 3, which then falls back to its seeds by itself; a
 /// run with such a relay in the minority must converge without that restart. The relay of the
 /// mixed runs listens, so it keeps node 3 on its side as a reference relay does: there the restart
-/// of node 3 (a reference relay) and the reconnect of a reference node are the recipe's recorded
-/// workarounds, and a Heartwood node the recipe had to reconnect (`reconnect-<node>`) fails.
+/// of node 3 (a reference relay) is the recipe's recorded workaround. So is the reconnect of a
+/// node (`reconnect-<node>`: its routes opened and its relay restarted), of either implementation,
+/// within the recipe's rule ([`reconnect_outside_the_rule`]); a reconnect outside it fails.
 fn check_reconnect(manifest: &Manifest, steps: &[run::Step], cases: &mut Cases) {
     if !steps.iter().any(|s| s.name == "converged") {
         return;
     }
     let restarted = steps.iter().any(|s| s.name == "reconnect-minority");
     if MIXED_RUNS.contains(&manifest.run.as_str()) {
+        let heal = (steps.iter())
+            .find(|s| s.name == "heal")
+            .and_then(|s| s.start);
+        let mut reconnected = Vec::new();
         for s in steps {
             let Some(node) = s
                 .name
@@ -666,34 +709,57 @@ fn check_reconnect(manifest: &Manifest, steps: &[run::Step], cases: &mut Cases) 
             else {
                 continue;
             };
-            if node.implementation == Implementation::Heartwood && !manifest.dry_run {
+            let heartwood = node.implementation == Implementation::Heartwood && !manifest.dry_run;
+            let implementation = match heartwood {
+                true => "a Heartwood relay",
+                false => "a reference relay",
+            };
+            if let Some(why) = reconnect_outside_the_rule(s, heal) {
                 cases.fail(
                     "run",
                     format!(
-                        "{} followed the heal without a scripted reconnect",
+                        "{} was reconnected by the recipe only when it had not followed the heal",
                         node.name
                     ),
-                    format!(
-                        "the recipe reconnected {}, a Heartwood relay ({})",
-                        node.name, s.name
-                    ),
+                    format!("{} ({implementation}): {why}", s.name),
                 );
-            } else {
-                cases.record(
-                    "run",
-                    format!(
-                        "{} was reconnected by the recipe after the heal (a reference relay)",
-                        node.name
-                    ),
-                );
+                continue;
             }
+            let after = (s.start.unwrap_or_default() - heal.unwrap_or_default()) / 1_000;
+            let behind = match (s.number("node1Height"), s.number("height")) {
+                (Some(control), Some(height)) => format!(
+                    ", {} blocks behind node 1 on its own tip",
+                    control.saturating_sub(height)
+                ),
+                _ => String::new(),
+            };
+            cases.record(
+                "run",
+                format!(
+                    "{} ({implementation}) was reconnected by the recipe {after} s after the heal{behind}, as the recipe reconnects a node 4 or 5 of either implementation that has not followed the heal in 60 s",
+                    node.name
+                ),
+            );
+            reconnected.push(node.name.clone());
+        }
+        let mut how = Vec::new();
+        if !reconnected.is_empty() {
+            how.push(format!(
+                "the recipe reconnected {}",
+                reconnected.join(" and ")
+            ));
+        }
+        if restarted {
+            how.push("the scripted restart of node 3's relay (a relay in the minority, of either implementation, keeps node 3 on its side)".to_owned());
         }
         cases.record(
             "run",
-            if restarted {
-                "the minority rejoined the majority after the scripted restart of node 3's relay (a relay in the minority, of either implementation, keeps node 3 on its side)"
-            } else {
-                "the minority rejoined the majority after the heal by itself"
+            match how.is_empty() {
+                true => "the minority rejoined the majority after the heal by itself".to_owned(),
+                false => format!(
+                    "the minority rejoined the majority after {}",
+                    how.join(", then ")
+                ),
             },
         );
         return;
@@ -1453,8 +1519,19 @@ mod tests {
         assert!(judged(Implementation::Heartwood, false, &[]).is_empty());
     }
 
+    /// A step `seconds` after a heal at 1,000 s, with its record.
+    fn step_after_the_heal(name: &str, node: &str, seconds: i64, record: Value) -> Step {
+        Step {
+            name: name.into(),
+            node: node.into(),
+            ok: true,
+            start: Some((1_000 + seconds) * 1_000),
+            record,
+        }
+    }
+
     #[test]
-    fn a_mixed_minority_records_node_3_restart_and_fails_a_heartwood_reconnect() {
+    fn a_mixed_minority_records_every_reconnect_the_recipes_rule_allows_of_either_implementation() {
         let judged = |steps: &[Step]| {
             let mut m = manifest(Implementation::Heartwood, false);
             m.run = "p".into();
@@ -1472,10 +1549,16 @@ mod tests {
             check_reconnect(&m, steps, &mut cases);
             cases.results
         };
+        let heal = step_after_the_heal("heal", "all", 0, json!({"step": "heal"}));
+        let behind = |name: &str| json!({"step": name, "height": 99, "tip": "b", "node1Height": 140, "node1Tip": "a"});
+        let reconnect = |node: &str, seconds, record| {
+            step_after_the_heal(&format!("reconnect-{node}"), node, seconds, record)
+        };
         // A Heartwood relay in the minority listens, as a reference relay does: node 3's restart
         // (a reference relay) is the recipe's recorded workaround, as is node 5's reconnect.
         let restarted = judged(&[
-            step("reconnect-node5"),
+            heal.clone(),
+            reconnect("node5", 65, behind("reconnect-node5")),
             step("reconnect-minority"),
             step("converged"),
         ]);
@@ -1487,13 +1570,63 @@ mod tests {
             restarted.iter().any(|r| r.label.contains("node 3")),
             "{restarted:?}"
         );
-        // A Heartwood node the recipe had to reconnect fails the run.
-        let touched = judged(&[step("reconnect-node4"), step("converged")]);
+        // The recipe reconnects node 4, a Heartwood relay, as it reconnects a reference node 4:
+        // 60 s or more after the heal, while it is 10 or more blocks behind node 1 on another tip.
+        // Both implementations face the same scenario, so it is recorded, not failed.
+        let heartwood = judged(&[
+            heal.clone(),
+            reconnect("node4", 61, behind("reconnect-node4")),
+            reconnect("node5", 80, behind("reconnect-node5")),
+            step("converged"),
+        ]);
         assert!(
-            touched
+            heartwood.iter().all(|r| !r.outcome.is_failure()),
+            "{heartwood:?}"
+        );
+        assert!(
+            heartwood
+                .iter()
+                .any(|r| r.label.contains("node4") && r.label.contains("a Heartwood relay")),
+            "{heartwood:?}"
+        );
+        // Outside the rule, a reconnect fails, whichever implementation the node runs: one before
+        // 60 s have passed since the heal, one of a node on node 1's tip or 9 blocks behind it,
+        // and one that no heal dates.
+        let early = judged(&[
+            heal.clone(),
+            reconnect("node4", 30, behind("reconnect-node4")),
+            step("converged"),
+        ]);
+        assert!(
+            early
                 .iter()
                 .any(|r| r.outcome.is_failure() && r.label.contains("node4")),
-            "{touched:?}"
+            "{early:?}"
+        );
+        let on_the_tip = json!({"height": 140, "tip": "a", "node1Height": 140, "node1Tip": "a"});
+        let near = json!({"height": 131, "tip": "b", "node1Height": 140, "node1Tip": "a"});
+        for record in [on_the_tip, near] {
+            let followed = judged(&[
+                heal.clone(),
+                reconnect("node5", 61, record),
+                step("converged"),
+            ]);
+            assert!(
+                followed
+                    .iter()
+                    .any(|r| r.outcome.is_failure() && r.label.contains("node5")),
+                "{followed:?}"
+            );
+        }
+        let undated = judged(&[
+            reconnect("node4", 61, behind("reconnect-node4")),
+            step("converged"),
+        ]);
+        assert!(
+            undated
+                .iter()
+                .any(|r| r.outcome.is_failure() && r.label.contains("node4")),
+            "{undated:?}"
         );
     }
 }

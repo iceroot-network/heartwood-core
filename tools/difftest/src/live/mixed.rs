@@ -712,10 +712,11 @@ fn transaction_ids(dir: &Path) -> Result<BTreeSet<String>> {
     Ok(out)
 }
 
-/// When node 4 left the fork, recorded beside the steps that reconnected reference nodes after the
-/// heal: the heal passed through node 4 alone only when it came first. A reference node whose peers
-/// are the minority's cannot come first (its health check needs a majority of the attested
-/// delegates among its peers), and a Heartwood relay behaves as it does.
+/// When node 4 left the fork, recorded beside the steps that reconnected nodes after the heal
+/// (node 4 itself among them, of either implementation): the heal passed through node 4 alone
+/// only when it came first. A reference node whose peers are the minority's cannot come first (its
+/// health check needs a majority of the attested delegates among its peers), and a Heartwood relay
+/// behaves as it does.
 fn node4_left_the_fork(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()> {
     let heartwood4 = heartwood(run.manifest).iter().any(|n| n.name == "node4");
     let dir = match heartwood4 {
@@ -753,7 +754,7 @@ fn node4_left_the_fork(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) ->
 }
 
 /// Run `p`: the minority's blocks through node 4 only, both sides on the majority's chain after
-/// the heal, and when node 4 left the fork beside the steps that reconnected reference nodes.
+/// the heal, and when node 4 left the fork beside the steps that reconnected nodes.
 pub(super) fn fork(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
     guard(
         cases,
@@ -824,20 +825,9 @@ pub(super) fn fork(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
                 );
             }
             // Its peer list: node 4 alone, until the recipe reopened its routes after the heal (a
-            // reference node 5 left on the minority's tip: `reconnect-node5`, recorded).
+            // node 5 left on the minority's tip: `reconnect-node5`). The reconnects of either
+            // implementation are judged against the recipe's rule with the run's steps.
             let steps = run::steps(run.run_dir)?;
-            for s in steps.iter().filter(|s| s.name.starts_with("reconnect-")) {
-                if heartwood(m).iter().any(|n| n.name == s.node) {
-                    cases.fail(
-                        SECTION,
-                        "the sides converged after the heal",
-                        format!(
-                            "the recipe had to reconnect the Heartwood relay {} ({})",
-                            s.node, s.name
-                        ),
-                    );
-                }
-            }
             let reopened = step(&steps, "reconnect-node5").and_then(|s| s.start);
             let polls = polls(run.run_dir)?;
             let mine: Vec<&Poll> = polls
