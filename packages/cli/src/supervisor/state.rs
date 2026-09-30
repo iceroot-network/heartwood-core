@@ -5,16 +5,14 @@
 //! `version`. The supervisor rewrites it whole, through a temporary file and a rename, at every
 //! change; it is trusted only while the supervisor's lock is held, except for `errored`.
 
-use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use nix::fcntl::OFlag;
 
 use serde_json::{Value, json};
 
-use super::at;
+use super::{RunDir, at};
 use crate::errors::ProcessError;
 use crate::instance::pick;
 use crate::seams::SupervisedStatus;
@@ -57,7 +55,10 @@ pub struct SupervisorState {
 impl SupervisorState {
     /// Read the state file at `path`; `None` when there is none.
     pub fn read(path: &Path) -> Result<Option<SupervisorState>, ProcessError> {
-        let text = match fs::read_to_string(path) {
+        let Some(dir) = RunDir::beside_if_there(path)? else {
+            return Ok(None);
+        };
+        let text = match dir.read(path) {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
             read => at(path, read)?,
         };
@@ -82,8 +83,13 @@ impl SupervisorState {
         }))
     }
 
-    /// Write the state file at `path`, atomically.
+    /// Write the state file at `path`, atomically, in its directory as [`RunDir::beside`] holds it.
     pub fn write(&self, path: &Path) -> Result<(), ProcessError> {
+        self.write_in(&RunDir::beside(path)?, path)
+    }
+
+    /// [`SupervisorState::write`] in the run directory `dir`, which was checked.
+    pub fn write_in(&self, dir: &RunDir, path: &Path) -> Result<(), ProcessError> {
         let value = json!({
             "name": self.name,
             "status": self.status.name(),
@@ -97,21 +103,17 @@ impl SupervisorState {
             "version": self.version,
         });
         let temp = path.with_extension("json.tmp");
-        let mut file = OpenOptions::new();
-        let file = file
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .custom_flags(OFlag::O_NOFOLLOW.bits())
-            .open(&temp);
-        let file = at(&temp, file)?;
+        let flags = OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC;
+        let file = at(&temp, dir.file(&temp, flags, 0o666))?;
         at(&temp, (&file).write_all(format!("{value:#}\n").as_bytes()))?;
-        at(path, fs::rename(&temp, path))
+        at(path, dir.rename(&temp, path))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     #[test]

@@ -55,6 +55,12 @@ fn id() -> impl Strategy<Value = String> {
     hex_of(prop::collection::vec(any::<u8>(), 32))
 }
 
+/// A getBlocks limit: the range 1 to 400 a reference server accepts, with its two edges drawn
+/// often.
+fn block_limit() -> impl Strategy<Value = u32> {
+    prop_oneof![1 => Just(1), 1 => Just(400), 4 => 1u32..=400]
+}
+
 /// A request the client writes, as the oracle's payload.
 fn request_case() -> impl Strategy<Value = OpCase> {
     let headers = (prop::sample::select(&VERSIONS[..]), 0u32..=65_535)
@@ -64,7 +70,7 @@ fn request_case() -> impl Strategy<Value = OpCase> {
         Just(("getPeers", json!({}))),
         prop::collection::vec(id(), 1..=10)
             .prop_map(|ids| ("getCommonBlocks", json!({ "ids": ids }))),
-        (1u32..=u32::MAX, 1u32..=400, any::<bool>()).prop_map(|(height, limit, only)| {
+        (1u32..=u32::MAX, block_limit(), any::<bool>()).prop_map(|(height, limit, only)| {
             let mut payload =
                 json!({ "lastBlockHeight": height, "blockLimit": limit, "serialised": true });
             if only {
@@ -389,5 +395,24 @@ mod tests {
         }
         assert_eq!(routes.len(), 7, "{routes:?}");
         assert!(routes.values().all(|n| *n >= 100), "{routes:?}");
+    }
+
+    /// The getBlocks limits drawn: both edges of the range 1 to 400 are reached often.
+    #[test]
+    fn the_getblocks_limits_reach_both_edges() {
+        let mut runner = TestRunner::deterministic();
+        let strategy = request_case();
+        let mut limits: BTreeMap<u64, usize> = BTreeMap::new();
+        for _ in 0..2_000 {
+            let (_, _, input) = strategy.new_tree(&mut runner).unwrap().current();
+            if let Some(limit) = input["payload"]["blockLimit"].as_u64() {
+                *limits.entry(limit).or_default() += 1;
+            }
+        }
+        let count = |limit| limits.get(&limit).copied().unwrap_or_default();
+        assert!(count(1) >= 20, "1: {}", count(1));
+        assert!(count(400) >= 20, "400: {}", count(400));
+        assert!(limits.keys().all(|limit| (1..=400).contains(limit)));
+        assert!(limits.len() > 50, "{} distinct limits", limits.len());
     }
 }

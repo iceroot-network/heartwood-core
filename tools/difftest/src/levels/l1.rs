@@ -442,7 +442,7 @@ pub fn under_reached(seen: &BTreeMap<String, usize>, minimum: u32) -> Vec<(Strin
 
 /// The outcomes of a forging decision that P19 must reach: each action of the reference's attempt
 /// (`forger-decide.js`), and each reason it refuses for. An answer that is an error is no
-/// action and is not listed.
+/// action and is not listed. P19 must also reach the forger's paths of [`forger_decide::PATHS`].
 pub const DECISION_CLASSES: [&str; 10] = [
     "decide stop",
     "decide error",
@@ -456,17 +456,14 @@ pub const DECISION_CLASSES: [&str; 10] = [
     "decide refused: quorum",
 ];
 
-/// The decision actions and refusals that `seen` counts fewer than `minimum` times, each with its
-/// count.
+/// The decision actions, refusals and paths that `seen` counts fewer than `minimum` times, each
+/// with its count.
 pub fn decisions_under_reached(
     seen: &BTreeMap<String, usize>,
     minimum: u32,
 ) -> Vec<(String, usize)> {
-    reached_fewer(
-        seen,
-        minimum,
-        DECISION_CLASSES.iter().map(|c| (*c).to_owned()),
-    )
+    let wanted = DECISION_CLASSES.iter().chain(&forger_decide::PATHS);
+    reached_fewer(seen, minimum, wanted.map(|c| (*c).to_owned()))
 }
 
 /// The error class of a refused transaction in an oracle answer (P7).
@@ -574,6 +571,7 @@ pub fn run(
             }
             if *property == Property::Decisions {
                 decision_outcomes(&answer, &mut seen.borrow_mut());
+                forger_decide::paths(&case.input, &answer, &mut seen.borrow_mut());
             }
             if *property == Property::Served {
                 served::outcomes(&case.input, &answer, &mut seen.borrow_mut());
@@ -685,7 +683,7 @@ pub fn run(
     }
     if options.properties.contains(&Property::Decisions) && options.decision_reach > 0 {
         source.push_str(&format!(
-            "; P19 each action and refusal at least {} times",
+            "; P19 each action, refusal and path at least {} times",
             options.decision_reach
         ));
     }
@@ -734,8 +732,9 @@ fn processor_checks(file: &str, seen: &BTreeMap<String, usize>, min_reach: u32) 
     out
 }
 
-/// P19's own check: each of the reference's actions and refusals must be reached `min_reach`
-/// times; nothing is checked without a minimum.
+/// P19's own check: each of the reference's actions and refusals, and each path of
+/// [`forger_decide::PATHS`], must be reached `min_reach` times; nothing is checked without a
+/// minimum.
 fn decision_checks(file: &str, seen: &BTreeMap<String, usize>, min_reach: u32) -> Vec<CaseResult> {
     if min_reach == 0 {
         return Vec::new();
@@ -751,7 +750,9 @@ fn decision_checks(file: &str, seen: &BTreeMap<String, usize>, min_reach: u32) -
         file: file.to_owned(),
         line: 0,
         op: Property::Decisions.number().to_owned(),
-        label: format!("P19 reached each action and refusal of the reference {min_reach} times"),
+        label: format!(
+            "P19 reached each action, refusal and path of the reference {min_reach} times"
+        ),
         height: 0,
         outcome,
     }]
@@ -915,6 +916,17 @@ mod tests {
             decision_outcomes(&output(action, reason), &mut seen);
         }
         assert_eq!(DECISION_CLASSES.len(), 10);
+        // Every action and refusal, but no path of the forger.
+        let checks = decision_checks("l1/decisions", &seen, 1);
+        let Outcome::HarnessError(message) = &checks[0].outcome else {
+            panic!("{checks:?}");
+        };
+        for path in forger_decide::PATHS {
+            assert!(message.contains(&format!("{path} 0")), "{message}");
+        }
+        for path in forger_decide::PATHS {
+            seen.insert(path.to_owned(), 2);
+        }
         let checks = decision_checks("l1/decisions", &seen, 1);
         assert!(checks.iter().all(|c| !c.outcome.is_failure()), "{checks:?}");
         assert_eq!(checks.len(), 1);
