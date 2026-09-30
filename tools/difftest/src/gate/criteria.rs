@@ -246,6 +246,9 @@ pub enum TestRef {
         file: String,
         /// The test function's name.
         name: String,
+        /// The cargo features its test file needs (`required-features` in the manifest).
+        #[serde(default)]
+        features: Vec<String>,
     },
     /// A valid passing gate record of a make target.
     Record {

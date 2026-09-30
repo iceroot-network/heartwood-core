@@ -11,7 +11,8 @@
 //!
 //! - an entry that is not retired has a non-empty trigger and at least one test;
 //! - a cargo test exists in the file it is named in (a `fn` of that name), and with `--run` it
-//!   passes (the tests run grouped by package and test file); a record test is a valid passing
+//!   passes (the tests run grouped by package, test file and features, and a test marked ignored
+//!   runs too); a record test is a valid passing
 //!   record of its make target;
 //! - each code name an entry claims is a real name;
 //! - an honest run (the product run as meant to run) hit no entry beyond those its rule allows;
@@ -80,34 +81,42 @@ fn passed_tests(output: &str) -> BTreeSet<String> {
 
 /// Run the cargo tests of `entries`, grouped by package and test file; the names that passed.
 fn run_cargo(repo: &Path, entries: &[&Entry]) -> Result<BTreeSet<(String, String)>> {
-    let mut groups: BTreeMap<(String, Option<String>), BTreeSet<String>> = BTreeMap::new();
+    let mut groups: BTreeMap<(String, Option<String>, Vec<String>), BTreeSet<String>> =
+        BTreeMap::new();
     for entry in entries {
         for test in &entry.tests {
             if let TestRef::Cargo {
                 package,
                 test,
                 name,
+                features,
                 ..
             } = test
             {
+                let mut features = features.clone();
+                features.sort();
                 groups
-                    .entry((package.clone(), test.clone()))
+                    .entry((package.clone(), test.clone(), features))
                     .or_default()
                     .insert(name.clone());
             }
         }
     }
     let mut passed = BTreeSet::new();
-    for ((package, test), names) in groups {
+    for ((package, test, features), names) in groups {
         let mut command = Command::new("cargo");
         command
             .current_dir(repo)
             .args(["test", "--locked", "-p", &package]);
+        if !features.is_empty() {
+            command.args(["--features", &features.join(",")]);
+        }
         match &test {
             Some(test) => command.args(["--test", test]),
             None => command.arg("--lib"),
         };
-        command.arg("--");
+        // The names are the filter, so an integration test that is marked ignored runs too.
+        command.arg("--").arg("--include-ignored");
         for name in &names {
             command.arg(name);
         }
