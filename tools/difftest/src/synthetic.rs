@@ -2350,7 +2350,8 @@ pub fn is_synthetic_file(file: &str) -> bool {
     file.ends_with("/synthetic") || file.ends_with("/synthetic-forger")
 }
 
-/// Run every synthetic case on top of `corpus` against the oracle `server`.
+/// Run every synthetic case on top of `corpus` against the oracle `server`, then the recovery
+/// cases ([`crate::synthetic_rollback`], [`crate::synthetic_clear`]).
 pub fn run(corpus: &Corpus, server: &mut OracleServer) -> Result<Vec<CaseResult>> {
     let keys = corpus_keys(corpus)?;
     let mut out = Vec::new();
@@ -2367,6 +2368,8 @@ pub fn run(corpus: &Corpus, server: &mut OracleServer) -> Result<Vec<CaseResult>
             }),
         }
     }
+    out.extend(crate::synthetic_rollback::run(corpus, server)?);
+    out.extend(crate::synthetic_clear::run(corpus, server)?);
     Ok(out)
 }
 

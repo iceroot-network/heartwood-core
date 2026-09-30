@@ -1,11 +1,14 @@
 //! The seam between the server's transport and its controllers: the transport's plugin chain calls
 //! [`RouteHandlers`] after the pre-handler step, and reports each socket's open and close through
-//! [`SessionEvents`], which the forger's attestation session listens to.
+//! [`SessionEvents`], which the forger's attestation session listens to. A request running on its
+//! own task reads its socket's close through [`SocketClosed`].
 
 use std::net::IpAddr;
+use std::sync::OnceLock;
 
 use futures_util::future::BoxFuture;
 use heartwood_p2p_wire::RouteId;
+use tokio::sync::watch;
 
 /// A socket's session, numbered by the server from 1 in the order the sockets opened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -59,6 +62,35 @@ pub trait RouteHandlers: Send + Sync {
         route: RouteId,
         request: ServerRequest,
     ) -> BoxFuture<'_, Result<Vec<u8>, ServerRefusal>>;
+}
+
+/// A request's view of its socket's close: the session fires it as soon as it stops serving the
+/// socket, whatever the reason; a request that runs on reads it (AwaitBlock's record).
+#[derive(Debug, Clone)]
+pub struct SocketClosed(watch::Receiver<bool>);
+
+impl SocketClosed {
+    /// A new signal: the sender fires it by sending `true`, or by being dropped.
+    pub fn channel() -> (watch::Sender<bool>, SocketClosed) {
+        let (sender, receiver) = watch::channel(false);
+        (sender, SocketClosed(receiver))
+    }
+
+    /// A signal that never fires, for a request without a socket.
+    pub fn never() -> SocketClosed {
+        static NEVER: OnceLock<watch::Sender<bool>> = OnceLock::new();
+        SocketClosed(NEVER.get_or_init(|| watch::channel(false).0).subscribe())
+    }
+
+    /// Whether the signal has fired.
+    pub fn is_closed(&self) -> bool {
+        *self.0.borrow() || self.0.has_changed().is_err()
+    }
+
+    /// Resolve once the signal fires.
+    pub async fn closed(&mut self) {
+        let _ = self.0.wait_for(|closed| *closed).await;
+    }
 }
 
 /// The sockets' opens and closes, as the transport reports them.

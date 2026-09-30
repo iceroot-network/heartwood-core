@@ -12,10 +12,12 @@
 
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use heartwood_crypto::{Block, BlockHeader, BlockId, PublicKeyBytes, TransactionId};
 use heartwood_kernel::ChainLink;
+use heartwood_p2p_wire::RouteId;
 use heartwood_p2p_wire::codecs::blocks::BlockListing;
 use heartwood_p2p_wire::internal::{CurrentRound, EmitEvent, NetworkState};
 use heartwood_p2p_wire::status::PeerConfig;
@@ -36,6 +38,40 @@ pub struct QueueState {
     pub new_block: bool,
     /// A job runs.
     pub running: bool,
+}
+
+/// How a public request's AwaitBlock step ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AwaitEnd {
+    /// Nothing to wait for: the machine was not in `newBlock` with the queue running.
+    NoWait,
+    /// The queue drained.
+    Drained,
+    /// The bound ended the wait.
+    Bound,
+    /// The request's socket closed before the drain or the bound; the wait still ran to one of
+    /// them, as the reference runs a request's steps after its socket has closed.
+    SocketClosed,
+}
+
+/// One public request's AwaitBlock step, as the server saw it: the record of
+/// [`NodeServices::await_block_step`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AwaitRecord {
+    /// The route.
+    pub route: RouteId,
+    /// The caller's address, normalised.
+    pub caller: IpAddr,
+    /// When the request reached the step, in milliseconds since the Unix epoch (UTC).
+    pub at_ms: i64,
+    /// The whole wait; zero when there was nothing to wait for.
+    pub waited: Duration,
+    /// How the wait ended.
+    pub end: AwaitEnd,
+    /// The chain's tip when the step began.
+    pub tip_before: u32,
+    /// The chain's tip when it ended; the answer is built after it.
+    pub tip_after: u32,
 }
 
 /// A collation of the pool for getUnconfirmedTransactions: the pool's size and the candidate
@@ -170,6 +206,13 @@ pub trait NodeServices: Send + Sync {
     /// records it.
     fn network_state_served(&self, caller: IpAddr, state: &NetworkState) {
         let _ = (caller, state);
+    }
+
+    /// A public request's AwaitBlock step ended, as `record` says: nothing, except in a harness
+    /// build, which appends the record to its start's file as one JSON line. Internal routes pass
+    /// the step without a record.
+    fn await_block_step(&self, record: &AwaitRecord) {
+        let _ = record;
     }
 }
 

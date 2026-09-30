@@ -63,9 +63,10 @@ hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"
 
 # The commands (heartwood-cli and heartwood-core, the relay's binary, only): clap 4.6 with derive
 # and the help, usage and error texts; nix 0.31 for the supervisor's signals and process calls,
-# with no other module. Every child process gets an explicit argv, never a shell string.
+# and the process's own user id for the recovery commands' check of the temp directory, with no
+# other module. Every child process gets an explicit argv, never a shell string.
 clap = { version = "4.6.7", default-features = false, features = ["derive", "error-context", "help", "std", "usage"] }
-nix = { version = "0.31.3", default-features = false, features = ["signal", "process", "fs"] }
+nix = { version = "0.31.3", default-features = false, features = ["signal", "process", "fs", "user"] }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }

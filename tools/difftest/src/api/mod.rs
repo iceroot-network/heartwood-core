@@ -19,6 +19,7 @@ pub mod judge;
 pub mod outside;
 pub mod record;
 
+use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 
@@ -68,7 +69,11 @@ pub enum ApiCompareArgs {
 /// Recorded answers are every `answers.jsonl` under the run directory's `api/` (or under the
 /// directory itself when it has no `api/`), as `api compare --left --right --out` writes them. A
 /// request of the `outside` section left unsent there is judged from the run's
-/// [`outside::RATE_LIMIT`] when the run has one.
+/// [`outside::RATE_LIMIT`] when the run has one. Then the corpora the run's `run.json` lists as
+/// `apiExtra`, each from its own directory, without the `outside` section (the recipe sends it
+/// once, for the first corpus's nodes) and without the posts of a body the first corpus posted to
+/// the same control node, which the control answered from its cooldown; the report's source
+/// counts both.
 /// Live, the corpus is sent to both nodes first, and the report is also written to
 /// `report.txt` in the output directory.
 pub fn compare(args: &ApiCompareArgs) -> Result<Report> {
@@ -85,11 +90,47 @@ pub fn compare(args: &ApiCompareArgs) -> Result<Report> {
                 });
             }
             let outside = OutsideAnswers::load(&run.join(outside::RATE_LIMIT))?;
-            judge_files(
-                &files,
-                format!("answers recorded under {}", root.display()),
-                outside.as_ref(),
-            )
+            let source = format!("answers recorded under {}", root.display());
+            let mut report = judge_files(&files, source, outside.as_ref())?;
+            let manifest = Manifest::load(run).ok();
+            for extra in manifest.iter().flat_map(|m| &m.api_extra) {
+                let path = run.join(&extra.dir).join(ANSWERS);
+                let right = manifest.as_ref().and_then(|m| m.api.as_ref()).map(|a| &a.1);
+                let posted = match right {
+                    Some(right) if *right == extra.right => posted_bodies(&files)?,
+                    _ => BTreeSet::new(),
+                };
+                let mut more = judge_files(std::slice::from_ref(&path), String::new(), None)?;
+                let answers = read_answers(&path)?;
+                let (mut unsent, mut repeats) = (0, 0);
+                let kept = more
+                    .results
+                    .drain(..)
+                    .zip(&answers)
+                    .filter(|(_, (_, recorded))| {
+                        let (outside, repeat) = (
+                            OutsideAnswers::covers(recorded),
+                            repeated_posts(recorded, &posted),
+                        );
+                        unsent += usize::from(outside);
+                        repeats += usize::from(repeat && !outside);
+                        !outside && !repeat
+                    });
+                report
+                    .results
+                    .extend(kept.map(|(case, _)| case).collect::<Vec<_>>());
+                report.source = format!(
+                    "{}, and {} against {} under {} ({unsent} requests of the outside section, \
+                     which the recipe sends for the first corpus only, and {repeats} posts the \
+                     control node answered from its cooldown, not judged)",
+                    report.source,
+                    extra.left,
+                    extra.right,
+                    run.join(&extra.dir).display()
+                );
+                report.files += 1;
+            }
+            Ok(report)
         }
         ApiCompareArgs::Live {
             left,
@@ -157,6 +198,51 @@ fn answer_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// The recorded answers of `path`, in order.
+fn read_answers(path: &Path) -> Result<Vec<(usize, Recorded)>> {
+    let text = std::fs::read_to_string(path).map_err(|e| Error::io(path, e))?;
+    let lines = text.lines().enumerate().filter(|(_, l)| !l.is_empty());
+    lines
+        .map(|(index, line)| {
+            let recorded = serde_json::from_str(line).map_err(|e| Error::Parse {
+                path: path.to_owned(),
+                line: index + 1,
+                message: e.to_string(),
+            })?;
+            Ok((index + 1, recorded))
+        })
+        .collect()
+}
+
+/// The bodies of the POST requests the answers of `files` record. A later corpus that posts one
+/// of them to the same control node is not comparable there: the reference's pool answers a
+/// transaction it has already tried with its cooldown (`ERR_COOLDOWN`, the seconds left), which
+/// the node under test, never sent it, does not.
+fn posted_bodies(files: &[PathBuf]) -> Result<BTreeSet<String>> {
+    let mut bodies = BTreeSet::new();
+    for path in files {
+        for (_, recorded) in read_answers(path)? {
+            let request = recorded.request.filter(|r| r.method == "POST");
+            bodies.extend(request.and_then(|r| r.body));
+        }
+    }
+    Ok(bodies)
+}
+
+/// Whether `recorded` posts one of `posted` again ([`posted_bodies`]) and the control node
+/// answered it from its cooldown, which only a repeat reaches.
+fn repeated_posts(recorded: &Recorded, posted: &BTreeSet<String>) -> bool {
+    let request = recorded.request.as_ref().filter(|r| r.method == "POST");
+    let repeated = request
+        .and_then(|r| r.body.as_ref())
+        .is_some_and(|body| posted.contains(body));
+    let cooldown = match &recorded.right {
+        Some(http::Reply::Answer { body, .. }) => body.to_string().contains("ERR_COOLDOWN"),
+        _ => false,
+    };
+    repeated && cooldown
+}
+
 fn judge_files(
     files: &[PathBuf],
     source: String,
@@ -164,14 +250,8 @@ fn judge_files(
 ) -> Result<Report> {
     let mut results = Vec::new();
     for path in files {
-        let text = std::fs::read_to_string(path).map_err(|e| Error::io(path, e))?;
-        for (index, line) in text.lines().enumerate().filter(|(_, l)| !l.is_empty()) {
-            let recorded: Recorded = serde_json::from_str(line).map_err(|e| Error::Parse {
-                path: path.clone(),
-                line: index + 1,
-                message: e.to_string(),
-            })?;
-            results.push(result(path, index + 1, &recorded, outside));
+        for (line, recorded) in read_answers(path)? {
+            results.push(result(path, line, &recorded, outside));
         }
     }
     Ok(Report {
@@ -339,6 +419,65 @@ mod tests {
             "implementation": "reference"}]}"#;
         std::fs::write(dir.join("run.json"), manifest).unwrap();
         assert!(relay_case(&dir, &binary).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A recorded answer of `name` to `request`, `left` and `right` its answers' status and body.
+    fn answer(name: &str, request: Value, left: (u16, Value), right: (u16, Value)) -> String {
+        let reply = |(status, body): (u16, Value)| {
+            json!({"status": status, "body": body,
+                "headers": {"connection": "close", "x-block-height": "212"}})
+        };
+        let line = json!({"file": "f.json", "name": name, "request": request,
+            "left": reply(left), "right": reply(right)});
+        format!("{line}\n")
+    }
+
+    #[test]
+    fn a_runs_second_corpus_is_judged_without_the_posts_the_control_answered_from_its_cooldown() {
+        let dir = std::env::temp_dir().join(format!("heartwood-api-extra-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for sub in [RUN_ANSWERS_DIR, "api-node6"] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+        }
+        let manifest = json!({"format": live_run::FORMAT, "run": "w", "network": "devnet",
+            "seed": "s", "nodes": [], "api": {"left": "node4", "right": "node1"},
+            "apiExtra": [{"left": "node6", "right": "node1", "dir": "api-node6"}]});
+        std::fs::write(dir.join("run.json"), manifest.to_string()).unwrap();
+        let get = json!({"method": "GET", "path": "/api"});
+        let missing = json!({"statusCode": 404, "error": "Not Found", "message": "Not Found"});
+        let post = json!({"method": "POST", "path": "/api/transactions", "body": "{\"t\":1}"});
+        let tried = |kind: &str| json!({"errors": {"x": {"type": kind}}});
+        let first = answer(
+            "g",
+            get.clone(),
+            (404, missing.clone()),
+            (404, missing.clone()),
+        ) + &answer(
+            "p",
+            post.clone(),
+            (200, tried("ERR_APPLY")),
+            (200, tried("ERR_APPLY")),
+        );
+        std::fs::write(dir.join(RUN_ANSWERS_DIR).join(ANSWERS), first).unwrap();
+        // Node 6's corpus: the post again, which node 1 answers from its cooldown, and a GET
+        // whose answers differ.
+        let other = json!({"statusCode": 404, "error": "Not Found", "message": "Other"});
+        let second = answer(
+            "p",
+            post,
+            (200, tried("ERR_APPLY")),
+            (200, tried("ERR_COOLDOWN")),
+        ) + &answer("g", get, (404, other), (404, missing));
+        std::fs::write(dir.join("api-node6").join(ANSWERS), second).unwrap();
+        let args = ApiCompareArgs::Recorded { run: dir.clone() };
+        let report = compare(&args).unwrap();
+        assert_eq!(report.files, 2);
+        assert_eq!(report.results.len(), 3, "{report}");
+        assert_eq!(report.failed(), 1, "{report}");
+        let failed = report.results.iter().find(|r| r.outcome.is_failure());
+        assert!(failed.unwrap().file.contains("api-node6"), "{report}");
+        assert!(report.source.contains("and 1 posts"), "{}", report.source);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

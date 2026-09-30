@@ -379,6 +379,7 @@ impl ServiceRig {
             broadcast: Arc::new(Silent),
             own_keys: Arc::new(heartwood_p2p::NoAttestedKeys),
             version: VERSION.to_owned(),
+            stall: None,
         })
         .map_err(|e| format!("the node does not start: {e}"))?;
         let network = Recording::default();

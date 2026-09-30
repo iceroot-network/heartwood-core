@@ -40,7 +40,9 @@ use crate::server::ServerOptions;
 use crate::server::ban_hammer::BanHammer;
 use crate::server::plugins::{PluginParts, Plugins};
 use crate::server::rate_limit::InboundLimiter;
-use crate::server::seams::{RouteHandlers, ServerRefusal, ServerRequest, SessionEvents, SessionId};
+use crate::server::seams::{
+    RouteHandlers, ServerRefusal, ServerRequest, SessionEvents, SessionId, SocketClosed,
+};
 use crate::server::session::{Reply, reply, route_of};
 use crate::view::{BlockPing, ChainView, DelegateInfo};
 
@@ -510,7 +512,8 @@ pub async fn serve_request(
             (status, Some(reason.to_owned()), false, reply)
         }
         Ok(route) => {
-            let answer = plugins.handle(route, payload, ip, SessionId(1)).await;
+            let answer =
+                (plugins.handle(route, payload, ip, SessionId(1), SocketClosed::never())).await;
             let (status, message) = match &answer.result {
                 Ok(_) => (200, None),
                 Err(refusal) => (refusal.status, Some(refusal.message.clone())),

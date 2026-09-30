@@ -26,7 +26,9 @@
 //              round deleted, StateBuilder when nothing loaded, the missed-block backfill when the
 //              store has no missed row, RoundState.restore, the pool's re-add). Mode "rebuild"
 //              starts with no saved state; mode "saved" first runs StateSaver on the running node,
-//              as a node does on every queue drain, and the new node loads that file.
+//              as a node does on every queue drain, and the new node loads that file; mode "kept"
+//              starts with the saved states as they are (those saveState kept). The new node has
+//              the running node's temp directory.
 //
 // Everything a node keeps outside the state (P2P, events, the API) is absent; the pool is bound
 // only by the pool sessions (lib/pool.js). The forger directory (CORE_PATH_TEMP) is an empty
@@ -164,6 +166,17 @@ class ChainStore {
         out.rounds = new Map([...this.rounds].map(([round, rows]) => [round, rows.map((r) => ({ ...r }))]));
         out.missed = this.missed.map((r) => ({ ...r }));
         return out;
+    }
+
+    /**
+     * The store summarised as a rollback's steps record it: the tip, the highest round with rows,
+     * and the numbers of missed-slot rows and of transactions (the genesis block's included).
+     */
+    summary() {
+        let transactions = 0;
+        for (const entry of this.blocks) transactions += entry.transactions.length;
+        const rounds = [...this.rounds].filter(([, rows]) => rows.length > 0).map(([round]) => round);
+        return { tip: this.height, round: rounds.length ? Math.max(...rounds) : 0, missed: this.missed.length, transactions };
     }
 
     /**
@@ -620,7 +633,9 @@ function recordingBlockchain() {
  *
  * Options: `store`, the chain store to start from (a restart's copy); `savedStatesPath`, the
  * directory of the saved states (a new one by default); `bindPool(app)`, which binds the pool
- * services in the application (lib/pool.js), else the pool is a stub.
+ * services in the application (lib/pool.js), else the pool is a stub; `tempPath`, the node's
+ * CORE_PATH_TEMP (the process's one empty directory by default), which a rollback writes its
+ * force-integrity-check.lock into and the next start reads, so a restart keeps it.
  */
 class HeadlessChain {
     constructor(solar, crypto, options = {}) {
@@ -631,6 +646,7 @@ class HeadlessChain {
         this.store = options.store || new ChainStore(this.lib);
         this.savedStatesPath = options.savedStatesPath;
         this.bindPool = options.bindPool;
+        this.tempPath = options.tempPath;
         this.started = false;
     }
 
@@ -659,7 +675,7 @@ class HeadlessChain {
         const { kernel, stateProvider, transactions } = this.pkgs;
         const { Application, Container, Services, Providers } = kernel;
         const Id = Container.Identifiers;
-        process.env.CORE_PATH_TEMP = emptyTempDir();
+        process.env.CORE_PATH_TEMP = this.tempPath || emptyTempDir();
         if (!this.savedStatesPath) this.savedStatesPath = newDataDir("saved-states");
 
         const app = new Application(new Container.Container());
@@ -732,33 +748,49 @@ class HeadlessChain {
 
     /**
      * Save the state as a node does on every queue drain (StateSaver), into an emptied saved-states
-     * directory, so that the saved state of the tip is the only one. Throws when no file was
-     * written (the saver logs its errors instead of throwing).
+     * directory, so that the saved state of the tip is the only one; with `keep`, beside the states
+     * saved before, none of them pruned. Returns the file. Throws when no file was written (the
+     * saver logs its errors instead of throwing).
      */
-    async saveState() {
+    async saveState({ keep = false } = {}) {
         const Id = this.pkgs.kernel.Container.Identifiers;
-        emptyDir(this.savedStatesPath);
-        await this.app.get(Id.StateSaver).run();
+        const saver = this.app.get(Id.StateSaver);
+        const configuration = saver.configuration;
+        if (keep) {
+            // The saver's own pruning (maxSavedStates) off, so that every state saved stays.
+            saver.configuration = { get: (key) => (key === "maxSavedStates" ? 0 : configuration.get(key)) };
+        } else {
+            emptyDir(this.savedStatesPath);
+        }
+        try {
+            await saver.run();
+        } finally {
+            saver.configuration = configuration;
+        }
         const file = path.join(this.savedStatesPath, this.lastBlock().data.id);
         if (!fs.existsSync(file)) throw new Error(`the state was not saved: ${this.logger.errors.join("; ") || "no file"}`);
+        return file;
     }
 
     /**
      * Stop this node at its tip and start a new one over a copy of its store, as the reference's
      * start does it: DatabaseInteraction.initialise(), then the blockchain's Initialise action.
-     * Mode "rebuild" starts with no saved state; mode "saved" saves this node's state first.
+     * Mode "rebuild" starts with no saved state; mode "saved" saves this node's state first; mode
+     * "kept" starts with the saved-states directory as it is (the states saved before, with
+     * saveState's `keep`). The new node has this node's temp directory.
      * Returns {chain} (the new node, started), or {refused: {reason}} when the start fails: the
      * reason is the text the reference gave app.terminate (patch 45's for a negative balance), the
      * integrity check's refusal, or the logged error.
      */
     async restart(mode) {
-        if (mode !== "rebuild" && mode !== "saved") throw new TypeError("mode must be rebuild or saved");
+        if (!["rebuild", "saved", "kept"].includes(mode)) throw new TypeError("mode must be rebuild, saved or kept");
         if (!this.started) throw new Error("the chain has not started");
         if (mode === "saved") await this.saveState();
-        else emptyDir(this.savedStatesPath);
+        else if (mode === "rebuild") emptyDir(this.savedStatesPath);
         // The stopped node's pool closes its storage; the new node's pool opens the same file.
         if (this.pool) this.pool.dispose();
-        const next = new HeadlessChain(this.solar, this.crypto, { store: this.store.copy(), savedStatesPath: this.savedStatesPath, bindPool: this.bindPool });
+        const options = { store: this.store.copy(), savedStatesPath: this.savedStatesPath, bindPool: this.bindPool, tempPath: this.tempPath };
+        const next = new HeadlessChain(this.solar, this.crypto, options);
         next.configure();
         await next.build();
         const Initialise = initialiseClass(this.solar);

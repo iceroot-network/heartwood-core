@@ -169,7 +169,8 @@ pub fn prepare(
                 records.display()
             )));
         }
-        crate::corpus_from_blocks::from_blocks(&files, &source.join("crypto"), seed, &staged)?;
+        let crypto = run::crypto_dir(run_dir, &source);
+        crate::corpus_from_blocks::from_blocks(&files, &crypto, seed, &staged)?;
         Vec::new()
     } else {
         let dirs = run::archives(&source)?;

@@ -4,7 +4,9 @@
 //! other; a process taking a lock refuses at once when another process holds it exclusively, and
 //! tries again while only probes hold it, for at most a second, however often they probe. The
 //! supervisor stops its node with SIGINT and kills it with SIGKILL 30 s later; any other process is
-//! signalled only while the lock that names it is held, so a stale pid is never signalled. A
+//! signalled only while the lock that names it is held, so a stale pid is never signalled. A holder
+//! of a node's lock that is not the node (`snapshot rollback`) removes the role's pid file as it
+//! takes the lock, as the node does, so that no pid a dead node left is read while it holds it. A
 //! supervisor writes its pid into its lock file as it takes the lock ([`record_pid`]), and `stop`
 //! and `kill` read the supervisor's pid from there while the lock is held ([`held_pid`]), never
 //! from the state file, which an earlier supervisor may have left. `kill` also signals process

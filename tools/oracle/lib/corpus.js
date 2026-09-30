@@ -205,7 +205,8 @@ class ReplaySession {
         if (probe && this.chain.pool) throw new Error("a node with a pool cannot be probed");
         const notes = {};
         if (mode === "saved" && integerLikeNames(this.chain.wallets()).length) notes.savedStateUsername = true;
-        const tip = this.chain.lastBlock().data.height;
+        // The stored tip: after a rollback (chain.rollback) the stopped node's state is above it.
+        const tip = this.chain.store.height;
         const round = this.chain.pkgs.kernel.Utils.roundCalculator.calculateRound(tip).round;
         if (tip > 1 && !(this.chain.store.rounds.get(round) || []).length) notes.roundRowsMissing = true;
         const result = await this.chain.restart(mode);

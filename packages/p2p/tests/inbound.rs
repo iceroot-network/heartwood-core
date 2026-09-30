@@ -17,14 +17,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use heartwood_crypto::Milestones;
-use heartwood_p2p::node_services::QueueState;
+use heartwood_p2p::node_services::{AwaitEnd, QueueState};
 use heartwood_p2p::server::ServerOptions;
 use heartwood_p2p::server::await_block::await_block;
 use heartwood_p2p::server::ban_hammer::BanHammer;
 use heartwood_p2p::server::caps::InboundCaps;
 use heartwood_p2p::server::plugins::Plugins;
 use heartwood_p2p::server::rate_limit::InboundLimiter;
-use heartwood_p2p::server::seams::{ServerRefusal, SessionId};
+use heartwood_p2p::server::seams::{ServerRefusal, SessionId, SocketClosed};
 use heartwood_p2p::testing::server::{PeerCall, StubAnswer, inbound_rate_limit, serve_request};
 use heartwood_p2p_wire::RouteId;
 use serde_json::{Value, json};
@@ -107,6 +107,7 @@ async fn the_forger_is_exempt_from_the_limiter_and_others_are_refused_and_banned
             request.clone(),
             FORGER,
             SessionId(1),
+            SocketClosed::never(),
         );
         assert_eq!(answer.await.result, Ok(Vec::new()));
     }
@@ -116,6 +117,7 @@ async fn the_forger_is_exempt_from_the_limiter_and_others_are_refused_and_banned
             request.clone(),
             peer(2),
             SessionId(2),
+            SocketClosed::never(),
         );
         let answer = answer.await;
         assert_eq!(answer.result.is_ok(), n < 9);
@@ -181,15 +183,18 @@ async fn await_block_waits_for_the_drain_at_most_its_bound() {
     };
     let (queue, reader) = watch::channel(stalled);
     let start = Instant::now();
-    assert!(!await_block(reader.clone(), ms(8_000)).await);
+    let never = SocketClosed::never;
+    let outcome = await_block(reader.clone(), ms(8_000), never()).await;
+    assert_eq!((outcome.end, outcome.waited), (AwaitEnd::Bound, ms(8_000)));
     assert_eq!(Instant::now() - start, ms(8_000));
-    let waiting = tokio::spawn(await_block(reader.clone(), ms(8_000)));
+    let waiting = tokio::spawn(await_block(reader.clone(), ms(8_000), never()));
     sleep(ms(300)).await;
     queue.send_replace(QueueState {
         new_block: true,
         running: false,
     });
-    assert!(waiting.await.unwrap());
+    let outcome = waiting.await.unwrap();
+    assert_eq!((outcome.end, outcome.waited), (AwaitEnd::Drained, ms(300)));
     assert_eq!(Instant::now() - start, ms(8_300));
     // The queue running outside newBlock, or newBlock with an idle queue: no wait.
     for state in [
@@ -203,7 +208,8 @@ async fn await_block_waits_for_the_drain_at_most_its_bound() {
         },
     ] {
         queue.send_replace(state);
-        assert!(await_block(reader.clone(), ms(8_000)).await);
+        let outcome = await_block(reader.clone(), ms(8_000), never()).await;
+        assert_eq!((outcome.end, outcome.waited), (AwaitEnd::NoWait, ms(0)));
     }
     assert_eq!(Instant::now() - start, ms(8_300));
 }
@@ -222,6 +228,7 @@ async fn a_stalled_queue_holds_public_routes_for_8_s_and_not_the_internal_ones()
         b"{}".to_vec(),
         FORGER,
         SessionId(1),
+        SocketClosed::never(),
     );
     assert_eq!(answer.await.result, Ok(Vec::new()));
     assert_eq!(Instant::now() - start, Duration::ZERO);
@@ -230,6 +237,7 @@ async fn a_stalled_queue_holds_public_routes_for_8_s_and_not_the_internal_ones()
         status_request(VERSION),
         peer(2),
         SessionId(2),
+        SocketClosed::never(),
     );
     assert_eq!(answer.await.result, Ok(Vec::new()));
     assert_eq!(Instant::now() - start, ms(8_000));
@@ -240,7 +248,8 @@ async fn the_plugins_run_in_the_reference_order() {
     let refusal = |status: u16, message: &str| Err(ServerRefusal::new(status, message));
     let run = |fakes: Fakes, route, payload: Vec<u8>, ip| async move {
         let (plugins, bans) = plugins(&fakes);
-        let answer = plugins.handle(route, payload, ip, SessionId(1)).await;
+        let answer =
+            (plugins.handle(route, payload, ip, SessionId(1), SocketClosed::never())).await;
         (answer.result, bans.reason(ip), fakes)
     };
     // The allowlist comes before the codec.

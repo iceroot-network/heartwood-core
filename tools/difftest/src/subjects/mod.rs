@@ -53,6 +53,9 @@
 //! - `relay_round`: the round and slot answers of the forger's internal routes.
 //! - `quorum`: the network state the forger reads.
 //! - `status_serve`: the served status.
+//! - `served`: the public routes' controllers (`p2p.controller`).
+//!
+//! With the store: `rollback`, `snapshot rollback` of a chain's store (`chain.rollback`).
 //!
 //! Most operations run under the devnet configuration the oracle was set up with, which the
 //! [`Devnet`] context carries; a case that brings its own milestone file runs under that file.
@@ -76,8 +79,10 @@ mod pool;
 mod processor;
 mod quorum;
 mod relay_round;
+mod rollback;
 
 pub use relay_round::masked as round_wallets_masked;
+mod served;
 mod server;
 mod signatures;
 mod state;
@@ -340,6 +345,8 @@ fn all_ops() -> impl Iterator<Item = &'static (&'static str, Run)> {
         .chain(relay_round::OPS)
         .chain(quorum::OPS)
         .chain(status_serve::OPS)
+        .chain(served::OPS)
+        .chain(rollback::OPS)
 }
 
 /// Register every operation of [`all_ops`] in `registry`.
