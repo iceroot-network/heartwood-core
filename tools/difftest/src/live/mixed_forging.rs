@@ -28,30 +28,30 @@ const GRACE_SLOTS: i64 = 2;
 
 /// What the checks read of the run: its validators, the blocks the Heartwood relays applied and
 /// the chain's slots.
-struct Data {
-    validators: Vec<Validator>,
+pub(super) struct Data {
+    pub(super) validators: Vec<Validator>,
     /// The validators whose relay is a Heartwood node.
-    hosted: Vec<String>,
-    blocks: BTreeMap<String, Recorded>,
-    answers: Vec<Answer>,
-    slots: Slots,
-    reach: u64,
-    problems: Vec<String>,
+    pub(super) hosted: Vec<String>,
+    pub(super) blocks: BTreeMap<String, Recorded>,
+    pub(super) answers: Vec<Answer>,
+    pub(super) slots: Slots,
+    pub(super) reach: u64,
+    pub(super) problems: Vec<String>,
 }
 
 impl Data {
     /// The validator that holds the delegate `key`.
-    fn holder(&self, key: &str) -> Option<&Validator> {
+    pub(super) fn holder(&self, key: &str) -> Option<&Validator> {
         self.validators.iter().find(|v| v.keys.contains_key(key))
     }
 
     /// The start of `slot`, in milliseconds since the Unix epoch.
-    fn slot_start(&self, slot: i64) -> i64 {
+    pub(super) fn slot_start(&self, slot: i64) -> i64 {
         self.slots.epoch_ms + slot * self.slots.slot_ms
     }
 }
 
-fn load(run: &ForgingRun<'_>) -> Result<Data> {
+pub(super) fn load(run: &ForgingRun<'_>) -> Result<Data> {
     let m = run.manifest;
     let mut heartwood = m.clone();
     heartwood
@@ -186,7 +186,7 @@ fn rounds(m: &Manifest) -> u32 {
 
 /// Every validator produced a block in every round, outside its fault windows, unless its windows
 /// leave no slot of the round free.
-fn production(run: &ForgingRun<'_>, data: &Data) -> Vec<String> {
+pub(super) fn production(run: &ForgingRun<'_>, data: &Data) -> Vec<String> {
     let m = run.manifest;
     let length = m.round_length.max(1);
     let mut problems = Vec::new();
@@ -238,7 +238,7 @@ fn allows_forging(answer: &Answer) -> bool {
 
 /// Every block a Heartwood-hosted delegate forged followed, in its slot, an answer of its own
 /// relay at the height below it on which the reference's forger forges ([`allows_forging`]).
-fn quorum_before(data: &Data) -> Vec<String> {
+pub(super) fn quorum_before(data: &Data) -> Vec<String> {
     let mut problems = Vec::new();
     for b in data.blocks.values() {
         let Some(holder) = data.holder(&b.key) else {
@@ -277,7 +277,7 @@ fn partition_start(windows: &[Window]) -> Option<i64> {
 }
 
 /// Every Heartwood relay counted all 53 delegates in one answer before the partition.
-fn counts(run: &ForgingRun<'_>, data: &Data, _steps: &[Step]) -> Vec<String> {
+pub(super) fn counts(run: &ForgingRun<'_>, data: &Data, _steps: &[Step]) -> Vec<String> {
     let cutoff = partition_start(run.windows).unwrap_or(i64::MAX);
     let hosted: Vec<Validator> = data
         .validators
@@ -459,7 +459,7 @@ fn partition(run: &ForgingRun<'_>, data: &Data, steps: &[Step], cases: &mut Case
 }
 
 /// The final tips of every node are one block.
-fn one_tip(run: &ForgingRun<'_>) -> Vec<String> {
+pub(super) fn one_tip(run: &ForgingRun<'_>) -> Vec<String> {
     let Ok(v) = run::read_json(&run.run_dir.join("final.json")) else {
         return vec!["no final.json: the run recorded no final tips".to_owned()];
     };
