@@ -1473,7 +1473,12 @@ no other hard link, and it and its directory belong to the user of the data dire
 writable by every user, the directory not by a group other than the user's own either (on a system
 whose users share a primary group, set `CORE_PATH_TEMP` to a directory of mode 0700, which `pool
 clear` and `state clear` create when it is missing); another marker is ignored with a warning that
-says why. The pool's online record is loaded at every start, whatever the restore path, so
+says why. The rule covers the marker and its own directory only, not the directories above it: the
+default temp directory `/tmp/<user>/<token>-core/<network>` sits in `/tmp/<user>`, which another
+user may have made first and may then rename or remove, so that a marker written there is never
+read. On a machine shared with other users, set `CORE_PATH_TEMP` to a directory under the data
+directory (as the devnet tooling does), or make `/tmp/<user>` yourself first. The pool's online
+record is loaded at every start, whatever the restore path, so
 a vote for a delegate that announced itself before the stop is admitted at once; a reference relay
 started without its saved state refuses it until a peer announces the delegate again.
 
