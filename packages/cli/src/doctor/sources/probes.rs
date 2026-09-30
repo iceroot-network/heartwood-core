@@ -99,7 +99,10 @@ impl Probes for HostProbes {
 /// [`Probe::ENV`] alone, standard input and error on the null device, reading at most `limits.1`
 /// bytes of its standard output (the rest is read and dropped). It is killed and reaped when it
 /// runs longer than `limits.0`. The doctor calls it only through [`HostProbes`], with a probe's
-/// fixed program and arguments; it is public for the probes' tests.
+/// fixed program and arguments. It is public only for the probes' tests, which run it with other
+/// programs to test its limits: no other code may call it, and it is hidden from the crate's
+/// documentation.
+#[doc(hidden)]
 pub fn run_program(
     program: &Path,
     args: &[&str],
