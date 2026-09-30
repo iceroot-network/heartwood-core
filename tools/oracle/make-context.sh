@@ -12,6 +12,8 @@
 #   Dockerfile, check-native.js, oracle/  the image recipe and the oracle scripts
 #   oracle/external       the published vector files that class V11 checks the reference against
 #                         (packages/crypto/tests/vectors/external in this repository)
+#   oracle/corpus         the committed corpora (tools/difftest/corpus), whose chain class V32
+#                         serves and class V33 rolls back
 #
 # --repo   a clone of the reference implementation, iceroot-network/solar-core-ref, with its tags
 #          [$SOLAR_REPO; one of the two is required]
@@ -30,7 +32,7 @@ while [ $# -gt 0 ]; do
         --repo) REPO=$2; shift 2 ;;
         --commit) REV=$2; shift 2 ;;
         --out) OUT=$2; shift 2 ;;
-        -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
         *) echo "make-context: unknown argument $1" >&2; exit 2 ;;
     esac
 done
@@ -70,6 +72,7 @@ cp "$HERE/Dockerfile" "$HERE/check-native.js" "$OUT/"
 cp "$HERE/gen-vectors.js" "$HERE/oracle-server.js" "$HERE/replay-chain.js" "$HERE/check-native.js" "$OUT/oracle/"
 cp -R "$HERE/lib/." "$OUT/oracle/lib/"
 cp -R "$ROOT/packages/crypto/tests/vectors/external" "$OUT/oracle/external"
+cp -R "$ROOT/tools/difftest/corpus" "$OUT/oracle/corpus"
 
 echo "make-context: $OUT"
 echo "make-context: Solar $REV = $COMMIT (tree $TREE), $(du -h "$OUT/solar-src.tar" | cut -f1) tarball"

@@ -40,7 +40,7 @@ use heartwood_p2p_wire::RouteId;
 use heartwood_p2p_wire::codecs::{blocks, peer as peer_codecs, transactions};
 use heartwood_p2p_wire::errors::{DecodeError, ReplyRefused, RequestError};
 use heartwood_p2p_wire::replies::{CommonBlock, PeerAddress};
-use heartwood_p2p_wire::requests::{ClientRequest, CommonBlockIds, Headers};
+use heartwood_p2p_wire::requests::{BlockLimit, ClientRequest, CommonBlockIds, Headers};
 use heartwood_p2p_wire::status::{self, CheckedStatus};
 use indexmap::IndexSet;
 use tokio::sync::mpsc;
@@ -59,7 +59,7 @@ use crate::seams::{
 use crate::view::{ChainView, OnlineSink, PeerEvents};
 
 /// The most blocks one getBlocks asks for.
-pub const MAX_DOWNLOAD_BLOCKS: u32 = 400;
+pub const MAX_DOWNLOAD_BLOCKS: u32 = BlockLimit::MAX;
 
 /// The client's receive limit when a route sets none of its own: 100 KiB.
 const SMALL: usize = 100 * 1024;
@@ -336,7 +336,7 @@ where
         let parts = &self.parts;
         let (Some(last_block_height), Some(block_limit)) = (
             NonZeroU32::new(request.from_height),
-            NonZeroU32::new(request.block_limit.min(MAX_DOWNLOAD_BLOCKS)),
+            BlockLimit::new(request.block_limit.min(MAX_DOWNLOAD_BLOCKS)),
         ) else {
             return Ok(Vec::new());
         };

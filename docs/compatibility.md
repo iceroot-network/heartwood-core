@@ -10,11 +10,11 @@ equal byte for byte, including which inputs each side rejects.
 
 | Level | What is compared | Status |
 |---|---|---|
-| L0 | golden vectors written by the reference, against Heartwood | runs against the eleven crates with vector classes: 9,019 of 9,265 records compared, all equal, the other 246 documented differences (see below) |
-| L1 | random and mutated cases, one oracle call each | runs: nineteen properties, from the fee floor to the pool, the crypto files, the peer-to-peer client, the block processor, the forger's blocks and decisions and the relay's forging quorum (see below) |
-| L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets through Heartwood's store and through its block processor and jobs, with seeded reverts, restarts at every height, synthetic blocks, pool sessions and kills of a running relay, and every block of those chains rebuilt by the forger (see below) |
+| L0 | golden vectors written by the reference, against Heartwood | runs against the eleven crates with vector classes: 9,172 of 9,419 records compared, all equal, the other 247 documented differences (see below) |
+| L1 | random and mutated cases, one oracle call each | runs: twenty properties, from the fee floor to the pool, the crypto files, the peer-to-peer client, the block processor, the forger's blocks and decisions, the relay's forging quorum and the answers it serves its peers (see below) |
+| L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets through Heartwood's store and through its block processor and jobs, with seeded reverts, restarts at every height, synthetic blocks, pool sessions and kills of a running relay, every block of those chains rebuilt by the forger, and the rollback command's cases on them with the start and the sync after each (see below) |
 | L3 | one scenario, observed through the node under test | runs: a scenario on a reference devnet whose observer is a reference relay, then the same with a Heartwood relay in its place; one scenario on a devnet of five reference nodes and on a devnet of five Heartwood relays with their forgers, compared submission by submission; and a Heartwood devnet through faults and forger failover (see below) |
-| L4 | a mixed network of reference and Heartwood nodes | runs: reference devnets with Heartwood relays that restart by every path, sync from an empty store, and follow a partition and its heal (see below) |
+| L4 | a mixed network of reference and Heartwood nodes | runs: reference devnets with Heartwood relays that restart by every path, sync from an empty store, and follow a partition and its heal; and reference nodes served by Heartwood relays: a reference relay syncing from a Heartwood relay alone, the recovery commands on a live relay, a partition across a Heartwood relay, and a network of Heartwood forgers observed by a reference relay, with the reference's own peer client comparing a Heartwood relay's answers with a reference relay's (see below) |
 
 ## Layout
 
@@ -64,6 +64,7 @@ packages/*/tests/vectors/  each crate's golden vectors, with its own MANIFEST.sh
 tools/difftest/       heartwood-difftest: the harness library and the `difftest` binary
   corpus/               a committed L2 corpus (a reference devnet chain and its digest lines)
   api-corpus/           the route corpus: the queries of every served route, for L3 and L4
+  p2p-corpus/           the peer-route cases the reference-client probe sends, for L4
 tools/check-layers.sh the dependency edges between the crates, and no async, storage or HTTP crate
                       in the consensus crates
 tools/check-lines.sh  code lines per crate against the review ceilings
@@ -83,6 +84,8 @@ tools/oracle/         the oracle: Node scripts and the image recipe
                         start paths), pool.js (the reference's pool), digest.js (the state
                         digest), corpus.js, vectors/ (one file per class)
   check-native.js       checks that the reference's native modules build and load
+  probe/                the reference-client probe: the reference's own peer client against
+                        a relay, case by case
 tools/wire-fuzz-seeds.js  seeds the wire fuzz corpora from the wire vectors
 tools/p2p-fuzz-seeds.js   seeds the p2p fuzz corpora from a vector run's V24 and V26 records
 tools/forger-fuzz-seeds.js  seeds the forger's internal_body corpus from a vector run's V29 records
@@ -133,6 +136,8 @@ make fuzz-forger fuzz-server   # the forger's and the server's fuzz targets
 make binary-tests   # the heartwood binary's tests, the slow ones too (a forging devnet among them)
 make devnet-smoke   # a forging devnet of this tree's binary: 1 node, then 5
 make live RUN=m     # a devnet of Heartwood relays and forgers (t, m and f: see L3 and L4)
+make rollback-replay NAME=txgen-one-node CORPUS=tools/difftest/corpus   # every rollback, the start and the sync after it
+make live RUN=w     # reference nodes on Heartwood relays (w0, w, p and s: see L3 and L4)
 ```
 
 `make check` needs only Rust. It lints and tests every crate on its own, with no features and
@@ -577,6 +582,15 @@ the one place where a Heartwood restart and the reference's differ.
   again from the genesis block through the handlers, and the state tables are written again. A
   balance that would go below zero during a replay stops the start with the reference's text,
   "State Generation failed: Wallet with negative balance".
+- A store that holds no missed-slot row (a chain that has never missed a slot, or one rolled back
+  below its first missed slot) then gets the rows of the slots between the genesis block and block
+  2, at height 2 with round 1's forging list, as the reference's start writes them (its
+  productivity backfill); a running node never counts those slots.
+- A start whose tip ends a round (or is the genesis block) writes the rows of the next round from
+  the restored state, as the reference's start saves them. After an ordinary stop they are
+  there already and nothing changes; after `snapshot rollback`, or after a revert to the last
+  block of a round followed by a stop, they come back, on the table path in a transaction of
+  its own.
 - A milestone entry that the tip has reached is fingerprinted when it is first reached. A start
   refuses a milestone file in which such an entry changed or disappeared, or which adds an entry at
   or below the tip, and names the height to roll back to. `p2p` and `fees.staticFees` are left out
@@ -584,6 +598,14 @@ the one place where a Heartwood restart and the reference's differ.
   a block is valid.
 - Every start also returns the pool's online record from the store (`Restored::online`);
   `ChainStore::save_online` replaces the stored record, outside any chunk.
+
+`rollback` is the core of `snapshot rollback` (see heartwood-core): `plan` gives the reference's
+target, the last block of the round before the one that holds the requested height, or its
+refusal with the reference's lines; `rollback` deletes, in one transaction of the store's
+writer, the blocks, transactions and missed-slot rows above the target, the round rows above its
+round, the undo records and milestone fingerprints above it and the state tables, and counts
+what it deleted. The online record, the pool's storage and the chain's identity stay, and the
+next start replays the stored blocks from the genesis block.
 
 ### The processor and the jobs
 
@@ -1015,7 +1037,12 @@ configuration):
   sync's end from its forger's live `forger.json`. In that window the pool refuses a vote or a
   revoke for such a delegate as offline, where the reference admits it;
 - AwaitBlock waits at most 8 s, then serves the request from the published chain; the reference
-  waits for the queue's drain without limit;
+  waits for the queue's drain without limit. With reference clients connected (see L3 and L4)
+  an honest wait ends by the drain within milliseconds (the longest seen, 375 ms under a load
+  of 8), so only a held job reaches the bound; the reference's clients then close their
+  sockets before 8 s, as their own timeouts are shorter, and a client with a longer timeout
+  gets the answer at 8.0 to 8.3 s (the queue's state is read every 20 ms) with the tip before
+  the job;
 - at most `maxSameSubnetPeers` addresses of one /24 or /48 hold sockets at once (an address that
   holds one may replace it); the reference has no such cap;
 - the transport faults that no honest client causes (a WebSocket ping or pong frame, a text frame,
@@ -1042,13 +1069,19 @@ configuration):
   Heartwood refuses anywhere, see L0) or a header its schema refuses, where the reference answers
   `{status: true}` and decides in its job;
 - getPeers sorts a peer without a latency last, and the status's peer configuration lists the API
-  before the webhooks, in rank order;
+  before the webhooks, in rank order. A peer's port cannot be negative here, so the reference's
+  rule that leaves out a peer with port -1 never applies; an IPv4-mapped IPv6 address and its
+  IPv4 form are one address, in getPeers and in `remoteAccess`, where the reference compares the
+  texts;
 - smaller differences of the transport: a codec refusal's text after its error class is
   Heartwood's; the 404 and 400 texts; a malformed, non-UTF-8 or over-16 KiB request head is dropped
   (the reference answers 400 or 431 first, with the same ban); percent-encoded `//paths` are not
   routed; `Sec-WebSocket-Version` is read as a decimal number; no pong is sent before "Malicious
   ping frame received"; the hello's socket id is `heartwood:<n>`; messages that come while a socket
-  closes are ignored; a closed socket is not listed again as established;
+  closes are ignored; a closed socket is not listed again as established; a plain HTTP request
+  on the peer-to-peer port gets the empty 404 with `connection: close` from every caller, where
+  the reference gives a caller in `remoteAccess` the HTTP framework's JSON 404 on a kept
+  connection (only a caller outside `remoteAccess` is banned, on both sides);
 - a silent socket that opens in the 5 s after a ping may be closed up to 15 s later than the
   reference's, whose check 5 s after a ping also covers the sockets opened since the ping when any
   socket was open at it.
@@ -1058,17 +1091,23 @@ make test-p2p                   # also the server's tests (features node and dif
 make fuzz-server                # nes_server_session, FUZZ_SECONDS
 ```
 
-The server's tests (`tests/{server,inbound,bans,controllers,attestation,quorum,forger_link,devnet}.rs`)
+The server's tests (`tests/{server,inbound,bans,controllers,attestation,quorum,forger_link,devnet,served,await_block,reference_clients}.rs`)
 run on tokio's paused clock against fakes of the node's services and of the peer side, and over
 in-memory connections or loopback addresses `127.11.0.x`; the relay's integration tests put the
-whole server under a real relay (see heartwood-core). Two vector classes cover the server:
-`V30-relay-forger` (the round answer and the forging quorum) and `V31-server` (the request chain
-over each route, the inbound limiter and the served status), installed in
-`packages/p2p/tests/vectors`. The fuzz target:
+whole server under a real relay (see heartwood-core). `tests/served.rs` runs every record of
+`V32-served` through the controllers over a scripted node; `tests/await_block.rs` takes each end
+of an AwaitBlock wait on a paused clock; `tests/reference_clients.rs` pins the plain HTTP 404's
+head, whose `cache-control` and `Date` come in the reference's order. Three vector classes cover
+the server: `V30-relay-forger` (the round answer and the forging quorum), `V31-server` (the
+request chain over each route, the inbound limiter and the served status) and `V32-served` (the
+public controllers' answers, see L0), installed in `packages/p2p/tests/vectors`; the property
+P20 draws the controllers' cases at random (see L1). The reference's own peer client, run from
+the oracle image, compares a Heartwood relay's answers with a reference relay's (see L3 and L4).
+The fuzz target:
 
 | Target | Input | Checks | Seeded from |
 |---|---|---|---|
-| `nes_server_session` | a script of client frames and pauses against one server session | no panic; the session ends where the reference's server would, with a typed reason | the hello and the request of each V31 `p2p.serveRequest` record, as binary frames (`SERVER_SEEDS`, `tools/server-fuzz-seeds.js`) |
+| `nes_server_session` | a script of client frames and pauses against one server session | no panic; the session ends where the reference's server would, with a typed reason | the hello and the request of each V31 `p2p.serveRequest` record, as binary frames (`SERVER_SEEDS`, `tools/server-fuzz-seeds.js`), and the requests the reference-client probe recorded (its fourth argument, a probe directory) |
 
 ## heartwood-forger
 
@@ -1216,6 +1255,9 @@ and nix are used by this crate only (`make layers`).
   500 MB into seven numbered files. A run is timed to the moment its child exited.
 - **the role commands**: `start`, `stop`, `restart`, `status` (with a process table read from
   `/proc`, or from `ps` elsewhere) and `log`, with their refusals.
+- **the recovery commands**: the marker files of `pool clear` and `state clear`, their questions
+  and the trust rule for the temp directory and its markers, which the relay's start reads
+  through the same function (see heartwood-core).
 - **network generate**: a network's chain definition, keys and single-node instance for a seed.
   The built-in devnet profile writes crypto files byte-identical to the genesis vectors (V10) for
   their three seeds.
@@ -1364,7 +1406,13 @@ each case shows only with the request named:
   refuses (422 on both sides, with another message);
 - the router takes the path as sent: the reference first decodes percent-escaped unreserved
   characters and resolves dot segments, so `/%61pi/...` or `/api/./peers` is 404 here;
-- the reference's documentation pages (`/`, `/index.html`, `/api.json`, `/swagger-ui.css`,
+- `GET` and `HEAD /` (and a path hapi normalises to it, such as `//` or `/a/..`) answer 200 with a
+  page of 49 bytes that links the base path (`text/html; charset=utf-8`; `HEAD` with the same
+  headers and no body), charged a point as the reference charges its documentation route. The
+  reference answers with its documentation's 872-byte page, with `last-modified`, `etag` and
+  `accept-ranges`. A reference peer probes a peer's API port with `HEAD /`, so the port shows
+  in its `/api/peers` only when this answers 200;
+- the reference's documentation files (`/index.html`, `/api.json`, `/swagger-ui.css`,
   `/swagger-ui.js`, and the paths that reach them through an escaped slash, such as `/..%2Fwww`)
   and the routes a relay does not serve are unmatched paths here, including
   `/blocks/first`, `/blocks/missed`, `/transactions/schemas` and `/wallets/top`, which a served
@@ -1464,11 +1512,62 @@ is done), `clear-pool.lock` clears the pool's storage, `CORE_RESET_DATABASE` emp
 start is then a first start) and the pool, and `CORE_RESET_POOL` empties the pool, at every start
 while they are set. Two differences keep another local user from using the temp directory, which
 is under the shared `/tmp` by default: the relay does not make that directory (the reference does,
-and refuses to start when it cannot), and it honours a marker only when the marker is a file, and
-it and its directory belong to the user of the data directory and are not writable by every user;
-another marker is ignored with a warning. The pool's online record is loaded at every start, whatever the restore path, so
+and refuses to start when it cannot), and it honours a marker only when the marker is a file with
+no other hard link, and it and its directory belong to the user of the data directory and are not
+writable by every user, the directory not by a group other than the user's own either (on a system
+whose users share a primary group, set `CORE_PATH_TEMP` to a directory of mode 0700, which `pool
+clear` and `state clear` create when it is missing); another marker is ignored with a warning that
+says why. The rule covers the marker and its own directory only, not the directories above it: the
+default temp directory `/tmp/<user>/<token>-core/<network>` sits in `/tmp/<user>`, which another
+user may have made first and may then rename or remove, so that a marker written there is never
+read. On a machine shared with other users, set `CORE_PATH_TEMP` to a directory under the data
+directory (as the devnet tooling does), or make `/tmp/<user>` yourself first. The pool's online
+record is loaded at every start, whatever the restore path, so
 a vote for a delegate that announced itself before the stop is admitted at once; a reference relay
-started without its saved state refuses it until a peer announces the delegate again.
+started without its saved state refuses it until a peer announces the delegate again. This holds
+after `state clear` and `snapshot rollback` too; only `CORE_RESET_DATABASE`, a reset to the
+genesis block, empties the record.
+
+The recovery commands, `heartwood snapshot rollback`, `heartwood pool clear` and `heartwood state
+clear` (or `snapshot:rollback`, `pool:clear`, `state:clear`), act on a relay's instance
+(`--token`, `--network` and the `CORE_PATH_*` variables, as the relay reads them):
+
+- `snapshot rollback --height N`, or `--number N` (N blocks below the tip; `--height` wins when
+  both are given, and a 0 counts as absent), rolls the store back to the last block of the round
+  before the one that holds the requested height, with the reference's refusals and log lines in
+  its order: "Rolling back the blockchain" and "Last block height is: <tip>" before the change,
+  then "Rolling back blockchain to last finished round <r> with last block height <h>". It
+  refuses while the relay runs, with the reference's text and Heartwood's instance name (`The
+  "<token>-<network>-relay" process is already running`), and holds the relay's process lock
+  until it ends, so no relay starts during a rollback; a pid file that a killed relay left is
+  removed. The change is one transaction (see heartwood-blockchain). The next start finds no
+  state, replays the stored blocks from the genesis block and writes the rows of the round after
+  the target, as the reference's start saves them, and the relay then syncs from its peers.
+- `pool clear` and `state clear` ask the reference's question, word for word (the first `y` or
+  `n` in the line typed decides, and the end of the input is a no), or none with `--force`, and
+  write the reference's marker, `clear-pool.lock` or `clear-saved-states.lock`, into the temp
+  directory the relay reads; they print nothing when they succeed. At its next start the relay
+  empties its pool's storage, or restores its state by a replay from the genesis block, and
+  removes the marker.
+
+Where the recovery commands differ on purpose: every refusal exits with status 1, where the
+reference logs some and exits 0. `snapshot rollback` also refuses a data directory without a store
+(and makes nothing), another network's store and a store without a block; its `--height` and
+`--number` take integers only (a decimal is a usage error, status 2); a failure inside the store
+logs "Rollback failed" and the error's text, where the reference logs a stack; its log file is
+`<token>-<network>-snapshot-current.log` (the reference's `<token>-snapshot-current.log`); it never
+resets the store, since `CORE_RESET_DATABASE` and `CORE_RESET_POOL` act at the relay's start; and
+it writes no `force-integrity-check.lock`, since every start checks the store. The start after a
+rollback logs Heartwood's own start lines, not the reference's rebuild. A relay keeps no saved-state
+files: where a reference relay whose newer saved states name deleted blocks loads an older one,
+below the target, and restarts there, Heartwood starts at the target; once both have synced again
+their stores are equal. The clears write where the relay reads (the reference's command writes
+into its own default temp path whatever `CORE_PATH_TEMP` says), make a missing temp directory with
+mode 0700, refuse a temp directory or an existing marker that fails the rule above and a run as
+another user than the relay's, and make the marker with mode 0600 without following a symbolic
+link; the reference's command writes nothing, prints nothing and exits 0 when its temp directory
+is missing or cannot be written. They ask on a plain line, `<question> (y/N) `, and read a whole
+line, where the reference's prompt draws `? <question> › (y/N)` and decides at the first key.
 
 `heartwood forger run` (or `forger:run`) runs a forger in the foreground. It reads the forger's
 profile of `app.json`, which may hold only the logger, the transactions and the forger components
@@ -1525,7 +1624,16 @@ build of the whole workspace turns on the test seams through `heartwood-difftest
 `difftest` (`make relay-binary`) `relay run` also takes the harness's flags, which no release build
 has: `--difftest-digest FILE` writes one state digest line per applied, reverted and restarted state,
 `--difftest-blocks FILE` the bytes of every applied block, and `--difftest-seed IP:PORT` names one
-seed that the address rules let through, for a mock peer on the same host.
+seed that the address rules let through, for a mock peer on the same host. With
+`HEARTWOOD_DIFFTEST_DIR` naming a directory, such a relay writes those files there, one of each
+per start, and also records every public request's AwaitBlock step in `await-NNNN.jsonl` beside
+the start's digest file (the time, the route, the caller, the wait, how it ended: at once, by the
+queue's drain, by the bound or after the caller's socket closed, and the tips before and after);
+a `stall-next-job` file there holding a number of milliseconds holds the next job of one block
+that long before its commit, with the debug line "difftest: holding the job for N ms". A block of
+the relay's own forger whose held job ends with less than 2 s left in the block's slot is then
+discarded as processed too late and removed by a fork recovery of one block, as any late block of
+the forger is, so a test that holds one needs slots longer than the hold.
 
 ```sh
 cargo test -p heartwood-core --locked                               # the command line, the configuration, the lock and the views
@@ -1543,7 +1651,13 @@ relay (no listening socket, a block forged through the relay, a second forger re
 its post in flight), the key file's and the forger profile's refusals, `start` and `stop` with their
 refusals, a stop that comes as soon as the pid file exists, the supervisor's `errored` state, the
 colon spellings, `network generate` against the genesis vectors and the devnet addressing's
-refusals. The tests that start a relay, a forger or a mock relay listen in `127.13.0.0/24`, or in
+refusals. The recovery commands' tests run `snapshot rollback` on a store of the committed chain
+(each refusal with its lines and the store left byte for byte, the lock held through the command,
+a rollback from 265 to 106 and the relay's next start, which replays, writes round 3's rows and
+serves height 106) and `pool clear` and `state clear` (the questions, `--force`, the marker at the
+path the relay reads with `CORE_PATH_TEMP` set and unset, the refused temp directories, and the
+relay's start after each, also with directories made under umask 002). The tests that start a
+relay, a forger or a mock relay listen in `127.13.0.0/24`, or in
 the block `HEARTWOOD_TEST_LOOPBACK` names (such as `127.24.0`), so that two runs on one host can be
 kept apart. The devnet smoke test (marked `devnet`), on the prefix `HEARTWOOD_DEVNET_PREFIX` names,
 has `heartwood devnet init --validators 1` forge 20 blocks, then a devnet of five nodes forge a
@@ -1557,11 +1671,11 @@ models the reference's class. On a run of every class (reference tag `s1-ref-v2`
 
 | Outcome | Records |
 |---|---|
-| compared, equal to the reference | 9,019 |
-| documented differences, each with its form checked on the input or shown by the oracle's answer | 246 |
+| compared, equal to the reference | 9,172 |
+| documented differences, each with its form checked on the input or shown by the oracle's answer | 247 |
 | skipped | 0 |
 
-That is 9,265 records in 31 files, and a run of the image and a local run agree on every one. The
+That is 9,419 records in 33 files, and a run of the image and a local run agree on every one. The
 gate runs with `--strict` (`make l0`), which fails a record that is skipped or has no Rust subject
 as it fails a difference. The builders of the removed types and of the extended header, which
 Heartwood does not have, are documented refusals (checked on the builder's input), so nothing is
@@ -1575,7 +1689,10 @@ compared, 8 documented), `config_vectors` over the crypto-file class (17 compare
 `network_vectors` over V26 (401 compared, 8 documented), `processor_vectors` and `job_vectors` over
 V27, `api_vectors` and `config_app_vectors` over V28, `logger_vectors` over the logger class (318
 compared, 60 documented), `forger_vectors` over V29 (102 compared, 1 documented: the forging
-delegate's own key on a peer's over-height header) and `relay_vectors` over V30 and V31. In V30 the five `forger.round` records are documented: the reference's round answer
+delegate's own key on a peer's over-height header), `relay_vectors` over V30 and V31, the p2p
+crate's `served` over V32 (124 compared, 1 documented: a postBlock whose memo is not valid UTF-8,
+which Heartwood refuses at the receipt) and `rollback_vectors` over V33 (29 compared). In V30 the
+five `forger.round` records are documented: the reference's round answer
 holds its wallet data (the attribute map with its known attributes, and for the round's delegates
 the copies it made at the round's start), and lists `allDelegates` in the order it filled its name
 index; Heartwood answers with the API's wallet shape and lists `allDelegates` by name. The forger
@@ -1680,6 +1797,7 @@ minimal case, which is written to `--regressions`.
 | P17 forging | P10's pool sessions, whose collation at the end is the forger's, with a random previous block, slot, reward (mostly the devnet's, sometimes 0 or any 64-bit value), key and aux | `forger.collateAndForge`: the collated and removed ids and the block's bytes |
 | P18 quorum | peer sets (heights, fast verifications, attested keys, states), the forger's attested keys, round sets that differ from the ranking, ranks, and the relay's tip | `quorum.analyze`: the network state's fields and `canForge` |
 | P19 decisions | one attempt of a slot: rounds, network states of every status with quorum counts around the threshold and over-height headers (empty blocks of two delegates, the forging delegate's signed header that counts a transaction, and one of its headers whose signature fails), status headers, slot answers, times left around the 2,000 ms margin, and failing calls | `forger.decide`: the attempt's action, the quorum's reason and every log line |
+| P20 served | the seven public routes' requests over a chain made for the case, over the committed corpus and `c2-faults` and `c4-restarts` cut below their tip (when they are under `target/corpus`), and over a synthetic store of full blocks: getBlocks around the tip and the 20 MiB cut, getCommonBlocks with known, unknown and repeated ids, getStatus, getPeers, getUnconfirmedTransactions, postTransactions, and postBlock of the next block, a skipping, an old and a header-only block and one above `maxTransactions` | `p2p.controller`: the answer or the thrown error, and the log lines |
 
 With the date as the seed and 10,000 cases per property (50,000 for P7), every property agrees
 with the reference. The only documented difference that appears is the one of a refused
@@ -1712,6 +1830,10 @@ and every reason of the quorum's refusal appears. From 10,000 cases `make l1` fa
 of them appears fewer than 20 times (`--decision-reach`, `L1_DECISION_REACH`); at 10,000 cases the
 rarest, `sameSlot`, came 164 times (about one case in sixty), so 1,000 cases do not reach 20 of
 each.
+
+P20 agrees with the reference at 10,000 cases with the date as the seed (10,001 records compared,
+none documented). From 10,000 cases `make l1` fails the run when a public route is reached fewer
+than 200 times or the getBlocks cut fewer than 20 (`--served-reach`, `L1_SERVED_REACH`).
 
 P13 agrees with the reference at 10,000 and at 20,000 cases with the date as the seed. Its only
 documented case is a block refused in its apply after missed slots (34 and 59 cases). `make l1`
@@ -1805,6 +1927,25 @@ left is accepted, not broadcast, and removed by the fork recovery, its return gi
 and the same block posted twice is accepted and broadcast once, the second job dropped as applied
 already. The answers, the log lines and the digest lines are compared.
 
+**Rollbacks.** `make rollback-replay NAME=<corpus>` (`difftest run l2 DIR --rollback`) builds the
+store at the corpus's tip once, as a follower imports the chain, and runs every case of the
+rollback class (V33, see L0) on a copy of it, against a fresh oracle session on the same chain:
+each refusal must answer as the reference's command does and leave the store byte for byte; each
+rollback must equal the reference's (the target, the round, the log lines, the rows deleted and
+the store's summary: its tip, highest round, missed slots and transactions); the start after it
+must replay for want of a state, with its line at the target equal to the judge's, the next
+round's rows equal, as a set, to those the reference's start saves, and the summary equal to the
+reference's after its own start; then every block above the target is downloaded again, one per
+job at its slot's time, with every line equal to the judge's and the store's anchors holding. The
+committed corpus, `c2-faults` (to 265), `c4-restarts` and four chains of live runs give 194 of
+194 each, and a live run's chain whose block 2 is not in slot 1 gives 164 of 164 (the start's
+rows before block 2 included, see heartwood-blockchain). `make l2-synthetic` also runs the
+recovery cases, on both sides: a rollback to the last block of the last whole round (212), one
+that leaves no missed-slot row (106), one with transactions in both stored pools, and one where
+the reference's start loads an older saved state below the target (it restarts at 200, Heartwood
+at 212; after both sync to 265 their lines and stores are equal, the documented case); and `state
+clear` and `pool clear` through their markers, each also with directories made under umask 002.
+
 **Kill test.** `make crash-test` replays the chain through the store in a child process
 (`difftest store replay`) and kills it with SIGKILL after a random delay, `KILLS` times; after each
 kill it restores the store by both of Heartwood's start paths (`difftest store check`), which must
@@ -1850,6 +1991,7 @@ make crash-test NAME=my-chain KILLS=200 RUNTIME=1         # a relay importing th
 make corpus-judge NAME=my-chain PROCESSOR=1               # also each block's result through the reference's job
 make l2-processor NAME=my-chain                           # Heartwood's download path, jobs and processor against those
 make forge-replay NAME=my-chain                           # every block rebuilt by the forger
+make rollback-replay NAME=my-chain                        # every rollback, the start and the sync after it
 cargo test -p heartwood-difftest --locked --test l2       # the committed corpus with its restart lines, through the
                                                           # store and through the processor, no oracle
 ```
@@ -1968,6 +2110,74 @@ the chain for 6 slots, then it resumed; node 5 synced from an empty store in 36 
 chain advanced. A forger's first quorum answer came 9 ms into its slot at the median, and every
 block reached every relay within 1 s of node 1 outside the fault windows.
 
+**Reference nodes on Heartwood relays.** Four more runs (`MIXED_RECIPE`; `make live RUN=w0`, `w`,
+`p` or `s`, all four at once) put Heartwood relays where reference nodes connect to them, on one
+generated network, with the reference's image and the relay image of `make relay-image`, built
+once before them. The debug switches of the reference's peer client are on in every reference
+node, so that it logs every reply it refuses. Each run stops at its planned height, which the
+recipe refuses to pass; the step list places each step in the round it needs:
+
+| Run | Network | Stopped at | What happens |
+|---|---|---|---|
+| `w0` | three reference forgers and three reference relays | 212 (round 4) | the steps of `w` with reference relays as nodes 4 and 6: the baseline the other runs are compared with |
+| `w` | three reference forgers, Heartwood relays as nodes 4 and 6, and a reference relay as node 5 | 212 (round 4) | the transaction scenario through node 4; node 5 started with an empty store and routes to node 4 alone, so that it syncs from the Heartwood relay, then a batch through it; node 6, isolated, restarted with a pooled transfer, then `pool clear`, then `state clear` and a vote for a delegate it saw online before; the heal; node 4's next block job held for 12 s; node 4 restarted by SIGINT; node 6 isolated again, rolled back with `snapshot rollback --height 133`, started and synced again |
+| `p` | three reference forgers, a Heartwood relay as node 4 and a reference relay as node 5 that reaches node 4 alone | 159 (round 3) | a partition of nodes 1 and 2 from nodes 3 to 5 across a round end, both sides forging, two conflicting transfers, then the heal; node 4 or node 5, of either implementation, still 10 or more blocks behind on its own tip 60 s after the heal gets its routes opened and its relay restarted |
+| `s` | three Heartwood nodes, each a relay and a forger in one container, and a reference relay as node 4 | 106 (round 2) | the transaction scenario through node 1; node 4 started with an empty store and routes to node 1 alone; votes that the reference relay admits only after it has verified the Heartwood forgers' status attestations; node 4's routes opened, a batch, node 2's relay restarted |
+
+`make live-check RUN=w`, `p` or `s` compares a run with `w0`, and each count below with the most
+any rehearsal of the same recipe with reference nodes only gave (`MIXED_SPREAD`, `--spread`),
+since the reference's own counts vary from run to run. It requires: one chain, every Heartwood
+relay's digest lines equal to the judge's; every reference node that reaches a Heartwood relay
+accepts it and lists it, with its API port, outside the fault windows of either; no reference node
+bans a Heartwood relay for a refused request or a broken session, logs an unexpected reply or
+refuses a reply from one, and its timeouts and disconnects about a Heartwood relay come only
+inside that relay's fault windows, no more often than the reference's rehearsals gave in the same
+place (lines between two nodes the routes keep apart are counted on their own); the same of the
+Heartwood relays' logs about reference nodes; the fresh node's blocks, its judged lines and its
+round and missed-slot rows equal to the serving relay's; transactions and blocks passing through
+a Heartwood relay both ways; in `p`, the minority's blocks through node 4, both sides converging
+on the majority's chain (a node reconnected only as the recipe's rule allows), and only the
+majority's conflicting transfer kept; in `s`, the votes
+admitted, a quorum for every forged block and every block rebuilt by the reference's forger; the
+recovery commands' effects (the pooled transfer kept, then gone, the replay start, the vote, and
+node 6's store summary after the rollback and after its start equal to the reference's own
+`chain.rollback` and `chain.restart` over the same chain, as the oracle runs them); a relay
+without a forger listening for peers on its node's address only, and a forger listening on
+nothing; and the start height of every step in its planned round and order.
+
+`make p2p-compare RUN=w0`, `w` or `s` runs the reference-client probe (`tools/oracle/probe/p2p.js`,
+`difftest p2p compare`): the reference's own nes client, peer connector and communicator, codecs
+and reply schemas, from the oracle image, send the 29 cases of `tools/difftest/p2p-corpus` (every
+public route and its edges, a 35 s idle hold, the port probes, and refusals such as an internal
+route, a bad version, an undecodable payload, a text frame and an oversized block) to a Heartwood
+relay and to a reference relay at the same paused height, and compares their answers, socket
+outcomes and bans; only the version suffix, the slot of an answer given in another slot and the
+hello's socket id are masked, and getPeers is judged by the run's routes. `make await-report
+RUN=w`, `p` or `s` reads the relays' AwaitBlock records (see heartwood-core): at least 20 records
+a round for each of getStatus, getBlocks and getUnconfirmedTransactions, every honest wait ended
+by the drain, and in `w` each wait of the held job ended by the 8 s bound or by its client's
+close, with at least one ended by the bound.
+
+On the last runs `w` and `s` passed every check. Node 5 synced from the Heartwood relay in 13 s,
+as it did from a reference relay in `w0`, and then received every block through it within 1 s of
+node 1; node 6's rollback and its start gave the store the reference's own command and start give
+on the same chain, and it synced again to the tip. The probe found no difference in any of the
+three runs (29 of 29 each); the route corpus compared 1,903 answers in `w` (nodes 4 and 6 against
+node 1) and 1,008 in `s`. The longest honest AwaitBlock wait was 338 ms (375 ms in an earlier run),
+at a load of about 10; in the held job the reference relays closed their sockets before 8 s, and
+the probe's client, whose timeout is 20 s, was answered at 8.0 s with the tip before the job. In
+`s` the reference relay admitted both votes, the Heartwood forgers' blocks had a quorum in every
+slot, and the reference's forger rebuilt all 105 of them. After the rollback a Heartwood relay
+took 23 s to sync the 71 blocks it lacked, where a reference relay took 4 s for 58: it fetched
+single blocks from its one peer until it had accepted others. Run `p` showed the minority's blocks
+served through the Heartwood relay and the fork resolved on it. After the heal a relay that knows
+only the minority's side cannot check the network's health and stays on that side, the reference
+relay in node 4's place in the rehearsals as much as the Heartwood relay, so the recipe reconnects
+either one that has not followed the heal 60 s after it (its routes opened and its relay
+restarted). In the last run the restarted Heartwood relay found the fork 6 s after its start and
+logged the reference's own lines (19 blocks removed back to height 80), and every node was on one
+tip 104 s after the heal.
+
 ## The oracle image
 
 `make oracle-image`, or `tools/oracle/build-image.sh --repo DIR --commit REV`:
@@ -2030,6 +2240,8 @@ run without `DEVNET_GENERATOR`, and then installs nothing.
 | `V29-forging.jsonl` (forger and p2p-wire) | block assembly (`forger.forge`: an empty block, each kept type alone and together, burns, 256 recipients, 150 and 151 transactions, a block over `maxPayload`, totals and rewards at the 64-bit edges, three aux values, milestones that change at the next height), collation and assembly after pool sessions (`forger.collateAndForge`), one attempt of the forger's slot (`forger.decide`, with its log lines), and the internal routes' round and network-state bodies as a relay writes them and the forger reads them |
 | `V30-relay-forger.jsonl` (p2p) | the relay's forging quorum over the network state of a round (`quorum.analyze`: the peers' heights, ids and delegates, the missed and the unknown) and the round the relay answers the forger with (`forger.round`) |
 | `V31-server.jsonl` (p2p) | the server's request chain over each route (`p2p.serveRequest`: the plugins' checks, the codec, the version and network gates, the forger's exemption from the limits), the inbound limiter's sequences (`ratelimit.run`) and the status the server signs and serves (`status.serve`) |
+| `V32-served.jsonl` (p2p) | the public controllers' answers (`p2p.controller`) over the committed corpus at heights 2, 53, 54, 106 and 265 and over a synthetic store of full blocks that reaches the 20 MiB cut: getBlocks from 0, 1, the middle, the tip and past it with limits 1 and 400, none and headers only; getCommonBlocks with no known id, one, several, the genesis block alone, ten, duplicates and an id in capitals; getPeers with equal latencies, a port of -1, the caller (also IPv4-mapped), peers without a latency and 2,001 peers; getUnconfirmedTransactions, postTransactions and getStatus (the records with `countOnly` are the controller's answer alone: the server's request schema has no such key and refuses the request before any controller runs); postBlock pinged, not chaining, by an unregistered or unranked generator, valid, from the forger, with the reduced reward, above `maxTransactions` (the reference throws, so the caller's socket ends) and with a memo that is not valid UTF-8 |
+| `V33-rollback.jsonl` (blockchain) | the reference's `snapshot:rollback` (`chain.rollback`) over the committed corpus at its tip, 265: 12 refusals (no flag, a 0 for either or both flags, negative values, the tip and above it, heights 1, 40 and 53) with their lines, and 17 rollbacks (`--height` at and around the round ends, `--number`, both flags), each with the rows it deleted, the store's summary, the start after it with its line and summary, and the rows of the round after the target |
 | `V20-logger.jsonl` (logger) | the log line of every level, coloured and plain, with and without emoji codes (the whole table, in slices), over times at the edges of a JavaScript date and messages with line breaks and colour codes |
 | `V21-pool.jsonl` (pool) | 50 scripted pool sessions over wallet fixtures, each step with the reference's answer and the pool's contents after it: every error code with its message (duplicates, the cooldown from 0 to 30 seconds and per channel, the size limit, another network byte, the fee floor and one below it, the static fee exact, lower and higher, a full pool with fee ties and evictions, the per-sender limit with `excess` and allowed senders, every handler refusal, the pending and offline texts, bad signatures and bytes that do not decode, the seven removed types as bytes and as JSON); JSON entries with a correct, wrong or missing id; accepted but not broadcast; a pending incoming transfer; nonce chains and gaps; re-adds after a flush and a restart of the storage; age expiry; removal cascades; forged removal; the online record's expiry; collation (fee and nonce order, ties, `exclude`, the most transactions, the byte budget, a failed sender) |
 | `V23-config.jsonl` (kernel) | `config.load` of the four crypto files: the devnet's files, accepted by both, and each refusal kind of the strict schema at each level, the keys of removed features on and off, `exceptions.json` other than `{}`, and missing files (the reference then falls back to its built-in preset) |
@@ -2070,10 +2282,11 @@ difftest oracle ping [--image TAG | --solar-dir DIR]
 difftest vectors verify DIR
 difftest vectors diff DIR DIR
 difftest run l0 DIR
-difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR] [--regressions DIR] [--min-reach N] [--decision-reach N] [ORACLE]
+difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR] [--regressions DIR] [--min-reach N] [--decision-reach N] [--served-reach N] [ORACLE]
 difftest run l2 DIR [--synthetic] [--restart] [--memory] [--to H] [ORACLE]
 difftest run l2 DIR --processor [--chunks reference|1] [--synthetic] [--to H] [ORACLE]
 difftest run l2 DIR --forge [--oracle] [--to H] [ORACLE]
+difftest run l2 DIR --rollback [--to H] [ORACLE]
 difftest run l3|l4              points to the live runs (see `difftest levels`)
 difftest corpus import ARCHIVE... --out DIR [--seed TEXT]
 difftest corpus from-blocks FILE... --crypto DIR --out DIR [--seed TEXT]
@@ -2082,7 +2295,10 @@ difftest corpus verify DIR
 difftest store replay DIR --db PATH [--to H]
 difftest store check DIR --db PATH
 difftest store crash DIR [--kills N] [--seed S] [--max-delay MS] [--runtime]
-difftest live check DIR
+difftest store summary DIR
+difftest live check DIR [--compare DIR] [--spread DIR]...
+difftest live await RUN_DIR
+difftest p2p compare RUN_DIR --left NODE --right NODE
 difftest api compare --run DIR
 difftest api compare --left URL --right URL [--corpus DIR] --out DIR
 difftest forger crash [--kills N] [--seed S] [--child FILE]
@@ -2097,6 +2313,10 @@ difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--
 corpus through the store under `PATH`, one block per chunk, and `store check` restores it by both
 start paths and prints each one's tip and restart line: the kill test's two halves. `run l2
 --forge` is the forge replay and `forger crash` the forger's crash test (see heartwood-forger);
+`run l2 --rollback` is the rollback replay (see L2); `store summary` gives the tip, the highest
+round, the missed slots and the transactions of a relay's store through a read-only connection,
+so a running relay's too; `live await` is the AwaitBlock report and `p2p compare` the probe's
+comparison of two relays of a live run (see L3 and L4);
 `corpus from-blocks` makes a corpus of a Heartwood relay's block files; `network generate` runs
 `heartwood network generate`'s files against the genesis records of a vector set. `live check`
 judges a live run's directory and `api compare --run` its recorded API answers (see L3 and L4);
@@ -2114,15 +2334,19 @@ object keys by their JavaScript order), `report`, `replay` (a corpus of inputs t
 and Heartwood), `genesis` (the chain-definition driver), `fixture` (wallet sets as both sides read
 them), `strategies` (the L1 generators), `corpus` and `digests` (L2 corpora and digest files),
 `synthetic` and `synthetic_pool` (the L2 synthetic blocks, restarts and pool sessions),
-`synthetic_processor` (the synthetic processor and fork cases), `synthetic_forger` and `service_rig`
+`synthetic_processor` (the synthetic processor and fork cases), `synthetic_rollback` and
+`synthetic_clear` (the recovery cases), `synthetic_forger` and `service_rig`
 (the forger's own blocks through the blockchain service), `forger_kill` (the forger's crash test),
 `corpus_from_blocks` (a corpus of relay block files), `restart` (restart plans and the reference's
 restart lines), `store` (the replay through the store, the store's rows against the node's, and the
 kill test), `runtime_kill` (the kill test through a relay), `levels` (L0, L1 and L2 run, with
 `levels::pool`, the judge of a pool session, `levels::l2_processor`, the replay through the
-processor and the judge of a job, and `levels::l2_forge`, the forge replay), `live` (the checks of a
-live run, with `live::forging`, those of a forging devnet) and `api` (the route corpus, its client,
-recording and judge, and the V28 subjects).
+processor and the judge of a job, `levels::l2_forge`, the forge replay, and `levels::l2_rollback`,
+the rollback replay), `store_summary`, `p2p_compare` (the probe's records), `live` (the checks of a
+live run, with `live::forging`, those of a forging devnet, `live::mixed`, `live::fresh`,
+`live::recovery`, `live::attest` and `live::schedule`, those of the runs with reference nodes on
+Heartwood relays, and `live::await_block`, the AwaitBlock report) and `api` (the route corpus, its
+client, recording and judge, and the V28 subjects).
 
 A difference names the JSON path and, for bytes, the first differing offset. This is
 `difftest vectors diff` against a copy of the vectors with one byte and one fee changed; an L0

@@ -75,6 +75,37 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # 3,000 to 3,100: the peer caps, the probe and fetch deadlines, the fork segment and reply checks
 # and the chunk cache's byte bound add 122 lines to heartwood-p2p, and the marker check of the temp
 # directory 24 to heartwood-core, which were at 7,956 and 2,985 of their ceilings before them.
+# With the reference's own clients on the server and the recovery commands (each ceiling is the
+# crate's count before them plus the work planned for them, rounded up to the next 100):
+# - heartwood-p2p goes from 8,100 to 8,500: it measured 8,078; the served answers made conformant to
+#   the reference's clients (up to 150 lines in the controllers and the served status), the
+#   transport's fixes for them (up to 150 in the listener, the session, the bans and the plugins)
+#   and the AwaitBlock record (the wait's outcome, the socket's close signal and the record's call
+#   site, 91 lines) add about 390.
+# - heartwood-blockchain goes from 3,700 to 3,800: it measured 3,665; `snapshot rollback` (the
+#   reference's target and refusals, and the store change in one transaction) and the start's write
+#   of the next round's rows after it add up to 95, and the job stall's field 4. The rollback is
+#   listed on its own. Its `difftest` module (the job stall, behind the `difftest` feature, which no
+#   release build enables) is test support: it is left out and listed apart, as the other crates'
+#   are. With the bodies built it goes to 3,900: it measured 3,837, 172 above 3,665, since the
+#   rollback took 140 lines where 80 were planned (62 lines of signatures written before its
+#   bodies, and 78 of bodies: the refusals' lines, the plan, the store change with its row counts
+#   and the reference's three lines), the start's write of the next round's rows 20 (16 in
+#   commit.rs, 4 in restore.rs), the job stall's field and call 8 (4 in node.rs, 4 in
+#   process_blocks_job.rs) and the rollback module's declaration and re-export 4. The start's
+#   productivity backfill (21 in restore.rs, 4 in commit.rs) and the rollback's first lines logged
+#   before its deletes (4) bring it to 3,866.
+# - heartwood-core goes from 3,100 to 3,200: it measured 3,009; the rollback command (up to 60
+#   lines), the two clears' dispatch and their marker check (20), the AwaitBlock record's override
+#   (10) and the three commands' flags and wiring (68) join the command tree. The clears' bodies
+#   live in heartwood-cli, where they need only paths.
+# - heartwood-cli goes from 3,500 to 3,600: it measured 3,347; the recovery commands (the markers,
+#   the question, the temp directory's trust rule and the clears' bodies, up to 175 lines) and
+#   their colon spellings (4) join it. The recovery commands are listed on their own. It goes to
+#   3,700 with the supervisor's run-file checks (the run directory's files opened relative to the
+#   directory that was checked, and a run file that is not a regular file refused): they took it
+#   from 3,347 to 3,405 without the recovery commands, and with the recovery commands' 229 lines
+#   (225 in recovery.rs and the colon spellings' 4) it measures 3,634.
 # A read-only diagnostics command and its protocol server join the commands crate, which links no
 # node crate: heartwood-cli goes from 3,500 to 8,600 and heartwood-core from 3,100 to 3,500. The
 # doctor is budgeted at 4,170 lines in heartwood-cli (its runner, report, rendering and redaction,
@@ -101,6 +132,13 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # fixed words in the advice take heartwood-cli's 33 lines; the node view's start and the words
 # in explain take heartwood-core's 8. heartwood-database, at 2,640, keeps its 3,000. The check of
 # that round took heartwood-cli to 10,329 (the doctor 6,980): the clock offset as a millisecond fact.
+# With the recovery commands and the doctor both in, heartwood-cli goes from 10,400 to 10,700 and
+# heartwood-core from 3,600 to 3,700, each the merged count rounded up to the next hundred with no
+# further addition planned in the merge. Each side fit its own ceiling (heartwood-cli 3,634 of
+# 3,700 and 10,329 of 10,400, heartwood-core 3,158 of 3,200 and 3,508 of 3,600), but both had
+# counted the room left under the base's ceiling, so the merged heartwood-cli measures 10,616 (the
+# doctor 6,980), over the base's ceiling plus both raises (10,600), and heartwood-core 3,657.
+# heartwood-database, at 2,699, keeps its 3,000.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"
@@ -112,26 +150,29 @@ CHECKS=(
     "heartwood-p2p-wire:packages/p2p-wire/src:3200"
     "heartwood-database:packages/database/src:3000"
     "heartwood-pool:packages/pool/src:2000"
-    "heartwood-blockchain:packages/blockchain/src:3700"
+    "heartwood-blockchain:packages/blockchain/src !packages/blockchain/src/difftest.rs:3900"
     "heartwood-blockchain storage and restart:packages/blockchain/src/commit.rs packages/blockchain/src/rows.rs packages/blockchain/src/restore.rs packages/blockchain/src/milestones.rs packages/blockchain/src/online.rs:"
     "heartwood-blockchain processor:packages/blockchain/src/processor:1200"
     "heartwood-blockchain forger's blocks:packages/blockchain/src/forger_blocks.rs:"
+    "heartwood-blockchain rollback:packages/blockchain/src/rollback.rs:"
     "heartwood-blockchain runtime:packages/blockchain/src/node.rs packages/blockchain/src/process_blocks_job.rs packages/blockchain/src/queue.rs packages/blockchain/src/pool_task.rs packages/blockchain/src/events.rs packages/blockchain/src/options.rs packages/blockchain/src/blockchain.rs packages/blockchain/src/state_machine packages/blockchain/src/fork_recovery.rs packages/blockchain/src/chain_state.rs packages/blockchain/src/network.rs packages/blockchain/src/work.rs:"
-    "heartwood-p2p:packages/p2p/src !packages/p2p/src/testing:8100"
+    "heartwood-blockchain test support (difftest only):packages/blockchain/src/difftest.rs:"
+    "heartwood-p2p:packages/p2p/src !packages/p2p/src/testing:8500"
     "heartwood-p2p client side:packages/p2p/src/nes packages/p2p/src/transport.rs packages/p2p/src/connector.rs packages/p2p/src/rate_limiter.rs packages/p2p/src/utils packages/p2p/src/peer.rs packages/p2p/src/repository.rs packages/p2p/src/communicator.rs packages/p2p/src/attestation.rs packages/p2p/src/processor.rs packages/p2p/src/scoring.rs packages/p2p/src/verifier.rs packages/p2p/src/nsect.rs packages/p2p/src/monitor.rs packages/p2p/src/chunk_cache.rs packages/p2p/src/download.rs packages/p2p/src/broadcaster.rs packages/p2p/src/seeds.rs packages/p2p/src/diversity.rs packages/p2p/src/options.rs packages/p2p/src/view.rs packages/p2p/src/seams.rs packages/p2p/src/errors.rs packages/p2p/src/lib.rs:"
     "heartwood-p2p server transport:packages/p2p/src/server !packages/p2p/src/server/controllers packages/p2p/src/node_services.rs packages/p2p/src/devnet.rs:"
     "heartwood-p2p server controllers and forger channel:packages/p2p/src/server/controllers packages/p2p/src/status_server.rs packages/p2p/src/attestation_session.rs packages/p2p/src/network_state.rs:"
     "heartwood-p2p test support (difftest only):packages/p2p/src/testing:"
     "heartwood-api:packages/api/src:5000"
-    "heartwood-core:packages/core/src !packages/core/src/harness.rs:3600"
+    "heartwood-core:packages/core/src !packages/core/src/harness.rs:3700"
     "heartwood-core test support (difftest only):packages/core/src/harness.rs:"
     "heartwood-forger:packages/forger/src !packages/forger/src/bin:2200"
     "heartwood-forger loop and relay client:packages/forger/src/forger_service.rs packages/forger/src/client.rs packages/forger/src/deadlines.rs:"
     "heartwood-forger forging, keys, record and attester:packages/forger/src/delegate.rs packages/forger/src/keys.rs packages/forger/src/signing_record.rs packages/forger/src/signer.rs packages/forger/src/attestation.rs:"
     "heartwood-forger test support (difftest only):packages/forger/src/bin:"
-    "heartwood-cli:packages/cli/src !packages/cli/src/bin:10400"
+    "heartwood-cli:packages/cli/src !packages/cli/src/bin:10700"
     "heartwood-cli supervisor, commands and network generate:packages/cli/src/argv.rs packages/cli/src/instance.rs packages/cli/src/supervisor packages/cli/src/process.rs packages/cli/src/process_table.rs packages/cli/src/network.rs:"
     "heartwood-cli devnet:packages/cli/src/devnet packages/cli/src/http.rs:"
+    "heartwood-cli recovery commands:packages/cli/src/recovery.rs:"
     "heartwood-cli doctor:packages/cli/src/doctor:"
     "heartwood-cli test support (test-child only):packages/cli/src/bin:"
 )

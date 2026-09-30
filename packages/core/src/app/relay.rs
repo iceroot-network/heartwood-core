@@ -250,8 +250,12 @@ async fn serve(
     ))));
     let first_start = restored.path == RestorePath::FirstStart;
     #[cfg(feature = "difftest")]
-    let (observer, record) =
+    let (observer, record, await_record) =
         crate::harness::files(&relay, run, &milestones, first_start).map_err(config)?;
+    #[cfg(feature = "difftest")]
+    let stall = (relay.env.get(crate::harness::DIR_VARIABLE))
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| heartwood_blockchain::difftest::StallControl::new(dir.into()));
     #[cfg(not(feature = "difftest"))]
     let observer = (None, first_start).0;
     let (node, handle) = Node::spawn(NodeParts {
@@ -273,6 +277,8 @@ async fn serve(
         broadcast: links.clone(),
         own_keys: links.clone(),
         version: VERSION.to_owned(),
+        #[cfg(feature = "difftest")]
+        stall,
     })
     .map_err(component)?;
     let ended = stops.clone();
@@ -323,6 +329,8 @@ async fn serve(
         clock: Arc::clone(&clock),
         #[cfg(feature = "difftest")]
         record,
+        #[cfg(feature = "difftest")]
+        await_record,
     };
     // A listener that cannot bind stops the relay, through the graceful shutdown.
     let (p2p, mut unbound) = match serve_p2p(p2p, Arc::new(services), peers, &links, clock).await {

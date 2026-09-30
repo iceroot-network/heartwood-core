@@ -33,6 +33,14 @@ impl Database {
         }
         Ok(out)
     }
+
+    /// Whether the table holds a row, as the reference's `hasMissedBlocks` asks at a start.
+    pub fn has_missed_blocks(&self) -> Result<bool, DatabaseError> {
+        let mut statement = self
+            .connection
+            .prepare_cached("SELECT EXISTS (SELECT 1 FROM missed_blocks)")?;
+        Ok(statement.query_row([], |row| row.get(0))?)
+    }
 }
 
 impl Chunk<'_> {

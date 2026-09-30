@@ -402,6 +402,8 @@ async fn a_round_a_running_job_started_is_read_with_the_tip_before_the_commit() 
         broadcast: links.clone(),
         own_keys: Arc::new(NoAttestedKeys),
         version: heartwood_core::VERSION.into(),
+        #[cfg(feature = "difftest")]
+        stall: None,
     })
     .unwrap();
     let settings = Settings::in_data_dir(&config.paths.data);

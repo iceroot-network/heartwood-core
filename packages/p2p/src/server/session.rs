@@ -43,7 +43,7 @@ use tokio::time::{Instant, sleep_until, timeout};
 
 use super::listener::{CLOSE_BACKLOG, Frame, FrameReader, FrameWriter, MAX_BACKLOG, Writes};
 use super::plugins::{Answer, Plugins};
-use super::seams::SessionId;
+use super::seams::{SessionId, SocketClosed};
 use crate::scoring::Violation;
 
 /// The nes protocol version of the hello.
@@ -184,6 +184,7 @@ impl ServerSession {
     /// Serve the WebSocket of `reader` and `writer` until it closes or the session ends it.
     pub async fn run(mut self, mut reader: FrameReader, writer: FrameWriter) -> SessionEnd {
         let (answers, mut answered) = mpsc::unbounded_channel::<(u32, Answer)>();
+        let (close_signal, closed) = SocketClosed::channel();
         let mut beat = next_beat(self.parts.beats_from, Instant::now());
         let mut check = None;
         let stop = loop {
@@ -225,12 +226,13 @@ impl ServerSession {
                     }
                 }
                 frame = reader.next() => {
-                    if let Some(stop) = self.frame(frame, &writer, &answers) {
+                    if let Some(stop) = self.frame(frame, &writer, &answers, &closed) {
                         break stop;
                     }
                 }
             }
         };
+        close_signal.send_replace(true);
         let stop = match (stop, writer.backlog()) {
             (Stop::Close(_) | Stop::Echo(_) | Stop::Ended, backlog) if backlog > CLOSE_BACKLOG => {
                 let ip = self.parts.ip;
@@ -277,9 +279,10 @@ impl ServerSession {
         frame: Frame,
         writer: &FrameWriter,
         answers: &mpsc::UnboundedSender<(u32, Answer)>,
+        closed: &SocketClosed,
     ) -> Option<Stop> {
         match frame {
-            Frame::Binary(bytes) => self.message(&bytes, writer, answers),
+            Frame::Binary(bytes) => self.message(&bytes, writer, answers, closed),
             Frame::Text => self.fault("Invalid message received"),
             Frame::Ping => self.fault("Malicious ping frame received"),
             Frame::Pong => self.fault("Malicious pong frame received"),
@@ -299,6 +302,7 @@ impl ServerSession {
         bytes: &[u8],
         writer: &FrameWriter,
         answers: &mpsc::UnboundedSender<(u32, Answer)>,
+        closed: &SocketClosed,
     ) -> Option<Stop> {
         let Ok(message) = Message::parse(bytes) else {
             return self.fault("Invalid payload received");
@@ -337,9 +341,9 @@ impl ServerSession {
                 self.in_flight = self.in_flight.saturating_add(1);
                 let plugins = Arc::clone(&self.parts.plugins);
                 let (ip, session, answers) = (self.parts.ip, self.parts.id, answers.clone());
-                let (id, payload) = (message.id, message.payload);
+                let (id, payload, closed) = (message.id, message.payload, closed.clone());
                 tokio::spawn(async move {
-                    let answer = plugins.handle(route, payload, ip, session).await;
+                    let answer = plugins.handle(route, payload, ip, session, closed).await;
                     let _ = answers.send((id, answer));
                 });
                 None

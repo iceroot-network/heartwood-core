@@ -487,6 +487,31 @@ async fn an_unmatched_path_is_answered_as_the_reference_catch_all_answers_it() {
     assert_eq!(call(&pipeline, get("/x%zz")).await.0, 400);
 }
 
+#[tokio::test]
+async fn the_root_is_a_page_and_the_documentation_files_are_not() {
+    let pipeline = pipeline(config());
+    for request in [get("/"), Request::head("/").body(Body::empty()).unwrap()] {
+        let head = request.method() == "HEAD";
+        let response = pipeline.handle(request, CLIENT.parse().unwrap()).await;
+        assert_eq!(response.status().as_u16(), 200);
+        let content_type = response.headers().get("content-type");
+        assert_eq!(content_type.unwrap(), "text/html; charset=utf-8");
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        // A GET's page names the base path.
+        assert!(head || String::from_utf8_lossy(&body).contains("\"/api\""));
+    }
+    let not_found = boom(404, "Not Found", "Not Found");
+    for file in [
+        "/index.html",
+        "/api.json",
+        "/swagger-ui.css",
+        "/swagger-ui.js",
+    ] {
+        let (status, _, body) = call(&pipeline, get(file)).await;
+        assert_eq!((status, body), (404, not_found.clone()), "{file}");
+    }
+}
+
 /// `request`'s answer from `pipeline`: its status, the bytes of `name`, and its body.
 async fn raw_header(pipeline: &Pipeline, request: Request<Body>, name: &str) -> (u16, Vec<u8>) {
     let response = pipeline.handle(request, CLIENT.parse().unwrap()).await;

@@ -4,16 +4,23 @@
 //! other; a process taking a lock refuses at once when another process holds it exclusively, and
 //! tries again while only probes hold it, for at most a second, however often they probe. The
 //! supervisor stops its node with SIGINT and kills it with SIGKILL 30 s later; any other process is
-//! signalled only while the lock that names it is held, so a stale pid is never signalled. A
+//! signalled only while the lock that names it is held, so a stale pid is never signalled. A holder
+//! of a node's lock that is not the node (`snapshot rollback`) removes the role's pid file as it
+//! takes the lock, as the node does, so that no pid a dead node left is read while it holds it. A
 //! supervisor writes its pid into its lock file as it takes the lock ([`record_pid`]), and `stop`
 //! and `kill` read the supervisor's pid from there while the lock is held ([`held_pid`]), never
 //! from the state file, which an earlier supervisor may have left. `kill` also signals process
 //! groups ([`send_group`]): a daemon supervisor's, which holds its node, and the group of the node
 //! a foreground supervisor it has just killed named last, as long as that node still leads one.
+//!
+//! The lock files are opened relative to their run directory's descriptor ([`RunDir`]): the
+//! functions of a path open the directory it is in without following a link, and their `_in`
+//! variants take a directory that was checked and is held, so that a directory swapped after the
+//! check is never where a lock lands.
 
-use std::fs::{File, OpenOptions, TryLockError};
-use std::io::{ErrorKind, Read};
-use std::os::unix::fs::{FileExt, OpenOptionsExt};
+use std::fs::{File, TryLockError};
+use std::io::ErrorKind;
+use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
@@ -23,6 +30,7 @@ use nix::fcntl::OFlag;
 use nix::sys::signal::{Signal, kill, killpg};
 use nix::unistd::{Pid, getpgid, getsid};
 
+use super::RunDir;
 use crate::errors::ProcessError;
 
 /// How long the supervisor waits after SIGINT before it sends SIGKILL.
@@ -36,35 +44,27 @@ const PROBE_WAIT: Duration = Duration::from_millis(10);
 const HELD_ATTEMPTS: u32 = 50;
 
 /// Take the lock at `path`, held until the file returned is closed; `None` when another process
-/// holds it.
+/// holds it. The directory is held for the call ([`RunDir::beside`]): a link in its place is
+/// refused.
 pub fn take_lock(path: &Path) -> Result<Option<File>, ProcessError> {
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .custom_flags(OFlag::O_NOFOLLOW.bits())
-        .open(path);
-    let file = file.map_err(|e| lock_error(path, &e))?;
+    take_lock_in(&RunDir::beside(path)?, path)
+}
+
+/// [`take_lock`] in the run directory `dir`, which was checked.
+pub fn take_lock_in(dir: &RunDir, path: &Path) -> Result<Option<File>, ProcessError> {
+    let flags = OFlag::O_WRONLY | OFlag::O_CREAT;
+    let file = dir
+        .file(path, flags, 0o666)
+        .map_err(|e| lock_error(path, &e))?;
     for _ in 0..TAKE_ATTEMPTS {
         match file.try_lock() {
             Ok(()) => return Ok(Some(file)),
-            Err(TryLockError::WouldBlock) if held_exclusively(path)? => return Ok(None),
+            Err(TryLockError::WouldBlock) if is_locked_in(dir, path)? => return Ok(None),
             Err(TryLockError::WouldBlock) => thread::sleep(PROBE_WAIT),
             Err(TryLockError::Error(e)) => return Err(lock_error(path, &e)),
         }
     }
     Ok(None)
-}
-
-/// Whether another process holds the lock at `path` exclusively, as a running process holds it:
-/// a shared lock is refused then, and granted beside the probes' shared locks.
-fn held_exclusively(path: &Path) -> Result<bool, ProcessError> {
-    let file = File::open(path).map_err(|e| lock_error(path, &e))?;
-    match file.try_lock_shared() {
-        Ok(()) => Ok(false),
-        Err(TryLockError::WouldBlock) => Ok(true),
-        Err(TryLockError::Error(e)) => Err(lock_error(path, &e)),
-    }
 }
 
 /// Write the pid of this process into the lock file `lock`, which it holds, in place of any pid an
@@ -79,13 +79,14 @@ pub fn record_pid(lock: &File, path: &Path) -> Result<(), ProcessError> {
 /// The pid the process that holds the lock at `path` recorded there; `None` when no process
 /// holds it or the holder has not recorded its pid within a moment (a lock taken without one).
 pub fn held_pid(path: &Path) -> Result<Option<u32>, ProcessError> {
+    let Some(dir) = RunDir::beside_if_there(path)? else {
+        return Ok(None);
+    };
     for _ in 0..HELD_ATTEMPTS {
-        if !is_locked(path)? {
+        if !is_locked_in(&dir, path)? {
             return Ok(None);
         }
-        let mut text = String::new();
-        let file = File::open(path).and_then(|mut file| file.read_to_string(&mut text));
-        file.map_err(|e| lock_error(path, &e))?;
+        let text = dir.read(path).map_err(|e| lock_error(path, &e))?;
         if let Ok(pid) = text.trim().parse() {
             return Ok(Some(pid));
         }
@@ -96,7 +97,14 @@ pub fn held_pid(path: &Path) -> Result<Option<u32>, ProcessError> {
 
 /// Whether a process holds the lock at `path`.
 pub fn is_locked(path: &Path) -> Result<bool, ProcessError> {
-    let file = match File::open(path) {
+    let dir = RunDir::beside_if_there(path)?;
+    dir.map_or(Ok(false), |dir| is_locked_in(&dir, path))
+}
+
+/// [`is_locked`] in the run directory `dir`: a shared lock is refused while a process holds the
+/// lock exclusively, and granted beside the probes' shared locks.
+pub fn is_locked_in(dir: &RunDir, path: &Path) -> Result<bool, ProcessError> {
+    let file = match dir.file(path, OFlag::O_RDONLY, 0) {
         Ok(file) => file,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(lock_error(path, &e)),

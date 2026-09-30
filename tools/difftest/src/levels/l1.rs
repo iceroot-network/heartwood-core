@@ -30,7 +30,7 @@ use crate::oracle::OracleServer;
 use crate::report::{CaseResult, Outcome, Report};
 use crate::strategies::transactions::{TxContext, fee_cases, handler_cases};
 use crate::strategies::{
-    exchange, fixtures, forger_decide, forging, kernel, monitor, quorum, state, verifier,
+    exchange, fixtures, forger_decide, forging, kernel, monitor, quorum, served, state, verifier,
 };
 use crate::subject::{Case, Registry};
 use crate::vectors::Expected;
@@ -76,11 +76,13 @@ pub enum Property {
     Quorum,
     /// The forger's decisions in a slot (`forger.decide`).
     Decisions,
+    /// The public routes' answers (`p2p.controller`).
+    Served,
 }
 
 impl Property {
     /// Every property.
-    pub const ALL: [Property; 19] = [
+    pub const ALL: [Property; 20] = [
         Property::FeeFloor,
         Property::Rounds,
         Property::Slots,
@@ -100,6 +102,7 @@ impl Property {
         Property::Forging,
         Property::Quorum,
         Property::Decisions,
+        Property::Served,
     ];
 
     /// The property's name on the command line.
@@ -124,10 +127,11 @@ impl Property {
             Property::Forging => "forging",
             Property::Quorum => "quorum",
             Property::Decisions => "decisions",
+            Property::Served => "served",
         }
     }
 
-    /// The property's short name (P1 to P19), which the command line accepts too.
+    /// The property's short name (P1 to P20), which the command line accepts too.
     pub const fn number(self) -> &'static str {
         match self {
             Property::FeeFloor => "P1",
@@ -149,6 +153,7 @@ impl Property {
             Property::Forging => "P17",
             Property::Quorum => "P18",
             Property::Decisions => "P19",
+            Property::Served => "P20",
         }
     }
 }
@@ -188,6 +193,9 @@ pub struct L1Options {
     /// How often P19 must reach each action and refusal of the reference's forging attempt; 0
     /// asks nothing (the counts are reported all the same).
     pub decision_reach: u32,
+    /// How often P20 must reach each public route, and a tenth as often the getBlocks cut; 0 asks
+    /// nothing.
+    pub served_reach: u32,
 }
 
 /// One case of a property, as the oracle takes it.
@@ -267,6 +275,9 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
             .prop_map(L1Case::plain)
             .boxed(),
         Property::Decisions => forger_decide::decision_cases(context)
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::Served => served::served_cases(context)
             .prop_map(L1Case::plain)
             .boxed(),
     }
@@ -431,7 +442,7 @@ pub fn under_reached(seen: &BTreeMap<String, usize>, minimum: u32) -> Vec<(Strin
 
 /// The outcomes of a forging decision that P19 must reach: each action of the reference's attempt
 /// (`forger-decide.js`), and each reason it refuses for. An answer that is an error is no
-/// action and is not listed.
+/// action and is not listed. P19 must also reach the forger's paths of [`forger_decide::PATHS`].
 pub const DECISION_CLASSES: [&str; 10] = [
     "decide stop",
     "decide error",
@@ -445,17 +456,14 @@ pub const DECISION_CLASSES: [&str; 10] = [
     "decide refused: quorum",
 ];
 
-/// The decision actions and refusals that `seen` counts fewer than `minimum` times, each with its
-/// count.
+/// The decision actions, refusals and paths that `seen` counts fewer than `minimum` times, each
+/// with its count.
 pub fn decisions_under_reached(
     seen: &BTreeMap<String, usize>,
     minimum: u32,
 ) -> Vec<(String, usize)> {
-    reached_fewer(
-        seen,
-        minimum,
-        DECISION_CLASSES.iter().map(|c| (*c).to_owned()),
-    )
+    let wanted = DECISION_CLASSES.iter().chain(&forger_decide::PATHS);
+    reached_fewer(seen, minimum, wanted.map(|c| (*c).to_owned()))
 }
 
 /// The error class of a refused transaction in an oracle answer (P7).
@@ -563,6 +571,10 @@ pub fn run(
             }
             if *property == Property::Decisions {
                 decision_outcomes(&answer, &mut seen.borrow_mut());
+                forger_decide::paths(&case.input, &answer, &mut seen.borrow_mut());
+            }
+            if *property == Property::Served {
+                served::outcomes(&case.input, &answer, &mut seen.borrow_mut());
             }
             let judged = super::judge_documented(&request, &answer, registry);
             let failed = judged.is_failure();
@@ -584,6 +596,9 @@ pub fn run(
         }
         if *property == Property::Decisions {
             results.extend(decision_checks(&file, &seen, options.decision_reach));
+        }
+        if *property == Property::Served {
+            results.extend(served::reach_checks(&file, &seen, options.served_reach));
         }
         if matches!(
             *property,
@@ -668,7 +683,7 @@ pub fn run(
     }
     if options.properties.contains(&Property::Decisions) && options.decision_reach > 0 {
         source.push_str(&format!(
-            "; P19 each action and refusal at least {} times",
+            "; P19 each action, refusal and path at least {} times",
             options.decision_reach
         ));
     }
@@ -717,8 +732,9 @@ fn processor_checks(file: &str, seen: &BTreeMap<String, usize>, min_reach: u32) 
     out
 }
 
-/// P19's own check: each of the reference's actions and refusals must be reached `min_reach`
-/// times; nothing is checked without a minimum.
+/// P19's own check: each of the reference's actions and refusals, and each path of
+/// [`forger_decide::PATHS`], must be reached `min_reach` times; nothing is checked without a
+/// minimum.
 fn decision_checks(file: &str, seen: &BTreeMap<String, usize>, min_reach: u32) -> Vec<CaseResult> {
     if min_reach == 0 {
         return Vec::new();
@@ -734,7 +750,9 @@ fn decision_checks(file: &str, seen: &BTreeMap<String, usize>, min_reach: u32) -
         file: file.to_owned(),
         line: 0,
         op: Property::Decisions.number().to_owned(),
-        label: format!("P19 reached each action and refusal of the reference {min_reach} times"),
+        label: format!(
+            "P19 reached each action, refusal and path of the reference {min_reach} times"
+        ),
         height: 0,
         outcome,
     }]
@@ -842,7 +860,8 @@ mod tests {
         assert_eq!("P17".parse::<Property>().unwrap(), Property::Forging);
         assert_eq!("P18".parse::<Property>().unwrap(), Property::Quorum);
         assert_eq!("P19".parse::<Property>().unwrap(), Property::Decisions);
-        assert!("P20".parse::<Property>().is_err());
+        assert_eq!("P20".parse::<Property>().unwrap(), Property::Served);
+        assert!("P21".parse::<Property>().is_err());
     }
 
     #[test]
@@ -897,6 +916,17 @@ mod tests {
             decision_outcomes(&output(action, reason), &mut seen);
         }
         assert_eq!(DECISION_CLASSES.len(), 10);
+        // Every action and refusal, but no path of the forger.
+        let checks = decision_checks("l1/decisions", &seen, 1);
+        let Outcome::HarnessError(message) = &checks[0].outcome else {
+            panic!("{checks:?}");
+        };
+        for path in forger_decide::PATHS {
+            assert!(message.contains(&format!("{path} 0")), "{message}");
+        }
+        for path in forger_decide::PATHS {
+            seen.insert(path.to_owned(), 2);
+        }
         let checks = decision_checks("l1/decisions", &seen, 1);
         assert!(checks.iter().all(|c| !c.outcome.is_failure()), "{checks:?}");
         assert_eq!(checks.len(), 1);

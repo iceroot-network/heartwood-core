@@ -22,9 +22,9 @@ use super::ServerOptions;
 use super::await_block::await_block;
 use super::ban_hammer::BanHammer;
 use super::rate_limit::InboundLimiter;
-use super::seams::{RouteHandlers, ServerRefusal, ServerRequest, SessionId};
+use super::seams::{RouteHandlers, ServerRefusal, ServerRequest, SessionId, SocketClosed};
 use super::validation::{VersionGate, check_request, check_size};
-use crate::node_services::{NodeServices, PeerSide};
+use crate::node_services::{AwaitRecord, NodeServices, PeerSide};
 use crate::scoring::Violation;
 
 /// A request's answer, and whether the close-connection plugin marked it `connection: close`.
@@ -84,17 +84,18 @@ impl Plugins {
 
     /// A request from `ip` on `session` to `route` (`None`: a path that names no route, which
     /// the reference's HTTP router answers 404) with `payload`, through every plugin and the
-    /// handler.
+    /// handler; `closed` fires when the request's socket closes.
     pub async fn handle(
         &self,
         route: Option<RouteId>,
         payload: Vec<u8>,
         ip: IpAddr,
         session: SessionId,
+        closed: SocketClosed,
     ) -> Answer {
         let from_forger = self.is_forger(ip);
         let result = match route {
-            Some(route) => self.chain(route, payload, ip, session, from_forger).await,
+            Some(route) => (self.chain(route, payload, ip, session, from_forger, closed)).await,
             None => Err(ServerRefusal::new(404, "Not Found")),
         };
         if let Err(refusal) = &result
@@ -119,6 +120,7 @@ impl Plugins {
         ip: IpAddr,
         session: SessionId,
         from_forger: bool,
+        closed: SocketClosed,
     ) -> Result<Vec<u8>, ServerRefusal> {
         let parts = &self.parts;
         let public = !route.is_internal();
@@ -129,7 +131,19 @@ impl Plugins {
             return Err(ServerRefusal::new(429, "Rate limit exceeded"));
         }
         if public {
-            await_block(parts.node.queue_state(), parts.options.await_block_bound).await;
+            let tip = || parts.node.chain().last_block().height();
+            let (tip_before, at_ms) = (tip(), parts.clock.now_ms());
+            let bound = parts.options.await_block_bound;
+            let outcome = await_block(parts.node.queue_state(), bound, closed).await;
+            parts.node.await_block_step(&AwaitRecord {
+                route,
+                caller: ip,
+                at_ms,
+                waited: outcome.waited,
+                end: outcome.end,
+                tip_before,
+                tip_after: tip(),
+            });
         }
         check_size(route, payload.len())?;
         if public {

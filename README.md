@@ -2,7 +2,7 @@
 
 # Heartwood Core
 
-The Rust implementation of IceRoot's node software. This repository currently provides cryptography, transaction and block codecs, network configuration, the headless state machine (wallets, delegates, rounds, transaction handlers, block application and reversal), the peer-to-peer wire codec, client and server, the store (SQLite), the transaction pool, block processing, the public API, the forger, the `heartwood` binary (a relay that follows a network and serves the peer-to-peer protocol and the public API, a forger process that forges through its relays, a process supervisor, `network generate` and a local devnet), and a differential-testing harness.
+The Rust implementation of IceRoot's node software. This repository currently provides cryptography, transaction and block codecs, network configuration, the headless state machine (wallets, delegates, rounds, transaction handlers, block application and reversal), the peer-to-peer wire codec, client and server, the store (SQLite), the transaction pool, block processing, the public API, the forger, the `heartwood` binary (a relay that follows a network and serves the peer-to-peer protocol and the public API, a forger process that forges through its relays, a process supervisor, the recovery commands, `network generate` and a local devnet), and a differential-testing harness.
 
 [Core overview](https://docs.iceroot.com/core/overview/) · [Build from source](https://docs.iceroot.com/core/installation/) · [Architecture](https://docs.iceroot.com/core/architecture/) · [Protocol design](https://docs.iceroot.com/core/protocol-design/)
 
@@ -64,6 +64,16 @@ target/release/heartwood forger run --network <name>
 
 `heartwood relay start` and `heartwood forger start` run a role under the built-in supervisor, as a daemon unless `--daemon false` is given, and `stop`, `restart`, `status` and `log` manage it. `heartwood network generate --network <name> --seed <text> --out <dir>` writes a new network's crypto files, its keys and one node's configuration.
 
+## Recover a relay
+
+```sh
+target/release/heartwood snapshot rollback --network <name> --height <h>
+target/release/heartwood pool clear --network <name>
+target/release/heartwood state clear --network <name>
+```
+
+`snapshot rollback` (or `snapshot:rollback`) rolls a stopped relay's store back to the last block of the round before height `h` (`--number n` counts n blocks down from the tip), holding the relay's lock while it works, so the relay cannot start meanwhile. At its next start the relay rebuilds its state from the stored blocks and syncs the rest from its peers. `pool clear` and `state clear` ask first (`--force` skips the question) and leave the reference's marker file in the relay's temp directory: at its next start the relay empties its transaction pool, or rebuilds its state from the genesis block. The commands take the relay's `--token` and `--network`, print the reference's lines and exit with status 1 on every refusal. [Compatibility and testing](docs/compatibility.md#heartwood-core) gives the rule a marker file must meet and where the commands differ from the reference's.
+
 ## Run a local devnet
 
 ```sh
@@ -90,9 +100,9 @@ target/release/heartwood devnet --dir <dir> stop
 | `packages/blockchain/` | The blockchain component: the block processor, jobs committed to the store, the node thread, the job queue, the state machine with fork recovery, and a node's start (first start, restart from the state tables, or replay from the genesis block) |
 | `packages/p2p/` | The peer-to-peer protocol: the client side as the relay uses it (nes sessions over WebSocket, requests and reply checks, peer acceptance and verification, discovery, downloads and broadcasts) and the relay's server (the listener, bans, inbound limits, the route controllers and the forger's status attestation) |
 | `packages/forger/` | The forger: the slot loop its relay drives, the relay client with failover and call deadlines, block assembly and signing through a persisted signing record, the key file and the status attester |
-| `packages/cli/` | The commands' library: the colon aliases, instances, a built-in process supervisor and the role commands, the files of `network generate`, and a local devnet with one loopback address per node |
+| `packages/cli/` | The commands' library: the colon aliases, instances, a built-in process supervisor and the role commands, the markers of the recovery commands and their trust rule, the files of `network generate`, and a local devnet with one loopback address per node |
 | `packages/api/` | The public API a relay serves: the block, node, peer, transaction and wallet routes with the reference's envelope, query grammar, pagination, headers, rate limit and semaphore |
-| `packages/core/` | The `heartwood` binary: the relay and forger roles (`run`, `start`, `stop`, `restart`, `status`, `log`), `network generate` and `devnet`, with the roles' configuration, process locks, signals and graceful shutdown |
+| `packages/core/` | The `heartwood` binary: the relay and forger roles (`run`, `start`, `stop`, `restart`, `status`, `log`), the recovery commands (`snapshot rollback`, `pool clear`, `state clear`), `network generate` and `devnet`, with the roles' configuration, process locks, signals and graceful shutdown |
 | `tools/difftest/` | Compatibility harness and command-line tools |
 | `tools/oracle/` | Reference execution, container builds and vector generation |
 | `packages/*/tests/vectors/` | Committed vectors of each crate, with checksums and source metadata |
@@ -102,7 +112,9 @@ The current implementation uses the retained reference cryptography and transact
 
 ## Compatibility
 
-The reference is [solar-core-ref](https://github.com/iceroot-network/solar-core-ref), based on Solar Core 4.3.1 with a documented patch series. Over the eleven crates that hold vector classes, the committed L0 vectors give 9,019 equal comparisons and 246 documented differences, with no record skipped. L1 (random cases against the reference, one call each), L2 (reference devnet chains replayed block by block through the store and through the block processor, with a state digest at every height and restarts by every start path, and every block rebuilt by the other side's forger), L3 (one scenario on a reference devnet, observed by a reference relay and by a Heartwood relay; and one scenario on a devnet of reference nodes and on a devnet of Heartwood relays and forgers, with a Heartwood devnet through faults and forger failover) and L4 (reference devnets with Heartwood relays: restarts, a sync from an empty store, a partition and its heal) run as well.
+The reference is [solar-core-ref](https://github.com/iceroot-network/solar-core-ref), based on Solar Core 4.3.1 with a documented patch series. Over the eleven crates that hold vector classes, the committed L0 vectors give 9,172 equal comparisons and 247 documented differences, with no record skipped. L1 (random cases against the reference, one call each), L2 (reference devnet chains replayed block by block through the store and through the block processor, with a state digest at every height and restarts by every start path, and every block rebuilt by the other side's forger), L3 (one scenario on a reference devnet, observed by a reference relay and by a Heartwood relay; and one scenario on a devnet of reference nodes and on a devnet of Heartwood relays and forgers, with a Heartwood devnet through faults and forger failover) and L4 (reference devnets with Heartwood relays: restarts, a sync from an empty store, a partition and its heal; and reference nodes served by Heartwood relays) run as well, and the rollback command's cases are replayed on each test chain, target by target, against the reference's own command and start.
+
+In the runs with reference nodes on Heartwood relays, every reference node accepted the Heartwood relays and listed their API ports, none banned one or refused one of its replies, a reference relay synced from a Heartwood relay alone as fast as from a reference relay, a reference relay verified the status attestations of Heartwood forgers and its forger rebuilt their blocks byte for byte, the recovery commands left a live relay's store as the reference's commands leave a reference node's, and the reference's own peer client got the same answers, socket outcomes and bans from a Heartwood relay as from a reference relay. A reference node behind a relay on the minority side of a partition did not always follow the heal by itself, with a reference or a Heartwood relay in that place.
 
 See [compatibility and testing](docs/compatibility.md) for exact boundaries, oracle prerequisites, vector classes, release requirements and regeneration instructions. Oracle runs are isolated from the network. Standard Rust checks use committed vectors and do not require the reference checkout or Docker.
 

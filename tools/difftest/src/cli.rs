@@ -31,8 +31,8 @@ Usage:
   difftest run l0 DIR             compare golden vectors with Heartwood's implementations
   difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR]
                   [--regressions DIR] [--min-reach N] [--decision-reach N]
-                  [ORACLE]
-                                  random and mutated cases of the properties (P1 to P19, or
+                  [--served-reach N] [ORACLE]
+                                  random and mutated cases of the properties (P1 to P20, or
                                   their names; all by default), one oracle call each; 256
                                   cases and seed 1 by default; DIR is a vector set with the
                                   genesis class [packages/crypto/tests/vectors]; the minimal
@@ -40,7 +40,9 @@ Usage:
                                   --min-reach fails P13 when the reference's answers reach a
                                   reachable result or an unchained status fewer than N times;
                                   --decision-reach fails P19 when they reach an action or a
-                                  refusal fewer than N times
+                                  refusal fewer than N times; --served-reach fails P20 when
+                                  they reach a public route fewer than N times or the
+                                  getBlocks cut fewer than N/10 times
   difftest run l2 DIR [--synthetic] [--restart] [--memory] [--to H] [ORACLE]
                                   replay the corpus DIR in Heartwood through a new store and
                                   compare every step with the oracle's digest lines, then the
@@ -61,6 +63,10 @@ Usage:
                                   Heartwood's forger from its inputs and compared with the
                                   stored bytes; --oracle has the reference rebuild a chain
                                   that Heartwood forged instead
+  difftest run l2 DIR --rollback [--to H] [ORACLE]
+                                  the rollback replay: the stored chain of DIR rolled back to
+                                  each target of the rollback class that it reaches, compared
+                                  with the oracle's rollback, then started and re-synced
   difftest run l3|l4              later levels (see `difftest levels`)
   difftest corpus import ARCHIVE... --out DIR [--seed TEXT]
                                   join the devnet tooling's archives of one chain (in order)
@@ -93,10 +99,22 @@ Usage:
                                   killed with SIGKILL N times (200) after up to MS ms (1500),
                                   and check each restore; --runtime kills a relay that imports
                                   DIR from a mock peer instead
+  difftest store summary DIR      a relay's store in the data directory DIR summarised: the
+                                  tip, the highest round row, the missed-slot rows and the
+                                  transactions (read-only: a running relay's store too)
   difftest corpus verify DIR      check a corpus against its manifest
-  difftest live check DIR         the comparisons of a live run's directory: the judge of its
+  difftest live check DIR [--compare DIR] [--spread DIR]...
+                                  the comparisons of a live run's directory: the judge of its
                                   chain, each Heartwood node's lines and store, the step
-                                  reports, the API answers, the ban scan and the invariants
+                                  reports, the API answers, the ban scan and the invariants;
+                                  --compare names the baseline run a run is compared with;
+                                  each --spread another run of the baseline's recipe with
+                                  reference nodes only: the log counts are compared with the
+                                  most any of those runs gave
+  difftest live await RUN_DIR     the AwaitBlock report of a live run's Heartwood relays
+  difftest p2p compare RUN_DIR --left NODE --right NODE
+                                  the reference-client probe's records of two relays of a live
+                                  run, compared case by case
   difftest api compare --run DIR  judge the route corpus's answers that a live run recorded
   difftest api compare --left URL --right URL [--corpus DIR] --out DIR
                                   send the route corpus to two nodes alternately, record and
@@ -115,7 +133,7 @@ Usage:
                                   generator for the same inputs
 
 --strict, with any command that compares (run, oracle replay, store crash, forger crash, network
-generate, live check, api compare): a case that was skipped or has no Rust implementation fails the run too, as
+generate, live check, live await, api compare, p2p compare): a case that was skipped or has no Rust implementation fails the run too, as
 a failed case does; the Makefile's gate targets pass it.
 
 ORACLE, where the reference runs (the flags win over the environment):
@@ -297,7 +315,32 @@ pub enum Command {
     LiveCheck {
         /// The run directory.
         dir: PathBuf,
+        /// The baseline run the run is compared with.
+        compare: Option<PathBuf>,
+        /// Other runs of the baseline's recipe with reference nodes only (`--spread`).
+        spread: Vec<PathBuf>,
     },
+    /// `difftest live await`: a live run's AwaitBlock report.
+    LiveAwait {
+        /// The run directory.
+        dir: PathBuf,
+    },
+    /// `difftest p2p compare`: the probe's records of two relays of a live run.
+    P2pCompare {
+        /// The run directory.
+        run: PathBuf,
+        /// The left node's name.
+        left: String,
+        /// The right node's name.
+        right: String,
+    },
+    /// `difftest store summary`: a relay's store summarised.
+    StoreSummary {
+        /// The relay's data directory.
+        dir: PathBuf,
+    },
+    /// `difftest run l2 DIR --rollback`: the rollback replay.
+    RunL2Rollback(L2RollbackArgs),
     /// `difftest api compare`: the route corpus's answers.
     ApiCompare(crate::api::ApiCompareArgs),
     /// `difftest run l2 DIR --forge`: the forge replay.
@@ -329,6 +372,17 @@ pub struct L2ProcessorArgs {
     pub chunks: Option<crate::levels::l2_processor::Chunks>,
     /// Run the synthetic processor and fork cases.
     pub synthetic: bool,
+    /// Replay the chain cut at this height.
+    pub to: Option<u32>,
+}
+
+/// The arguments of `difftest run l2 DIR --rollback`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct L2RollbackArgs {
+    /// Where the oracle runs.
+    pub oracle: OracleArgs,
+    /// The corpus.
+    pub dir: PathBuf,
     /// Replay the chain cut at this height.
     pub to: Option<u32>,
 }
@@ -365,6 +419,9 @@ pub struct L1Args {
     pub min_reach: u32,
     /// How often P19 must reach each action and refusal of the reference (0: no check).
     pub decision_reach: u32,
+    /// How often P20 must reach each public route, and a tenth as often the getBlocks cut (0: no
+    /// check).
+    pub served_reach: u32,
 }
 
 /// The arguments of `difftest run l2`.
@@ -500,7 +557,40 @@ pub fn parse(args: &[String]) -> Result<Command> {
         }
         ["corpus", "from-blocks", rest @ ..] => parse_from_blocks(rest),
         ["corpus", "verify", dir] => Ok(Command::CorpusVerify { dir: dir.into() }),
-        ["live", "check", dir] => Ok(Command::LiveCheck { dir: dir.into() }),
+        ["live", "check", dir, rest @ ..] => {
+            let (mut compare, mut spread) = (None, Vec::new());
+            let mut it = rest.iter();
+            while let Some(flag) = it.next() {
+                match *flag {
+                    "--compare" => compare = Some(value(flag, it.next())?.into()),
+                    "--spread" => spread.push(value(flag, it.next())?.into()),
+                    other => return Err(usage(format!("unknown live check option {other}"))),
+                }
+            }
+            Ok(Command::LiveCheck {
+                dir: dir.into(),
+                compare,
+                spread,
+            })
+        }
+        ["live", "await", dir] => Ok(Command::LiveAwait { dir: dir.into() }),
+        ["p2p", "compare", run, rest @ ..] => {
+            let (mut left, mut right) = (None, None);
+            let mut it = rest.iter();
+            while let Some(&flag) = it.next() {
+                match flag {
+                    "--left" => left = Some(value(flag, it.next())?.to_owned()),
+                    "--right" => right = Some(value(flag, it.next())?.to_owned()),
+                    _ => return Err(usage(format!("unknown option {flag}"))),
+                }
+            }
+            Ok(Command::P2pCompare {
+                run: run.into(),
+                left: left.ok_or_else(|| usage("p2p compare needs --left NODE"))?,
+                right: right.ok_or_else(|| usage("p2p compare needs --right NODE"))?,
+            })
+        }
+        ["store", "summary", dir] => Ok(Command::StoreSummary { dir: dir.into() }),
         ["api", "compare", rest @ ..] => parse_api_compare(rest),
         ["forger", "crash", rest @ ..] => parse_forger_crash(rest),
         ["network", "generate", dir] => Ok(Command::NetworkGenerate {
@@ -684,6 +774,7 @@ fn parse_l1(args: &[&str]) -> Result<Command> {
         regressions: None,
         min_reach: 0,
         decision_reach: 0,
+        served_reach: 0,
     };
     let mut it = args.iter();
     while let Some(&flag) = it.next() {
@@ -717,6 +808,11 @@ fn parse_l1(args: &[&str]) -> Result<Command> {
                     .parse()
                     .map_err(|_| usage("--decision-reach needs an unsigned integer"))?;
             }
+            "--served-reach" => {
+                l1.served_reach = value(flag, it.next())?
+                    .parse()
+                    .map_err(|_| usage("--served-reach needs an unsigned integer"))?;
+            }
             _ => oracle_flag(&mut l1.oracle, flag, it.next())?,
         }
     }
@@ -729,6 +825,9 @@ fn parse_l2(args: &[&str]) -> Result<Command> {
     }
     if args.contains(&"--forge") {
         return parse_forge(args);
+    }
+    if args.contains(&"--rollback") {
+        return parse_rollback(args);
     }
     let Some((dir, rest)) = args.split_first() else {
         return Err(usage(
@@ -761,6 +860,28 @@ fn parse_l2(args: &[&str]) -> Result<Command> {
         memory,
         to,
     }))
+}
+
+fn parse_rollback(args: &[&str]) -> Result<Command> {
+    let Some((dir, rest)) = args.split_first() else {
+        return Err(usage(
+            "usage: difftest run l2 DIR --rollback [--to H] [ORACLE]",
+        ));
+    };
+    let mut rollback = L2RollbackArgs {
+        oracle: OracleArgs::default(),
+        dir: (*dir).into(),
+        to: None,
+    };
+    let mut it = rest.iter();
+    while let Some(&flag) = it.next() {
+        match flag {
+            "--rollback" => {}
+            "--to" => rollback.to = Some(height(flag, it.next())?),
+            _ => oracle_flag(&mut rollback.oracle, flag, it.next())?,
+        }
+    }
+    Ok(Command::RunL2Rollback(rollback))
 }
 
 fn parse_l2_processor(args: &[&str]) -> Result<Command> {
@@ -1010,7 +1131,7 @@ mod tests {
         assert_eq!(
             p(
                 "run l1 --property P7 --property digest --cases 9 --seed 20260926 --solar-dir /s \
-               --min-reach 20 --decision-reach 30"
+               --min-reach 20 --decision-reach 30 --served-reach 200"
             )
             .unwrap(),
             Command::RunL1(L1Args {
@@ -1025,6 +1146,7 @@ mod tests {
                 regressions: None,
                 min_reach: 20,
                 decision_reach: 30,
+                served_reach: 200,
             })
         );
         assert_eq!(
@@ -1112,8 +1234,55 @@ mod tests {
         assert_eq!(
             p("live check runs/h").unwrap(),
             Command::LiveCheck {
-                dir: "runs/h".into()
+                dir: "runs/h".into(),
+                compare: None,
+                spread: vec![],
             }
+        );
+        assert_eq!(
+            p("live check runs/w --compare runs/w0").unwrap(),
+            Command::LiveCheck {
+                dir: "runs/w".into(),
+                compare: Some("runs/w0".into()),
+                spread: vec![],
+            }
+        );
+        assert_eq!(
+            p("live check runs/w --compare runs/w0 --spread a/w0 --spread b/w").unwrap(),
+            Command::LiveCheck {
+                dir: "runs/w".into(),
+                compare: Some("runs/w0".into()),
+                spread: vec!["a/w0".into(), "b/w".into()],
+            }
+        );
+        assert_eq!(
+            p("live await runs/w").unwrap(),
+            Command::LiveAwait {
+                dir: "runs/w".into()
+            }
+        );
+        assert_eq!(
+            p("p2p compare runs/w --left node4 --right node1").unwrap(),
+            Command::P2pCompare {
+                run: "runs/w".into(),
+                left: "node4".into(),
+                right: "node1".into(),
+            }
+        );
+        assert_eq!(
+            p("store summary data").unwrap(),
+            Command::StoreSummary { dir: "data".into() }
+        );
+        assert_eq!(
+            p("run l2 c --rollback --to 265 --image i").unwrap(),
+            Command::RunL2Rollback(L2RollbackArgs {
+                oracle: OracleArgs {
+                    image: Some("i".into()),
+                    ..OracleArgs::default()
+                },
+                dir: "c".into(),
+                to: Some(265),
+            })
         );
         assert_eq!(
             p("api compare --run runs/h").unwrap(),
@@ -1231,7 +1400,10 @@ mod tests {
             "run l0",
             "run l2",
             "run l1 --cases 0",
-            "run l1 --property P20",
+            "run l1 --property P21",
+            "run l1 --served-reach x",
+            "p2p compare r --left a",
+            "live check r --compare",
             "run l1 --min-reach x",
             "run l1 --decision-reach x",
             "run l2 c --processor --chunks 2",

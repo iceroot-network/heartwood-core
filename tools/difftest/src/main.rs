@@ -319,8 +319,35 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             Ok(verdict(&report, strict))
         }
         Command::RunL2Processor(args) => run_l2_processor(&args, env, strict),
-        Command::LiveCheck { dir } => {
-            let report = live::check(&dir)?;
+        Command::LiveCheck {
+            dir,
+            compare,
+            spread,
+        } => {
+            let report = live::check(&dir, compare.as_deref(), &spread)?;
+            print!("{report}");
+            Ok(verdict(&report, strict))
+        }
+        Command::LiveAwait { dir } => {
+            let report = live::await_block::report(&dir)?;
+            print!("{report}");
+            Ok(verdict(&report, strict))
+        }
+        Command::P2pCompare { run, left, right } => {
+            let report = heartwood_difftest::p2p_compare::compare(&run, &left, &right)?;
+            print!("{report}");
+            Ok(verdict(&report, strict))
+        }
+        Command::StoreSummary { dir } => {
+            let summary = heartwood_difftest::store_summary::summary(&dir)?;
+            println!("{summary}");
+            Ok(true)
+        }
+        Command::RunL2Rollback(args) => {
+            let corpus = Corpus::load(&args.dir)?;
+            let oracle = args.oracle.resolve(env)?;
+            let options = heartwood_difftest::levels::l2_rollback::RollbackOptions { to: args.to };
+            let report = heartwood_difftest::levels::l2_rollback::run(&corpus, &options, &oracle)?;
             print!("{report}");
             Ok(verdict(&report, strict))
         }
@@ -377,6 +404,7 @@ fn run_l1(args: &L1Args, env: impl Fn(&str) -> Option<String>, strict: bool) -> 
             regressions: args.regressions.clone(),
             min_reach: args.min_reach,
             decision_reach: args.decision_reach,
+            served_reach: args.served_reach,
         },
     )?;
     print!("{}", run.report);

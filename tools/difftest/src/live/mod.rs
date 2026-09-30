@@ -46,15 +46,28 @@
 //!   their listeners, the status polls, the attestations before every block, no slot with two
 //!   blocks of one key, and run `f`'s faults.
 //!
+//! The runs of reference nodes beside Heartwood relays ([`MIXED_RUNS`]: `w`, `p` and `s`, and `w0`,
+//! their reference baseline) have the checks of `mixed_checks` too: one chain, the judge, the
+//! acceptance of the Heartwood relays, the reference and Heartwood logs per fault window's class
+//! against the baseline, the fresh sync, the propagation, the fork of run `p`, the attestations of
+//! run `s`, the recovery commands, AwaitBlock, the processes, the records and the schedule. The
+//! baseline is the run `--compare` names, or [`COMPARE`]'s run beside this one.
+//!
 //! Besides the report, the check writes every case with its outcome to `live-check.txt` in the run
 //! directory.
 
+mod attest;
+pub mod await_block;
 pub mod bans;
 mod corpora;
 pub mod digest;
 pub mod forging;
+mod fresh;
+mod mixed;
 mod nodes;
+mod recovery;
 pub mod run;
+mod schedule;
 pub mod steps;
 
 use std::collections::BTreeMap;
@@ -78,8 +91,11 @@ pub const CORPUS_ROOT: &str = "target/corpus";
 pub const LAG_LIMIT_SECONDS: f64 = 8.0;
 /// The variable naming the run a check of run `t` or `m` compares with (the other of the two), as
 /// `make live-check RUN=t COMPARE=m` gives it: make passes a variable of its command line to the
-/// environment of its recipes. Run `m`'s `run.json` names run `t` as its pair already.
+/// environment of its recipes. Run `m`'s `run.json` names run `t` as its pair already. Runs `w`,
+/// `p` and `s` compare with their baseline `w0`.
 pub const COMPARE: &str = "COMPARE";
+/// The runs of reference nodes beside Heartwood relays, `w0` being their reference baseline.
+pub const MIXED_RUNS: [&str; 4] = ["w0", "w", "p", "s"];
 
 /// What a live check reads besides the run directory.
 pub struct LiveOptions<'a> {
@@ -89,12 +105,19 @@ pub struct LiveOptions<'a> {
     pub oracle: &'a dyn Fn() -> Result<Oracle>,
     /// The release binary of the tree being judged, which must be the relay the run tested.
     pub relay_binary: PathBuf,
+    /// The run the run is compared with (`--compare`): the other of runs `t` and `m`, or the
+    /// baseline `w0` of a mixed run.
+    pub compare: Option<PathBuf>,
+    /// Other runs of the baseline's recipe with reference nodes only (`--spread`): a mixed run's
+    /// log counts are compared with the most any of the baseline and these gave.
+    pub spread: Vec<PathBuf>,
 }
 
 /// Check the live run in `run_dir`, with the corpora under [`CORPUS_ROOT`], the oracle of the
-/// environment (`DIFFTEST_IMAGE` or `SOLAR_DIR`) and the tree's release binary at
-/// [`run::RELAY_BINARY`].
-pub fn check(run_dir: &Path) -> Result<Report> {
+/// environment (`DIFFTEST_IMAGE` or `SOLAR_DIR`), the tree's release binary at
+/// [`run::RELAY_BINARY`], the run `compare` to compare with and the other reference runs of its
+/// recipe, `spread`.
+pub fn check(run_dir: &Path, compare: Option<&Path>, spread: &[PathBuf]) -> Result<Report> {
     let oracle = || OracleArgs::default().resolve(|name: &str| std::env::var(name).ok());
     check_with(
         run_dir,
@@ -102,8 +125,46 @@ pub fn check(run_dir: &Path) -> Result<Report> {
             corpus_root: PathBuf::from(CORPUS_ROOT),
             oracle: &oracle,
             relay_binary: PathBuf::from(run::RELAY_BINARY),
+            compare: compare.map(Path::to_path_buf),
+            spread: spread.to_vec(),
         },
     )
+}
+
+/// What the checks of a mixed run ([`MIXED_RUNS`]) read.
+pub struct MixedRun<'a> {
+    /// The run's directory.
+    pub run_dir: &'a Path,
+    /// Its `run.json`.
+    pub manifest: &'a Manifest,
+    /// Its fault windows.
+    pub windows: &'a [run::Window],
+    /// The baseline run's directory, when the check compares with one.
+    pub baseline: Option<&'a Path>,
+    /// Other runs of the baseline's recipe with reference nodes only.
+    pub spread: &'a [PathBuf],
+    /// Where the run's corpora are imported and judged.
+    pub corpus_root: &'a Path,
+    /// The oracle, asked for only when a check needs it.
+    pub oracle: &'a dyn Fn() -> Result<Oracle>,
+}
+
+/// The checks of a mixed run, in the report's order.
+fn mixed_checks(run: &MixedRun<'_>, cases: &mut Cases) -> Result<()> {
+    mixed::one_chain(run, cases)?;
+    mixed::judge(run, cases)?;
+    mixed::acceptance(run, cases)?;
+    mixed::reference_logs(run, cases)?;
+    mixed::heartwood_logs(run, cases)?;
+    fresh::check(run, cases)?;
+    mixed::propagation(run, cases)?;
+    mixed::fork(run, cases)?;
+    attest::check(run, cases)?;
+    recovery::check(run, cases)?;
+    await_block::gate(run, cases)?;
+    mixed::processes(run, cases)?;
+    mixed::recorded(run, cases)?;
+    schedule::check(run, cases)
 }
 
 /// The cases of a check, by section.
@@ -132,6 +193,16 @@ impl Cases {
         self.push(section, label, 0, Outcome::HarnessError(message.into()));
     }
 
+    /// A check that has no Rust implementation yet: a strict run fails on it.
+    fn not_built(&mut self, section: &str, label: &str) {
+        self.push(
+            section,
+            format!("{label} (not built)"),
+            0,
+            Outcome::NoSubject,
+        );
+    }
+
     fn record(&mut self, section: &str, label: impl AsRef<str>) {
         self.push(
             section,
@@ -145,17 +216,30 @@ impl Cases {
 /// Check the live run in `run_dir` with `options`.
 pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
     let mut manifest = Manifest::load(run_dir)?;
-    if let Some(pair) = std::env::var(COMPARE).ok().filter(|p| !p.is_empty()) {
-        if !matches!(
-            (manifest.run.as_str(), pair.as_str()),
-            ("t", "m") | ("m", "t")
-        ) {
-            return Err(Error::Usage(format!(
-                "{COMPARE}={pair}: run {} compares with run t or m only (T against M)",
-                manifest.run
-            )));
+    let named = (options.compare.as_deref())
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned());
+    let pair = named.or_else(|| std::env::var(COMPARE).ok().filter(|p| !p.is_empty()));
+    // A mixed run's baseline is the run `--compare` names: its manifest's `pair` does not make it
+    // a pair of runs `h` and `r`, whose submissions and wallets are compared one for one.
+    if MIXED_RUNS.contains(&manifest.run.as_str()) {
+        manifest.pair = None;
+    }
+    let mut baseline = None;
+    if let Some(pair) = pair {
+        match (manifest.run.as_str(), pair.as_str()) {
+            ("t", "m") | ("m", "t") => manifest.pair = Some(pair),
+            ("w" | "p" | "s", "w0") => {
+                let beside = || run_dir.parent().unwrap_or(Path::new(".")).join(&pair);
+                baseline = Some(options.compare.clone().unwrap_or_else(beside));
+            }
+            _ => {
+                return Err(Error::Usage(format!(
+                    "{COMPARE}={pair}: run {} compares with run t or m (T against M), or runs w, p and s with run w0",
+                    manifest.run
+                )));
+            }
         }
-        manifest.pair = Some(pair);
     }
     if matches!(manifest.run.as_str(), "t" | "m" | "f") {
         let expected = if manifest.run == "f" { 7 } else { 5 };
@@ -183,7 +267,10 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
         run: manifest.run.clone(),
         results: Vec::new(),
     };
-    let windows = run::windows(run_dir, manifest.window_seconds)?;
+    let mut windows = run::windows(run_dir, manifest.window_seconds)?;
+    if MIXED_RUNS.contains(&manifest.run.as_str()) {
+        windows.extend(run::minority_window(&manifest, &run::steps(run_dir)?));
+    }
     // The route corpus first: whether its judge is built in this tree decides how a failed
     // recording of it counts.
     let mut api_cases = Cases {
@@ -204,6 +291,18 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
     check_bans(run_dir, &manifest, &windows, &mut cases)?;
     check_invariants(run_dir, &manifest, &windows, &mut cases)?;
     forging::check(run_dir, &manifest, &windows, &mut cases)?;
+    if MIXED_RUNS.contains(&manifest.run.as_str()) {
+        let mixed = MixedRun {
+            run_dir,
+            manifest: &manifest,
+            windows: &windows,
+            baseline: baseline.as_deref(),
+            spread: &options.spread,
+            corpus_root: &options.corpus_root,
+            oracle: options.oracle,
+        };
+        mixed_checks(&mixed, &mut cases)?;
+    }
     let report = Report {
         title: match (&manifest.relay_image, &manifest.relay_binary_sha256) {
             (Some(image), Some(sha)) if manifest.has_heartwood() => format!(
@@ -545,16 +644,135 @@ fn check_run(
     Ok(())
 }
 
+/// How long after a partition's heal the recipe may reconnect a node that has not followed it.
+const RECONNECT_AFTER_MS: i64 = 60_000;
+
+/// How many blocks behind node 1, on another tip, a node the recipe reconnects must be.
+const RECONNECT_BEHIND: u64 = 10;
+
+/// The heal a reconnect `step` counts from: the one it records (`heal`, when the recipe opened
+/// the routes), else `heal`, the start of the run's heal step, which comes a few seconds earlier.
+fn reconnect_heal(step: &run::Step, heal: Option<i64>) -> Option<i64> {
+    (step.text("heal").as_deref())
+        .and_then(run::parse_time)
+        .or(heal)
+}
+
+/// Why the recipe's reconnect `step` (`reconnect-<node>`) is outside its rule, or `None` when it is
+/// inside: 60 s or more after the heal ([`reconnect_heal`]), while the node was 10 or more blocks
+/// behind node 1 on another tip. The step records both tips (`height`, `tip`, `node1Height`,
+/// `node1Tip`); a record without them is judged on its time alone.
+fn reconnect_outside_the_rule(step: &run::Step, heal: Option<i64>) -> Option<String> {
+    let (Some(start), Some(heal)) = (step.start, reconnect_heal(step, heal)) else {
+        return Some("the run records no heal, or the step no start".to_owned());
+    };
+    if start - heal < RECONNECT_AFTER_MS {
+        return Some(format!(
+            "it started {} ms after the heal, before 60 s had passed",
+            start - heal
+        ));
+    }
+    let tips = (
+        step.number("height"),
+        step.text("tip"),
+        step.number("node1Height"),
+        step.text("node1Tip"),
+    );
+    match tips {
+        (Some(height), Some(tip), Some(control), Some(control_tip))
+            if tip == control_tip || control.saturating_sub(height) < RECONNECT_BEHIND =>
+        {
+            Some(format!(
+                "it was at {height} ({tip}) against node 1's {control} ({control_tip}), not 10 or more blocks behind on another tip"
+            ))
+        }
+        _ => None,
+    }
+}
+
 /// How the minority of a partition rejoined after the heal. The recipe restarts node 3's relay
 /// when there is no single tip 120 s after the heal (`reconnect-minority`): node 3 keeps its side
 /// of the fork while it holds a peer, which a reference relay as node 4 is (a dry run). A Heartwood
-/// node 4 has no listener, so it is no peer of node 3, which then falls back to its seeds by
-/// itself; a run with a Heartwood relay in the minority must converge without that restart.
+/// relay without a listener is no peer of node 3, which then falls back to its seeds by itself; a
+/// run with such a relay in the minority must converge without that restart. The relay of the
+/// mixed runs listens, so it keeps node 3 on its side as a reference relay does: there the restart
+/// of node 3 (a reference relay) is the recipe's recorded workaround. So is the reconnect of a
+/// node (`reconnect-<node>`: its routes opened and its relay restarted), of either implementation,
+/// within the recipe's rule ([`reconnect_outside_the_rule`]); a reconnect outside it fails.
 fn check_reconnect(manifest: &Manifest, steps: &[run::Step], cases: &mut Cases) {
     if !steps.iter().any(|s| s.name == "converged") {
         return;
     }
     let restarted = steps.iter().any(|s| s.name == "reconnect-minority");
+    if MIXED_RUNS.contains(&manifest.run.as_str()) {
+        let heal = (steps.iter())
+            .find(|s| s.name == "heal")
+            .and_then(|s| s.start);
+        let mut reconnected = Vec::new();
+        for s in steps {
+            let Some(node) = s
+                .name
+                .strip_prefix("reconnect-")
+                .and_then(|n| manifest.node(n))
+            else {
+                continue;
+            };
+            let heartwood = node.implementation == Implementation::Heartwood && !manifest.dry_run;
+            let implementation = match heartwood {
+                true => "a Heartwood relay",
+                false => "a reference relay",
+            };
+            if let Some(why) = reconnect_outside_the_rule(s, heal) {
+                cases.fail(
+                    "run",
+                    format!(
+                        "{} was reconnected by the recipe only when it had not followed the heal",
+                        node.name
+                    ),
+                    format!("{} ({implementation}): {why}", s.name),
+                );
+                continue;
+            }
+            let after =
+                (s.start.unwrap_or_default() - reconnect_heal(s, heal).unwrap_or_default()) / 1_000;
+            let behind = match (s.number("node1Height"), s.number("height")) {
+                (Some(control), Some(height)) => format!(
+                    ", {} blocks behind node 1 on its own tip",
+                    control.saturating_sub(height)
+                ),
+                _ => String::new(),
+            };
+            cases.record(
+                "run",
+                format!(
+                    "{} ({implementation}) was reconnected by the recipe {after} s after the heal{behind}, as the recipe reconnects a node 4 or 5 of either implementation that has not followed the heal in 60 s",
+                    node.name
+                ),
+            );
+            reconnected.push(node.name.clone());
+        }
+        let mut how = Vec::new();
+        if !reconnected.is_empty() {
+            how.push(format!(
+                "the recipe reconnected {}",
+                reconnected.join(" and ")
+            ));
+        }
+        if restarted {
+            how.push("the scripted restart of node 3's relay (a relay in the minority, of either implementation, keeps node 3 on its side)".to_owned());
+        }
+        cases.record(
+            "run",
+            match how.is_empty() {
+                true => "the minority rejoined the majority after the heal by itself".to_owned(),
+                false => format!(
+                    "the minority rejoined the majority after {}",
+                    how.join(", then ")
+                ),
+            },
+        );
+        return;
+    }
     let heartwood = !manifest.dry_run
         && manifest.minority.as_ref().is_some_and(|(members, _)| {
             members.iter().any(|m| {
@@ -810,7 +1028,7 @@ fn check_nodes(
                     node,
                     &last.dir,
                     last.tip,
-                    manifest.round_length,
+                    (manifest.round_length, manifest.block_time),
                 ));
                 c.extend(nodes::heartwood_logs(run_dir, node, &references));
                 c
@@ -873,7 +1091,28 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
             e.to_string(),
         ),
         Ok(Ok(report)) => {
-            let (compared, failed) = (report.compared(), report.failed());
+            // One line per corpus: the first (`api/`), then each of `apiExtra`.
+            let main = (left.as_str(), right.as_str(), api::RUN_ANSWERS_DIR);
+            let extra = (manifest.api_extra.iter())
+                .map(|e| (e.left.as_str(), e.right.as_str(), e.dir.as_str()));
+            for (left, right, dir) in std::iter::once(main).chain(extra) {
+                let dir = run_dir.join(dir);
+                let (mut compared, mut failed) = (0, 0);
+                for r in (report.results.iter()).filter(|r| Path::new(&r.file).starts_with(&dir)) {
+                    compared += usize::from(r.outcome.is_compared());
+                    failed += usize::from(r.outcome.is_failure());
+                }
+                let label = format!("the route corpus, {left} against {right}");
+                if compared == 0 {
+                    cases.fail(
+                        "api",
+                        label,
+                        format!("no answer judged under {}", dir.display()),
+                    );
+                } else if failed == 0 {
+                    cases.pass("api", format!("{label}: {compared} queries compared"));
+                }
+            }
             for r in report.results {
                 if r.outcome != Outcome::Pass {
                     cases.push(
@@ -883,14 +1122,6 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
                         r.outcome,
                     );
                 }
-            }
-            if failed == 0 {
-                cases.pass(
-                    "api",
-                    format!(
-                        "the route corpus, {left} against {right}: {compared} queries compared"
-                    ),
-                );
             }
         }
     }
@@ -1230,7 +1461,7 @@ mod tests {
         };
         Manifest {
             run: "m2".into(),
-            network: "b5-m2".into(),
+            network: "devnet-m2".into(),
             dry_run,
             seed: "solar-devnet".into(),
             round_length: 53,
@@ -1245,6 +1476,7 @@ mod tests {
             pair: None,
             minority: Some((vec!["node3".into(), "node4".into()], "minority".into())),
             api: None,
+            api_extra: Vec::new(),
             window_seconds: 30,
             status: "complete".into(),
             relay_image: None,
@@ -1294,5 +1526,131 @@ mod tests {
         );
         // A run without a partition has nothing to record.
         assert!(judged(Implementation::Heartwood, false, &[]).is_empty());
+    }
+
+    /// A step `seconds` after a heal at 1,000 s, with its record.
+    fn step_after_the_heal(name: &str, node: &str, seconds: i64, record: Value) -> Step {
+        Step {
+            name: name.into(),
+            node: node.into(),
+            ok: true,
+            start: Some((1_000 + seconds) * 1_000),
+            record,
+        }
+    }
+
+    #[test]
+    fn a_mixed_minority_records_every_reconnect_the_recipes_rule_allows_of_either_implementation() {
+        let judged = |steps: &[Step]| {
+            let mut m = manifest(Implementation::Heartwood, false);
+            m.run = "p".into();
+            m.nodes.push(Node {
+                name: "node5".into(),
+                ip: String::new(),
+                implementation: Implementation::Reference,
+                forger: false,
+                under_test: false,
+            });
+            let mut cases = Cases {
+                run: "p".into(),
+                results: Vec::new(),
+            };
+            check_reconnect(&m, steps, &mut cases);
+            cases.results
+        };
+        let heal = step_after_the_heal("heal", "all", 0, json!({"step": "heal"}));
+        let behind = |name: &str| json!({"step": name, "height": 99, "tip": "b", "node1Height": 140, "node1Tip": "a"});
+        let reconnect = |node: &str, seconds, record| {
+            step_after_the_heal(&format!("reconnect-{node}"), node, seconds, record)
+        };
+        // A Heartwood relay in the minority listens, as a reference relay does: node 3's restart
+        // (a reference relay) is the recipe's recorded workaround, as is node 5's reconnect.
+        let restarted = judged(&[
+            heal.clone(),
+            reconnect("node5", 65, behind("reconnect-node5")),
+            step("reconnect-minority"),
+            step("converged"),
+        ]);
+        assert!(
+            !restarted.is_empty() && restarted.iter().all(|r| !r.outcome.is_failure()),
+            "{restarted:?}"
+        );
+        assert!(
+            restarted.iter().any(|r| r.label.contains("node 3")),
+            "{restarted:?}"
+        );
+        // The recipe reconnects node 4, a Heartwood relay, as it reconnects a reference node 4:
+        // 60 s or more after the heal, while it is 10 or more blocks behind node 1 on another tip.
+        // Both implementations face the same scenario, so it is recorded, not failed.
+        let heartwood = judged(&[
+            heal.clone(),
+            reconnect("node4", 61, behind("reconnect-node4")),
+            reconnect("node5", 80, behind("reconnect-node5")),
+            step("converged"),
+        ]);
+        assert!(
+            heartwood.iter().all(|r| !r.outcome.is_failure()),
+            "{heartwood:?}"
+        );
+        assert!(
+            heartwood
+                .iter()
+                .any(|r| r.label.contains("node4") && r.label.contains("a Heartwood relay")),
+            "{heartwood:?}"
+        );
+        // Outside the rule, a reconnect fails, whichever implementation the node runs: one before
+        // 60 s have passed since the heal, one of a node on node 1's tip or 9 blocks behind it,
+        // and one that no heal dates.
+        let early = judged(&[
+            heal.clone(),
+            reconnect("node4", 30, behind("reconnect-node4")),
+            step("converged"),
+        ]);
+        assert!(
+            early
+                .iter()
+                .any(|r| r.outcome.is_failure() && r.label.contains("node4")),
+            "{early:?}"
+        );
+        // The rule counts from the heal the step records (the routes' opening, 5 s after the heal
+        // step's start here), so a reconnect 61 s after the step's start is 56 s after the heal.
+        let mut reopened_late = behind("reconnect-node4");
+        reopened_late["heal"] = json!("1970-01-01T00:16:45.000Z");
+        let before_the_recorded_heal = judged(&[
+            heal.clone(),
+            reconnect("node4", 61, reopened_late),
+            step("converged"),
+        ]);
+        assert!(
+            before_the_recorded_heal
+                .iter()
+                .any(|r| r.outcome.is_failure() && r.label.contains("node4")),
+            "{before_the_recorded_heal:?}"
+        );
+        let on_the_tip = json!({"height": 140, "tip": "a", "node1Height": 140, "node1Tip": "a"});
+        let near = json!({"height": 131, "tip": "b", "node1Height": 140, "node1Tip": "a"});
+        for record in [on_the_tip, near] {
+            let followed = judged(&[
+                heal.clone(),
+                reconnect("node5", 61, record),
+                step("converged"),
+            ]);
+            assert!(
+                followed
+                    .iter()
+                    .any(|r| r.outcome.is_failure() && r.label.contains("node5")),
+                "{followed:?}"
+            );
+        }
+        let undated = judged(&[
+            reconnect("node4", 61, behind("reconnect-node4")),
+            step("converged"),
+        ]);
+        assert!(
+            undated
+                .iter()
+                .any(|r| r.outcome.is_failure() && r.label.contains("node4")),
+            "{undated:?}"
+        );
     }
 }

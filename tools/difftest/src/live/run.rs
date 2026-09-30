@@ -60,6 +60,18 @@ pub struct Node {
     pub under_test: bool,
 }
 
+/// A route corpus a run recorded: the node under test, the control and the run's directory of
+/// its answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiCorpus {
+    /// The node under test.
+    pub left: String,
+    /// The control node.
+    pub right: String,
+    /// The directory of its `answers.jsonl`, relative to the run.
+    pub dir: String,
+}
+
 /// A run's `run.json`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Manifest {
@@ -89,6 +101,8 @@ pub struct Manifest {
     pub minority: Option<(Vec<String>, String)>,
     /// The nodes of the route corpus (under test, control), when the run records one.
     pub api: Option<(String, String)>,
+    /// The route corpora the run recorded after that one (`apiExtra`).
+    pub api_extra: Vec<ApiCorpus>,
     /// Seconds a fault window lasts after its recovery.
     pub window_seconds: i64,
     /// `running`, `complete` or `failed`.
@@ -214,6 +228,19 @@ impl Manifest {
         let api = v
             .get("api")
             .and_then(|a| Some((text(a, "left")?, text(a, "right")?)));
+        let api_extra = (v
+            .get("apiExtra")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten())
+        .filter_map(|a| {
+            Some(ApiCorpus {
+                left: text(a, "left")?,
+                right: text(a, "right")?,
+                dir: text(a, "dir")?,
+            })
+        })
+        .collect();
         Ok(Manifest {
             run: need("run")?,
             network: need("network")?,
@@ -228,6 +255,7 @@ impl Manifest {
             pair: text(&v, "pair"),
             minority,
             api,
+            api_extra,
             window_seconds: v
                 .get("faultWindowSeconds")
                 .and_then(Value::as_i64)
@@ -342,6 +370,36 @@ pub struct Step {
     pub record: Value,
 }
 
+impl Step {
+    /// The height the step started at, as the recipe recorded it (`startHeight`).
+    pub fn start_height(&self) -> Option<u64> {
+        self.record.get("startHeight").and_then(Value::as_u64)
+    }
+
+    /// A time the step's record holds under `key` (`end`, `contactNode3At`, ...) in its record or
+    /// in its `detail` object, in milliseconds since the Unix epoch.
+    pub fn time(&self, key: &str) -> Option<i64> {
+        self.text(key).and_then(|t| parse_time(&t))
+    }
+
+    /// A number the step's record holds under `key`, in its record or in its `detail` object.
+    pub fn number(&self, key: &str) -> Option<u64> {
+        self.record
+            .get(key)
+            .or_else(|| self.record.get("detail").and_then(|d| d.get(key)))
+            .and_then(Value::as_u64)
+    }
+
+    /// A text the step's record holds under `key`, in its record or in its `detail` object.
+    pub fn text(&self, key: &str) -> Option<String> {
+        self.record
+            .get(key)
+            .or_else(|| self.record.get("detail").and_then(|d| d.get(key)))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    }
+}
+
 /// The steps of the run in `dir`.
 pub fn steps(dir: &Path) -> Result<Vec<Step>> {
     Ok(read_lines(&dir.join("steps.jsonl"))?
@@ -384,6 +442,145 @@ impl Window {
     pub fn concerns(&self, node: &str) -> bool {
         self.is_partition() || self.nodes.iter().any(|n| n == node)
     }
+
+    /// The window's class, the unit the mixed runs' counts compare in: the recipe's classes
+    /// (`stall`, `restart`, `hold`, `isolation`, `rollback`, `start`, `network-start`,
+    /// `not-started`) as they are, a kill, a stop and a marker restart as `restart`, a fresh
+    /// node's sync as `start`, and any other fault (`partition`, ...) under its own name.
+    pub fn class(&self) -> &str {
+        match self.fault.as_str() {
+            "sigint" | "sigkill" | "sigterm" | "marker-restart" => "restart",
+            "fresh-sync" => "start",
+            other => other,
+        }
+    }
+}
+
+/// The window that a line at `t` concerning `node` falls in: the one that started last among
+/// those that concern the node and contain `t`.
+pub fn window_at<'w>(windows: &'w [Window], node: &str, t: i64) -> Option<&'w Window> {
+    windows
+        .iter()
+        .filter(|w| w.concerns(node) && w.contains(t))
+        .max_by_key(|w| w.start)
+}
+
+/// The class of a line between two nodes the run's route table kept apart ([`kept_apart`]).
+pub const UNREACHABLE: &str = "unreachable";
+
+/// The window of a partition's minority after the heal: from the `heal` step's start to
+/// `window_seconds` after the end of the `converged` step, for the nodes of `run.json`'s `minority`.
+///
+/// A partition leaves each side with the other side's nodes gone from its peer lists, and a
+/// reference node rechecks the network only when its peers attest a majority of the delegates
+/// ("Not enough peers available to check network health"). So the minority can keep its side of
+/// the fork, unlisted by the majority's nodes, until a node of it falls back to its seeds (in run
+/// `p`, the scripted restart of node 3's relay, which the recipe does 120 s after the heal when
+/// the tips still differ). Its blocks and its listing in that span are the heal's, not a relay's
+/// behaviour. Its class, `minority`, is one the baseline never has: its log lines are recorded,
+/// as the partition's are.
+pub fn minority_window(manifest: &Manifest, steps: &[Step]) -> Option<Window> {
+    let (members, _) = manifest.minority.as_ref()?;
+    let heal = steps.iter().find(|s| s.name == "heal")?.start?;
+    let converged = steps.iter().find(|s| s.name == "converged")?.time("end")?;
+    (converged >= heal).then(|| Window {
+        fault: "minority".to_owned(),
+        nodes: members.clone(),
+        start: heal,
+        end: converged.saturating_add(manifest.window_seconds.saturating_mul(1_000)),
+    })
+}
+
+/// A span of a node's reach-only routes (`routes.jsonl`, written by the tooling's `reach-only`
+/// and `reach-all`): the nodes it could reach from `start` to `end`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reach {
+    /// The node whose routes were limited.
+    pub node: String,
+    /// The nodes it could still reach (none for an isolation).
+    pub allowed: Vec<String>,
+    /// When its routes were limited, in milliseconds since the Unix epoch.
+    pub start: i64,
+    /// `window_seconds` after its routes next changed, as a fault window ends after its
+    /// recovery; the end of time when they never did.
+    pub end: i64,
+}
+
+/// The reach-only spans of the run in `dir`, from `routes.jsonl` (none when it has no such file);
+/// a change the tooling recorded as failed left the routes as they were.
+pub fn reaches(dir: &Path, window_seconds: i64) -> Result<Vec<Reach>> {
+    let path = dir.join("routes.jsonl");
+    let mut out: Vec<Reach> = Vec::new();
+    for record in read_lines(&path)? {
+        if record.get("ok").and_then(Value::as_bool) == Some(false) {
+            continue;
+        }
+        let (Some(node), Some(t)) = (
+            text(&record, "node"),
+            text(&record, "t").and_then(|t| parse_time(&t)),
+        ) else {
+            return Err(bad(
+                &path,
+                format!("a route change without a node or a time: {record}"),
+            ));
+        };
+        let end = t.saturating_add(window_seconds.saturating_mul(1_000));
+        for open in out
+            .iter_mut()
+            .filter(|r| r.node == node && r.end == i64::MAX)
+        {
+            open.end = end;
+        }
+        if text(&record, "action").as_deref() == Some("reach-only") {
+            let allowed = text(&record, "allowed").unwrap_or_default();
+            out.push(Reach {
+                node,
+                allowed: allowed
+                    .split([',', ' '])
+                    .filter(|n| !n.is_empty() && *n != "-")
+                    .map(str::to_owned)
+                    .collect(),
+                start: t,
+                end: i64::MAX,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Whether the route table kept `a` and `b` apart at `t`: a reach-only span of either that leaves
+/// the other out. A line one of them logged of the other then shows the route, not the peer.
+pub fn kept_apart(reaches: &[Reach], a: &str, b: &str, t: i64) -> bool {
+    reaches.iter().any(|r| {
+        r.start <= t
+            && t <= r.end
+            && ((r.node == a && !r.allowed.iter().any(|n| n == b))
+                || (r.node == b && !r.allowed.iter().any(|n| n == a)))
+    })
+}
+
+/// The route table's spans as windows of class [`UNREACHABLE`], for the comparison of a run's
+/// counts with a baseline's: each span of a node of `readers` or `named` concerns the nodes of
+/// `named` it kept apart from a reader (a reader's span: the named nodes it could not reach; a
+/// named node's span: that node).
+pub fn reach_windows(reaches: &[Reach], readers: &[String], named: &[String]) -> Vec<Window> {
+    reaches
+        .iter()
+        .filter_map(|r| {
+            let reader = readers.contains(&r.node);
+            let nodes: Vec<String> = named
+                .iter()
+                .filter(|n| **n == r.node || (reader && !r.allowed.contains(n)))
+                .cloned()
+                .collect();
+            (!nodes.is_empty()).then(|| Window {
+                fault: UNREACHABLE.to_owned(),
+                nodes,
+                start: r.start,
+                end: r.end,
+            })
+        })
+        .collect()
 }
 
 /// The fault windows of the run in `dir`; a fault without a recovery lasts to the end of time.
@@ -425,6 +622,20 @@ pub fn archives(dir: &Path) -> Result<Vec<PathBuf>> {
         .collect();
     out.sort();
     Ok(out)
+}
+
+/// The directory of the crypto files of the node whose files are in `node_dir`, a directory of the
+/// run in `run_dir`: its own `crypto/` (a node of the tooling's native runs), else its archived
+/// configuration's `config/crypto/` (a node in a container), else the run's copy of the generated
+/// network's, `network/crypto/`.
+pub fn crypto_dir(run_dir: &Path, node_dir: &Path) -> PathBuf {
+    [
+        node_dir.join("crypto"),
+        node_dir.join("config").join("crypto"),
+    ]
+    .into_iter()
+    .find(|d| d.join("network.json").is_file())
+    .unwrap_or_else(|| run_dir.join("network").join("crypto"))
 }
 
 /// Milliseconds since the Unix epoch of a UTC time `YYYY-MM-DDTHH:MM:SS[.fff]Z` (also with a space
@@ -536,8 +747,171 @@ mod tests {
         assert!(w.concerns("node4") && !w.concerns("node1"));
         let p = Window {
             fault: "partition".into(),
-            ..w
+            ..w.clone()
         };
         assert!(p.concerns("node1"));
+        assert_eq!(p.class(), "partition");
+        assert_eq!(w.class(), "restart");
+    }
+
+    #[test]
+    fn a_line_belongs_to_the_last_window_that_holds_it() {
+        let window = |fault: &str, start: i64, end: i64| Window {
+            fault: fault.into(),
+            nodes: vec!["node6".into()],
+            start,
+            end,
+        };
+        let all = [window("isolation", 0, 100), window("rollback", 40, 80)];
+        assert_eq!(window_at(&all, "node6", 50).unwrap().class(), "rollback");
+        assert_eq!(window_at(&all, "node6", 90).unwrap().class(), "isolation");
+        assert!(window_at(&all, "node6", 101).is_none());
+        assert!(window_at(&all, "node4", 50).is_none());
+    }
+
+    #[test]
+    fn a_step_reads_its_height_and_details() {
+        let record = serde_json::json!({"step": "r3", "node": "node6", "ok": true,
+            "startHeight": 112, "contactNode3At": "1970-01-01T00:00:02.000Z",
+            "detail": {"kept": 1, "outcome": "refused"}});
+        let step = Step {
+            name: "r3".into(),
+            node: "node6".into(),
+            ok: true,
+            start: None,
+            record,
+        };
+        assert_eq!(step.start_height(), Some(112));
+        assert_eq!(step.time("contactNode3At"), Some(2_000));
+        assert_eq!(step.number("kept"), Some(1));
+        assert_eq!(step.text("outcome").as_deref(), Some("refused"));
+        assert_eq!(step.text("missing"), None);
+    }
+
+    fn step_at(name: &str, start: &str, end: &str) -> Step {
+        Step {
+            name: name.into(),
+            node: "all".into(),
+            ok: true,
+            start: parse_time(start),
+            record: serde_json::json!({"step": name, "start": start, "end": end}),
+        }
+    }
+
+    fn minority_manifest(run: &str) -> Manifest {
+        Manifest {
+            run: run.into(),
+            network: "mixed-p".into(),
+            dry_run: false,
+            seed: "solar-devnet".into(),
+            round_length: 53,
+            block_time: 8,
+            stop_height: 159,
+            control: "node1".into(),
+            nodes: Vec::new(),
+            corpora: BTreeMap::new(),
+            pair: None,
+            minority: Some((
+                vec!["node3".into(), "node4".into(), "node5".into()],
+                "live-p-minority".into(),
+            )),
+            api: None,
+            api_extra: Vec::new(),
+            window_seconds: 30,
+            status: "complete".into(),
+            relay_image: None,
+            relay_binary_sha256: None,
+            worktree: None,
+        }
+    }
+
+    #[test]
+    fn the_minority_holds_a_window_from_the_heal_until_the_tips_converged() {
+        let steps = [
+            step_at(
+                "heal",
+                "2026-09-29T18:30:41.409Z",
+                "2026-09-29T18:30:48.614Z",
+            ),
+            step_at(
+                "converged",
+                "2026-09-29T18:30:48.630Z",
+                "2026-09-29T18:33:41.666Z",
+            ),
+        ];
+        let w = minority_window(&minority_manifest("p"), &steps).expect("a window");
+        assert_eq!(w.class(), "minority");
+        assert_eq!(w.nodes, ["node3", "node4", "node5"]);
+        assert_eq!(Some(w.start), parse_time("2026-09-29T18:30:41.409Z"));
+        assert_eq!(Some(w.end), parse_time("2026-09-29T18:34:11.666Z"));
+        assert!(!w.concerns("node1") && w.concerns("node4"));
+        // No window without a heal, a convergence or a minority.
+        assert_eq!(minority_window(&minority_manifest("p"), &steps[..1]), None);
+        assert_eq!(minority_window(&minority_manifest("p"), &steps[1..]), None);
+        let mut none = minority_manifest("p");
+        none.minority = None;
+        assert_eq!(minority_window(&none, &steps), None);
+    }
+
+    fn routes_file(lines: &[&str]) -> crate::store::ScratchDir {
+        let dir = crate::store::ScratchDir::new("live-routes").unwrap();
+        std::fs::write(dir.path().join("routes.jsonl"), lines.join("\n")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_route_table_keeps_a_reach_only_node_apart_from_the_others() {
+        let dir = routes_file(&[
+            r#"{"t":"1970-01-01T00:00:10.000Z","node":"node4","action":"reach-only","allowed":"node1","height":20,"ok":true}"#,
+            r#"{"t":"1970-01-01T00:01:40.000Z","node":"node4","action":"reach-all","allowed":"all","height":56,"ok":true}"#,
+            r#"{"t":"1970-01-01T00:00:20.000Z","node":"node6","action":"reach-only","allowed":"-","height":21,"ok":true}"#,
+            r#"{"t":"1970-01-01T00:00:30.000Z","node":"node5","action":"reach-only","allowed":"node2","height":22,"ok":false}"#,
+        ]);
+        let reaches = reaches(dir.path(), 30).unwrap();
+        assert_eq!(reaches.len(), 2, "{reaches:?}");
+        assert_eq!(reaches[0].allowed, ["node1"]);
+        // node 4 reaches node 1 only, until 30 s after its routes opened at 100 s
+        assert!(kept_apart(&reaches, "node4", "node2", 50_000));
+        assert!(kept_apart(&reaches, "node2", "node4", 50_000));
+        assert!(!kept_apart(&reaches, "node4", "node1", 50_000));
+        assert!(kept_apart(&reaches, "node4", "node3", 130_000));
+        assert!(!kept_apart(&reaches, "node4", "node3", 130_001));
+        assert!(!kept_apart(&reaches, "node4", "node3", 9_999));
+        // node 6 reaches no one from 20 s to the end; a failed change leaves the routes as they were
+        assert!(kept_apart(&reaches, "node1", "node6", 10_000_000));
+        assert!(!kept_apart(&reaches, "node5", "node3", 40_000));
+        // For a comparison: the named nodes each span leaves a reader of the list without.
+        let readers = ["node1".to_owned(), "node4".to_owned()];
+        let named = ["node2".to_owned(), "node6".to_owned()];
+        let windows = reach_windows(&reaches, &readers, &named);
+        assert_eq!(windows.len(), 2);
+        assert!(windows.iter().all(|w| w.class() == UNREACHABLE));
+        assert_eq!(windows[0].nodes, ["node2", "node6"]);
+        assert_eq!(windows[1].nodes, ["node6"]);
+        assert!(reach_windows(&reaches, &["node2".to_owned()], &["node3".to_owned()]).is_empty());
+    }
+
+    #[test]
+    fn a_node_reads_its_own_crypto_files_first() {
+        let dir = crate::store::ScratchDir::new("live-crypto").unwrap();
+        let run = dir.path();
+        let put = |d: &Path| {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("network.json"), "{}").unwrap();
+        };
+        assert_eq!(
+            crypto_dir(run, &run.join("nodes/node1")),
+            run.join("network/crypto")
+        );
+        put(&run.join("nodes/node1/config/crypto"));
+        assert_eq!(
+            crypto_dir(run, &run.join("nodes/node1")),
+            run.join("nodes/node1/config/crypto")
+        );
+        put(&run.join("nodes/node1/crypto"));
+        assert_eq!(
+            crypto_dir(run, &run.join("nodes/node1")),
+            run.join("nodes/node1/crypto")
+        );
     }
 }

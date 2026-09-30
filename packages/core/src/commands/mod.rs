@@ -1,18 +1,21 @@
 //! The command tree of the `heartwood` binary, one module per family: [`relay`] and [`forger`]
 //! (`run`, `start`, `stop`, `restart`, `status`, `log`), [`network`] (`generate`), `devnet`
 //! (feature `devnet`: `init`, `start`, `stop`, `status`, `logs`, `stop-node`, `start-node`,
-//! `restart-node`, `reset`, `wait`, `env`), [`doctor`] (read-only diagnostics, `checks`, `explain`,
-//! `mcp`) and [`supervise`] (the hidden supervisor), with `version` and clap's `help`. The
-//! reference's colon spellings (`relay:start`) are rewritten first
-//! ([`heartwood_cli::argv::rewrite`]); flags keep the reference's camelCase with kebab-case
+//! `restart-node`, `reset`, `wait`, `env`), [`snapshot`] (`rollback`), [`clear`] (`pool clear` and
+//! `state clear`), [`doctor`] (read-only diagnostics, `checks`, `explain`, `mcp`) and [`supervise`]
+//! (the hidden supervisor), with `version` and clap's `help`. The reference's colon spellings
+//! (`relay:start`) are rewritten first ([`heartwood_cli::argv::rewrite`]); flags keep the
+//! reference's camelCase with kebab-case
 //! aliases.
 
+pub mod clear;
 #[cfg(feature = "devnet")]
 pub mod devnet;
 pub mod doctor;
 pub mod forger;
 pub mod network;
 pub mod relay;
+pub mod snapshot;
 pub mod supervise;
 
 use std::ffi::OsString;
@@ -47,6 +50,15 @@ pub enum Command {
     /// A local devnet on this host.
     #[cfg(feature = "devnet")]
     Devnet(devnet::Devnet),
+    /// The relay's stored chain: `snapshot rollback`.
+    #[command(subcommand)]
+    Snapshot(snapshot::SnapshotCommand),
+    /// The relay's pool: `pool clear`.
+    #[command(subcommand)]
+    Pool(clear::PoolCommand),
+    /// The relay's state: `state clear`.
+    #[command(subcommand)]
+    State(clear::StateCommand),
     /// Read-only diagnostics of this host's node.
     Doctor(doctor::DoctorLine),
     /// Supervise a started role (written by `start`).
@@ -168,6 +180,9 @@ pub fn run(command: Command) -> ExitCode {
         Command::Network(command) => network::run(command),
         #[cfg(feature = "devnet")]
         Command::Devnet(command) => devnet::run(command),
+        Command::Snapshot(command) => snapshot::run(command),
+        Command::Pool(command) => clear::run_pool(command),
+        Command::State(command) => clear::run_state(command),
         Command::Doctor(line) => doctor::run(line),
         Command::Supervise(command) => supervise::run(command),
         Command::Version => {

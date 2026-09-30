@@ -11,7 +11,7 @@
 //! rows but at heights either node refused or undid a block.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use heartwood_database::{Database, Settings};
 use serde_json::Value;
@@ -137,7 +137,7 @@ pub fn heartwood_digest(
 }
 
 /// A missed row: timestamp, height, username.
-type MissedKey = (i64, u64, String);
+pub(super) type MissedKey = (i64, u64, String);
 
 /// The node's missed rows and its refused or undone heights, from a corpus's `reference/`.
 fn reference_rows(dir: &Path) -> Result<(Vec<MissedKey>, BTreeSet<u64>)> {
@@ -161,13 +161,88 @@ fn reference_rows(dir: &Path) -> Result<(Vec<MissedKey>, BTreeSet<u64>)> {
     Ok((rows, refused))
 }
 
+/// The first of a Heartwood relay's `starts` that found no missed-slot row in its store on a chain
+/// of 2 blocks or more, its tip: `chain` (node 1's rows) holds none at or below that tip but at
+/// the `refused` heights, where Heartwood writes none. Such a start writes the rows of the slots
+/// before block 2, as the reference's start does ([`super::recovery::backfill_times`]). With
+/// `before_rollback`, only the starts before the first one that opened below the height the one
+/// before it reached (the start after a rollback).
+pub(super) fn backfilling_start(
+    starts: &[digest::Start],
+    chain: &[MissedKey],
+    refused: &BTreeSet<u64>,
+    before_rollback: bool,
+) -> Option<u32> {
+    let rolled_back = starts
+        .windows(2)
+        .position(|pair| pair[1].tip < pair[0].reached)
+        .map_or(starts.len(), |i| i + 1);
+    let considered = if before_rollback {
+        &starts[..rolled_back]
+    } else {
+        starts
+    };
+    considered
+        .iter()
+        .filter(|start| start.tip >= 2)
+        .find(|start| {
+            !chain
+                .iter()
+                .any(|row| row.1 <= u64::from(start.tip) && !refused.contains(&row.1))
+        })
+        .map(|start| start.tip)
+}
+
+/// The rows of the slots before block 2 in the Heartwood relay `node`'s store (`missed`), which
+/// node 1 never writes: when one of its starts found no missed-slot row ([`backfilling_start`]),
+/// they must be exactly the reference's (their height 2 and times, [`super::recovery::backfill_times`];
+/// the delegates are the relay's own tests'), and they are taken out of `missed` for the anchors;
+/// otherwise they are left for the anchors to find. The passing case's text, if any.
+fn backfill_in_store(
+    run_dir: &Path,
+    node: &Node,
+    corpus_dir: &Path,
+    block_time: u32,
+    missed: &mut Vec<heartwood_database::MissedRow>,
+) -> std::result::Result<Option<String>, String> {
+    let corpus = Corpus::load(corpus_dir).map_err(|e| e.to_string())?;
+    let times = super::recovery::backfill_times(&corpus, block_time);
+    if times.is_empty() {
+        return Ok(None);
+    }
+    let dir = run_dir.join("nodes").join(&node.name).join("difftest");
+    let read = digest::read(&dir).map_err(|e| e.to_string())?;
+    let (chain, refused) = reference_rows(corpus_dir).map_err(|e| e.to_string())?;
+    let Some(tip) = backfilling_start(&digest::starts_of(&read), &chain, &refused, false) else {
+        return Ok(None);
+    };
+    let last = times.last().copied().unwrap_or(0);
+    let mut held: Vec<i64> = missed
+        .iter()
+        .filter(|m| m.height == 2 && m.timestamp <= last)
+        .map(|m| m.timestamp)
+        .collect();
+    held.sort_unstable();
+    if held != times {
+        return Err(format!(
+            "its start at {tip} found no missed-slot row, so the {} rows of the slots before block 2 at {times:?} are expected at height 2; the store holds {held:?}",
+            times.len()
+        ));
+    }
+    missed.retain(|m| !(m.height == 2 && m.timestamp <= last));
+    Ok(Some(format!(
+        "its start at {tip} found no missed-slot row and wrote the {} rows of the slots before block 2, as the reference's start does (node 1's store has none)",
+        times.len()
+    )))
+}
+
 /// The store of the Heartwood relay `node` against the final chain's corpus in `corpus_dir`.
 pub fn heartwood_store(
     run_dir: &Path,
     node: &Node,
     corpus_dir: &Path,
     tip: u32,
-    round_length: u32,
+    (round_length, block_time): (u32, u32),
 ) -> Vec<Check> {
     let label = format!("{}: store", node.name);
     let data = run_dir.join("nodes").join(&node.name).join("data");
@@ -208,13 +283,18 @@ pub fn heartwood_store(
         Err(e) => out.push(fail(&label, e.to_string())),
     }
     let last_round = store::last_round(tip, round_length);
-    let rows = match store::read_rows(&database, tip, last_round) {
+    let mut rows = match store::read_rows(&database, tip, last_round) {
         Ok(r) => r,
         Err(e) => {
             out.push(fail(&label, e));
             return out;
         }
     };
+    match backfill_in_store(run_dir, node, corpus_dir, block_time, &mut rows.missed) {
+        Ok(Some(text)) => out.push(pass(format!("{}: {text}", node.name))),
+        Ok(None) => {}
+        Err(e) => out.push(fail(&label, e)),
+    }
     for (anchor, outcome) in store::anchors(corpus_dir, &rows, tip, last_round) {
         out.push((format!("{}: {anchor}", node.name), 0, outcome));
     }
@@ -259,7 +339,7 @@ pub fn heartwood_store(
     out
 }
 
-fn copy_dir(from: &Path, to: &Path) -> Result<()> {
+pub(super) fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     std::fs::create_dir_all(to).map_err(|e| Error::io(to, e))?;
     for entry in std::fs::read_dir(from).map_err(|e| Error::io(from, e))? {
         let entry = entry.map_err(|e| Error::io(from, e))?;
@@ -406,17 +486,152 @@ pub fn heartwood_logs(run_dir: &Path, node: &Node, peers: &[&str]) -> Vec<Check>
     out
 }
 
-/// A corpus's rows keyed for comparison: blocks by height, block columns by height, round rows by
-/// round as sets, missed rows as a multiset.
-struct Rows {
-    blocks: BTreeMap<u64, String>,
-    meta: BTreeMap<u64, Value>,
-    rounds: BTreeMap<u64, BTreeSet<(String, String)>>,
-    missed: Vec<MissedKey>,
-    refused: BTreeSet<u64>,
+/// A line of a node's log: `[YYYY-MM-DD HH:MM:SS.mmm] LEVEL: text`, the time in UTC.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct LogLine {
+    /// When, in milliseconds since the Unix epoch.
+    pub at: Option<i64>,
+    /// The line's text after its level.
+    pub text: String,
 }
 
-fn rows_of(dir: &Path) -> Result<Rows> {
+/// The line `line` of a log, when it has the format's time and level; a continuation line has
+/// none.
+pub(super) fn log_line(line: &str) -> Option<LogLine> {
+    let rest = line.strip_prefix('[')?;
+    let (stamp, rest) = rest.split_once("] ")?;
+    let (level, text) = rest.split_once(": ")?;
+    if level.is_empty() || !level.bytes().all(|b| b.is_ascii_uppercase()) {
+        return None;
+    }
+    Some(LogLine {
+        at: super::run::parse_time(&format!("{stamp}Z")),
+        text: text.to_owned(),
+    })
+}
+
+/// The log files in `dir` in time order of the files: the relay's own file log, rotated files
+/// (`.log.gz`) first, which alone hold its debug lines; the streams a supervisor keeps repeat its
+/// console, so they are read only when there is no file log. A directory that is not there is an
+/// error.
+fn log_paths(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths: Vec<_> = std::fs::read_dir(dir)
+        .map_err(|e| Error::io(dir, e))?
+        .filter_map(std::result::Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.file_name().is_some_and(|n| is_log(&n.to_string_lossy())))
+        .collect();
+    paths.sort();
+    let named = |p: &PathBuf| {
+        p.file_name()
+            .is_some_and(|n| is_file_log(&n.to_string_lossy()))
+    };
+    if paths.iter().any(named) {
+        paths.retain(named);
+    }
+    Ok(paths)
+}
+
+/// The text of the logs in `dir`, file after file (see [`log_paths`]); a file that cannot be read
+/// is an error.
+pub(super) fn read_log_text(dir: &Path) -> Result<String> {
+    let mut out = String::new();
+    for path in log_paths(dir)? {
+        out.push_str(&log_text(&path).map_err(|e| Error::io(&path, e))?);
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    Ok(out)
+}
+
+/// The lines of the logs in `dir` that have a time and a level, in time order of the files.
+pub(super) fn read_logs(dir: &Path) -> Result<Vec<LogLine>> {
+    Ok(read_log_text(dir)?.lines().filter_map(log_line).collect())
+}
+
+/// What a log line records of a peer, for the checks that count the lines naming an address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Event {
+    /// "Banning <ip> for <duration>. Reason: <reason>": the reason without its trailing emoji or
+    /// short code.
+    Ban {
+        /// The banned address.
+        ip: String,
+        /// The reason.
+        reason: String,
+    },
+    /// "Got unexpected reply from <url>": a reply the client could not use.
+    UnexpectedReply(String),
+    /// "Socket data validation error (peer <ip>": a reply whose content was refused.
+    ValidationError(String),
+    /// "Response error (peer <ip>/<route>)": how a client logs a timeout.
+    ResponseError(String),
+    /// "Socket error (peer <ip>)".
+    SocketError(String),
+    /// "Accepted new peer <ip>:<port>".
+    Accepted(String),
+}
+
+impl Event {
+    /// The address the event names.
+    pub(super) fn ip(&self) -> &str {
+        match self {
+            Event::Ban { ip, .. }
+            | Event::UnexpectedReply(ip)
+            | Event::ValidationError(ip)
+            | Event::ResponseError(ip)
+            | Event::SocketError(ip)
+            | Event::Accepted(ip) => ip,
+        }
+    }
+}
+
+/// The address at the start of `rest` (after any `scheme://`): digits and dots.
+fn address(rest: &str) -> String {
+    let rest = rest.split_once("://").map_or(rest, |(_, r)| r);
+    rest.chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect()
+}
+
+/// The event a log line's `text` records, if it records one of them.
+pub(super) fn event_of(text: &str) -> Option<Event> {
+    if let Some(rest) = text.strip_prefix("Banning ") {
+        let (ip, rest) = rest.split_once(" for ")?;
+        let (_, reason) = rest.split_once(". Reason: ")?;
+        return Some(Event::Ban {
+            ip: ip.to_owned(),
+            reason: super::bans::reason_text(reason).to_owned(),
+        });
+    }
+    let after = |marker: &str| text.split_once(marker).map(|(_, rest)| address(rest));
+    let ip = |marker: &str| after(marker).filter(|ip| !ip.is_empty());
+    if let Some(ip) = ip("Got unexpected reply from ") {
+        Some(Event::UnexpectedReply(ip))
+    } else if let Some(ip) = ip("Socket data validation error (peer ") {
+        Some(Event::ValidationError(ip))
+    } else if let Some(ip) = ip("Response error (peer ") {
+        Some(Event::ResponseError(ip))
+    } else if let Some(ip) = ip("Socket error (peer ") {
+        Some(Event::SocketError(ip))
+    } else {
+        ip("Accepted new peer ").map(Event::Accepted)
+    }
+}
+
+/// A corpus's rows keyed for comparison: blocks by height, block columns by height, round rows by
+/// round as sets, missed rows as a multiset.
+pub(super) struct Rows {
+    pub(super) blocks: BTreeMap<u64, String>,
+    pub(super) meta: BTreeMap<u64, Value>,
+    pub(super) rounds: BTreeMap<u64, BTreeSet<(String, String)>>,
+    pub(super) missed: Vec<MissedKey>,
+    pub(super) refused: BTreeSet<u64>,
+}
+
+/// The rows of the corpus in `dir`.
+pub(super) fn rows_of(dir: &Path) -> Result<Rows> {
     let height = |v: &Value, k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0);
     let blocks = read_lines(&dir.join("blocks.jsonl"))?
         .iter()
@@ -534,6 +749,120 @@ mod tests {
     use super::*;
     use crate::live::run::Implementation;
     use crate::vectors::testutil::TestDir;
+
+    #[test]
+    fn a_start_that_found_no_missed_row_on_a_stored_chain_is_the_backfilling_one() {
+        let start = |number, tip, reached| digest::Start {
+            number,
+            tip,
+            reached,
+        };
+        let chain: Vec<MissedKey> = vec![(1224, 151, "d".into()), (1704, 210, "d".into())];
+        let none = BTreeSet::new();
+        // Run w's node 6: a first start, three at 56, and the start after the rollback at 106.
+        let node6 = [
+            start(1, 1, 56),
+            start(2, 56, 56),
+            start(3, 56, 56),
+            start(4, 56, 160),
+            start(5, 106, 212),
+        ];
+        assert_eq!(backfilling_start(&node6, &chain, &none, true), Some(56));
+        // Its node 4: a first start and a restart at 130.
+        let node4 = [start(1, 1, 130), start(2, 130, 212)];
+        assert_eq!(backfilling_start(&node4, &chain, &none, false), Some(130));
+        // A restart above the chain's first missed row found a row; a first start found no chain.
+        let late = [start(1, 1, 160), start(2, 160, 212)];
+        assert_eq!(backfilling_start(&late, &chain, &none, false), None);
+        assert_eq!(backfilling_start(&late[..1], &chain, &none, false), None);
+        // Node 1's row of a block it refused is one Heartwood does not write.
+        let refused = BTreeSet::from([151]);
+        assert_eq!(backfilling_start(&late, &chain, &refused, false), Some(160));
+        // The start after a rollback counts only when the starts after it may.
+        let rolled_back = [start(1, 1, 160), start(2, 106, 212)];
+        assert_eq!(backfilling_start(&rolled_back, &chain, &none, true), None);
+        assert_eq!(
+            backfilling_start(&rolled_back, &chain, &none, false),
+            Some(106)
+        );
+    }
+
+    #[test]
+    fn log_lines_are_read_as_events() {
+        let line = |text: &str| {
+            let l = log_line(&format!("[2026-09-27 10:24:19.332] DEBUG: {text}")).unwrap();
+            assert_eq!(
+                l.at,
+                super::super::run::parse_time("2026-09-27T10:24:19.332Z")
+            );
+            event_of(&l.text)
+        };
+        assert_eq!(
+            line("Banning 10.82.0.14 for 10 seconds. Reason: Did not make an endpoint request 🚔"),
+            Some(Event::Ban {
+                ip: "10.82.0.14".into(),
+                reason: "Did not make an endpoint request".into()
+            })
+        );
+        assert_eq!(
+            line(
+                "Banning 10.82.0.11 for 5 minutes. Reason: Validation failed :oncoming_police_car:"
+            ),
+            Some(Event::Ban {
+                ip: "10.82.0.11".into(),
+                reason: "Validation failed".into()
+            })
+        );
+        assert_eq!(
+            line("Got unexpected reply from ws://10.82.0.14:6002/p2p.peer.getPeers: {}"),
+            Some(Event::UnexpectedReply("10.82.0.14".into()))
+        );
+        assert_eq!(
+            line("Socket data validation error (peer 10.82.0.14) : ..."),
+            Some(Event::ValidationError("10.82.0.14".into()))
+        );
+        assert_eq!(
+            line("Response error (peer 10.82.0.14/p2p.blocks.getBlocks) : timeout"),
+            Some(Event::ResponseError("10.82.0.14".into()))
+        );
+        assert_eq!(
+            line("Socket error (peer 10.82.0.14): Socket error ⚠️"),
+            Some(Event::SocketError("10.82.0.14".into()))
+        );
+        assert_eq!(
+            line("Accepted new peer 10.82.0.14:6002 (v4.3.1) 🤗"),
+            Some(Event::Accepted("10.82.0.14".into()))
+        );
+        assert_eq!(line("Starting Round 3"), None);
+        assert!(log_line("  at Object.<anonymous> (file.js:1:1)").is_none());
+    }
+
+    #[test]
+    fn a_log_directory_reads_the_file_logs_with_the_rotated_ones_first() {
+        let dir = TestDir::new("live-log-order");
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(b"[2026-09-27 23:59:01.000] DEBUG: rotated\n")
+            .unwrap();
+        std::fs::write(
+            dir.path().join("solar-testnet-relay-2026-09-27.log.gz"),
+            gz.finish().unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("solar-testnet-relay-current.log"),
+            "[2026-09-28 00:00:01.000] DEBUG: current\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("relay.out.log"),
+            "[2026-09-28 00:00:01.000] INFO: console\n",
+        )
+        .unwrap();
+        let lines = read_logs(dir.path()).unwrap();
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["rotated", "current"]);
+        assert!(read_logs(&dir.path().join("absent")).is_err());
+    }
 
     #[test]
     fn the_log_scan_reads_rotated_files_and_records_the_cleanse() {

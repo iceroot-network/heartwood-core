@@ -71,6 +71,9 @@ pub struct JobContext<'a> {
     pub clock: &'a dyn Clock,
     /// Who is told of each applied block, on the node thread.
     pub observer: &'a mut dyn CommitObserver,
+    /// The harness's job stall (feature `difftest`).
+    #[cfg(feature = "difftest")]
+    pub stall: Option<&'a crate::difftest::StallControl>,
 }
 
 impl ForgedIds for BTreeSet<TransactionId> {
@@ -113,6 +116,8 @@ pub fn run_job(ctx: &mut JobContext<'_>, job: Job) -> Result<JobOutcome, NodeErr
     let ids: Vec<TransactionId> = ids.map(|transaction| *transaction.id()).collect();
     let forged = ctx.store.database().forged_transaction_ids(&ids);
     let forged: BTreeSet<TransactionId> = forged.map_err(StoreError::from)?.into_iter().collect();
+    #[cfg(feature = "difftest")]
+    crate::difftest::hold(ctx.stall, job.blocks.len());
     let mut chunk = ctx.store.chunk()?;
     let (mut accepted, mut results, mut clear_queue) = (Vec::new(), Vec::new(), false);
     let (mut last_result, mut last_processed, mut fork, mut faulty) = (None, None, None, None);

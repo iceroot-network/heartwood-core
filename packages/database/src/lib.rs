@@ -69,5 +69,5 @@ pub use crate::missed::MissedRow;
 pub use crate::node_local::DelegateVersionRow;
 pub use crate::reader::{READ_TIMEOUT, Reader, Readers};
 pub use crate::rounds::RoundRow;
-pub use crate::state::{StateRow, UndoRow, WalletRow};
+pub use crate::state::{RowCounts, StateRow, UndoRow, WalletRow};
 pub use crate::transactions::TransactionRow;

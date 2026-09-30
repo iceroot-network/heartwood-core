@@ -190,6 +190,8 @@ async fn the_servers_reads_and_work_go_to_the_node_and_its_store() {
         broadcast: broadcasts.clone(),
         own_keys: links.clone(),
         version: heartwood_core::VERSION.into(),
+        #[cfg(feature = "difftest")]
+        stall: None,
     })
     .unwrap();
     let corpus = blocks(&milestones);
@@ -228,7 +230,37 @@ async fn the_servers_reads_and_work_go_to_the_node_and_its_store() {
         clock,
         #[cfg(feature = "difftest")]
         record: Some(heartwood_core::harness::NetworkStateRecord::open(&record).unwrap()),
+        #[cfg(feature = "difftest")]
+        await_record: Some(
+            heartwood_core::harness::AwaitRecordFile::open(&setup.root.join("await-0000.jsonl"))
+                .unwrap(),
+        ),
     };
+
+    // A public request's AwaitBlock step reaches the harness's record through the service.
+    #[cfg(feature = "difftest")]
+    {
+        use heartwood_p2p::node_services::{AwaitEnd, AwaitRecord};
+        services.await_block_step(&AwaitRecord {
+            route: heartwood_p2p_wire::RouteId::GetStatus,
+            caller: "127.0.0.9".parse().unwrap(),
+            at_ms: 1_700_000_000_123,
+            waited: std::time::Duration::from_millis(8_004),
+            end: AwaitEnd::Bound,
+            tip_before: 58,
+            tip_after: 58,
+        });
+        let text = std::fs::read_to_string(setup.root.join("await-0000.jsonl")).unwrap();
+        let line: serde_json::Value = serde_json::from_str(text.trim_end()).unwrap();
+        assert_eq!(
+            line,
+            serde_json::json!({
+                "t": "2023-11-14T22:13:20.123Z", "route": "getStatus",
+                "caller": "127.0.0.9", "waitMs": 8004, "end": "bound",
+                "tipBefore": 58, "tipAfter": 58,
+            })
+        );
+    }
 
     // The boot and the first sync, as the server reads them.
     assert!(!services.is_booted() && services.first_synced_ms().is_none());

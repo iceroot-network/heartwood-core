@@ -727,6 +727,11 @@ const CALLS: &[(&str, &str, Class)] = &[
         "the harness's record could not be written: {error}",
         Class::Untyped,
     ),
+    (
+        "core/src/markers.rs",
+        "Ignored {}: {}: {why} :warning:",
+        Class::Untyped,
+    ),
     ("core/src/signals.rs", "{message}", Class::Untyped),
     (
         "api/src/controllers/transactions.rs",

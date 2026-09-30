@@ -93,7 +93,20 @@ pub fn required(run: &str) -> Vec<String> {
         ],
         _ => &[],
     };
-    common.iter().chain(own).map(|s| (*s).to_owned()).collect()
+    // The steps of a mixed run, with their planned rounds, are the schedule's.
+    let mixed: Vec<&str> = super::schedule::plan(run).iter().map(|p| p.name).collect();
+    // `archive` is node 1's archive. Run s's node 1 is a Heartwood relay, whose files the
+    // collection takes (its block files are the run's chain): its archive is the reference
+    // observer's, node 4's.
+    let archives: &[&str] = if run == "s" { &["archive-node4"] } else { &[] };
+    common
+        .iter()
+        .filter(|s| run != "s" || **s != "archive")
+        .chain(own)
+        .chain(&mixed)
+        .chain(archives)
+        .map(|s| (*s).to_owned())
+        .collect()
 }
 
 /// How many times a required step must have run.
@@ -109,7 +122,10 @@ pub fn times(run: &str, step: &str) -> usize {
 /// The problems of the steps: a failed step, a required step that did not run (often enough).
 pub fn problems(run: &str, steps: &[Step]) -> Vec<String> {
     let mut out = Vec::new();
-    if !matches!(run, "r" | "h" | "m1" | "m2" | "t" | "m" | "f") {
+    if !matches!(
+        run,
+        "r" | "h" | "m1" | "m2" | "t" | "m" | "f" | "w0" | "w" | "p" | "s"
+    ) {
         out.push(format!("unknown live run {run}"));
     }
     let mut count: BTreeMap<&str, usize> = BTreeMap::new();
@@ -635,6 +651,22 @@ mod tests {
                 .iter()
                 .any(|p| p.contains("kill-node4-KILL ran 0 times, the schedule has it 3"))
         );
+        // The mixed runs have their schedules' steps; the baseline has no stall.
+        assert!(required("w").contains(&"stall-node4".to_owned()));
+        assert!(!required("w0").contains(&"stall-node4".to_owned()));
+        assert!(required("s").contains(&"restart-node2".to_owned()));
+        assert!(
+            problems("s", &[])
+                .iter()
+                .all(|p| !p.contains("unknown live run"))
+        );
+        // Run s's node 1 is a Heartwood relay: its files are collected, and the archive is the
+        // reference observer's.
+        let s: Vec<Step> = required("s").iter().map(|n| step(n, true)).collect();
+        assert!(problems("s", &s).is_empty(), "{:?}", problems("s", &s));
+        assert!(!required("s").contains(&"archive".to_owned()));
+        assert!(required("s").contains(&"archive-node4".to_owned()));
+        assert!(required("w").contains(&"archive".to_owned()));
     }
 
     #[test]
