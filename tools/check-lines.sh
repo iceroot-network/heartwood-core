@@ -95,10 +95,10 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # (the doctor 6,946), heartwood-core to 3,500 and heartwood-database to 2,627.
 # A second round of the review's fixes goes heartwood-cli from 10,300 to 10,400 and heartwood-core
 # from 3,500 to 3,600, each the measured count rounded up to the next hundred with no further
-# addition planned in this change: heartwood-cli measures 10,332 (the doctor 6,983) and
+# addition planned in this change: heartwood-cli measures 10,328 (the doctor 6,979) and
 # heartwood-core 3,508. The store window's own tip and its start below it (the slot checks and the
 # version floor read the store with the relay's API off), the plain-unit sizes and the phrases of
-# fixed words in the advice take heartwood-cli's 37 lines; the node view's start and the words
+# fixed words in the advice take heartwood-cli's 33 lines; the node view's start and the words
 # in explain take heartwood-core's 8. heartwood-database, at 2,640, keeps its 3,000.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"

@@ -632,7 +632,7 @@ impl Scan {
             // Before the window, only the forger's start and the lines that list its delegates.
             if at_ms < window.from_ms {
                 match roster_line(role, level, message) {
-                    Some(LineKind::ForgerStarted | LineKind::ForgerManagerStarted) => {
+                    Some(LineKind::ForgerStarted) => {
                         (self.roster, self.restarted) = (Vec::new(), true);
                     }
                     kind => self.roster.extend(kind.map(event)),
@@ -662,17 +662,19 @@ impl Scan {
     }
 }
 
-/// The kind of a line before the window that the roster needs: the forger's start, or a line
-/// that lists its delegates. A test of the line's opening spares the other lines the patterns.
+/// The kind of a line before the window that the roster needs: the forger's start (its version
+/// line, which comes before the start's delegate lines; its manager's line comes after them), or a
+/// line that lists its delegates. A test of the line's opening spares the other lines the patterns.
 fn roster_line(role: Role, level: Level, message: &str) -> Option<LineKind> {
-    const OPENINGS: [&str; 4] = ["Loaded ", "Delegate", "Heartwood Core ", "Forger Manager "];
+    const OPENINGS: [&str; 3] = ["Loaded ", "Delegate", "Heartwood Core "];
     let opens = OPENINGS.iter().any(|opening| message.starts_with(opening));
     if role != Role::Forger || level != Level::Info || !opens {
         return None;
     }
     match patterns::classify(role, level, message)? {
-        kind @ (LineKind::ForgerStarted | LineKind::ForgerManagerStarted) => Some(kind),
-        kind @ (LineKind::DelegatesLoaded { .. } | LineKind::ActivePosition { .. }) => Some(kind),
+        kind @ (LineKind::ForgerStarted
+        | LineKind::DelegatesLoaded { .. }
+        | LineKind::ActivePosition { .. }) => Some(kind),
         _ => None,
     }
 }
@@ -816,12 +818,7 @@ pub fn read_log(context: &LogContext<'_>) -> Result<LogWindow, Unknown> {
     excerpts.drain(..surplus);
     older.events.extend(current.events);
     // A start inside the window makes the lines before it an earlier run's.
-    let started = |event: &LogEvent| {
-        matches!(
-            event.kind,
-            LineKind::ForgerStarted | LineKind::ForgerManagerStarted
-        )
-    };
+    let started = |event: &LogEvent| event.kind == LineKind::ForgerStarted;
     let roster = match (older.events.iter().any(started), current.restarted) {
         (true, _) => Vec::new(),
         (false, true) => current.roster,

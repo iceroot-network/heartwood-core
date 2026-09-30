@@ -1157,7 +1157,7 @@ fn the_error_capture_is_read_by_the_same_caps_and_its_excerpts_are_capped() {
 fn the_forger_s_delegate_lines_before_the_window_since_its_last_start_are_kept_apart() {
     let text = "\
 [2026-10-02 09:00:00.000] INFO: Loaded 2 active delegates: genesis_8, genesis_9
-[2026-10-02 10:00:00.000] INFO: Forger Manager started 🔨
+[2026-10-02 10:00:00.000] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
 [2026-10-02 10:00:08.000] INFO: Loaded 2 active delegates: genesis_1, genesis_2
 [2026-10-02 10:00:08.000] INFO: Loaded 1 inactive delegate: genesis_3
 [2026-10-02 11:00:00.000] INFO: Delegate genesis_4 is now in an active forging position 🎉
@@ -1190,12 +1190,45 @@ fn the_forger_s_delegate_lines_before_the_window_since_its_last_start_are_kept_a
 }
 
 #[test]
+fn the_delegate_lines_of_the_forger_s_own_start_are_kept_before_the_window() {
+    // The forger's start as it logs it: its version line, its delegates, then its manager's line.
+    let text = "\
+[2026-10-02 10:00:00.000] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
+[2026-10-02 10:00:00.270] INFO: Loaded 2 active delegates: genesis_1, genesis_2
+[2026-10-02 10:00:00.271] INFO: Forger Manager started 🔨
+[2026-10-02 12:30:00.000] INFO: Delegate genesis_1 is due to forge in 8 seconds from now ✨
+";
+    let named = |events: &[heartwood_cli::doctor::sources::logs::LogEvent]| {
+        let names = events.iter().flat_map(|event| match &event.kind {
+            LineKind::DelegatesLoaded { names, .. } => names.clone(),
+            _ => Vec::new(),
+        });
+        names
+            .map(|name| name.as_str().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        named(&read(Role::Forger, text).roster),
+        ["genesis_1", "genesis_2"]
+    );
+    // A start across the window's start: its delegate line before the window, its manager's line
+    // inside it.
+    let across = "\
+[2026-10-02 11:59:59.900] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
+[2026-10-02 11:59:59.990] INFO: Loaded 1 active delegate: genesis_3
+[2026-10-02 12:00:00.010] INFO: Forger Manager started 🔨
+";
+    assert_eq!(named(&read(Role::Forger, across).roster), ["genesis_3"]);
+}
+
+#[test]
 fn a_forger_start_inside_the_window_leaves_no_delegate_lines_from_before_it() {
     let text = "\
-[2026-10-02 10:00:00.000] INFO: Forger Manager started 🔨
+[2026-10-02 10:00:00.000] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
 [2026-10-02 10:00:08.000] INFO: Loaded 2 active delegates: genesis_1, genesis_2
-[2026-10-02 12:30:00.000] INFO: Forger Manager started 🔨
+[2026-10-02 12:30:00.000] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
 [2026-10-02 12:30:08.000] INFO: Loaded 1 active delegate: genesis_5
+[2026-10-02 12:30:08.001] INFO: Forger Manager started 🔨
 ";
     let window = read(Role::Forger, text);
     // The lines before the start in the window are an earlier run's.
