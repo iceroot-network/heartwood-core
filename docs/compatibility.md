@@ -2118,7 +2118,7 @@ recipe refuses to pass; the step list places each step in the round it needs:
 |---|---|---|---|
 | `w0` | three reference forgers and three reference relays | 212 (round 4) | the steps of `w` with reference relays as nodes 4 and 6: the baseline the other runs are compared with |
 | `w` | three reference forgers, Heartwood relays as nodes 4 and 6, and a reference relay as node 5 | 212 (round 4) | the transaction scenario through node 4; node 5 started with an empty store and routes to node 4 alone, so that it syncs from the Heartwood relay, then a batch through it; node 6, isolated, restarted with a pooled transfer, then `pool clear`, then `state clear` and a vote for a delegate it saw online before; the heal; node 4's next block job held for 12 s; node 4 restarted by SIGINT; node 6 isolated again, rolled back with `snapshot rollback --height 133`, started and synced again |
-| `p` | three reference forgers, a Heartwood relay as node 4 and a reference relay as node 5 that reaches node 4 alone | 159 (round 3) | a partition of nodes 1 and 2 from nodes 3 to 5 across a round end, both sides forging, two conflicting transfers, then the heal |
+| `p` | three reference forgers, a Heartwood relay as node 4 and a reference relay as node 5 that reaches node 4 alone | 159 (round 3) | a partition of nodes 1 and 2 from nodes 3 to 5 across a round end, both sides forging, two conflicting transfers, then the heal; node 4 or node 5, of either implementation, still 10 or more blocks behind on its own tip 60 s after the heal gets its routes opened and its relay restarted |
 | `s` | three Heartwood nodes, each a relay and a forger in one container, and a reference relay as node 4 | 106 (round 2) | the transaction scenario through node 1; node 4 started with an empty store and routes to node 1 alone; votes that the reference relay admits only after it has verified the Heartwood forgers' status attestations; node 4's routes opened, a batch, node 2's relay restarted |
 
 `make live-check RUN=w`, `p` or `s` compares a run with `w0`, and each count below with the most
@@ -2133,7 +2133,8 @@ place (lines between two nodes the routes keep apart are counted on their own); 
 Heartwood relays' logs about reference nodes; the fresh node's blocks, its judged lines and its
 round and missed-slot rows equal to the serving relay's; transactions and blocks passing through
 a Heartwood relay both ways; in `p`, the minority's blocks through node 4, both sides converging
-on the majority's chain, and only the majority's conflicting transfer kept; in `s`, the votes
+on the majority's chain (a node reconnected only as the recipe's rule allows), and only the
+majority's conflicting transfer kept; in `s`, the votes
 admitted, a quorum for every forged block and every block rebuilt by the reference's forger; the
 recovery commands' effects (the pooled transfer kept, then gone, the replay start, the vote, and
 node 6's store summary after the rollback and after its start equal to the reference's own
@@ -2166,10 +2167,13 @@ the probe's client, whose timeout is 20 s, was answered at 8.0 s with the tip be
 slot, and the reference's forger rebuilt all 105 of them. After the rollback a Heartwood relay
 took 23 s to sync the 71 blocks it lacked, where a reference relay took 4 s for 58: it fetched
 single blocks from its one peer until it had accepted others. Run `p` showed the minority's blocks
-served through the Heartwood relay and the fork resolved on it, but the heal needed the recipe to
-reconnect reference relays, as it did with reference relays in node 4's place in the rehearsals,
-and in the last run a reference relay that knew only the minority's side was still on it when the
-forgers paused.
+served through the Heartwood relay and the fork resolved on it. After the heal a relay that knows
+only the minority's side cannot check the network's health and stays on that side, the reference
+relay in node 4's place in the rehearsals as much as the Heartwood relay, so the recipe reconnects
+either one that has not followed the heal 60 s after it (its routes opened and its relay
+restarted). In the last run the restarted Heartwood relay found the fork 6 s after its start and
+logged the reference's own lines (19 blocks removed back to height 80), and every node was on one
+tip 104 s after the heal.
 
 ## The oracle image
 
