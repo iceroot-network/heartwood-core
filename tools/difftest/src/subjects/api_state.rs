@@ -4,14 +4,9 @@
 //! A listing runs the crate's services as the routes run them, over the fixture's wallets in the
 //! index orders the case gives (`orders`, permutations of fixture positions; the fixture's own
 //! order by default), with the delegates' rank, missed blocks, productivity and version from
-//! `extras`. The pagination service is the crate's when it is written; until then a stable sort by
-//! the reference's comparator stands in for it ([`stand_in`]), which the cases with mixed value
-//! types (where only the service's tree decides which pairs are compared) do not use.
+//! `extras`, and paged by the crate's pagination service, as the routes page them.
 
-use std::cmp::Ordering;
 use std::net::{IpAddr, Ipv4Addr};
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::OnceLock;
 
 use heartwood_api::controllers::delegates::{delegates_page, find_delegate, listing};
 use heartwood_api::controllers::wallets_list::wallets_page;
@@ -19,13 +14,12 @@ use heartwood_api::pagination::Pagination;
 use heartwood_api::resources::delegate::{delegate, supply};
 use heartwood_api::schemas::{parse_query, validate_params, validate_query};
 use heartwood_api::search::criteria::{of_query, sorting_of};
-use heartwood_api::search::{Criteria, Direction, ResultsPage, Sorting, page, plain};
+use heartwood_api::search::{self, Criteria, Direction, plain};
 use heartwood_api::{
     ApiError, ApiRequest, DelegateProduction, Hundredths, ProductivityTable, RouteId,
 };
 use heartwood_crypto::BlockId;
 use heartwood_crypto::identities::{Address, PublicKey, PublicKeyBytes};
-use heartwood_p2p::utils::npm_semver;
 use heartwood_pool::{OnlineEntry, PoolView, PoolViewOptions};
 use heartwood_state::{Resignation, Wallet, WalletRepository};
 use serde_json::{Map, Value, json};
@@ -48,120 +42,6 @@ fn refusal(error: &ApiError) -> Verdict {
         answer["message"] = json!(error.message);
     }
     Verdict::Output(answer)
-}
-
-// The pagination service.
-
-/// The value at the dotted `path` of `value`.
-fn get<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
-    path.split('.').try_fold(value, |value, key| value.get(key))
-}
-
-fn ordering(a: &Value, b: &Value) -> Option<Ordering> {
-    let marker = |map: &Map<String, Value>, key: &str| Some(map.get(key)?.as_str()?.to_owned());
-    match (a, b) {
-        (Value::Bool(a), Value::Bool(b)) => Some(a.cmp(b)),
-        (Value::String(a), Value::String(b)) => Some(a.encode_utf16().cmp(b.encode_utf16())),
-        (Value::Number(a), Value::Number(b)) => a.as_f64()?.partial_cmp(&b.as_f64()?),
-        (Value::Object(a), Value::Object(b)) => {
-            match (marker(a, "$bigNumber"), marker(b, "$bigNumber")) {
-                (Some(a), Some(b)) => Some(a.parse::<i128>().ok()?.cmp(&b.parse::<i128>().ok()?)),
-                _ => npm_semver::compare(&marker(a, "$semver")?, &marker(b, "$semver")?),
-            }
-        }
-        _ => None,
-    }
-}
-
-/// The reference's comparator over a sorting: absent values, then `null`, last in both
-/// directions; the values of one type in the direction; any other pair is `None`.
-fn compare(a: &Value, b: &Value, sorting: &Sorting) -> Option<Ordering> {
-    for (property, direction) in &sorting.0 {
-        let (a, b) = match (get(a, property), get(b, property)) {
-            (None, None) => continue,
-            (None, Some(_)) => return Some(Ordering::Greater),
-            (Some(_), None) => return Some(Ordering::Less),
-            (Some(Value::Null), Some(Value::Null)) => continue,
-            (Some(Value::Null), Some(_)) => return Some(Ordering::Greater),
-            (Some(_), Some(Value::Null)) => return Some(Ordering::Less),
-            (Some(a), Some(b)) if *direction == Direction::Desc => (b, a),
-            (Some(a), Some(b)) => (a, b),
-        };
-        match ordering(a, b)? {
-            Ordering::Equal => continue,
-            order => return Some(order),
-        }
-    }
-    Some(Ordering::Equal)
-}
-
-/// A stable sort by the comparator, paged: what the pagination service gives while every pair the
-/// tree compares is of one type.
-fn stand_in(
-    pagination: Pagination,
-    sorting: &Sorting,
-    items: std::vec::IntoIter<Value>,
-) -> Result<ResultsPage, ApiError> {
-    let all: Vec<Value> = items.collect();
-    let mut failed = false;
-    let mut order: Vec<usize> = (0..all.len()).collect();
-    order.sort_by(|a, b| match all.get(*a).zip(all.get(*b)) {
-        Some((x, y)) => compare(x, y, sorting).unwrap_or_else(|| {
-            failed = true;
-            Ordering::Equal
-        }),
-        None => Ordering::Equal,
-    });
-    if failed {
-        return Err(ApiError::internal());
-    }
-    let skip = usize::try_from(pagination.offset).unwrap_or(usize::MAX);
-    let take = usize::try_from(pagination.limit).unwrap_or(usize::MAX);
-    Ok(ResultsPage {
-        results: order
-            .into_iter()
-            .skip(skip)
-            .take(take)
-            .filter_map(|index| all.get(index).cloned())
-            .collect(),
-        total_count: all.len() as u64,
-        total_count_is_estimate: false,
-    })
-}
-
-/// Whether the crate's pagination service is written (it is `todo!()` until it is).
-pub fn real_page_available() -> bool {
-    static AVAILABLE: OnceLock<bool> = OnceLock::new();
-    *AVAILABLE.get_or_init(|| {
-        let hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let ran = catch_unwind(AssertUnwindSafe(|| {
-            page(
-                Pagination {
-                    offset: 0,
-                    limit: 1,
-                },
-                &Sorting::default(),
-                Vec::new().into_iter(),
-            )
-        }))
-        .is_ok();
-        std::panic::set_hook(hook);
-        ran
-    })
-}
-
-/// The pagination service the listings run with.
-fn pager(
-    pagination: Pagination,
-    sorting: &Sorting,
-    items: std::vec::IntoIter<Value>,
-) -> Result<ResultsPage, ApiError> {
-    if real_page_available() {
-        page(pagination, sorting, items)
-    } else {
-        stand_in(pagination, sorting, items)
-    }
 }
 
 // The fixture and what it states beside the wallets.
@@ -375,7 +255,14 @@ fn delegates_route(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     if request.route == RouteId::DelegatesIndex {
         let parts = (pagination, sorting_of(query, &[]), &[of_query(query)][..]);
         let wallets = state.in_order(&state.usernames);
-        let page = delegates_page(wallets, supply, &state.pool, &state.table, parts, pager);
+        let page = delegates_page(
+            wallets,
+            supply,
+            &state.pool,
+            &state.table,
+            parts,
+            search::page,
+        );
         return Ok(answer(
             page.map(|page| listing(&request, pagination, page).body),
         ));
@@ -401,7 +288,7 @@ fn delegates_route(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let tail = [("balance", Direction::Desc)];
     let parts = (pagination, sorting_of(query, &tail), &criteria[..]);
     let wallets = state.in_order(&state.public_keys);
-    let page = wallets_page(wallets, &state.pool, &state.table, parts, pager);
+    let page = wallets_page(wallets, &state.pool, &state.table, parts, search::page);
     Ok(answer(
         page.map(|page| listing(&request, pagination, page).body),
     ))
@@ -422,7 +309,7 @@ fn wallets_route(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let tail = [("balance", Direction::Desc)];
     let parts = (pagination, sorting_of(query, &tail), &[of_query(query)][..]);
     let wallets = state.in_order(&state.addresses);
-    let page = wallets_page(wallets, &state.pool, &state.table, parts, pager);
+    let page = wallets_page(wallets, &state.pool, &state.table, parts, search::page);
     Ok(answer(
         page.map(|page| listing(&request, pagination, page).body),
     ))
