@@ -1377,8 +1377,20 @@ fn a_run_without_a_devnet_says_so_before_it_starts_anything() {
     );
     assert!(!ok, "{text}");
     assert!(text.contains("unknown field `bogus`"), "{text}");
-    assert!(text.contains("does not run at L2"), "{text}");
-    assert!(text.contains("2 records in 2 files"), "{text}");
+    // A scenario of another level is named, not counted: its level is another record's.
+    assert!(
+        text.contains("left to the records of their other levels: zero-vote-ties"),
+        "{text}"
+    );
+    assert!(text.contains("1 records in 2 files"), "{text}");
+    // A run with no scenario at its level at all is the harness's error, not an empty pass.
+    std::fs::remove_file(dir.join("broken.json")).expect("remove");
+    let (ok, text) = difftest(
+        &["scenario", "run", "--backend", "lockstep", "--level", "l2", d, "--strict"],
+        &["--solar-dir".into(), "/nonexistent".into()],
+    );
+    assert!(!ok, "{text}");
+    assert!(text.contains("no scenario of"), "{text}");
 }
 
 /// A stub API of a node: a tip, and a verdict for every transaction of a `POST`.

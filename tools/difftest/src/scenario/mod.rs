@@ -113,7 +113,8 @@ fn files(path: &Path) -> Result<Vec<PathBuf>> {
     Ok(found)
 }
 
-/// A case of the command's own: a scenario file that cannot run, or is left to another level.
+/// A case of the command's own: a scenario file that cannot run, or a run with no scenario at its
+/// level.
 fn note(file: &Path, label: &str, outcome: Outcome) -> CaseResult {
     CaseResult {
         file: file.display().to_string(),
@@ -179,6 +180,7 @@ pub fn run_command(args: &crate::cli::ScenarioRunArgs) -> Result<Report> {
         .level
         .unwrap_or_else(|| default_level(args.options.backend));
     let mut results = Vec::new();
+    let mut left = Vec::new();
     let paths = files(&args.path)?;
     for path in &paths {
         let scenario = match load(path) {
@@ -193,11 +195,7 @@ pub fn run_command(args: &crate::cli::ScenarioRunArgs) -> Result<Report> {
             }
         };
         if !scenario.levels.contains(&level) {
-            let why = format!(
-                "{} does not run at {level:?}: left to a live run of another level",
-                scenario.id
-            );
-            results.push(note(path, &scenario.id, Outcome::Skipped(why)));
+            left.push(scenario.id);
             continue;
         }
         let ran = compile(&scenario, &oracle).and_then(|compiled| run_one(&compiled, args, level));
@@ -210,13 +208,25 @@ pub fn run_command(args: &crate::cli::ScenarioRunArgs) -> Result<Report> {
             )),
         }
     }
+    if results.is_empty() {
+        let why = format!("no scenario of {} runs at {level:?}", args.path.display());
+        results.push(note(&args.path, "scenarios", Outcome::HarnessError(why)));
+    }
+    let mut source = format!(
+        "the {:?} backend, {}",
+        args.options.backend,
+        args.path.display()
+    );
+    if !left.is_empty() {
+        // Named, not counted: a level a scenario does not list is proved by another record.
+        source.push_str(&format!(
+            "; left to the records of their other levels: {}",
+            left.join(", ")
+        ));
+    }
     Ok(Report {
         title: format!("scenarios at {level:?}"),
-        source: format!(
-            "the {:?} backend, {}",
-            args.options.backend,
-            args.path.display()
-        ),
+        source,
         files: paths.len(),
         results,
     })
