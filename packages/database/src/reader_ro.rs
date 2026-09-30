@@ -8,13 +8,14 @@
 //! [`ReadOnlyStore::open`] refuses a store whose two files are not there. A writer that closes
 //! between that check and the open removes both files, and the open's first read creates them
 //! anew (empty, and left for the writer's next start, which reuses them): the open then finds
-//! their device and inode changed and refuses too, having read nothing. The two queries select
-//! by `height` in one read transaction, each capped at a row count. The node itself never uses
-//! this module.
+//! them changed and refuses too, having read nothing. A file made anew may take its old inode
+//! number, so the files are told apart by their creation time as well; on a file system that
+//! keeps none, only the device and inode tell. The two queries select by `height` in one read
+//! transaction, each capped at a row count. The node itself never uses this module.
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
 use rusqlite::config::DbConfig;
 use rusqlite::types::ToSql;
@@ -99,9 +100,10 @@ pub struct ReadOnlyStore {
     timeout: Duration,
 }
 
-/// The device and inode of a store's `-wal` and `-shm` files, which a writer holds open.
+/// The device, inode and creation time of a store's `-wal` and `-shm` files, which a writer
+/// holds open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WriterFiles([(u64, u64); 2]);
+pub struct WriterFiles([(u64, u64, Option<Duration>); 2]);
 
 impl WriterFiles {
     /// The `-wal` and `-shm` files of the store at `path` as they stand, when both are regular
@@ -111,7 +113,9 @@ impl WriterFiles {
             let mut beside = path.as_os_str().to_owned();
             beside.push(suffix);
             let meta = std::fs::symlink_metadata(PathBuf::from(beside)).ok()?;
-            meta.is_file().then(|| (meta.dev(), meta.ino()))
+            let created = meta.created().ok();
+            let created = created.and_then(|at| at.duration_since(UNIX_EPOCH).ok());
+            meta.is_file().then(|| (meta.dev(), meta.ino(), created))
         };
         Some(WriterFiles([file("-wal")?, file("-shm")?]))
     }
