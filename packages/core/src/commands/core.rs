@@ -4,10 +4,11 @@
 use std::process::ExitCode;
 
 use clap::{ArgAction, Args, Subcommand};
-use heartwood_cli::Role;
+use heartwood_cli::supervisor::signals::is_locked;
+use heartwood_cli::{Instance, ProcessError, Role};
 
-use super::Manage;
 use super::relay::RelayRun;
+use super::{Manage, on_instance};
 
 /// A `core` command.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
@@ -48,11 +49,29 @@ pub struct CoreStart {
     pub daemon: bool,
 }
 
+/// Refuse the start of the core role while a relay or a forger of its instance runs, under a
+/// supervisor or not: the roles are one node's two halves, and a core process holds both.
+fn refuse_beside(core: &Instance) -> Result<(), ProcessError> {
+    for role in Role::ALL {
+        let other = Instance {
+            role,
+            ..core.clone()
+        };
+        if is_locked(&other.supervisor_lock_path())? || is_locked(&other.lock_path())? {
+            return Err(ProcessError::AlreadyRunning { name: other.name() });
+        }
+    }
+    Ok(())
+}
+
 /// Run `command`.
 pub fn run(command: CoreCommand) -> ExitCode {
     match command {
         CoreCommand::Run(run) => crate::exit(crate::app::core::run_core(&run)),
-        CoreCommand::Start(_) => super::not_built("core start"),
+        CoreCommand::Start(start) => on_instance(Role::Core, &start.run.relay.instance(), |i| {
+            refuse_beside(i)?;
+            super::start(i, start.run.relay.args(), start.daemon)
+        }),
         CoreCommand::Manage(command) => super::manage(Role::Core, command),
     }
 }
