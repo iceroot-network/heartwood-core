@@ -7,7 +7,7 @@
 // The target reads a route's choice byte, then a raw query string. Every distinct query string a
 // record of VECTOR_DIR's classes gives as `input.query` (the queries of the grammar and of the
 // pagination, and the listings' queries) is written once for each choice byte from 0 to CHOICES - 1
-// (11 by default, the target's routes), as CORPUS_DIR/api_query/<SHA-1 of its bytes>, the name
+// (27 by default, the target's routes), as CORPUS_DIR/api_query/<SHA-1 of its bytes>, the name
 // libFuzzer gives the files of a corpus, so a seed that is already there is not written again.
 // The fee statistics' `days` values are written for that route's choice byte (9) as well, and the
 // inputs of the vectors' api.fuzzQuery records (`input.hex`, a choice byte and a query) as they are.
@@ -31,7 +31,7 @@ function main(argv) {
     }
     const [vectors, corpus] = argv;
     const max = Number(argv[2] || 65536);
-    const choices = Number(argv[3] || 11);
+    const choices = Number(argv[3] || 27);
     const queries = new Set();
     const inputs = new Set();
     for (const file of fs.readdirSync(vectors).filter((f) => f.endsWith(".jsonl")).sort()) {

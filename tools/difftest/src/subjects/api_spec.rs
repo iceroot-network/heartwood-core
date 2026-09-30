@@ -28,8 +28,8 @@ pub(super) const OPS: &[(&str, Run)] = &[
 /// The routes of the query target, in the order of its choice byte: the route, the path of a
 /// request to it (the reference's, with the base path), whether it lists a page and whether its
 /// handler reads the query (the reference validates none on the others, so no handler looks at
-/// what the plugins wrote).
-const ROUTES: [(RouteId, &str, bool, bool); 11] = [
+/// what the plugins wrote). The listings' routes follow the first eleven.
+const ROUTES: [(RouteId, &str, bool, bool); 27] = [
     (RouteId::TransactionsIndex, "/api/transactions", true, true),
     (
         RouteId::BlocksTransactions,
@@ -65,6 +65,67 @@ const ROUTES: [(RouteId, &str, bool, bool); 11] = [
         "/api/transactions/schemas",
         false,
         false,
+    ),
+    (RouteId::DelegatesIndex, "/api/delegates", true, true),
+    (
+        RouteId::DelegatesShow,
+        "/api/delegates/genesis_1",
+        false,
+        false,
+    ),
+    (
+        RouteId::DelegatesVoters,
+        "/api/delegates/genesis_1/voters",
+        true,
+        true,
+    ),
+    (RouteId::WalletsIndex, "/api/wallets", true, true),
+    (RouteId::WalletsTop, "/api/wallets/top", true, true),
+    (RouteId::BlocksIndex, "/api/blocks", true, true),
+    (RouteId::BlocksMissed, "/api/blocks/missed", true, true),
+    (RouteId::BlocksFirst, "/api/blocks/first", false, true),
+    (
+        RouteId::DelegatesBlocks,
+        "/api/delegates/genesis_1/blocks",
+        true,
+        true,
+    ),
+    (
+        RouteId::DelegatesMissedBlocks,
+        "/api/delegates/genesis_1/blocks/missed",
+        true,
+        true,
+    ),
+    (
+        RouteId::RoundsDelegates,
+        "/api/rounds/12/delegates",
+        false,
+        false,
+    ),
+    (RouteId::VotesIndex, "/api/votes", true, true),
+    (
+        RouteId::VotesShow,
+        "/api/votes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        false,
+        true,
+    ),
+    (
+        RouteId::WalletsTransactionsSent,
+        "/api/wallets/genesis_1/transactions/sent",
+        true,
+        true,
+    ),
+    (
+        RouteId::WalletsTransactionsReceived,
+        "/api/wallets/genesis_1/transactions/received",
+        true,
+        true,
+    ),
+    (
+        RouteId::WalletsVotes,
+        "/api/wallets/genesis_1/votes",
+        true,
+        true,
     ),
 ];
 

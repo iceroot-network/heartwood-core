@@ -38,7 +38,7 @@ const REMOVED_PATHS = ["/locks", "/locks/{id}", "/locks/unlocked"];
 // The routes of the query target, in the order of its choice byte: the path a request has (a
 // valid one, since only the query is fuzzed), whether the route lists a page, and whether its
 // handler reads the query (the reference validates none on the others, so it passes what the
-// plugins wrote and no handler looks at it).
+// plugins wrote and no handler looks at it). The listings' routes follow the first eleven.
 const ROUTES = [
     ["/api/transactions", true, true],
     ["/api/blocks/12/transactions", true, true],
@@ -51,6 +51,22 @@ const ROUTES = [
     ["/api/blockchain/search/abc", false, false],
     ["/api/node/fees", false, true],
     ["/api/transactions/schemas", false, false],
+    ["/api/delegates", true, true],
+    ["/api/delegates/genesis_1", false, false],
+    ["/api/delegates/genesis_1/voters", true, true],
+    ["/api/wallets", true, true],
+    ["/api/wallets/top", true, true],
+    ["/api/blocks", true, true],
+    ["/api/blocks/missed", true, true],
+    ["/api/blocks/first", false, true],
+    ["/api/delegates/genesis_1/blocks", true, true],
+    ["/api/delegates/genesis_1/blocks/missed", true, true],
+    ["/api/rounds/12/delegates", false, false],
+    ["/api/votes", true, true],
+    [`/api/votes/${"a".repeat(64)}`, false, true],
+    ["/api/wallets/genesis_1/transactions/sent", true, true],
+    ["/api/wallets/genesis_1/transactions/received", true, true],
+    ["/api/wallets/genesis_1/votes", true, true],
 ];
 
 // The deepest query written out whole; the JSON readers of the harness stop at 128 levels.

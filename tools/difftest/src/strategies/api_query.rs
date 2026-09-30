@@ -1,8 +1,9 @@
-//! P23, the query grammar: random raw queries over every route's schema (nested keys to the
+//! P23, the query grammar: random raw queries over every route's schema that the query target
+//! reaches (its 27 routes: the served ones, the chain routes and the listings; nested keys to the
 //! grammar's 128 levels, comma lists, holes, casts, `%` patterns, percent-encoding and bytes beyond
-//! ASCII, repeated keys, the paging keys, the fee statistics' `days`), for `api.fuzzQuery`: the
-//! route's choice byte and the raw query through the grammar, the route's validation and the
-//! pagination.
+//! ASCII, repeated keys, the paging keys, the listings' criteria and orders, the fee statistics'
+//! `days`), for `api.fuzzQuery`: the route's choice byte and the raw query through the grammar,
+//! the route's validation and the pagination.
 //!
 //! A query is a list of pairs joined by `&`; a key is a name, sometimes nested by dots (to a
 //! depth of 130, past the grammar's limit) or bracketed, and a value a plain token, a number, a
@@ -19,7 +20,7 @@ use super::kernel::OpCase;
 use super::transactions::TxContext;
 
 /// Names the routes' criteria and the paging use, and some they do not.
-const NAMES: [&str; 22] = [
+const NAMES: [&str; 30] = [
     "page",
     "limit",
     "offset",
@@ -39,13 +40,21 @@ const NAMES: [&str; 22] = [
     "vendorField",
     "nonce",
     "version",
+    "username",
+    "balance",
+    "publicKey",
+    "address",
+    "attributes",
+    "generatorPublicKey",
+    "votingFor",
+    "isResigned",
     "a",
     "z",
     "__proto__",
 ];
 
 /// Suffixes of a nested criterion.
-const PARTS: [&str; 9] = [
+const PARTS: [&str; 12] = [
     "from",
     "to",
     "asset",
@@ -55,6 +64,9 @@ const PARTS: [&str; 9] = [
     "x",
     "constructor",
     "a",
+    "delegate",
+    "username",
+    "*",
 ];
 
 fn name() -> impl Strategy<Value = String> {
@@ -86,6 +98,8 @@ fn token() -> impl Strategy<Value = String> {
             "", "0", "1", "30", "31", "07", "+7", "-1", "1.5", "1e1", "1e400", " 7", "7 ", "NaN",
             "Infinity", "true", "false", "null", "undefined", "9007199254740991",
             "9007199254740992", "18446744073709551616", "asc", "desc", "%20", "%", "%%", "%zz",
+            "genesis_1", "balance:desc", "rank:asc", "username:desc",
+            "attributes.delegate.voteBalance:desc",
         ]
         .into_iter()
         .map(str::to_owned)
@@ -135,9 +149,10 @@ fn query() -> impl Strategy<Value = Vec<u8>> {
 /// The cases of P23.
 pub fn query_cases(context: &Arc<TxContext>) -> BoxedStrategy<OpCase> {
     let _ = context;
-    // The route's choice byte: the 11 routes of the target, and bytes past them, which wrap.
+    // The route's choice byte: the 27 routes of the target, and bytes past them, which wrap.
     let choice = prop_oneof![
-        8 => 0u8..=10,
+        4 => 0u8..=10,
+        6 => 11u8..=26,
         2 => Just(9u8),
         1 => any::<u8>(),
     ];

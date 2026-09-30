@@ -10,7 +10,8 @@
 // api.feeStatistics: fee rows of the kept types as the repository returns them (one per type, as
 // text), listed with and without days, with the types in the order the rows have, and empty.
 // api.fuzzQuery: a choice byte and a raw query, through the reference's query plugins, the route's
-// validation and the pagination plugin, on the routes the chain routes added and on a listing.
+// validation and the pagination plugin, on the routes the chain routes added, on a listing, and on
+// each route of the state and history listings (choice bytes 11 to 26).
 // Inputs are fixed, so every run writes the same records.
 
 const LOOKBACKS = [604800, 129600, 10800, 32400, 54000, 75600, 1000, 100, 0, 2592000, 86400, 1];
@@ -86,6 +87,63 @@ const QUERIES = [
     [0, "limit=101"],
 ];
 
+// The choice bytes of the state and history listings (11 to 26, in the target's order), each with
+// no query, the queries its schema accepts and some it refuses.
+const LISTING_QUERIES = [
+    [11, ""],
+    [11, "orderBy=rank:asc&limit=5"],
+    [11, "username=genesis_1&isResigned=false"],
+    [11, "producedBlocks.from=1&orderBy=producedBlocks:desc"],
+    [11, "limit=101"],
+    [11, "nosuch=1"],
+    [12, ""],
+    [12, "anything=goes"],
+    [13, ""],
+    [13, "balance.from=1&orderBy=balance:desc"],
+    [13, "attributes.delegate.username=genesis_1"],
+    [13, "attributes.*.username=genesis_1"],
+    [14, ""],
+    [14, "orderBy=balance:desc,nonce:asc&page=2&limit=3"],
+    [14, "publicKey=02%25"],
+    [14, "attributes.secondPublicKey=03aa&votingFor.genesis_1.votes.from=1"],
+    [14, "nosuch=1"],
+    [15, ""],
+    [15, "limit=2&balance.to=100"],
+    [15, "orderBy=attributes.nosuch:asc"],
+    [16, ""],
+    [16, "orderBy=height:desc&limit=3"],
+    [16, "username=genesis_1&height.from=2&height.to=5"],
+    [16, "orderBy=nosuch:asc"],
+    [16, "transform=false&payloadHash=zz"],
+    [17, ""],
+    [17, "username=genesis_2&orderBy=timestamp:asc"],
+    [17, "page=2&limit=1&height.from=3"],
+    [18, ""],
+    [18, "transform=false"],
+    [18, "transform=maybe"],
+    [19, ""],
+    [19, "orderBy=height:asc&limit=2"],
+    [19, "transform=false&totalFee.from=0"],
+    [20, ""],
+    [20, "timestamp.from=1&orderBy=height:desc"],
+    [20, "totalAmount=1"],
+    [21, ""],
+    [21, "a=1&page=2"],
+    [22, ""],
+    [22, "orderBy=timestamp:desc&limit=3"],
+    [22, "senderPublicKey=02aa&transform=false"],
+    [23, ""],
+    [23, "transform=false"],
+    [24, ""],
+    [24, "orderBy=amount:desc&limit=2"],
+    [24, "type=0&typeGroup=2"],
+    [25, ""],
+    [25, "typeGroup=1&nonce.from=1"],
+    [26, ""],
+    [26, "page=2&limit=1"],
+    [26, "orderBy=nosuch:asc"],
+];
+
 const hex = (choice, query) => Buffer.concat([Buffer.from([choice]), Buffer.from(query, "utf8")]).toString("hex");
 
 module.exports = async function apiSpecVectors({ rec, must, shared }) {
@@ -117,7 +175,7 @@ module.exports = async function apiSpecVectors({ rec, must, shared }) {
         await add("api.feeStatistics", input, `feeStatistics: ${name}`);
     }
 
-    for (const [choice, query] of QUERIES) {
+    for (const [choice, query] of [...QUERIES, ...LISTING_QUERIES]) {
         await add("api.fuzzQuery", { hex: hex(choice, query) }, `fuzzQuery: route ${choice}, ${JSON.stringify(query)}`);
     }
     // Nested keys: to the depth the records write out whole, and past it, where they give the depth.
