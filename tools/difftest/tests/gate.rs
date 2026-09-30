@@ -1235,3 +1235,70 @@ fn a_register_run_fails_an_entry_whose_test_fails() {
     );
     assert!(ran.text.contains("E-3  active   ok"), "{}", ran.text);
 }
+
+#[test]
+fn a_merge_adds_no_run_twice_and_refuses_a_directory_without_entries() {
+    let rig = Rig::new();
+    rig.criteria(&base_criteria());
+    assert!(
+        ledger_run(
+            &rig,
+            "ledger",
+            "box-1",
+            "kind=target id=parse seconds=1800 forks=1",
+            T1
+        )
+        .ok
+    );
+    // A server's directory that holds a copy of the ledger beside its own run.
+    let copy = rig.path("server");
+    std::fs::create_dir_all(&copy).expect("server");
+    for file in std::fs::read_dir(rig.path("ledger")).expect("ledger") {
+        let file = file.expect("entry").path();
+        std::fs::copy(&file, copy.join(file.file_name().expect("name"))).expect("copy");
+    }
+    assert!(
+        ledger_run(
+            &rig,
+            "server",
+            "box-2",
+            "kind=target id=parse seconds=1800 forks=1",
+            T2
+        )
+        .ok
+    );
+    let merge = |from: &str| {
+        rig.gate(&[
+            "ledger",
+            "merge",
+            "--from",
+            &rig.arg(from),
+            "--machine",
+            "box-2",
+            "--ledger",
+            &rig.arg("ledger"),
+        ])
+    };
+    let merged = merge("server");
+    assert!(merged.ok, "{}", merged.text);
+    assert!(merged.text.contains("1 entries added"), "{}", merged.text);
+    assert!(merged.text.contains("1 already there"), "{}", merged.text);
+    let show = rig.gate(&[
+        "ledger",
+        "show",
+        "--criteria",
+        &rig.arg("criteria.json"),
+        "--ledger",
+        &rig.arg("ledger"),
+    ]);
+    let parse = show
+        .text
+        .lines()
+        .find(|l| l.trim_start().starts_with("parse"))
+        .expect("parse line");
+    assert!(parse.contains("1.00 hours"), "{parse}");
+    std::fs::create_dir_all(rig.path("records-only")).expect("dir");
+    let empty = merge("records-only");
+    assert!(!empty.ok, "{}", empty.text);
+    assert!(empty.text.contains("no ledger entries"), "{}", empty.text);
+}

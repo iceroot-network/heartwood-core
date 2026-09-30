@@ -2,7 +2,7 @@
 //! (the totals), `ledger plan` (what the criteria still need) and `ledger merge` (another
 //! machine's entries into the ledger).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -475,9 +475,26 @@ fn merge(args: &[String]) -> Result<bool> {
         return Err(Error::Usage("--machine is empty".to_owned()));
     }
     let found = store::load_all::<LedgerEntry>(std::slice::from_ref(&from), LEDGER_FORMAT)?;
+    if found.is_empty() {
+        return Err(Error::Usage(format!(
+            "no ledger entries under {} (a server's ledger directory, not its records)",
+            from.display()
+        )));
+    }
+    // The runs the ledger holds, whatever machine they are named for: a copy of one of them in
+    // FROM (a server that was given the ledger) is the same run, not another.
+    let mut known: BTreeSet<RunKey> =
+        store::load_all::<LedgerEntry>(std::slice::from_ref(&ledger), LEDGER_FORMAT)?
+            .iter()
+            .map(|(_, entry)| RunKey::of(entry))
+            .collect();
     let (mut added, mut same) = (0usize, 0usize);
     for (path, mut entry) in found {
         check_entry(&path, &entry)?;
+        if !known.insert(RunKey::of(&entry)) {
+            same += 1;
+            continue;
+        }
         entry.machine.clone_from(&machine);
         if store::put_entry(&entry, &ledger)?.1 {
             added += 1;
@@ -490,6 +507,36 @@ fn merge(args: &[String]) -> Result<bool> {
         from.display()
     );
     Ok(true)
+}
+
+/// What makes a run the same run, whichever machine name it carries.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct RunKey {
+    kind: bool,
+    id: String,
+    seed: Option<String>,
+    cases: Option<u64>,
+    seconds: Option<u64>,
+    forks: Option<u32>,
+    head: String,
+    started: String,
+    finished: String,
+}
+
+impl RunKey {
+    fn of(entry: &LedgerEntry) -> RunKey {
+        RunKey {
+            kind: entry.kind == LedgerKind::Property,
+            id: entry.id.clone(),
+            seed: entry.seed.clone(),
+            cases: entry.cases,
+            seconds: entry.seconds,
+            forks: entry.forks,
+            head: entry.head.clone(),
+            started: entry.started.clone(),
+            finished: entry.finished.clone(),
+        }
+    }
 }
 
 /// An entry the ledger takes: a property run has cases and a seed, a target run seconds.
