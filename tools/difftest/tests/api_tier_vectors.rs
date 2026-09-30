@@ -1,7 +1,7 @@
 //! L0 over the API tier's records of class V34: the state's index orders, the listings, the
-//! pagination and its tree, the wallet search and the collation, the SQL records, and the chain
+//! pagination and its tree, the wallet search and the collation, the SQL records, the chain
 //! routes' documents (the OpenAPI document, the transaction schemas, the fee statistics and the
-//! query fuzz target's inputs), without an oracle.
+//! query fuzz target's inputs) and the productivity's window, without an oracle.
 //!
 //! Every record goes, by its operation, to the subject of its area. A record of an operation this
 //! test does not list fails it, and so does a listed operation with fewer records than its

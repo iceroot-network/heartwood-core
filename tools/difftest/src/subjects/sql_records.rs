@@ -2,8 +2,12 @@
 //! `sql.round2` (`ROUND(numeric, 2)`), `sql.avgInt8` (`AVG(bigint)::int8`), `sql.productivity`
 //! (the productivity query over generated row sets, answered by the store's own reader over a
 //! scratch store holding those rows, and rounded by the store's own functions) and `sql.meta`
-//! (the recording's provenance).
+//! (the recording's provenance); and `api.productivityWindow`, the first second of the window the
+//! reference's `updateProductivity` asks that query for, answered by the served table's own
+//! [`window_start`].
 
+use heartwood_api::productivity::window_start;
+use heartwood_crypto::crypto::slots;
 use heartwood_crypto::{BlockId, TransactionId};
 use heartwood_database::{
     BlockRow, Database, DatabaseError, MissedRow, Readers, Settings, TransactionRow, avg_int8,
@@ -21,6 +25,7 @@ pub(super) const OPS: &[(&str, Run)] = &[
     ("sql.avgInt8", avg_int8_op),
     ("sql.productivity", productivity),
     ("sql.meta", meta),
+    ("api.productivityWindow", productivity_window),
 ];
 
 /// PostgreSQL's error class for a division by zero.
@@ -247,6 +252,21 @@ fn productivity(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         })
         .collect::<Vec<_>>();
     Ok(Verdict::Output(json!({ "rows": rows })))
+}
+
+/// The first second of the productivity window at a tip stamped `tipTimestamp` on a network whose
+/// first milestone's epoch is `epoch`, with the lookback `lookback`, as the served table takes it.
+fn productivity_window(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
+    let input = case.input;
+    let tip = (input["tipTimestamp"].as_u64())
+        .and_then(|tip| u32::try_from(tip).ok())
+        .ok_or_else(|| failed("input.tipTimestamp is not a timestamp"))?;
+    let epoch = slots::epoch_unix_ms(text(input, "epoch")?)
+        .ok_or_else(|| failed("input.epoch is not an epoch"))?;
+    let lookback =
+        (input["lookback"].as_i64()).ok_or_else(|| failed("input.lookback is not an integer"))?;
+    let first = window_start(tip, epoch, lookback);
+    Ok(Verdict::Output(json!({ "firstSecond": first })))
 }
 
 /// The provenance record: both PostgreSQL versions, the recording script's and the inputs' hashes.

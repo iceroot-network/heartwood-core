@@ -13,6 +13,7 @@
         "sql.productivity": 50,
         "api.spec": 2,
         "api.transactionSchemas": 1,
-        "api.feeStatistics": 6
+        "api.feeStatistics": 6,
+        "api.productivityWindow": 60
     }
 }
