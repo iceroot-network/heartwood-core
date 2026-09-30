@@ -5,7 +5,8 @@
 //                           (server.ts boot): the base path in `servers`, the version, the
 //                           network character in the address patterns and the example addresses,
 //                           the pool's maxTransactionsPerRequest, the registered types, groups
-//                           and versions, and the missed-block summaries' days; then cut to what
+//                           and versions (in a node's registry order, the service provider's
+//                           binding order), and the missed-block summaries' days; then cut to what
 //                           Heartwood serves (the registered handlers of the six kept types, the
 //                           three /locks paths taken out).
 //                           network is {pubKeyHash} (the address version byte), pool is
@@ -65,6 +66,40 @@ module.exports = function apiSpecOps({ solar, devnet, cm, atHeight, handlerRegis
         return KEPT.has(`${constructor.typeGroup}/${constructor.type}`);
     };
 
+    // A running node's registry lists its handlers in the order the transactions service provider
+    // binds them, which is not the order the handlers module exports them in: the provider's
+    // register() is run against a recorder of its bindings.
+    let bindingOrder;
+    async function registeredHandlers() {
+        if (!bindingOrder) {
+            const { ServiceProvider, Handlers } = solar.transactions();
+            const handlerClasses = new Set([...Object.values(Handlers.Core), ...Object.values(Handlers.Solar)]);
+            const bound = [];
+            const binding = {
+                to: (target) => {
+                    if (handlerClasses.has(target)) bound.push(target);
+                    return binding;
+                },
+                toConstantValue: () => binding,
+                toDynamicValue: () => binding,
+                inSingletonScope: () => binding,
+                when: () => binding,
+            };
+            await ServiceProvider.prototype.register.call({ app: { bind: () => binding } });
+            if (bound.length === 0) throw new Error("the transactions service provider bound no handler");
+            bindingOrder = bound;
+        }
+        const place = (handler) => {
+            const at = bindingOrder.indexOf(Object.getPrototypeOf(handler).constructor);
+            if (at < 0) throw new Error("a registered handler is not bound by the service provider");
+            return at;
+        };
+        return handlerRegistry()
+            .getRegisteredHandlers()
+            .slice()
+            .sort((left, right) => place(left) - place(right));
+    }
+
     /** Run fn under the devnet network with the address version byte of `network`. */
     async function underNetwork(network, fn) {
         const hash = network && network.pubKeyHash;
@@ -86,10 +121,11 @@ module.exports = function apiSpecOps({ solar, devnet, cm, atHeight, handlerRegis
         return value;
     };
 
-    function spec({ network, pool, blockchain, basePath, version }, height) {
+    async function spec({ network, pool, blockchain, basePath, version }, height) {
         if (typeof basePath !== "string" || typeof version !== "string") throw new TypeError("basePath and version must be text");
         const maxTransactions = count(pool && pool.maxTransactionsPerRequest, "pool.maxTransactionsPerRequest");
         const seconds = count(blockchain && blockchain.missedBlocksLookback, "blockchain.missedBlocksLookback");
+        const registered = await registeredHandlers();
         return underNetwork(network, () =>
             atHeight(height, () => {
                 // The reference's boot(), on its own document.
@@ -112,7 +148,7 @@ module.exports = function apiSpecOps({ solar, devnet, cm, atHeight, handlerRegis
 
                 const typeGroups = new Set();
                 const types = new Set();
-                for (const handler of handlerRegistry().getRegisteredHandlers().filter(isKept)) {
+                for (const handler of registered.filter(isKept)) {
                     const constructor = handler.getConstructor();
                     typeGroups.add(constructor.typeGroup);
                     types.add(constructor.type);

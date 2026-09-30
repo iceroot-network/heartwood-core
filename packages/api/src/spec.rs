@@ -269,7 +269,7 @@ mod tests {
         );
         assert_eq!(doc["servers"], json!([{ "url": "/api" }]));
         assert_eq!(doc["info"]["version"], "4.3.1-heartwood.0.1.0");
-        assert_eq!(schemas["transactionTypes"]["enum"], json!([2, 7, 6, 1, 0]));
+        assert_eq!(schemas["transactionTypes"]["enum"], json!([1, 2, 6, 7, 0]));
         assert_eq!(schemas["transactionTypeGroups"]["enum"], json!([1, 2]));
         assert_eq!(schemas["transactionVersions"]["enum"], json!([2, 3]));
         let summary = doc["paths"]["/blocks/missed"]["get"]["summary"]

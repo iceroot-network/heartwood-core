@@ -22,13 +22,14 @@ pub fn window(days: i64, now_ms: i64, epoch: i64) -> Option<(i64, i64)> {
     Some((slots::epoch_time(age, epoch), i64::MAX))
 }
 
-/// The types this implementation carries, in the order of the reference's handler registry (the
+/// The types this implementation carries, in the order of a running reference node's handler
+/// registry, which is the order its transactions service provider binds the handlers in (the
 /// order its statistics list them in, and its OpenAPI document's type list).
 pub const REGISTERED: [TransactionType; 6] = [
-    TransactionType::DelegateRegistration,
-    TransactionType::DelegateResignation,
-    TransactionType::Transfer,
     TransactionType::SecondSignature,
+    TransactionType::DelegateRegistration,
+    TransactionType::Transfer,
+    TransactionType::DelegateResignation,
     TransactionType::Burn,
     TransactionType::Vote,
 ];
@@ -165,10 +166,10 @@ mod tests {
         assert_eq!(
             types,
             [
+                "secondSignature",
                 "delegateRegistration",
-                "delegateResignation",
                 "transfer",
-                "secondSignature"
+                "delegateResignation"
             ]
         );
         let types: Vec<&String> = out["data"]["2"].as_object().unwrap().keys().collect();

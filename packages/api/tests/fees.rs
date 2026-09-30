@@ -113,24 +113,25 @@ fn a_window_lists_the_types_as_the_rows_come() {
 
 #[test]
 fn without_days_the_types_come_in_the_registry_order_with_zeros() {
-    // The store gives one row per type in the wire order, zeros for a type with none.
+    // The store gives one row per type, zeros for a type with none, in an order of its own.
     let rows = vec![
-        row(1, 1, 0),
-        row(1, 2, 0),
-        row(1, 6, 8),
-        row(1, 7, 0),
-        row(2, 0, 0),
         row(2, 2, 0),
+        row(1, 7, 0),
+        row(1, 6, 8),
+        row(2, 0, 0),
+        row(1, 2, 0),
+        row(1, 1, 0),
     ];
     let out = response(None, &in_registry_order(rows));
     assert_eq!(out["meta"], json!({}));
+    // The order the reference's service provider binds the handlers in.
     assert_eq!(
         keys(&out["data"]["1"]),
         [
+            "secondSignature",
             "delegateRegistration",
-            "delegateResignation",
             "transfer",
-            "secondSignature"
+            "delegateResignation"
         ]
     );
     assert_eq!(keys(&out["data"]["2"]), ["burn", "vote"]);
@@ -183,10 +184,10 @@ async fn the_route_answers_over_a_store_with_and_without_days() {
     assert_eq!(
         keys(&none.body["data"]["1"]),
         [
+            "secondSignature",
             "delegateRegistration",
-            "delegateResignation",
             "transfer",
-            "secondSignature"
+            "delegateResignation"
         ]
     );
     let month = snapshot::get(address, "/api/node/fees?days=30").await;

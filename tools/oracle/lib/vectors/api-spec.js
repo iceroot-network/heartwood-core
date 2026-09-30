@@ -15,7 +15,7 @@
 
 const LOOKBACKS = [604800, 129600, 10800, 32400, 54000, 75600, 1000, 100, 0, 2592000, 86400, 1];
 
-// The kept types, as [typeGroup, type], in an order that is not the registry's.
+// The kept types, as [typeGroup, type], in the registry's order (listed reversed below).
 const KEPT = [[1, 1], [1, 2], [1, 6], [1, 7], [2, 0], [2, 2]];
 
 const row = (typeGroup, type, avg, burned, max, min, sum) => ({ typeGroup, type, avg, burned, max, min, sum });
@@ -27,6 +27,14 @@ const FEES = [
     ["one transfer type", undefined, [row(1, 6, "10000000", "0", "10000000", "10000000", "200000000")]],
     ["one type, thirty days", 30, [row(1, 6, "5000000", "0", "9000000", "1000000", "15000000")]],
     ["every kept type, in the registry's order", undefined, [
+        row(1, 1, "500000000", "0", "500000000", "500000000", "500000000"),
+        row(1, 2, "2500000000", "0", "2500000000", "2500000000", "2500000000"),
+        row(1, 6, "10000000", "0", "12000000", "9000000", "200000000"),
+        row(1, 7, "2500000000", "0", "2500000000", "2500000000", "2500000000"),
+        row(2, 0, "0", "25000000", "0", "0", "0"),
+        row(2, 2, "100000000", "0", "100000000", "100000000", "100000000"),
+    ]],
+    ["every kept type, in the export order of the handlers module", undefined, [
         row(1, 2, "2500000000", "0", "2500000000", "2500000000", "2500000000"),
         row(1, 7, "2500000000", "0", "2500000000", "2500000000", "2500000000"),
         row(1, 6, "10000000", "0", "12000000", "9000000", "200000000"),

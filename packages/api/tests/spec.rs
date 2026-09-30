@@ -109,7 +109,9 @@ fn another_network_writes_its_own_character_and_options() {
 fn the_document_lists_the_kept_types_and_versions_only() {
     let doc = document(&patches(90, 40, 604_800)).unwrap();
     let schemas = schemas(&doc);
-    assert_eq!(schemas["transactionTypes"]["enum"], json!([2, 7, 6, 1, 0]));
+    // The order of a node's handler registry, which is the order its service provider binds the
+    // handlers in.
+    assert_eq!(schemas["transactionTypes"]["enum"], json!([1, 2, 6, 7, 0]));
     assert_eq!(schemas["transactionTypeGroups"]["enum"], json!([1, 2]));
     assert_eq!(schemas["transactionVersions"]["enum"], json!([2, 3]));
 }
