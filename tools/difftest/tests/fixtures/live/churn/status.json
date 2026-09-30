@@ -1,0 +1,133 @@
+{
+ "nodes": [
+  {
+   "node": "node1",
+   "processes": [
+    {
+     "role": "relay",
+     "status": "online",
+     "restarts": 0,
+     "pid": 2098365,
+     "supervisor": 2098363,
+     "unstable": false,
+     "lastExit": null
+    },
+    {
+     "role": "forger",
+     "status": "online",
+     "restarts": 0,
+     "pid": 2227197,
+     "supervisor": 2227185,
+     "unstable": false,
+     "lastExit": null
+    }
+   ]
+  },
+  {
+   "node": "node2",
+   "processes": [
+    {
+     "role": "relay",
+     "status": "online",
+     "restarts": 0,
+     "pid": 2099084,
+     "supervisor": 2099082,
+     "unstable": false,
+     "lastExit": null
+    },
+    {
+     "role": "forger",
+     "status": "online",
+     "restarts": 0,
+     "pid": 2227205,
+     "supervisor": 2227194,
+     "unstable": false,
+     "lastExit": null
+    }
+   ]
+  },
+  {
+   "node": "node3",
+   "processes": [
+    {
+     "role": "relay",
+     "status": "online",
+     "restarts": 0,
+     "pid": 2322468,
+     "supervisor": 2322466,
+     "unstable": false,
+     "lastExit": null
+    },
+    {
+     "role": "forger",
+     "status": "online",
+     "restarts": 0,
+     "pid": 2323887,
+     "supervisor": 2323885,
+     "unstable": false,
+     "lastExit": null
+    }
+   ]
+  },
+  {
+   "node": "node4",
+   "processes": [
+    {
+     "role": "relay",
+     "status": "online",
+     "restarts": 0,
+     "pid": 2325770,
+     "supervisor": 2325768,
+     "unstable": false,
+     "lastExit": null
+    },
+    {
+     "role": "forger",
+     "status": "online",
+     "restarts": 0,
+     "pid": 2326325,
+     "supervisor": 2326323,
+     "unstable": false,
+     "lastExit": null
+    }
+   ]
+  },
+  {
+   "node": "node5",
+   "processes": [
+    {
+     "role": "relay",
+     "status": "online",
+     "restarts": 0,
+     "pid": 2326497,
+     "supervisor": 2326495,
+     "unstable": false,
+     "lastExit": null
+    },
+    {
+     "role": "forger",
+     "status": "online",
+     "restarts": 0,
+     "pid": 2335421,
+     "supervisor": 2335419,
+     "unstable": false,
+     "lastExit": null
+    }
+   ]
+  },
+  {
+   "node": "node6",
+   "processes": [
+    {
+     "role": "relay",
+     "status": "online",
+     "restarts": 0,
+     "pid": 1973367,
+     "supervisor": 1973321,
+     "unstable": false,
+     "lastExit": null
+    }
+   ]
+  }
+ ]
+}

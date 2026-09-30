@@ -1,0 +1,54 @@
+{
+  "format": "heartwood-corpus/1",
+  "seed": "1",
+  "chain": {
+    "nethash": "b6f71a8eaef93da19abfdf5946417e216ba25fbe3a58db03bb56d6de82190f2b",
+    "genesisId": "8ad9d39cbc958c74d44049a843969ef48ddc8d3f3dc9bf8d6bb7edee2749f53a",
+    "epoch": "2026-09-30T21:56:06.000Z",
+    "activeDelegates": 53,
+    "blockTime": 8
+  },
+  "reference": {
+    "commit": "ddbd58100d0b39a234cbbce6b9213c9f99dbc0f9",
+    "keyFormat": "basis-points",
+    "seriesSha256": "ff7a3841c59986b13c553762840c5c342c9360e9ea2008208ed449b61c90464d"
+  },
+  "tip": 265,
+  "blocks": 264,
+  "transactions": 15002,
+  "rounds": 6,
+  "roundRows": 318,
+  "missedRows": 17,
+  "rejections": 0,
+  "liveRestarts": 0,
+  "checkpoints": [
+    "h000000265.json"
+  ],
+  "archives": [
+    {
+      "from": 1,
+      "to": 265,
+      "blocks": 265,
+      "transactions": 15109,
+      "verified": true
+    }
+  ],
+  "revertSteps": 25,
+  "revertSeed": "3290182824497206751",
+  "judge": {
+    "ok": true,
+    "reference": {
+      "version": "4.3.1",
+      "commit": "ddbd58100d0b39a234cbbce6b9213c9f99dbc0f9",
+      "tree": "a4df428c8612290af2e7c8139a23d31eb057ce8f",
+      "seriesSha256": "ff7a3841c59986b13c553762840c5c342c9360e9ea2008208ed449b61c90464d"
+    },
+    "oracle": {
+      "mode": "local",
+      "image": null,
+      "node": "v18.20.8"
+    },
+    "lines": 1967,
+    "finalChainDigest": "00ca5b753768f3d377992318734597c8fbcf8368cd6a64d817c4f7a93c0e4ec9"
+  }
+}

@@ -1,0 +1,74 @@
+{
+ "format": "heartwood-judge/1",
+ "ok": true,
+ "reference": {
+  "version": "4.3.1",
+  "commit": "ddbd58100d0b39a234cbbce6b9213c9f99dbc0f9",
+  "tree": "a4df428c8612290af2e7c8139a23d31eb057ce8f",
+  "seriesSha256": "ff7a3841c59986b13c553762840c5c342c9360e9ea2008208ed449b61c90464d"
+ },
+ "oracle": {
+  "mode": "local",
+  "image": null,
+  "node": "v18.20.8"
+ },
+ "blocks": 264,
+ "tip": 265,
+ "lines": 1967,
+ "reverts": 851,
+ "reapplies": 851,
+ "finalChainDigest": "00ca5b753768f3d377992318734597c8fbcf8368cd6a64d817c4f7a93c0e4ec9",
+ "failures": [],
+ "anchors": {
+  "A1": {
+   "ok": true,
+   "rounds": 6,
+   "rows": 318,
+   "differences": []
+  },
+  "A2": {
+   "ok": true,
+   "rows": 17,
+   "headlessRows": 17,
+   "excluded": [],
+   "refusedWithoutHeight": 0,
+   "onlyNode": [],
+   "onlyHeadless": []
+  },
+  "A3": {
+   "ok": true,
+   "blocks": 264,
+   "differences": []
+  },
+  "A4": {
+   "ok": true,
+   "checkpoints": [
+    {
+     "file": "reference/checkpoints/h000000265.json",
+     "height": 265,
+     "wallets": 259,
+     "delegates": 53,
+     "differences": []
+    }
+   ]
+  },
+  "A5": {
+   "ok": true,
+   "archives": [
+    {
+     "from": 1,
+     "to": 265,
+     "verified": true
+    }
+   ]
+  }
+ },
+ "processor": {
+  "ok": true,
+  "blocks": 264,
+  "lines": 1967,
+  "jobs": 1115,
+  "notAccepted": [],
+  "differences": []
+ }
+}
