@@ -705,6 +705,36 @@ async fn without_a_forger_only_the_offer_is_recorded() {
     assert_eq!(names, ["offered"]);
 }
 
+/// A build without the harness (a release build) records nothing at any of the three points: an
+/// offer with its signatures, and an offer served unsigned after the wait.
+#[cfg(not(feature = "difftest"))]
+#[tokio::test(start_paused = true)]
+async fn a_build_without_the_harness_records_no_attestation_step() {
+    let signed = Arc::new(tokio_server());
+    let forger_task = honest_forger(&signed, 1);
+    sleep(Duration::from_millis(10)).await;
+    let answer = served(&signed.status.get_status().await.unwrap());
+    assert_eq!(answer.public_keys.len(), 3);
+    forger_task.abort();
+    let unsigned = Arc::new(tokio_server());
+    let quiet = {
+        let server = Arc::clone(&unsigned);
+        tokio::spawn(async move {
+            server
+                .session
+                .status_to_sign(session(1), forger(), declared())
+                .await
+        })
+    };
+    sleep(Duration::from_millis(10)).await;
+    let answer = served(&unsigned.status.get_status().await.unwrap());
+    assert!(answer.public_keys.is_empty());
+    quiet.abort();
+    for server in [&signed, &unsigned] {
+        assert!(server.node.attestations.lock().unwrap().is_empty());
+    }
+}
+
 #[cfg(feature = "difftest")]
 #[tokio::test(start_paused = true)]
 async fn the_record_file_has_one_json_line_per_step() {
