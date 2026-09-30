@@ -1,0 +1,1 @@
+{"data":{"address":"SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX","publicKey":"02aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899","balance":"500000000","nonce":"3","attributes":{"delegate":{"username":"alice","voteBalance":"500000000","forgedFees":"0","forgedRewards":"1000000000","producedBlocks":5,"rank":1,"lastBlock":{"id":"a1b2c3d4"}}}}}

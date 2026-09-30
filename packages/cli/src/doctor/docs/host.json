@@ -1,0 +1,79 @@
+{
+  "area": "host",
+  "checks": [
+    {
+      "id": "host.resources",
+      "title": "Resources against the planning estimates",
+      "area": "host",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "/proc",
+        "the process table"
+      ],
+      "rules": {
+        "pass": "The host has the CPUs and 90% of the memory of the planning estimate for the roles it runs.",
+        "warn": "The host has fewer CPUs, or less memory, than the planning estimate. The estimates are for planning, not requirements, so this never fails.",
+        "unknown": "The CPUs, the memory or the roles could not be read."
+      },
+      "advice": {
+        "enough": "The host has {cpus} CPUs and {memory_bytes} of memory, enough for {roles}.",
+        "below-estimate": "This host has {cpus} CPUs and {memory_bytes} of memory. The planning estimates for {roles} are {need_cpus} CPUs and {need_memory_bytes} of memory. These are planning estimates, not requirements. See https://docs.iceroot.com/validators/doctor/#host-resources."
+      },
+      "words": {
+        "relay": "a relay",
+        "forger": "a forger",
+        "relay-and-forger": "a relay and a forger together"
+      },
+      "docs": "https://docs.iceroot.com/validators/doctor/#host-resources"
+    },
+    {
+      "id": "host.memory",
+      "title": "Memory and swap",
+      "area": "host",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "/proc"
+      ],
+      "rules": {
+        "pass": "More than 10% of the memory is available, and no role uses swap.",
+        "warn": "10% or less of the memory is available, or a role has memory in swap.",
+        "fail": "Less than 2% of the memory is available.",
+        "unknown": "The memory or a role's status could not be read."
+      },
+      "advice": {
+        "enough": "{percent}% of the memory is available.",
+        "low": "Only {percent}% of the memory is available. Add memory or stop other services. See https://docs.iceroot.com/validators/doctor/#host-memory.",
+        "exhausted": "Only {percent}% of the memory is available, and the system may stop the node. Add memory or stop other services now. See https://docs.iceroot.com/validators/doctor/#host-memory.",
+        "swap": "The {role} has memory in swap, which slows block processing. Add memory or stop other services. See https://docs.iceroot.com/validators/doctor/#host-memory."
+      },
+      "docs": "https://docs.iceroot.com/validators/doctor/#host-memory"
+    },
+    {
+      "id": "host.user",
+      "title": "The doctor's user",
+      "area": "host",
+      "subjects": [
+        "host"
+      ],
+      "sources": [
+        "/proc",
+        "the node's files"
+      ],
+      "rules": {
+        "pass": "The doctor runs as the user who holds the data directory, and not as root.",
+        "warn": "The doctor runs as root, or as a user other than the one the data directory belongs to.",
+        "unknown": "The user or the data directory could not be read."
+      },
+      "advice": {
+        "node-user": "The doctor runs as user {uid}, who holds the data directory.",
+        "root": "The doctor runs as root. Run the doctor as the node's user. It needs no privilege. See https://docs.iceroot.com/validators/doctor/#host-user.",
+        "other-user": "The doctor runs as user {uid}, and the data directory belongs to user {holder}, so some checks may not read what they need. Run the doctor as the node's user. It needs no privilege. See https://docs.iceroot.com/validators/doctor/#host-user."
+      },
+      "docs": "https://docs.iceroot.com/validators/doctor/#host-user"
+    }
+  ]
+}

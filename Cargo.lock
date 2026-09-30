@@ -605,6 +605,7 @@ name = "heartwood-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "flate2",
  "heartwood-crypto",
  "heartwood-kernel",
  "indexmap",

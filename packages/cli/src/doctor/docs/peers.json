@@ -1,0 +1,80 @@
+{
+  "area": "peers",
+  "checks": [
+    {
+      "id": "peers.count",
+      "title": "Enough peers",
+      "area": "peers",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the relay's API",
+        "the configuration"
+      ],
+      "rules": {
+        "pass": "The relay has at least its configured minimum network reach in peers.",
+        "warn": "The relay has some peers, but fewer than the minimum network reach in its configuration.",
+        "fail": "The relay has no peers.",
+        "unknown": "The peer list or the configuration could not be read.",
+        "skipped": "This host does not run a relay."
+      },
+      "advice": {
+        "none": "The relay has no peers. Check that the P2P port is open (net.reachable) and that `peers.json` lists reachable seeds. See https://docs.iceroot.com/validators/doctor/#peers-count.",
+        "few": "The relay has {peers} peers and wants at least {wanted}. Check that the P2P port is open (net.reachable) and that `peers.json` lists reachable seeds. See https://docs.iceroot.com/validators/doctor/#peers-count.",
+        "enough": "The relay has {peers} peers."
+      },
+      "docs": "https://docs.iceroot.com/validators/doctor/#peers-count"
+    },
+    {
+      "id": "peers.height",
+      "title": "Height against the peers",
+      "area": "peers",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the relay's API",
+        "the relay's log"
+      ],
+      "rules": {
+        "pass": "The relay is within 2 blocks of the median height of its peers.",
+        "warn": "The relay is 3 to 52 blocks behind, or more than 2 ahead of, its peers, or it is far behind and has not yet finished its first sync, or the log cannot say whether it has.",
+        "fail": "The relay is 53 blocks or more behind its peers' median height, and it had caught up since its last start.",
+        "unknown": "No peer reported a height, or the relay's own height could not be read.",
+        "skipped": "This host does not run a relay."
+      },
+      "advice": {
+        "close": "The relay is level with its peers, within {blocks} blocks, at height {height}.",
+        "ahead": "The relay, at height {height}, is {blocks} blocks ahead of its peers' median. It may be on a fork of its own. See sync.forks and the relay's log. See https://docs.iceroot.com/validators/doctor/#peers-height.",
+        "behind": "The relay is {blocks} blocks behind its peers, at height {height}. It may be stuck on a fork or unable to download. See sync.forks and the relay's log. See https://docs.iceroot.com/validators/doctor/#peers-height.",
+        "first-sync": "The relay is {blocks} blocks behind its peers, at height {height}, and has not finished its first sync since it started. Wait for it to catch up. See https://docs.iceroot.com/validators/doctor/#peers-height.",
+        "far-behind": "The relay is {blocks} blocks behind its peers, at height {height}, after it had caught up. It may be stuck on a fork or unable to download. See sync.forks and the relay's log. See https://docs.iceroot.com/validators/doctor/#peers-height."
+      },
+      "docs": "https://docs.iceroot.com/validators/doctor/#peers-height"
+    },
+    {
+      "id": "peers.diversity",
+      "title": "Peers from several networks",
+      "area": "peers",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the relay's API"
+      ],
+      "rules": {
+        "pass": "No network holds more than half of the relay's public peers.",
+        "warn": "One network (a /24 for IPv4, a /48 for IPv6) holds more than half of the relay's public peers.",
+        "skipped": "The relay has fewer than 4 public peers, or none: loopback, private, link-local and shared-space peers do not count.",
+        "unknown": "The peer list could not be read."
+      },
+      "advice": {
+        "skipped-few": "The relay has {public} public peers, too few to judge how varied they are.",
+        "shared": "{largest} of the relay's {public} public peers share one network. A node that sees only one network is easier to isolate. Add seeds from other providers. See https://docs.iceroot.com/validators/doctor/#peers-diversity.",
+        "spread": "The relay's {public} public peers come from different networks."
+      },
+      "docs": "https://docs.iceroot.com/validators/doctor/#peers-diversity"
+    }
+  ]
+}

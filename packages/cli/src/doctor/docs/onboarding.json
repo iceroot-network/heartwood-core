@@ -1,0 +1,30 @@
+{
+  "area": "onboarding",
+  "checks": [
+    {
+      "id": "onboarding.sync-proof",
+      "title": "The sync check of an application",
+      "area": "onboarding",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the relay's API",
+        "the socket table"
+      ],
+      "rules": {
+        "pass": "The relay is synced (within 2 blocks of its peers), has block 2, and its API listens beyond loopback.",
+        "warn": "The relay is synced, but its API listens on loopback only.",
+        "fail": "The relay is still syncing, is more than 2 blocks behind, or lacks block 2.",
+        "unknown": "The peers, the API or the sockets could not be read.",
+        "skipped": "This host does not run a relay."
+      },
+      "advice": {
+        "ready": "The relay is synced at height {height}. The tip is {tip_id}; block 2 is {block_2_id}; the API listens beyond loopback. The text to sign comes with the application rules. See https://docs.iceroot.com/validators/doctor/#onboarding-sync-proof.",
+        "loopback-only": "The relay is synced at height {height}, but its API listens on loopback only, so the application check cannot reach it. The check must reach this API for about 10 minutes. Use a sentry, or open the API port to the checker's address only for the check, then close it again. The text to sign comes with the application rules. See https://docs.iceroot.com/validators/doctor/#onboarding-sync-proof.",
+        "not-ready": "The relay is not ready for the application check: it is {behind} blocks behind its peers (syncing: {syncing}; block 2 served: {has_block_2}). Wait until it is synced and run the doctor again. See https://docs.iceroot.com/validators/doctor/#onboarding-sync-proof."
+      },
+      "docs": "https://docs.iceroot.com/validators/doctor/#onboarding-sync-proof"
+    }
+  ]
+}

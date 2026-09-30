@@ -50,6 +50,7 @@ pub mod meta;
 pub mod missed;
 pub mod node_local;
 pub mod reader;
+pub mod reader_ro;
 pub mod recipients;
 pub mod rounds;
 pub mod state;

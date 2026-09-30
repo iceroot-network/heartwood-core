@@ -21,8 +21,10 @@ test-child = []
 # The commands depend on the crypto crate (the chain definition that `network generate` writes)
 # and the kernel (paths, `.env`, the clock) only, so they never link a node component. Every child
 # process gets an explicit argv, never a shell string; nix gives the supervisor its signals.
+# flate2 reads the doctor's newest rotated log.
 [dependencies]
 clap.workspace = true
+flate2.workspace = true
 heartwood-crypto = { workspace = true, features = ["genesis"] }
 heartwood-kernel.workspace = true
 indexmap.workspace = true

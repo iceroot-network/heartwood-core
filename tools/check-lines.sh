@@ -106,6 +106,39 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 #   directory that was checked, and a run file that is not a regular file refused): they took it
 #   from 3,347 to 3,405 without the recovery commands, and with the recovery commands' 229 lines
 #   (225 in recovery.rs and the colon spellings' 4) it measures 3,634.
+# A read-only diagnostics command and its protocol server join the commands crate, which links no
+# node crate: heartwood-cli goes from 3,500 to 8,600 and heartwood-core from 3,100 to 3,500. The
+# doctor is budgeted at 4,170 lines in heartwood-cli (its runner, report, rendering and redaction,
+# its sources and their parsers, 47 checks and the server) and 370 in heartwood-core (its command
+# and the node's view for it), each ceiling the count before it plus the budget plus a quarter of
+# the budget, rounded up to the next hundred. heartwood-database keeps its 3,000 with the doctor's
+# read-only store opener. The doctor is listed on its own, without a ceiling of its own.
+# With the doctor built, heartwood-cli goes from 8,600 to 10,300: the crate measures 10,201 lines,
+# of which the doctor takes 6,852 against its budget of 4,170. Its runner, seams, parsed view,
+# registry, documentation loader and report types take 2,086 (the view alone 856: every source
+# read once within the run's budget, its reasons and their conversions); the rendering and the
+# redaction 504; the host's files, /proc tables and probes 665 (reads that follow no final link,
+# the key files refused by device and inode, fixed probes with a deadline and an output cap); the
+# logs and the API 1,212 (every log template as ordered literal pieces with its level and emoji,
+# line integrity, rotated files, the loopback address rule and the request budget); the 47 checks
+# 2,016, with the confirmations and boundaries of their rules; the protocol server 369. No
+# reviewed line was cut to meet the earlier ceiling. The review's fixes took heartwood-cli to 10,295
+# (the doctor 6,946), heartwood-core to 3,500 and heartwood-database to 2,627.
+# A second round of the review's fixes goes heartwood-cli from 10,300 to 10,400 and heartwood-core
+# from 3,500 to 3,600, each the measured count rounded up to the next hundred with no further
+# addition planned in this change: heartwood-cli measures 10,328 (the doctor 6,979) and
+# heartwood-core 3,508. The store window's own tip and its start below it (the slot checks and the
+# version floor read the store with the relay's API off), the plain-unit sizes and the phrases of
+# fixed words in the advice take heartwood-cli's 33 lines; the node view's start and the words
+# in explain take heartwood-core's 8. heartwood-database, at 2,640, keeps its 3,000. The check of
+# that round took heartwood-cli to 10,329 (the doctor 6,980): the clock offset as a millisecond fact.
+# With the recovery commands and the doctor both in, heartwood-cli goes from 10,400 to 10,700 and
+# heartwood-core from 3,600 to 3,700, each the merged count rounded up to the next hundred with no
+# further addition planned in the merge. Each side fit its own ceiling (heartwood-cli 3,634 of
+# 3,700 and 10,329 of 10,400, heartwood-core 3,158 of 3,200 and 3,508 of 3,600), but both had
+# counted the room left under the base's ceiling, so the merged heartwood-cli measures 10,616 (the
+# doctor 6,980), over the base's ceiling plus both raises (10,600), and heartwood-core 3,657.
+# heartwood-database, at 2,699, keeps its 3,000.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"
@@ -130,16 +163,17 @@ CHECKS=(
     "heartwood-p2p server controllers and forger channel:packages/p2p/src/server/controllers packages/p2p/src/status_server.rs packages/p2p/src/attestation_session.rs packages/p2p/src/network_state.rs:"
     "heartwood-p2p test support (difftest only):packages/p2p/src/testing:"
     "heartwood-api:packages/api/src:5000"
-    "heartwood-core:packages/core/src !packages/core/src/harness.rs:3200"
+    "heartwood-core:packages/core/src !packages/core/src/harness.rs:3700"
     "heartwood-core test support (difftest only):packages/core/src/harness.rs:"
     "heartwood-forger:packages/forger/src !packages/forger/src/bin:2200"
     "heartwood-forger loop and relay client:packages/forger/src/forger_service.rs packages/forger/src/client.rs packages/forger/src/deadlines.rs:"
     "heartwood-forger forging, keys, record and attester:packages/forger/src/delegate.rs packages/forger/src/keys.rs packages/forger/src/signing_record.rs packages/forger/src/signer.rs packages/forger/src/attestation.rs:"
     "heartwood-forger test support (difftest only):packages/forger/src/bin:"
-    "heartwood-cli:packages/cli/src !packages/cli/src/bin:3700"
+    "heartwood-cli:packages/cli/src !packages/cli/src/bin:10700"
     "heartwood-cli supervisor, commands and network generate:packages/cli/src/argv.rs packages/cli/src/instance.rs packages/cli/src/supervisor packages/cli/src/process.rs packages/cli/src/process_table.rs packages/cli/src/network.rs:"
     "heartwood-cli devnet:packages/cli/src/devnet packages/cli/src/http.rs:"
     "heartwood-cli recovery commands:packages/cli/src/recovery.rs:"
+    "heartwood-cli doctor:packages/cli/src/doctor:"
     "heartwood-cli test support (test-child only):packages/cli/src/bin:"
 )
 

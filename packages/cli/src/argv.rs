@@ -8,13 +8,14 @@
 use std::ffi::OsString;
 
 /// Every command the shim knows, by group: the colon spelling of each is split in two.
-const COMMANDS: [(&str, &str); 7] = [
+const COMMANDS: [(&str, &str); 8] = [
     ("relay", "run start stop restart status log"),
     ("forger", "run start stop restart status log"),
     ("network", "generate"),
     ("snapshot", "rollback"),
     ("pool", "clear"),
     ("state", "clear"),
+    ("doctor", "checks explain mcp"),
     (
         "devnet",
         "init start stop status logs stop-node start-node restart-node reset wait env",

@@ -2,13 +2,16 @@
 //! (`run`, `start`, `stop`, `restart`, `status`, `log`), [`network`] (`generate`), `devnet`
 //! (feature `devnet`: `init`, `start`, `stop`, `status`, `logs`, `stop-node`, `start-node`,
 //! `restart-node`, `reset`, `wait`, `env`), [`snapshot`] (`rollback`), [`clear`] (`pool clear` and
-//! `state clear`) and [`supervise`] (the hidden supervisor), with `version` and clap's `help`. The reference's colon spellings (`relay:start`) are rewritten
-//! first ([`heartwood_cli::argv::rewrite`]); flags keep the reference's camelCase with kebab-case
+//! `state clear`), [`doctor`] (read-only diagnostics, `checks`, `explain`, `mcp`) and [`supervise`]
+//! (the hidden supervisor), with `version` and clap's `help`. The reference's colon spellings
+//! (`relay:start`) are rewritten first ([`heartwood_cli::argv::rewrite`]); flags keep the
+//! reference's camelCase with kebab-case
 //! aliases.
 
 pub mod clear;
 #[cfg(feature = "devnet")]
 pub mod devnet;
+pub mod doctor;
 pub mod forger;
 pub mod network;
 pub mod relay;
@@ -56,6 +59,8 @@ pub enum Command {
     /// The relay's state: `state clear`.
     #[command(subcommand)]
     State(clear::StateCommand),
+    /// Read-only diagnostics of this host's node.
+    Doctor(doctor::DoctorLine),
     /// Supervise a started role (written by `start`).
     #[command(hide = true)]
     Supervise(supervise::Supervise),
@@ -178,6 +183,7 @@ pub fn run(command: Command) -> ExitCode {
         Command::Snapshot(command) => snapshot::run(command),
         Command::Pool(command) => clear::run_pool(command),
         Command::State(command) => clear::run_state(command),
+        Command::Doctor(line) => doctor::run(line),
         Command::Supervise(command) => supervise::run(command),
         Command::Version => {
             println!("{}", crate::VERSION);

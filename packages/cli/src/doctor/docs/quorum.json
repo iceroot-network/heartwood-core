@@ -1,0 +1,84 @@
+{
+  "area": "quorum",
+  "checks": [
+    {
+      "id": "quorum.forging-allowed",
+      "title": "Forging allowed at our slots",
+      "area": "quorum",
+      "subjects": [
+        "forger"
+      ],
+      "sources": [
+        "the forger's log",
+        "the relay's API"
+      ],
+      "rules": {
+        "pass": "No refusal at our slots in the window: the forger logs a refusal at its own slot when the relay's network state forbids forging.",
+        "warn": "A refusal at one of our slots (not enough quorum, not peered with enough delegates, no network state, or a cold start more than one round after the relay started); over-height block headers; or the network state's height out of sync with the round.",
+        "fail": "Refusals at our last 2 slots.",
+        "unknown": "The forger's log cannot be read, its file level hides info lines, or it shows no refusal while the forger does not run.",
+        "skipped": "No forger runs on this host."
+      },
+      "advice": {
+        "none": "No refusal at our slots in the window ({slots} slots seen).",
+        "quorum": "At your slot at {time} too few of the validators the relay reached agreed with its view of the chain, so forging was not safe ({count} refusals in the window). If many validators report this, the network is split; check the announcements.",
+        "not-peered-few-peers": "At your slot at {time} the relay reached fewer than 27 of the 53 active validators through attested peers, so the forger did not forge ({count} refusals in the window). Your relay has too few peers (see peers.count).",
+        "not-peered-network": "At your slot at {time} the relay reached fewer than 27 of the 53 active validators, although it has enough peers ({count} refusals in the window). Too many validators are offline or unattested across the network, so no forger can forge; your node is not the cause. Check the announcements.",
+        "not-peered": "At your slot at {time} the relay reached fewer than 27 of the 53 active validators, so the forger did not forge ({count} refusals in the window). If peers.count warns, your relay has too few peers; otherwise validators are offline across the network.",
+        "cold-start": "At your slot at {time} the relay was still in its cold start, more than one round after it started ({count} refusals in the window). Read the relay's log: it may not reach enough peers to leave it.",
+        "no-network-state": "At your slot at {time} the forger could not get the network state from its relay ({count} refusals in the window). See forger.link-history.",
+        "overheight": "At {time} the forger saw distinct block headers above the chain's height at its slot. This usually passes; if it repeats, see sync.forks.",
+        "out-of-sync": "At {time} the relay's network state and the round disagreed on the height, a sign of delayed blocks on the network. If it repeats, see sync.state."
+      },
+      "docs": "https://docs.iceroot.com/validators/doctor/#quorum-forging-allowed"
+    },
+    {
+      "id": "quorum.attestation",
+      "title": "The relay attests its forger",
+      "area": "quorum",
+      "subjects": [
+        "forger",
+        "relay"
+      ],
+      "sources": [
+        "the forger's log",
+        "the relay's log",
+        "the socket table",
+        "the process table"
+      ],
+      "rules": {
+        "pass": "The forger is linked to a relay at a loopback address and attests without warnings.",
+        "warn": "Lines of the forger not attesting the relay's status in the window; the forger linked to a relay at a non-loopback address (the forger does not poll such a relay at all, so no line is logged: the socket table shows it); more attestation session replacements than forger starts; or sessions that take turns in the relay's log while the socket table does not show two forger connections.",
+        "fail": "The forger runs with no link to any relay; or attestation sessions that take turns while the socket table shows two connections from those loopback addresses to this relay's P2P port.",
+        "unknown": "The forger's configuration or its sockets cannot be read, or the forger does not run.",
+        "skipped": "No forger runs on this host."
+      },
+      "advice": {
+        "attested": "The forger is linked to a relay on this host, which attests it.",
+        "no-link": "The forger runs but has no link to any relay, so no relay attests it and your delegate counts as offline. See forger.link.",
+        "remote-relay": "The forger is linked to a relay on another host ({address}). Until node keys arrive, a relay attests only a forger on its own host, so your delegate counts as offline while this lasts.",
+        "not-attesting": "The forger did not attest its relay's status {count} times in the window, the last at {time}. Your relay then serves its status unsigned: peers do not count your delegate as online, and pools refuse votes for it as offline. One reason is an offered slot more than one away from the forger's clock (see clock.symptoms).",
+        "replaced": "The relay logged {count} attestation sessions replacing an older one, and the forger started {starts} times in the window. Another forger may attach to this relay; see whether the sessions take turns.",
+        "alternating": "Two forgers on this host attach to this relay, from {first} and {second}. A relay attests one forger at a time, so they take turns and each one's delegates drop offline; they also close each other's connections. Give each forger its own relay.",
+        "alternating-logged": "The relay logged attestation sessions that take turns between {first} and {second}, but the socket table does not show both connected now. Confirm with each forger's status before changing anything: these lines can also come from text a peer sent."
+      },
+      "docs": "https://docs.iceroot.com/validators/doctor/#quorum-attestation"
+    },
+    {
+      "id": "quorum.reach",
+      "title": "The relay's reach",
+      "area": "quorum",
+      "subjects": [
+        "relay"
+      ],
+      "sources": [
+        "the node's files"
+      ],
+      "rules": {
+        "skipped": "This check comes with a later release, which gives the relay's reach and quorum directly."
+      },
+      "advice": {},
+      "docs": "https://docs.iceroot.com/validators/doctor/#quorum-reach"
+    }
+  ]
+}

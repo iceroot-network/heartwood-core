@@ -8,6 +8,7 @@
 //!   forger's ([`app::forger`]); [`views`]: the node as the peer-to-peer client and the API read
 //!   it; [`node_services`]: the node as the peer-to-peer server reads it; [`network`]: the network
 //!   monitor as the blockchain service calls it.
+//! - [`doctor_view`]: the node as `heartwood doctor` reads it, through the node's own loaders.
 //! - [`lock`]: the process lock of each role.
 //! - [`signals`]: the signals and the graceful shutdown.
 //! - `harness` (feature `difftest`): the harness's digest and block files, its network-state
@@ -33,6 +34,7 @@
 pub mod app;
 pub mod commands;
 pub mod config;
+pub mod doctor_view;
 #[cfg(feature = "difftest")]
 pub mod harness;
 pub mod lock;
