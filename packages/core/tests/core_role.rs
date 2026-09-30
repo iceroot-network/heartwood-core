@@ -502,7 +502,18 @@ fn a_core_profile_without_the_forger_stops_the_start_naming_it() {
     let refused = node.run(&["core", "run", "--networkStart"]);
     assert!(!refused.status.success());
     assert!(
-        text(&refused).contains("@solar-network/forger"),
+        text(&refused).contains("the core profile of app.json has no @solar-network/forger"),
+        "{}",
+        text(&refused)
+    );
+    // A relay's component missing from the core profile is named with the profile too.
+    let plugins = app["core"]["plugins"].as_array_mut().unwrap();
+    plugins.retain(|plugin| plugin["package"] != "@solar-network/pool");
+    fs::write(node.config().join("app.json"), app.to_string()).unwrap();
+    let refused = node.run(&["core", "run", "--networkStart"]);
+    assert!(!refused.status.success());
+    assert!(
+        text(&refused).contains("the core profile of app.json has no @solar-network/pool"),
         "{}",
         text(&refused)
     );

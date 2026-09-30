@@ -180,8 +180,9 @@ impl RelayConfig {
             let package = Package::named(&plugin.package);
             let package = package.ok_or_else(|| {
                 config(format!(
-                    "unknown package {:?} in the relay profile of app.json",
-                    plugin.package
+                    "unknown package {:?} in the {} profile of app.json",
+                    plugin.package,
+                    role.profile()
                 ))
             })?;
             let known = package.describe().1;
@@ -214,7 +215,8 @@ impl RelayConfig {
         let mut missing = Package::ALL.into_iter().filter(|p| p.required());
         if let Some(missing) = missing.find(|package| !components.contains(package)) {
             return Err(config(format!(
-                "the relay profile of app.json has no {}",
+                "the {} profile of app.json has no {}",
+                role.profile(),
                 missing.name()
             )));
         }
