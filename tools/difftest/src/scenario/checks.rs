@@ -1,9 +1,10 @@
 //! What a step checks: each named transaction, digest, projection, count and invariant of a
-//! [`Check`] evaluated on the backend as a case of the report. A check that a network of one
-//! implementation cannot decide (`digest`, `revertSymmetry`, `restartEqual`, which compare two
-//! runs) is skipped there, unless the backend vouches for it by how it works; the suites' two
-//! runs are compared by `scenario compare`. `withinBlocks` gives a live check that many blocks to
-//! come true.
+//! [`Check`] evaluated on the backend as a case of the report. A check that the runner cannot
+//! decide by the API (`digest`, `revertSymmetry`, `restartEqual`, which need the nodes' digest
+//! lines and the reference's judgement of them) is skipped on a live network, where `live check`
+//! judges the run's chain and lines, unless the backend vouches for it by how it works (the
+//! lockstep producer compares every line with the reference). `withinBlocks` gives a live check
+//! that many blocks to come true.
 
 use std::collections::hash_map::Entry;
 
@@ -239,7 +240,7 @@ impl Ctx<'_, '_> {
             Invariant::Supply => self.supply(),
             Invariant::Schedule => self.schedule(),
             Invariant::RevertSymmetry | Invariant::RestartEqual => Ok(Outcome::Skipped(
-                "compared from both runs by scenario compare".into(),
+                "a live network's revert and restart lines are judged by live check".into(),
             )),
         }
     }
@@ -427,7 +428,7 @@ pub fn evaluate(ctx: &mut Ctx<'_, '_>, check: &Check) -> Vec<CaseResult> {
                 said.map_or_else(|why| expected("digests agree", why), |()| Outcome::Pass)
             }
             None => Outcome::Skipped(
-                "the digests of both implementations are compared by scenario compare".into(),
+                "a live network's digests are judged against the reference by live check".into(),
             ),
         };
         cases.push(ctx.case("digest".into(), height(ctx), outcome));

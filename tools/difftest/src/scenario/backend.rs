@@ -161,9 +161,8 @@ pub trait Backend {
     }
 
     /// What the backend itself says of the check `name` (`digest`, `revertSymmetry`,
-    /// `restartEqual` or `singleTip`) by how it works: `None` when it cannot say, as a network of
-    /// one implementation cannot (those checks compare two runs, in `scenario compare`), else
-    /// whether it holds and why not.
+    /// `restartEqual` or `singleTip`) by how it works: `None` when it cannot say, as a live
+    /// network cannot (its lines are judged by `live check`), else whether it holds and why not.
     fn verified(&self, name: &str) -> Option<Result<(), String>> {
         let _ = name;
         None
