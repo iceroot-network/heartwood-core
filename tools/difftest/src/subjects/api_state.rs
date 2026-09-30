@@ -26,7 +26,7 @@ use serde_json::{Map, Value, json};
 
 use super::{Env, Outcome, Run, failed};
 use crate::fixture::Fixture;
-use crate::subject::{Case, Verdict};
+use crate::subject::{ApiDifference, Case, Documented, Verdict};
 
 /// The operations of this module.
 pub(super) const OPS: &[(&str, Run)] = &[
@@ -238,6 +238,16 @@ fn answer(reply: Result<Value, ApiError>) -> Verdict {
     }
 }
 
+/// A wallet listing's answer: [`answer`], which differs from the reference's where a wallet's
+/// second key came before its delegate record ([`ApiDifference::AttributeOrder`]; the oracle notes
+/// its answer with the delegate first).
+fn wallets_answer(reply: Result<Value, ApiError>) -> Verdict {
+    Verdict::DiffersWhereShown {
+        difference: Documented::Api(ApiDifference::AttributeOrder),
+        verdict: Box::new(answer(reply)),
+    }
+}
+
 fn delegates_route(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     const KINDS: [RouteId; 3] = [
         RouteId::DelegatesIndex,
@@ -289,7 +299,7 @@ fn delegates_route(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let parts = (pagination, sorting_of(query, &tail), &criteria[..]);
     let wallets = state.in_order(&state.public_keys);
     let page = wallets_page(wallets, &state.pool, &state.table, parts, search::page);
-    Ok(answer(
+    Ok(wallets_answer(
         page.map(|page| listing(&request, pagination, page).body),
     ))
 }
@@ -310,7 +320,7 @@ fn wallets_route(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let parts = (pagination, sorting_of(query, &tail), &[of_query(query)][..]);
     let wallets = state.in_order(&state.addresses);
     let page = wallets_page(wallets, &state.pool, &state.table, parts, search::page);
-    Ok(answer(
+    Ok(wallets_answer(
         page.map(|page| listing(&request, pagination, page).body),
     ))
 }

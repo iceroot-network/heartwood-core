@@ -10,7 +10,9 @@
 // and one with balances near the top of the amounts. A listing runs on the fixture's own index
 // orders and on others (reversed, rotated, shuffled) to show where a tie leaves the order to the
 // index. Coverage is checked as the records are made: a criterion of every kind, the refusals
-// (a range on a text value is a 500, a % in a username a 422), pages, and each route.
+// (a range on a text value is a 500, a % in a username a 422), pages, and each route. A last
+// fixture has delegates with second keys, one set before its delegate record (`so`) and one
+// after, for the attribute order and the `attributes.*` wildcard criteria.
 
 const HEIGHT = 1000;
 const SUPPLY = 8000;
@@ -215,6 +217,31 @@ module.exports = async function apiStateVectors({ solar, rec, must }) {
     await list("api.walletsPage", [], ["", "limit=5"]);
     await list("api.walletsPage", [], [""], { path: "/wallets/top" });
     await list("api.walletsPage", huge, ["", "orderBy=balance:asc", "balance.from=6000000000000000000", "balance=3999999999999999999"]);
+
+    // The attribute order: a delegate whose second key came first, one whose came after, and
+    // delegates, voters and a wallet without a second key; the wildcard criteria test each value
+    // of `attributes` in its order, and throw on a second key given an object.
+    const second = (i) => key(`v34 second secret ${i}`);
+    const ordered = [
+        { ...delegate(1), spk: second(1), so: true },
+        { ...delegate(2), spk: second(2) },
+        delegate(3),
+        delegate(4),
+        wallet("v34 voter 0", { bal: "90", v: [[name(1), 10000]] }),
+        wallet("v34 voter 1", { bal: "50", v: [[name(3), 10000]] }),
+        wallet("v34 filler", { bal: "460", n: "2" }),
+    ];
+    const withoutSecond = ordered.filter((w) => w.spk === undefined || w.so === true);
+    const wildcards = [
+        "", "limit=2", "orderBy=balance:asc", `attributes.*.username=${name(1)}`, `attributes.*.username=${name(2)}`, `attributes.*.username=${name(3)}`,
+        "attributes.*.producedBlocks=5", "attributes.*.producedBlocks.from=1", `attributes.*=${second(1)}`, `attributes.*=${second(2)}`, "attributes.*=x",
+        `attributes.*.username=${name(1)},${name(3)}`, "attributes.*.nosuch=1", `attributes.secondPublicKey=${second(1)}`, "orderBy=attributes.secondPublicKey",
+    ];
+    await list("api.walletsPage", ordered, wildcards);
+    await list("api.walletsPage", withoutSecond, wildcards);
+    await list("api.walletsPage", ordered, ["", "limit=3"], { path: "/wallets/top" });
+    await list("api.delegatesPage", ordered, ["", `attributes.*.username=${name(1)}`], { path: `/delegates/${name(1)}/voters` });
+    await list("api.delegatesPage", ordered, ["", `username=${name(1)}`]);
 
     // The delegate resource at a stated supply.
     const base = { a: A(1), pk: K(1), u: name(1), vb: "90", voters: 1, pb: 5, ff: "300", fr: "600", bf: "270", dn: "60", rk: 2, lb: hex(1), missed: 3, productivity: 9950, version: "4.3.1" };

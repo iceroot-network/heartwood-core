@@ -19,8 +19,11 @@
 // attributes a fixture has no way to state: rank, missed (blocks missed), productivity (in
 // hundredths of a percent) and version. Both are what the listings read from the state. A
 // delegate's attribute keys are put in the order a state built from the store gives them, and a
-// delegate's second key after its delegate attribute (a wallet's attribute order follows its
-// history, which a fixture does not state).
+// delegate's second key after its delegate attribute, unless the fixture says the second key came
+// first (`so`), as a start from the store sets them (a wallet's attribute order follows its
+// history). Where a fixture has such a wallet, the listings' answer notes `delegateFirst`: the
+// reference's answer with every delegate attribute before its second key, the order Heartwood
+// keeps.
 //
 // api.delegateResource builds one delegate wallet from `wallet` (keys a, pk optional, u, vb, voters,
 // rk, rs, pb, ff, fr, bf, dn, lb, missed, productivity, version; the amounts are decimal
@@ -111,8 +114,12 @@ module.exports = function apiStateOps({ solar, withConfig }) {
         return order;
     }
 
-    /** Load `fixture`, put the indexes in the orders of `orders` and set the delegates' extras. */
-    async function load(fixture, orders = {}, extras = {}, height) {
+    /**
+     * Load `fixture`, put the indexes in the orders of `orders` and set the delegates' extras; a
+     * wallet's second key goes after its delegate attribute, unless the fixture says it came first
+     * and `ownOrder` keeps that.
+     */
+    async function load(fixture, orders = {}, extras = {}, height, ownOrder = true) {
         const state = fixtures();
         await state.load(fixture, height);
         const repository = state.chain.walletRepository;
@@ -136,13 +143,13 @@ module.exports = function apiStateOps({ solar, withConfig }) {
             if (extra.productivity !== undefined) delegate.productivity = extra.productivity / 100;
             if (extra.version !== undefined) delegate.version = { version: extra.version };
         }
-        for (const wallet of wallets) {
+        for (const [at, wallet] of wallets.entries()) {
             const delegate = wallet.hasAttribute("delegate") ? wallet.getAttribute("delegate") : undefined;
             if (delegate === undefined) continue;
             const ordered = {};
             for (const name of DELEGATE_KEYS) if (name in delegate) ordered[name] = delegate[name];
             wallet.setAttribute("delegate", { ...ordered, ...delegate });
-            if (wallet.hasAttribute("secondPublicKey")) {
+            if (wallet.hasAttribute("secondPublicKey") && !(ownOrder && fixture[at].so === true)) {
                 const second = wallet.getAttribute("secondPublicKey");
                 wallet.forgetAttribute("secondPublicKey");
                 wallet.setAttribute("secondPublicKey", second);
@@ -162,9 +169,15 @@ module.exports = function apiStateOps({ solar, withConfig }) {
     const listing = (defaultPath) => async ({ fixture, query, path: route = defaultPath, orders, extras }, height) => {
         if (typeof query !== "string") throw new TypeError("query must be text");
         if (typeof route !== "string" || !route.startsWith("/")) throw new TypeError("path must start with /");
+        const url = `/api${route}${query ? `?${query}` : ""}`;
         return withConfig(undefined, async () => {
             current.repository = await load(fixture, orders, extras, height);
-            return inject(`/api${route}${query ? `?${query}` : ""}`);
+            const answer = await inject(url);
+            if (Array.isArray(fixture) && fixture.some((w) => w && w.so === true)) {
+                current.repository = await load(fixture, orders, extras, height, false);
+                answer.notes = { delegateFirst: await inject(url) };
+            }
+            return answer;
         });
     };
 

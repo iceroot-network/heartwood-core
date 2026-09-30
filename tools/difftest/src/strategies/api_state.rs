@@ -1,6 +1,7 @@
 //! P21, the listings over the state: random wallet sets (attributes, balances with ties, resigned
-//! delegates, usernames with digits and punctuation) in random index orders, random criteria,
-//! `orderBy` chains and pages, for `api.delegatesPage` and `api.walletsPage`.
+//! delegates, usernames with digits and punctuation, delegates whose second key came before their
+//! delegate record) in random index orders, random criteria (`attributes.*` wildcards among
+//! them), `orderBy` chains and pages, for `api.delegatesPage` and `api.walletsPage`.
 //!
 //! A case is a fixture and a plan of seeds; the query is made from the two by plain functions, so
 //! that a shrunk fixture keeps its query's shape. The criteria take their values from the fixture
@@ -284,7 +285,7 @@ fn wallet_criterion(kind: u32, seed: u32, facts: &Facts) -> String {
     let (small, large) = between(seed, 200);
     let (low, high) = (facts.balance(seed), facts.balance(seed >> 3));
     let (low, high) = (low.min(high), low.max(high));
-    match kind % 34 {
+    match kind % 37 {
         0 => format!("address={}", facts.address(seed)),
         1 => format!(
             "address={},{}",
@@ -326,8 +327,18 @@ fn wallet_criterion(kind: u32, seed: u32, facts: &Facts) -> String {
         19 => "unknown=1".to_owned(),
         20 => format!("attributes.delegate.rank={}", small % 12 + 1),
         21 => "nonce=x".to_owned(),
+        // The wildcard over each value of `attributes`, in the wallet's attribute order.
+        22 => format!("attributes.*.username={}", facts.name(seed)),
+        23 => format!("attributes.*.producedBlocks={}", facts.count(seed)),
+        24 => format!(
+            "attributes.*={}",
+            facts
+                .seconds
+                .get(pick(seed, facts.seconds.len().max(1)))
+                .map_or_else(|| facts.name(seed), Clone::clone)
+        ),
         // The valid kinds again, so that most cases are answered with a page.
-        other => wallet_criterion(other - 22, seed, facts),
+        other => wallet_criterion(other - 25, seed, facts),
     }
 }
 
@@ -476,8 +487,15 @@ fn extras(plan: &Plan, fixture: &Fixture) -> Value {
     Value::Object(made)
 }
 
-/// The case of a fixture and a plan.
+/// The case of a fixture and a plan. A delegate with a second key has it set first when the
+/// route's seed has the bit of its position.
 fn case(fixture: &Fixture, plan: &Plan) -> OpCase {
+    let mut fixture = fixture.clone();
+    for (at, wallet) in fixture.wallets.iter_mut().enumerate() {
+        let both = wallet.second_public_key.is_some() && wallet.delegate.is_some();
+        wallet.second_key_first = both && (plan.route >> (5 + at % 24)) & 1 == 1;
+    }
+    let fixture = &fixture;
     let facts = Facts::of(fixture);
     let mut input = Map::new();
     input.insert("fixture".to_owned(), fixture.to_json());

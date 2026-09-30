@@ -290,6 +290,7 @@ fn assemble(
                     .then(|| second_keys(i).public_key().to_compressed()),
                 delegate,
                 votes: if keyed { votes } else { Votes::new() },
+                second_key_first: false,
             }
         })
         .collect();

@@ -154,6 +154,10 @@ pub enum ApiDifference {
     /// `GET /api.json`: the reference's document lists every registered route and type, the
     /// removed ones included; Heartwood's lists the kept ones.
     SpecKeptOnly,
+    /// The order of a wallet's attributes: the reference keeps the order they were set in, a
+    /// start from its store setting the second key before the delegate record; Heartwood keeps
+    /// the delegate first.
+    AttributeOrder,
 }
 
 impl ApiDifference {
@@ -365,6 +369,14 @@ impl ApiDifference {
                 "the OpenAPI document: the reference lists every registered route and transaction \
                  type, the removed ones included, Heartwood lists the kept ones"
             }
+            ApiDifference::AttributeOrder => {
+                "the order of a wallet's attributes: the reference keeps the order they were set \
+                 in (a start from its store sets the second key first), Heartwood writes the \
+                 delegate first; a listed wallet's attribute keys show it, and an attributes \
+                 wildcard criterion given an object (attributes.*.username=...) on a delegate \
+                 with a second key, which the reference's search tests on the second key first \
+                 and answers 500 where Heartwood's matches the delegate"
+            }
         }
     }
 }
@@ -373,6 +385,11 @@ impl ApiDifference {
 /// that the output's value cannot show, for [`Documented::shown_by`]; and of a subject's output
 /// that holds what Heartwood observed for a documented difference's mask. L0 does not compare it.
 pub const NOTES: &str = "notes";
+
+/// The note of a listing's oracle answer that holds the reference's answer with every wallet's
+/// delegate attribute before its second key, as Heartwood keeps them
+/// ([`ApiDifference::AttributeOrder`]).
+pub const DELEGATE_FIRST: &str = "delegateFirst";
 
 /// The start of the message of the `RangeError` that Node raises when its stack overflows.
 const STACK_OVERFLOW: &str = "Maximum call stack size exceeded";
@@ -412,14 +429,16 @@ impl Documented {
 
     /// The oracle's answer `expected` without the part this difference changes, when Heartwood's
     /// verdict `ours` and the answer both have that part; the case is then the documented
-    /// difference if `ours` equals what is left. Four differences have one: the missed rows of a
+    /// difference if `ours` equals what is left. Five differences have one: the missed rows of a
     /// refused block (the rows the reference recorded for a block both refused, in a
     /// `chain.process` answer refused by the accept handler, or in each job of a `chain.job`
     /// answer), the wallets of a round answer (the answer with Heartwood's wallets in the places
     /// where the key and the name agree, [`crate::subjects::round_wallets_masked`]), an escaped
     /// log text (the reference's line with its message escaped), and the index orders after a
     /// restart (the answer with Heartwood's restart orders where they list the same keys and its
-    /// table path is the stored rows' order, [`crate::subjects::index_orders_masked`]).
+    /// table path is the stored rows' order, [`crate::subjects::index_orders_masked`]), and the
+    /// attribute order of a listing (the reference's own answer with each wallet's delegate first,
+    /// which the oracle notes as [`DELEGATE_FIRST`] where a wallet's second key came first).
     pub fn masked(self, expected: &Expected, ours: &Verdict) -> Option<Expected> {
         if self == Documented::EscapedLogText {
             return crate::subjects::escaped_line(expected);
@@ -433,6 +452,17 @@ impl Documented {
             (self, expected, ours)
         {
             return crate::subjects::index_orders_masked(theirs, ours).map(Expected::Output);
+        }
+        if let (Documented::Api(ApiDifference::AttributeOrder), Expected::Output(theirs)) =
+            (self, expected)
+        {
+            // The reference's own answer with the delegate first on every wallet, where that order
+            // changes the answer, its keys' order included (which `==` on values does not see).
+            let other = theirs.get(NOTES)?.get(DELEGATE_FIRST)?;
+            let mut own = theirs.clone();
+            own.as_object_mut()?.shift_remove(NOTES);
+            let changes = !crate::compare::diff(&own, other).is_empty();
+            return changes.then(|| Expected::Output(other.clone()));
         }
         let (Documented::MissedRowsOfRefusedBlock, Expected::Output(theirs), Verdict::Output(ours)) =
             (self, expected, ours)
@@ -552,6 +582,36 @@ pub fn heartwood(devnet: Option<Devnet>) -> Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_attribute_order_takes_the_references_delegate_first_answer_where_it_differs() {
+        let listed = |keys: [&str; 2]| {
+            let mut attributes = serde_json::Map::new();
+            for key in keys {
+                attributes.insert(key.to_owned(), Value::from(key));
+            }
+            serde_json::json!({ "status": 200, "body": { "data": [{ "attributes": attributes }] } })
+        };
+        let own = listed(["secondPublicKey", "delegate"]);
+        let first = listed(["delegate", "secondPublicKey"]);
+        let answer = |other: &Value| {
+            let mut answer = own.clone();
+            answer[NOTES] = serde_json::json!({ DELEGATE_FIRST: other });
+            Expected::Output(answer)
+        };
+        let difference = Documented::Api(ApiDifference::AttributeOrder);
+        let ours = Verdict::Output(first.clone());
+        // Only the keys' order differs: the delegate-first answer is the expectation.
+        match difference.masked(&answer(&first), &ours) {
+            Some(Expected::Output(taken)) => {
+                assert!(crate::compare::diff(&taken, &first).is_empty());
+            }
+            other => panic!("the delegate-first answer is not taken: {other:?}"),
+        }
+        // The order changes nothing, or the oracle noted nothing: the answer is compared as it is.
+        assert!(difference.masked(&answer(&own), &ours).is_none());
+        assert!(difference.masked(&Expected::Output(own), &ours).is_none());
+    }
 
     struct Echo;
 
