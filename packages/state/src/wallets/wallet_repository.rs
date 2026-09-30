@@ -11,7 +11,9 @@
 //! lookup is set in the address index, and binding a key or registering a name re-indexes the
 //! wallet, as the reference's handlers do. After each transaction a block applies or reverts, its
 //! sender and its recipients are re-indexed at the end of the block, as the reference's handlers
-//! defer it.
+//! defer it. The reference's handlers re-index them in the state's wallets whatever wallets they
+//! ran on (a pool's view, a collation's copy), so a transaction run on a copy re-indexes its
+//! parties here too ([`WalletRepository::reindex_parties`]).
 
 use std::sync::Arc;
 
@@ -220,25 +222,41 @@ impl WalletRepository {
     /// Queue the sender and the recipients of `transaction`, which a block just applied or
     /// reverted, for a re-index at the end of the block.
     pub(crate) fn defer_reindex(&mut self, transaction: &Transaction) {
-        let data = transaction.data();
-        let sender = Address::from_public_key(&data.sender_public_key, self.network);
-        self.indexes.defer(sender);
-        if let Asset::Transfer { transfers } = &data.asset {
-            for item in transfers {
-                self.indexes.defer(item.recipient);
-            }
+        for address in parties(transaction, self.network) {
+            self.indexes.defer(address);
         }
     }
 
     /// Re-index the queued wallets that are in the address index, in the order they were queued,
     /// as the reference's handlers do after a block.
     pub(crate) fn reindex_deferred(&mut self) {
-        for address in self.indexes.take_deferred() {
+        let deferred = self.indexes.take_deferred();
+        self.reindex_parties(deferred);
+    }
+
+    /// Re-index the wallets at `addresses` that are in the address index, in order: the parties
+    /// ([`parties`]) of transactions the handlers applied or reverted on a copy of these wallets,
+    /// which the reference's handlers re-index in the state's wallets too. Only the indexes'
+    /// orders change.
+    pub fn reindex_parties(&mut self, addresses: impl IntoIterator<Item = Address>) {
+        for address in addresses {
             if self.indexes.has_address(&address) {
                 self.reindex(&address);
             }
         }
     }
+}
+
+/// The sender and the recipients of `transaction` on the network with address byte `network`, in
+/// the order the reference's handlers re-index them after they apply or revert it.
+pub fn parties(transaction: &Transaction, network: u8) -> impl Iterator<Item = Address> + '_ {
+    let data = transaction.data();
+    let sender = Address::from_public_key(&data.sender_public_key, network);
+    let recipients = match &data.asset {
+        Asset::Transfer { transfers } => transfers.as_slice(),
+        _ => &[],
+    };
+    std::iter::once(sender).chain(recipients.iter().map(|item| item.recipient))
 }
 
 /// The repository read back from the store, and what changed since the last commit.

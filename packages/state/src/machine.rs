@@ -288,6 +288,13 @@ impl State {
         &self.wallets
     }
 
+    /// Re-index the wallets at `addresses` that are in the address index, in order (see
+    /// [`WalletRepository::reindex_parties`]): the parties of the transactions a pool or a
+    /// collation applied or reverted on its copy of the wallets. Only the indexes' orders change.
+    pub fn reindex_parties(&mut self, addresses: impl IntoIterator<Item = Address>) {
+        self.wallets.reindex_parties(addresses);
+    }
+
     /// The round state.
     pub fn round(&self) -> &RoundState {
         &self.round

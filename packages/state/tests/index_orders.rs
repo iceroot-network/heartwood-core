@@ -23,7 +23,7 @@ use heartwood_crypto::transactions::TransactionBuilder;
 use heartwood_crypto::transactions::types::TransferItem;
 use heartwood_crypto::{Aux, Block, KeyPair, Milestones, Network, Transaction};
 use heartwood_state::State;
-use heartwood_state::wallets::{Delegate, Wallet, WalletRepository};
+use heartwood_state::wallets::{Delegate, Wallet, WalletRepository, parties};
 use heartwood_transactions::{Handlers, minimum_fee};
 use serde_json::{Value, json};
 
@@ -311,6 +311,39 @@ fn a_block_moves_its_senders_and_recipients_to_the_end_in_transaction_order() {
         chain.usernames().last().map(String::as_str),
         Some("genesis_3")
     );
+}
+
+#[test]
+fn a_transaction_run_on_other_wallets_moves_its_known_parties_in_the_state() {
+    let mut chain = Chain::new();
+    let funds = chain.transfer(
+        "team-placeholder-1",
+        0,
+        &[("wallet/1", 100 * SXP), ("wallet/2", 100 * SXP)],
+    );
+    chain.apply(vec![funds]);
+    let before = chain.addresses();
+    let wallets = chain.state.wallets().clone();
+    // A pool's transfer from wallet/1 to a delegate and to a wallet the state does not know.
+    let pooled = chain.transfer("wallet/1", 0, &[("genesis_3", SXP), ("wallet/8", SXP)]);
+    let [one, delegate, unknown] = ["wallet/1", "genesis_3", "wallet/8"].map(|n| chain.address(n));
+    let parties: Vec<Address> = parties(&pooled, NETWORK).collect();
+    assert_eq!(parties, [one, delegate, unknown]);
+    chain.state.reindex_parties(parties);
+    let after = chain.addresses();
+    assert_eq!(after.len(), before.len(), "no wallet joins the index");
+    assert_eq!(after[after.len() - 2..], [one, delegate]);
+    let kept: Vec<Address> = (before.into_iter())
+        .filter(|a| *a != one && *a != delegate)
+        .collect();
+    assert_eq!(after[..after.len() - 2], kept);
+    assert_eq!(
+        chain.usernames().last().map(String::as_str),
+        Some("genesis_3")
+    );
+    // Only the orders changed.
+    assert_eq!(chain.state.wallets(), &wallets);
+    assert!(!chain.state.wallets().has_by_address(&unknown));
 }
 
 #[test]
