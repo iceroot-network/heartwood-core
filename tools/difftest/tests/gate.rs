@@ -1129,3 +1129,37 @@ fn a_record_file_that_is_not_json_is_an_error_not_a_skip() {
     assert!(!ran.ok);
     assert!(ran.text.contains("cut-short.json"), "{}", ran.text);
 }
+
+#[test]
+fn every_documented_reason_a_report_lists_is_a_hit() {
+    let rig = Rig::new();
+    let mut criteria = base_criteria();
+    criteria["register"] = json!({
+        "entries": [entry(
+            "E-1",
+            "when a refused sender had no key",
+            json!([{"kind": "record", "target": "l0"}]),
+            &["levels::BOUND_KEY"]
+        )],
+        "records": [{"target": "l2", "class": "honest"}]
+    });
+    rig.criteria(&criteria);
+    let printed = report(
+        10,
+        &[
+            (2, heartwood_difftest::levels::BOUND_KEY),
+            (1, "a difference no name is given"),
+        ],
+    );
+    assert!(
+        rig.record("l2", "difftest run l2 corpus", 0, &printed, T1)
+            .ok
+    );
+    let hits = &rig.records()[0]["hits"];
+    assert_eq!(hits["levels::BOUND_KEY"], 2, "{hits}");
+    assert_eq!(hits["unnamed: a difference no name is given"], 1, "{hits}");
+    let ran = register(&rig, &[]);
+    assert!(!ran.ok, "{}", ran.text);
+    assert!(ran.text.contains("an honest run hits none"), "{}", ran.text);
+    assert!(ran.text.contains("which no entry claims"), "{}", ran.text);
+}

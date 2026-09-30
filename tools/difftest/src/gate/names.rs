@@ -141,14 +141,39 @@ pub const fn api_name(difference: ApiDifference) -> &'static str {
     }
 }
 
+/// The documented differences whose reason is a named text of the harness, not a variant: the
+/// code name (the constant's path) and the text.
+pub const NAMED_REASONS: [(&str, &str); 2] = [
+    ("levels::BOUND_KEY", crate::levels::BOUND_KEY),
+    (
+        "synthetic_rollback::OLDER_SAVED_STATE",
+        crate::synthetic_rollback::OLDER_SAVED_STATE,
+    ),
+];
+
+/// What a hit is counted under when a report prints a documented difference whose reason has no
+/// code name: this prefix and the reason, which no register entry claims.
+pub const UNNAMED: &str = "unnamed: ";
+
 /// The code name of the difference whose reason text a report printed.
 pub fn name_of_reason(reason: &str) -> Option<&'static str> {
-    ALL.iter().find(|d| d.reason() == reason).map(|d| name(*d))
+    ALL.iter()
+        .find(|d| d.reason() == reason)
+        .map(|d| name(*d))
+        .or_else(|| {
+            NAMED_REASONS
+                .iter()
+                .find(|(_, text)| *text == reason)
+                .map(|(name, _)| *name)
+        })
 }
 
-/// Every code name, in [`ALL`]'s order.
+/// Every code name: [`ALL`]'s in its order, then [`NAMED_REASONS`]'.
 pub fn all_names() -> Vec<&'static str> {
-    ALL.iter().map(|d| name(*d)).collect()
+    ALL.iter()
+        .map(|d| name(*d))
+        .chain(NAMED_REASONS.iter().map(|(name, _)| *name))
+        .collect()
 }
 
 #[cfg(test)]
@@ -178,6 +203,11 @@ mod tests {
     fn a_reason_maps_back_to_its_name() {
         for difference in ALL {
             assert_eq!(name_of_reason(difference.reason()), Some(name(difference)));
+        }
+        for (name, text) in NAMED_REASONS {
+            assert_eq!(name_of_reason(text), Some(name));
+            assert!(all_names().contains(&name));
+            assert!(ALL.iter().all(|d| d.reason() != text));
         }
         assert_eq!(name_of_reason("not a reason"), None);
     }

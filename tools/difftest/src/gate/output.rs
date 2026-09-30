@@ -2,9 +2,10 @@
 //! of `cargo test`'s result lines) and the documented differences the report lists.
 //!
 //! A comparison prints, per report, `N compared: X passed, Y failed`, `D documented differences
-//! ...` with one `    n  <reason>` line per difference, and `S skipped ...`. Each reason text is
-//! mapped back to its code name ([`super::names`]); a line that is not a known reason counts
-//! nothing.
+//! ...` with one `    n  <reason>` line per difference, `S skipped ...` and `M records have no
+//! Rust implementation yet`. Each reason under a documented-differences line is mapped back to
+//! its code name ([`super::names`]); a reason without one is counted as
+//! [`super::names::UNNAMED`] and the reason, so that no documented difference goes uncounted.
 
 use std::collections::BTreeMap;
 
@@ -25,7 +26,17 @@ pub fn parse(text: &str) -> Parsed {
     let mut counts = Counts::default();
     let mut seen = false;
     let mut hits: BTreeMap<String, u64> = BTreeMap::new();
+    let mut documented = false;
     for line in text.lines() {
+        if documented {
+            if let Some((n, reason)) = reason_line(line) {
+                let name = names::name_of_reason(reason)
+                    .map_or_else(|| format!("{}{reason}", names::UNNAMED), str::to_owned);
+                *hits.entry(name).or_insert(0) += n;
+                continue;
+            }
+            documented = false;
+        }
         if let Some((compared, passed, failed)) = compared_line(line) {
             seen = true;
             counts.compared += compared;
@@ -33,8 +44,11 @@ pub fn parse(text: &str) -> Parsed {
             counts.failed += failed;
         } else if let Some(n) = leading_count(line, " documented differences") {
             seen = true;
+            documented = true;
             counts.documented += n;
-        } else if let Some(n) = leading_count(line, " skipped") {
+        } else if let Some(n) = leading_count(line, " skipped")
+            .or_else(|| leading_count(line, " records have no Rust implementation"))
+        {
             seen = true;
             counts.skipped += n;
         } else if let Some((passed, failed, ignored)) = cargo_result(line) {
@@ -43,10 +57,6 @@ pub fn parse(text: &str) -> Parsed {
             counts.passed += passed;
             counts.failed += failed;
             counts.skipped += ignored;
-        } else if let Some((n, reason)) = reason_line(line)
-            && let Some(name) = names::name_of_reason(reason)
-        {
-            *hits.entry(name.to_owned()).or_insert(0) += n;
         }
     }
     Parsed {
@@ -145,6 +155,19 @@ mod tests {
         let parsed = parse(&text);
         assert_eq!(parsed.counts.map(|c| c.compared), Some(580));
         assert_eq!(parsed.hits["Documented::Locale"], 3);
+    }
+
+    #[test]
+    fn a_reason_without_a_code_name_is_counted_by_its_text_and_other_lines_are_not() {
+        let text = "  5 compared: 5 passed, 0 failed\n  3 documented differences (on purpose):\n\
+                    \x20       2  a reason no variant has\n\
+                    \x20       1  a reason no variant has\n\
+                    \x20 2 records have no Rust implementation yet:\n\
+                    \x20       2  some.op\n";
+        let parsed = parse(text);
+        assert_eq!(parsed.hits.len(), 1, "{:?}", parsed.hits);
+        assert_eq!(parsed.hits["unnamed: a reason no variant has"], 3);
+        assert_eq!(parsed.counts.map(|c| c.skipped), Some(2));
     }
 
     #[test]
