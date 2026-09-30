@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use heartwood_crypto::identities::{Address, PublicKeyBytes};
-use heartwood_state::{StateView, Wallet};
+use heartwood_state::{StateView, Wallet, WalletRepository};
 use serde_json::Value;
 
 use crate::context::{ApiContext, ApiReply, ApiRequest, Route, RouteId};
@@ -28,14 +28,18 @@ pub fn routes() -> Vec<Route> {
     ]
 }
 
-/// A wallet.
+/// A wallet; a delegate's missed blocks and productivity from the node's table at the tip.
 pub async fn show(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
     let state = ctx.state();
     let wallet = find(&state, request.param("id").unwrap_or_default())?;
-    Ok(ApiReply::data(crate::resources::wallet(
+    let table = match wallet.delegate() {
+        Some(_) => super::delegates::table(&ctx, &state)?,
+        None => Arc::default(),
+    };
+    Ok(ApiReply::data(crate::resources::wallet_with(
         &wallet,
-        &state,
         &ctx.pool(),
+        &table,
     )))
 }
 
@@ -63,7 +67,11 @@ pub async fn transactions(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<A
 /// key, by delegate name, else a new wallet for a valid address of the network; 422 "Wallet not
 /// valid" for another id of 34 characters, 404 "Wallet not found" for anything else.
 pub fn find(state: &StateView, id: &str) -> Result<Wallet, ApiError> {
-    let wallets = &state.wallets;
+    find_in(&state.wallets, id)
+}
+
+/// [`find`] over the wallets alone.
+pub fn find_in(wallets: &WalletRepository, id: &str) -> Result<Wallet, ApiError> {
     let network = wallets.network();
     // Each index is keyed by the canonical text: an address, a lowercase key, a name.
     let address = Address::from_base58_for(id, network).ok();

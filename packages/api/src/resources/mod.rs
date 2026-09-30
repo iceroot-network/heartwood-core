@@ -21,6 +21,9 @@ use heartwood_pool::PoolView;
 use heartwood_state::{Resignation, StateView, Wallet};
 use serde_json::{Value, json};
 
+use crate::context::{Hundredths, ProductivityTable};
+use crate::search::{big_number, plain};
+
 /// Where a confirmed transaction is, as its resource shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransactionBlock {
@@ -142,6 +145,19 @@ pub fn transaction(
 /// and set again moves last), which the state does not keep.
 pub fn wallet(wallet: &Wallet, state: &StateView, pool: &PoolView) -> Value {
     let _ = state;
+    wallet_with(wallet, pool, &ProductivityTable::default())
+}
+
+/// [`wallet`] with the delegate's missed blocks and productivity, which the reference sets on the
+/// wallet's delegate attribute after the resignation, from `table`.
+pub fn wallet_with(wallet: &Wallet, pool: &PoolView, table: &ProductivityTable) -> Value {
+    plain(wallet_searchable(wallet, pool, table))
+}
+
+/// [`wallet_with`] as the listings search and sort it: each BigNumber a
+/// [`big_number`] (the balance, the nonce, the amounts of the delegate
+/// attribute and the votes of `votingFor`), which [`plain`] writes out as text.
+pub fn wallet_searchable(wallet: &Wallet, pool: &PoolView, table: &ProductivityTable) -> Value {
     let key = wallet.public_key().map(|key| key.to_compressed());
     let delegate = wallet.delegate().map(|delegate| {
         let version = key.as_ref().and_then(|key| pool.version(key));
@@ -149,27 +165,28 @@ pub fn wallet(wallet: &Wallet, state: &StateView, pool: &PoolView) -> Value {
             Resignation::Permanent => "permanent",
             Resignation::Temporary => "temporary",
         });
+        let production = table.by_username.get(delegate.username());
+        let missed = production.and_then(|production| production.missed);
+        let productivity = production.and_then(|production| production.productivity);
         defined(json!({
-            "username": delegate.username(), "voteBalance": delegate.vote_balance.to_string(),
-            "forgedFees": delegate.forged_fees.to_string(),
-            "burnedFees": delegate.burned_fees.to_string(),
-            "forgedRewards": delegate.forged_rewards.to_string(),
-            "donations": delegate.donations.to_string(),
+            "username": delegate.username(), "voteBalance": big_number(delegate.vote_balance),
+            "forgedFees": big_number(delegate.forged_fees),
+            "burnedFees": big_number(delegate.burned_fees),
+            "forgedRewards": big_number(delegate.forged_rewards),
+            "donations": big_number(delegate.donations),
             "producedBlocks": delegate.produced_blocks, "rank": delegate.rank,
             "voters": delegate.voters,
             "lastBlock": delegate.last_block.as_ref().map(BlockId::to_hex),
             "version": version, "resigned": resigned,
+            "missedBlocks": missed, "productivity": productivity.map(hundredths),
         }))
     });
     let second = wallet.second_public_key().map(|key| key.to_hex());
     let attributes = defined(json!({ "delegate": delegate, "secondPublicKey": second }));
     let shares = wallet.vote_shares();
     let voting_for = wallet.votes().iter().map(|(name, points)| {
-        let percent = match points % 100 {
-            0 => json!(points / 100),
-            _ => json!(f64::from(*points) / 100.0),
-        };
-        let votes = shares.get(name).map(u64::to_string);
+        let percent = hundredths(Hundredths(u32::from(*points)));
+        let votes = shares.get(name).map(big_number);
         (
             name.clone(),
             defined(json!({ "percent": percent, "votes": votes })),
@@ -177,9 +194,17 @@ pub fn wallet(wallet: &Wallet, state: &StateView, pool: &PoolView) -> Value {
     });
     defined(json!({
         "address": wallet.address().to_base58(), "publicKey": key.map(|key| key.to_hex()),
-        "balance": wallet.balance().to_string(), "nonce": wallet.nonce().to_string(),
+        "balance": big_number(wallet.balance()), "nonce": big_number(wallet.nonce()),
         "attributes": attributes, "votingFor": Value::Object(voting_for.collect()),
     }))
+}
+
+/// A count of hundredths as a JavaScript number: whole when it is, else the fraction.
+pub(crate) fn hundredths(count: Hundredths) -> Value {
+    match count.0 % 100 {
+        0 => json!(count.0 / 100),
+        _ => json!(f64::from(count.0) / 100.0),
+    }
 }
 
 /// A peer: its address, ports, version, height, latency and plugins.
