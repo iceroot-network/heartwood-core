@@ -1031,6 +1031,30 @@ fn missed_slots_are_counted_for_the_delegates_of_the_forger() {
     );
 }
 
+#[test]
+fn a_scenario_that_looks_past_five_rounds_is_refused_before_it_starts() {
+    let far = |steps: Value| {
+        let compiled = compiled(steps, &[]);
+        let mut fake = Fake::new(1);
+        let refused = run(&compiled, &mut fake, Level::L3).map(|_| ());
+        (refused, fake.log.borrow().len(), fake.height.get())
+    };
+    // The devnet's round is 53 blocks: five rounds end at 265.
+    let (ok, ..) = far(json!([{"at": {"round": 5, "position": "end"}, "check": {"digest": true}}]));
+    assert!(ok.is_ok());
+    for steps in [
+        json!([{"at": {"height": 266}}]),
+        json!([{"at": {"height": 260}, "do": "wait", "blocks": 6}]),
+        json!([{"at": {"height": 260}, "check": {"forged": ["t"], "withinBlocks": 6}}]),
+        json!([{"at": {"round": 6, "position": "start"}}]),
+    ] {
+        let (refused, actions, height) = far(steps.clone());
+        let error = refused.expect_err("refused").to_string();
+        assert!(error.contains("past the 5 rounds"), "{steps}: {error}");
+        assert_eq!((actions, height), (0, 1), "nothing ran");
+    }
+}
+
 const BLOCKS: &str = "/api/blocks?limit=100&page=1&orderBy=height:asc";
 
 #[test]

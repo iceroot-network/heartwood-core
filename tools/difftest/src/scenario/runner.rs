@@ -17,6 +17,25 @@ use crate::report::{CaseResult, Outcome, Report};
 /// The longest a live network may take to bring a step's trigger.
 pub const STEP_LIMIT: Duration = Duration::from_secs(40 * 60);
 
+/// The rounds a scenario may reach: a test network runs at most five.
+pub const MAX_ROUNDS: u32 = 5;
+
+/// The last height `scenario` looks at as planned: each step's fire height with its wait and its
+/// check's window.
+pub fn last_height(scenario: &super::format::Scenario, round_length: u32) -> Result<u32> {
+    let fires = super::compile::fire_heights(scenario, round_length)?;
+    let reach = |(step, fire): (&Step, &u32)| {
+        let window = step.check.as_ref().and_then(|c| c.within_blocks).unwrap_or(0);
+        let wait = match step.action {
+            Some(Action::Wait) => step.blocks.unwrap_or(0),
+            Some(Action::Submit) => 1,
+            _ => 0,
+        };
+        fire.saturating_add(wait).saturating_add(window)
+    };
+    Ok(scenario.steps.iter().zip(&fires).map(reach).max().unwrap_or(0))
+}
+
 /// Where the network was when a step fired or is now: the tip's height and slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Seen {
@@ -79,6 +98,15 @@ impl<'a> Runner<'a> {
             .iter()
             .any(|s| s.at.slot.is_some() || s.at.slots_after.is_some());
         let chain = Chain::new(scenario)?;
+        let last = last_height(scenario, chain.round_length)?;
+        let most = MAX_ROUNDS.saturating_mul(chain.round_length);
+        if last > most {
+            return Err(crate::Error::Usage(format!(
+                "{} looks at height {last}, past the {MAX_ROUNDS} rounds ({most} blocks) a test \
+                 network runs",
+                scenario.id
+            )));
+        }
         backend
             .rules(&chain.crypto)
             .map_err(|e| crate::Error::Fixture(e.to_string()))?;
