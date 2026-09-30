@@ -66,8 +66,8 @@ pub use crate::filters::{
 };
 pub use crate::history::blocks_list::{CountFlag, ListedBlock};
 pub use crate::history::download::DownloadBlockRow;
-pub use crate::history::fees::FeeStatisticsRow;
-pub use crate::history::productivity::ProductivityRow;
+pub use crate::history::fees::{FeeStatisticsRow, avg_int8, round_div};
+pub use crate::history::productivity::{ProductivityRow, hundredths, round2};
 pub use crate::history::totals::BurnedTotals;
 pub use crate::history::{BlockSelector, Direction, Listing, Order, Page, TransactionRecord};
 pub use crate::integrity::{IntegrityProblem, IntegrityReport};

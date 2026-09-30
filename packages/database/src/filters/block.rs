@@ -3,6 +3,8 @@
 //! reference's `LIKE 'id%'`; the numeric keys take a value or a range.
 
 use super::Numeric;
+use super::sql::{Condition, keys};
+use crate::errors::DatabaseError;
 
 /// One criteria of the reference's block criteria. An empty list is a key the criteria does not
 /// give.
@@ -54,5 +56,35 @@ impl BlockFilter {
         BlockFilter {
             groups: vec![vec![criteria]],
         }
+    }
+}
+
+impl BlockFilter {
+    /// The filter as an SQL condition on `blocks`, with its parameters.
+    pub(crate) fn condition(&self) -> Result<Condition, DatabaseError> {
+        Condition::groups(&self.groups, |condition, criteria| criteria.sql(condition))
+    }
+}
+
+impl BlockCriteria {
+    /// Every key the criteria gives, each holding when one of its values does.
+    fn sql(&self, c: &mut Condition) -> Result<String, DatabaseError> {
+        Ok(keys(vec![
+            self.id.iter().map(|prefix| c.id_prefix(prefix)).collect(),
+            c.integers("version", &self.version)?,
+            c.numerics("timestamp", &self.timestamp)?,
+            c.texts("previous_block", &self.previous_block),
+            c.numerics("height", &self.height)?,
+            c.numerics("number_of_transactions", &self.number_of_transactions)?,
+            c.numerics("total_amount", &self.total_amount)?,
+            c.numerics("total_fee", &self.total_fee)?,
+            c.numerics("burned_fee", &self.burned_fee)?,
+            c.numerics("reward", &self.reward)?,
+            c.numerics("payload_length", &self.payload_length)?,
+            c.texts("payload_hash", &self.payload_hash),
+            c.texts("generator_public_key", &self.generator_public_key),
+            c.texts("username", &self.username),
+            c.texts("block_signature", &self.block_signature),
+        ]))
     }
 }
