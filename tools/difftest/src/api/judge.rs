@@ -8,9 +8,9 @@
 //! holds each node's own peers, not at all); and bodies equal after the projections:
 //!
 //! - `confirmations` is left out everywhere, `/node/status`'s `timestamp` and `blocksCount`,
-//!   `/node/syncing`'s `blocks`, `/node/configuration`'s `core.version` and a wallet's
-//!   `attributes.delegate.version`: each depends on the time, the node's build or its own view of
-//!   the network, not on the chain; a wallet's `attributes` are compared without their key order,
+//!   `/node/syncing`'s `blocks`, `/node/configuration`'s `core.version`, `/api.json`'s
+//!   `info.version` and a wallet's `attributes.delegate.version`: each depends on the time, the
+//!   node's build or its own view of the network, not on the chain; a wallet's `attributes` are compared without their key order,
 //!   which follows the node's history (a state rebuilt at a restart orders them otherwise); the
 //!   routes that list wallets (`/wallets`, `/wallets/top`, a delegate's voters) project each
 //!   wallet as `/wallets/{id}` does;
@@ -34,6 +34,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use heartwood_api::RouteId;
+use heartwood_api::resources::fee_statistics::REGISTERED;
 use heartwood_api::schemas::parse_query;
 use serde_json::Value;
 
@@ -126,7 +127,13 @@ pub fn outcome(line: &Recorded) -> Outcome {
     let headers_differ = !header_differences.iter().all(follows_status);
     differences.extend(header_differences);
     if ls == rs {
-        differences.extend(bodies(route, *rs, lb, rb));
+        match request.filter(|r| is_spec(&r.path)) {
+            Some(_) => {
+                let (left, right) = (spec_projection(lb), spec_projection(rb));
+                differences.extend(compare::diff(&right, &left));
+            }
+            None => differences.extend(bodies(route, *rs, lb, rb)),
+        }
     }
     if differences.is_empty() {
         return Outcome::Pass;
@@ -509,14 +516,15 @@ fn documented(
                 .then(|| ApiDifference::EstimatedCount.reason())
         }
         "feeTypes" => {
-            // Heartwood's types are the reference's, with the same values; the reference's others
-            // hold zeros only.
+            // Heartwood's types are kept types, each with the reference's values; the reference's
+            // others hold zeros only; and without `days`, where the reference lists every
+            // registered type, Heartwood lists every kept one.
             let (ours, theirs) = (left["data"].as_object()?, right["data"].as_object()?);
             let kept = ours.iter().all(|(group, types)| {
                 let types = types.as_object().into_iter().flatten();
-                types
-                    .into_iter()
-                    .all(|(name, value)| &right["data"][group][name] == value)
+                types.into_iter().all(|(name, value)| {
+                    &right["data"][group][name] == value && is_kept(group, name)
+                })
             });
             let others = theirs.iter().all(|(group, types)| {
                 let types = types.as_object().into_iter().flatten();
@@ -524,28 +532,89 @@ fn documented(
                     ours.get(group).and_then(|g| g.get(name)).is_some() || zeros(value)
                 })
             });
+            let every = left["meta"].get("days").is_some()
+                || REGISTERED.iter().all(|kind| {
+                    let group = ours.get(&kind.type_group().to_string());
+                    group.and_then(|g| g.get(kind.key())).is_some()
+                });
             let meta = left["meta"] == right["meta"];
-            (left_status == 200 && right_status == 200 && meta && kept && others)
+            (left_status == 200 && right_status == 200 && meta && kept && others && every)
                 .then(|| ApiDifference::FeeTypes.reason())
         }
         "specKeptOnly" => {
-            // Heartwood's paths are some of the reference's, each the same; the rest of the
-            // document but its components is the same.
+            // Heartwood's paths are the reference's but the removed lock operations', each the
+            // same; its type and group lists are the kept types', which the reference's hold; and
+            // the rest of the document is the same, apart from the version ([`spec_projection`]).
             let (ours, theirs) = (left["paths"].as_object()?, right["paths"].as_object()?);
             let kept = ours
                 .iter()
                 .all(|(path, item)| theirs.get(path) == Some(item));
+            let removed: Vec<&str> = (theirs.keys())
+                .filter(|path| !ours.contains_key(*path))
+                .map(String::as_str)
+                .collect();
+            let listed = |body: &Value, name: &str| -> Option<Vec<u64>> {
+                let list = body["components"]["schemas"][name]["enum"].as_array()?;
+                list.iter().map(Value::as_u64).collect()
+            };
+            let kept_list = |name: &str, kept: Vec<u64>| {
+                let (Some(mut ours), Some(theirs)) = (listed(left, name), listed(right, name))
+                else {
+                    return false;
+                };
+                ours.sort_unstable();
+                ours == kept && kept.iter().all(|value| theirs.contains(value))
+            };
+            let set = |values: &mut Vec<u64>| {
+                values.sort_unstable();
+                values.dedup();
+                std::mem::take(values)
+            };
+            let types = set(&mut REGISTERED.map(|kind| u64::from(kind.type_id())).to_vec());
+            let groups = set(&mut REGISTERED.map(|kind| u64::from(kind.type_group())).to_vec());
             let rest = |body: &Value| {
-                let mut body = body.clone();
+                let mut body = spec_projection(body);
                 remove(&mut body, &["paths"]);
-                remove(&mut body, &["components"]);
+                for list in ["transactionTypes", "transactionTypeGroups"] {
+                    remove(&mut body, &["components", "schemas", list, "enum"]);
+                }
                 body
             };
-            (left_status == 200 && right_status == 200 && kept && rest(left) == rest(right))
-                .then(|| ApiDifference::SpecKeptOnly.reason())
+            (left_status == 200
+                && right_status == 200
+                && kept
+                && removed == REMOVED_PATHS
+                && kept_list("transactionTypes", types)
+                && kept_list("transactionTypeGroups", groups)
+                && rest(left) == rest(right))
+            .then(|| ApiDifference::SpecKeptOnly.reason())
         }
         _ => None,
     }
+}
+
+/// The paths of the reference's document that Heartwood's leaves out, in the document's order: the
+/// lock (HTLC) operations, whose transaction types are removed.
+const REMOVED_PATHS: [&str; 3] = ["/locks", "/locks/{id}", "/locks/unlocked"];
+
+/// Whether `name` in type group `group` is a type Heartwood carries.
+fn is_kept(group: &str, name: &str) -> bool {
+    REGISTERED
+        .iter()
+        .any(|kind| kind.type_group().to_string() == group && kind.key() == name)
+}
+
+/// The OpenAPI document without its `info.version`, which names the node's build, as
+/// `/node/configuration`'s `core.version` does.
+fn spec_projection(body: &Value) -> Value {
+    let mut body = body.clone();
+    remove(&mut body, &["info", "version"]);
+    body
+}
+
+/// Whether a request of `path` asks for the OpenAPI document.
+fn is_spec(path: &str) -> bool {
+    path.strip_suffix('/').unwrap_or(path) == "/api.json"
 }
 
 /// The order of a round's stored rows: votes descending, then the public key.
@@ -668,44 +737,111 @@ mod tests {
         let other = json!({"meta": {"count": 1, "totalCount": 9, "pageCount": 9,
             "totalCountIsEstimate": true}, "data": [b]});
         assert!(estimated(counted(3), other).is_failure());
-        // The fee statistics: the reference's extra types hold zeros only.
-        let zero = json!({"avg": "0", "burned": "0", "max": "0", "min": "0", "sum": "0"});
-        let paid = json!({"avg": "5", "burned": "1", "max": "9", "min": "1", "sum": "10"});
-        let fees = |l: Value, r: Value| {
-            outcome(&case(
-                "/api/node/fees",
-                "feeTypes",
-                answer(200, json!({"meta": {}, "data": l})),
-                answer(200, json!({"meta": {}, "data": r})),
-            ))
-        };
-        let types = ApiDifference::FeeTypes;
-        let ours = json!({"1": {"transfer": paid}});
-        assert!(is(
-            &fees(
-                ours.clone(),
-                json!({"1": {"transfer": paid, "htlcLock": zero}})
-            ),
-            types
-        ));
-        assert!(fees(ours, json!({"1": {"transfer": paid, "htlcLock": paid}})).is_failure());
-        // The document: Heartwood's paths are some of the reference's.
-        let spec = |paths: Value| json!({"openapi": "3.0.0", "paths": paths, "components": {}});
-        let documents = |l: Value, r: Value| {
+    }
+
+    /// A document as `/api.json` answers it: `paths`, the type and group lists, a version.
+    fn document(paths: &[&str], types: &[u64], groups: &[u64], version: &str) -> Value {
+        let paths: serde_json::Map<String, Value> = (paths.iter())
+            .map(|path| ((*path).to_owned(), json!({"get": {"summary": path}})))
+            .collect();
+        json!({
+            "openapi": "3.0.0",
+            "info": {"title": "API", "version": version},
+            "paths": paths,
+            "components": {"schemas": {
+                "address": {"pattern": "^[D][a-km-zA-HJ-NP-Z1-9]{33}$"},
+                "transactionTypes": {"enum": types},
+                "transactionTypeGroups": {"enum": groups},
+            }},
+        })
+    }
+
+    #[test]
+    fn the_document_differs_only_by_the_removed_routes_and_types() {
+        let judged = |ours: Value, theirs: Value| {
             outcome(&case(
                 "/api.json",
                 "specKeptOnly",
-                answer(200, l),
-                answer(200, r),
+                answer(200, ours),
+                answer(200, theirs),
             ))
         };
         let kept = ApiDifference::SpecKeptOnly;
-        let both = json!({"/blocks": {"get": {}}, "/locks": {"get": {}}});
-        assert!(is(
-            &documents(spec(json!({"/blocks": {"get": {}}})), spec(both.clone())),
-            kept
-        ));
-        assert!(documents(spec(json!({"/votes": {"get": {}}})), spec(both)).is_failure());
+        let locks = ["/locks", "/locks/{id}", "/locks/unlocked"];
+        let all: Vec<&str> = ["/blocks", "/votes"].into_iter().chain(locks).collect();
+        let theirs = document(&all, &[0, 1, 2, 3, 6, 7, 8], &[1, 2], "4.3.1");
+        let ours = document(
+            &["/blocks", "/votes"],
+            &[1, 2, 6, 7, 0],
+            &[1, 2],
+            "4.3.1-heartwood.0.1.0",
+        );
+        assert!(is(&judged(ours.clone(), theirs.clone()), kept));
+        // The version names each node's build: alone, it is no difference.
+        let mut same = theirs.clone();
+        same["info"]["version"] = json!("4.3.1-heartwood.0.1.0");
+        assert_eq!(judged(same, theirs.clone()), Outcome::Pass);
+        // A served route left out, or a document without paths.
+        let fewer = document(&["/blocks"], &[1, 2, 6, 7, 0], &[1, 2], "4.3.1");
+        assert!(judged(fewer, theirs.clone()).is_failure());
+        let none = document(&[], &[1, 2, 6, 7, 0], &[1, 2], "4.3.1");
+        assert!(judged(none, theirs.clone()).is_failure());
+        // A component patched otherwise, or a type list that is not the kept types.
+        let mut pattern = ours.clone();
+        pattern["components"]["schemas"]["address"]["pattern"] = json!("^[a][1-9]{33}$");
+        assert!(judged(pattern, theirs.clone()).is_failure());
+        let removed_type = document(
+            &["/blocks", "/votes"],
+            &[1, 2, 6, 7, 0, 8],
+            &[1, 2],
+            "4.3.1",
+        );
+        assert!(judged(removed_type, theirs.clone()).is_failure());
+        let missing_type = document(&["/blocks", "/votes"], &[1, 2, 6, 0], &[1, 2], "4.3.1");
+        assert!(judged(missing_type, theirs).is_failure());
+    }
+
+    #[test]
+    fn the_fee_statistics_without_days_list_every_kept_type() {
+        let zero = json!({"avg": "0", "burned": "0", "max": "0", "min": "0", "sum": "0"});
+        let paid = json!({"avg": "5", "burned": "1", "max": "9", "min": "1", "sum": "10"});
+        let fees = |ours: Value, theirs: Value, meta: Value| {
+            outcome(&case(
+                "/api/node/fees",
+                "feeTypes",
+                answer(200, json!({"meta": meta, "data": ours})),
+                answer(200, json!({"meta": meta, "data": theirs})),
+            ))
+        };
+        let types = ApiDifference::FeeTypes;
+        let kept = json!({
+            "1": {"secondSignature": zero, "delegateRegistration": zero, "transfer": paid,
+                  "delegateResignation": zero},
+            "2": {"burn": zero, "vote": zero},
+        });
+        let mut theirs = kept.clone();
+        theirs["1"]["htlcLock"] = zero.clone();
+        assert!(is(&fees(kept.clone(), theirs.clone(), json!({})), types));
+        // A kept type left out, though its row holds zeros only.
+        let mut fewer = kept.clone();
+        fewer["2"]
+            .as_object_mut()
+            .map(|group| group.shift_remove("vote"));
+        assert!(fees(fewer.clone(), theirs.clone(), json!({})).is_failure());
+        // A removed type listed, with the reference's zeros, beside another it leaves out.
+        let mut extra = theirs.clone();
+        theirs["1"]["ipfs"] = zero;
+        assert!(fees(extra.clone(), theirs.clone(), json!({})).is_failure());
+        extra["1"]["ipfs"] = theirs["1"]["ipfs"].clone();
+        assert_eq!(fees(extra, theirs, json!({})), Outcome::Pass);
+        // With days, a type without transactions is listed by neither.
+        let mut windowed = fewer.clone();
+        windowed["1"]["transfer"] = paid.clone();
+        let mut both = fewer;
+        both["1"]["transfer"] = paid;
+        both["1"]["htlcLock"] =
+            json!({"avg": "0", "burned": "0", "max": "0", "min": "0", "sum": "0"});
+        assert!(is(&fees(windowed, both, json!({"days": 7})), types));
     }
 
     #[test]
