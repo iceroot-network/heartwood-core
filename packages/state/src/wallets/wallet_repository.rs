@@ -7,11 +7,17 @@
 //! exist yet; a created wallet that stays empty is invisible to the rules and to the state digest.
 //!
 //! The public key and the delegate record of a wallet change only through the repository, which
-//! keeps its [`Indexes`] in step with them.
+//! keeps its [`Indexes`] in step with them, in the reference's orders: a wallet created by a
+//! lookup is set in the address index, and binding a key or registering a name re-indexes the
+//! wallet, as the reference's handlers do. After each transaction a block applies or reverts, its
+//! sender and its recipients are re-indexed at the end of the block, as the reference's handlers
+//! defer it.
 
 use std::sync::Arc;
 
+use heartwood_crypto::Transaction;
 use heartwood_crypto::identities::{Address, PublicKey, PublicKeyBytes};
+use heartwood_crypto::transactions::Asset;
 use indexmap::IndexMap;
 
 use crate::errors::WalletError;
@@ -91,8 +97,10 @@ impl WalletRepository {
             .and_then(|address| self.find_by_address(address))
     }
 
-    /// The wallet at `address`, created empty if it does not exist, to change it.
+    /// The wallet at `address`, created empty if it does not exist, to change it. An address that
+    /// is not in the address index is set there, as the reference's lookup creates its wallet.
     pub fn get_or_create(&mut self, address: &Address) -> &mut Wallet {
+        self.indexes.set_address(*address);
         let entry = self
             .wallets
             .entry(*address)
@@ -118,11 +126,12 @@ impl WalletRepository {
             .ok_or(WalletError::UnknownWallet { address })
     }
 
-    /// Bind `public_key` to the wallet at `address` (created if needed) and index it.
+    /// Bind `public_key` to the wallet at `address` (created if needed) and re-index the wallet.
     pub fn bind_public_key(&mut self, address: &Address, public_key: PublicKey) {
         self.indexes
             .set_public_key(public_key.to_compressed(), *address);
         self.get_or_create(address).set_public_key(Some(public_key));
+        self.reindex(address);
     }
 
     /// Forget the public key of the wallet at `address` and its index entry.
@@ -154,6 +163,7 @@ impl WalletRepository {
             self.indexes.forget_username(previous.username());
         }
         self.indexes.set_username(username, *address);
+        self.reindex(address);
         self.get_or_create(address)
             .delegate_mut()
             .ok_or(WalletError::NotADelegate { address: *address })
@@ -179,10 +189,11 @@ impl WalletRepository {
             .filter_map(|(_, address)| self.find_by_address(address))
     }
 
-    /// Every wallet in the reference's address index order: the order the addresses were first
-    /// used.
+    /// Every wallet in the reference's address index order (see [`Indexes::addresses_in_order`]).
     pub fn by_address_index(&self) -> impl Iterator<Item = &Wallet> {
-        self.iter()
+        self.indexes
+            .addresses_in_order()
+            .filter_map(|address| self.find_by_address(address))
     }
 
     /// Every wallet with a public key, in the reference's public-key index order.
@@ -198,13 +209,44 @@ impl WalletRepository {
             .usernames_in_order()
             .filter_map(|(_, address)| self.find_by_address(address))
     }
+
+    /// Re-index the wallet at `address`, if it exists (see the module documentation).
+    pub(crate) fn reindex(&mut self, address: &Address) {
+        if let Some(wallet) = self.wallets.get(address) {
+            self.indexes.reindex(wallet);
+        }
+    }
+
+    /// Queue the sender and the recipients of `transaction`, which a block just applied or
+    /// reverted, for a re-index at the end of the block.
+    pub(crate) fn defer_reindex(&mut self, transaction: &Transaction) {
+        let data = transaction.data();
+        let sender = Address::from_public_key(&data.sender_public_key, self.network);
+        self.indexes.defer(sender);
+        if let Asset::Transfer { transfers } = &data.asset {
+            for item in transfers {
+                self.indexes.defer(item.recipient);
+            }
+        }
+    }
+
+    /// Re-index the queued wallets that are in the address index, in the order they were queued,
+    /// as the reference's handlers do after a block.
+    pub(crate) fn reindex_deferred(&mut self) {
+        for address in self.indexes.take_deferred() {
+            if self.indexes.has_address(&address) {
+                self.reindex(&address);
+            }
+        }
+    }
 }
 
 /// The repository read back from the store, and what changed since the last commit.
 impl WalletRepository {
     /// The repository of `wallets`, in their order, on the network with address byte `network`,
-    /// with the public-key and username indexes built again. Refused when two wallets hold the
-    /// same key or the same name.
+    /// with the indexes built again in that one order, as the reference's saved-state loader
+    /// re-indexes each wallet it reads. Refused when two wallets hold the same key or the same
+    /// name.
     pub fn from_wallets(
         network: u8,
         wallets: Vec<Wallet>,
@@ -224,6 +266,7 @@ impl WalletRepository {
                 }
                 (repository.indexes).set_username(delegate.username().into(), address);
             }
+            repository.indexes.reindex(&wallet);
             let held = repository.wallets.insert(address, Arc::new(wallet));
             if held.is_some() {
                 return Err(bad("wallet", format!("{address} is held twice")));

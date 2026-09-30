@@ -183,6 +183,9 @@ impl State {
             .revert_block(&mut self.wallets, height, undo.round.clone())
             .map_err(RevertError::from)
             .and_then(|()| {
+                if undo.round.is_some() {
+                    defer_round_reindex(&mut self.wallets, &self.journal, &undo, milestones);
+                }
                 block_state::revert_block(
                     &mut self.wallets,
                     self.store.totals_mut(),
@@ -384,4 +387,25 @@ fn check_vote_balances(wallets: &WalletRepository) -> Result<(), RestoreError> {
     }
     let unknown = sums.into_keys().next();
     unknown.map_or(Ok(()), |name| Err(wrong(name)))
+}
+
+/// Queue for a re-index the senders and recipients of the round that `undo`'s block ended, from
+/// that block back to the round's first block, each block's transactions in reverse order: the
+/// reference reverts them on a copy of the wallets to rank the round again, and its handlers
+/// re-index the state's wallets as they go (see [`crate::wallets::indexes`]).
+fn defer_round_reindex(
+    wallets: &mut WalletRepository,
+    journal: &[BlockUndo],
+    undo: &BlockUndo,
+    milestones: &Milestones,
+) {
+    let first = calculate_round(undo.block.height(), milestones).round_height;
+    let earlier = journal.iter().rev();
+    let round =
+        std::iter::once(undo).chain(earlier.take_while(|e| u64::from(e.block.height()) >= first));
+    for block in round.map(|undo| &undo.block) {
+        for transaction in block.transactions().iter().rev() {
+            wallets.defer_reindex(transaction);
+        }
+    }
 }
