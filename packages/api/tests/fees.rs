@@ -218,7 +218,11 @@ async fn fees_over_the_chain(query: Value, now_ms: i64) -> Value {
 fn expected(fees: &[u64]) -> Value {
     let count = u128::try_from(fees.len()).unwrap();
     let sum: u128 = fees.iter().copied().map(u128::from).sum();
-    let avg = if count == 0 { 0 } else { (2 * sum + count) / (2 * count) };
+    let avg = if count == 0 {
+        0
+    } else {
+        (2 * sum + count) / (2 * count)
+    };
     json!({
         "avg": avg.to_string(),
         "max": fees.iter().max().copied().unwrap_or(0).to_string(),
@@ -256,9 +260,7 @@ fn fees_from(start: i64) -> Value {
             .iter()
             .find(|kind| kind.type_group() == group && kind.type_id() == id)
             .unwrap();
-        let types = data
-            .entry(group.to_string())
-            .or_insert_with(|| json!({}));
+        let types = data.entry(group.to_string()).or_insert_with(|| json!({}));
         types
             .as_object_mut()
             .unwrap()

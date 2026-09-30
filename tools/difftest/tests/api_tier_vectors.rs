@@ -52,7 +52,11 @@ fn minimums() -> Vec<(String, usize)> {
             (op.clone(), fewest)
         })
         .collect();
-    assert!(!minimums.is_empty(), "{} lists no operation of {CLASS}", path.display());
+    assert!(
+        !minimums.is_empty(),
+        "{} lists no operation of {CLASS}",
+        path.display()
+    );
     minimums
 }
 
