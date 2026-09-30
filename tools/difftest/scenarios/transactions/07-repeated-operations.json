@@ -18,7 +18,7 @@
      ]},
     {"name": "votes again after the block", "at": {"afterBlocks": 2}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["vote-other-later"], "invalid": ["vote-again-later"], "codes": {"vote-again-later": "ERR_APPLY"}},
      "txs": [
-       {"ref": "vote-again-later", "type": "vote", "from": "voter-a", "nonce": 2, "asset": {"votes": [["genesis_20", 100]]}},
+       {"ref": "vote-again-later", "type": "vote", "from": "voter-a", "nonce": 2, "fee": "20000000", "asset": {"votes": [["genesis_20", 100]]}},
        {"ref": "vote-other-later", "type": "vote", "from": "voter-a", "nonce": 2, "asset": {"votes": [["genesis_21", 100]]}}
      ]},
     {"name": "registers twice in one block", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["register-first"], "invalid": ["register-again-same-block", "register-name-same-block"], "codes": {"register-again-same-block": "ERR_APPLY", "register-name-same-block": "ERR_APPLY"}},
@@ -43,7 +43,7 @@
      ]},
     {"name": "resigns again after the block", "at": {"afterBlocks": 2}, "do": "submit", "node": 1, "via": "api", "check": {"invalid": ["resign-again-later"], "codes": {"resign-again-later": "ERR_APPLY"}},
      "txs": [
-       {"ref": "resign-again-later", "type": "delegateResignation", "from": "resigner", "nonce": 3, "asset": {"resignationType": 0}}
+       {"ref": "resign-again-later", "type": "delegateResignation", "from": "resigner", "nonce": 3, "fee": "1", "asset": {"resignationType": 0}}
      ]},
     {"name": "what was kept", "at": {"afterBlocks": 2}, "check": {"forged": ["vote-first", "vote-other-later", "register-first", "resigner-registers", "resign-first"], "absent": ["vote-again-same-block", "vote-again-later", "register-again-same-block", "register-name-same-block", "register-again-later", "register-name-later", "resign-again-same-block", "resign-again-later"], "digest": true}}
   ]

@@ -18,7 +18,7 @@
      ]},
     {"name": "a third once the first is in a block", "at": {"afterBlocks": 2}, "do": "submit", "node": 1, "via": "api", "check": {"invalid": ["spend-third"], "codes": {"spend-third": "ERR_APPLY"}},
      "txs": [
-       {"ref": "spend-third", "type": "transfer", "from": "spender", "nonce": 2, "to": [["payee", "60000000000"]]}
+       {"ref": "spend-third", "type": "transfer", "from": "spender", "nonce": 2, "to": [["payee", "60000000001"]]}
      ]},
     {"name": "a nonce used twice", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["nonce-first"], "invalid": ["nonce-reused"], "codes": {"nonce-reused": "ERR_APPLY"}},
      "txs": [
@@ -36,7 +36,7 @@
     {"name": "the nonce in order, then a gap", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["gap-first"], "invalid": ["gap-near"], "codes": {"gap-near": "ERR_APPLY"}},
      "txs": [
        {"ref": "gap-first", "type": "transfer", "from": "gap-user", "nonce": 1, "to": [["payee", "100000000"]]},
-       {"ref": "gap-near", "type": "transfer", "from": "gap-user", "nonce": 3, "to": [["payee", "100000000"]]}
+       {"ref": "gap-near", "type": "transfer", "from": "gap-user", "nonce": 3, "to": [["payee", "100000001"]]}
      ]},
     {"name": "the missing nonce", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["gap-second"]},
      "txs": [
