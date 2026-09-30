@@ -5,9 +5,10 @@
 //! [`Readable::new`] refuses a path that is not absolute, that has a `.` or `..` component, whose
 //! file name is on [`KEY_FILE_NAMES`] in any letter case, or that is outside [`ReadableRoots`]:
 //! the instance's five directories and exactly two files the firewall and clock checks read. The
-//! fixed files of `/proc` and `/sys` are read through [`ProcFile`] alone, never as a `Readable`. A name check alone can be beaten by a link with an innocent name, so [`HostFs`]
-//! opens every file with `O_NOFOLLOW`, takes the open descriptor's device and inode, and closes it
-//! unread when they are a key file's ([`FsError::KeyFile`]).
+//! fixed files of `/proc` and `/sys` are read through [`ProcFile`] alone, never as a `Readable`.
+//! A name check alone can be beaten by a link with an innocent name, so [`HostFs`] opens every
+//! file with `O_NOFOLLOW`, takes the open descriptor's device and inode, and closes it unread when
+//! they are a key file's ([`FsError::KeyFile`]).
 
 use std::ffi::OsString;
 use std::fs::{File, Metadata, OpenOptions};
