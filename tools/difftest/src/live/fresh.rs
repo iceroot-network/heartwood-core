@@ -35,7 +35,8 @@ pub(super) struct Expected {
 }
 
 /// The rows of the serving chain: the corpus's reference rows when it has them, else the rows of
-/// the serving relay's store.
+/// the serving relay's store. The reference rows are the control's archive's when the corpus was
+/// imported from one, else the judge's over the control's block file (a Heartwood control).
 pub(super) fn expected(
     run: &MixedRun<'_>,
     serving: &str,
@@ -49,11 +50,20 @@ pub(super) fn expected(
             refused,
             ..
         } = rows_of(dir)?;
+        let archived = std::fs::read(dir.join("corpus.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .is_some_and(|meta| meta.get("archives").is_some());
+        let control = &run.manifest.control;
         return Ok(Expected {
             rounds,
             missed,
             refused,
-            from: "node 1's archive".to_owned(),
+            from: if archived {
+                format!("{control}'s archive")
+            } else {
+                format!("the judge's rows over {control}'s block file")
+            },
         });
     }
     let data = run.run_dir.join("nodes").join(serving).join("data");
