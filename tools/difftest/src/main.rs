@@ -338,6 +338,37 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             print!("{report}");
             Ok(verdict(&report, strict))
         }
+        Command::LiveResources { dir } => {
+            let report = live::resources::report(&dir)?;
+            print!("{report}");
+            Ok(verdict(&report, strict))
+        }
+        Command::ScenarioCompile(args) => {
+            let oracle = args.oracle.resolve(|name: &str| std::env::var(name).ok())?;
+            let scenario = heartwood_difftest::scenario::load(&args.file)?;
+            let compiled = heartwood_difftest::scenario::compile(&scenario, &oracle)?;
+            let text = serde_json::to_string_pretty(&compiled)
+                .map_err(|e| Error::Usage(format!("the compiled scenario: {e}")))?;
+            match &args.out {
+                Some(out) => std::fs::write(out, text + "\n").map_err(|e| Error::Io {
+                    path: out.clone(),
+                    source: e,
+                })?,
+                None => println!("{text}"),
+            }
+            Ok(true)
+        }
+        Command::ScenarioRun(args) => {
+            let report = heartwood_difftest::scenario::run_command(&args)?;
+            print!("{report}");
+            Ok(verdict(&report, strict))
+        }
+        Command::ScenarioCompare { dir, suite } => {
+            let report = heartwood_difftest::scenario::compare(&dir, suite.as_deref())?;
+            print!("{report}");
+            Ok(verdict(&report, strict))
+        }
+        Command::Gate(args) => heartwood_difftest::gate::run(&args),
         Command::LockstepMake(args) => {
             let made = heartwood_difftest::lockstep::run(&args)?;
             println!(

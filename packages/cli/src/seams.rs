@@ -31,17 +31,34 @@ pub enum Role {
     Relay,
     /// The forger: the delegates' keys, driven by its relays.
     Forger,
+    /// The combined role: a relay and its forger in one process, which holds the relay's and the
+    /// forger's locks of its token and network besides its own ([`Role::also_locks`]), so that
+    /// neither split role starts beside it.
+    Core,
 }
 
 impl Role {
-    /// Every role, relays first, as a devnet starts them.
+    /// The split roles, relays first, as a devnet starts them and the doctor judges them.
     pub const ALL: [Role; 2] = [Role::Relay, Role::Forger];
+
+    /// Every role a supervisor runs: the split roles, then the combined one.
+    pub const SUPERVISED: [Role; 3] = [Role::Relay, Role::Forger, Role::Core];
 
     /// The role's name in commands and file names.
     pub const fn name(self) -> &'static str {
         match self {
             Role::Relay => "relay",
             Role::Forger => "forger",
+            Role::Core => "core",
+        }
+    }
+
+    /// The other roles whose locks a node of this role holds while it runs, beside its own: the
+    /// relay's and the forger's for `core`, none for a split role.
+    pub const fn also_locks(self) -> &'static [Role] {
+        match self {
+            Role::Core => &[Role::Relay, Role::Forger],
+            Role::Relay | Role::Forger => &[],
         }
     }
 }
@@ -56,18 +73,18 @@ impl FromStr for Role {
     type Err = String;
 
     fn from_str(text: &str) -> Result<Role, String> {
-        Role::ALL
+        Role::SUPERVISED
             .into_iter()
             .find(|role| role.name() == text)
-            .ok_or_else(|| format!("unknown role {text:?}: relay or forger"))
+            .ok_or_else(|| format!("unknown role {text:?}: relay, forger or core"))
     }
 }
 
 /// One role of one node: its token, network and role, and its five directories.
 ///
 /// The files of an instance: under `<data>/run` (mode 0700) the role's lock `<role>.lock`, pid
-/// `<role>.pid`, supervisor lock `<role>.supervisor.lock` and supervisor state
-/// `<role>.state.json`; under `<log>` the node's log `<name>-current.log` and the supervisor's
+/// `<role>.pid`, supervisor lock `<role>.supervisor.lock`, supervisor state `<role>.state.json`
+/// and service-manager record `<role>.manager.json`; under `<log>` the node's log `<name>-current.log` and the supervisor's
 /// captures `<name>-out.log` and `<name>-error.log`, where `<name>` is [`Instance::name`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instance {
@@ -111,6 +128,12 @@ impl Instance {
     /// The supervisor's state file.
     pub fn state_path(&self) -> PathBuf {
         self.run_dir().join(format!("{}.state.json", self.role))
+    }
+
+    /// The service-manager record a start under a service manager writes
+    /// ([`crate::supervisor::manager`]).
+    pub fn manager_path(&self) -> PathBuf {
+        self.run_dir().join(format!("{}.manager.json", self.role))
     }
 
     /// The node's own log file.
@@ -391,7 +414,10 @@ mod tests {
     fn roles_and_statuses_have_their_names() {
         assert_eq!("relay".parse::<Role>(), Ok(Role::Relay));
         assert_eq!("forger".parse::<Role>(), Ok(Role::Forger));
-        assert!("core".parse::<Role>().is_err());
+        assert_eq!("core".parse::<Role>(), Ok(Role::Core));
+        assert!("node".parse::<Role>().is_err());
+        assert!(!Role::ALL.contains(&Role::Core));
+        assert_eq!(Role::Core.also_locks(), [Role::Relay, Role::Forger]);
         assert!(SupervisedStatus::Stopping.is_running());
         assert!(!SupervisedStatus::Errored.is_running());
         assert_eq!(

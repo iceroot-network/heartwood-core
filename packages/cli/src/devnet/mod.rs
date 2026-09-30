@@ -22,6 +22,10 @@
 //! - **[`reset`]** deletes a node's data, logs, temp and cache (the forger's signing record
 //!   stays); **[`wait`]** polls the relays' heights every 2 s; **[`logs`]** merges the nodes'
 //!   logs in time order with prefixes; **[`env()`]** gives a node's environment.
+//! - **The flags' shapes** (bodies to come): [`InitOptions::core`] (each validator one `core`
+//!   process instead of a relay and a forger), [`start_with`] ([`StartOptions`]: `--keep-epoch`,
+//!   `--no-wait`), [`status_json`] and [`resources`] (`status --json` and `--resources`), and
+//!   [`follow`] (`logs --follow`); [`run()`] (`devnet run`) execs the scenario runner.
 //! - **Guards.** A prefix outside 127.0.0.0/8, a listener address another process holds, a
 //!   network whose name is not `devnet` (or `devnet-...`) and a node `.env` that binds a
 //!   listener to an address that is not loopback are refused.
@@ -49,9 +53,15 @@ use crate::seams::{Instance, NodeApi, ProcessOps, Profile, Role, StatusRow};
 mod control;
 mod manifest;
 mod report;
+pub mod run;
 
-pub use crate::devnet::control::{reset, restart_node, start, start_node, stop, stop_node, wait};
-pub use crate::devnet::report::{LogStream, env, logs, status};
+pub use crate::devnet::control::{
+    StartOptions, reset, restart_node, start, start_node, start_with, stop, stop_node, wait,
+};
+pub use crate::devnet::report::{
+    LogStream, Resources, env, follow, logs, resources, status, status_json,
+};
+pub use crate::devnet::run::run;
 
 type Result<T, E = DevnetError> = std::result::Result<T, E>;
 
@@ -172,6 +182,9 @@ pub struct InitOptions {
     pub log_level: String,
     /// Replace a devnet the directory already holds, stopping its processes first.
     pub force: bool,
+    /// Run each validator as one `core` process (its relay and forger together) instead of a
+    /// relay and a forger.
+    pub core: bool,
 }
 
 impl Default for InitOptions {
@@ -188,6 +201,7 @@ impl Default for InitOptions {
             min_network_reach: 1,
             log_level: "info".to_owned(),
             force: false,
+            core: false,
         }
     }
 }
@@ -391,6 +405,9 @@ pub fn init(
     tools: &Tools<'_>,
 ) -> Result<Manifest> {
     let root = std::path::absolute(root).map_err(io(root))?;
+    if options.core {
+        return Err(DevnetError::NotBuilt("devnet init --core"));
+    }
     let [a, b, c] = options.address_prefix;
     if a != 127 {
         return Err(guard(format!("{a}.{b}.{c} is not a loopback prefix")));

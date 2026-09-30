@@ -53,19 +53,30 @@
 //! run `s`, the recovery commands, AwaitBlock, the processes, the records and the schedule. The
 //! baseline is the run `--compare` names, or [`COMPARE`]'s run beside this one.
 //!
+//! The forging runs ([`FORGING_RUNS`]: `mixed-short`, `mixed` and `mixed-split`, reference and
+//! Heartwood nodes forging side by side in rootless namespaces; `churn`, every churn event on
+//! Heartwood nodes; `core`, Heartwood nodes of the combined role) have the checks of their own
+//! module too (`mixed_forging` with the attestation's timing, `churn` with the resource
+//! rules, `core_run`), each run in a directory of its own (`<results>/<run>/<seed>`).
+//!
 //! Besides the report, the check writes every case with its outcome to `live-check.txt` in the run
 //! directory.
 
 mod attest;
+mod attestation;
 pub mod await_block;
 pub mod bans;
+mod churn;
+mod core_run;
 mod corpora;
 pub mod digest;
 pub mod forging;
 mod fresh;
 mod mixed;
+mod mixed_forging;
 mod nodes;
 mod recovery;
+pub mod resources;
 pub mod run;
 mod schedule;
 pub mod steps;
@@ -96,6 +107,9 @@ pub const LAG_LIMIT_SECONDS: f64 = 8.0;
 pub const COMPARE: &str = "COMPARE";
 /// The runs of reference nodes beside Heartwood relays, `w0` being their reference baseline.
 pub const MIXED_RUNS: [&str; 4] = ["w0", "w", "p", "s"];
+/// The forging runs: the mixed forging network's (`mixed-short`, `mixed`, `mixed-split`), the
+/// churn run and the core run.
+pub const FORGING_RUNS: [&str; 5] = ["mixed-short", "mixed", "mixed-split", "churn", "core"];
 
 /// What a live check reads besides the run directory.
 pub struct LiveOptions<'a> {
@@ -147,6 +161,36 @@ pub struct MixedRun<'a> {
     pub corpus_root: &'a Path,
     /// The oracle, asked for only when a check needs it.
     pub oracle: &'a dyn Fn() -> Result<Oracle>,
+}
+
+/// What the checks of a forging run ([`FORGING_RUNS`]) read.
+pub struct ForgingRun<'a> {
+    /// The run's directory.
+    pub run_dir: &'a Path,
+    /// Its `run.json`.
+    pub manifest: &'a Manifest,
+    /// Its fault windows.
+    pub windows: &'a [run::Window],
+    /// Where the run's corpora are imported and judged.
+    pub corpus_root: &'a Path,
+    /// The oracle, asked for only when a check needs it.
+    pub oracle: &'a dyn Fn() -> Result<Oracle>,
+}
+
+/// The checks of a forging run, by its content name.
+fn forging_checks(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
+    match run.manifest.run.as_str() {
+        "mixed-short" | "mixed" | "mixed-split" => {
+            mixed_forging::check(run, cases)?;
+            attestation::check(run, cases)
+        }
+        "churn" => {
+            churn::check(run, cases)?;
+            resources::check(run, cases)
+        }
+        "core" => core_run::check(run, cases),
+        _ => Ok(()),
+    }
 }
 
 /// The checks of a mixed run, in the report's order.
@@ -302,6 +346,16 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
             oracle: options.oracle,
         };
         mixed_checks(&mixed, &mut cases)?;
+    }
+    if FORGING_RUNS.contains(&manifest.run.as_str()) {
+        let forging = ForgingRun {
+            run_dir,
+            manifest: &manifest,
+            windows: &windows,
+            corpus_root: &options.corpus_root,
+            oracle: options.oracle,
+        };
+        forging_checks(&forging, &mut cases)?;
     }
     let report = Report {
         title: match (&manifest.relay_image, &manifest.relay_binary_sha256) {

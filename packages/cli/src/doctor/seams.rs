@@ -589,6 +589,8 @@ pub enum Subject {
     Relay,
     /// The forger.
     Forger,
+    /// The combined role, which no check judges yet.
+    Core,
 }
 
 impl Subject {
@@ -598,6 +600,7 @@ impl Subject {
             Subject::Host => "host",
             Subject::Relay => "relay",
             Subject::Forger => "forger",
+            Subject::Core => "core",
         }
     }
 }
@@ -607,6 +610,7 @@ pub const fn subject_of(role: Role) -> Subject {
     match role {
         Role::Relay => Subject::Relay,
         Role::Forger => Subject::Forger,
+        Role::Core => Subject::Core,
     }
 }
 

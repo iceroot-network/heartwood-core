@@ -32,6 +32,9 @@
 //! - [`levels`]: L0 to L4; L0, L1 and L2 run, L3 and L4 plug in with the node's processes.
 //! - [`lockstep`]: `difftest lockstep make`, chains forged by Heartwood while the reference
 //!   applies every block and judges every transaction beside it.
+//! - [`scenario`]: the scenario format, its compilation through the oracle and its runner with
+//!   its backends (`difftest scenario compile|run|compare`).
+//! - [`gate`]: the gate records, the cumulative ledger and the baseline record (`difftest gate`).
 //! - [`genesis`]: the devnet chain-definition driver (`difftest genesis`).
 //! - [`forger_kill`]: the forger's crash test (`difftest forger crash`).
 //! - [`network_generate`]: `heartwood network generate` against the genesis vectors.
@@ -51,6 +54,7 @@ pub mod digests;
 pub mod errors;
 pub mod fixture;
 pub mod forger_kill;
+pub mod gate;
 pub mod genesis;
 pub mod levels;
 pub mod live;
@@ -62,6 +66,7 @@ pub mod replay;
 pub mod report;
 pub mod restart;
 pub mod runtime_kill;
+pub mod scenario;
 pub mod service_rig;
 pub mod store;
 pub mod store_summary;

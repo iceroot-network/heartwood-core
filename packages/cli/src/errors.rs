@@ -102,6 +102,9 @@ pub enum ProcessError {
         /// Why.
         reason: String,
     },
+    /// A command that is not built yet.
+    #[error("{0} is not built yet")]
+    NotBuilt(&'static str),
 }
 
 /// `network generate` failed.
@@ -259,4 +262,7 @@ pub enum DevnetError {
         /// The system's error.
         message: String,
     },
+    /// A devnet command or flag that is not built yet.
+    #[error("{0} is not built yet")]
+    NotBuilt(&'static str),
 }

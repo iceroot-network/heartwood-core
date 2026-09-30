@@ -15,5 +15,10 @@
         "api.transactionSchemas": 1,
         "api.feeStatistics": 6,
         "api.productivityWindow": 60
+    },
+    "V35-operator": {
+        "env.stringify": 20,
+        "env.parseCli": 20,
+        "config.forgerKey": 0
     }
 }

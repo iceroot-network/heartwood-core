@@ -74,6 +74,34 @@ pub struct AwaitRecord {
     pub tip_after: u32,
 }
 
+/// A step of a status's attestation, as the status server saw it: the record of
+/// [`NodeServices::attestation_step`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AttestationStep {
+    /// A changed status was offered to the forger's session.
+    Offered,
+    /// The forger's verified signatures attached to it.
+    Signed {
+        /// The attestations attached.
+        attestations: usize,
+    },
+    /// A getStatus served it unsigned after the wait.
+    ServedUnsigned,
+}
+
+/// One step of a status's attestation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttestationRecord {
+    /// When, in milliseconds since the Unix epoch (UTC).
+    pub at_ms: i64,
+    /// The step.
+    pub step: AttestationStep,
+    /// The SHA-256 of the status's text, in hex, which names its offer.
+    pub status: String,
+    /// The status's slot.
+    pub slot: i64,
+}
+
 /// A collation of the pool for getUnconfirmedTransactions: the pool's size and the candidate
 /// transactions, serialised, in the collator's order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -212,6 +240,13 @@ pub trait NodeServices: Send + Sync {
     /// build, which appends the record to its start's file as one JSON line. Internal routes pass
     /// the step without a record.
     fn await_block_step(&self, record: &AwaitRecord) {
+        let _ = record;
+    }
+
+    /// A step of a status's attestation, as `record` says (an offer, its signatures' attachment,
+    /// a getStatus served unsigned after the wait): nothing, except in a harness build, which
+    /// appends the record to its start's file as one JSON line.
+    fn attestation_step(&self, record: &AttestationRecord) {
         let _ = record;
     }
 }

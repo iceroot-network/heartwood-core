@@ -256,7 +256,7 @@ async fn serve(
     ))));
     let first_start = restored.path == RestorePath::FirstStart;
     #[cfg(feature = "difftest")]
-    let (observer, record, await_record) =
+    let (observer, record, await_record, attestation_record) =
         crate::harness::files(&relay, run, &milestones, first_start).map_err(config)?;
     #[cfg(feature = "difftest")]
     let stall = (relay.env.get(crate::harness::DIR_VARIABLE))
@@ -337,6 +337,8 @@ async fn serve(
         record,
         #[cfg(feature = "difftest")]
         await_record,
+        #[cfg(feature = "difftest")]
+        attestation_record,
     };
     // A listener that cannot bind stops the relay, through the graceful shutdown.
     let (p2p, mut unbound) = match serve_p2p(p2p, Arc::new(services), peers, &links, clock).await {

@@ -10,9 +10,12 @@ use std::path::Path;
 use heartwood_crypto::utils::js;
 use heartwood_kernel::config::dot_env::{self, EnvValue};
 
+use serde_json::Value;
+
 use crate::devnet::manifest::io;
 use crate::devnet::{Consistency, DevnetStatus, Manifest, ManifestNode, NodeSelection};
 use crate::devnet::{NodeStatus, QUORUM, RelayView, Result, Tools};
+use crate::errors::DevnetError;
 use crate::seams::{ApiBlock, Env, Role, SupervisedStatus};
 
 /// The most bytes read from a log's end to find its last lines.
@@ -121,6 +124,47 @@ impl fmt::Display for DevnetStatus {
         )?;
         write!(f, "({QUORUM} needed)")
     }
+}
+
+/// The machine-readable form of [`status`] (`status --json`): every node's processes and API
+/// reads, the consistency, the counts compared and the delegates online.
+pub fn status_json(root: &Path, tools: &Tools<'_>) -> Result<Value> {
+    let _ = (root, tools);
+    Err(DevnetError::NotBuilt("devnet status --json"))
+}
+
+/// The resources of one process tree (a supervisor's node and its children), Linux only.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Resources {
+    /// Resident memory of the whole tree, in bytes.
+    pub rss: u64,
+    /// Proportional memory of the whole tree (`smaps_rollup`), in bytes, where readable.
+    pub pss: Option<u64>,
+    /// CPU time of the whole tree, user and system, in milliseconds.
+    pub cpu_ms: u64,
+    /// Bytes the tree has written (`/proc/<pid>/io`), where readable.
+    pub written: Option<u64>,
+}
+
+/// The resources of every running process of the devnet (`status --resources`), labelled
+/// `node<k>/<role>`, in node and role order.
+pub fn resources(root: &Path, tools: &Tools<'_>) -> Result<Vec<(String, Resources)>> {
+    let _ = (root, tools);
+    Err(DevnetError::NotBuilt("devnet status --resources"))
+}
+
+/// [`logs`], then follow the files as they grow (`logs --follow`), with the node and role
+/// prefixes, until `stop` answers true.
+pub fn follow(
+    root: &Path,
+    selection: &NodeSelection,
+    stream: LogStream,
+    lines: usize,
+    out: &mut dyn Write,
+    stop: &dyn Fn() -> bool,
+) -> Result<()> {
+    let _ = (root, selection, stream, lines, out, stop);
+    Err(DevnetError::NotBuilt("devnet logs --follow"))
 }
 
 /// Which log of each process [`logs`] reads.

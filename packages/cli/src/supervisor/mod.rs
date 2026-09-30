@@ -19,6 +19,7 @@
 //!   reaches it except through the supervisor.
 
 pub mod logs;
+pub mod manager;
 pub mod restart;
 pub mod signals;
 pub mod state;

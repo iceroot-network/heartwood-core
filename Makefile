@@ -20,6 +20,10 @@
 #                       a forging devnet's smoke test
 #   make lockstep       a chain forged by Heartwood while the reference applies every block beside it
 #   make fuzz-api replay-api   the API's query fuzz target, and its corpus through the oracle
+#   make scenario suites   the scenarios through the runner, and the scenario suites on devnets
+#   make live-resources api-compare   the forging runs' resource series, and their route answers
+#   make l1-long fuzz-long ledger-merge gate-s1   the long runs, the cumulative ledger and the
+#                       baseline record; with GATE_RECORDS set, every gate target writes its record
 #
 # Settings for this machine (SOLAR_REPO, LOCAL_SOLAR, TOOLCHAIN_ENV, ...) go in local.mk, which is
 # git-ignored, or on the command line: make e2e SOLAR_REPO=/path/to/solar-core-ref
@@ -56,6 +60,8 @@ VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12,V19,V22 kernel=V
                  p2p=V25,V26,V30,V31,V32 blockchain=V27,V33 api=V28 forger=V29
 # The API's listings (V34) go to the state, the API and the store, whose tests read each its kinds.
 VECTOR_CRATES += state=V34 api=V34 database=V34
+# The operator commands' files (V35) go to the CLI.
+VECTOR_CRATES += cli=V35
 # L1: cases per property, the generator's seed, the properties (P1 to P23 or their names, comma
 # separated; all when empty); L1_MIN_REACH, how often P13 must reach each reachable result of the
 # processor and each unchained status (when empty: 20 from 1,000 cases per property, else none);
@@ -119,11 +125,33 @@ need-image = $(if $(SHORT)$(filter-out heartwood-oracle:,$(IMAGE)),,$(error cann
 # Stops a corpus recipe without NAME.
 need-name = $(if $(NAME),,$(error set NAME, the corpus under CORPUS=$(CORPUS)))
 
+# The gate records. With GATE_RECORDS naming the records' directory (in local.mk, for the gates;
+# empty in development, where nothing is written), `$(gate)` before a gate target's command runs it
+# through tools/gate-record.sh, which then writes the target's record with `difftest gate record`:
+# the target and its variables, the head, the tested paths (GATE_TESTED; the criteria file
+# S1_CRITERIA narrows them where it names the command), the oracle image, the machine, the
+# command's exit status and its UTC start and end. It exits with the command's status, or 1 when
+# the record cannot be written. A long run (l1-long, fuzz-long) also writes its ledger entry into
+# LEDGER_DIR. The ledger and the baseline record read them (ledger-merge, gate-s1).
+GATE_RECORDS  ?=
+LEDGER_DIR    ?=
+S1_CRITERIA   ?=
+GATE_TESTED   ?= packages tools/difftest tools/oracle fuzz
+GATE_LEDGER   ?=
+gate-image = $(if $(filter --image%,$(ORACLE_ARGS)),$(IMAGE))
+gate = GATE_RECORDS='$(GATE_RECORDS)' GATE_TARGET='$@' GATE_VARIABLES='$(filter-out GATE_%,$(MAKEOVERRIDES))' \
+       GATE_IMAGE='$(gate-image)' GATE_TESTED='$(GATE_TESTED)' GATE_CRITERIA='$(S1_CRITERIA)' \
+       GATE_LEDGER="$${GATE_LEDGER:-$(GATE_LEDGER)}" LEDGER_DIR='$(LEDGER_DIR)' GATE_DIFFTEST='$(DIFFTEST)' tools/gate-record.sh
+need-records = $(if $(GATE_RECORDS),,$(error set GATE_RECORDS, the gate records' directory, in local.mk))
+need-ledger = $(if $(LEDGER_DIR),,$(error set LEDGER_DIR, the cumulative ledger's directory, in local.mk))
+need-criteria = $(if $(S1_CRITERIA),,$(error set S1_CRITERIA, the S1 gate's criteria file, in local.mk))
+
 .PHONY: help check build clippy fmt fmt-check test release-check oracle-context oracle-image \
         oracle-save vectors vectors-local vectors-diff vectors-install l0 ping test-oracle e2e \
         l1 corpus-import corpus-judge corpus-verify l2 l2-synthetic l2-restart crash-test pool-bench \
         layers lines lines-if-tokei l2-processor relay-binary relay-image live live-check api-compare doc \
-        test-integration rollback-replay p2p-compare await-report
+        test-integration rollback-replay p2p-compare await-report scenario suites live-resources \
+        l1-long fuzz-long ledger-merge gate-s1
 
 help: ## this list
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | awk -F'\t' '{ printf "  make %-15s %s\n", $$1, $$2 }'
@@ -282,7 +310,7 @@ vectors-install: vectors-diff ## copy the container run into each crate's tests/
 	done
 
 l0: build ## compare VECTORS/container with Heartwood's subjects
-	$(DIFFTEST) run l0 $(VECTORS)/container $(STRICT)
+	$(gate) $(DIFFTEST) run l0 $(VECTORS)/container $(STRICT)
 
 ping: build ## oracle-server.js answers, in the image and locally
 	$(need-image)
@@ -303,7 +331,7 @@ l1: build ## L1 properties against the oracle (ORACLE_ARGS): L1_CASES, L1_SEED, 
 	if [ -z "$$reach" ]; then if [ $(L1_CASES) -ge 1000 ]; then reach=20; else reach=0; fi; fi; \
 	if [ -z "$$decisions" ]; then if [ $(L1_CASES) -ge 10000 ]; then decisions=20; else decisions=0; fi; fi; \
 	if [ -z "$$served" ]; then if [ $(L1_CASES) -ge 10000 ]; then served=200; else served=0; fi; fi; \
-	$(DIFFTEST) run l1 $(if $(L1_PROPERTY),--property $(L1_PROPERTY)) --min-reach $$reach \
+	$(gate) $(DIFFTEST) run l1 $(if $(L1_PROPERTY),--property $(L1_PROPERTY)) --min-reach $$reach \
 	    --decision-reach $$decisions --served-reach $$served \
 	    --cases $(L1_CASES) --seed $(L1_SEED) --regressions target/l1-regressions $(STRICT) $(ORACLE_ARGS)
 
@@ -315,7 +343,7 @@ corpus-import: build ## devnet archives (ARCHIVE='dir ...', in chain order) to t
 corpus-judge: build ## the oracle's judge of CORPUS/NAME: digest lines, anchors, restart lines (DUMP, RESTARTS, TO, PROCESSOR)
 	$(need-name)
 	$(need-image)
-	$(TOOLCHAIN) && $(DIFFTEST) corpus judge $(CORPUS)/$(NAME) $(if $(DUMP),--dump $(DUMP)) \
+	$(TOOLCHAIN) && $(gate) $(DIFFTEST) corpus judge $(CORPUS)/$(NAME) $(if $(DUMP),--dump $(DUMP)) \
 	    $(if $(RESTARTS),--restarts $(RESTARTS)) $(if $(TO),--to $(TO)) $(if $(PROCESSOR),--processor) \
 	    $(ORACLE_ARGS)
 
@@ -325,29 +353,29 @@ corpus-verify: build ## the manifest of CORPUS/NAME
 
 l2: build ## replay CORPUS/NAME in Heartwood through its store against the judge's lines (TO=H)
 	$(need-name)
-	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) $(if $(TO),--to $(TO)) $(STRICT)
+	$(gate) $(DIFFTEST) run l2 $(CORPUS)/$(NAME) $(if $(TO),--to $(TO)) $(STRICT)
 
 l2-synthetic: build ## L2 of CORPUS/NAME with the synthetic restart, pool and processor cases on top (needs the oracle)
 	$(need-name)
 	$(need-image)
-	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --synthetic $(if $(TO),--to $(TO)) $(STRICT) $(ORACLE_ARGS)
-	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor --synthetic $(if $(TO),--to $(TO)) $(STRICT) \
+	$(TOOLCHAIN) && $(gate) $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --synthetic $(if $(TO),--to $(TO)) $(STRICT) $(ORACLE_ARGS)
+	$(TOOLCHAIN) && $(gate) $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor --synthetic $(if $(TO),--to $(TO)) $(STRICT) \
 	    $(ORACLE_ARGS)
 
 l2-restart: build ## L2 of CORPUS/NAME with the restarts of its restart plan, by both of Heartwood's paths (TO=H)
 	$(need-name)
-	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --restart $(if $(TO),--to $(TO)) $(STRICT)
+	$(gate) $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --restart $(if $(TO),--to $(TO)) $(STRICT)
 
 # The rollback replay compares with the oracle's rollback and restart on the same corpus, so it
 # needs the oracle (ORACLE_ARGS), as l2-synthetic does.
 rollback-replay: build ## CORPUS/NAME rolled back to each target it reaches, started and re-synced, against the oracle (TO=H)
 	$(need-name)
 	$(need-image)
-	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --rollback $(if $(TO),--to $(TO)) $(STRICT) $(ORACLE_ARGS)
+	$(TOOLCHAIN) && $(gate) $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --rollback $(if $(TO),--to $(TO)) $(STRICT) $(ORACLE_ARGS)
 
 crash-test: build ## CORPUS/NAME replayed through the store (or a relay, RUNTIME=1) in a child process killed KILLS times
 	$(need-name)
-	$(DIFFTEST) store crash $(CORPUS)/$(NAME) --kills $(KILLS) $(if $(KILL_SEED),--seed $(KILL_SEED)) \
+	$(gate) $(DIFFTEST) store crash $(CORPUS)/$(NAME) --kills $(KILLS) $(if $(KILL_SEED),--seed $(KILL_SEED)) \
 	    $(if $(RUNTIME),--runtime) $(STRICT)
 
 pool-bench: ## the cost of the pool's per-sender views, of the store's commit and of a re-index (release build)
@@ -375,8 +403,8 @@ lines-if-tokei:
 deny: ## advisories, licences, sources and bans of every dependency (cargo-deny; needs the network)
 	@$(TOOLCHAIN) && command -v cargo-deny >/dev/null 2>&1 || \
 	    { echo "deny: cargo-deny is not installed (cargo install --locked cargo-deny)" >&2; exit 1; }
-	$(TOOLCHAIN) && cargo deny --locked --config deny.toml check
-	$(TOOLCHAIN) && cargo deny --locked --config deny.toml --manifest-path $(FUZZ_MANIFEST) check \
+	$(TOOLCHAIN) && $(gate) cargo deny --locked --config deny.toml check
+	$(TOOLCHAIN) && $(gate) cargo deny --locked --config deny.toml --manifest-path $(FUZZ_MANIFEST) check \
 	    --allow unused-wrapper
 
 # ---- heartwood-p2p-wire: the peer-to-peer wire codec ----
@@ -583,13 +611,21 @@ OBSERVER_RESULTS   ?=
 OBSERVER_RUNS      := observer
 is-observer = $(filter $(OBSERVER_RUNS),$(RUN))
 need-observer = $(if $(is-observer),$(if $(OBSERVER_ENV),,$(error set OBSERVER_ENV, the observer run's environment (NAME, SUBNET, HOST_PORT_BASE, STOP_HEIGHT, RESULTS), in local.mk)))
-recipe-name-of-run = $(if $(filter $(DEVNET_RUNS),$(RUN)),DEVNET_RECIPE,$(if $(is-mixed),MIXED_RECIPE,LIVE_RECIPE))
+# The forging runs, rootless (mixed-short, mixed, mixed-split: reference and Heartwood nodes forging
+# side by side; churn: every churn event on Heartwood nodes) or in mode B (core: Heartwood nodes
+# of the combined role), each run into a directory of its own, FORGING_RESULTS/RUN/SEED (SEED the
+# run's network seed), by MIXED_FORGING_RECIPE, CHURN_RECIPE and CORE_RECIPE (set in local.mk).
+FORGING_RUNS       := mixed-short mixed mixed-split churn core
+is-forging = $(filter $(FORGING_RUNS),$(RUN))
+forging-recipe-name = $(if $(filter churn,$(RUN)),CHURN_RECIPE,$(if $(filter core,$(RUN)),CORE_RECIPE,MIXED_FORGING_RECIPE))
+recipe-name-of-run = $(if $(is-forging),$(forging-recipe-name),$(if $(filter $(DEVNET_RUNS),$(RUN)),DEVNET_RECIPE,$(if $(is-mixed),MIXED_RECIPE,LIVE_RECIPE)))
 recipe-of-run = $($(recipe-name-of-run))
-results-name-of-run = $(if $(is-mixed),MIXED_RESULTS,$(if $(is-observer),OBSERVER_RESULTS,LIVE_RESULTS))
+results-name-of-run = $(if $(is-forging),FORGING_RESULTS,$(if $(is-mixed),MIXED_RESULTS,$(if $(is-observer),OBSERVER_RESULTS,LIVE_RESULTS)))
 results-of-run = $($(results-name-of-run))
-run-dir = $(results-of-run)/$(if $(is-observer),h,$(RUN))
+run-dir = $(results-of-run)/$(if $(is-observer),h,$(RUN)$(if $(is-forging),/$(SEED)))
 need-live = $(if $(recipe-of-run),,$(error set $(recipe-name-of-run), the devnet tooling's recipe, in local.mk))
-need-run = $(if $(RUN),,$(error set RUN, the live run: r, h, m1, m2, t, m, f, w0, w, p, s or observer))
+need-run = $(if $(RUN),,$(error set RUN, the live run: r, h, m1, m2, t, m, f, w0, w, p, s, observer, mixed-short, mixed, mixed-split, churn or core))
+need-seed = $(if $(is-forging),$(if $(SEED),,$(error set SEED, the forging run's network seed and directory under FORGING_RESULTS/$(RUN))))
 need-results = $(if $(results-of-run),,$(error set $(results-name-of-run), the live runs' directory, in local.mk))
 need-mixed = $(if $(is-mixed),,$(error set RUN to a mixed run: w0, w, p or s))
 # The two relays a mixed run's probe compares: the Heartwood relay against a reference relay (node
@@ -599,7 +635,7 @@ probe-pair = $(if $(filter s,$(RUN)),--left node1 --right node4,--left node4 --r
 
 l2-processor: build ## replay CORPUS/NAME through the processor and the job against the judge's lines (TO, CHUNKS)
 	$(need-name)
-	$(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor $(if $(CHUNKS),--chunks $(CHUNKS)) $(if $(TO),--to $(TO)) \
+	$(gate) $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --processor $(if $(CHUNKS),--chunks $(CHUNKS)) $(if $(TO),--to $(TO)) \
 	    $(STRICT)
 
 relay-binary: ## the relay's release binary with the harness's flags (target/release/heartwood)
@@ -618,45 +654,96 @@ relay-image: relay-binary ## the relay's release binary and its devnet image (RE
 # their live target builds the binary only: `make relay-image` runs once before them, and
 # MIXED_RECIPE checks that the image holds this tree's binary.
 relay-of-run = $(if $(filter-out r t w0,$(RUN)),$(1))
-live-prerequisite = $(if $(is-observer),build relay-image,$(if $(filter m f,$(RUN)),relay-binary,$(if $(is-mixed),$(call relay-of-run,relay-binary),$(call relay-of-run,relay-image))))
+live-prerequisite = $(if $(is-observer),build relay-image,$(if $(filter m f $(FORGING_RUNS),$(RUN)),relay-binary,$(if $(is-mixed),$(call relay-of-run,relay-binary),$(call relay-of-run,relay-image))))
 
-live: $(live-prerequisite) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2 with LIVE_RECIPE, t|m|f with DEVNET_RECIPE, w0|w|p|s with MIXED_RECIPE, observer with LIVE_RECIPE and OBSERVER_ENV)
+# The planned stop height of each forging run and scenario suite: 2 rounds (106), the lifecycle
+# suite 3 (159: a temporary resignation's revoke is valid no earlier than 107 blocks after it),
+# the faulted mixed runs and the churn run 5 (265, every fault or churn event in one run). A run
+# never passes its planned height or round 5, and never starts within 40 minutes of 00:00 UTC,
+# when the nodes' logs rotate; the recipes refuse the same.
+planned-mixed-short := 106
+planned-mixed := 265
+planned-mixed-split := 265
+planned-churn := 265
+planned-core := 106
+planned-transactions := 106
+planned-lifecycle := 159
+planned-network := 106
+planned-network-split := 106
+STOP_HEIGHT ?=
+define live-guard
+@planned='$(1)'; stop='$(STOP_HEIGHT)'; \
+	if [ -z "$$planned" ]; then echo "$@: no planned stop height for $(2)" >&2; exit 2; fi; \
+	if [ -n "$$stop" ] && ! { [ "$$stop" -le "$$planned" ] && [ "$$stop" -le 265 ]; } 2>/dev/null; then \
+	    echo "$@: STOP_HEIGHT=$$stop is beyond $(2)'s planned stop height $$planned (round 5 ends at 265)" >&2; exit 2; \
+	fi; \
+	now=$$(( 10#$$(date -u +%H) * 60 + 10#$$(date -u +%M) )); \
+	if [ $$now -ge 1400 ] || [ $$now -lt 40 ]; then \
+	    echo "$@: $$(date -u +%H:%M) UTC is within 40 minutes of 00:00 UTC, when the nodes' logs rotate" >&2; exit 2; \
+	fi
+endef
+
+live: $(live-prerequisite) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2 with LIVE_RECIPE, t|m|f with DEVNET_RECIPE, w0|w|p|s with MIXED_RECIPE, observer with LIVE_RECIPE and OBSERVER_ENV, mixed-short|mixed|mixed-split|churn|core with SEED)
 	$(need-run)
 	$(need-live)
 	$(need-observer)
-	$(if $(is-observer),env $(OBSERVER_ENV) $(recipe-of-run) h,$(recipe-of-run) $(RUN)) $(CURDIR)
+	$(need-seed)
+	$(if $(is-forging),$(call live-guard,$(planned-$(RUN)),run $(RUN)))
+	$(if $(is-forging),STOP_HEIGHT=$(or $(STOP_HEIGHT),$(planned-$(RUN))) $(recipe-of-run) $(RUN) '$(SEED)' $(run-dir),$(if $(is-observer),env $(OBSERVER_ENV) $(recipe-of-run) h,$(recipe-of-run) $(RUN))) $(CURDIR)
 
 # A mixed run's check reads the oracle's image (its rollback's prediction), and its baseline run
 # from --compare, not from COMPARE in difftest's environment. The baseline of runs w, p and s is
 # w0 unless COMPARE names it.
 mixed-compare = $(if $(COMPARE),$(COMPARE),$(if $(filter-out w0,$(is-mixed)),w0))
 mixed-spread = $(if $(and $(is-mixed),$(mixed-compare)),$(foreach d,$(MIXED_SPREAD),--spread $(d)))
-live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS, MIXED_RESULTS or OBSERVER_RESULTS; COMPARE, for w, p and s w0 by default)
+# The suites' check compares each suite's reference and Heartwood runs of a seed
+# (FORGING_RESULTS/suites/SEED/SUITE-IMPL), every suite or SUITE alone.
+live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS, MIXED_RESULTS, OBSERVER_RESULTS or FORGING_RESULTS with SEED; COMPARE, for w, p and s w0 by default; RUN=suites with SEED and SUITE)
 	$(need-run)
-	$(need-results)
-	$(if $(is-mixed),$(need-image))
-	$(TOOLCHAIN) && $(if $(is-mixed),env -u COMPARE DIFFTEST_IMAGE='$(IMAGE)') $(DIFFTEST) live check \
-	    $(run-dir) $(if $(and $(is-mixed),$(mixed-compare)),--compare $(results-of-run)/$(mixed-compare)) $(mixed-spread) $(STRICT)
+	$(if $(filter suites,$(RUN)),,$(need-results))
+	$(need-seed)
+	$(if $(or $(is-mixed),$(is-forging)),$(need-image))
+	$(TOOLCHAIN) && if [ '$(RUN)' = suites ]; then \
+	    [ -n '$(SEED)' ] && [ -n '$(FORGING_RESULTS)' ] || { echo "live-check: set SEED and FORGING_RESULTS for RUN=suites" >&2; exit 2; }; \
+	    $(gate) $(DIFFTEST) scenario compare $(FORGING_RESULTS)/suites/$(SEED) $(if $(SUITE),--suite $(SUITE)) $(STRICT); \
+	else \
+	    $(gate) $(if $(or $(is-mixed),$(is-forging)),env -u COMPARE DIFFTEST_IMAGE='$(IMAGE)') $(DIFFTEST) live check \
+	        $(run-dir) $(if $(and $(is-mixed),$(mixed-compare)),--compare $(results-of-run)/$(mixed-compare)) $(mixed-spread) $(STRICT); \
+	fi
 
-api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the API answers a live run recorded (RUN, LIVE_RESULTS, MIXED_RESULTS or OBSERVER_RESULTS), or two nodes' (LEFT, RIGHT)
+# A forging run records the route corpus of each pair it compares (PAIR=5,3: node 5 against node
+# 3) in its run directory's api/node5-node3.
+PAIR               ?=
+pair-dir = $(if $(PAIR),/api/node$(word 1,$(subst $(comma), ,$(PAIR)))-node$(word 2,$(subst $(comma), ,$(PAIR))))
+comma := ,
+api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the API answers a live run recorded (RUN, LIVE_RESULTS, MIXED_RESULTS, OBSERVER_RESULTS, or FORGING_RESULTS with SEED and PAIR=5,3|4,2), or two nodes' (LEFT, RIGHT)
+	$(need-seed)
 	$(TOOLCHAIN) && if [ -n '$(LEFT)' ] && [ -n '$(RIGHT)' ]; then \
-	    $(DIFFTEST) api compare --left '$(LEFT)' --right '$(RIGHT)' --out $(API_COMPARE_OUT) $(STRICT); \
+	    $(gate) $(DIFFTEST) api compare --left '$(LEFT)' --right '$(RIGHT)' --out $(API_COMPARE_OUT) $(STRICT); \
 	else \
 	    [ -n '$(RUN)' ] && [ -n '$(results-of-run)' ] || { echo "api-compare: set RUN and $(results-name-of-run), or LEFT and RIGHT" >&2; exit 2; }; \
-	    $(DIFFTEST) api compare --run $(run-dir) $(STRICT); \
+	    $(if $(is-forging),[ -n '$(PAIR)' ] || { echo "api-compare: set PAIR for RUN=$(RUN) (such as PAIR=5$(comma)3)" >&2; exit 2; };) \
+	    $(gate) $(DIFFTEST) api compare --run $(run-dir)$(pair-dir) $(STRICT); \
 	fi
 
 p2p-compare: build $(call relay-of-run,relay-binary) ## the reference-client probe's records of a mixed run's two relays (RUN=w0|w|s, MIXED_RESULTS)
 	$(need-run)
 	$(need-mixed)
 	$(need-results)
-	$(DIFFTEST) p2p compare $(results-of-run)/$(RUN) $(probe-pair) $(STRICT)
+	$(gate) $(DIFFTEST) p2p compare $(results-of-run)/$(RUN) $(probe-pair) $(STRICT)
 
 await-report: build ## the AwaitBlock report of a mixed run's Heartwood relays (RUN=w|p|s, MIXED_RESULTS)
 	$(need-run)
 	$(need-mixed)
 	$(need-results)
-	$(DIFFTEST) live await $(results-of-run)/$(RUN) $(STRICT)
+	$(gate) $(DIFFTEST) live await $(results-of-run)/$(RUN) $(STRICT)
+
+live-resources: build ## the resource report of a forging run's series (RUN=mixed-short|mixed|mixed-split|churn|core, SEED, FORGING_RESULTS)
+	$(need-run)
+	$(need-seed)
+	$(if $(is-forging),,$(error set RUN to a forging run: $(FORGING_RUNS)))
+	$(need-results)
+	$(gate) $(DIFFTEST) live resources $(run-dir) $(STRICT)
 # ---- end of the relay ----
 
 # ---- heartwood-forger and heartwood-cli: the forger, the commands and the devnet ----
@@ -707,12 +794,12 @@ forger-features: ## only FORGER_AUX enables the forger-aux feature of heartwood-
 forge-replay: build ## the forge replay of CORPUS/NAME (TO=H); DIRECTION=oracle has the reference rebuild a chain Heartwood forged
 	$(need-name)
 	$(if $(filter oracle,$(DIRECTION)),$(need-image))
-	$(TOOLCHAIN) && $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --forge $(if $(TO),--to $(TO)) \
+	$(TOOLCHAIN) && $(gate) $(DIFFTEST) run l2 $(CORPUS)/$(NAME) --forge $(if $(TO),--to $(TO)) \
 	    $(if $(filter oracle,$(DIRECTION)),--oracle $(ORACLE_ARGS)) $(STRICT)
 
 forger-crash: build ## the forger's crash test: forger-child against a mock relay, killed KILLS times (KILL_SEED)
 	$(TOOLCHAIN) && cargo build --locked -p heartwood-forger --features difftest --bin forger-child
-	$(TOOLCHAIN) && $(DIFFTEST) forger crash --kills $(KILLS) --child $(FORGER_CHILD) $(if $(KILL_SEED),--seed $(KILL_SEED)) \
+	$(TOOLCHAIN) && $(gate) $(DIFFTEST) forger crash --kills $(KILLS) --child $(FORGER_CHILD) $(if $(KILL_SEED),--seed $(KILL_SEED)) \
 	    $(STRICT)
 
 # The two targets run at the same time, FUZZ_FORK jobs each, with the wire targets' libFuzzer
@@ -773,7 +860,7 @@ fuzz-server: ## the server's fuzz target, FUZZ_SECONDS (nightly and cargo-fuzz);
 	exit $$fail
 
 binary-tests: build ## the heartwood binary's tests, the slow ones too
-	$(TOOLCHAIN) && cargo test --locked -p heartwood-core --all-features --tests -- --include-ignored
+	$(TOOLCHAIN) && $(gate) cargo test --locked -p heartwood-core --all-features --tests -- --include-ignored
 
 devnet-smoke: build ## a forging devnet of this tree's binary: 1 node for 20 blocks, then 5 nodes for a round
 	$(TOOLCHAIN) && HEARTWOOD_DEVNET_PREFIX=$(DEVNET_PREFIX) cargo test --locked -p heartwood-core --all-features \
@@ -810,7 +897,7 @@ lockstep: build ## a lockstep chain CORPUS/NAME from SEED, PROFILE and RECIPE, R
 	@if [ '$(ROUNDS)' -gt 5 ] 2>/dev/null && [ -z '$(LONG)' ]; then \
 	    echo "lockstep: ROUNDS=$(ROUNDS) is a long chain; set LONG=1 for more than 5 rounds" >&2; exit 2; \
 	fi
-	$(TOOLCHAIN) && $(DIFFTEST) lockstep make --seed '$(SEED)' --profile '$(PROFILE)' --rounds $(ROUNDS) \
+	$(TOOLCHAIN) && $(gate) $(DIFFTEST) lockstep make --seed '$(SEED)' --profile '$(PROFILE)' --rounds $(ROUNDS) \
 	    --recipe '$(RECIPE)' --out $(CORPUS)/$(NAME) $(if $(LONG),--long) $(ORACLE_ARGS)
 
 fuzz-api: ## the API's query fuzz target, FUZZ_SECONDS (nightly and cargo-fuzz); logs in API_LOGS
@@ -822,7 +909,7 @@ fuzz-api: ## the API's query fuzz target, FUZZ_SECONDS (nightly and cargo-fuzz);
 	$(TOOLCHAIN) && cargo +nightly fuzz build $(API_FUZZ)
 	@$(TOOLCHAIN) && mkdir -p $(API_LOGS) $(FUZZ_CORPUS)/$(API_FUZZ) && \
 	echo "fuzz-api: $(API_FUZZ) running for $(FUZZ_SECONDS) s, $(FUZZ_FORK) jobs; logs in $(API_LOGS)" && \
-	fail=0; cargo +nightly fuzz run $(API_FUZZ) -- $(WIRE_LIBFUZZER) > $(API_LOGS)/$(API_FUZZ).log 2>&1 || fail=1; \
+	fail=0; $(gate) cargo +nightly fuzz run $(API_FUZZ) -- $(WIRE_LIBFUZZER) > $(API_LOGS)/$(API_FUZZ).log 2>&1 || fail=1; \
 	last=$$(grep -E '^#[0-9]+: cov: ' $(API_LOGS)/$(API_FUZZ).log | tail -n 1); \
 	files=$$(find $(FUZZ_CORPUS)/$(API_FUZZ) -type f | wc -l); \
 	echo "fuzz-api: $(API_FUZZ): $${last:-no status line}; corpus $$files files"; \
@@ -838,7 +925,7 @@ replay-api: build ## the api_query corpus through the oracle (ORACLE_ARGS) and H
 	    if [ -z "$$(ls -A $(FUZZ_CORPUS)/$$target 2>/dev/null)" ]; then \
 	        echo "replay-api: $(FUZZ_CORPUS)/$$target is missing or empty (make fuzz-api)" >&2; fail=1; continue; \
 	    fi; \
-	    $(DIFFTEST) oracle replay $$op $(FUZZ_CORPUS)/$$target --vectors packages/crypto/tests/vectors $(ORACLE_ARGS) \
+	    $(gate) $(DIFFTEST) oracle replay $$op $(FUZZ_CORPUS)/$$target --vectors packages/crypto/tests/vectors $(ORACLE_ARGS) \
 	        > $$log 2>&1; status=$$?; cat $$log; \
 	    if [ $$status != 0 ]; then \
 	        echo "replay-api: $$target: the replay failed (exit $$status)" >&2; fail=1; \
@@ -848,3 +935,96 @@ replay-api: build ## the api_query corpus through the oracle (ORACLE_ARGS) and H
 	done; \
 	exit $$fail
 # ---- end of the API's listings ----
+
+# ---- the scenarios, the suites and the baseline record ----
+# scenario runs the scenario files (SCENARIO, a file or a directory; every scenario of
+# SCENARIOS by default) at LEVEL (l2, l3 or l4) through the runner's BACKEND (lockstep for l2,
+# heartwood for a devnet of this tree, external for the tooling's backend, DIFFTEST_SCENARIO_BACKEND
+# in local.mk), with the oracle of ORACLE_ARGS compiling their transactions; a level the backend
+# cannot run is named in its record as left to a live run.
+# suites runs one scenario suite (SUITE: transactions, lifecycle, network or network-split) on one
+# implementation (IMPL: reference, on the tooling's Docker devnet; heartwood, on a devnet of this
+# tree in mode B) with the network seed SEED, by SUITES_RECIPE, into FORGING_RESULTS/suites/SEED/
+# SUITE-IMPL; `live-check RUN=suites SEED=...` compares the two implementations' runs.
+# l1-long runs L1_PROPERTY (one property) L1_CASES cases for each seed of L1_SEEDS (such as 1-7, or
+# a list) and fuzz-long runs every target of FUZZ_TARGETS for FUZZ_SECONDS with FUZZ_FORK jobs, each
+# run a gate record and a ledger entry. ledger-merge adds another machine's records (FROM, a
+# directory, and MACHINE, its name) to the ledger; gate-s1 prints the baseline record's table from the
+# records, the ledger and the criteria file (PART, one part of it, or all).
+SCENARIOS          := tools/difftest/scenarios
+SCENARIO           ?=
+LEVEL              ?= l2
+BACKEND            ?= $(if $(filter l2,$(LEVEL)),lockstep,heartwood)
+DIFFTEST_SCENARIO_BACKEND ?=
+SUITES_RECIPE      ?=
+MIXED_FORGING_RECIPE ?=
+CHURN_RECIPE       ?=
+CORE_RECIPE        ?=
+FORGING_RESULTS    ?=
+SUITE              ?=
+IMPL               ?=
+SUITES             := transactions lifecycle network network-split
+IMPLS              := reference heartwood
+L1_SEEDS           ?=
+FUZZ_TARGETS       ?=
+FROM               ?=
+MACHINE            ?=
+PART               ?=
+suite-dir = $(FORGING_RESULTS)/suites/$(SEED)/$(SUITE)-$(IMPL)
+# The seeds of L1_SEEDS: a range A-B or a list.
+l1-seeds = $(if $(findstring -,$(L1_SEEDS)),$$(seq $(subst -, ,$(L1_SEEDS))),$(subst $(comma), ,$(L1_SEEDS)))
+
+scenario: build ## the scenarios at LEVEL through the runner's BACKEND (SCENARIO, LEVEL, BACKEND; ORACLE_ARGS compiles)
+	$(need-image)
+	$(if $(filter external,$(BACKEND)),$(if $(DIFFTEST_SCENARIO_BACKEND),,$(error set DIFFTEST_SCENARIO_BACKEND, the tooling's scenario backend, in local.mk)))
+	$(TOOLCHAIN) && DIFFTEST_SCENARIO_BACKEND='$(DIFFTEST_SCENARIO_BACKEND)' $(gate) $(DIFFTEST) scenario run \
+	    --backend $(BACKEND) --level $(LEVEL) $(or $(SCENARIO),$(SCENARIOS)) $(STRICT) $(ORACLE_ARGS)
+
+suites: relay-binary ## one scenario suite on one implementation (SUITE, IMPL=reference|heartwood, SEED; SUITES_RECIPE)
+	$(if $(filter $(SUITES),$(SUITE)),,$(error set SUITE to one of $(SUITES)))
+	$(if $(filter $(IMPLS),$(IMPL)),,$(error set IMPL to one of $(IMPLS)))
+	$(if $(SEED),,$(error set SEED, the suite run's network seed))
+	$(if $(SUITES_RECIPE),,$(error set SUITES_RECIPE, the devnet tooling's suites recipe, in local.mk))
+	$(if $(FORGING_RESULTS),,$(error set FORGING_RESULTS, the forging runs' directory, in local.mk))
+	$(call live-guard,$(planned-$(SUITE)),suite $(SUITE))
+	STOP_HEIGHT=$(or $(STOP_HEIGHT),$(planned-$(SUITE))) DIFFTEST_SCENARIO_BACKEND='$(DIFFTEST_SCENARIO_BACKEND)' \
+	    $(SUITES_RECIPE) $(SUITE) $(IMPL) '$(SEED)' $(suite-dir) $(CURDIR)
+
+l1-long: build ## one L1 property over many seeds, each a gate record and a ledger entry (L1_PROPERTY, L1_CASES, L1_SEEDS)
+	$(need-image)
+	$(if $(filter-out ,$(word 2,$(subst $(comma), ,$(L1_PROPERTY)))),$(error set L1_PROPERTY to one property))
+	$(if $(L1_PROPERTY),,$(error set L1_PROPERTY, the property))
+	$(if $(L1_SEEDS),,$(error set L1_SEEDS, the seeds: A-B or a list))
+	$(need-records)
+	$(need-ledger)
+	@$(TOOLCHAIN) && fail=0; for seed in $(l1-seeds); do \
+	    GATE_LEDGER="kind=property id=$(L1_PROPERTY) cases=$(L1_CASES) seed=$$seed" \
+	    $(MAKE) --no-print-directory l1 L1_PROPERTY=$(L1_PROPERTY) L1_CASES=$(L1_CASES) L1_SEED=$$seed || fail=1; \
+	done; exit $$fail
+
+fuzz-long: ## every target of FUZZ_TARGETS for FUZZ_SECONDS with FUZZ_FORK jobs, each a gate record and a ledger entry
+	$(if $(FUZZ_TARGETS),,$(error set FUZZ_TARGETS, targets of fuzz/fuzz_targets))
+	$(need-records)
+	$(need-ledger)
+	$(TOOLCHAIN) && for target in $(FUZZ_TARGETS); do cargo +nightly fuzz build $$target || exit 1; done
+	@$(TOOLCHAIN) && mkdir -p target/fuzz-long && fail=0; for target in $(FUZZ_TARGETS); do \
+	    mkdir -p $(FUZZ_CORPUS)/$$target; log=target/fuzz-long/$$target.log; \
+	    export GATE_LEDGER="kind=target id=$$target seconds=$(FUZZ_SECONDS) forks=$(FUZZ_FORK)"; \
+	    $(gate) cargo +nightly fuzz run $$target -- $(WIRE_LIBFUZZER) > $$log 2>&1 || fail=1; \
+	    last=$$(grep -E '^#[0-9]+: cov: ' $$log | tail -n 1); echo "fuzz-long: $$target: $${last:-no status line}"; \
+	    case "$$last" in *'oom/timeout/crash: 0/0/0 '*) ;; *) fail=1 ;; esac; \
+	done; exit $$fail
+
+ledger-merge: build ## another machine's gate records (FROM) into the ledger, as MACHINE's
+	$(need-ledger)
+	$(if $(FROM),,$(error set FROM, the directory of the other machine's records))
+	$(if $(MACHINE),,$(error set MACHINE, the other machine's name))
+	$(DIFFTEST) gate ledger merge --from '$(FROM)' --machine '$(MACHINE)' --ledger '$(LEDGER_DIR)'
+
+gate-s1: build ## the S1 record's table from the gate records, the ledger and the criteria file (PART)
+	$(need-records)
+	$(need-ledger)
+	$(need-criteria)
+	$(DIFFTEST) gate s1 --criteria '$(S1_CRITERIA)' --records '$(GATE_RECORDS)' --ledger '$(LEDGER_DIR)' \
+	    $(if $(PART),--part $(PART)) $(STRICT)
+# ---- end of the scenarios, the suites and the baseline record ----

@@ -83,6 +83,7 @@ mod job;
 mod kernel;
 mod keys;
 mod monitor;
+mod operator;
 mod peer_rules;
 mod peers;
 mod pool;
@@ -339,7 +340,7 @@ const OPS: &[(&str, Run)] = &[
 
 /// Every operation: [`OPS`], then the tables of the wire, `config`, `text`, `pool`, the peer
 /// network, the processor and the job, the API and the node's configuration, the forger, the
-/// server, the store's rollback and the API's listings.
+/// server, the store's rollback, the API's listings and the operator commands' files.
 fn all_ops() -> impl Iterator<Item = &'static (&'static str, Run)> {
     OPS.iter()
         .chain(wire::OPS)
@@ -368,6 +369,7 @@ fn all_ops() -> impl Iterator<Item = &'static (&'static str, Run)> {
         .chain(api_js::OPS)
         .chain(api_spec::OPS)
         .chain(sql_records::OPS)
+        .chain(operator::OPS)
 }
 
 /// Register every operation of [`all_ops`] in `registry`.
@@ -558,7 +560,8 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
         | Documented::Api(_)
         | Documented::OverHeightOwnBlock
         | Documented::RoundWallets
-        | Documented::ReplayIndexOrder => false,
+        | Documented::ReplayIndexOrder
+        | Documented::CliEnvParser => false,
     }
 }
 

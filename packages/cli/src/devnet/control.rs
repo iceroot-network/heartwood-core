@@ -59,6 +59,30 @@ pub fn start(root: &Path, selection: &NodeSelection, tools: &Tools<'_>) -> Resul
     launch(&manifest, &picked, role, tools)
 }
 
+/// The flags of `start` beside the node selection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StartOptions {
+    /// Keep the manifest's epoch: never re-stamp it (`--keep-epoch`).
+    pub keep_epoch: bool,
+    /// Return once every process is started, without waiting for the relays' APIs (`--no-wait`).
+    pub no_wait: bool,
+}
+
+/// [`start`] with `options`; with the default options it is [`start`].
+pub fn start_with(
+    root: &Path,
+    selection: &NodeSelection,
+    options: &StartOptions,
+    tools: &Tools<'_>,
+) -> Result<()> {
+    if *options != StartOptions::default() {
+        return Err(DevnetError::NotBuilt(
+            "devnet start --keep-epoch and --no-wait",
+        ));
+    }
+    start(root, selection, tools)
+}
+
 /// Start node `node` (`start-node`): [`start`] of that node alone.
 pub fn start_node(root: &Path, node: u32, role: Option<Role>, tools: &Tools<'_>) -> Result<()> {
     let nodes = vec![node];

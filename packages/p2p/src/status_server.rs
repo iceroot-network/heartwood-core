@@ -20,7 +20,7 @@ use heartwood_p2p_wire::status::{self, PeerConfig, SignedState, StatusHeaderData
 use tokio::sync::watch;
 
 use crate::attestation_session::{AttestationSession, Signing};
-use crate::node_services::NodeServices;
+use crate::node_services::{AttestationStep, NodeServices};
 use crate::server::ATTESTATION_WAIT;
 use crate::server::seams::ServerRefusal;
 
@@ -137,6 +137,27 @@ impl StatusServer {
             self.attestation.offer(current.text.clone());
         }
         current
+    }
+
+    /// The attestation record's hook at `step` of the status `current`: the node's record in a
+    /// harness build (`difftest`), nothing in any other build.
+    #[allow(
+        dead_code,
+        reason = "called at the attestation record's three points: an offer, the signatures' attachment and a status served unsigned"
+    )]
+    fn attestation_step(&self, step: AttestationStep, current: &Current) {
+        #[cfg(feature = "difftest")]
+        self.node
+            .attestation_step(&crate::node_services::AttestationRecord {
+                at_ms: self.clock.now_ms(),
+                step,
+                status: heartwood_crypto::utils::hex::encode(
+                    &heartwood_crypto::crypto::hash::sha256(current.text.as_bytes()),
+                ),
+                slot: current.key.slot,
+            });
+        #[cfg(not(feature = "difftest"))]
+        let _ = (step, current);
     }
 
     /// Refresh at each new tip, slot boundary and half-slot flip until `shutdown` turns true.

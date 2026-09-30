@@ -119,6 +119,9 @@ pub enum Documented {
     /// Heartwood's replay sets them in the order the chain set them, its table path in the order
     /// of the stored rows.
     ReplayIndexOrder,
+    /// An environment file's line that the reference's CLI (`envfile`) reads otherwise than its
+    /// node's parser, which Heartwood's commands use for both.
+    CliEnvParser,
 }
 
 /// A served route's documented difference from the reference.
@@ -318,6 +321,12 @@ impl Documented {
                  chain's order and its table path in the order of the stored rows; only a tie of \
                  a listing sorted by index order shows it, on a restarted node"
             }
+            Documented::CliEnvParser => {
+                "an environment file's line that the reference's CLI reads with envfile and its \
+                 node with its own parser, and the two read differently; Heartwood's commands \
+                 read the file as the node does, so `env get` and `env list` show what the node \
+                 uses (commands only)"
+            }
             Documented::RoundWallets => {
                 "the wallets of the relay's round answer: the reference writes its wallet data \
                  (the attribute map with its known attributes, and for the round's delegates the \
@@ -409,7 +418,7 @@ const STACK_OVERFLOW: &str = "Maximum call stack size exceeded";
 impl Documented {
     /// Whether the oracle's answer `expected` shows the reference's side of this difference: a
     /// `true` note in the output's `notes` (`pluginsPrototype`, `stackOverflow`, `wideAmount`,
-    /// `fullPoolEviction`, `savedStateUsername`, `roundRowsMissing`, `locale`), or, for deep
+    /// `fullPoolEviction`, `savedStateUsername`, `roundRowsMissing`, `locale`, `cliEnvParser`), or, for deep
     /// groups, a `RangeError` for the overflow of the Node stack. A replaced prototype is shown
     /// only with the reply check's refusal of the plugins, the one step it changes. The
     /// differences that Heartwood checks on the input ([`Verdict::RefusedByDesign`]) are never
@@ -435,6 +444,7 @@ impl Documented {
             Documented::SavedStateUsername => note("savedStateUsername"),
             Documented::RoundRowsAfterRevert => note("roundRowsMissing"),
             Documented::Locale => note("locale"),
+            Documented::CliEnvParser => note("cliEnvParser"),
             _ => false,
         }
     }

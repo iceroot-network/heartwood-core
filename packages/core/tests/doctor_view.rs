@@ -169,6 +169,7 @@ fn a_refused_configuration_names_its_kind_and_the_file() {
         let found = match role {
             Role::Relay => view.relay(&node.instance(role)).map(drop),
             Role::Forger => view.forger(&node.instance(role)).map(drop),
+            Role::Core => panic!("the doctor reads the split roles only"),
         };
         match found {
             Err(NodeViewError::Refused { kind, file }) => (kind, file.unwrap()),
@@ -237,6 +238,7 @@ fn a_refused_configuration_names_its_kind_and_the_file() {
         let found = match role {
             Role::Relay => homeless.relay(&node.instance(role)).map(drop),
             Role::Forger => homeless.forger(&node.instance(role)).map(drop),
+            Role::Core => panic!("Role::ALL holds the split roles only"),
         };
         assert_eq!(found, Err(other.clone()));
     }

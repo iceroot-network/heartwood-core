@@ -118,6 +118,22 @@ Usage:
                                   reference nodes only: the log counts are compared with the
                                   most any of those runs gave
   difftest live await RUN_DIR     the AwaitBlock report of a live run's Heartwood relays
+  difftest live resources RUN_DIR the resource report of a forging run's process trees
+  difftest scenario compile FILE [--out FILE] [ORACLE]
+                                  build every transaction of the scenario FILE once through
+                                  the oracle, at its planned height
+  difftest scenario run --backend heartwood|external|lockstep [--level l2|l3|l4]
+                        [--devnet-root DIR] FILE|DIR [ORACLE]
+                                  run the scenarios (a file, or every file of a directory)
+                                  through the runner on the backend: a devnet of this tree,
+                                  the executable $DIFFTEST_SCENARIO_BACKEND names, or the
+                                  lockstep producer
+  difftest scenario compare DIR [--suite NAME]
+                                  a suite's reference and Heartwood runs of one seed (DIR's
+                                  NAME-reference and NAME-heartwood), side by side
+  difftest gate record|ledger|s1|coverage|register ARG...
+                                  the gate records, the cumulative ledger, the S1 record's
+                                  table, the coverage rows and the register's checks
   difftest p2p compare RUN_DIR --left NODE --right NODE
                                   the reference-client probe's records of two relays of a live
                                   run, compared case by case
@@ -139,7 +155,8 @@ Usage:
                                   generator for the same inputs
 
 --strict, with any command that compares (run, oracle replay, store crash, forger crash, network
-generate, live check, live await, api compare, p2p compare): a case that was skipped or has no Rust implementation fails the run too, as
+generate, live check, live await, live resources, api compare, p2p compare, scenario run,
+scenario compare, gate s1): a case that was skipped or has no Rust implementation fails the run too, as
 a failed case does; the Makefile's gate targets pass it.
 
 ORACLE, where the reference runs (the flags win over the environment):
@@ -367,6 +384,46 @@ pub enum Command {
     },
     /// `difftest lockstep make`: a lockstep chain.
     LockstepMake(LockstepArgs),
+    /// `difftest live resources`: a forging run's resource report.
+    LiveResources {
+        /// The run directory.
+        dir: PathBuf,
+    },
+    /// `difftest scenario compile`: a scenario's transactions, built once.
+    ScenarioCompile(ScenarioCompileArgs),
+    /// `difftest scenario run`: scenarios through the runner.
+    ScenarioRun(ScenarioRunArgs),
+    /// `difftest scenario compare`: a suite's reference and Heartwood runs of one seed.
+    ScenarioCompare {
+        /// The seed's directory of suite runs.
+        dir: PathBuf,
+        /// One suite only.
+        suite: Option<String>,
+    },
+    /// `difftest gate ...`: the gate records, the ledger and the baseline record.
+    Gate(crate::gate::GateArgs),
+}
+
+/// The arguments of `difftest scenario compile`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioCompileArgs {
+    /// Where the oracle runs.
+    pub oracle: OracleArgs,
+    /// The scenario file.
+    pub file: PathBuf,
+    /// Where the compiled scenario is written; standard output when `None`.
+    pub out: Option<PathBuf>,
+}
+
+/// The arguments of `difftest scenario run`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioRunArgs {
+    /// Where the oracle runs.
+    pub oracle: OracleArgs,
+    /// The backend, the level and the devnet.
+    pub options: crate::scenario::RunOptions,
+    /// A scenario file, or a directory of them.
+    pub path: PathBuf,
 }
 
 /// The arguments of `difftest lockstep make`.
@@ -624,6 +681,37 @@ pub fn parse(args: &[String]) -> Result<Command> {
             vectors: dir.into(),
         }),
         ["lockstep", "make", rest @ ..] => parse_lockstep(rest),
+        ["live", "resources", dir] => Ok(Command::LiveResources { dir: dir.into() }),
+        ["scenario", "compile", rest @ ..] => parse_scenario_compile(rest),
+        ["scenario", "run", rest @ ..] => parse_scenario_run(rest),
+        ["scenario", "compare", dir, rest @ ..] => {
+            let suite = match rest {
+                [] => None,
+                ["--suite", name] => Some((*name).to_owned()),
+                _ => return Err(usage("usage: difftest scenario compare DIR [--suite NAME]")),
+            };
+            Ok(Command::ScenarioCompare {
+                dir: dir.into(),
+                suite,
+            })
+        }
+        ["gate", verb, rest @ ..] => {
+            use crate::gate::{GateArgs, GateVerb};
+            let verb = match *verb {
+                "record" => GateVerb::Record,
+                "ledger" => GateVerb::Ledger,
+                "s1" => GateVerb::S1,
+                "coverage" => GateVerb::Coverage,
+                "register" => GateVerb::Register,
+                other => {
+                    return Err(usage(format!(
+                        "unknown gate command {other}: record, ledger, s1, coverage or register"
+                    )));
+                }
+            };
+            let args = rest.iter().map(|arg| (*arg).to_owned()).collect();
+            Ok(Command::Gate(GateArgs { verb, args }))
+        }
         ["corpus", "judge", dir, rest @ ..] => {
             let mut judge = JudgeArgs {
                 oracle: OracleArgs::default(),
@@ -1138,6 +1226,59 @@ fn parse_genesis(args: &[&str]) -> Result<Command> {
 fn value<'a>(flag: &str, next: Option<&&'a str>) -> Result<&'a str> {
     next.copied()
         .ok_or_else(|| usage(format!("{flag} needs a value")))
+}
+
+fn parse_scenario_compile(args: &[&str]) -> Result<Command> {
+    let (mut oracle, mut file, mut out) = (OracleArgs::default(), None, None);
+    let mut it = args.iter();
+    while let Some(&arg) = it.next() {
+        match arg {
+            "--out" => out = Some(PathBuf::from(value(arg, it.next())?)),
+            flag if flag.starts_with("--") => oracle_flag(&mut oracle, flag, it.next())?,
+            _ if file.is_none() => file = Some(PathBuf::from(arg)),
+            _ => return Err(usage("scenario compile takes one FILE")),
+        }
+    }
+    Ok(Command::ScenarioCompile(ScenarioCompileArgs {
+        oracle,
+        file: file.ok_or_else(|| usage("usage: difftest scenario compile FILE [--out FILE]"))?,
+        out,
+    }))
+}
+
+fn parse_scenario_run(args: &[&str]) -> Result<Command> {
+    use crate::scenario::{BackendKind, Level as ScenarioLevel, RunOptions};
+    let (mut oracle, mut path) = (OracleArgs::default(), None);
+    let (mut backend, mut level, mut devnet_root) = (None, None, None);
+    let mut it = args.iter();
+    while let Some(&arg) = it.next() {
+        match arg {
+            "--backend" => backend = Some(value(arg, it.next())?.parse::<BackendKind>()?),
+            "--level" => {
+                level = Some(match value(arg, it.next())? {
+                    "l2" | "L2" => ScenarioLevel::L2,
+                    "l3" | "L3" => ScenarioLevel::L3,
+                    "l4" | "L4" => ScenarioLevel::L4,
+                    other => return Err(usage(format!("unknown level {other}: l2, l3 or l4"))),
+                });
+            }
+            "--devnet-root" => devnet_root = Some(PathBuf::from(value(arg, it.next())?)),
+            flag if flag.starts_with("--") => oracle_flag(&mut oracle, flag, it.next())?,
+            _ if path.is_none() => path = Some(PathBuf::from(arg)),
+            _ => return Err(usage("scenario run takes one FILE or DIR")),
+        }
+    }
+    let usage_text = "usage: difftest scenario run --backend heartwood|external|lockstep \
+                      [--level l2|l3|l4] [--devnet-root DIR] FILE|DIR";
+    Ok(Command::ScenarioRun(ScenarioRunArgs {
+        oracle,
+        options: RunOptions {
+            backend: backend.ok_or_else(|| usage(usage_text))?,
+            level,
+            devnet_root,
+        },
+        path: path.ok_or_else(|| usage(usage_text))?,
+    }))
 }
 
 fn oracle_flag(oracle: &mut OracleArgs, flag: &str, next: Option<&&str>) -> Result<()> {

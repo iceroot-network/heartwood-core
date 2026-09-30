@@ -7,7 +7,10 @@
 //! - [`instance`]: an instance (token, network and role), its five directories, and its name
 //!   `<token>-<network>-<role>`; explicit flags always win over `config.json`.
 //! - [`supervisor`]: `heartwood supervise`, the built-in supervisor with pm2's restart rules, its
-//!   lock, state file and output capture.
+//!   lock, state file, service-manager record and output capture.
+//! - [`instance_index`] and [`top`]: the index of started instances, and `top` over it.
+//! - [`mod@env`], [`config`] and [`service`]: `env get|list|set|paths`, `config publish|forger` and
+//!   `service install|uninstall` (systemd units, written only).
 //! - [`process`] and [`process_table`]: the role commands `start`, `stop`, `restart`, `status` and
 //!   `log`, and the process table that `status` prints.
 //! - [`network`]: the file-writing side of `network generate`, with the devnet profile built in.
@@ -38,18 +41,23 @@
 )]
 
 pub mod argv;
+pub mod config;
 #[cfg(feature = "devnet")]
 pub mod devnet;
 pub mod doctor;
+pub mod env;
 pub mod errors;
 pub mod http;
 pub mod instance;
+pub mod instance_index;
 pub mod network;
 pub mod process;
 pub mod process_table;
 pub mod recovery;
 pub mod seams;
+pub mod service;
 pub mod supervisor;
+pub mod top;
 
 pub use crate::errors::{DevnetError, HttpError, InstanceError, NetworkError, ProcessError};
 pub use crate::seams::{

@@ -235,6 +235,8 @@ async fn the_servers_reads_and_work_go_to_the_node_and_its_store() {
             heartwood_core::harness::AwaitRecordFile::open(&setup.root.join("await-0000.jsonl"))
                 .unwrap(),
         ),
+        #[cfg(feature = "difftest")]
+        attestation_record: None,
     };
 
     // A public request's AwaitBlock step reaches the harness's record through the service.

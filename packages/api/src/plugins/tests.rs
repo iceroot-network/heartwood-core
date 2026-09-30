@@ -730,9 +730,55 @@ fn the_route_table_serves_every_route_once_and_literal_paths_first() {
         let found = pipeline.lookup(Method::Get, path).unwrap();
         assert_eq!(found.map(|(route, _)| route), Some(expected), "{path}");
     }
-    // `/api.json` is outside the base path: no route under it takes it.
+    // `/api.json` is outside the base path: no route under it takes it, and a pipeline that does
+    // not serve the document leaves it to the catch-all.
     assert_eq!(pipeline.lookup(Method::Get, "/api.json").unwrap(), None);
     assert_eq!(pipeline.lookup(Method::Get, "/api/api.json").unwrap(), None);
+}
+
+/// A pipeline that serves the OpenAPI document besides every route under the base path, as a
+/// node's does, with `config`.
+fn serving_the_document(config: ApiConfig) -> Pipeline {
+    let host = Host {
+        config: Arc::new(config),
+        height: Box::new(|| 265),
+        dispatch: Box::new(echo),
+    };
+    let mut routes = RouteId::ALL.to_vec();
+    routes.push(RouteId::ApiSpec);
+    Pipeline::with_parts(routes, host, GRAMMAR)
+}
+
+#[tokio::test]
+async fn the_openapi_document_is_the_one_route_outside_the_base_path() {
+    let mut limited = config();
+    limited.rate_limit.points = 4;
+    let pipeline = serving_the_document(limited);
+    let found = |path: &str| pipeline.lookup(Method::Get, path).unwrap().map(|(r, _)| r);
+    assert_eq!(found("/api.json"), Some(RouteId::ApiSpec));
+    assert_eq!(found("/api/api.json"), None);
+    assert_eq!(pipeline.lookup(Method::Post, "/api.json").unwrap(), None);
+    // The same path under the base path is the catch-all's 404, charged.
+    assert_eq!(call(&pipeline, get("/api/api.json")).await.0, 404);
+    // Served with the plugins of any route: charged, with the tip's height, closed, CORS.
+    for request in [
+        get("/api.json"),
+        get("/api.json/?any=thing"),
+        Request::head("/api.json").body(Body::empty()).unwrap(),
+    ] {
+        let (status, headers, body) = call(&pipeline, request).await;
+        assert_eq!(status, 200);
+        assert_eq!(header(&headers, "x-block-height"), Some("265"));
+        assert_eq!(header(&headers, "connection"), Some("close"));
+        assert_eq!(header(&headers, "vary"), Some("origin"));
+        assert!(
+            body.is_null() || body["data"]["route"] == "ApiSpec",
+            "{body}"
+        );
+    }
+    assert_eq!(call(&pipeline, get("/api.json")).await.0, 429);
+    let post = Request::post("/api.json").body(Body::from("{}")).unwrap();
+    assert_eq!(call(&pipeline, post).await.0, 404);
 }
 
 #[tokio::test]

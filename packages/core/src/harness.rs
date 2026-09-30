@@ -34,6 +34,7 @@ use heartwood_crypto::{Block, BlockHeader, Milestones, Params};
 use heartwood_kernel::timestamp::UtcDateTime;
 use heartwood_p2p::node_services::{AwaitEnd, AwaitRecord};
 use heartwood_p2p::seams::PeerRules;
+pub use heartwood_p2p::testing::attestation::AttestationRecordFile;
 use heartwood_p2p::utils::rules::Rules;
 use heartwood_p2p_wire::RouteId;
 use heartwood_p2p_wire::codecs::blocks::ListedBlock;
@@ -318,17 +319,19 @@ impl AwaitRecordFile {
     }
 }
 
-/// The recorder, the network-state record and the AwaitBlock record of a relay run, when the
-/// harness asks for them.
+/// The recorder, the network-state record, the AwaitBlock record and the attestation record of a
+/// relay run, when the harness asks for them.
 pub type HarnessFiles = (
     Option<Box<dyn CommitObserver>>,
     Option<NetworkStateRecord>,
     Option<AwaitRecordFile>,
+    Option<AttestationRecordFile>,
 );
 
 /// The harness's files of a relay run: the recorder of `--difftest-digest` and
 /// `--difftest-blocks`, or else of the next free pair of per-start files in the directory that
-/// [`DIR_VARIABLE`] names; and the network-state record and this start's AwaitBlock record there.
+/// [`DIR_VARIABLE`] names; and the network-state record and this start's AwaitBlock and
+/// attestation records there.
 pub fn files(
     relay: &crate::config::RelayConfig,
     run: &crate::commands::relay::RelayRun,
@@ -360,6 +363,8 @@ pub fn files(
         )),
     };
     let record = (dir.as_ref().map(|dir| NetworkStateRecord::open(dir))).transpose()?;
-    let awaits = dir.map(|dir| AwaitRecordFile::open(&dir.join(format!("await-{number}"))));
-    Ok((observer, record, awaits.transpose()?))
+    let awaits =
+        (dir.as_ref()).map(|dir| AwaitRecordFile::open(&dir.join(format!("await-{number}"))));
+    let attests = dir.map(|dir| AttestationRecordFile::open(&dir.join(format!("attest-{number}"))));
+    Ok((observer, record, awaits.transpose()?, attests.transpose()?))
 }

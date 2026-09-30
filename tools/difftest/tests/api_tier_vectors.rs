@@ -1,7 +1,10 @@
 //! L0 over the API tier's records of class V34: the state's index orders, the listings, the
 //! pagination and its tree, the wallet search and the collation, the SQL records, the chain
 //! routes' documents (the OpenAPI document, the transaction schemas, the fee statistics and the
-//! query fuzz target's inputs) and the productivity's window, without an oracle.
+//! query fuzz target's inputs) and the productivity's window, without an oracle; and over the
+//! operator commands' records of class V35 (the environment file's writer and reader, the forger's
+//! key file), read from `packages/cli/tests/vectors` or the directory `OPERATOR_VECTORS` names,
+//! and required there once the CLI's vectors are installed (their manifest exists).
 //!
 //! Every record goes, by its operation, to the subject of its area. A record of an operation this
 //! test does not list fails it, and so does a listed operation with fewer records than its
@@ -34,14 +37,19 @@ const MINIMUMS: &str = "tools/oracle/vector-minimums.json";
 /// The operations of the class with the fewest records of each, from the oracle's manifest, which
 /// `make vectors-install` checks too.
 fn minimums() -> Vec<(String, usize)> {
+    minimums_of(CLASS)
+}
+
+/// The operations of `class` with the fewest records of each, from the oracle's manifest.
+fn minimums_of(class_name: &str) -> Vec<(String, usize)> {
     let path = workspace().join(MINIMUMS);
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{} cannot be read: {error}", path.display()));
     let manifest: serde_json::Value = serde_json::from_str(&text)
         .unwrap_or_else(|error| panic!("{} is not JSON: {error}", path.display()));
-    let class = manifest[CLASS]
+    let class = manifest[class_name]
         .as_object()
-        .unwrap_or_else(|| panic!("{} lists no {CLASS}", path.display()));
+        .unwrap_or_else(|| panic!("{} lists no {class_name}", path.display()));
     let minimums: Vec<(String, usize)> = class
         .iter()
         .map(|(op, fewest)| {
@@ -54,10 +62,62 @@ fn minimums() -> Vec<(String, usize)> {
         .collect();
     assert!(
         !minimums.is_empty(),
-        "{} lists no operation of {CLASS}",
+        "{} lists no operation of {class_name}",
         path.display()
     );
     minimums
+}
+
+/// The operator commands' class.
+const OPERATOR_CLASS: &str = "V35-operator";
+
+#[test]
+fn the_operator_vectors_pass_l0() {
+    let minimums = minimums_of(OPERATOR_CLASS);
+    let dir = ClassDir::from_env(
+        &workspace(),
+        "OPERATOR_VECTORS",
+        "packages/cli/tests/vectors",
+    );
+    let named = matches!(dir, ClassDir::Named(_));
+    // Until the vectors stage installs the class, the CLI has no vector set: nothing to hold yet.
+    if !named && !dir.path().join("MANIFEST.sha256").exists() {
+        eprintln!("the_operator_vectors_pass_l0: the CLI's vectors are not installed yet");
+        return;
+    }
+    let Some(mut set) = dir.load(OPERATOR_CLASS).expect("the class is installed") else {
+        eprintln!(
+            "the_operator_vectors_pass_l0: {OPERATOR_CLASS} is not in {}, which OPERATOR_VECTORS names",
+            dir.path().display()
+        );
+        return;
+    };
+    let devnet = devnet(&set);
+    set.files.retain(|file| file.meta.class == OPERATOR_CLASS);
+    let mut per_op: BTreeMap<&str, usize> = BTreeMap::new();
+    for record in set.files.iter().flat_map(|file| &file.records) {
+        assert!(
+            minimums.iter().any(|(op, _)| *op == record.op),
+            "{OPERATOR_CLASS} has a record of {}, no operation of this test",
+            record.op
+        );
+        *per_op.entry(record.op.as_str()).or_default() += 1;
+    }
+    for (op, fewest) in &minimums {
+        let count = per_op.get(op.as_str()).copied().unwrap_or(0);
+        if named && count == 0 {
+            eprintln!("the_operator_vectors_pass_l0: the run has no {op} record");
+            continue;
+        }
+        assert!(
+            count >= *fewest,
+            "{OPERATOR_CLASS} has {count} {op} records, fewer than {fewest}"
+        );
+    }
+    let report = l0::run(&set, &subject::heartwood(Some(devnet)));
+    eprintln!("{OPERATOR_CLASS}: records per operation {per_op:?}\n{report}");
+    assert!(report.is_success(), "{report}");
+    assert_eq!(report.skipped(), 0, "{report}");
 }
 
 /// Operations the class may hold besides the minimums' (records the parts add beyond them): the

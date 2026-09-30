@@ -18,7 +18,11 @@
 //! anywhere, is answered as the reference's catch-all route answers it (in `catch_all`): 400
 //! uncharged when its path does not decode, else charged a point and answered 404 (403 for a short
 //! path that leads above the documentation's directory); another method on an unmatched path is
-//! answered 404 before the rate limit.
+//! answered 404 before the rate limit. One route lies outside the base path: `GET /api.json`
+//! ([`RouteId::ApiSpec`], trailing slash stripped as on any route), the OpenAPI document
+//! ([`crate::spec::answer`]), with the server-wide plugins as on any route and no schema; every
+//! other path outside the base path keeps the catch-all's answers, and `<base>/api.json` matches
+//! nothing.
 //!
 //! The request's headers are read as Node's server gives them to hapi (`node_header`): as
 //! Latin-1, and a repeated header's values joined with `, `. So is its target, when the server
@@ -333,7 +337,8 @@ impl ErrorLines {
 impl Pipeline {
     /// The pipeline of `routes` over `context`.
     pub(crate) fn new(routes: Vec<Route>, context: Arc<ApiContext>) -> Pipeline {
-        let ids = routes.iter().map(|route| route.id).collect();
+        let mut ids: Vec<RouteId> = routes.iter().map(|route| route.id).collect();
+        ids.push(RouteId::ApiSpec);
         let tip = Arc::clone(&context);
         let host = Host {
             config: Arc::clone(&context.config),
@@ -341,6 +346,10 @@ impl Pipeline {
             dispatch: Box::new(move |id, request| {
                 match routes.iter().find(|route| route.id == id) {
                     Some(route) => (route.handler)(Arc::clone(&context), request),
+                    None if id == RouteId::ApiSpec => {
+                        let reply = crate::spec::answer(&context);
+                        Box::pin(async move { Ok(reply) })
+                    }
                     None => Box::pin(async { Err(not_found()) }),
                 }
             }),
@@ -486,16 +495,22 @@ impl Pipeline {
         Ok(Answer::json(reply.status, reply.body))
     }
 
-    /// The route of `method` at `path` under the base path, and its decoded parameters: the route
-    /// with the most literal segments wins, as in hapi's router (`/wallets/top` over
+    /// The route of `method` at `path`, and its decoded parameters: [`RouteId::ApiSpec`] at its
+    /// path from the server's root when the pipeline serves it, else the route under the base path
+    /// with the most literal segments, as in hapi's router (`/wallets/top` over
     /// `/wallets/{id}`). `Ok(None)` when none matches; 400 for a parameter that is not
     /// percent-encoded UTF-8.
     fn lookup(&self, method: Method, path: &str) -> Result<Option<(RouteId, Params)>, ApiError> {
+        let outside = RouteId::ApiSpec;
+        if method == outside.method() && path == outside.path() && self.routes.contains(&outside) {
+            return Ok(Some((outside, Params::new())));
+        }
         let Some(rest) = path.strip_prefix(self.host.config.base_path.as_str()) else {
             return Ok(None);
         };
         let segments: Vec<&str> = rest.split('/').collect();
-        let routes = self.routes.iter().filter(|route| route.method() == method);
+        let under = |route: &&RouteId| **route != outside && route.method() == method;
+        let routes = self.routes.iter().filter(under);
         let matched = routes.filter_map(|&route| Some((route, matches(route, &segments)?)));
         let Some((route, (_, raw))) = matched.max_by_key(|(_, (literals, _))| *literals) else {
             return Ok(None);

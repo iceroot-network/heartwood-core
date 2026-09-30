@@ -135,7 +135,8 @@ fn has_json_form(difference: Documented, json: &Value) -> bool {
         | Documented::Api(_)
         | Documented::OverHeightOwnBlock
         | Documented::RoundWallets
-        | Documented::ReplayIndexOrder => false,
+        | Documented::ReplayIndexOrder
+        | Documented::CliEnvParser => false,
     }
 }
 

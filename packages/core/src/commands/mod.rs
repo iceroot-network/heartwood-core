@@ -2,21 +2,29 @@
 //! (`run`, `start`, `stop`, `restart`, `status`, `log`), [`network`] (`generate`), `devnet`
 //! (feature `devnet`: `init`, `start`, `stop`, `status`, `logs`, `stop-node`, `start-node`,
 //! `restart-node`, `reset`, `wait`, `env`), [`snapshot`] (`rollback`), [`clear`] (`pool clear` and
-//! `state clear`), [`doctor`] (read-only diagnostics, `checks`, `explain`, `mcp`) and [`supervise`]
-//! (the hidden supervisor), with `version` and clap's `help`. The reference's colon spellings
+//! `state clear`), [`doctor`] (read-only diagnostics, `checks`, `explain`, `mcp`), [`top`] (the
+//! token's running instances), [`mod@env`] (`get`, `list`, `set`, `paths`), [`config`] (`publish`,
+//! `forger`), [`service`] (`install`, `uninstall`), [`mod@core`] (the combined role's `run`, `start`,
+//! `stop`, `restart`, `status`, `log`) and [`supervise`] (the hidden supervisor), with `version`
+//! (`--verbose`) and clap's `help`. A command that is not built yet says so and exits with 1. The reference's colon spellings
 //! (`relay:start`) are rewritten first ([`heartwood_cli::argv::rewrite`]); flags keep the
 //! reference's camelCase with kebab-case
 //! aliases.
 
 pub mod clear;
+pub mod config;
+pub mod core;
 #[cfg(feature = "devnet")]
 pub mod devnet;
 pub mod doctor;
+pub mod env;
 pub mod forger;
 pub mod network;
 pub mod relay;
+pub mod service;
 pub mod snapshot;
 pub mod supervise;
+pub mod top;
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -61,11 +69,29 @@ pub enum Command {
     State(clear::StateCommand),
     /// Read-only diagnostics of this host's node.
     Doctor(doctor::DoctorLine),
+    /// The token's running instances.
+    Top(top::Top),
+    /// An instance's environment file and directories.
+    #[command(subcommand)]
+    Env(env::EnvCommand),
+    /// An instance's configuration files and the forger's key.
+    #[command(subcommand)]
+    Config(config::ConfigCommand),
+    /// A systemd unit for one role of an instance.
+    #[command(subcommand)]
+    Service(service::ServiceCommand),
+    /// The combined role's commands.
+    #[command(subcommand)]
+    Core(core::CoreCommand),
     /// Supervise a started role (written by `start`).
     #[command(hide = true)]
     Supervise(supervise::Supervise),
     /// Print the version.
-    Version,
+    Version {
+        /// Also the target and the enabled features.
+        #[arg(long)]
+        verbose: bool,
+    },
 }
 
 /// The flags of `stop`, `restart` and `status`: the instance.
@@ -172,6 +198,11 @@ pub(crate) fn manage(role: Role, command: Manage) -> ExitCode {
     }
 }
 
+/// The answer of a command that is not built yet: the message, and the exit status 1.
+pub(crate) fn not_built(what: &str) -> ExitCode {
+    crate::exit(Err(format!("{what} is not built yet")))
+}
+
 /// Run `command`; the process's exit status.
 pub fn run(command: Command) -> ExitCode {
     match command {
@@ -184,11 +215,17 @@ pub fn run(command: Command) -> ExitCode {
         Command::Pool(command) => clear::run_pool(command),
         Command::State(command) => clear::run_state(command),
         Command::Doctor(line) => doctor::run(line),
+        Command::Top(top) => top::run(top),
+        Command::Env(command) => env::run(command),
+        Command::Config(command) => config::run(command),
+        Command::Service(command) => service::run(command),
+        Command::Core(command) => core::run(command),
         Command::Supervise(command) => supervise::run(command),
-        Command::Version => {
+        Command::Version { verbose: false } => {
             println!("{}", crate::VERSION);
             ExitCode::SUCCESS
         }
+        Command::Version { verbose: true } => not_built("version --verbose"),
     }
 }
 
@@ -241,6 +278,22 @@ mod tests {
             "heartwood network generate --network devnet --seed s --out o --chainOnly",
             "heartwood supervise --role relay --token t --network n -- heartwood relay run",
             "heartwood version",
+            "heartwood version --verbose",
+            "heartwood top --token node1",
+            "heartwood env get --network devnet --key CORE_DB_HOST",
+            "heartwood env set --network devnet --key CORE_LOG_LEVEL --value debug",
+            "heartwood env list --network devnet",
+            "heartwood env paths --token node1 --network devnet",
+            "heartwood config publish --network devnet --force",
+            "heartwood config forger --network devnet --method privateKey",
+            "heartwood config forger private-key --network devnet",
+            "heartwood service install --network devnet --role core --system --out o",
+            "heartwood service uninstall --network devnet --role relay",
+            "heartwood core run --token node1 --network devnet --networkStart",
+            "heartwood core start --network devnet --daemon=false",
+            "heartwood core stop --network devnet",
+            "heartwood core log --network devnet --lines 5",
+            "heartwood supervise --role core --token t --network n -- heartwood core run",
         ] {
             assert!(line(text).is_ok(), "{text}");
         }
@@ -249,6 +302,12 @@ mod tests {
             "heartwood devnet init --validators 1 --failover 1:1,6,7",
             "heartwood devnet stop-node 3 --role relay --kill",
             "heartwood devnet wait --height 20",
+            "heartwood devnet init --validators 3 --core",
+            "heartwood devnet start --keep-epoch --no-wait",
+            "heartwood devnet status --json",
+            "heartwood devnet status --resources",
+            "heartwood devnet logs --follow --node 2",
+            "heartwood devnet run s.json -- --seed 1",
         ] {
             assert!(line(text).is_ok(), "{text}");
         }
