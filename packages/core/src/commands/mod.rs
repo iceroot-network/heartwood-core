@@ -203,6 +203,25 @@ pub(crate) fn not_built(what: &str) -> ExitCode {
     crate::exit(Err(format!("{what} is not built yet")))
 }
 
+/// The version, with the platform this build runs on and the features it was built with (a test
+/// seam is named only in a build that has it).
+pub(crate) fn verbose_version() -> String {
+    let features = [
+        ("devnet", cfg!(feature = "devnet")),
+        ("difftest", cfg!(feature = "difftest")),
+    ];
+    let mut on = features.iter().filter(|(_, on)| *on).map(|(name, _)| *name);
+    let listed = on.next().map_or_else(
+        || "none".to_owned(),
+        |first| on.fold(first.to_owned(), |all, name| format!("{all}, {name}")),
+    );
+    let (arch, os) = (std::env::consts::ARCH, std::env::consts::OS);
+    format!(
+        "{}\ntarget: {arch}-{os}\nfeatures: {listed}",
+        crate::VERSION
+    )
+}
+
 /// Run `command`; the process's exit status.
 pub fn run(command: Command) -> ExitCode {
     match command {
@@ -225,7 +244,10 @@ pub fn run(command: Command) -> ExitCode {
             println!("{}", crate::VERSION);
             ExitCode::SUCCESS
         }
-        Command::Version { verbose: true } => not_built("version --verbose"),
+        Command::Version { verbose: true } => {
+            println!("{}", verbose_version());
+            ExitCode::SUCCESS
+        }
     }
 }
 
@@ -245,6 +267,17 @@ mod tests {
             Command::Forger(forger::ForgerCommand::Start(start)) => start.daemon,
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn the_verbose_version_has_the_version_the_target_and_the_features_of_this_build() {
+        let lines: Vec<String> = verbose_version().lines().map(str::to_owned).collect();
+        assert_eq!(lines[0], crate::VERSION);
+        assert!(lines[1].starts_with("target: "), "{lines:?}");
+        let features = lines[2].strip_prefix("features: ").unwrap();
+        assert_eq!(features.contains("devnet"), cfg!(feature = "devnet"));
+        assert_eq!(features.contains("difftest"), cfg!(feature = "difftest"));
+        assert_eq!(lines.len(), 3);
     }
 
     #[test]
