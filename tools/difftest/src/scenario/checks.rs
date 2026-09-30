@@ -7,10 +7,11 @@
 
 use std::collections::hash_map::Entry;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::backend::{Backend, BackendError};
 use super::format::{ApiCheck, Check, Invariant};
+use super::projection::{self, Names};
 use super::runner::Runner;
 use crate::compare;
 use crate::report::{CaseResult, Outcome};
@@ -28,6 +29,8 @@ pub struct Ctx<'r, 'a> {
     pub name: &'r str,
     /// The node the step fired on, the highest tip's.
     pub node: u32,
+    /// The projections read, by check label, for the run's record.
+    pub values: Vec<(String, Value)>,
 }
 
 /// The result of one probe: settled, or a block should come first.
@@ -118,100 +121,79 @@ impl Ctx<'_, '_> {
         })
     }
 
-    /// A projection of the API, equal on the nodes given, read at tips that stood still; a read
-    /// that a new block interrupted is read again.
+    /// A projection of the API, equal on the nodes given, read while every one of them stood at
+    /// the same height; a read that a new block interrupted, or that found the nodes at different
+    /// heights, is read again after the network had time to move on. The value read is kept for
+    /// the run's record.
     fn projection(&mut self, api: &ApiCheck) -> Probe {
         let nodes: Vec<u32> = if api.nodes.is_empty() {
             (1..=self.backend().nodes()).collect()
         } else {
             api.nodes.clone()
         };
-        'attempt: for _ in 0..ATTEMPTS {
-            let mut first: Option<Value> = None;
-            for &node in &nodes {
-                let before = self.backend().tip(node)?;
-                let value = self.project(node, &api.projection)?;
-                if self.backend().tip(node)? != before {
-                    continue 'attempt;
-                }
-                match &first {
-                    None => first = Some(value),
-                    Some(expected) => {
-                        let differences = compare::diff(expected, &value);
-                        if !differences.is_empty() {
-                            return Ok(Outcome::Mismatch(differences));
-                        }
-                    }
-                }
+        for attempt in 0..ATTEMPTS {
+            if attempt > 0 {
+                self.runner.backend.wait()?;
             }
-            return Ok(Outcome::Pass);
+            if let Some(outcome) = self.projection_once(api, &nodes)? {
+                return Ok(outcome);
+            }
         }
         Ok(Outcome::Skipped(
-            "the tips kept moving while the answers were read".into(),
+            "the nodes never stood at one height while the answers were read".into(),
         ))
     }
 
-    fn project(&self, node: u32, name: &str) -> Result<Value, BackendError> {
-        let get = |path: String| -> Result<Value, BackendError> {
-            Ok(self.backend().get(node, &path)?.body)
+    /// One read of `api` on `nodes`: `None` when the tips moved or differed.
+    fn projection_once(&mut self, api: &ApiCheck, nodes: &[u32]) -> Result<Option<Outcome>, BackendError> {
+        let names = Names {
+            chain: &self.runner.chain,
+            actors: self.runner.compiled.scenario.actors.keys().map(String::as_str).collect(),
+            transactions: &self.runner.compiled.transactions,
         };
-        let failed = |message: String| BackendError::Failed {
-            action: "project the API",
-            message,
-        };
-        match name {
-            "wallets" => {
-                let mut out = serde_json::Map::new();
-                let mut names: Vec<&String> = self.runner.compiled.scenario.actors.keys().collect();
-                names.sort();
-                let genesis = "genesis".to_owned();
-                for actor in std::iter::once(&genesis).chain(names) {
-                    let address = &self
-                        .runner
-                        .chain
-                        .person(actor)
-                        .map_err(|e| failed(e.to_string()))?
-                        .address;
-                    let body = get(format!("/api/wallets/{address}"))?;
-                    let data = &body["data"];
-                    out.insert(
-                        actor.clone(),
-                        json!({"balance": data["balance"], "nonce": data["nonce"]}),
-                    );
+        let mut height = None;
+        let mut first: Option<Value> = None;
+        let mut outcome = Outcome::Pass;
+        for &node in nodes {
+            let before = self.backend().tip(node)?;
+            let value = projection::read(self.backend(), &names, node, &api.projection)?;
+            let after = self.backend().tip(node)?;
+            if after != before || height.is_some_and(|h| h != before.height) {
+                return Ok(None);
+            }
+            height = Some(before.height);
+            match &first {
+                None => first = Some(value),
+                Some(expected) => {
+                    let differences = compare::diff(expected, &value);
+                    if !differences.is_empty() && outcome == Outcome::Pass {
+                        outcome = Outcome::Mismatch(differences);
+                    }
                 }
-                Ok(Value::Object(out))
             }
-            "delegates" => {
-                let body = get("/api/delegates?limit=100".to_owned())?;
-                let list = body["data"].as_array().cloned().unwrap_or_default();
-                Ok(Value::Object(
-                    list.iter()
-                        .filter_map(|d| {
-                            Some((
-                                d["username"].as_str()?.to_owned(),
-                                json!({"rank": d["rank"], "votes": d["votes"]}),
-                            ))
-                        })
-                        .collect(),
-                ))
-            }
-            "supply" => {
-                let body = get("/api/blockchain".to_owned())?;
-                Ok(json!({"supply": body["data"]["supply"], "burned": body["data"]["burned"]}))
-            }
-            other => Err(failed(format!(
-                "no projection is named {other}: wallets, delegates or supply"
-            ))),
         }
+        if let Some(value) = first {
+            let label = format!("{}: api {}", self.name, api.projection);
+            match self.values.iter_mut().find(|(l, _)| *l == label) {
+                Some(kept) => kept.1 = value,
+                None => self.values.push((label, value)),
+            }
+        }
+        Ok(Some(outcome))
     }
 
     /// The missed slots recorded for the delegates of `node`'s forger (all of them when the
     /// backend does not know the delegates).
     fn missed(&self, node: u32) -> Result<u64, BackendError> {
         let total = |path: String| -> Result<u64, BackendError> {
-            Ok(self.backend().get(node, &path)?.body["meta"]["totalCount"]
-                .as_u64()
-                .unwrap_or(0))
+            let answer = self.backend().get(node, &path)?;
+            match answer.body["meta"]["totalCount"].as_u64() {
+                Some(count) if answer.status == 200 => Ok(count),
+                _ => Err(BackendError::Failed {
+                    action: "count the missed slots",
+                    message: format!("{path} answers {} without a count", answer.status),
+                }),
+            }
         };
         let delegates = self.backend().forger_delegates(node)?;
         if delegates.is_empty() {
@@ -301,9 +283,9 @@ impl Ctx<'_, '_> {
         let genesis: i128 = self.runner.chain.supply.parse().unwrap_or(0);
         let mut rewards = 0;
         for block in &blocks {
-            let Some(reward) = amount(&block["reward"]) else {
+            let Some(reward) = amount(&block["forged"]["reward"]) else {
                 return Ok(Outcome::HarnessError(
-                    "a block of /api/blocks names no reward".into(),
+                    "a block of /api/blocks names no forged.reward".into(),
                 ));
             };
             rewards += reward;
@@ -324,13 +306,14 @@ impl Ctx<'_, '_> {
         })
     }
 
-    /// Every block was forged by a delegate of its round, none twice in a round.
+    /// Every block was forged by an active delegate of its round. A delegate may forge twice in
+    /// a round: after a missed slot the reference gives the round's later slots to delegates that
+    /// have forged in it already, at the milestone's `secondaryReward`.
     fn schedule(&mut self) -> Probe {
         let (node, tip) = self.runner.observe()?;
         let length = self.runner.chain.round_length.max(1);
         let mut rounds: std::collections::HashMap<u32, Vec<String>> =
             std::collections::HashMap::new();
-        let mut seen: std::collections::HashSet<(u32, String)> = std::collections::HashSet::new();
         for block in self.blocks(node, tip.height)? {
             let height = block["height"]
                 .as_u64()
@@ -366,12 +349,6 @@ impl Ctx<'_, '_> {
                 return Ok(expected(
                     &format!("a delegate of round {round}"),
                     format!("{generator} at {height}"),
-                ));
-            }
-            if !seen.insert((round, generator.clone())) {
-                return Ok(expected(
-                    "one block a round",
-                    format!("{generator} twice in round {round}"),
                 ));
             }
         }

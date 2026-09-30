@@ -290,15 +290,15 @@ impl<'a> Runner<'a> {
                 Err(outcome) => self.case(index, tip.height, format!("{name}: action"), outcome),
             }
             if let Some(check) = &step.check {
-                let cases = checks::evaluate(
-                    &mut Ctx {
-                        runner: &mut self,
-                        step: index,
-                        name: &name,
-                        node,
-                    },
-                    check,
-                );
+                let mut ctx = Ctx {
+                    runner: &mut self,
+                    step: index,
+                    name: &name,
+                    node,
+                    values: Vec::new(),
+                };
+                let cases = checks::evaluate(&mut ctx, check);
+                record.projections = ctx.values;
                 for case in cases {
                     record.checked(&case.label, &case.outcome);
                     self.results.push(case);

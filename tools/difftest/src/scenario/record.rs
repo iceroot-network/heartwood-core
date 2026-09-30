@@ -5,8 +5,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::backend::{Submitted, Tip};
+use crate::compare::diff;
 use crate::errors::{Error, Result};
 use crate::report::{CaseResult, Outcome, Report};
 
@@ -44,6 +46,10 @@ pub struct StepRecord {
     /// Each check's label and how it came out: `pass`, `skipped: why` or `failed: why`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outcomes: Vec<(String, String)>,
+    /// The value of each `api` check, by label, as the nodes last agreed on it (or as the first
+    /// node answered when they did not).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projections: Vec<(String, Value)>,
 }
 
 impl StepRecord {
@@ -55,6 +61,7 @@ impl StepRecord {
             tip: (tip.height, tip.id.clone()),
             submitted: Vec::new(),
             outcomes: Vec::new(),
+            projections: Vec::new(),
         }
     }
 
@@ -158,8 +165,14 @@ fn differs(
     }
 }
 
+/// The projection that two runs of a suite compare with each other: the scenario's own wallets,
+/// which the same accepted transactions leave equal on both implementations. The other projections
+/// hold what two independent networks do not share (the blocks, their forgers and rewards).
+const SHARED_PROJECTION: &str = ": api wallets";
+
 /// The two runs of one scenario, step by step: what the pools answered, how each check came out,
-/// and at a `digest` check the block the tips stood at (its id names the chain up to it).
+/// and the scenario's wallets where a step read them. Two runs are two networks that forged their
+/// own blocks, so their chains are not compared here: each is judged on its own (`live check`).
 fn compare_runs(suite: &str, reference: &Record, heartwood: &Record) -> Vec<CaseResult> {
     let id = &reference.scenario;
     let mut cases = Vec::new();
@@ -197,23 +210,31 @@ fn compare_runs(suite: &str, reference: &Record, heartwood: &Record) -> Vec<Case
                 Some((_, now)) => differs(label, was, now),
             };
             cases.push(case(suite, id, r.index, label.clone(), height, outcome));
-            if label.ends_with(": digest") {
-                let outcome = if r.tip.0 != h.tip.0 {
-                    Outcome::Skipped(format!("the tips stood at {} and {}", r.tip.0, h.tip.0))
-                } else if r.tip.1 == h.tip.1 {
-                    Outcome::Pass
-                } else {
-                    differs("block", &r.tip, &h.tip)
-                };
-                cases.push(case(
-                    suite,
-                    id,
-                    r.index,
-                    format!("{}: chain at the digest", r.name),
-                    height,
-                    outcome,
-                ));
-            }
+        }
+        for (label, was) in r
+            .projections
+            .iter()
+            .filter(|(l, _)| l.ends_with(SHARED_PROJECTION))
+        {
+            let outcome = match h.projections.iter().find(|(l, _)| l == label) {
+                None => differs(label, "a value", "none"),
+                Some((_, now)) => {
+                    let differences = diff(was, now);
+                    if differences.is_empty() {
+                        Outcome::Pass
+                    } else {
+                        Outcome::Mismatch(differences)
+                    }
+                }
+            };
+            cases.push(case(
+                suite,
+                id,
+                r.index,
+                format!("{label} of both runs"),
+                height,
+                outcome,
+            ));
         }
     }
     cases

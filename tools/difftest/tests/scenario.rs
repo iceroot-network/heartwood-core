@@ -19,6 +19,7 @@ use heartwood_difftest::scenario::backend::Answer;
 use heartwood_difftest::scenario::backends::{external, heartwood};
 use heartwood_difftest::scenario::chain::Chain;
 use heartwood_difftest::scenario::compile::{fire_heights, specs};
+use heartwood_difftest::scenario::projection::{self, Names};
 use heartwood_difftest::scenario::format::{
     Compiled, CompiledTx, Level, Part, RestartModes, Scenario, Via,
 };
@@ -314,6 +315,8 @@ struct Fake {
     lag: HashMap<u32, u32>,
     delegates: Vec<String>,
     unsupported: HashSet<&'static str>,
+    /// The height at which the lagging nodes catch up.
+    catch_up: Option<u32>,
 }
 
 impl Fake {
@@ -331,6 +334,7 @@ impl Fake {
             lag: HashMap::new(),
             delegates: Vec::new(),
             unsupported: HashSet::new(),
+            catch_up: None,
         }
     }
 
@@ -468,6 +472,9 @@ impl Backend for Fake {
             });
         }
         self.height.set(self.height.get() + 1);
+        if self.catch_up.is_some_and(|at| self.height.get() >= at) {
+            self.lag.clear();
+        }
         let taken: Vec<String> = self.pool.borrow_mut().drain(..).collect();
         self.chain.borrow_mut().extend(taken);
         Ok(())
@@ -761,6 +768,11 @@ fn wallet_pages(fake: &mut Fake, chain: &Chain, node: u32, alice: &str) {
     }
 }
 
+/// A list route's one page, as the API pages it.
+fn one_page(rows: Value) -> Value {
+    json!({"meta": {"count": 1, "next": null}, "data": rows})
+}
+
 #[test]
 fn an_api_projection_is_equal_on_every_node_or_a_mismatch() {
     let compiled = compiled(
@@ -786,11 +798,18 @@ fn an_api_projection_is_equal_on_every_node_or_a_mismatch() {
     let mut fake = Fake::new(2);
     wallet_pages(&mut fake, &chain, 1, "5");
     wallet_pages(&mut fake, &chain, 2, "6");
-    let delegates = json!({"data": [
-        {"username": "genesis_1", "rank": 1, "votes": "0", "noise": 1},
-        {"username": "genesis_2", "rank": 2, "votes": "5"},
-    ]});
-    fake.page_everywhere("/api/delegates?limit=100", delegates);
+    // The delegates differ only in what the projection removes: the version and productivity.
+    for (node, version, productivity) in [(1, "1.0.0", 99.1), (2, "1.0.1", 98.0)] {
+        fake.page(
+            node,
+            "/api/delegates?page=1&limit=100",
+            one_page(json!([
+                {"username": "genesis_1", "rank": 1, "version": version,
+                 "votesReceived": {"votes": "5", "percent": 1, "voters": 1},
+                 "blocks": {"produced": 3, "missed": node, "productivity": productivity}},
+            ])),
+        );
+    }
     fake.page(
         1,
         "/api/blockchain",
@@ -801,7 +820,7 @@ fn an_api_projection_is_equal_on_every_node_or_a_mismatch() {
         "/api/blockchain",
         json!({"data": {"supply": "11", "burned": "0"}}),
     );
-    let (report, _) = run_on(&mut fake, &compiled);
+    let (report, record) = run_on(&mut fake, &compiled);
     let cases: Vec<&Outcome> = report.results.iter().map(|c| &c.outcome).collect();
     // The wallets differ between the nodes (alice's balance); on one node they cannot.
     assert!(
@@ -809,10 +828,19 @@ fn an_api_projection_is_equal_on_every_node_or_a_mismatch() {
         "{cases:?}"
     );
     assert_eq!(*cases[1], Outcome::Pass);
-    assert_eq!(*cases[2], Outcome::Pass);
+    assert_eq!(*cases[2], Outcome::Pass, "{cases:?}");
     assert!(matches!(cases[3], Outcome::Mismatch(_)), "supply differs");
     assert!(
         matches!(cases[4], Outcome::HarnessError(m) if m.contains("no projection is named weather"))
+    );
+    // The value read is the run's record: node 1's, without what the projection removes.
+    let delegates = &record.steps[2].projections;
+    assert_eq!(delegates[0].0, "step 3: api delegates");
+    assert_eq!(
+        delegates[0].1,
+        json!([{"username": "genesis_1", "rank": 1,
+                "votesReceived": {"votes": "5", "percent": 1, "voters": 1},
+                "blocks": {"produced": 3}}])
     );
     // What is kept of a wallet is its balance and nonce: a difference elsewhere is not one.
     let mut equal = Fake::new(2);
@@ -820,6 +848,78 @@ fn an_api_projection_is_equal_on_every_node_or_a_mismatch() {
     wallet_pages(&mut equal, &chain, 2, "5");
     let (report, _) = run_on(&mut equal, &compiled);
     assert_eq!(report.results[0].outcome, Outcome::Pass);
+}
+
+#[test]
+fn the_projections_read_the_routes_they_name_without_what_may_differ() {
+    let compiled = compiled(
+        json!([{"at": {"height": 2}}]),
+        &[("fund", 0)],
+    );
+    let chain = Chain::new(&compiled.scenario).expect("chain");
+    let alice = chain.person("alice").expect("alice").address.clone();
+    let mut fake = Fake::new(1);
+    fake.page(1, &format!("/api/wallets/{alice}"), json!({"data": {"balance": "5",
+        "attributes": {"delegate": {"username": "a", "version": "1.0.0", "productivity": 1}}}}));
+    fake.page(1, "/api/transactions/id-fund", json!({"data": {"id": "id-fund", "confirmations": 3}}));
+    fake.page(1, "/api/blocks/4", json!({"data": {"height": 4, "confirmations": 1}}));
+    fake.page(1, "/api/rounds/1/delegates", json!({"data": [
+        {"publicKey": "bb", "votes": "5"}, {"publicKey": "aa", "votes": "5"},
+        {"publicKey": "cc", "votes": "10"}]}));
+    fake.page(1, "/api/transactions/unconfirmed?page=1&limit=100",
+        one_page(json!([{"id": "b"}, {"id": "a"}])));
+    fake.page(1, "/api/blocks/missed?height.from=2&height.to=9&page=1&limit=100",
+        one_page(json!([{"height": 3}])));
+    fake.page(1, "/api/node/syncing", json!({"data": {"syncing": false, "blocks": 0, "height": 4}}));
+    fake.page(1, "/api/node/configuration", json!({"data": {"core": {"version": "x"}, "nethash": "n"}}));
+    // Two pages, the first pointing at the second.
+    fake.page(1, "/api/delegates/genesis_1/voters?page=1&limit=100",
+        json!({"meta": {"next": "/delegates/genesis_1/voters?page=2&limit=100"}, "data": [{"address": "1"}]}));
+    fake.page(1, "/api/delegates/genesis_1/voters?page=2&limit=100", one_page(json!([{"address": "2"}])));
+    let runner_chain = Chain::new(&compiled.scenario).expect("chain");
+    let names = Names {
+        chain: &runner_chain,
+        actors: vec!["alice", "bob"],
+        transactions: &compiled.transactions,
+    };
+    let read = |text: &str| projection::read(&fake, &names, 1, text).expect(text);
+    assert_eq!(
+        read("wallet(alice)"),
+        json!({"data": {"balance": "5", "attributes": {"delegate": {"username": "a"}}}})
+    );
+    assert_eq!(read("tx(fund)"), json!({"data": {"id": "id-fund"}}));
+    assert_eq!(read("block(4)"), json!({"data": {"height": 4}}));
+    assert_eq!(
+        read("round(1)")["data"],
+        json!([{"publicKey": "cc", "votes": "10"}, {"publicKey": "aa", "votes": "5"},
+               {"publicKey": "bb", "votes": "5"}])
+    );
+    assert_eq!(read("pool"), json!(["a", "b"]));
+    assert_eq!(read("missed(2, 9)"), json!([{"height": 3}]));
+    assert_eq!(read("status"), json!({"data": {"syncing": false, "height": 4}}));
+    assert_eq!(read("config"), json!({"data": {"core": {}, "nethash": "n"}}));
+    assert_eq!(read("voters(genesis_1)"), json!([{"address": "1"}, {"address": "2"}]));
+    // A route that answers another status is compared with its status.
+    assert_eq!(read("tx(elsewhere)"), json!({"status": 404, "body": {}}));
+    for bad in ["wallet", "delegates(1)", "missed(1)", "tx(a"] {
+        assert!(projection::read(&fake, &names, 1, bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn a_projection_waits_for_the_nodes_to_stand_at_one_height() {
+    let compiled = compiled(
+        json!([{"at": {"height": 3}, "check": {"api": {"projection": "supply"}}}]),
+        &[],
+    );
+    // Node 2 is a block behind until the network reaches height 4.
+    let mut fake = Fake::new(2);
+    fake.lag.insert(2, 1);
+    fake.catch_up = Some(4);
+    fake.page_everywhere("/api/blockchain", json!({"data": {"supply": "10"}}));
+    let (report, _) = run_on(&mut fake, &compiled);
+    assert_eq!(report.results[0].outcome, Outcome::Pass);
+    assert_eq!(report.results[0].height, 4, "read once both stood at 4");
 }
 
 #[test]
@@ -869,6 +969,9 @@ fn a_projection_is_read_again_when_a_block_came_in_between() {
         fn get(&self, node: u32, path: &str) -> Result<Answer, BackendError> {
             self.0.get(node, path)
         }
+        fn wait(&mut self) -> Result<(), BackendError> {
+            self.0.wait()
+        }
     }
     let compiled = compiled(
         json!([{"at": {"height": 2}, "check": {"api": {"projection": "supply"}}}]),
@@ -878,7 +981,7 @@ fn a_projection_is_read_again_when_a_block_came_in_between() {
     fake.page(1, "/api/blockchain", json!({"data": {"supply": "10"}}));
     let (report, _) = run(&compiled, &mut Restless(fake), Level::L3).expect("run");
     assert!(
-        matches!(outcome(&report, "api supply"), Outcome::Skipped(m) if m.contains("kept moving")),
+        matches!(outcome(&report, "api supply"), Outcome::Skipped(m) if m.contains("never stood at one height")),
         "{:#?}",
         report.results
     );
@@ -919,6 +1022,13 @@ fn missed_slots_are_counted_for_the_delegates_of_the_forger() {
     let (report, _) = run_on(&mut own, &compiled);
     assert_eq!(report.results[0].outcome, Outcome::Pass);
     assert_eq!(report.results[1].outcome, Outcome::Pass);
+    // A route that gives no count is the harness's error, not a count of none.
+    let (report, _) = run_on(&mut Fake::new(1), &compiled);
+    assert!(
+        matches!(&report.results[0].outcome, Outcome::HarnessError(m) if m.contains("without a count")),
+        "{:?}",
+        report.results[0]
+    );
 }
 
 const BLOCKS: &str = "/api/blocks?limit=100&page=1&orderBy=height:asc";
@@ -935,8 +1045,8 @@ fn the_supply_is_the_genesis_supply_plus_the_rewards_less_the_burns() {
         .parse()
         .expect("supply");
     let blocks = json!({"data": [
-        {"height": 1, "reward": "0"}, {"height": 2, "reward": "10"}, {"height": 3, "reward": 10},
-        {"height": 4, "reward": "10"},
+        {"height": 1, "forged": {"reward": "0"}}, {"height": 2, "forged": {"reward": "10"}},
+        {"height": 3, "forged": {"reward": 10}}, {"height": 4, "forged": {"reward": "10"}},
     ]});
     let run_with = |supply: u64, burned: u64| {
         let mut fake = Fake::new(1);
@@ -969,7 +1079,7 @@ fn the_supply_is_the_genesis_supply_plus_the_rewards_less_the_burns() {
 }
 
 #[test]
-fn every_block_is_forged_by_a_delegate_of_its_round_and_none_twice() {
+fn every_block_is_forged_by_a_delegate_of_its_round() {
     let compiled = compiled(
         json!([{"at": {"height": 3}, "check": {"invariant": ["schedule"]}}]),
         &[],
@@ -997,10 +1107,8 @@ fn every_block_is_forged_by_a_delegate_of_its_round_and_none_twice() {
         run_with(["aa", "cc"]),
         mismatch("a delegate of round 1", "cc at 3")
     );
-    assert_eq!(
-        run_with(["aa", "aa"]),
-        mismatch("one block a round", "aa twice in round 1")
-    );
+    // After a missed slot a delegate forges a second slot of its round (at the secondary reward).
+    assert_eq!(run_with(["aa", "aa"]), Outcome::Pass);
 }
 
 // The records and their comparison.
@@ -1049,26 +1157,51 @@ fn a_record_reads_back_as_written() {
     assert!(other.steps[0].outcomes[2].1.starts_with("failed"));
 }
 
+/// `record` with the scenario's wallets read at its step.
+fn with_wallets(mut record: Record, alice: &str) -> Record {
+    record.steps[0].projections.push((
+        "first: api wallets".into(),
+        json!({"alice": {"balance": alice, "nonce": "1"}}),
+    ));
+    record
+}
+
 #[test]
-fn a_suite_compares_the_pool_answers_the_checks_and_the_chain_at_the_digests() {
+fn a_suite_compares_the_pool_answers_the_checks_and_the_scenario_wallets() {
     let scratch = ScratchDir::new("scenario-compare").expect("scratch");
     let dir = scratch.path();
-    let same = |backend, tip: (u32, &str), answer| record("s", backend, tip, answer, Outcome::Pass);
-    // Equal runs pass, and the chain at the digest is compared by the tip's id.
+    let same = |backend, tip: (u32, &str), answer| {
+        with_wallets(record("s", backend, tip, answer, Outcome::Pass), "5")
+    };
+    // Equal runs pass: two networks forge their own blocks, so their tips are not compared.
     suite(dir, "a-reference", &same("reference", (5, "x"), true));
-    suite(dir, "a-heartwood", &same("heartwood", (5, "x"), true));
-    // Another answer of the pool, another chain, and a check that came out otherwise.
+    suite(dir, "a-heartwood", &same("heartwood", (6, "y"), true));
+    // Another answer of the pool.
     suite(dir, "b-reference", &same("reference", (5, "x"), true));
-    suite(dir, "b-heartwood", &same("heartwood", (5, "y"), false));
+    suite(dir, "b-heartwood", &same("heartwood", (5, "x"), false));
+    // A check that came out otherwise.
     suite(dir, "c-reference", &same("reference", (5, "x"), true));
     suite(
         dir,
         "c-heartwood",
-        &record("s", "heartwood", (5, "x"), true, mismatch("a", "b")),
+        &with_wallets(
+            record("s", "heartwood", (5, "x"), true, mismatch("a", "b")),
+            "5",
+        ),
     );
-    // Tips at other heights are not comparable.
+    // Other balances of the scenario's wallets, and wallets one run did not read.
     suite(dir, "d-reference", &same("reference", (5, "x"), true));
-    suite(dir, "d-heartwood", &same("heartwood", (6, "y"), true));
+    suite(
+        dir,
+        "d-heartwood",
+        &with_wallets(record("s", "heartwood", (5, "x"), true, Outcome::Pass), "6"),
+    );
+    suite(dir, "e-reference", &same("reference", (5, "x"), true));
+    suite(
+        dir,
+        "e-heartwood",
+        &record("s", "heartwood", (5, "x"), true, Outcome::Pass),
+    );
     let report = compare(dir, None).expect("compare");
     let of = |suite: &str| -> Vec<&Outcome> {
         report
@@ -1083,18 +1216,16 @@ fn a_suite_compares_the_pool_answers_the_checks_and_the_chain_at_the_digests() {
         "{:?}",
         of("a")
     );
-    assert_eq!(of("a").len(), 3, "answers, the check, the chain");
-    assert!(
-        of("b").iter().filter(|o| o.is_failure()).count() == 2,
-        "{:?}",
-        of("b")
-    );
-    assert!(of("c").iter().any(|o| o.is_failure()), "{:?}", of("c"));
-    assert!(
-        of("d")
-            .iter()
-            .any(|o| matches!(o, Outcome::Skipped(m) if m.contains("stood at 5 and 6")))
-    );
+    assert_eq!(of("a").len(), 3, "answers, the check, the wallets");
+    for (name, failures) in [("b", 1), ("c", 1), ("d", 1), ("e", 1)] {
+        assert_eq!(
+            of(name).iter().filter(|o| o.is_failure()).count(),
+            failures,
+            "{name}: {:?}",
+            of(name)
+        );
+    }
+    assert!(of("d").iter().any(|o| matches!(o, Outcome::Mismatch(_))));
     // One suite alone.
     let only = compare(dir, Some("a")).expect("compare");
     assert_eq!(only.files, 1);

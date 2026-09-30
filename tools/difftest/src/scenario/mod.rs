@@ -14,6 +14,7 @@ pub mod chain;
 pub mod checks;
 pub mod compile;
 pub mod format;
+pub mod projection;
 pub mod record;
 pub mod runner;
 
