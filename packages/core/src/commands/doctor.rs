@@ -198,10 +198,8 @@ pub fn run(line: DoctorLine) -> ExitCode {
         Ok(doctor) => doctor,
         Err(error) => {
             let _ = error.print();
-            return match error.use_stderr() {
-                true => ExitCode::from(CANNOT_RUN),
-                false => ExitCode::SUCCESS,
-            };
+            let code = if error.use_stderr() { CANNOT_RUN } else { 0 };
+            return ExitCode::from(code);
         }
     };
     match doctor.command {
@@ -229,46 +227,24 @@ fn cannot_run(error: impl std::fmt::Display) -> ExitCode {
 /// system's name services), and `USER` for the redaction.
 fn scope(flags: &InstanceFlags) -> Result<DoctorScope, String> {
     let env = |name: &str| std::env::var(name).ok();
-    let (home, user) = (std::env::var_os("HOME"), env("USER"));
-    let home = home.filter(|home| !home.is_empty()).map(PathBuf::from);
-    let Some(home) = home else {
-        return Err("HOME is not set".to_owned());
-    };
+    let home = std::env::var_os("HOME").filter(|home| !home.is_empty());
+    let home = PathBuf::from(home.ok_or("HOME is not set")?);
     let cwd = std::env::current_dir().unwrap_or_default();
     let instance = heartwood_cli::instance::resolve(Role::Relay, flags, &env, &home, &cwd);
     let identity = HostIdentity {
-        home: Some(home.clone()),
-        user: user.clone(),
+        home: Some(home),
+        user: env("USER"),
         host_name: None,
     };
     let instance = instance.map_err(|error| instance_error(&error, &identity))?;
-    Ok(DoctorScope::of(&instance, Some(home), user))
+    Ok(DoctorScope::of(&instance, identity.home, identity.user))
 }
 
-/// `error` as the doctor prints it: the path it names with the home directory as `~` and the
-/// user's name as `user`, and its reason cleaned and redacted as untrusted text, as the report
-/// prints them (standard error reaches an SSH client too).
+/// `error` as the doctor prints it: cleaned and redacted as the report redacts untrusted text,
+/// the home directory as `~` and the user's name as `user` (standard error reaches an SSH client
+/// too).
 fn instance_error(error: &InstanceError, identity: &HostIdentity) -> String {
-    let mut redactor = Redactor::new(identity, true);
-    match error {
-        InstanceError::MissingToken { config } => {
-            format!(
-                "no token: pass --token or set it in {}",
-                redactor.path(config)
-            )
-        }
-        InstanceError::MissingNetwork { config } => {
-            format!(
-                "no network: pass --network or set it in {}",
-                redactor.path(config)
-            )
-        }
-        InstanceError::Config { path, reason } => {
-            let file = redactor.path(path);
-            format!("{file} is not valid: {}", redactor.untrusted(reason))
-        }
-        other => redactor.untrusted(&other.to_string()),
-    }
+    Redactor::new(identity, true).untrusted(&error.to_string())
 }
 
 fn run_checks(flags: &RunFlags) -> ExitCode {
@@ -344,11 +320,8 @@ fn explain(id: CheckId) -> ExitCode {
         Err(error) => return cannot_run(error),
     };
     let mut text = format!("{}: {}\n", doc.id, doc.title);
-    text.push_str(&format!(
-        "Area: {}. About: {}.\n",
-        doc.area,
-        doc.subjects.join(", ")
-    ));
+    let about = doc.subjects.join(", ");
+    text.push_str(&format!("Area: {}. About: {about}.\n", doc.area));
     text.push_str(&format!("Reads: {}.\n", doc.sources.join(", ")));
     for status in Status::ALL.map(Status::name) {
         if let Some(rule) = doc.rules.get(status) {
