@@ -425,7 +425,8 @@ pub fn evaluate(ctx: &mut Ctx<'_, '_>, check: &Check) -> Vec<CaseResult> {
         let outcome = match ctx.runner.wait_blocks(target) {
             Ok(()) => ctx.forged(reference).map(|o| match o {
                 Outcome::Pass => expected("in no block", "in the chain"),
-                _ => Outcome::Pass,
+                Outcome::VerdictMismatch { .. } => Outcome::Pass,
+                other => other,
             }),
             Err(e) => Err(e),
         }
