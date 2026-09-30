@@ -117,7 +117,10 @@ pub fn log_level(input: &CheckInput<'_>) -> Vec<Finding> {
             true => (Pass, "detailed"),
             false => (Warn, "too-high"),
         };
-        let values = vec![("level", Fact::Word(level.name()))];
+        let values = vec![
+            ("role", Fact::Word(role.name())),
+            ("level", Fact::Word(level.name())),
+        ];
         found(input, subject, (status, Basis::Config), key, values)
     })
 }
