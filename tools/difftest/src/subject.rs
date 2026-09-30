@@ -158,6 +158,11 @@ pub enum ApiDifference {
     /// start from its store setting the second key before the delegate record; Heartwood keeps
     /// the delegate first.
     AttributeOrder,
+    /// The query grammar's bounds: a query value nested more than 128 levels below the query, or
+    /// with more than 16,384 holes, which a schema key that takes any object accepts (`asset` on
+    /// the transaction lists and histories, `attributes` on the wallet listings): the reference
+    /// answers it, Heartwood answers 500.
+    QueryBounds,
 }
 
 impl ApiDifference {
@@ -368,6 +373,13 @@ impl ApiDifference {
             ApiDifference::SpecKeptOnly => {
                 "the OpenAPI document: the reference lists every registered route and transaction \
                  type, the removed ones included, Heartwood lists the kept ones"
+            }
+            ApiDifference::QueryBounds => {
+                "a query value nested more than 128 levels below the query or with more than \
+                 16,384 holes, under a key that takes any object (asset on the transaction lists \
+                 and histories, attributes on the wallet listings): the reference answers it up \
+                 to its stack's and its strings' limits, Heartwood answers 500 (untrusted input \
+                 may not cause unbounded work)"
             }
             ApiDifference::AttributeOrder => {
                 "the order of a wallet's attributes: the reference keeps the order they were set \

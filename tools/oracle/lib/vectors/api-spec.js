@@ -182,6 +182,13 @@ module.exports = async function apiSpecVectors({ rec, must, shared }) {
     for (const levels of [50, 98, 99, 100, 101, 127, 128, 129, 130, 131, 132, 133, 140]) {
         await add("api.fuzzQuery", { hex: hex(0, `a${".k".repeat(levels - 1)}=1`) }, `fuzzQuery: a key nested ${levels} levels`);
     }
+    // A key that takes any object, nested to the grammar's bound and past it: asset on a
+    // transaction list (0) and on a wallet's votes (26), attributes on the wallets (14).
+    for (const [choice, key] of [[0, "asset"], [26, "asset"], [14, "attributes"]]) {
+        for (const levels of [128, 129, 130, 200]) {
+            await add("api.fuzzQuery", { hex: hex(choice, `${key}${".k".repeat(levels - 1)}=1`) }, `fuzzQuery: route ${choice}, ${key} nested ${levels} levels`);
+        }
+    }
     await add("api.fuzzQuery", { hex: "" }, "fuzzQuery: no input");
     return out;
 };

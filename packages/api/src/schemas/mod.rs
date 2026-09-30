@@ -89,7 +89,7 @@ const MAX_HOLES: usize = 16_384;
 
 /// The key under which [`parse_query`] names the keys whose value it did not write out whole. No
 /// parsed query can hold it, because the grammar nests every name that has a dot.
-const BEYOND: &str = ".beyond";
+pub const BEYOND: &str = ".beyond";
 
 /// The most transactions of one `POST /transactions` (the pool's `maxTransactionsPerRequest`).
 const MAX_TRANSACTIONS_PER_REQUEST: usize = 40;

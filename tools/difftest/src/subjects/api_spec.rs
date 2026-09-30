@@ -7,7 +7,7 @@ use std::net::{IpAddr, Ipv4Addr};
 
 use heartwood_api::pagination::{Pagination, envelope};
 use heartwood_api::resources::fee_statistics;
-use heartwood_api::schemas::{PARSED, parse_query, validate_query};
+use heartwood_api::schemas::{BEYOND, PARSED, parse_query, validate_query};
 use heartwood_api::spec::{self, Patches};
 use heartwood_api::{ApiRequest, RouteId};
 use heartwood_crypto::utils::hex;
@@ -15,7 +15,7 @@ use heartwood_database::FeeStatisticsRow;
 use serde_json::{Map, Value, json};
 
 use super::{Env, Outcome, Run, failed};
-use crate::subject::{Case, Verdict};
+use crate::subject::{ApiDifference, Case, Documented, Verdict};
 
 /// The operations of this module.
 pub(super) const OPS: &[(&str, Run)] = &[
@@ -210,10 +210,22 @@ fn depth(value: &Value) -> usize {
     }
 }
 
+/// Whether `route` refuses the query `parsed` for a value the grammar wrote out shortened, past its
+/// bounds, alone: the query without the grammar's note of the shortened keys is valid.
+fn beyond_the_bounds(route: RouteId, parsed: &Value) -> bool {
+    let mut whole = parsed.clone();
+    let noted = whole
+        .as_object_mut()
+        .and_then(|map| map.shift_remove(BEYOND))
+        .is_some();
+    noted && validate_query(route, &whole).is_ok()
+}
+
 /// A fuzz input of the query target: `{status: 500}` where the reference's plugins throw, the
 /// route's refusal as `{status}`, else `{status: 200, query}` with the validated query the handler
 /// reads and, for a route that lists a page, its `page` (the list's `meta`); `{}` for an empty
-/// input.
+/// input. A refusal for a value past the grammar's bounds alone is Heartwood's by design
+/// ([`ApiDifference::QueryBounds`]).
 fn fuzz_query(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let text = case.input["hex"]
         .as_str()
@@ -230,6 +242,12 @@ fn fuzz_query(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let (route, path, paginates, reads) = ROUTES[usize::from(choice) % ROUTES.len()];
     let mut query = match validate_query(route, &parsed) {
         Ok(query) => query,
+        Err(error) if error.status == 500 && beyond_the_bounds(route, &parsed) => {
+            return Ok(Verdict::RefusedByDesign {
+                difference: Documented::Api(ApiDifference::QueryBounds),
+                holds: true,
+            });
+        }
         Err(error) => return status(error.status),
     };
     let mut page = None;
