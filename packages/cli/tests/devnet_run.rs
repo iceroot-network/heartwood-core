@@ -3,12 +3,12 @@
 
 #![cfg(feature = "devnet")]
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use heartwood_cli::devnet::run::{RUNNER, command, find};
+use heartwood_cli::devnet::run::{BUILT_RUNNER, RUNNER, command, find, locate};
 use heartwood_cli::errors::DevnetError;
 
 /// A directory holding a fake runner that records its argv, one argument per line, and exits 7.
@@ -56,4 +56,22 @@ fn says_so_when_the_harness_is_not_installed() {
     let error = find([]).unwrap_err();
     assert_eq!(error, DevnetError::RunnerMissing(RUNNER));
     assert!(error.to_string().contains("not installed"));
+}
+
+#[test]
+fn takes_the_harness_build_next_to_the_binary_but_not_from_path() {
+    let (runner, _) = fake_runner("built");
+    let dir = runner.parent().unwrap().to_path_buf();
+    let built = dir.join(BUILT_RUNNER);
+    fs::rename(&runner, &built).unwrap();
+    assert_eq!(locate(Some(&dir), OsStr::new("")), Ok(built.clone()));
+    let path = std::env::join_paths([&dir]).unwrap();
+    assert_eq!(
+        locate(None, &path),
+        Err(DevnetError::RunnerMissing(RUNNER))
+    );
+    // The installed name comes first, from the directories of PATH too.
+    let (installed, _) = fake_runner("installed");
+    let path = std::env::join_paths([installed.parent().unwrap()]).unwrap();
+    assert_eq!(locate(Some(&dir), &path), Ok(installed));
 }
