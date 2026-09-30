@@ -605,6 +605,7 @@ fn a_property_needs_its_runs_seeded_independently_and_a_target_its_cpu_hours() {
         "{}",
         plan.text
     );
+    assert!(plan.text.contains("new seeds only, not 1"), "{}", plan.text);
     assert!(
         !plan.text.contains("parse"),
         "a met target is not planned: {}",
@@ -1054,4 +1055,41 @@ fn a_command_that_is_not_a_gate_verb_is_a_usage_error() {
         .expect("runs");
     assert_eq!(out.status.code(), Some(2));
     let _ = rig;
+}
+
+// ----- more of the ledger, the records, the path rule and the register
+
+#[test]
+fn runs_of_one_seed_count_their_cases_once() {
+    let rig = Rig::new();
+    rig.criteria(&base_criteria());
+    // One seed draws the same cases: its longest run holds every shorter one.
+    for (spec, started) in [
+        ("kind=property id=P1 cases=1000 seed=1", T1),
+        ("kind=property id=P1 cases=400 seed=1", T2),
+        ("kind=property id=P1 cases=300 seed=2", T3),
+    ] {
+        assert!(ledger_run(&rig, "ledger", "box-1", spec, started).ok);
+    }
+    let args = [
+        "--criteria",
+        &rig.arg("criteria.json"),
+        "--ledger",
+        &rig.arg("ledger"),
+    ];
+    let show = rig.gate(&[&["ledger", "show"], &args[..]].concat());
+    let p1 = show
+        .text
+        .lines()
+        .find(|l| l.trim_start().starts_with("P1 "))
+        .expect("P1 line");
+    assert!(p1.contains("1,300 cases"), "{p1}");
+    assert!(p1.contains("  2 runs"), "{p1}");
+    assert!(p1.contains("met"), "{p1}");
+    let plan = rig.gate(&[&["ledger", "plan"], &args[..]].concat());
+    assert!(
+        !plan.text.contains("P1 "),
+        "a met property is not planned: {}",
+        plan.text
+    );
 }

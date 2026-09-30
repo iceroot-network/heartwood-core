@@ -2,7 +2,7 @@
 //! (the totals), `ledger plan` (what the criteria still need) and `ledger merge` (another
 //! machine's entries into the ledger).
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -18,10 +18,12 @@ use crate::errors::{Error, Result};
 pub struct PropertyTotal {
     /// `P1` to `P23`.
     pub id: String,
-    /// Cumulative cases of the counted runs.
+    /// Cumulative cases of the counted runs, a seed's cases once (its longest run).
     pub cases: u64,
     /// Distinct seeds among the counted runs.
     pub runs: u32,
+    /// The seeds of the counted runs.
+    pub seeds: Vec<String>,
     /// Counted runs.
     pub counted: usize,
     /// Valid runs that failed (each one fails the property).
@@ -92,12 +94,15 @@ pub fn totals(criteria: &Criteria, evidence: &Evidence) -> Totals {
             id: id.clone(),
             cases: 0,
             runs: 0,
+            seeds: Vec::new(),
             counted: 0,
             failed: Vec::new(),
             unreached: Vec::new(),
             stale: Vec::new(),
         };
-        let mut seeds: BTreeSet<String> = BTreeSet::new();
+        // One seed draws the same cases in the same order, so its runs overlap: the longest
+        // holds every shorter one, and only it counts.
+        let mut seeds: BTreeMap<String, u64> = BTreeMap::new();
         let mut unseeded = 0u32;
         for item in evidence
             .entries
@@ -119,16 +124,22 @@ pub fn totals(criteria: &Criteria, evidence: &Evidence) -> Totals {
                 total.unreached.push(describe(entry));
             } else {
                 total.counted += 1;
-                total.cases += entry.cases.unwrap_or(0);
+                let cases = entry.cases.unwrap_or(0);
                 match &entry.seed {
                     Some(seed) => {
-                        seeds.insert(seed.clone());
+                        let longest = seeds.entry(seed.clone()).or_insert(0);
+                        *longest = (*longest).max(cases);
                     }
-                    None => unseeded += 1,
+                    None => {
+                        unseeded += 1;
+                        total.cases += cases;
+                    }
                 }
             }
         }
-        total.runs = u32::try_from(seeds.len())
+        total.cases += seeds.values().sum::<u64>();
+        total.seeds = seeds.into_keys().collect();
+        total.runs = u32::try_from(total.seeds.len())
             .unwrap_or(u32::MAX)
             .saturating_add(unseeded);
         properties.push(total);
@@ -324,9 +335,14 @@ pub fn render_plan(criteria: &Criteria, totals: &Totals, forks: Option<u32>) -> 
         } else {
             "  (a counted run failed: it needs a fix and new runs)"
         };
+        let used = if p.seeds.is_empty() {
+            String::new()
+        } else {
+            format!("; new seeds only, not {}", p.seeds.join(", "))
+        };
         let _ = writeln!(
             out,
-            "  {:<4} {:>12} cases and {} seeded runs still needed: {runs_to_do} runs of {} cases{fixed}",
+            "  {:<4} {:>12} cases and {} seeded runs still needed: {runs_to_do} runs of {} cases{used}{fixed}",
             p.id,
             group(cases_left),
             runs_left,
