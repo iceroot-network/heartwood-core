@@ -5,11 +5,15 @@
 //! must recover a crashed writer's WAL index and so opens read-write) and `query_only`, and each
 //! statement is interrupted after its timeout. It must be opened only while the relay's lock is
 //! held: with no writer, opening a WAL store would create its `-wal` and `-shm` files, so
-//! [`ReadOnlyStore::open`] refuses a store whose two files are not there. The two queries select
+//! [`ReadOnlyStore::open`] refuses a store whose two files are not there. A writer that closes
+//! between that check and the open removes both files, and the open's first read creates them
+//! anew (empty, and left for the writer's next start, which reuses them): the open then finds
+//! their device and inode changed and refuses too, having read nothing. The two queries select
 //! by `height` in one read transaction, each capped at a row count. The node itself never uses
 //! this module.
 
-use std::path::PathBuf;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use rusqlite::config::DbConfig;
@@ -95,19 +99,41 @@ pub struct ReadOnlyStore {
     timeout: Duration,
 }
 
+/// The device and inode of a store's `-wal` and `-shm` files, which a writer holds open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WriterFiles([(u64, u64); 2]);
+
+impl WriterFiles {
+    /// The `-wal` and `-shm` files of the store at `path` as they stand, when both are regular
+    /// files (a link is not followed); `None` otherwise.
+    pub fn of(path: &Path) -> Option<WriterFiles> {
+        let file = |suffix: &str| {
+            let mut beside = path.as_os_str().to_owned();
+            beside.push(suffix);
+            let meta = std::fs::symlink_metadata(PathBuf::from(beside)).ok()?;
+            meta.is_file().then(|| (meta.dev(), meta.ino()))
+        };
+        Some(WriterFiles([file("-wal")?, file("-shm")?]))
+    }
+}
+
 impl ReadOnlyStore {
     /// Open the store of `settings` read-only, each statement interrupted after `timeout`;
     /// refused with [`ReadOnlyError::NoWriter`], before any open, when its `-wal` or `-shm` file
-    /// is missing.
+    /// is missing, and after the open when they are no longer the files seen before it.
     pub fn open(settings: &Settings, timeout: Duration) -> Result<ReadOnlyStore, ReadOnlyError> {
-        let beside = |suffix: &str| {
-            let mut path = settings.path.clone().into_os_string();
-            path.push(suffix);
-            PathBuf::from(path).is_file()
-        };
-        if !beside("-wal") || !beside("-shm") {
-            return Err(ReadOnlyError::NoWriter);
-        }
+        let seen = WriterFiles::of(&settings.path).ok_or(ReadOnlyError::NoWriter)?;
+        ReadOnlyStore::open_seen(settings, timeout, seen)
+    }
+
+    /// [`ReadOnlyStore::open`] once its `-wal` and `-shm` were `seen`: the store is opened, and
+    /// refused with [`ReadOnlyError::NoWriter`] when after its first read the two files are not
+    /// those (a writer that closed meanwhile removed them and the read created them anew).
+    pub fn open_seen(
+        settings: &Settings,
+        timeout: Duration,
+        seen: WriterFiles,
+    ) -> Result<ReadOnlyStore, ReadOnlyError> {
         // No SQLITE_OPEN_CREATE and no URI file names: the path is an existing file.
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let connection = Connection::open_with_flags(&settings.path, flags)?;
@@ -120,8 +146,12 @@ impl ReadOnlyStore {
             timeout,
         };
         store.arm()?;
+        // The first read opens the `-wal` and `-shm` files, or creates them when they are gone.
         let version: i64 =
             (store.connection).pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if WriterFiles::of(&settings.path) != Some(seen) {
+            return Err(ReadOnlyError::NoWriter);
+        }
         if version != i64::from(SCHEMA_VERSION) {
             let found = version.to_string();
             let expected = SCHEMA_VERSION;

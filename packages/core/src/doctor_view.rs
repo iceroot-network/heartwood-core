@@ -251,6 +251,10 @@ impl NodeView for CoreNodeView {
         }
         let settings = Settings::in_data_dir(&relay.paths.data);
         let store = ReadOnlyStore::open(&settings, STORE_TIMEOUT).map_err(store_error)?;
+        // A relay that stopped while the store was opened is not read.
+        if !is_locked(&relay.lock_path()).unwrap_or(false) {
+            return Err(NodeViewError::RelayNotRunning);
+        }
         let rows = store.window(usernames, from_height).map_err(store_error)?;
         let missed = rows.missed.into_iter().map(|row| MissedSlot {
             timestamp: row.timestamp,

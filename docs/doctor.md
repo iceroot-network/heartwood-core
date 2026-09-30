@@ -14,6 +14,11 @@ loopback address: at most 12 in a run, with no retry. It needs no privilege: run
 user. A run takes at most 5 seconds.
 
 
+It reads the relay's store through a read-only connection, and only while the relay runs. A relay
+that stops at the very moment the doctor opens its store can leave the store's two empty
+companion files (`-wal` and `-shm`) behind; the relay's next start takes them over, and the
+doctor reads nothing from such a store.
+
 It takes the home directory from `HOME` and the user's name from `USER`, and never looks either
 up in the system's user database. Without `HOME` it does not run (exit code 3), as a role's start
 does not.

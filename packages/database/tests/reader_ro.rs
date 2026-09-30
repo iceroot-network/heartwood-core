@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use common::{chain, open, write_block};
-use heartwood_database::reader_ro::{MAX_ROWS, ReadOnlyError, ReadOnlyStore};
+use heartwood_database::reader_ro::{MAX_ROWS, ReadOnlyError, ReadOnlyStore, WriterFiles};
 use heartwood_database::{MissedRow, Settings};
 
 const TIMEOUT: Duration = Duration::from_secs(1);
@@ -148,6 +148,23 @@ fn a_store_that_no_writer_holds_is_not_opened_and_stays_as_it_was() {
     let opened = ReadOnlyStore::open(&missing, TIMEOUT);
     assert!(matches!(opened, Err(ReadOnlyError::NoWriter)));
     assert!(!dir.join("nothing").exists());
+}
+
+#[test]
+fn a_writer_that_closes_between_the_check_and_the_open_leaves_the_store_unread() {
+    let (database, settings) = chain("ro-race", 5);
+    let seen = WriterFiles::of(&settings.path).expect("the writer's files");
+    // The writer closes after the check: its close removes the -wal and -shm.
+    drop(database);
+    assert_eq!(WriterFiles::of(&settings.path), None);
+    let store = std::fs::read(&settings.path).unwrap();
+    let opened = ReadOnlyStore::open_seen(&settings, TIMEOUT, seen);
+    assert!(matches!(opened, Err(ReadOnlyError::NoWriter)));
+    // The store is as it was; a log the open's read created is empty.
+    let dir = settings.path.parent().unwrap();
+    let after = files(dir);
+    assert_eq!(after.get("blockchain.db"), Some(&store));
+    assert!(after.get("blockchain.db-wal").is_none_or(Vec::is_empty));
 }
 
 #[test]
