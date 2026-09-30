@@ -671,6 +671,16 @@ const CALLS: &[(&str, &str, Class)] = &[
         "The store's log could not be reset: {error}",
         Class::Untyped,
     ),
+    (
+        "api/src/productivity.rs",
+        "The productivity table could not be computed: {error}",
+        Class::Untyped,
+    ),
+    (
+        "api/src/productivity.rs",
+        "The chain's totals could not be read: {error}",
+        Class::Untyped,
+    ),
     ("blockchain/src/blockchain.rs", "{error}", Class::Untyped),
     (
         "blockchain/src/node.rs",
