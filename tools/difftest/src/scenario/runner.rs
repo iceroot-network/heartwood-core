@@ -78,10 +78,14 @@ impl<'a> Runner<'a> {
             .steps
             .iter()
             .any(|s| s.at.slot.is_some() || s.at.slots_after.is_some());
+        let chain = Chain::new(scenario)?;
+        backend
+            .rules(&chain.crypto)
+            .map_err(|e| crate::Error::Fixture(e.to_string()))?;
         Ok(Runner {
             backend,
             compiled,
-            chain: Chain::new(scenario)?,
+            chain,
             answers: HashMap::new(),
             results: Vec::new(),
             records: Vec::new(),

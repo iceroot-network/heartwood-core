@@ -53,6 +53,7 @@ pub struct External {
     program: PathBuf,
     root: PathBuf,
     nodes: u32,
+    rules: http::Rules,
 }
 
 impl External {
@@ -62,6 +63,7 @@ impl External {
             program: program.to_path_buf(),
             root: root.to_path_buf(),
             nodes: 0,
+            rules: http::Rules::default(),
         };
         let info = external.call("read the network's description", "info", &[])?;
         let info: Value =
@@ -162,6 +164,11 @@ impl Backend for External {
             .map(drop)
     }
 
+    fn rules(&mut self, crypto: &serde_json::Value) -> Result<(), BackendError> {
+        self.rules = http::Rules::new(crypto)?;
+        Ok(())
+    }
+
     fn submit(
         &mut self,
         node: u32,
@@ -169,7 +176,7 @@ impl Backend for External {
         transactions: &[CompiledTx],
     ) -> Result<Vec<Submitted>, BackendError> {
         if via == Via::Api {
-            return http::submit(&self.api_url(node)?, transactions);
+            return http::submit(&self.api_url(node)?, &self.rules, transactions);
         }
         let file =
             std::env::temp_dir().join(format!("scenario-submit-{}-{node}.txt", std::process::id()));

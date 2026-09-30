@@ -100,6 +100,12 @@ pub trait Backend {
     /// Archive every node's chain and logs into `dir`, as the run's record.
     fn archive(&mut self, dir: &Path) -> Result<(), BackendError>;
 
+    /// The chain's crypto files (`network`, `milestones`), before the first submit: the live
+    /// backends write transactions to the API in JSON, which needs them.
+    fn rules(&mut self, _crypto: &serde_json::Value) -> Result<(), BackendError> {
+        Ok(())
+    }
+
     /// Submit `transactions` to node `node` over `via`; each one's answer, in order.
     fn submit(
         &mut self,

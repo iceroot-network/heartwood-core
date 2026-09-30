@@ -11,6 +11,9 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
+use heartwood_crypto::transactions::TransactionBuilder;
+use heartwood_crypto::utils::hex;
+use heartwood_crypto::{Aux, KeyPair, Milestones, Network};
 use heartwood_difftest::report::{Outcome, Report};
 use heartwood_difftest::scenario::backend::Answer;
 use heartwood_difftest::scenario::backends::{external, heartwood};
@@ -1235,7 +1238,14 @@ fn stub_api() -> String {
                 (200, json!({"data": {"block": {"height": 7, "id": "abc"}}}))
             } else if line.starts_with("post /api/transactions") {
                 let sent = String::from_utf8_lossy(&request[body_at..]).into_owned();
-                assert!(sent.contains("00t1") && sent.contains("00t2"), "{sent}");
+                let sent: Value = serde_json::from_str(&sent).expect("a JSON body");
+                let nonces: Vec<&Value> = sent["transactions"]
+                    .as_array()
+                    .expect("a list")
+                    .iter()
+                    .map(|t| &t["nonce"])
+                    .collect();
+                assert_eq!(nonces, [&json!("1"), &json!("2")], "{sent}");
                 (
                     422,
                     json!({
@@ -1255,6 +1265,24 @@ fn stub_api() -> String {
         }
     });
     format!("http://{address}")
+}
+
+/// A crypto file of the devnet profile's chain for the scenario `scenario_json` gives.
+fn chain_crypto(name: &str) -> Value {
+    let scenario: Scenario = serde_json::from_value(scenario_json(json!([]))).expect("scenario");
+    Chain::new(&scenario).expect("chain").crypto[name].clone()
+}
+
+/// The hex of a signed burn with `nonce`, under the rules `crypto` holds.
+fn burn(crypto: &Value, nonce: u64) -> String {
+    let network = Network::load(&crypto["network"].to_string()).expect("network");
+    let milestones = Milestones::load(&crypto["milestones"].to_string(), &network).expect("rules");
+    let keys = KeyPair::from_passphrase("scenario").expect("keys");
+    let tx = TransactionBuilder::burn(1)
+        .nonce(nonce)
+        .build(&keys, Aux::fixed([7; 32]), milestones.at(1))
+        .expect("built");
+    hex::encode(tx.bytes())
 }
 
 #[test]
@@ -1315,14 +1343,18 @@ fn the_external_backend_calls_its_executable_once_per_action() {
             id: "abc".into()
         }
     );
+    let rules =
+        json!({"network": chain_crypto("network"), "milestones": chain_crypto("milestones")});
+    backend.rules(&rules).expect("rules");
     let txs: Vec<CompiledTx> = ["t1", "t2"]
         .iter()
-        .map(|r| CompiledTx {
+        .zip(1..)
+        .map(|(r, nonce)| CompiledTx {
             reference: (*r).into(),
             step: 0,
             height: 3,
             id: format!("id-{r}"),
-            bytes: format!("00{r}"),
+            bytes: burn(&rules, nonce),
         })
         .collect();
     let answers = backend.submit(1, Via::Api, &txs).expect("submit");
@@ -1355,7 +1387,7 @@ fn the_external_backend_calls_its_executable_once_per_action() {
         format!("partition {r} 1,2 3"),
         format!("archive {r} {}", dir.display()),
         format!("post-transactions {r} 2 "),
-        "00t1\n00t2\n".to_owned(),
+        format!("{}\n{}\n", txs[0].bytes, txs[1].bytes),
     ] {
         assert!(calls.contains(&want), "{want:?} in\n{calls}");
     }

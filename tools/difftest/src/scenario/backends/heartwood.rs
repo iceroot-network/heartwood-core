@@ -60,6 +60,7 @@ pub struct Heartwood {
     root: PathBuf,
     binary: PathBuf,
     manifest: Manifest,
+    rules: http::Rules,
 }
 
 impl Heartwood {
@@ -71,6 +72,7 @@ impl Heartwood {
                 .map_err(|e| failed("read the devnet's directory", e))?,
             binary: binary(),
             manifest,
+            rules: http::Rules::default(),
         })
     }
 
@@ -182,6 +184,11 @@ impl Backend for Heartwood {
         Ok(())
     }
 
+    fn rules(&mut self, crypto: &serde_json::Value) -> Result<(), BackendError> {
+        self.rules = http::Rules::new(crypto)?;
+        Ok(())
+    }
+
     fn submit(
         &mut self,
         node: u32,
@@ -194,7 +201,7 @@ impl Backend for Heartwood {
                 action: "submit over the peer-to-peer network",
             });
         }
-        http::submit(&self.api_url(node)?, transactions)
+        http::submit(&self.api_url(node)?, &self.rules, transactions)
     }
 
     fn tip(&self, node: u32) -> Result<Tip, BackendError> {

@@ -1,10 +1,44 @@
 //! The API calls of the live backends, over the route corpus's HTTP client.
 
+use heartwood_crypto::utils::hex;
+use heartwood_crypto::{Milestones, Network, Transaction};
 use serde_json::{Value, json};
 
 use super::super::backend::{Answer, BackendError, Submitted};
 use super::super::format::CompiledTx;
 use crate::api::http::{Node, Reply, Request};
+
+/// The chain's rules, which turn a compiled transaction into the JSON form the API takes.
+#[derive(Debug, Default)]
+pub struct Rules(Option<Milestones>);
+
+impl Rules {
+    /// The rules of the crypto files `crypto` holds (`network` and `milestones`).
+    pub fn new(crypto: &Value) -> Result<Rules, BackendError> {
+        let read = |name: &str| {
+            crypto
+                .get(name)
+                .map(Value::to_string)
+                .ok_or_else(|| failed("read the chain's rules", format!("no {name} file")))
+        };
+        let network =
+            Network::load(&read("network")?).map_err(|e| failed("read the chain's rules", e))?;
+        let milestones = Milestones::load(&read("milestones")?, &network)
+            .map_err(|e| failed("read the chain's rules", e))?;
+        Ok(Rules(Some(milestones)))
+    }
+
+    /// The API's form of the transaction `hex_text` writes.
+    fn json(&self, hex_text: &str) -> Result<Value, BackendError> {
+        let Some(milestones) = &self.0 else {
+            return Err(failed("submit", "the runner gave no chain rules"));
+        };
+        let params = milestones.at(1);
+        let bytes = hex::decode(hex_text).map_err(|e| failed("submit", e))?;
+        let tx = Transaction::decode_trusted(&bytes, params).map_err(|e| failed("submit", e))?;
+        Ok(tx.to_json(params))
+    }
+}
 
 fn failed(action: &'static str, message: impl ToString) -> BackendError {
     BackendError::Failed {
@@ -41,8 +75,8 @@ pub fn get(base: &str, path: &str) -> Result<Answer, BackendError> {
     )
 }
 
-/// `POST /api/transactions` of the hex transactions `hexes` at `base`.
-pub fn post_transactions(base: &str, hexes: &[String]) -> Result<Answer, BackendError> {
+/// `POST /api/transactions` of the JSON transactions `transactions` at `base`.
+pub fn post_transactions(base: &str, transactions: &[Value]) -> Result<Answer, BackendError> {
     send(
         base,
         Request {
@@ -50,7 +84,7 @@ pub fn post_transactions(base: &str, hexes: &[String]) -> Result<Answer, Backend
             path: "/api/transactions".into(),
             query: String::new(),
             headers: vec![("content-type".into(), "application/json".into())],
-            body: Some(json!({ "transactions": hexes }).to_string()),
+            body: Some(json!({ "transactions": transactions }).to_string()),
         },
     )
 }
@@ -87,9 +121,16 @@ pub fn verdict(body: &Value, id: &str) -> (bool, Option<String>) {
 }
 
 /// Submit `transactions` over `POST /api/transactions` at `base`: each one's answer, in order.
-pub fn submit(base: &str, transactions: &[CompiledTx]) -> Result<Vec<Submitted>, BackendError> {
-    let hexes: Vec<String> = transactions.iter().map(|t| t.bytes.clone()).collect();
-    let answer = post_transactions(base, &hexes)?;
+pub fn submit(
+    base: &str,
+    rules: &Rules,
+    transactions: &[CompiledTx],
+) -> Result<Vec<Submitted>, BackendError> {
+    let wire = transactions
+        .iter()
+        .map(|t| rules.json(&t.bytes))
+        .collect::<Result<Vec<_>, _>>()?;
+    let answer = post_transactions(base, &wire)?;
     if !matches!(answer.status, 200 | 201 | 422) {
         return Err(failed(
             "submit",
