@@ -1698,6 +1698,22 @@ fn backfilled_rows_without_a_start_that_wrote_them_fail() {
 }
 
 #[test]
+fn a_prediction_read_from_the_runs_file_says_so() {
+    let f = fixture();
+    let report = check_run(&f, &f.w);
+    assert_passes(
+        &report,
+        "recovery",
+        "read from predictions/rollback-180-170.json, not asked of the oracle",
+    );
+    assert_passes(
+        &report,
+        "recovery",
+        "derived by the reference's rules from the rollback's prediction",
+    );
+}
+
+#[test]
 fn a_transport_line_outside_every_window_fails_even_when_the_baseline_has_one() {
     let f = fixture();
     for run in [&f.w, &f.w0] {

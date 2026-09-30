@@ -167,6 +167,8 @@ struct Prediction {
     summary: Summary,
     /// The store after the start that follows it (`chain.restart`), when the oracle was asked.
     restart: Option<Summary>,
+    /// Where the rollback's prediction came from, for the case texts.
+    source: String,
 }
 
 /// The prediction of the rollback `asked` over the corpus in `dir` cut at `cut`. The oracle gets
@@ -178,8 +180,10 @@ fn prediction(run: &MixedRun<'_>, dir: &Path, cut: u32, asked: u64) -> Result<Pr
         .run_dir
         .join("predictions")
         .join(format!("rollback-{cut}-{asked}.json"));
-    let (result, restart) = if cache.exists() {
-        (run::read_json(&cache)?, None)
+    let file = format!("predictions/rollback-{cut}-{asked}.json");
+    let (result, restart, source) = if cache.exists() {
+        let source = format!("read from {file}, not asked of the oracle");
+        (run::read_json(&cache)?, None, source)
     } else {
         let corpus = Corpus::load(dir)?.cut(cut)?;
         let oracle = (run.oracle)()?;
@@ -194,7 +198,8 @@ fn prediction(run: &MixedRun<'_>, dir: &Path, cut: u32, asked: u64) -> Result<Pr
         )?;
         l2::call(&mut server, "chain.close", 1, &json!({"session": session}))?;
         let restart = answer.pointer("/restart/summary").and_then(Summary::of);
-        (answer["rollback"].clone(), restart)
+        let source = "asked of the oracle's chain.rollback".to_owned();
+        (answer["rollback"].clone(), restart, source)
     };
     if let Some(lines) = result.get("refused") {
         return Err(Error::Oracle(format!(
@@ -214,6 +219,7 @@ fn prediction(run: &MixedRun<'_>, dir: &Path, cut: u32, asked: u64) -> Result<Pr
         target,
         summary,
         restart,
+        source,
     })
 }
 
@@ -534,7 +540,10 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
         kept,
         "the oracle",
     ) {
-        cases.pass(SECTION, format!("{label} ({})", after.describe()));
+        cases.pass(
+            SECTION,
+            format!("{label} ({}; {})", after.describe(), predicted.source),
+        );
     }
     // The start after it, as the reference's start after that rollback: the same tip and
     // transactions, the next round's rows saved, and, when the rollback left no missed row, the
@@ -569,7 +578,15 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
             ),
         );
     } else if differences(cases, label, &wanted, &started, kept, "the oracle") {
-        cases.pass(SECTION, format!("{label} ({})", started.describe()));
+        let source = if predicted.restart.is_some() {
+            "the oracle's chain.restart after its rollback"
+        } else {
+            "derived by the reference's rules from the rollback's prediction"
+        };
+        cases.pass(
+            SECTION,
+            format!("{label} ({}; {source})", started.describe()),
+        );
     }
     Ok(())
 }
