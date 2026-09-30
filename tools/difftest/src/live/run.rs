@@ -801,7 +801,7 @@ mod tests {
     fn minority_manifest(run: &str) -> Manifest {
         Manifest {
             run: run.into(),
-            network: "b7-p".into(),
+            network: "mixed-p".into(),
             dry_run: false,
             seed: "solar-devnet".into(),
             round_length: 53,

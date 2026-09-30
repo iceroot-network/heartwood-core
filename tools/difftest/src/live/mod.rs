@@ -1378,7 +1378,7 @@ mod tests {
         };
         Manifest {
             run: "m2".into(),
-            network: "b5-m2".into(),
+            network: "devnet-m2".into(),
             dry_run,
             seed: "solar-devnet".into(),
             round_length: 53,
