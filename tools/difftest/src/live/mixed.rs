@@ -240,6 +240,28 @@ pub(super) struct Baseline {
     pub windows: Vec<Window>,
 }
 
+/// The other reference runs of the baseline's recipe (`--spread`), loaded as the baseline is.
+pub(super) fn spread(run: &MixedRun<'_>) -> Result<Vec<Baseline>> {
+    run.spread
+        .iter()
+        .map(|dir| {
+            let manifest = Manifest::load(dir)?;
+            if manifest.has_heartwood() {
+                return Err(Error::Usage(format!(
+                    "--spread {}: no run of reference nodes only",
+                    dir.display()
+                )));
+            }
+            let windows = run::windows(dir, manifest.window_seconds)?;
+            Ok(Baseline {
+                dir: dir.clone(),
+                manifest,
+                windows,
+            })
+        })
+        .collect()
+}
+
 /// The baseline of a mixed run: none for `w0` itself; for the others the run given, or an error
 /// when none was given.
 pub(super) fn baseline(run: &MixedRun<'_>) -> Result<Option<Baseline>> {

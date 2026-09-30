@@ -319,8 +319,12 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             Ok(verdict(&report, strict))
         }
         Command::RunL2Processor(args) => run_l2_processor(&args, env, strict),
-        Command::LiveCheck { dir, compare } => {
-            let report = live::check(&dir, compare.as_deref())?;
+        Command::LiveCheck {
+            dir,
+            compare,
+            spread,
+        } => {
+            let report = live::check(&dir, compare.as_deref(), &spread)?;
             print!("{report}");
             Ok(verdict(&report, strict))
         }

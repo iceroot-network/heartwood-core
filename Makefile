@@ -513,13 +513,17 @@ replay-p2p: build ## the reply_check and listed_block corpora through the oracle
 # set in local.mk. The comparisons of a run are the harness's (live check, api compare, p2p
 # compare, live await). CHUNKS names one job cut of l2-processor (reference or 1; both when empty);
 # LEFT and RIGHT are two nodes' API URLs for a direct api-compare; COMPARE names the run a run is
-# compared with (m for t and t for m; w0 for w, p and s).
+# compared with (m for t and t for m; w0 for w, p and s). MIXED_SPREAD, set in local.mk, lists
+# other runs of w0's recipe with reference nodes only (the recipe's dry runs): the log counts of
+# runs w, p and s are then compared with the most any of w0 and those runs gave, as the reference's
+# own counts spread from run to run.
 LIVE_RECIPE        ?=
 DEVNET_RECIPE      ?=
 MIXED_RECIPE       ?=
 RELAY_IMAGE_RECIPE ?=
 LIVE_RESULTS       ?=
 MIXED_RESULTS      ?=
+MIXED_SPREAD       ?=
 COMPARE            ?=
 RUN                ?=
 CHUNKS             ?=
@@ -576,12 +580,13 @@ live: $(live-prerequisite) ## one live run of at most 5 rounds on a devnet (RUN=
 # from --compare, not from COMPARE in difftest's environment. The baseline of runs w, p and s is
 # w0 unless COMPARE names it.
 mixed-compare = $(if $(COMPARE),$(COMPARE),$(if $(filter-out w0,$(is-mixed)),w0))
+mixed-spread = $(if $(and $(is-mixed),$(mixed-compare)),$(foreach d,$(MIXED_SPREAD),--spread $(d)))
 live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS or MIXED_RESULTS; COMPARE, for w, p and s w0 by default)
 	$(need-run)
 	$(need-results)
 	$(if $(is-mixed),$(need-image))
 	$(TOOLCHAIN) && $(if $(is-mixed),env -u COMPARE DIFFTEST_IMAGE='$(IMAGE)') $(DIFFTEST) live check \
-	    $(results-of-run)/$(RUN) $(if $(and $(is-mixed),$(mixed-compare)),--compare $(results-of-run)/$(mixed-compare)) $(STRICT)
+	    $(results-of-run)/$(RUN) $(if $(and $(is-mixed),$(mixed-compare)),--compare $(results-of-run)/$(mixed-compare)) $(mixed-spread) $(STRICT)
 
 api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the API answers a live run recorded (RUN, LIVE_RESULTS or MIXED_RESULTS), or two nodes' (LEFT, RIGHT)
 	$(TOOLCHAIN) && if [ -n '$(LEFT)' ] && [ -n '$(RIGHT)' ]; then \

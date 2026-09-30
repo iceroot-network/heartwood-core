@@ -108,12 +108,16 @@ pub struct LiveOptions<'a> {
     /// The run the run is compared with (`--compare`): the other of runs `t` and `m`, or the
     /// baseline `w0` of a mixed run.
     pub compare: Option<PathBuf>,
+    /// Other runs of the baseline's recipe with reference nodes only (`--spread`): a mixed run's
+    /// log counts are compared with the most any of the baseline and these gave.
+    pub spread: Vec<PathBuf>,
 }
 
 /// Check the live run in `run_dir`, with the corpora under [`CORPUS_ROOT`], the oracle of the
 /// environment (`DIFFTEST_IMAGE` or `SOLAR_DIR`), the tree's release binary at
-/// [`run::RELAY_BINARY`] and the run `compare` to compare with.
-pub fn check(run_dir: &Path, compare: Option<&Path>) -> Result<Report> {
+/// [`run::RELAY_BINARY`], the run `compare` to compare with and the other reference runs of its
+/// recipe, `spread`.
+pub fn check(run_dir: &Path, compare: Option<&Path>, spread: &[PathBuf]) -> Result<Report> {
     let oracle = || OracleArgs::default().resolve(|name: &str| std::env::var(name).ok());
     check_with(
         run_dir,
@@ -122,6 +126,7 @@ pub fn check(run_dir: &Path, compare: Option<&Path>) -> Result<Report> {
             oracle: &oracle,
             relay_binary: PathBuf::from(run::RELAY_BINARY),
             compare: compare.map(Path::to_path_buf),
+            spread: spread.to_vec(),
         },
     )
 }
@@ -136,6 +141,8 @@ pub struct MixedRun<'a> {
     pub windows: &'a [run::Window],
     /// The baseline run's directory, when the check compares with one.
     pub baseline: Option<&'a Path>,
+    /// Other runs of the baseline's recipe with reference nodes only.
+    pub spread: &'a [PathBuf],
     /// Where the run's corpora are imported and judged.
     pub corpus_root: &'a Path,
     /// The oracle, asked for only when a check needs it.
@@ -290,6 +297,7 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
             manifest: &manifest,
             windows: &windows,
             baseline: baseline.as_deref(),
+            spread: &options.spread,
             corpus_root: &options.corpus_root,
             oracle: options.oracle,
         };

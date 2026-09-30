@@ -103,11 +103,14 @@ Usage:
                                   tip, the highest round row, the missed-slot rows and the
                                   transactions (read-only: a running relay's store too)
   difftest corpus verify DIR      check a corpus against its manifest
-  difftest live check DIR [--compare DIR]
+  difftest live check DIR [--compare DIR] [--spread DIR]...
                                   the comparisons of a live run's directory: the judge of its
                                   chain, each Heartwood node's lines and store, the step
                                   reports, the API answers, the ban scan and the invariants;
-                                  --compare names the baseline run a run is compared with
+                                  --compare names the baseline run a run is compared with;
+                                  each --spread another run of the baseline's recipe with
+                                  reference nodes only: the log counts are compared with the
+                                  most any of those runs gave
   difftest live await RUN_DIR     the AwaitBlock report of a live run's Heartwood relays
   difftest p2p compare RUN_DIR --left NODE --right NODE
                                   the reference-client probe's records of two relays of a live
@@ -314,6 +317,8 @@ pub enum Command {
         dir: PathBuf,
         /// The baseline run the run is compared with.
         compare: Option<PathBuf>,
+        /// Other runs of the baseline's recipe with reference nodes only (`--spread`).
+        spread: Vec<PathBuf>,
     },
     /// `difftest live await`: a live run's AwaitBlock report.
     LiveAwait {
@@ -552,14 +557,22 @@ pub fn parse(args: &[String]) -> Result<Command> {
         }
         ["corpus", "from-blocks", rest @ ..] => parse_from_blocks(rest),
         ["corpus", "verify", dir] => Ok(Command::CorpusVerify { dir: dir.into() }),
-        ["live", "check", dir] => Ok(Command::LiveCheck {
-            dir: dir.into(),
-            compare: None,
-        }),
-        ["live", "check", dir, "--compare", compare] => Ok(Command::LiveCheck {
-            dir: dir.into(),
-            compare: Some(compare.into()),
-        }),
+        ["live", "check", dir, rest @ ..] => {
+            let (mut compare, mut spread) = (None, Vec::new());
+            let mut it = rest.iter();
+            while let Some(flag) = it.next() {
+                match *flag {
+                    "--compare" => compare = Some(value(flag, it.next())?.into()),
+                    "--spread" => spread.push(value(flag, it.next())?.into()),
+                    other => return Err(usage(format!("unknown live check option {other}"))),
+                }
+            }
+            Ok(Command::LiveCheck {
+                dir: dir.into(),
+                compare,
+                spread,
+            })
+        }
         ["live", "await", dir] => Ok(Command::LiveAwait { dir: dir.into() }),
         ["p2p", "compare", run, rest @ ..] => {
             let (mut left, mut right) = (None, None);
@@ -1223,6 +1236,7 @@ mod tests {
             Command::LiveCheck {
                 dir: "runs/h".into(),
                 compare: None,
+                spread: vec![],
             }
         );
         assert_eq!(
@@ -1230,6 +1244,15 @@ mod tests {
             Command::LiveCheck {
                 dir: "runs/w".into(),
                 compare: Some("runs/w0".into()),
+                spread: vec![],
+            }
+        );
+        assert_eq!(
+            p("live check runs/w --compare runs/w0 --spread a/w0 --spread b/w").unwrap(),
+            Command::LiveCheck {
+                dir: "runs/w".into(),
+                compare: Some("runs/w0".into()),
+                spread: vec!["a/w0".into(), "b/w".into()],
             }
         );
         assert_eq!(

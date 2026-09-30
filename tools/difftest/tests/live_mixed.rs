@@ -898,6 +898,11 @@ fn build_run(chain: &Chain, kind: &Kind, run: &Path) {
 // ---------------------------------------------------------------------------------------------
 
 fn check_run(f: &Fixture, run: &Path) -> Report {
+    check_run_with(f, run, &[])
+}
+
+/// The check of `run` with `spread`, other reference runs of the baseline's recipe.
+fn check_run_with(f: &Fixture, run: &Path, spread: &[PathBuf]) -> Report {
     let no_oracle = || -> heartwood_difftest::Result<_> {
         Err(Error::Usage(
             "the fixture's chains are judged: no oracle".into(),
@@ -910,6 +915,7 @@ fn check_run(f: &Fixture, run: &Path) -> Report {
             oracle: &no_oracle,
             relay_binary: f.root.join("no-such-binary"),
             compare: (run == f.w).then(|| f.w0.clone()),
+            spread: spread.to_vec(),
         },
     )
     .expect("the live check runs")
@@ -1151,6 +1157,52 @@ fn socket_closes_above_the_baseline_fail_and_the_stalls_are_left_out() {
         "mixed",
         "Heartwood logs",
         "Did not make an endpoint request in restart",
+    );
+}
+
+/// A copy of run w0 as another reference run of its recipe, in `name/w0` beside it.
+fn spread_run(f: &Fixture, name: &str) -> PathBuf {
+    let dir = f.w0.parent().unwrap().join(name).join("w0");
+    copy_dir(&f.w0, &dir);
+    dir
+}
+
+#[test]
+fn counts_are_compared_with_the_most_any_reference_run_of_the_recipe_gave() {
+    let f = fixture();
+    let closed = |t: f64| ban(t, &ip(4), CLOSED);
+    // Node 4's restart window: w0's node 1 logged one close of node 4, another reference run of
+    // the recipe two, and run w's node 1 two.
+    append(&reference_log(&f.w0, "node1"), &closed(1_200.0));
+    let other = spread_run(&f, "other");
+    append(&reference_log(&other, "node1"), &closed(1_201.0));
+    for t in [1_200.0, 1_201.0] {
+        append(&reference_log(&f.w, "node1"), &closed(t));
+    }
+    let report = check_run(&f, &f.w);
+    assert_fails(&report, "mixed", "reference logs", "transport in restart");
+    let report = check_run_with(&f, &f.w, std::slice::from_ref(&other));
+    assert_clean(&report, &SECTIONS);
+    assert_passes(&report, "mixed", "node4 restart 2 (2)");
+    assert_passes(&report, "mixed", "the most any of 2 reference runs");
+    // A third line is above every reference run's count.
+    append(&reference_log(&f.w, "node1"), &closed(1_202.0));
+    let report = check_run_with(&f, &f.w, &[other]);
+    assert_fails(
+        &report,
+        "mixed",
+        "reference logs",
+        "3 transport lines of node4 in restart, more than the baseline's 2",
+    );
+    // A run with Heartwood relays is no reference run.
+    let mixed = f.w.parent().unwrap().join("mixed").join("w");
+    copy_dir(&f.w, &mixed);
+    let report = check_run_with(&f, &f.w, &[mixed]);
+    assert_fails(
+        &report,
+        "mixed",
+        "reference logs",
+        "no run of reference nodes only",
     );
 }
 

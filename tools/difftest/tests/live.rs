@@ -35,6 +35,7 @@ fn a_live_check_parses() {
         Command::LiveCheck {
             dir: "fixtures/run".into(),
             compare: None,
+            spread: vec![],
         }
     );
 }
@@ -172,6 +173,7 @@ fn check(f: &Fixture) -> Report {
             oracle: &no_oracle,
             relay_binary: f.relay.clone(),
             compare: None,
+            spread: Vec::new(),
         },
     )
     .expect("the live check runs")

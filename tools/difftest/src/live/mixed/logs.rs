@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{SECTION, baseline, guard, heartwood, ip_of, references};
+use super::{Baseline, SECTION, baseline, guard, heartwood, ip_of, references, spread};
 use crate::errors::Result;
 use crate::live::bans::{self, OUTSIDE, Ruling, Tally};
 use crate::live::nodes::{Event, event_of, read_logs};
@@ -115,6 +115,30 @@ fn named_by(
     Ok((tally, forbidden))
 }
 
+/// The baseline run and the other reference runs of its recipe (`--spread`).
+fn baselines(run: &MixedRun<'_>) -> Result<Vec<Baseline>> {
+    let base = baseline(run)?
+        .ok_or_else(|| crate::errors::Error::Usage("no baseline run given".into()))?;
+    let mut all = vec![base];
+    all.extend(spread(run)?);
+    Ok(all)
+}
+
+/// With other reference runs of the recipe, the record of which runs the allowance is the most of.
+fn spread_note(cases: &mut Cases, what: &str, bases: &[Baseline]) {
+    if bases.len() > 1 {
+        let dirs: Vec<String> = bases.iter().map(|b| b.dir.display().to_string()).collect();
+        cases.record(
+            SECTION,
+            format!(
+                "{what}: each count is compared with the most any of {} reference runs of the baseline's recipe gave: {}",
+                bases.len(),
+                dirs.join(", ")
+            ),
+        );
+    }
+}
+
 /// The findings of a comparison as cases: an excess fails, a count within the baseline's is one
 /// passing case, a count left out is recorded. `windows` are the baseline's, with its route
 /// table's spans between the same readers and nodes as windows of their own class.
@@ -161,18 +185,12 @@ pub(in crate::live) fn reference_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
             );
             return Ok(());
         }
-        let base = baseline(run)?
-            .ok_or_else(|| crate::errors::Error::Usage("no baseline run given".into()))?;
+        let bases = baselines(run)?;
         let readers: Vec<String> = references(m).iter().map(|n| n.name.clone()).collect();
         let here = Logged {
             dir: run.run_dir,
             windows: run.windows,
             reaches: run::reaches(run.run_dir, m.window_seconds)?,
-        };
-        let there = Logged {
-            dir: &base.dir,
-            windows: &base.windows,
-            reaches: run::reaches(&base.dir, base.manifest.window_seconds)?,
         };
         let (tally, forbidden) = named_by(&here, &readers, &named)?;
         for reader in &readers {
@@ -191,31 +209,49 @@ pub(in crate::live) fn reference_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
                 );
             }
         }
-        // The baseline's own lines about the same nodes, by the same readers.
-        let base_named: Vec<(String, String)> = named
-            .iter()
-            .filter_map(|(n, _)| ip_of(&base.manifest, n).map(|ip| (n.clone(), ip.to_owned())))
-            .collect();
-        let (mut base_tally, _) = named_by(&there, &readers, &base_named)?;
-        if !named.iter().any(|(n, _)| n == FALLBACK)
-            && let Some(ip) = ip_of(&base.manifest, FALLBACK)
-        {
-            // The baseline's node 4 as each of its readers logged it.
-            let fallback = [(FALLBACK.to_owned(), ip.to_owned())];
-            let mut each = Vec::new();
-            for reader in references(&base.manifest)
-                .iter()
-                .filter(|n| n.name != FALLBACK)
-            {
-                let one = [reader.name.clone()];
-                each.push(named_by(&there, &one, &fallback)?.0);
-            }
-            base_tally.merge(&Tally::most(&each, readers.len()));
-        }
+        // Each baseline run's own lines about the same nodes, by the same readers; the most any of
+        // them gave is the allowance.
         let names: Vec<String> = named.iter().map(|(n, _)| n.clone()).collect();
-        let mut ruled = base.windows.clone();
-        ruled.extend(run::reach_windows(&there.reaches, &readers, &names));
-        rule(cases, "reference logs", &tally, &base_tally, &ruled);
+        let mut tallies = Vec::new();
+        let mut ruled = Vec::new();
+        for base in &bases {
+            let there = Logged {
+                dir: &base.dir,
+                windows: &base.windows,
+                reaches: run::reaches(&base.dir, base.manifest.window_seconds)?,
+            };
+            let base_named: Vec<(String, String)> = named
+                .iter()
+                .filter_map(|(n, _)| ip_of(&base.manifest, n).map(|ip| (n.clone(), ip.to_owned())))
+                .collect();
+            let (mut base_tally, _) = named_by(&there, &readers, &base_named)?;
+            if !named.iter().any(|(n, _)| n == FALLBACK)
+                && let Some(ip) = ip_of(&base.manifest, FALLBACK)
+            {
+                // The baseline's node 4 as each of its readers logged it.
+                let fallback = [(FALLBACK.to_owned(), ip.to_owned())];
+                let mut each = Vec::new();
+                for reader in references(&base.manifest)
+                    .iter()
+                    .filter(|n| n.name != FALLBACK)
+                {
+                    let one = [reader.name.clone()];
+                    each.push(named_by(&there, &one, &fallback)?.0);
+                }
+                base_tally.merge(&Tally::most(&each, readers.len()));
+            }
+            tallies.push(base_tally);
+            ruled.extend(base.windows.iter().cloned());
+            ruled.extend(run::reach_windows(&there.reaches, &readers, &names));
+        }
+        spread_note(cases, "reference logs", &bases);
+        rule(
+            cases,
+            "reference logs",
+            &tally,
+            &Tally::most(&tallies, 1),
+            &ruled,
+        );
         Ok(())
     })
 }
@@ -282,8 +318,7 @@ pub(in crate::live) fn heartwood_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
             );
             return Ok(());
         }
-        let base = baseline(run)?
-            .ok_or_else(|| crate::errors::Error::Usage("no baseline run given".into()))?;
+        let bases = baselines(run)?;
         let peers: Vec<(String, String)> = references(m)
             .iter()
             .map(|n| (n.name.clone(), n.ip.clone()))
@@ -298,13 +333,7 @@ pub(in crate::live) fn heartwood_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
             windows: run.windows,
             reaches: run::reaches(run.run_dir, m.window_seconds)?,
         };
-        let there = Logged {
-            dir: &base.dir,
-            windows: &base.windows,
-            reaches: run::reaches(&base.dir, base.manifest.window_seconds)?,
-        };
         let mut total = Tally::default();
-        let mut base_total = Tally::default();
         for relay in &relays {
             let log = run.run_dir.join("nodes").join(&relay.name).join("log");
             let (tally, forbidden) = heartwood_by(&here, &log, &relay.name, &peers, &devnet)?;
@@ -322,36 +351,58 @@ pub(in crate::live) fn heartwood_logs(run: &MixedRun<'_>, cases: &mut Cases) -> 
                 );
             }
             total.merge(&tally);
-            // The baseline's node of the same name, and the same peers.
-            let base_log = base.dir.join("logs").join(&relay.name);
-            let base_peers: Vec<(String, String)> = peers
-                .iter()
-                .filter_map(|(n, _)| ip_of(&base.manifest, n).map(|ip| (n.clone(), ip.to_owned())))
-                .collect();
-            let (t, _) = heartwood_by(&there, &base_log, &relay.name, &base_peers, &[])?;
-            base_total.merge(&t);
-        }
-        if !heartwood(m).iter().any(|n| n.name == FALLBACK) {
-            // The baseline's node 4's bans, peer by peer.
-            let log = base.dir.join("logs").join(FALLBACK);
-            let mut each = Vec::new();
-            for peer in base.manifest.nodes.iter().filter(|n| n.name != FALLBACK) {
-                let one = [(peer.name.clone(), peer.ip.clone())];
-                each.push(heartwood_by(&there, &log, FALLBACK, &one, &[])?.0);
-            }
-            base_total.merge(&Tally::most(&each, peers.len()));
         }
         // The counts are keyed by the Heartwood relay that logged them: the route table's spans
         // between a peer and a relay of this run, as windows of the relays.
         let peer_names: Vec<String> = peers.iter().map(|(n, _)| n.clone()).collect();
         let relay_names: Vec<String> = relays.iter().map(|n| n.name.clone()).collect();
-        let mut ruled = base.windows.clone();
-        ruled.extend(run::reach_windows(
-            &there.reaches,
-            &peer_names,
-            &relay_names,
-        ));
-        rule(cases, "Heartwood logs", &total, &base_total, &ruled);
+        let mut tallies = Vec::new();
+        let mut ruled = Vec::new();
+        for base in &bases {
+            let there = Logged {
+                dir: &base.dir,
+                windows: &base.windows,
+                reaches: run::reaches(&base.dir, base.manifest.window_seconds)?,
+            };
+            let mut base_total = Tally::default();
+            for relay in &relays {
+                // The baseline's node of the same name, and the same peers.
+                let base_log = base.dir.join("logs").join(&relay.name);
+                let base_peers: Vec<(String, String)> = peers
+                    .iter()
+                    .filter_map(|(n, _)| {
+                        ip_of(&base.manifest, n).map(|ip| (n.clone(), ip.to_owned()))
+                    })
+                    .collect();
+                let (t, _) = heartwood_by(&there, &base_log, &relay.name, &base_peers, &[])?;
+                base_total.merge(&t);
+            }
+            if !heartwood(m).iter().any(|n| n.name == FALLBACK) {
+                // The baseline's node 4's bans, peer by peer.
+                let log = base.dir.join("logs").join(FALLBACK);
+                let mut each = Vec::new();
+                for peer in base.manifest.nodes.iter().filter(|n| n.name != FALLBACK) {
+                    let one = [(peer.name.clone(), peer.ip.clone())];
+                    each.push(heartwood_by(&there, &log, FALLBACK, &one, &[])?.0);
+                }
+                base_total.merge(&Tally::most(&each, peers.len()));
+            }
+            tallies.push(base_total);
+            ruled.extend(base.windows.iter().cloned());
+            ruled.extend(run::reach_windows(
+                &there.reaches,
+                &peer_names,
+                &relay_names,
+            ));
+        }
+        spread_note(cases, "Heartwood logs", &bases);
+        rule(
+            cases,
+            "Heartwood logs",
+            &total,
+            &Tally::most(&tallies, 1),
+            &ruled,
+        );
         Ok(())
     })
 }
