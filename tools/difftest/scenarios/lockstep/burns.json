@@ -1,0 +1,28 @@
+{
+  "id": "burns",
+  "title": "Burns of every size, with and without a fee, take the amount out of the supply and a burn below the minimum is refused",
+  "levels": ["L2"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "settleBlocks": 0,
+  "actors": {"hop-a": {"seed": 1}, "hop-b": {"seed": 2}, "hop-c": {"seed": 3}, "spender": {"seed": 4}, "payee": {"seed": 5}, "nonce-user": {"seed": 6}, "gap-user": {"seed": 7}, "poor": {"seed": 8}, "exact-a": {"seed": 10}, "exact-b": {"seed": 11}, "voter-a": {"seed": 12}, "voter-b": {"seed": 13}, "registrant-a": {"seed": 14}, "registrant-b": {"seed": 15}, "registrant-c": {"seed": 16}, "resigner": {"seed": 17}, "sig-owner": {"seed": 18}, "second-key": {"seed": 19}, "burner": {"seed": 20}, "bulk-1": {"seed": 21}, "bulk-2": {"seed": 22}, "bulk-3": {"seed": 23}},
+  "steps": [
+    {"name": "fund the wallets", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [
+       {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["hop-a", "50000000000"], ["hop-b", "300000000"], ["hop-c", "300000000"], ["spender", "100000000000"], ["payee", "100000000"], ["nonce-user", "100000000000"], ["gap-user", "100000000000"], ["poor", "1000"], ["exact-a", "10000000000"], ["exact-b", "10000000000"], ["voter-a", "10000000000"], ["voter-b", "10000000000"], ["registrant-a", "20000000000"], ["registrant-b", "20000000000"], ["registrant-c", "20000000000"], ["resigner", "20000000000"], ["sig-owner", "10000000000"], ["second-key", "100000000"], ["burner", "10000000000"], ["bulk-1", "100000000000"], ["bulk-2", "100000000000"], ["bulk-3", "100000000000"]]}
+     ]},
+    {"name": "burns", "at": {"height": 44}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["burn-minimum", "burn-large", "burn-with-fee"], "invalid": ["burn-below-minimum", "burn-more-than-balance"], "codes": {"burn-below-minimum": "ERR_APPLY", "burn-more-than-balance": "ERR_APPLY"}},
+     "txs": [
+       {"ref": "burn-minimum", "type": "burn", "from": "burner", "nonce": 1, "fee": "0", "asset": {"amount": "2000000"}},
+       {"ref": "burn-large", "type": "burn", "from": "burner", "nonce": 2, "asset": {"amount": "500000000"}},
+       {"ref": "burn-with-fee", "type": "burn", "from": "burner", "nonce": 3, "fee": "6173000", "asset": {"amount": "100000000"}},
+       {"ref": "burn-below-minimum", "type": "burn", "from": "burner", "nonce": 4, "asset": {"amount": "1999999"}},
+       {"ref": "burn-more-than-balance", "type": "burn", "from": "burner", "nonce": 4, "asset": {"amount": "100000000000"}}
+     ]},
+    {"name": "a burn once the first are in a block", "at": {"afterBlocks": 2}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["burn-late"]},
+     "txs": [
+       {"ref": "burn-late", "type": "burn", "from": "burner", "nonce": 4, "asset": {"amount": "200000000"}}
+     ]},
+    {"name": "what was burned", "at": {"afterBlocks": 3}, "check": {"forged": ["burn-minimum", "burn-large", "burn-with-fee", "burn-late"], "absent": ["burn-below-minimum", "burn-more-than-balance"], "digest": true}}
+  ]
+}

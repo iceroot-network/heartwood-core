@@ -1,0 +1,26 @@
+{
+  "id": "restarts",
+  "title": "Relays and forgers restart at different heights, from their saved state or by rebuilding it, and the chain stays one",
+  "levels": ["L3"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "settleBlocks": 0,
+  "actors": {"voter-early": {"seed": 1}, "voter-restart": {"seed": 2}, "voter-round": {"seed": 3}, "extra-a": {"seed": 4}, "extra-b": {"seed": 5}, "extra-c": {"seed": 6}, "pool-a": {"seed": 7}, "pool-b": {"seed": 8}, "payee": {"seed": 9}, "miss-user": {"seed": 10}, "restart-user": {"seed": 11}, "split-user": {"seed": 12}},
+  "steps": [
+    {"name": "fund the wallets", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [
+       {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["voter-early", "10000000000"], ["voter-restart", "10000000000"], ["voter-round", "10000000000"], ["extra-a", "20000000000"], ["extra-b", "20000000000"], ["extra-c", "20000000000"], ["pool-a", "10000000000"], ["pool-b", "10000000000"], ["payee", "100000000"], ["miss-user", "10000000000"], ["restart-user", "10000000000"], ["split-user", "10000000000"]]}
+     ]},
+    {"name": "a forger restarts", "at": {"height": 131}, "do": "restart", "node": 1, "role": "forger"},
+    {"name": "a relay rebuilds its state", "at": {"afterBlocks": 2}, "do": "restart", "node": 1, "role": "relay", "mode": {"reference": "rebuild", "heartwood": "replay"}},
+    {"name": "one tip after the rebuild", "at": {"afterBlocks": 0}, "check": {"invariant": ["singleTip"], "withinBlocks": 10}},
+    {"name": "a relay restarts from its saved state", "at": {"afterBlocks": 2}, "do": "restart", "node": 3, "role": "relay", "mode": {"reference": "saved", "heartwood": "table"}},
+    {"name": "one tip", "at": {"afterBlocks": 0}, "check": {"invariant": ["singleTip"], "withinBlocks": 8}},
+    {"name": "a transfer", "at": {"afterBlocks": 1}, "do": "submit", "node": 4, "via": "api", "check": {"accept": ["between-restarts"]},
+     "txs": [
+       {"ref": "between-restarts", "type": "transfer", "from": "restart-user", "nonce": 1, "to": [["payee", "100000000"]]}
+     ]},
+    {"name": "a whole node restarts", "at": {"afterBlocks": 2}, "do": "restart", "node": 2, "mode": {"reference": "saved", "heartwood": "table"}},
+    {"name": "one tip at the end", "at": {"afterBlocks": 0}, "check": {"forged": ["between-restarts"], "invariant": ["singleTip"], "withinBlocks": 10}}
+  ]
+}

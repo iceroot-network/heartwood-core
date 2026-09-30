@@ -1,0 +1,42 @@
+{
+  "id": "delegate-resignation",
+  "title": "A delegate resigns for a while and can revoke it only 106 blocks later, another resigns for good; extra delegates are registered first to fill the set",
+  "levels": ["L2", "L3"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "settleBlocks": 0,
+  "actors": {"voter-early": {"seed": 1}, "voter-restart": {"seed": 2}, "voter-round": {"seed": 3}, "extra-a": {"seed": 4}, "extra-b": {"seed": 5}, "extra-c": {"seed": 6}, "pool-a": {"seed": 7}, "pool-b": {"seed": 8}, "payee": {"seed": 9}, "miss-user": {"seed": 10}, "restart-user": {"seed": 11}, "split-user": {"seed": 12}},
+  "steps": [
+    {"name": "fund the wallets", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [
+       {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["voter-early", "10000000000"], ["voter-restart", "10000000000"], ["voter-round", "10000000000"], ["extra-a", "20000000000"], ["extra-b", "20000000000"], ["extra-c", "20000000000"], ["pool-a", "10000000000"], ["pool-b", "10000000000"], ["payee", "100000000"], ["miss-user", "10000000000"], ["restart-user", "10000000000"], ["split-user", "10000000000"]]}
+     ]},
+    {"name": "registers the extra delegates", "at": {"height": 6}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["extra-one", "extra-two", "extra-three"]},
+     "txs": [
+       {"ref": "extra-one", "type": "delegateRegistration", "from": "extra-a", "nonce": 1, "asset": {"username": "extradelegate1"}},
+       {"ref": "extra-two", "type": "delegateRegistration", "from": "extra-b", "nonce": 1, "asset": {"username": "extradelegate2"}},
+       {"ref": "extra-three", "type": "delegateRegistration", "from": "extra-c", "nonce": 1, "asset": {"username": "extradelegate3"}}
+     ]},
+    {"name": "three resignations", "at": {"height": 40}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["resign-temporary", "resign-early", "resign-permanent"]},
+     "txs": [
+       {"ref": "resign-temporary", "type": "delegateResignation", "from": "genesis_22", "nonce": 3, "asset": {"resignationType": 0}},
+       {"ref": "resign-early", "type": "delegateResignation", "from": "genesis_23", "nonce": 3, "asset": {"resignationType": 0}},
+       {"ref": "resign-permanent", "type": "delegateResignation", "from": "genesis_21", "nonce": 3, "asset": {"resignationType": 1}}
+     ]},
+    {"name": "revokes at once", "at": {"afterBlocks": 8}, "do": "submit", "node": 1, "via": "api", "check": {"invalid": ["revoke-early", "revoke-permanent"], "codes": {"revoke-early": "ERR_APPLY", "revoke-permanent": "ERR_APPLY"}},
+     "txs": [
+       {"ref": "revoke-early", "type": "delegateResignation", "from": "genesis_23", "nonce": 4, "asset": {"resignationType": 2}},
+       {"ref": "revoke-permanent", "type": "delegateResignation", "from": "genesis_21", "nonce": 4, "asset": {"resignationType": 2}}
+     ]},
+    {"name": "a second resignation", "at": {"afterBlocks": 3}, "do": "submit", "node": 1, "via": "api", "check": {"invalid": ["resign-again"], "codes": {"resign-again": "ERR_APPLY"}},
+     "txs": [
+       {"ref": "resign-again", "type": "delegateResignation", "from": "genesis_22", "nonce": 4, "asset": {"resignationType": 0}}
+     ]},
+    {"name": "what was forged", "at": {"afterBlocks": 3}, "check": {"forged": ["extra-one", "extra-two", "extra-three", "resign-temporary", "resign-early", "resign-permanent"], "absent": ["revoke-early", "revoke-permanent", "resign-again"]}},
+    {"name": "the revoke, 107 blocks after the resignation", "at": {"height": 147}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["revoke"]},
+     "txs": [
+       {"ref": "revoke", "type": "delegateResignation", "from": "genesis_22", "nonce": 4, "asset": {"resignationType": 2}}
+     ]},
+    {"name": "revoked", "at": {"afterBlocks": 3}, "check": {"forged": ["revoke"], "digest": true}}
+  ]
+}

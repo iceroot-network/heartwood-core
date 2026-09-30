@@ -1,0 +1,18 @@
+{
+  "id": "peer-discovery",
+  "title": "A node told of one seed finds every other node within two discovery cycles",
+  "levels": ["L3", "L4"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "settleBlocks": 0,
+  "actors": {"prop-a": {"seed": 1}, "prop-b": {"seed": 2}, "prop-c": {"seed": 3}, "prop-d": {"seed": 4}, "payee": {"seed": 5}, "split-user": {"seed": 6}},
+  "steps": [
+    {"name": "fund the wallets", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [
+       {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["prop-a", "10000000000"], ["prop-b", "10000000000"], ["prop-c", "10000000000"], ["prop-d", "10000000000"], ["payee", "100000000"], ["split-user", "10000000000"]]}
+     ]},
+    {"name": "settled after the sync", "at": {"height": 34}, "check": {"invariant": ["singleTip"], "withinBlocks": 4}},
+    {"name": "wait two discovery cycles", "at": {"afterBlocks": 0}, "do": "wait", "blocks": 8},
+    {"name": "still one tip", "at": {"afterBlocks": 0}, "check": {"invariant": ["singleTip"]}}
+  ]
+}
