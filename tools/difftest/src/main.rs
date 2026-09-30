@@ -368,7 +368,7 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             print!("{report}");
             Ok(verdict(&report, strict))
         }
-        Command::Gate(args) => heartwood_difftest::gate::run(&args),
+        Command::Gate(args) => heartwood_difftest::gate::run(&args, strict),
         Command::LockstepMake(args) => {
             let made = heartwood_difftest::lockstep::run(&args)?;
             println!(

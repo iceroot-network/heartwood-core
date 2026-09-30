@@ -63,13 +63,24 @@ impl GateVerb {
     }
 }
 
-/// Run a gate command; whether its checks passed.
-pub fn run(args: &GateArgs) -> Result<bool> {
+/// Run a gate command; whether its checks passed. `strict` is the harness's `--strict`, which the
+/// command line takes out of the arguments before they get here: it makes `s1`, `coverage`,
+/// `register` and `ledger show|plan` demand everything, not only that nothing failed.
+pub fn run(args: &GateArgs, strict: bool) -> Result<bool> {
+    let mut rest = args.args.clone();
+    let takes_strict = match args.verb {
+        GateVerb::S1 | GateVerb::Coverage | GateVerb::Register => true,
+        GateVerb::Ledger => rest.first().is_some_and(|v| v == "show" || v == "plan"),
+        GateVerb::Record => false,
+    };
+    if strict && takes_strict {
+        rest.push("--strict".to_owned());
+    }
     match args.verb {
-        GateVerb::Record => make_record::run(&args.args),
-        GateVerb::Ledger => totals::run(&args.args),
-        GateVerb::S1 => s1::run(&args.args),
-        GateVerb::Coverage => coverage::run(&args.args),
-        GateVerb::Register => register::run(&args.args),
+        GateVerb::Record => make_record::run(&rest),
+        GateVerb::Ledger => totals::run(&rest),
+        GateVerb::S1 => s1::run(&rest),
+        GateVerb::Coverage => coverage::run(&rest),
+        GateVerb::Register => register::run(&rest),
     }
 }

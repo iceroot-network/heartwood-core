@@ -109,10 +109,10 @@ pub fn run(args: &[String]) -> Result<bool> {
         (Some(_), None) => Err(Error::Usage("--ledger needs --ledger-dir".to_owned())),
         (Some(spec), Some(dir)) => {
             if dirty && !allow_dirty {
-                return Err(Error::Usage(
-                    "the tree has changes beside its head: the ledger entry is not written"
-                        .to_owned(),
-                ));
+                eprintln!(
+                    "gate record: the tree has changes beside its head, so the ledger entry is not written (--allow-dirty writes it)"
+                );
+                return Ok(false);
             }
             let source = format!("gate record {}", record.file_name());
             let entry = entry_from(&spec, &record, &source)?;

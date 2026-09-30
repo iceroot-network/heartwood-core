@@ -102,11 +102,15 @@ fn entry_paths(criteria: &Criteria, entry: &LedgerEntry) -> Vec<String> {
 
 /// Every JSON file under `dirs` (recursively, symbolic links not followed) whose `format` is
 /// `format`, parsed strictly and sorted by path. Other JSON files are not this store's and are
-/// skipped; a file of the format that does not parse is an error.
+/// skipped; a file of the format that does not parse is an error. A directory that is not there
+/// holds nothing.
 pub fn load_all<T: DeserializeOwned>(dirs: &[PathBuf], format: &str) -> Result<Vec<(PathBuf, T)>> {
     let mut files = Vec::new();
     for dir in dirs {
-        walk(dir, &mut files)?;
+        // A directory nothing has been written to yet holds nothing.
+        if dir.is_dir() {
+            walk(dir, &mut files)?;
+        }
     }
     files.sort();
     files.dedup();
