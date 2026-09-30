@@ -1,0 +1,419 @@
+[2026-09-30 20:16:52.972] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a core node of node2 on devnet
+[2026-09-30 20:16:52.973] WARNING: Devnet addressing: this node is 198.51.100.12 and accepts peers in 127.0.0.0/8 only
+[2026-09-30 20:16:53.178] INFO: Starting Blockchain Manager ⛓️
+[2026-09-30 20:16:53.178] INFO: Last block in database: 1
+[2026-09-30 20:16:53.192] INFO: Checking 0 peers 🔭
+[2026-09-30 20:16:53.192] INFO: 0 of 0 peers on the network are responsive
+[2026-09-30 20:16:53.192] INFO: Median Network Height: 0
+[2026-09-30 20:16:53.459] WARNING: Waiting for a responsive host ⏳
+[2026-09-30 20:16:55.460] INFO: Waiting for relay to become ready ⏳
+[2026-09-30 20:17:03.193] INFO: Couldn't find enough peers. Falling back to seed peers 🔥
+[2026-09-30 20:17:03.193] INFO: Block download finished 🚀
+[2026-09-30 20:17:03.193] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:17:03.193] INFO: The network launches in 9 seconds ⏱️
+[2026-09-30 20:17:04.189] INFO: Checking 0 peers 🔭
+[2026-09-30 20:17:04.213] INFO: Public API (HTTP) Server started at http://198.51.100.12:6003
+[2026-09-30 20:17:05.475] INFO: Loaded 18 active delegates: genesis_19, genesis_20, genesis_21, genesis_22, genesis_23, genesis_24, genesis_25, genesis_26, genesis_27, genesis_28, genesis_29, genesis_30, genesis_31, genesis_32, genesis_33, genesis_34, genesis_35, genesis_36
+[2026-09-30 20:17:05.475] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:17:05.475] INFO: Forger Manager started 🔨
+[2026-09-30 20:17:12.002] INFO: The network has launched and the next block is due in 8 seconds! Welcome aboard 🎉
+[2026-09-30 20:17:20.042] INFO: Received new block forged by delegate genesis_48 (#16) at height 2 with 1.9 dRT reward 📦
+[2026-09-30 20:17:20.560] INFO: Broadcasting block 2 to 2 peers 📡
+[2026-09-30 20:17:28.004] INFO: Delegate genesis_23 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:17:28.043] INFO: Received new block forged by delegate genesis_3 (#42) at height 3 with 2.1 dRT reward 📦
+[2026-09-30 20:17:28.068] INFO: Block download finished 🚀
+[2026-09-30 20:17:28.068] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:17:29.007] INFO: Downloaded 1 new block accounting for a total of 0 transactions
+[2026-09-30 20:17:36.006] INFO: Checking 2 peers 🔭
+[2026-09-30 20:17:36.034] INFO: Delegate genesis_23 forged a new block at height 4 with 0 transactions 🔱
+[2026-09-30 20:17:36.034] INFO: Received new block forged by delegate genesis_23 (#22) at height 4 with 2 dRT reward 📦
+[2026-09-30 20:17:36.034] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:17:36.043] INFO: Broadcasting block 4 to 2 peers 📡
+[2026-09-30 20:17:44.007] INFO: Checking 2 peers 🔭
+[2026-09-30 20:17:44.034] INFO: Delegate genesis_35 forged a new block at height 5 with 0 transactions 🔱
+[2026-09-30 20:17:44.034] INFO: Received new block forged by delegate genesis_35 (#37) at height 5 with 2.1 dRT reward 📦
+[2026-09-30 20:17:44.034] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:17:44.043] INFO: Broadcasting block 5 to 2 peers 📡
+[2026-09-30 20:17:52.043] INFO: Received new block forged by delegate genesis_15 (#48) at height 6 with 2.2 dRT reward 📦
+[2026-09-30 20:17:52.562] INFO: Broadcasting block 6 to 2 peers 📡
+[2026-09-30 20:18:00.044] INFO: Received new block forged by delegate genesis_50 (#41) at height 7 with 2.1 dRT reward 📦
+[2026-09-30 20:18:00.562] INFO: Broadcasting block 7 to 2 peers 📡
+[2026-09-30 20:18:08.045] INFO: Received new block forged by delegate genesis_4 (#51) at height 8 with 2.2 dRT reward 📦
+[2026-09-30 20:18:08.562] INFO: Broadcasting block 8 to 2 peers 📡
+[2026-09-30 20:18:16.045] INFO: Received new block forged by delegate genesis_47 (#39) at height 9 with 2.1 dRT reward 📦
+[2026-09-30 20:18:16.563] INFO: Broadcasting block 9 to 2 peers 📡
+[2026-09-30 20:18:24.046] INFO: Received new block forged by delegate genesis_39 (#11) at height 10 with 1.9 dRT reward 📦
+[2026-09-30 20:18:24.564] INFO: Broadcasting block 10 to 2 peers 📡
+[2026-09-30 20:18:32.010] INFO: Delegate genesis_26 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:18:32.011] INFO: Block download finished 🚀
+[2026-09-30 20:18:32.011] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:18:32.045] INFO: Received new block forged by delegate genesis_17 (#36) at height 11 with 2.1 dRT reward 📦
+[2026-09-30 20:18:32.562] INFO: Broadcasting block 11 to 2 peers 📡
+[2026-09-30 20:18:40.005] INFO: Checking 2 peers 🔭
+[2026-09-30 20:18:40.033] INFO: Delegate genesis_26 forged a new block at height 12 with 0 transactions 🔱
+[2026-09-30 20:18:40.033] INFO: Received new block forged by delegate genesis_26 (#17) at height 12 with 1.9 dRT reward 📦
+[2026-09-30 20:18:40.033] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:18:40.042] INFO: Broadcasting block 12 to 2 peers 📡
+[2026-09-30 20:18:48.043] INFO: Received new block forged by delegate genesis_42 (#21) at height 13 with 1.9 dRT reward 📦
+[2026-09-30 20:18:48.560] INFO: Broadcasting block 13 to 2 peers 📡
+[2026-09-30 20:18:56.006] INFO: Delegate genesis_29 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:18:56.007] INFO: Block download finished 🚀
+[2026-09-30 20:18:56.007] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:18:56.041] INFO: Received new block forged by delegate genesis_14 (#32) at height 14 with 2 dRT reward 📦
+[2026-09-30 20:18:56.559] INFO: Broadcasting block 14 to 2 peers 📡
+[2026-09-30 20:19:04.007] INFO: Checking 2 peers 🔭
+[2026-09-30 20:19:04.034] INFO: Delegate genesis_29 forged a new block at height 15 with 0 transactions 🔱
+[2026-09-30 20:19:04.034] INFO: Received new block forged by delegate genesis_29 (#5) at height 15 with 1.8 dRT reward 📦
+[2026-09-30 20:19:04.034] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:19:04.043] INFO: Broadcasting block 15 to 2 peers 📡
+[2026-09-30 20:19:12.005] INFO: Checking 2 peers 🔭
+[2026-09-30 20:19:12.032] INFO: Delegate genesis_27 forged a new block at height 16 with 0 transactions 🔱
+[2026-09-30 20:19:12.032] INFO: Received new block forged by delegate genesis_27 (#49) at height 16 with 2.2 dRT reward 📦
+[2026-09-30 20:19:12.033] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:19:12.041] INFO: Broadcasting block 16 to 2 peers 📡
+[2026-09-30 20:19:20.005] INFO: Delegate genesis_28 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:19:20.005] INFO: Block download finished 🚀
+[2026-09-30 20:19:20.005] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:19:20.041] INFO: Received new block forged by delegate genesis_11 (#2) at height 17 with 1.8 dRT reward 📦
+[2026-09-30 20:19:20.559] INFO: Broadcasting block 17 to 2 peers 📡
+[2026-09-30 20:19:28.008] INFO: Checking 2 peers 🔭
+[2026-09-30 20:19:28.035] INFO: Delegate genesis_28 forged a new block at height 18 with 0 transactions 🔱
+[2026-09-30 20:19:28.035] INFO: Received new block forged by delegate genesis_28 (#19) at height 18 with 1.9 dRT reward 📦
+[2026-09-30 20:19:28.035] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:19:28.044] INFO: Broadcasting block 18 to 2 peers 📡
+[2026-09-30 20:19:36.042] INFO: Received new block forged by delegate genesis_41 (#35) at height 19 with 2.1 dRT reward 📦
+[2026-09-30 20:19:36.560] INFO: Broadcasting block 19 to 2 peers 📡
+[2026-09-30 20:19:44.041] INFO: Received new block forged by delegate genesis_52 (#1) at height 20 with 1.8 dRT reward 📦
+[2026-09-30 20:19:44.559] INFO: Broadcasting block 20 to 2 peers 📡
+[2026-09-30 20:19:52.047] INFO: Received new block forged by delegate genesis_40 (#26) at height 21 with 2 dRT reward 📦
+[2026-09-30 20:19:52.565] INFO: Broadcasting block 21 to 2 peers 📡
+[2026-09-30 20:20:00.004] INFO: Delegate genesis_30 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:20:00.004] INFO: Block download finished 🚀
+[2026-09-30 20:20:00.004] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:20:00.042] INFO: Received new block forged by delegate genesis_12 (#47) at height 22 with 2.2 dRT reward 📦
+[2026-09-30 20:20:00.560] INFO: Broadcasting block 22 to 2 peers 📡
+[2026-09-30 20:20:08.010] INFO: Checking 2 peers 🔭
+[2026-09-30 20:20:08.037] INFO: Delegate genesis_30 forged a new block at height 23 with 0 transactions 🔱
+[2026-09-30 20:20:08.037] INFO: Received new block forged by delegate genesis_30 (#43) at height 23 with 2.1 dRT reward 📦
+[2026-09-30 20:20:08.037] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:20:08.046] INFO: Broadcasting block 23 to 2 peers 📡
+[2026-09-30 20:20:16.005] INFO: Checking 2 peers 🔭
+[2026-09-30 20:20:16.036] INFO: Delegate genesis_19 forged a new block at height 24 with 0 transactions 🔱
+[2026-09-30 20:20:16.036] INFO: Received new block forged by delegate genesis_19 (#10) at height 24 with 1.8 dRT reward 📦
+[2026-09-30 20:20:16.037] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:20:16.045] INFO: Broadcasting block 24 to 2 peers 📡
+[2026-09-30 20:20:24.042] INFO: Received new block forged by delegate genesis_46 (#4) at height 25 with 1.8 dRT reward 📦
+[2026-09-30 20:20:24.560] INFO: Broadcasting block 25 to 2 peers 📡
+[2026-09-30 20:20:32.005] INFO: Delegate genesis_21 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:20:32.007] INFO: Block download finished 🚀
+[2026-09-30 20:20:32.007] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:20:32.035] INFO: Received new block forged by delegate genesis_7 (#23) at height 26 with 2 dRT reward 📦
+[2026-09-30 20:20:32.552] INFO: Broadcasting block 26 to 2 peers 📡
+[2026-09-30 20:20:40.006] INFO: Checking 2 peers 🔭
+[2026-09-30 20:20:40.033] INFO: Delegate genesis_21 forged a new block at height 27 with 0 transactions 🔱
+[2026-09-30 20:20:40.033] INFO: Received new block forged by delegate genesis_21 (#18) at height 27 with 1.9 dRT reward 📦
+[2026-09-30 20:20:40.034] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:20:40.042] INFO: Broadcasting block 27 to 2 peers 📡
+[2026-09-30 20:20:48.042] INFO: Received new block forged by delegate genesis_13 (#14) at height 28 with 1.9 dRT reward 📦
+[2026-09-30 20:20:48.561] INFO: Broadcasting block 28 to 2 peers 📡
+[2026-09-30 20:20:56.045] INFO: Received new block forged by delegate genesis_8 (#40) at height 29 with 2.1 dRT reward 📦
+[2026-09-30 20:20:56.562] INFO: Broadcasting block 29 to 2 peers 📡
+[2026-09-30 20:21:04.004] INFO: Delegate genesis_34 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:21:04.005] INFO: Block download finished 🚀
+[2026-09-30 20:21:04.005] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:21:04.045] INFO: Received new block forged by delegate genesis_1 (#29) at height 30 with 2 dRT reward 📦
+[2026-09-30 20:21:04.562] INFO: Broadcasting block 30 to 2 peers 📡
+[2026-09-30 20:21:12.006] INFO: Checking 2 peers 🔭
+[2026-09-30 20:21:12.036] INFO: Delegate genesis_34 forged a new block at height 31 with 0 transactions 🔱
+[2026-09-30 20:21:12.036] INFO: Received new block forged by delegate genesis_34 (#46) at height 31 with 2.2 dRT reward 📦
+[2026-09-30 20:21:12.036] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:21:12.053] INFO: Broadcasting block 31 to 2 peers 📡
+[2026-09-30 20:21:20.044] INFO: Received new block forged by delegate genesis_6 (#34) at height 32 with 2.1 dRT reward 📦
+[2026-09-30 20:21:20.562] INFO: Broadcasting block 32 to 2 peers 📡
+[2026-09-30 20:21:28.009] INFO: Delegate genesis_20 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:21:28.009] INFO: Block download finished 🚀
+[2026-09-30 20:21:28.009] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:21:28.048] INFO: Received new block forged by delegate genesis_51 (#31) at height 33 with 2 dRT reward 📦
+[2026-09-30 20:21:28.565] INFO: Broadcasting block 33 to 2 peers 📡
+[2026-09-30 20:21:36.008] INFO: Checking 2 peers 🔭
+[2026-09-30 20:21:36.035] INFO: Delegate genesis_20 forged a new block at height 34 with 0 transactions 🔱
+[2026-09-30 20:21:36.035] INFO: Received new block forged by delegate genesis_20 (#7) at height 34 with 1.8 dRT reward 📦
+[2026-09-30 20:21:36.035] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:21:36.044] INFO: Broadcasting block 34 to 2 peers 📡
+[2026-09-30 20:21:44.008] INFO: Delegate genesis_22 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:21:44.008] INFO: Block download finished 🚀
+[2026-09-30 20:21:44.008] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:21:44.045] INFO: Received new block forged by delegate genesis_10 (#45) at height 35 with 2.2 dRT reward 📦
+[2026-09-30 20:21:44.563] INFO: Broadcasting block 35 to 2 peers 📡
+[2026-09-30 20:21:52.010] INFO: Checking 2 peers 🔭
+[2026-09-30 20:21:52.037] INFO: Delegate genesis_22 forged a new block at height 36 with 0 transactions 🔱
+[2026-09-30 20:21:52.037] INFO: Received new block forged by delegate genesis_22 (#8) at height 36 with 1.8 dRT reward 📦
+[2026-09-30 20:21:52.038] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:21:52.046] INFO: Broadcasting block 36 to 2 peers 📡
+[2026-09-30 20:22:00.010] INFO: Delegate genesis_36 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:22:00.010] INFO: Block download finished 🚀
+[2026-09-30 20:22:00.010] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:22:00.043] INFO: Received new block forged by delegate genesis_38 (#27) at height 37 with 2 dRT reward 📦
+[2026-09-30 20:22:00.561] INFO: Broadcasting block 37 to 2 peers 📡
+[2026-09-30 20:22:08.003] INFO: Checking 2 peers 🔭
+[2026-09-30 20:22:08.025] INFO: Delegate genesis_36 forged a new block at height 38 with 0 transactions 🔱
+[2026-09-30 20:22:08.025] INFO: Received new block forged by delegate genesis_36 (#52) at height 38 with 2.2 dRT reward 📦
+[2026-09-30 20:22:08.025] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:22:08.035] INFO: Broadcasting block 38 to 2 peers 📡
+[2026-09-30 20:22:16.045] INFO: Received new block forged by delegate genesis_49 (#25) at height 39 with 2 dRT reward 📦
+[2026-09-30 20:22:16.564] INFO: Broadcasting block 39 to 2 peers 📡
+[2026-09-30 20:22:24.037] INFO: Received new block forged by delegate genesis_16 (#44) at height 40 with 2.2 dRT reward 📦
+[2026-09-30 20:22:24.557] INFO: Broadcasting block 40 to 2 peers 📡
+[2026-09-30 20:22:32.005] INFO: Delegate genesis_24 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:22:32.006] INFO: Block download finished 🚀
+[2026-09-30 20:22:32.006] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:22:32.042] INFO: Received new block forged by delegate genesis_5 (#20) at height 41 with 1.9 dRT reward 📦
+[2026-09-30 20:22:32.560] INFO: Broadcasting block 41 to 2 peers 📡
+[2026-09-30 20:22:40.005] INFO: Checking 2 peers 🔭
+[2026-09-30 20:22:40.033] INFO: Delegate genesis_24 forged a new block at height 42 with 0 transactions 🔱
+[2026-09-30 20:22:40.033] INFO: Received new block forged by delegate genesis_24 (#38) at height 42 with 2.1 dRT reward 📦
+[2026-09-30 20:22:40.033] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:22:40.041] INFO: Broadcasting block 42 to 2 peers 📡
+[2026-09-30 20:22:48.006] INFO: Checking 2 peers 🔭
+[2026-09-30 20:22:48.033] INFO: Delegate genesis_31 forged a new block at height 43 with 0 transactions 🔱
+[2026-09-30 20:22:48.033] INFO: Received new block forged by delegate genesis_31 (#13) at height 43 with 1.9 dRT reward 📦
+[2026-09-30 20:22:48.033] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:22:48.041] INFO: Broadcasting block 43 to 2 peers 📡
+[2026-09-30 20:22:56.052] INFO: Received new block forged by delegate genesis_45 (#30) at height 44 with 2 dRT reward 📦
+[2026-09-30 20:22:56.583] INFO: Broadcasting block 44 to 2 peers 📡
+[2026-09-30 20:23:04.045] INFO: Received new block forged by delegate genesis_44 (#33) at height 45 with 2.1 dRT reward 📦
+[2026-09-30 20:23:04.563] INFO: Broadcasting block 45 to 2 peers 📡
+[2026-09-30 20:23:12.043] INFO: Received new block forged by delegate genesis_43 (#50) at height 46 with 2.2 dRT reward 📦
+[2026-09-30 20:23:12.560] INFO: Broadcasting block 46 to 2 peers 📡
+[2026-09-30 20:23:20.045] INFO: Received new block forged by delegate genesis_2 (#15) at height 47 with 1.9 dRT reward 📦
+[2026-09-30 20:23:20.563] INFO: Broadcasting block 47 to 2 peers 📡
+[2026-09-30 20:23:28.007] INFO: Delegate genesis_33 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:23:28.007] INFO: Block download finished 🚀
+[2026-09-30 20:23:28.007] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:23:28.043] INFO: Received new block forged by delegate genesis_18 (#3) at height 48 with 1.8 dRT reward 📦
+[2026-09-30 20:23:28.560] INFO: Broadcasting block 48 to 2 peers 📡
+[2026-09-30 20:23:36.006] INFO: Checking 2 peers 🔭
+[2026-09-30 20:23:36.036] INFO: Delegate genesis_33 forged a new block at height 49 with 0 transactions 🔱
+[2026-09-30 20:23:36.036] INFO: Received new block forged by delegate genesis_33 (#24) at height 49 with 2 dRT reward 📦
+[2026-09-30 20:23:36.036] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:23:36.045] INFO: Broadcasting block 49 to 2 peers 📡
+[2026-09-30 20:23:44.004] INFO: Checking 2 peers 🔭
+[2026-09-30 20:23:44.035] INFO: Delegate genesis_25 forged a new block at height 50 with 0 transactions 🔱
+[2026-09-30 20:23:44.035] INFO: Received new block forged by delegate genesis_25 (#6) at height 50 with 1.8 dRT reward 📦
+[2026-09-30 20:23:44.035] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:23:44.044] INFO: Broadcasting block 50 to 2 peers 📡
+[2026-09-30 20:23:52.007] INFO: Checking 2 peers 🔭
+[2026-09-30 20:23:52.034] INFO: Delegate genesis_32 forged a new block at height 51 with 0 transactions 🔱
+[2026-09-30 20:23:52.035] INFO: Received new block forged by delegate genesis_32 (#12) at height 51 with 1.9 dRT reward 📦
+[2026-09-30 20:23:52.035] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:23:52.043] INFO: Broadcasting block 51 to 2 peers 📡
+[2026-09-30 20:24:00.047] INFO: Received new block forged by delegate genesis_9 (#53) at height 52 with 2.2 dRT reward 📦
+[2026-09-30 20:24:00.566] INFO: Broadcasting block 52 to 2 peers 📡
+[2026-09-30 20:24:08.043] INFO: Received new block forged by delegate genesis_53 (#28) at height 53 with 2 dRT reward 📦
+[2026-09-30 20:24:08.562] INFO: Broadcasting block 53 to 2 peers 📡
+[2026-09-30 20:24:16.006] INFO: Checking 2 peers 🔭
+[2026-09-30 20:24:16.037] INFO: Delegate genesis_23 forged a new block at height 54 with 0 transactions 🔱
+[2026-09-30 20:24:16.037] INFO: Received new block forged by delegate genesis_23 (#22) at height 54 with 2 dRT reward 📦
+[2026-09-30 20:24:16.037] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:24:16.045] INFO: Broadcasting block 54 to 2 peers 📡
+[2026-09-30 20:24:24.006] INFO: Delegate genesis_22 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:24:24.006] INFO: Block download finished 🚀
+[2026-09-30 20:24:24.006] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:24:24.045] INFO: Received new block forged by delegate genesis_12 (#4) at height 55 with 1.8 dRT reward 📦
+[2026-09-30 20:24:24.563] INFO: Broadcasting block 55 to 2 peers 📡
+[2026-09-30 20:24:32.006] INFO: Checking 2 peers 🔭
+[2026-09-30 20:24:32.034] INFO: Delegate genesis_22 forged a new block at height 56 with 0 transactions 🔱
+[2026-09-30 20:24:32.034] INFO: Received new block forged by delegate genesis_22 (#51) at height 56 with 2.2 dRT reward 📦
+[2026-09-30 20:24:32.034] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:24:32.043] INFO: Broadcasting block 56 to 2 peers 📡
+[2026-09-30 20:24:40.042] INFO: Received new block forged by delegate genesis_14 (#32) at height 57 with 2 dRT reward 📦
+[2026-09-30 20:24:40.558] INFO: Broadcasting block 57 to 2 peers 📡
+[2026-09-30 20:24:48.042] INFO: Received new block forged by delegate genesis_43 (#7) at height 58 with 1.8 dRT reward 📦
+[2026-09-30 20:24:48.559] INFO: Broadcasting block 58 to 2 peers 📡
+[2026-09-30 20:24:56.095] INFO: Received new block forged by delegate genesis_16 (#1) at height 59 with 1.8 dRT reward 📦
+[2026-09-30 20:24:56.625] INFO: Broadcasting block 59 to 2 peers 📡
+[2026-09-30 20:25:04.036] INFO: Received new block forged by delegate genesis_8 (#18) at height 60 with 1.9 dRT reward 📦
+[2026-09-30 20:25:04.552] INFO: Broadcasting block 60 to 2 peers 📡
+[2026-09-30 20:25:12.008] INFO: Delegate genesis_28 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:25:12.008] INFO: Block download finished 🚀
+[2026-09-30 20:25:12.008] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:25:12.043] INFO: Received new block forged by delegate genesis_6 (#12) at height 61 with 1.9 dRT reward 📦
+[2026-09-30 20:25:12.562] INFO: Broadcasting block 61 to 2 peers 📡
+[2026-09-30 20:25:20.006] INFO: Checking 2 peers 🔭
+[2026-09-30 20:25:20.034] INFO: Delegate genesis_28 forged a new block at height 62 with 0 transactions 🔱
+[2026-09-30 20:25:20.034] INFO: Received new block forged by delegate genesis_28 (#41) at height 62 with 2.1 dRT reward 📦
+[2026-09-30 20:25:20.034] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:25:20.042] INFO: Broadcasting block 62 to 2 peers 📡
+[2026-09-30 20:25:28.006] INFO: Delegate genesis_36 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:25:28.006] INFO: Block download finished 🚀
+[2026-09-30 20:25:28.006] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:25:28.037] INFO: Received new block forged by delegate genesis_40 (#26) at height 63 with 2 dRT reward 📦
+[2026-09-30 20:25:28.556] INFO: Broadcasting block 63 to 2 peers 📡
+[2026-09-30 20:25:36.006] INFO: Checking 2 peers 🔭
+[2026-09-30 20:25:36.036] INFO: Delegate genesis_36 forged a new block at height 64 with 0 transactions 🔱
+[2026-09-30 20:25:36.036] INFO: Received new block forged by delegate genesis_36 (#9) at height 64 with 1.8 dRT reward 📦
+[2026-09-30 20:25:36.036] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:25:36.045] INFO: Broadcasting block 64 to 2 peers 📡
+[2026-09-30 20:25:44.007] INFO: Delegate genesis_21 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:25:44.008] INFO: Block download finished 🚀
+[2026-09-30 20:25:44.008] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:25:44.044] INFO: Received new block forged by delegate genesis_38 (#27) at height 65 with 2 dRT reward 📦
+[2026-09-30 20:25:44.563] INFO: Broadcasting block 65 to 2 peers 📡
+[2026-09-30 20:25:52.006] INFO: Checking 2 peers 🔭
+[2026-09-30 20:25:52.034] INFO: Delegate genesis_21 forged a new block at height 66 with 0 transactions 🔱
+[2026-09-30 20:25:52.034] INFO: Received new block forged by delegate genesis_21 (#40) at height 66 with 2.1 dRT reward 📦
+[2026-09-30 20:25:52.035] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:25:52.043] INFO: Broadcasting block 66 to 2 peers 📡
+[2026-09-30 20:26:00.006] INFO: Delegate genesis_20 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:26:00.006] INFO: Block download finished 🚀
+[2026-09-30 20:26:00.006] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:26:00.044] INFO: Received new block forged by delegate genesis_46 (#47) at height 67 with 2.2 dRT reward 📦
+[2026-09-30 20:26:00.562] INFO: Broadcasting block 67 to 2 peers 📡
+[2026-09-30 20:26:08.008] INFO: Checking 2 peers 🔭
+[2026-09-30 20:26:08.035] INFO: Delegate genesis_20 forged a new block at height 68 with 0 transactions 🔱
+[2026-09-30 20:26:08.035] INFO: Received new block forged by delegate genesis_20 (#50) at height 68 with 2.2 dRT reward 📦
+[2026-09-30 20:26:08.035] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:26:08.043] INFO: Broadcasting block 68 to 2 peers 📡
+[2026-09-30 20:26:16.007] INFO: Checking 2 peers 🔭
+[2026-09-30 20:26:16.034] INFO: Delegate genesis_19 forged a new block at height 69 with 0 transactions 🔱
+[2026-09-30 20:26:16.034] INFO: Received new block forged by delegate genesis_19 (#52) at height 69 with 2.2 dRT reward 📦
+[2026-09-30 20:26:16.034] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:26:16.042] INFO: Broadcasting block 69 to 2 peers 📡
+[2026-09-30 20:26:24.045] INFO: Received new block forged by delegate genesis_13 (#36) at height 70 with 2.1 dRT reward 📦
+[2026-09-30 20:26:24.564] INFO: Broadcasting block 70 to 2 peers 📡
+[2026-09-30 20:26:32.046] INFO: Received new block forged by delegate genesis_48 (#38) at height 71 with 2.1 dRT reward 📦
+[2026-09-30 20:26:32.563] INFO: Broadcasting block 71 to 2 peers 📡
+[2026-09-30 20:26:40.007] INFO: Delegate genesis_32 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:26:40.008] INFO: Block download finished 🚀
+[2026-09-30 20:26:40.008] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:26:40.043] INFO: Received new block forged by delegate genesis_10 (#2) at height 72 with 1.8 dRT reward 📦
+[2026-09-30 20:26:40.561] INFO: Broadcasting block 72 to 2 peers 📡
+[2026-09-30 20:26:48.009] INFO: Checking 2 peers 🔭
+[2026-09-30 20:26:48.036] INFO: Delegate genesis_32 forged a new block at height 73 with 0 transactions 🔱
+[2026-09-30 20:26:48.036] INFO: Received new block forged by delegate genesis_32 (#34) at height 73 with 2.1 dRT reward 📦
+[2026-09-30 20:26:48.036] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:26:48.044] INFO: Broadcasting block 73 to 2 peers 📡
+[2026-09-30 20:26:56.035] INFO: Received new block forged by delegate genesis_37 (#53) at height 74 with 2.2 dRT reward 📦
+[2026-09-30 20:26:56.554] INFO: Broadcasting block 74 to 2 peers 📡
+[2026-09-30 20:27:04.043] INFO: Received new block forged by delegate genesis_1 (#29) at height 75 with 2 dRT reward 📦
+[2026-09-30 20:27:04.560] INFO: Broadcasting block 75 to 2 peers 📡
+[2026-09-30 20:27:12.043] INFO: Received new block forged by delegate genesis_11 (#45) at height 76 with 2.2 dRT reward 📦
+[2026-09-30 20:27:12.561] INFO: Broadcasting block 76 to 2 peers 📡
+[2026-09-30 20:27:20.011] INFO: Delegate genesis_34 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:27:20.011] INFO: Block download finished 🚀
+[2026-09-30 20:27:20.011] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:27:20.046] INFO: Received new block forged by delegate genesis_53 (#28) at height 77 with 2 dRT reward 📦
+[2026-09-30 20:27:20.564] INFO: Broadcasting block 77 to 2 peers 📡
+[2026-09-30 20:27:28.008] INFO: Checking 2 peers 🔭
+[2026-09-30 20:27:28.036] INFO: Delegate genesis_34 forged a new block at height 78 with 0 transactions 🔱
+[2026-09-30 20:27:28.036] INFO: Received new block forged by delegate genesis_34 (#3) at height 78 with 1.8 dRT reward 📦
+[2026-09-30 20:27:28.036] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:27:28.044] INFO: Broadcasting block 78 to 2 peers 📡
+[2026-09-30 20:27:36.007] INFO: Delegate genesis_31 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:27:36.007] INFO: Block download finished 🚀
+[2026-09-30 20:27:36.007] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:27:36.034] INFO: Received new block forged by delegate genesis_47 (#17) at height 79 with 1.9 dRT reward 📦
+[2026-09-30 20:27:36.552] INFO: Broadcasting block 79 to 2 peers 📡
+[2026-09-30 20:27:44.007] INFO: Checking 2 peers 🔭
+[2026-09-30 20:27:44.035] INFO: Delegate genesis_31 forged a new block at height 80 with 0 transactions 🔱
+[2026-09-30 20:27:44.035] INFO: Received new block forged by delegate genesis_31 (#35) at height 80 with 2.1 dRT reward 📦
+[2026-09-30 20:27:44.035] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:27:44.043] INFO: Broadcasting block 80 to 2 peers 📡
+[2026-09-30 20:27:52.043] INFO: Received new block forged by delegate genesis_44 (#11) at height 81 with 1.9 dRT reward 📦
+[2026-09-30 20:27:52.561] INFO: Broadcasting block 81 to 2 peers 📡
+[2026-09-30 20:28:00.007] INFO: Delegate genesis_33 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:28:00.007] INFO: Block download finished 🚀
+[2026-09-30 20:28:00.007] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:28:00.042] INFO: Received new block forged by delegate genesis_4 (#8) at height 82 with 1.8 dRT reward 📦
+[2026-09-30 20:28:00.560] INFO: Broadcasting block 82 to 2 peers 📡
+[2026-09-30 20:28:08.011] INFO: Checking 2 peers 🔭
+[2026-09-30 20:28:08.039] INFO: Delegate genesis_33 forged a new block at height 83 with 0 transactions 🔱
+[2026-09-30 20:28:08.039] INFO: Received new block forged by delegate genesis_33 (#24) at height 83 with 2 dRT reward 📦
+[2026-09-30 20:28:08.039] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:28:08.047] INFO: Broadcasting block 83 to 2 peers 📡
+[2026-09-30 20:28:16.007] INFO: Checking 2 peers 🔭
+[2026-09-30 20:28:16.039] INFO: Delegate genesis_27 forged a new block at height 84 with 0 transactions 🔱
+[2026-09-30 20:28:16.039] INFO: Received new block forged by delegate genesis_27 (#6) at height 84 with 1.8 dRT reward 📦
+[2026-09-30 20:28:16.039] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:28:16.047] INFO: Broadcasting block 84 to 2 peers 📡
+[2026-09-30 20:28:24.005] INFO: Checking 2 peers 🔭
+[2026-09-30 20:28:24.037] INFO: Delegate genesis_29 forged a new block at height 85 with 0 transactions 🔱
+[2026-09-30 20:28:24.038] INFO: Received new block forged by delegate genesis_29 (#48) at height 85 with 2.2 dRT reward 📦
+[2026-09-30 20:28:24.038] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:28:24.046] INFO: Broadcasting block 85 to 2 peers 📡
+[2026-09-30 20:28:32.045] INFO: Received new block forged by delegate genesis_52 (#44) at height 86 with 2.2 dRT reward 📦
+[2026-09-30 20:28:32.563] INFO: Broadcasting block 86 to 2 peers 📡
+[2026-09-30 20:28:40.036] INFO: Received new block forged by delegate genesis_2 (#37) at height 87 with 2.1 dRT reward 📦
+[2026-09-30 20:28:40.554] INFO: Broadcasting block 87 to 2 peers 📡
+[2026-09-30 20:28:48.043] INFO: Received new block forged by delegate genesis_42 (#43) at height 88 with 2.1 dRT reward 📦
+[2026-09-30 20:28:48.561] INFO: Broadcasting block 88 to 2 peers 📡
+[2026-09-30 20:28:56.043] INFO: Received new block forged by delegate genesis_5 (#42) at height 89 with 2.1 dRT reward 📦
+[2026-09-30 20:28:56.559] INFO: Broadcasting block 89 to 2 peers 📡
+[2026-09-30 20:29:04.005] INFO: Delegate genesis_25 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:29:04.005] INFO: Block download finished 🚀
+[2026-09-30 20:29:04.005] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:29:04.050] INFO: Received new block forged by delegate genesis_18 (#46) at height 90 with 2.2 dRT reward 📦
+[2026-09-30 20:29:04.590] INFO: Broadcasting block 90 to 2 peers 📡
+[2026-09-30 20:29:12.011] INFO: Checking 2 peers 🔭
+[2026-09-30 20:29:12.038] INFO: Delegate genesis_25 forged a new block at height 91 with 0 transactions 🔱
+[2026-09-30 20:29:12.038] INFO: Received new block forged by delegate genesis_25 (#49) at height 91 with 2.2 dRT reward 📦
+[2026-09-30 20:29:12.038] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:29:12.046] INFO: Broadcasting block 91 to 2 peers 📡
+[2026-09-30 20:29:20.042] INFO: Received new block forged by delegate genesis_41 (#13) at height 92 with 1.9 dRT reward 📦
+[2026-09-30 20:29:20.559] INFO: Broadcasting block 92 to 2 peers 📡
+[2026-09-30 20:29:28.045] INFO: Received new block forged by delegate genesis_17 (#14) at height 93 with 1.9 dRT reward 📦
+[2026-09-30 20:29:28.563] INFO: Broadcasting block 93 to 2 peers 📡
+[2026-09-30 20:29:36.043] INFO: Received new block forged by delegate genesis_7 (#23) at height 94 with 2 dRT reward 📦
+[2026-09-30 20:29:36.561] INFO: Broadcasting block 94 to 2 peers 📡
+[2026-09-30 20:29:44.035] INFO: Received new block forged by delegate genesis_15 (#5) at height 95 with 1.8 dRT reward 📦
+[2026-09-30 20:29:44.552] INFO: Broadcasting block 95 to 2 peers 📡
+[2026-09-30 20:29:52.042] INFO: Received new block forged by delegate genesis_39 (#33) at height 96 with 2.1 dRT reward 📦
+[2026-09-30 20:29:52.559] INFO: Broadcasting block 96 to 2 peers 📡
+[2026-09-30 20:30:00.037] INFO: Received new block forged by delegate genesis_49 (#25) at height 97 with 2 dRT reward 📦
+[2026-09-30 20:30:00.555] INFO: Broadcasting block 97 to 2 peers 📡
+[2026-09-30 20:30:08.008] INFO: Delegate genesis_30 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:30:08.008] INFO: Block download finished 🚀
+[2026-09-30 20:30:08.008] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:30:08.043] INFO: Received new block forged by delegate genesis_9 (#10) at height 98 with 1.8 dRT reward 📦
+[2026-09-30 20:30:08.561] INFO: Broadcasting block 98 to 2 peers 📡
+[2026-09-30 20:30:16.010] INFO: Checking 2 peers 🔭
+[2026-09-30 20:30:16.037] INFO: Delegate genesis_30 forged a new block at height 99 with 0 transactions 🔱
+[2026-09-30 20:30:16.037] INFO: Received new block forged by delegate genesis_30 (#21) at height 99 with 1.9 dRT reward 📦
+[2026-09-30 20:30:16.037] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:30:16.045] INFO: Broadcasting block 99 to 2 peers 📡
+[2026-09-30 20:30:24.007] INFO: Checking 2 peers 🔭
+[2026-09-30 20:30:24.026] INFO: Delegate genesis_35 forged a new block at height 100 with 0 transactions 🔱
+[2026-09-30 20:30:24.026] INFO: Received new block forged by delegate genesis_35 (#15) at height 100 with 1.9 dRT reward 📦
+[2026-09-30 20:30:24.026] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:30:24.035] INFO: Broadcasting block 100 to 2 peers 📡
+[2026-09-30 20:30:32.008] INFO: Checking 2 peers 🔭
+[2026-09-30 20:30:32.036] INFO: Delegate genesis_26 forged a new block at height 101 with 0 transactions 🔱
+[2026-09-30 20:30:32.036] INFO: Received new block forged by delegate genesis_26 (#39) at height 101 with 2.1 dRT reward 📦
+[2026-09-30 20:30:32.036] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:30:32.044] INFO: Broadcasting block 101 to 2 peers 📡
+[2026-09-30 20:30:40.006] INFO: Delegate genesis_24 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:30:40.006] INFO: Block download finished 🚀
+[2026-09-30 20:30:40.006] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:30:40.047] INFO: Received new block forged by delegate genesis_45 (#30) at height 102 with 2 dRT reward 📦
+[2026-09-30 20:30:40.565] INFO: Broadcasting block 102 to 2 peers 📡
+[2026-09-30 20:30:48.007] INFO: Checking 2 peers 🔭
+[2026-09-30 20:30:48.026] INFO: Delegate genesis_24 forged a new block at height 103 with 0 transactions 🔱
+[2026-09-30 20:30:48.026] INFO: Received new block forged by delegate genesis_24 (#16) at height 103 with 1.9 dRT reward 📦
+[2026-09-30 20:30:48.026] ERROR: emitEvent: unable to find any local hosts ‼️
+[2026-09-30 20:30:48.034] INFO: Broadcasting block 103 to 2 peers 📡
+[2026-09-30 20:30:56.045] INFO: Received new block forged by delegate genesis_51 (#31) at height 104 with 2 dRT reward 📦
+[2026-09-30 20:30:56.562] INFO: Broadcasting block 104 to 2 peers 📡
+[2026-09-30 20:31:04.044] INFO: Received new block forged by delegate genesis_50 (#19) at height 105 with 1.9 dRT reward 📦
+[2026-09-30 20:31:04.562] INFO: Broadcasting block 105 to 2 peers 📡
+[2026-09-30 20:31:12.006] INFO: Delegate genesis_23 is due to forge in 8 seconds from now ✨
+[2026-09-30 20:31:12.006] INFO: Block download finished 🚀
+[2026-09-30 20:31:12.006] INFO: Blockchain 100% in sync 💯
+[2026-09-30 20:31:12.048] INFO: Received new block forged by delegate genesis_3 (#20) at height 106 with 1.9 dRT reward 📦
+[2026-09-30 20:31:12.520] INFO: Received signal 2, stopping the core
+[2026-09-30 20:31:12.565] INFO: Broadcasting block 106 to 2 peers 📡
+[2026-09-30 20:31:12.570] INFO: Public API (HTTP) Server stopped at http://198.51.100.12:6003
+[2026-09-30 20:31:12.571] INFO: Stopping Blockchain Manager ⛓️
+[2026-09-30 20:31:12.571] INFO: The blockchain has been stopped 🎸
+[2026-09-30 20:31:12.571] INFO: Stopping the forger
+[2026-09-30 20:31:12.571] INFO: The forger has stopped
+[2026-09-30 20:31:12.596] INFO: The node has stopped: its pool is flushed and its store is closed
