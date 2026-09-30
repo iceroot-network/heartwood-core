@@ -325,3 +325,44 @@ fn a_minority_archive_is_judged_as_a_chain_of_its_own() {
         "{failed:#?}"
     );
 }
+
+/// Rewrite the fixture's `run.json` with `change`.
+fn edit_manifest(f: &Fixture, change: impl FnOnce(&mut Value)) {
+    let mut manifest = read_json(&f.run.join("run.json"));
+    change(&mut manifest);
+    std::fs::write(f.run.join("run.json"), manifest.to_string()).unwrap();
+}
+
+#[test]
+fn a_mixed_run_without_a_heartwood_node_is_no_evidence() {
+    let f = fixture();
+    edit_manifest(&f, |m| {
+        for node in m["nodes"].as_array_mut().unwrap() {
+            node["implementation"] = json!("reference");
+            node["underTest"] = json!(false);
+        }
+    });
+    let failed = failures(&check(&f));
+    assert!(
+        has(&failed, "a mixed forging run with Heartwood nodes"),
+        "{failed:#?}"
+    );
+    assert!(
+        has(
+            &failed,
+            "the attestation record's waits and unsigned statuses"
+        ),
+        "{failed:#?}"
+    );
+}
+
+#[test]
+fn a_dry_run_of_the_recipe_is_no_evidence() {
+    let f = fixture();
+    edit_manifest(&f, |m| m["dryRun"] = json!(true));
+    let failed = failures(&check(&f));
+    assert!(
+        has(&failed, "a mixed forging run with Heartwood nodes"),
+        "{failed:#?}"
+    );
+}

@@ -121,7 +121,11 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
         .filter(|n| n.implementation == Implementation::Heartwood && !m.dry_run)
         .collect();
     if relays.is_empty() {
-        cases.record(SECTION, "no Heartwood relay in this run (a dry run of the recipe): no attestation record to read");
+        cases.fail(
+            SECTION,
+            label,
+            "no Heartwood relay in this mixed run (or a dry run): no attestation record to read",
+        );
         return Ok(());
     }
     for n in relays {

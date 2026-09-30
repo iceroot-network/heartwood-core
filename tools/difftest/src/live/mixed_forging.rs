@@ -94,9 +94,10 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
             .iter()
             .any(|n| n.implementation == Implementation::Heartwood)
     {
-        cases.record(
+        cases.fail(
             SECTION,
-            "no Heartwood node in this run (a dry run of the recipe): no block file or record to read",
+            "a mixed forging run with Heartwood nodes",
+            "its run.json names no Heartwood node, or a dry run: no block file or record to judge",
         );
         return Ok(());
     }
