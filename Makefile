@@ -166,8 +166,20 @@ test: ## cargo test: each library crate alone, with no features and with all, th
 # The tests marked `#[ignore = "integration"]` (the served API over a store, a relay importing from
 # a mock peer, the kill test through the runtime, ...): each by its exact name, with its crate's
 # features; a marked test that its target does not list fails.
-test-integration: build ## the integration-tagged tests of every crate
-	$(TOOLCHAIN) && tools/test-integration.sh
+# The tests that need the reference run against the oracle image when it is built (or against
+# DIFFTEST_TEST_IMAGE or DIFFTEST_TEST_SOLAR_DIR when set); without one they are skipped, and the
+# run says so (DIFFTEST_TEST_NO_ORACLE), rather than passing unrun.
+test-integration: build ## the integration-tagged tests of every crate (the oracle's against IMAGE when it is built)
+	$(TOOLCHAIN) && if [ -z "$$DIFFTEST_TEST_IMAGE$$DIFFTEST_TEST_SOLAR_DIR" ]; then \
+	    if $(DIFFTEST_DOCKER) image inspect '$(IMAGE)' >/dev/null 2>&1; then \
+	        export DIFFTEST_TEST_IMAGE='$(IMAGE)'; \
+	        echo "test-integration: the tests that need the reference run against $(IMAGE)"; \
+	    else \
+	        export DIFFTEST_TEST_NO_ORACLE=1; \
+	        echo "test-integration: no oracle image $(IMAGE): the tests that need the reference are skipped"; \
+	    fi; \
+	fi; \
+	tools/test-integration.sh
 
 # Every crate's documentation, with every feature: a warning (a link to a private item, a broken
 # link) fails.

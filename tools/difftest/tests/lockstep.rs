@@ -5,7 +5,10 @@
 //! which can also be told to answer another digest line or another verdict, so the producer's
 //! stops are tested without the oracle. The integration tests (ignored for the reason
 //! `integration`, which `make test-integration` runs) run the chain against the real reference
-//! (`DIFFTEST_TEST_SOLAR_DIR` or `DIFFTEST_TEST_IMAGE`) and through the judge and the replays.
+//! (`DIFFTEST_TEST_SOLAR_DIR` or `DIFFTEST_TEST_IMAGE`, which `make test-integration` sets to the
+//! oracle image when it is built) and through the judge and the replays. Without an oracle they
+//! fail, unless `DIFFTEST_TEST_NO_ORACLE` says to skip them (as `make test-integration` does, and
+//! says so, when the image is not built).
 
 use std::path::{Path, PathBuf};
 
@@ -649,6 +652,22 @@ fn oracle_flags() -> Option<Vec<String>> {
         .map(|image| vec!["--image".into(), image])
 }
 
+/// The oracle of the integration test `test`; `None` when the run skips it on purpose
+/// (`DIFFTEST_TEST_NO_ORACLE`). Without either, the test fails: it must not pass unrun.
+fn oracle_or_skip(test: &str) -> Option<Vec<String>> {
+    if let Some(flags) = oracle_flags() {
+        return Some(flags);
+    }
+    assert!(
+        std::env::var_os("DIFFTEST_TEST_NO_ORACLE").is_some(),
+        "{test}: no test oracle configured: set DIFFTEST_TEST_IMAGE or DIFFTEST_TEST_SOLAR_DIR \
+         (make test-integration sets the image when it is built), or DIFFTEST_TEST_NO_ORACLE to \
+         skip the test"
+    );
+    eprintln!("{test}: skipped (DIFFTEST_TEST_NO_ORACLE)");
+    None
+}
+
 fn difftest(args: &[&str], oracle: &[String]) -> (bool, String) {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_difftest"))
         .args(args)
@@ -666,8 +685,7 @@ fn difftest(args: &[&str], oracle: &[String]) -> (bool, String) {
 #[test]
 #[ignore = "integration"]
 fn a_chain_with_the_real_reference_goes_through_the_judge_and_the_replays() {
-    let Some(oracle) = oracle_flags() else {
-        eprintln!("no test oracle configured");
+    let Some(oracle) = oracle_or_skip("the lockstep chain") else {
         return;
     };
     let scratch = ScratchDir::new("lockstep-live").expect("scratch");
@@ -727,8 +745,7 @@ fn a_chain_with_the_real_reference_goes_through_the_judge_and_the_replays() {
 #[test]
 #[ignore = "integration"]
 fn a_chain_with_reverts_missed_slots_and_a_milestone_goes_through_the_real_reference() {
-    let Some(oracle) = oracle_flags() else {
-        eprintln!("no test oracle configured");
+    let Some(oracle) = oracle_or_skip("the lockstep chain with reverts") else {
         return;
     };
     let scratch = ScratchDir::new("lockstep-live").expect("scratch");
@@ -778,6 +795,21 @@ fn a_chain_with_reverts_missed_slots_and_a_milestone_goes_through_the_real_refer
         "{judged}"
     );
     assert!(judged.contains("A1 ok, A2 ok, A3 ok"), "{judged}");
-    let (ok, out) = difftest(&["run", "l2", d, "--strict"], &[]);
-    assert!(ok, "{out}");
+    for extra in [
+        &["--strict"][..],
+        &["--restart", "--strict"],
+        &["--processor", "--strict"],
+    ] {
+        let mut args = vec!["run", "l2", d];
+        args.extend(extra);
+        let (ok, out) = difftest(&args, &[]);
+        assert!(ok, "l2 {extra:?}: {out}");
+        assert!(out.contains(" 0 failed"), "{out}");
+    }
+    let (ok, out) = difftest(
+        &["run", "l2", d, "--forge", "--oracle", "--strict"],
+        &oracle,
+    );
+    assert!(ok, "the forge replay through the reference: {out}");
+    assert!(out.contains(" 0 failed"), "{out}");
 }
