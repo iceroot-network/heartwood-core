@@ -54,12 +54,13 @@ packages/forger/      heartwood-forger: the forger (the slot loop its relay driv
                       attester)
 packages/cli/         heartwood-cli: the commands' library (the colon aliases, instances, the
                       supervisor and the role commands, `network generate`'s files, the local
-                      devnet)
+                      devnet, and the doctor (read-only diagnostics, its report and its MCP
+                      server))
 packages/api/         heartwood-api: the public API a relay serves (routes, query grammar,
                       pagination, headers, rate limit, semaphore)
 packages/core/        heartwood-core: the `heartwood` binary, the relay and forger roles with
-                      their configuration, process lock and signals, `network generate` and
-                      `devnet`
+                      their configuration, process lock and signals, `network generate`,
+                      `devnet` and `doctor`
 packages/*/tests/vectors/  each crate's golden vectors, with its own MANIFEST.sha256
 tools/difftest/       heartwood-difftest: the harness library and the `difftest` binary
   corpus/               a committed L2 corpus (a reference devnet chain and its digest lines)
@@ -485,6 +486,12 @@ transaction. Ties of the requested order are broken by the block height and the 
 is the same on every call; text sorts by its bytes, which is the reference's order on a database
 in the C locale. The pattern, the containment and the `jsonb` order were checked against
 PostgreSQL 14 in the C locale.
+
+`reader_ro` opens the store for the doctor with `SQLITE_OPEN_READ_ONLY` and `query_only`, only
+while the relay's lock is held, with the writer's `-wal` and `-shm` checked before and after the
+open; it reads one window of blocks and missed slots by height, from a height or from a number of
+blocks below the store's own tip, which the same read transaction reads, and never writes,
+checkpoints or recovers the write-ahead log.
 
 ```sh
 cargo test -p heartwood-database --locked   # row round trips, chunks, reverts, the start checks, killed commits, the history queries
@@ -1271,6 +1278,14 @@ and nix are used by this crate only (`make layers`).
   127.0.0.0/8. `init --force` refuses to clear a devnet whose manifest it cannot read while any of
   its processes may run; the manifest, `devnet.json`, holds the key-derivation seed and is written
   with mode 0600; `status` says how many relays it compared, out of the devnet's.
+- **the doctor** (`src/doctor/`): `heartwood doctor`, 47 read-only checks of one instance with
+  fixed, documented rules, a text and a JSON report (format `heartwood-doctor-report/1`, schema
+  `src/doctor/report.schema.json`) with addresses, the home directory, the user and host names
+  redacted, and `heartwood doctor mcp`, a read-only server of the Model Context Protocol over
+  standard input and output. It reads files without following a final link, refuses the key files
+  by name and by device and inode, reads `/proc` and `/sys` through fixed files only, runs three
+  fixed probes, and asks only its own relay's API on a loopback address. See
+  [doctor.md](doctor.md) and [doctor-mcp.md](doctor-mcp.md).
 
 Where the commands differ on purpose from the reference's: the process names carry the network;
 a second supervisor of an instance's role refuses to start (its lock); a `config.json` that is not
@@ -1291,6 +1306,12 @@ The supervisor's tests run the `test-child` binary (feature `test-child`), whose
 test scripts; one of them waits the 30 seconds before SIGKILL. The devnet's tests run against
 recording fakes of the process operations and of the API reads, on loopback addresses
 `127.13.0.x`.
+
+The doctor has no counterpart in the reference: its tests are case tables over a fake view (every
+status of every check), a drift guard that finds each log template in the node's own log calls,
+the golden report, the MCP server over a scripted client, and a forging devnet node under `strace`
+(`packages/core/tests/doctor_binary.rs`, tagged `devnet`).
+
 ## heartwood-api
 
 `packages/api` is the public API a relay serves, on axum and hyper, under `/api`. It serves the
@@ -1480,8 +1501,9 @@ node with a reference node's (see L3 and L4).
 
 `packages/core` is the `heartwood` binary: the relay and forger roles, each with `run` (the process
 itself, in the foreground), `start`, `stop`, `restart`, `status` and `log` (through the supervisor
-of heartwood-cli), `network generate`, `devnet` (feature `devnet`, on by default), the hidden
-`supervise` and `version`. The reference's colon spellings (`relay:start`) are the same commands.
+of heartwood-cli), `network generate`, `devnet` (feature `devnet`, on by default), `doctor`
+(read-only diagnostics, through heartwood-cli and the node's own loaders), the hidden `supervise`
+and `version`. The reference's colon spellings (`relay:start`) are the same commands.
 `heartwood relay run` (or `heartwood relay:run`) runs a relay in the foreground, with the
 reference's flags in camelCase and their kebab-case aliases: `--token`, `--network`, `--env`,
 `--networkStart`, `--disableDiscovery`, `--skipDiscovery`, `--ignoreMinimumNetworkReach` and

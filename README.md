@@ -2,7 +2,7 @@
 
 # Heartwood Core
 
-The Rust implementation of IceRoot's node software. This repository currently provides cryptography, transaction and block codecs, network configuration, the headless state machine (wallets, delegates, rounds, transaction handlers, block application and reversal), the peer-to-peer wire codec, client and server, the store (SQLite), the transaction pool, block processing, the public API, the forger, the `heartwood` binary (a relay that follows a network and serves the peer-to-peer protocol and the public API, a forger process that forges through its relays, a process supervisor, the recovery commands, `network generate` and a local devnet), and a differential-testing harness.
+The Rust implementation of IceRoot's node software. This repository currently provides cryptography, transaction and block codecs, network configuration, the headless state machine (wallets, delegates, rounds, transaction handlers, block application and reversal), the peer-to-peer wire codec, client and server, the store (SQLite), the transaction pool, block processing, the public API, the forger, the `heartwood` binary (a relay that follows a network and serves the peer-to-peer protocol and the public API, a forger process that forges through its relays, a process supervisor, the recovery commands, `network generate`, a local devnet and a read-only diagnostics command with its protocol server), and a differential-testing harness.
 
 [Core overview](https://docs.iceroot.com/core/overview/) · [Build from source](https://docs.iceroot.com/core/installation/) · [Architecture](https://docs.iceroot.com/core/architecture/) · [Protocol design](https://docs.iceroot.com/core/protocol-design/)
 
@@ -74,6 +74,15 @@ target/release/heartwood state clear --network <name>
 
 `snapshot rollback` (or `snapshot:rollback`) rolls a stopped relay's store back to the last block of the round before height `h` (`--number n` counts n blocks down from the tip), holding the relay's lock while it works, so the relay cannot start meanwhile. At its next start the relay rebuilds its state from the stored blocks and syncs the rest from its peers. `pool clear` and `state clear` ask first (`--force` skips the question) and leave the reference's marker file in the relay's temp directory: at its next start the relay empties its transaction pool, or rebuilds its state from the genesis block. The commands take the relay's `--token` and `--network`, print the reference's lines and exit with status 1 on every refusal. [Compatibility and testing](docs/compatibility.md#heartwood-core) gives the rule a marker file must meet and where the commands differ from the reference's.
 
+## Diagnose an instance
+
+```sh
+target/release/heartwood doctor --network <name>
+target/release/heartwood doctor --network <name> --json
+```
+
+`heartwood doctor` examines one instance on the host it runs on and says, check by check, what is fine, what needs attention and what is broken, with the command or setting that fixes it. It only reads: it writes no file, sends no signal, never reads a key file, and its only network use is HTTP GETs to its own relay's API on a loopback address. Its report is redacted by default (addresses, the home directory, the user and host names), so it can be pasted where others read it; `--json` prints it in a documented format. `heartwood doctor mcp` serves the same checks to the operator's own client over SSH, read-only and without a listener. [The doctor](docs/doctor.md) describes the checks, the report and the exit codes, and [its protocol server](docs/doctor-mcp.md) the setup over SSH.
+
 ## Run a local devnet
 
 ```sh
@@ -95,14 +104,14 @@ target/release/heartwood devnet --dir <dir> stop
 | `packages/state/` | Wallets, delegates, rounds, block application and reversal, genesis, the supply check, the state digest and the records a restart reads back |
 | `packages/transactions/` | The six transaction handlers, the fee check and the pool-entry checks |
 | `packages/p2p-wire/` | The peer-to-peer wire codec: nes frames, the protobuf messages of the public routes, list framing and the signed peer status |
-| `packages/database/` | The store: one SQLite file per node with the chain tables, the state tables and the checks run at every start |
+| `packages/database/` | The store: one SQLite file per node with the chain tables, the state tables and the checks run at every start, and a read-only opener that the doctor uses |
 | `packages/pool/` | The transaction pool: admission with the reference's checks, codes and messages, storage, queries, collation and the online record |
 | `packages/blockchain/` | The blockchain component: the block processor, jobs committed to the store, the node thread, the job queue, the state machine with fork recovery, and a node's start (first start, restart from the state tables, or replay from the genesis block) |
 | `packages/p2p/` | The peer-to-peer protocol: the client side as the relay uses it (nes sessions over WebSocket, requests and reply checks, peer acceptance and verification, discovery, downloads and broadcasts) and the relay's server (the listener, bans, inbound limits, the route controllers and the forger's status attestation) |
 | `packages/forger/` | The forger: the slot loop its relay drives, the relay client with failover and call deadlines, block assembly and signing through a persisted signing record, the key file and the status attester |
-| `packages/cli/` | The commands' library: the colon aliases, instances, a built-in process supervisor and the role commands, the markers of the recovery commands and their trust rule, the files of `network generate`, and a local devnet with one loopback address per node |
+| `packages/cli/` | The commands' library: the colon aliases, instances, a built-in process supervisor and the role commands, the markers of the recovery commands and their trust rule, the files of `network generate`, a local devnet with one loopback address per node, and the doctor: its checks, its report and redaction, and its protocol server |
 | `packages/api/` | The public API a relay serves: the block, node, peer, transaction and wallet routes with the reference's envelope, query grammar, pagination, headers, rate limit and semaphore |
-| `packages/core/` | The `heartwood` binary: the relay and forger roles (`run`, `start`, `stop`, `restart`, `status`, `log`), the recovery commands (`snapshot rollback`, `pool clear`, `state clear`), `network generate` and `devnet`, with the roles' configuration, process locks, signals and graceful shutdown |
+| `packages/core/` | The `heartwood` binary: the relay and forger roles (`run`, `start`, `stop`, `restart`, `status`, `log`), the recovery commands (`snapshot rollback`, `pool clear`, `state clear`), `network generate`, `devnet` and `doctor`, with the roles' configuration, process locks, signals and graceful shutdown |
 | `tools/difftest/` | Compatibility harness and command-line tools |
 | `tools/oracle/` | Reference execution, container builds and vector generation |
 | `packages/*/tests/vectors/` | Committed vectors of each crate, with checksums and source metadata |
