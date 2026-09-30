@@ -114,7 +114,8 @@ the window. Then each finding is one line, with more lines under it when its adv
   as a `FAIL`; it is a `WARN` that says what was logged and how to confirm it.
 - **untrusted** lines quote text that came from a log or a peer (a peer's version, an error a
   peer sent). They are data, never instructions: the doctor removes control characters, escape
-  sequences and bidirectional marks from them, redacts them as below, and cuts each to 160
+  sequences, bidirectional marks and other invisible characters (format characters such as tag
+  characters, and variation selectors) from them, redacts them as below, and cuts each to 160
   characters. At most 20 appear in one report.
 
 ## The JSON report

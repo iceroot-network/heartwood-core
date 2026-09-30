@@ -66,7 +66,8 @@ The report is the same as `heartwood doctor --json` gives (see [the doctor](doct
 
 Text that comes from outside the host (peer versions, error messages from peers and relays, and
 other log lines) appears only in fields named `untrusted`, with its source. Control characters,
-escape sequences and bidirectional marks are removed, addresses and long hexadecimal runs are
+escape sequences, bidirectional marks and other invisible characters (format characters such as
+tag characters, and variation selectors) are removed, addresses and long hexadecimal runs are
 redacted, and each excerpt is capped at 160 characters, at most 20 in a response. Titles,
 statuses, facts and advice are fixed texts and typed values.
 

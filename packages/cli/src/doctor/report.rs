@@ -259,8 +259,8 @@ pub enum UntrustedSource {
 
 /// Text from a log, a peer or a file: data, never instructions. The report keeps it as read
 /// (capped at 512 bytes when collected); the renderer removes control characters, escape
-/// sequences and bidirectional marks, redacts addresses and long hex runs, and caps each excerpt
-/// at 160 characters and 20 per report.
+/// sequences, bidirectional marks and the other invisible characters, redacts addresses and long
+/// hex runs, and caps each excerpt at 160 characters and 20 per report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Untrusted {
     /// Where it came from.
