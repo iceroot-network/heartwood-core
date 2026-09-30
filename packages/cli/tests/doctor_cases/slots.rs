@@ -619,3 +619,31 @@ fn blocks_logged_as_forged_that_the_chain_does_not_hold_rest_on_the_log() {
     assert_eq!(basis("cause-not-on-chain"), (Status::Warn, Basis::Chain));
     assert_eq!(basis("not-on-chain"), (Status::Fail, Basis::Log));
 }
+
+#[test]
+fn a_window_past_the_stores_row_cap_reads_the_latest_blocks_and_a_cut_window_is_not_judged() {
+    use heartwood_cli::doctor::checks::slots::MAX_WINDOW_BLOCKS;
+    use heartwood_cli::doctor::view::Window;
+    // 24 hours of 8 s slots are 10,800 blocks: the store is asked for the latest 4,900.
+    let mut long = missing(&[], &[7, 113], vec![]);
+    long.window = Window {
+        from_ms: NOW_MS - 24 * 3_600_000,
+        to_ms: NOW_MS,
+    };
+    let _ = run("slots.missed", &long, &DoctorOptions::default());
+    let calls = long.store_calls.borrow();
+    assert_eq!(MAX_WINDOW_BLOCKS, 4_900);
+    assert_eq!(
+        calls.as_slice(),
+        [(vec![OURS.to_owned()], TIP - MAX_WINDOW_BLOCKS)]
+    );
+    // A cut window holds the oldest blocks and every missed row: two missed slots after its last
+    // block are not "our last 2 slots".
+    let mut cut = missing(&[3, 2], &[400, 300], vec![]);
+    if let Ok(store) = &mut cut.store_window {
+        store.capped = true;
+    }
+    let findings = run("slots.missed", &cut, &DoctorOptions::default());
+    assert_eq!(findings.len(), 1, "{findings:#?}");
+    assert_eq!(findings[0].status, Status::Unknown);
+}

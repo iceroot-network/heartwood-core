@@ -34,6 +34,10 @@ const MAX_LISTED: usize = 10;
 const RATE_SLOTS: usize = 100;
 /// The most signing-record keys looked up through the API, for its request budget.
 const MAX_LOOKUPS: usize = 4;
+/// The most blocks a window asks the store for: below the store's cap of 5,000 rows, which
+/// keeps the oldest rows, with room for the blocks forged while the doctor runs. A longer window
+/// is judged on its latest blocks.
+pub const MAX_WINDOW_BLOCKS: u32 = 4_900;
 
 /// The findings of one check about one subject.
 #[derive(Debug, Clone, Copy)]
@@ -193,8 +197,9 @@ pub(super) fn unix_ms(chain: &ChainFacts, epoch_s: u32) -> i64 {
     chain.epoch_ms.saturating_add(since)
 }
 
-/// The store from the height the window reaches back to (the tip less the window's blocks), with
-/// our delegates' missed rows. Every check asks with the same bounds, so the store is read once.
+/// The store from the height the window reaches back to (the tip less the window's blocks, at
+/// most [`MAX_WINDOW_BLOCKS`]), with our delegates' missed rows. Every check asks with the same
+/// bounds, so the store is read once.
 pub(super) fn store(view: &dyn View, ours: &Ours, chain: &ChainFacts) -> Stored {
     let tip = match view.api_last_block() {
         Ok(block) => block.height,
@@ -203,7 +208,7 @@ pub(super) fn store(view: &dyn View, ours: &Ours, chain: &ChainFacts) -> Stored 
     let window = view.window();
     let back = window.to_ms.saturating_sub(window.from_ms) / slot_ms(chain);
     let back = u32::try_from(back.saturating_add(1)).unwrap_or(u32::MAX);
-    view.store_window(&ours.names, tip.saturating_sub(back))
+    view.store_window(&ours.names, tip.saturating_sub(back.min(MAX_WINDOW_BLOCKS)))
 }
 
 /// `slots.active`.
@@ -251,6 +256,10 @@ pub fn missed(input: &CheckInput<'_>) -> Vec<Finding> {
         }
         let chain = chain(view)?;
         let store = store(view, &ours, chain)?;
+        // The cap keeps the oldest rows: the latest slots, which the rules judge, are cut.
+        if store.capped {
+            return Err(Unknown::new(Source::Store, Reason::TooLarge));
+        }
         let log = view.log(Role::Forger).ok();
         let ours_only = |slot: &&MissedSlot| ours.named(Some(&slot.username));
         let missed: Vec<&MissedSlot> = store.missed.iter().filter(ours_only).collect();
