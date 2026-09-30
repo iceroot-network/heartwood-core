@@ -2,15 +2,18 @@
 //!
 //! For each request: equal status codes; `connection: close` on both answers; `X-Block-Height`
 //! on both, and equal (both nodes are at the paused tip); every other header equal, apart from
-//! `date`, `content-length`, `transfer-encoding` and `keep-alive` (and, on the peer list, the
-//! `accept-encoding` of `vary`, which follows the length of a body that holds each node's own
-//! peers); and bodies equal after the projections:
+//! `date`, `content-length`, `transfer-encoding` and `keep-alive`, and the `accept-encoding` of
+//! `vary`, which follows the length of the answer's body (an answer of 1,024 bytes or more may be
+//! compressed): it is judged on each answer against its own length (on the peer list, whose body
+//! holds each node's own peers, not at all); and bodies equal after the projections:
 //!
 //! - `confirmations` is left out everywhere, `/node/status`'s `timestamp` and `blocksCount`,
 //!   `/node/syncing`'s `blocks`, `/node/configuration`'s `core.version` and a wallet's
 //!   `attributes.delegate.version`: each depends on the time, the node's build or its own view of
 //!   the network, not on the chain; a wallet's `attributes` are compared without their key order,
-//!   which follows the node's history (a state rebuilt at a restart orders them otherwise);
+//!   which follows the node's history (a state rebuilt at a restart orders them otherwise); the
+//!   routes that list wallets (`/wallets`, `/wallets/top`, a delegate's voters) project each
+//!   wallet as `/wallets/{id}` does;
 //! - an error's `message` is not compared for 422, whose text is Joi's (the status is);
 //! - the peer routes compare the peers both nodes list, by address, without `latency` and
 //!   `height` (each node's own measurement and last report), and not their order or count;
@@ -53,6 +56,9 @@ const UNCOMPARED: [&str; 6] = [
 
 /// Headers that follow the status: hapi offers byte ranges only in a successful answer.
 const STATUS_HEADERS: [&str; 1] = ["accept-ranges"];
+
+/// The length from which hapi may compress an answer, and so names `accept-encoding` in `vary`.
+const COMPRESSED_FROM: usize = 1024;
 
 /// The served route of `method` and `path`: a literal segment wins over a parameter, as in the
 /// reference's router.
@@ -110,7 +116,8 @@ pub fn outcome(line: &Recorded) -> Outcome {
         differences.push(value("status", Value::from(*rs), Value::from(*ls)));
     }
     let mut header_differences = Vec::new();
-    headers(lh, rh, route, &mut header_differences);
+    let lengths = (length(lh, lb), length(rh, rb));
+    headers(lh, rh, route, lengths, &mut header_differences);
     // A documented difference never excuses a header, apart from one that follows a status that
     // differs.
     let follows_status = |d: &Difference| {
@@ -150,10 +157,23 @@ fn value(path: &str, expected: Value, actual: Value) -> Difference {
     }
 }
 
+/// The length of an answer's body: its `content-length`, else the length of its JSON text.
+fn length(headers: &serde_json::Map<String, Value>, body: &Value) -> usize {
+    let stated = headers.get("content-length").and_then(Value::as_str);
+    match stated.and_then(|text| text.parse().ok()) {
+        Some(length) => length,
+        None => match body {
+            Value::String(text) => text.len(),
+            other => other.to_string().len(),
+        },
+    }
+}
+
 fn headers(
     left: &serde_json::Map<String, Value>,
     right: &serde_json::Map<String, Value>,
     route: Option<RouteId>,
+    (left_length, right_length): (usize, usize),
     out: &mut Vec<Difference>,
 ) {
     for (side, headers) in [("left", left), ("right", right)] {
@@ -178,22 +198,34 @@ fn headers(
         ));
     }
     let names: std::collections::BTreeSet<&String> = left.keys().chain(right.keys()).collect();
+    // An answer's length decides whether it may be compressed, and with it whether `vary` names
+    // `accept-encoding`: that part of `vary` is left out where it follows the answer's own length.
     // The peer list's body holds each node's own peers, of which only those both list are
-    // compared; its length decides whether the answer may be compressed (1,024 bytes or more), and
-    // with it whether `vary` names `accept-encoding`.
-    let own_length = matches!(route, Some(RouteId::PeersIndex));
-    let header = |headers: &serde_json::Map<String, Value>, name: &str| match headers.get(name) {
-        Some(Value::String(vary)) if own_length && name == "vary" => Some(Value::from(
-            vary.split(',')
-                .map(str::trim)
-                .filter(|v| !v.eq_ignore_ascii_case("accept-encoding"))
-                .collect::<Vec<_>>()
-                .join(","),
-        )),
-        other => other.cloned(),
+    // compared, so there it is always left out.
+    let own_peers = matches!(route, Some(RouteId::PeersIndex));
+    // `vary` without `accept-encoding`, and whether naming it follows the answer's length.
+    let vary = |headers: &serde_json::Map<String, Value>, length: usize| {
+        let vary = headers
+            .get("vary")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let encoding = |v: &&str| v.eq_ignore_ascii_case("accept-encoding");
+        let named = vary.split(',').map(str::trim).any(|v| encoding(&v));
+        let kept: Vec<&str> = (vary.split(',').map(str::trim))
+            .filter(|v| !encoding(v))
+            .collect();
+        (
+            kept.join(","),
+            own_peers || named == (length >= COMPRESSED_FROM),
+        )
     };
     for name in names {
-        if !UNCOMPARED.contains(&name.as_str()) && header(left, name) != header(right, name) {
+        let differs = left.get(name) != right.get(name)
+            && (name != "vary" || {
+                let (ours, theirs) = (vary(left, left_length), vary(right, right_length));
+                ours.0 != theirs.0 || !ours.1 || !theirs.1
+            });
+        if !UNCOMPARED.contains(&name.as_str()) && differs {
             out.push(value(
                 &format!("headers.{name}"),
                 right.get(name).cloned().unwrap_or(Value::Null),
@@ -258,15 +290,22 @@ fn project(route: Option<RouteId>, status: u16, body: &Value) -> Value {
         }
         Some(RouteId::NodeSyncing) => remove(&mut body, &["data", "blocks"]),
         Some(RouteId::NodeConfiguration) => remove(&mut body, &["data", "core", "version"]),
-        Some(RouteId::WalletsShow) => {
-            remove(&mut body, &["data", "attributes", "delegate", "version"]);
-            if let Some(attributes) = body.get_mut("data").and_then(|d| d.get_mut("attributes")) {
-                sort_keys(attributes);
-            }
+        Some(RouteId::WalletsShow) => body.get_mut("data").into_iter().for_each(wallet),
+        Some(RouteId::WalletsIndex | RouteId::WalletsTop | RouteId::DelegatesVoters) => {
+            let listed = body.get_mut("data").and_then(Value::as_array_mut);
+            listed.into_iter().flatten().for_each(wallet);
         }
         _ => {}
     }
     body
+}
+
+/// A wallet without its delegate's version, its attributes in key order.
+fn wallet(wallet: &mut Value) {
+    remove(wallet, &["attributes", "delegate", "version"]);
+    if let Some(attributes) = wallet.get_mut("attributes") {
+        sort_keys(attributes);
+    }
 }
 
 fn remove(value: &mut Value, path: &[&str]) {
@@ -454,10 +493,11 @@ fn documented(
                 .then(|| ApiDifference::RoundOrder.reason())
         }
         "estimatedCount" => {
-            // The same page; the counts, and what follows from them, apart.
+            // The same page; the counts, and what follows from them, apart (past the last page,
+            // whether there is a previous one).
             let counted = |body: &Value| {
                 let mut body = body.clone();
-                for key in ["totalCount", "pageCount", "last", "next"] {
+                for key in ["totalCount", "pageCount", "last", "next", "previous"] {
                     remove(&mut body, &["meta", key]);
                 }
                 body
@@ -869,10 +909,12 @@ mod tests {
                 headers
             };
             let mut differences = Vec::new();
+            let short = (100, 100);
             headers(
                 &with(left_vary),
                 &with("origin"),
                 Some(RouteId::PeersIndex),
+                short,
                 &mut differences,
             );
             let mut others = Vec::new();
@@ -880,6 +922,7 @@ mod tests {
                 &with(left_vary),
                 &with("origin"),
                 Some(RouteId::BlocksLast),
+                short,
                 &mut others,
             );
             (differences.len(), others.len())
@@ -888,6 +931,110 @@ mod tests {
         assert_eq!(peers("origin,accept-encoding"), (0, 1));
         assert_eq!(peers("origin"), (0, 0));
         assert_eq!(peers("accept-encoding"), (1, 1));
+    }
+
+    #[test]
+    fn a_listed_wallet_is_compared_as_a_wallet_alone_is() {
+        let delegate = |version_first: bool, version: &str, produced: u64| {
+            let mut delegate = serde_json::Map::new();
+            delegate.insert("username".into(), json!("genesis_1"));
+            delegate.insert("producedBlocks".into(), json!(produced));
+            let (last, version) = (json!("8025a842"), json!(version));
+            if version_first {
+                delegate.insert("version".into(), version);
+                delegate.insert("lastBlock".into(), last);
+            } else {
+                delegate.insert("lastBlock".into(), last);
+                delegate.insert("version".into(), version);
+            }
+            json!({"address": "dA", "attributes": {"delegate": delegate}})
+        };
+        let judged = |path: &str, left: Value, right: Value| {
+            let page = |item: Value| json!({"meta": {"count": 1}, "data": [item]});
+            let (left, right) = (answer(200, page(left)), answer(200, page(right)));
+            outcome(&case(path, "", left, right))
+        };
+        let (ours, theirs) = (delegate(false, "0.1.0", 3), delegate(true, "4.3.1", 3));
+        for path in [
+            "/api/wallets",
+            "/api/wallets/top",
+            "/api/delegates/genesis_1/voters",
+        ] {
+            assert_eq!(judged(path, ours.clone(), theirs.clone()), Outcome::Pass);
+            assert!(judged(path, ours.clone(), delegate(true, "4.3.1", 4)).is_failure());
+        }
+        // The order of the listed wallets is still compared.
+        let other = json!({"address": "dB"});
+        let two = |items: Value| answer(200, json!({"meta": {"count": 2}, "data": items}));
+        let swapped = case(
+            "/api/wallets",
+            "",
+            two(json!([ours, other])),
+            two(json!([other, theirs])),
+        );
+        assert!(outcome(&swapped).is_failure());
+    }
+
+    #[test]
+    fn the_vary_of_an_answer_follows_its_own_length() {
+        let fees = |types: Value| json!({"meta": {"days": 7}, "data": {"1": types}});
+        let zero = json!({"avg": "0", "burned": "0", "max": "0", "min": "0", "sum": "0"});
+        let ours = fees(json!({"transfer": zero}));
+        let many: serde_json::Map<String, Value> = (0..20)
+            .map(|n| (format!("type{n}"), zero.clone()))
+            .chain([("transfer".to_owned(), zero.clone())])
+            .collect();
+        let theirs = fees(Value::Object(many));
+        let judged = |left_vary: &str, left: &Value, right_vary: &str, right: &Value| {
+            let reply =
+                |vary: &str, body: &Value| with_header(answer(200, body.clone()), "vary", vary);
+            outcome(&case(
+                "/api/node/fees",
+                "feeTypes",
+                reply(left_vary, left),
+                reply(right_vary, right),
+            ))
+        };
+        // The reference's longer answer is compressed, Heartwood's shorter one is not.
+        let compressed = "origin,accept-encoding";
+        assert!(is(
+            &judged("origin", &ours, compressed, &theirs),
+            ApiDifference::FeeTypes
+        ));
+        // Equal headers are no difference; a vary that differs where its own answer's length
+        // does not explain it is one.
+        assert!(is(
+            &judged(compressed, &ours, compressed, &theirs),
+            ApiDifference::FeeTypes
+        ));
+        assert!(judged(compressed, &ours, "origin", &theirs).is_failure());
+        assert!(judged("origin", &theirs, compressed, &theirs).is_failure());
+    }
+
+    #[test]
+    fn an_estimated_count_excuses_the_previous_page_it_decides() {
+        let meta = |total: u64, pages: u64, previous: Value| {
+            json!({"meta": {"count": 0, "totalCount": total, "pageCount": pages,
+                "totalCountIsEstimate": true, "previous": previous, "next": null,
+                "self": "/blocks?page=3&limit=100"}, "data": []})
+        };
+        let judged = |left: Value, right: Value| {
+            outcome(&case(
+                "/api/blocks",
+                "estimatedCount",
+                answer(200, left),
+                answer(200, right),
+            ))
+        };
+        // Past the last page, the previous page follows the page count.
+        let ours = meta(159, 2, json!("/blocks?page=2&limit=100"));
+        assert!(is(
+            &judged(ours.clone(), meta(78, 1, Value::Null)),
+            ApiDifference::EstimatedCount
+        ));
+        let mut other = meta(78, 1, Value::Null);
+        other["meta"]["self"] = json!("/blocks?page=4&limit=100");
+        assert!(judged(ours, other).is_failure());
     }
 
     #[test]
