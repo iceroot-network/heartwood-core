@@ -179,10 +179,12 @@ pub fn crypto_data(node: &NodeInfo) -> Value {
 }
 
 /// The genesis block `genesis` as loaded, as the reference's configuration holds it once it has
-/// booted: building the block serialises each of its transactions, and the serialiser sets on the
-/// transaction's own object, in this order, `version` to 3 and `headerType` to 0 when they are
-/// not truthy, and `typeGroup` to 1 when it is missing. A key it adds comes last; a key it sets
-/// keeps its place.
+/// booted: building the block turns each transaction's `amount`, `fee` and `nonce`, and the
+/// amounts of its transfers, into the decimal strings of big numbers, and serialises the
+/// transaction, which sets on its own object, in this order, `version` to 3 and `headerType` to 0
+/// when they are not truthy, and `typeGroup` to 1 when it is missing. A key it adds comes last; a
+/// key it sets keeps its place. A key that the transaction's schema does not list is kept, as the
+/// reference keeps it.
 pub fn genesis_as_held(genesis: &Value) -> Value {
     let mut genesis = genesis.clone();
     let transactions = genesis
@@ -192,6 +194,19 @@ pub fn genesis_as_held(genesis: &Value) -> Value {
         let Some(transaction) = transaction.as_object_mut() else {
             continue;
         };
+        for key in ["amount", "fee", "nonce"] {
+            as_text(transaction.get_mut(key));
+        }
+        let transfers = transaction
+            .get_mut("asset")
+            .and_then(|asset| asset.get_mut("transfers"));
+        for transfer in transfers
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            as_text(transfer.get_mut("amount"));
+        }
         for (key, default) in [("version", 3), ("headerType", 0)] {
             if !transaction.get(key).is_some_and(js::is_truthy) {
                 transaction.insert(key.to_owned(), Value::from(default));
@@ -202,6 +217,16 @@ pub fn genesis_as_held(genesis: &Value) -> Value {
         }
     }
     genesis
+}
+
+/// A whole number that is not negative, written as a JSON number, becomes its decimal string, as
+/// a big number is served.
+fn as_text(value: Option<&mut Value>) {
+    if let Some(value) = value
+        && let Some(number) = value.as_u64()
+    {
+        *value = Value::from(number.to_string());
+    }
 }
 
 /// `GET /node/fees`: the fee statistics of the kept types, over the last `days` days when the
