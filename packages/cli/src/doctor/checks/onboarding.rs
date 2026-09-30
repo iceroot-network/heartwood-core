@@ -48,9 +48,9 @@ pub fn sync_proof(input: &CheckInput<'_>) -> Vec<Finding> {
         facts.push(("block_2_id", block_2));
         let loopback = addresses.iter().all(IpAddr::is_loopback);
         let word = if loopback {
-            "loopback only"
+            "loopback-only"
         } else {
-            "beyond loopback"
+            "beyond-loopback"
         };
         facts.push(("api", Fact::Word(word)));
         let verdict = either(loopback, (Warn, "loopback-only"), (Pass, "ready"));

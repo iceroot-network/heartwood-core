@@ -23,6 +23,9 @@
         "no-evidence": "No line of the forger's log in the window says whether our delegates are active. Run the doctor with a longer --window, or read the forger's log since its start.",
         "no-delegates": "No delegate of this forger is known, so its slots are not checked. Name it with --delegate <name>."
       },
+      "words": {
+        "unnamed": "a delegate"
+      },
       "docs": "https://docs.iceroot.com/validators/doctor/#slots-active"
     },
     {
@@ -54,6 +57,9 @@
         "cause-unread": "Slot at {time} missed by {delegate}: the forger's log cannot be read, so the cause is not known.",
         "not-on-chain": "The forger logged {count} forged blocks that the chain holds with another generator or not at all, the last at height {height}. Either this forger signs outside its own slot, or the network refused its blocks. See forger.link-history and the relay's log at that time.",
         "no-delegates": "No delegate of this forger is known, so its slots are not checked. Name it with --delegate <name>."
+      },
+      "words": {
+        "unnamed": "a delegate"
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#slots-missed"
     }

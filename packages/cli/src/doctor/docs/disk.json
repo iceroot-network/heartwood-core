@@ -20,8 +20,13 @@
         "unknown": "The data directory's free space could not be read."
       },
       "advice": {
-        "ok": "The data disk has {free_mb} MB free ({percent}%): about {days} days at {growth_mb} MB a day, {growth}.",
-        "low": "The data disk has {days} days left at the current growth ({growth_mb} MB a day, {growth}); {free_mb} MB ({percent}%) is free. Every node keeps every block, so the store only grows. Add space before it fills: a full disk stops the relay. More: https://docs.iceroot.com/validators/doctor/#disk-space"
+        "ok": "The data disk has {free_bytes} free ({percent}%): about {days} days at {growth_bytes_per_day} a day, {growth}.",
+        "low": "The data disk has {days} days left at the current growth ({growth_bytes_per_day} a day, {growth}); {free_bytes} ({percent}%) is free. Every node keeps every block, so the store only grows. Add space before it fills: a full disk stops the relay. More: https://docs.iceroot.com/validators/doctor/#disk-space"
+      },
+      "words": {
+        "measured": "measured from the store's size",
+        "planning": "the planning figure of about 35 GB a year, used until the chain has 10,000 blocks",
+        "planning-no-height": "the planning figure of about 35 GB a year: the height could not be read"
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#disk-space"
     },
@@ -44,8 +49,8 @@
         "skipped": "All three directories are on the data directory's filesystem, which disk.space covers."
       },
       "advice": {
-        "ok": "The {disk} disk has {free_mb} MiB free.",
-        "low": "The {disk} disk has {free_mb} MiB free. Logs rotate daily; when the disk fills, the node stops writing its log. More: https://docs.iceroot.com/validators/doctor/#disk-other",
+        "ok": "The {disk} disk has {free_bytes} free.",
+        "low": "The {disk} disk has {free_bytes} free. Logs rotate daily; when the disk fills, the node stops writing its log. More: https://docs.iceroot.com/validators/doctor/#disk-other",
         "same-disk": "The log, temporary and configuration directories share the data directory's filesystem."
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#disk-other"

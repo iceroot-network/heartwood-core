@@ -221,6 +221,55 @@ fn the_json_report_has_its_keys_in_order_and_typed_values() {
 }
 
 #[test]
+fn sizes_are_bytes_in_the_json_and_plain_units_in_the_advice() {
+    let disk = ENTRIES.iter().position(|entry| entry.id == "disk.space");
+    let mut space = finding(disk.unwrap(), Status::Pass);
+    (space.subject, space.basis, space.advice) = (Subject::Host, Basis::System, Advice::key("ok"));
+    let values = vec![
+        ("free_bytes", Fact::Bytes(107_374_182_400)),
+        ("percent", Fact::Int(50)),
+        ("days", Fact::Int(1_119)),
+        ("growth_bytes_per_day", Fact::Bytes(95_890_410)),
+        ("growth", Fact::Word("planning")),
+    ];
+    (space.facts, space.advice.values) = (values.clone(), values);
+    // Each size alone, through a template of its own (a key with no documented template is
+    // rendered as it stands).
+    let sizes = [
+        (0, "0 bytes"),
+        (1_023, "1023 bytes"),
+        (1_024, "1 KiB"),
+        (1_536, "1.5 KiB"),
+        (10 * (1 << 30) - 1, "10 GiB"),
+        (95_890_410, "91.4 MiB"),
+        (8_214_528_000, "7.7 GiB"),
+        (2_199_023_255_552, "2 TiB"),
+        (u64::MAX, "16 EiB"),
+    ];
+    let mut findings = vec![space];
+    for (bytes, _) in sizes {
+        let mut alone = finding(disk.unwrap(), Status::Pass);
+        alone.advice = Advice::key("{size}");
+        alone.advice.values = vec![("size", Fact::Bytes(bytes))];
+        findings.push(alone);
+    }
+    let value: Value = serde_json::from_str(&render_json(&report(findings))).unwrap();
+    let found = &value["findings"][0];
+    assert_eq!(
+        found["facts"],
+        json!({"free_bytes": 107_374_182_400_u64, "percent": 50, "days": 1_119,
+               "growth_bytes_per_day": 95_890_410, "growth": "planning"})
+    );
+    let advice = found["advice"].as_str().unwrap();
+    let expected = "The data disk has 100 GiB free (50%): about 1119 days at 91.4 MiB a day, the \
+                    planning figure of about 35 GB a year, used until the chain has 10,000 blocks.";
+    assert_eq!(advice, expected);
+    for (n, (_, text)) in sizes.iter().enumerate() {
+        assert_eq!(value["findings"][n + 1]["advice"], *text);
+    }
+}
+
+#[test]
 fn the_json_report_always_redacts_addresses_and_show_addresses_changes_the_text_only() {
     let mut first = finding(20, Status::Warn);
     first.advice = Advice {

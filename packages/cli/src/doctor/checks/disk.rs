@@ -49,8 +49,9 @@ fn data_mount(view: &dyn View) -> Result<(&[MountRow], &MountRow), Unknown> {
     Ok((mounts, holding(view, mounts, NodeDir::Data).ok_or(unread)?))
 }
 
-/// The bytes a day the store grows by, and how that was worked out: the store's size per block
-/// once the chain has 10,000 blocks, the planning figure before.
+/// The bytes a day the store grows by, and how that was worked out (`measured`: the store's size
+/// per block once the chain has 10,000 blocks; `planning`: the planning figure before; and
+/// `planning-no-height` when the height could not be read).
 fn growth(view: &dyn View) -> (u64, &'static str) {
     let measured = || {
         let block_time = u64::from(view.relay_config().ok()?.chain.block_time_s);
@@ -62,14 +63,10 @@ fn growth(view: &dyn View) -> (u64, &'static str) {
         day.filter(|day| *day > 0 && height >= MEASURED_FROM)
     };
     let planning = match view.api_last_block() {
-        Ok(_) => {
-            "the planning figure of about 35 GB a year, used until the chain has 10,000 blocks"
-        }
-        Err(_) => "the planning figure of about 35 GB a year: the height could not be read",
+        Ok(_) => "planning",
+        Err(_) => "planning-no-height",
     };
-    measured().map_or((PLANNING_PER_DAY, planning), |day| {
-        (day, "measured from the store's size")
-    })
+    measured().map_or((PLANNING_PER_DAY, planning), |day| (day, "measured"))
 }
 
 /// The data disk's free space, and the days it lasts at the store's growth.
@@ -82,10 +79,10 @@ pub fn space(input: &CheckInput<'_>) -> Vec<Finding> {
         let fail = under(free, total, 5) || free < 2 * GIB || lasts_under(14);
         let (status, key) = graded(fail, under(free, total, 15) || lasts_under(180));
         let values = vec![
-            ("free_mb", int(free / 1_000_000)),
+            ("free_bytes", Fact::Bytes(free)),
             ("percent", int(percent_of(free, total))),
             ("days", int(free / per_day.max(1))),
-            ("growth_mb", int(per_day / 1_000_000)),
+            ("growth_bytes_per_day", Fact::Bytes(per_day)),
             ("growth", Fact::Word(how)),
         ];
         Ok((status, key, values))
@@ -116,7 +113,10 @@ pub fn other(input: &CheckInput<'_>) -> Vec<Finding> {
             return Ok((Status::Skipped, "same-disk", Vec::new()));
         };
         let (status, key) = graded(least < 100 * MIB, least < GIB);
-        let values = vec![("disk", Fact::Word(name)), ("free_mb", int(least / MIB))];
+        let values = vec![
+            ("disk", Fact::Word(name)),
+            ("free_bytes", Fact::Bytes(least)),
+        ];
         Ok((status, key, values))
     })
 }

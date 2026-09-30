@@ -45,7 +45,7 @@ clients, as the same JSON in one text item.
 | `run_checks` | `roles` (`relay`, `forger`, `all`), `checks` (at most 64 ids), `profile` (`default`, `onboarding`), `window_minutes` (5 to 1,440) | the report, format `heartwood-doctor-report/1`, with addresses always redacted; `fresh`, `cachedForSeconds` and `nextRunInSeconds` |
 | `get_report` | none | the last report of this server, or `null` |
 | `read_log_summary` | `role` (`relay`, `forger`), `window_minutes` (5 to 1,440) | for each known line kind and level: the count and the first and last time; the count of other lines; at most 20 excerpts of at most 160 characters in `untrusted` |
-| `explain_check` | `id` | what the check measures, what it reads, its rules per status, its advice and its documentation link: the text of `heartwood doctor explain` |
+| `explain_check` | `id` | what the check measures, what it reads, its rules per status, its advice, the phrase its advice shows for each fixed word of its facts (`words`) and its documentation link: the text of `heartwood doctor explain` |
 
 The report is the same as `heartwood doctor --json` gives (see [the doctor](doctor.md)).
 

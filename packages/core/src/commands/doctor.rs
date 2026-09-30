@@ -331,6 +331,9 @@ fn explain(id: CheckId) -> ExitCode {
     for (key, template) in &doc.advice {
         text.push_str(&format!("Advice ({key}): {template}\n"));
     }
+    for (word, phrase) in &doc.words {
+        text.push_str(&format!("Word ({word}): {phrase}\n"));
+    }
     text.push_str(&format!("More: {}\n", doc.docs));
     out(&text);
     ExitCode::SUCCESS

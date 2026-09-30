@@ -18,8 +18,13 @@
         "unknown": "The CPUs, the memory or the roles could not be read."
       },
       "advice": {
-        "enough": "The host has {cpus} CPUs and {memory_gb} GiB, enough for {roles}.",
-        "below-estimate": "This host has {cpus} CPUs and {memory_gb} GiB of memory. The planning estimates for {roles} are {need_cpus} CPUs and {need_gb} GiB. These are planning estimates, not requirements. See https://docs.iceroot.com/validators/doctor/#host-resources."
+        "enough": "The host has {cpus} CPUs and {memory_bytes} of memory, enough for {roles}.",
+        "below-estimate": "This host has {cpus} CPUs and {memory_bytes} of memory. The planning estimates for {roles} are {need_cpus} CPUs and {need_memory_bytes} of memory. These are planning estimates, not requirements. See https://docs.iceroot.com/validators/doctor/#host-resources."
+      },
+      "words": {
+        "relay": "a relay",
+        "forger": "a forger",
+        "relay-and-forger": "a relay and a forger together"
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#host-resources"
     },

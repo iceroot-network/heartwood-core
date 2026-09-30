@@ -220,12 +220,17 @@ fn golden() -> Report {
         None,
         "CORE_API_HOST=[2001:db8::10]:4003 fe80::1%eth0 198.51.100.23",
     )];
-    let mut space = finding("disk.space", Host, S::Pass, B::System, "{free} bytes free.");
+    // Sizes are bytes in the facts and plain units in the advice; a fixed word is a word in the
+    // facts and its documented phrase in the advice.
+    let mut space = finding("disk.space", Host, S::Pass, B::System, "ok");
     space.facts = vec![
-        ("free", Fact::Bytes(107_374_182_400)),
-        ("total", Fact::Bytes(214_748_364_800)),
+        ("free_bytes", Fact::Bytes(107_374_182_400)),
+        ("percent", Fact::Int(50)),
+        ("days", Fact::Int(1_119)),
+        ("growth_bytes_per_day", Fact::Bytes(95_890_410)),
+        ("growth", Fact::Word("planning")),
     ];
-    space.advice.values = vec![("free", Fact::Bytes(107_374_182_400))];
+    space.advice.values = space.facts.clone();
     let mut key_file = finding(
         "keys.file",
         Forger,
@@ -240,22 +245,15 @@ fn golden() -> Report {
         ("path", key_path.clone()),
     ];
     key_file.advice.values = vec![("mode", Fact::Mode(0o644)), ("path", key_path)];
-    let mut resources = finding(
-        "host.resources",
-        Host,
-        S::Pass,
-        B::System,
-        "{cpus} CPUs and {memory} bytes of memory.",
-    );
+    let mut resources = finding("host.resources", Host, S::Warn, B::System, "below-estimate");
     resources.facts = vec![
         ("cpus", Fact::Int(4)),
-        ("memory", Fact::Bytes(8_214_528_000)),
-        ("fromPlanning", Fact::Bool(true)),
+        ("memory_bytes", Fact::Bytes(8_214_528_000)),
+        ("roles", Fact::Word("relay-and-forger")),
+        ("need_cpus", Fact::Int(6)),
+        ("need_memory_bytes", Fact::Bytes(10_737_418_240)),
     ];
-    resources.advice.values = vec![
-        ("cpus", Fact::Int(4)),
-        ("memory", Fact::Bytes(8_214_528_000)),
-    ];
+    resources.advice.values = resources.facts.clone();
     let proof = Finding::skipped(check("onboarding.sync-proof"), Relay, keys::SKIPPED_PROFILE);
 
     Report {

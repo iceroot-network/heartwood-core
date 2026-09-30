@@ -323,7 +323,7 @@ impl Session<'_> {
                 let doc = doc.ok_or((INVALID_PARAMS, "Unknown check", None))?;
                 json!({"id": doc.id, "title": doc.title, "area": doc.area,
                     "subjects": doc.subjects, "sources": doc.sources, "rules": doc.rules,
-                    "advice": doc.advice, "docs": doc.docs})
+                    "advice": doc.advice, "words": doc.words, "docs": doc.docs})
             }
         };
         let content = json!([{"type": "text", "text": value.to_string()}]);

@@ -13,14 +13,14 @@ WARN    forger.start-errors       The forger logged a start error. [forger, log]
                                   untrusted 5 (forger error capture, 2026-10-02 13:13:11 UTC): cannot read ~/.config/solar-core/testnet/app.json on host as user:  denied
 WARN    net.api-exposure          The API listens on addr-3 (public) port 4003. [relay, socket]
                                   untrusted 6 (configuration warning): CORE_API_HOST=[addr-4 (public)]:4003 addr-5 (link-local) addr-1 (public)
+WARN    host.resources            This host has 4 CPUs and 7.7 GiB of memory. The planning estimates for a relay and a forger together are 6 CPUs and 10 GiB of memory. These are planning estimates, not requirements. See https://docs.iceroot.com/validators/doctor/#host-resources. [host, system]
 UNKNOWN sync.state                The doctor could not read the relay's API: rate limited (429). [relay, chain]
 PASS    process.roles             The relay runs, up 5400000 ms. [relay, process]
 PASS    peers.diversity           Peers are spread out. [relay, chain]
                                   untrusted 1 (peer version): 4.9.9-evil
                                   untrusted 2 (peer version): 4.3.1
 PASS    forger.signing-record     The signing record matches the chain. [forger, chain]
-PASS    disk.space                107374182400 bytes free. [host, system]
-PASS    host.resources            4 CPUs and 8214528000 bytes of memory. [host, system]
+PASS    disk.space                The data disk has 100 GiB free (50%): about 1119 days at 91.4 MiB a day, the planning figure of about 35 GB a year, used until the chain has 10,000 blocks. [host, system]
 SKIPPED process.core-role         This check comes with a later release. [relay, config]
 SKIPPED onboarding.sync-proof     This check is not part of the profile that was run. [relay, config]
-Summary: 2 fail, 6 warn, 5 pass, 1 unknown, 2 skipped.  More: heartwood doctor explain <check>
+Summary: 2 fail, 7 warn, 4 pass, 1 unknown, 2 skipped.  More: heartwood doctor explain <check>

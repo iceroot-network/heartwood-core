@@ -45,23 +45,20 @@ pub fn resources(input: &CheckInput<'_>) -> Vec<Finding> {
             let (vcpus, gb) = estimate(&planning, *role).ok_or(unparsed)?;
             need = (need.0 + vcpus, need.1 + gb);
         }
-        let phrase = match present.as_slice() {
+        let roles = match present.as_slice() {
             [] => return Err(Unknown::new(Source::Process, Reason::NotConfigured)),
-            [Role::Relay] => "a relay",
-            [_] => "a forger",
-            _ => "a relay and a forger together",
+            [Role::Relay] => "relay",
+            [_] => "forger",
+            _ => "relay-and-forger",
         };
         let wanted = u128::from(need.1) * u128::from(GIB * MEMORY_PERCENT);
         let enough = u64::from(cpus) >= need.0 && u128::from(memory) * 100 >= wanted;
         let facts = vec![
             ("cpus", int(cpus)),
-            (
-                "memory_gb",
-                int(memory / GIB + u64::from(memory % GIB >= GIB / 2)),
-            ),
-            ("roles", Fact::Word(phrase)),
+            ("memory_bytes", Fact::Bytes(memory)),
+            ("roles", Fact::Word(roles)),
             ("need_cpus", int(need.0)),
-            ("need_gb", int(need.1)),
+            ("need_memory_bytes", Fact::Bytes(need.1.saturating_mul(GIB))),
         ];
         Ok((
             System,

@@ -5,8 +5,9 @@
 //!
 //! An area file is `{"area": <name>, "checks": [<entry>...]}`; an entry holds `id`, `title`,
 //! `area`, `subjects`, `sources`, `rules` (a text per status), `advice` (a template per key; a
-//! template names its values as `{name}`) and `docs`, the link to its page. `common.json` is
-//! `{"advice": {<key>: <template>}}`.
+//! template names its values as `{name}`), optionally `words` (the phrase an advice text shows for
+//! a fixed word of a fact, which the JSON facts keep as the word) and `docs`, the link to its
+//! page. `common.json` is `{"advice": {<key>: <template>}}`.
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -53,6 +54,8 @@ pub struct CheckDoc {
     pub rules: BTreeMap<String, String>,
     /// Its advice templates, by key.
     pub advice: BTreeMap<String, String>,
+    /// The phrases its advice shows for the fixed words of its facts, by word.
+    pub words: BTreeMap<String, String>,
     /// The link to its page.
     pub docs: String,
 }
@@ -93,6 +96,11 @@ impl Docs {
     pub fn template(&self, id: CheckId, key: &str) -> Option<&str> {
         let own = self.check(id).and_then(|doc| doc.advice.get(key));
         own.or_else(|| self.common.get(key)).map(String::as_str)
+    }
+
+    /// The phrase `id`'s advice shows for the fixed word `word`, when its entry gives one.
+    pub fn word(&self, id: CheckId, word: &str) -> Option<&str> {
+        self.check(id)?.words.get(word).map(String::as_str)
     }
 }
 
@@ -141,6 +149,9 @@ fn check(entry: &Value) -> Option<CheckDoc> {
         sources: list("sources")?,
         rules: texts(entry.get("rules"))?,
         advice: texts(entry.get("advice"))?,
+        words: entry
+            .get("words")
+            .map_or(Some(BTreeMap::new()), |w| texts(Some(w)))?,
         docs: text("docs")?,
     })
 }

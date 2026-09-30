@@ -145,6 +145,12 @@ fn it_exits_with_3_when_it_cannot_run_and_its_lists_work() {
     let explain = heartwood(&["doctor:explain", "keys.file"], &vars);
     assert_eq!(code(&explain), 0);
     assert!(String::from_utf8_lossy(&explain.stdout).starts_with("keys.file: "));
+    let explain = heartwood(&["doctor", "explain", "disk.space"], &vars);
+    let text = String::from_utf8_lossy(&explain.stdout);
+    assert!(
+        text.contains("\nWord (planning): the planning figure"),
+        "{text}"
+    );
 }
 
 #[test]

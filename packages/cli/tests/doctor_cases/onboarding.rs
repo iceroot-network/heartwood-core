@@ -190,6 +190,6 @@ fn the_proof_prints_the_facts_and_no_text_to_sign() {
     assert!(
         finding
             .facts
-            .contains(&("api", Fact::Word("beyond loopback")))
+            .contains(&("api", Fact::Word("beyond-loopback")))
     );
 }

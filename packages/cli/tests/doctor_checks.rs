@@ -47,6 +47,34 @@ fn every_case_gives_its_findings_and_only_statuses_its_check_declares() {
 }
 
 #[test]
+fn every_size_is_a_count_of_bytes_under_a_name_that_says_so_and_every_word_is_one() {
+    use heartwood_cli::doctor::report::Fact;
+    let units = ["_kb", "_mb", "_gb", "_tb", "_kib", "_mib", "_gib", "_tib"];
+    for case in doctor_cases::all() {
+        let entry = ENTRIES.iter().find(|entry| entry.id == case.check).unwrap();
+        let input = CheckInput {
+            entry,
+            view: &case.view,
+            options: &case.options,
+        };
+        for finding in (entry.run)(&input) {
+            let facts = finding.facts.len();
+            let all = finding.facts.iter().chain(&finding.advice.values);
+            for (n, (name, fact)) in all.enumerate() {
+                let what = format!("{}: {} {name} = {fact:?}", case.name, finding.id.as_str());
+                assert!(!units.iter().any(|unit| name.contains(unit)), "{what}");
+                let bytes = name.ends_with("_bytes") || name.contains("_bytes_");
+                assert_eq!(matches!(fact, Fact::Bytes(_)), bytes, "{what}");
+                // A fixed word of the report's facts is one word; the advice shows its phrase.
+                let word = |w: &str| w.bytes().all(|b| b.is_ascii_lowercase() || b == b'-');
+                let phrase = matches!(fact, Fact::Word(w) if !word(w));
+                assert!(n >= facts || !phrase, "{what}");
+            }
+        }
+    }
+}
+
+#[test]
 fn the_registry_walk_finds_a_case_for_every_status_of_every_built_check() {
     let cases = doctor_cases::all();
     let (mut not_built, mut missing) = (Vec::new(), Vec::new());

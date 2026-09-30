@@ -351,9 +351,10 @@ fn every_tool_answers_over_the_fake_world() {
             json!({"role": "forger", "window_minutes": 5}),
         ),
         call(6, "explain_check", json!({"id": "keys.file"})),
+        call(7, "explain_check", json!({"id": "disk.space"})),
     ];
     let answers = session(&world, &lines);
-    assert_eq!(answers.len(), 6);
+    assert_eq!(answers.len(), 7);
     let empty = structured(&answers[0]);
     assert_eq!(*empty, json!({"report": null, "cachedForSeconds": null}));
     let checks = structured(&answers[1])["checks"].as_array().unwrap();
@@ -395,6 +396,11 @@ fn every_tool_answers_over_the_fake_world() {
         "https://docs.iceroot.com/validators/doctor/#keys-file"
     );
     assert!(explain["rules"].is_object() && explain["advice"].is_object());
+    assert_eq!(explain["words"], json!({}));
+    // A fact's fixed word, and the phrase the advice shows for it.
+    let words = &structured(&answers[6])["words"];
+    let planning = words["planning"].as_str().unwrap();
+    assert!(planning.starts_with("the planning figure"), "{words}");
 
     // Every structured result holds the fields its tool's output schema requires, and no others.
     let lines = [request(7, "tools/list", json!({}), true)];

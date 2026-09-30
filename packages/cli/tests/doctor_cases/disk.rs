@@ -186,30 +186,29 @@ fn growth_of(view: &FakeView) -> (Fact, Fact) {
             .find(|(key, _)| *key == name);
         found.map(|(_, fact)| fact.clone()).unwrap()
     };
-    (fact("growth_mb"), fact("growth"))
+    (fact("growth_bytes_per_day"), fact("growth"))
 }
 
 #[test]
 fn growth_is_the_planning_figure_before_10000_blocks_and_measured_from_then() {
-    let (mb, how) = growth_of(&chain_of(9_999, 400 * GB));
-    assert_eq!(mb, Fact::Int(95));
-    let Fact::Word(how) = how else {
-        panic!("not a word")
-    };
-    assert!(how.contains("planning figure"), "{how}");
-    let (mb, how) = growth_of(&chain_of(10_000, 400 * GB));
-    assert_eq!(mb, Fact::Int(10_800));
-    assert_eq!(how, Fact::Word("measured from the store's size"));
-    let (mb, _) = growth_of(&chain_of(20_000, 400 * GB));
-    assert_eq!(mb, Fact::Int(10_800));
+    let planning = Fact::Bytes(95_890_410);
+    let measured = Fact::Bytes(10_800_000_000);
+    let growth = |view| growth_of(&view);
+    assert_eq!(
+        growth(chain_of(9_999, 400 * GB)),
+        (planning.clone(), Fact::Word("planning"))
+    );
+    assert_eq!(
+        growth(chain_of(10_000, 400 * GB)),
+        (measured.clone(), Fact::Word("measured"))
+    );
+    assert_eq!(
+        growth(chain_of(20_000, 400 * GB)),
+        (measured, Fact::Word("measured"))
+    );
     let mut view = chain_of(20_000, 400 * GB);
     view.api_last_block = Err(denied(Source::Api));
-    let (mb, how) = growth_of(&view);
-    assert_eq!(mb, Fact::Int(95));
-    let Fact::Word(how) = how else {
-        panic!("not a word")
-    };
-    assert!(how.contains("height could not be read"), "{how}");
+    assert_eq!(growth(view), (planning, Fact::Word("planning-no-height")));
 }
 
 /// A mount of `major:minor` at `at`.

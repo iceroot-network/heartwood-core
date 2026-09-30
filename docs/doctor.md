@@ -85,9 +85,10 @@ WARN    forger.hosts              The forger has one relay: addr-1 (loopback). [
 WARN    sync.forks                2 fork recoveries in the window. [relay, log]
                                   untrusted 1 (relay log, 2026-10-02 13:53:11 UTC): Failed to download blocks ...
 PASS    peers.count               24 peers (at least 20 wanted). [relay, chain]
+PASS    disk.space                The data disk has 100 GiB free (50%): about 1119 days at 91.4 MiB a day, ... [host, system]
 UNKNOWN clock.sync                The doctor could not read the system probes: the program is not installed. [host, system]
 SKIPPED process.core-role         This check comes with a later release. [relay, config]
-Summary: 1 fail, 2 warn, 1 pass, 1 unknown, 1 skipped.  More: heartwood doctor explain <check>
+Summary: 1 fail, 2 warn, 2 pass, 1 unknown, 1 skipped.  More: heartwood doctor explain <check>
 ```
 
 The first line names the instance, the roles found on this host, the time of the run in UTC and
@@ -142,8 +143,14 @@ example below is shortened.
             "profile": "default", "windowMinutes": 60},
   "redaction": {"addresses": true, "identity": false, "untrustedOmitted": 0},
   "host": {"os": "linux", "arch": "x86_64", "kernel": "6.8", "cpus": 4, "memoryBytes": 8214528000},
-  "summary": {"pass": 1, "warn": 2, "fail": 1, "unknown": 1, "skipped": 1, "worst": "fail"},
+  "summary": {"pass": 2, "warn": 2, "fail": 1, "unknown": 1, "skipped": 1, "worst": "fail"},
   "findings": [
+    {"id": "disk.space", "subject": "host", "status": "pass", "basis": "system",
+     "facts": {"free_bytes": 107374182400, "percent": 50, "days": 1119,
+               "growth_bytes_per_day": 95890410, "growth": "planning"},
+     "advice": "The data disk has 100 GiB free (50%): about 1119 days at 91.4 MiB a day, the planning figure of about 35 GB a year, used until the chain has 10,000 blocks.",
+     "docs": "https://docs.iceroot.com/validators/doctor/#disk-space",
+     "untrusted": []},
     {"id": "keys.file", "subject": "forger", "status": "fail", "basis": "system",
      "facts": {"mode": "0644", "owner": "same", "path": "~/.config/solar-core/testnet/delegates.json"},
      "advice": "delegates.json is open to other users (mode 0644).\nRun: chmod 600 ~/.config/solar-core/testnet/delegates.json",
@@ -158,12 +165,15 @@ example below is shortened.
 
 - Keys always come in the order the schema lists them; findings in the order of
   `heartwood doctor checks`, every check once (a finding per role where a check looks at both).
-- Times are UTC. Numbers are integers: sizes in bytes, durations in milliseconds. Modes are octal
-  strings.
+- Times are UTC. Numbers are integers: a size is a count of bytes under a name that says so
+  (`free_bytes`, `growth_bytes_per_day`, `memory_bytes`), a duration a count of milliseconds
+  (`millis`, or a name that ends in `_ms`). The advice prints sizes in plain units (`100 GiB`,
+  `91.4 MiB`). Modes are octal strings.
 - `facts` hold typed values only: integers, yes or no, fixed words, ids that passed a strict
   grammar (a 64-digit block id, a 66-digit public key, a delegate name, a variable name, a
-  version), address labels, redacted paths, sizes, durations and times. No text from a log or a
-  peer is ever a fact, a status or advice.
+  version), address labels, redacted paths, sizes, durations and times. A fixed word is one word
+  (`planning`, `loopback-only`); the advice prints the phrase the check's documentation gives it.
+  No text from a log or a peer is ever a fact, a status or advice.
 - `untrusted` lists each excerpt once; a finding names its excerpts by `id`.
   `redaction.untrustedOmitted` counts the excerpts left out beyond the first 20.
 - The same inputs give the same bytes. A change of meaning changes the format's `/1`.

@@ -102,9 +102,9 @@ pub(super) fn named_as(text: &str) -> (&'static str, Fact) {
     ("delegate", name(text))
 }
 
-/// A delegate's name as a fact (names reach here only after passing the username grammar).
+/// A delegate's name as a fact; a name out of the username grammar is the word `unnamed`.
 pub(super) fn name(text: &str) -> Fact {
-    Id::new(IdKind::Username, text).map_or(Fact::Word("a delegate"), Fact::Id)
+    Id::new(IdKind::Username, text).map_or(Fact::Word("unnamed"), Fact::Id)
 }
 
 /// Our delegates: their names, and the public keys the forger's signing record holds.

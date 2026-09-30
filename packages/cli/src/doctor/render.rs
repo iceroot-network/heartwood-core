@@ -236,19 +236,42 @@ fn fact_value(fact: &Fact, redactor: &mut Redactor<'_>) -> Value {
     }
 }
 
-/// A finding's advice: its template with its values filled in, redacted as the facts are.
+/// A finding's advice: its template with its values filled in, redacted as the facts are; a size
+/// in plain units, a fixed word as the phrase the check's documentation gives it.
 fn advice(finding: &Finding, redactor: &mut Redactor<'_>) -> String {
-    let template = docs::docs()
-        .ok()
-        .and_then(|docs| docs.template(finding.id, finding.advice.key));
+    let docs = docs::docs().ok();
+    let template = docs.and_then(|docs| docs.template(finding.id, finding.advice.key));
     let mut text = template.unwrap_or(finding.advice.key).to_owned();
     for (name, value) in &finding.advice.values {
-        let value = match fact_value(value, redactor) {
-            Value::String(text) => text,
-            Value::Null => "an unknown time".to_owned(),
-            other => other.to_string(),
+        let value = match (value, fact_value(value, redactor)) {
+            (Fact::Bytes(bytes), _) => size(*bytes),
+            (Fact::Word(word), _) => docs
+                .and_then(|d| d.word(finding.id, word))
+                .unwrap_or(word)
+                .into(),
+            (_, Value::String(text)) => text,
+            (_, Value::Null) => "an unknown time".to_owned(),
+            (_, other) => other.to_string(),
         };
         text = text.replace(&format!("{{{name}}}"), &value);
     }
     text
+}
+
+/// A size in the largest binary unit it reaches, with one decimal below 100 of that unit (left out
+/// when it is 0): `1023 bytes`, `1.5 KiB`, `91.4 MiB`, `10 GiB`, `100 GiB`. The facts keep bytes.
+fn size(bytes: u64) -> String {
+    const UNITS: [&str; 6] = ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
+    let Some(power) = (1..=UNITS.len()).rev().find(|p| bytes >> (10 * p) > 0) else {
+        return format!("{bytes} bytes");
+    };
+    let unit = UNITS.get(power - 1).copied().unwrap_or_default();
+    let (value, shift) = (u128::from(bytes), 10 * power);
+    let half = 1 << (shift - 1);
+    let tenths = (value * 10 + half) >> shift;
+    match tenths {
+        ..1000 if tenths % 10 != 0 => format!("{}.{} {unit}", tenths / 10, tenths % 10),
+        ..1000 => format!("{} {unit}", tenths / 10),
+        _ => format!("{} {unit}", (value + half) >> shift),
+    }
 }

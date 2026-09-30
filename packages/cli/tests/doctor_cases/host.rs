@@ -304,12 +304,14 @@ fn the_resources_say_what_they_compare() {
         panic!("one finding")
     };
     assert!(finding.facts.contains(&("need_cpus", Fact::Int(6))));
-    assert!(finding.facts.contains(&("need_gb", Fact::Int(10))));
-    assert!(finding.facts.contains(&("memory_gb", Fact::Int(8))));
+    let need = ("need_memory_bytes", Fact::Bytes(10 * GIB));
+    assert!(finding.facts.contains(&need), "{finding:#?}");
+    let memory = ("memory_bytes", Fact::Bytes(8 * GIB));
+    assert!(finding.facts.contains(&memory), "{finding:#?}");
     assert!(
         finding
             .facts
-            .contains(&("roles", Fact::Word("a relay and a forger together")))
+            .contains(&("roles", Fact::Word("relay-and-forger")))
     );
 }
 
