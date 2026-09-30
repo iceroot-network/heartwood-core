@@ -72,16 +72,19 @@ fn read(dir: &Path) -> Result<(Vec<Line>, Vec<String>)> {
 /// the wait from an offer to its signatures (minimum, median and maximum, in milliseconds).
 fn summary(lines: &[Line]) -> String {
     let count = |step: &str| lines.iter().filter(|l| l.step == step).count();
-    let offered: BTreeMap<&str, i64> = lines
-        .iter()
-        .filter(|l| l.step == "offered")
-        .map(|l| (l.status.as_str(), l.at))
-        .collect();
-    let mut waits: Vec<i64> = lines
-        .iter()
-        .filter(|l| l.step == "signed")
-        .filter_map(|l| offered.get(l.status.as_str()).map(|at| l.at - at))
-        .collect();
+    // A status can be offered again after its signatures went on: a signature belongs to the offer
+    // before it.
+    let mut offered: BTreeMap<&str, i64> = BTreeMap::new();
+    let mut waits: Vec<i64> = Vec::new();
+    for l in lines {
+        match l.step.as_str() {
+            "offered" => {
+                offered.insert(l.status.as_str(), l.at);
+            }
+            "signed" => waits.extend(offered.get(l.status.as_str()).map(|at| l.at - at)),
+            _ => {}
+        }
+    }
     waits.sort_unstable();
     let wait = match (waits.first(), waits.get(waits.len() / 2), waits.last()) {
         (Some(min), Some(median), Some(max)) => {
@@ -161,4 +164,40 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(at: i64, step: &str, status: &str) -> Line {
+        Line {
+            at,
+            step: step.to_owned(),
+            status: status.to_owned(),
+            slot: 1,
+        }
+    }
+
+    #[test]
+    fn a_signature_belongs_to_the_offer_before_it() {
+        // The same status is offered again after its signatures went on.
+        let lines = [
+            line(1_000, "offered", "a"),
+            line(1_400, "signed", "a"),
+            line(9_000, "offered", "a"),
+            line(9_250, "signed", "a"),
+            line(9_300, "unsigned", "b"),
+        ];
+        assert_eq!(
+            summary(&lines),
+            "2 offered, 2 signed, 1 served unsigned; the wait from an offer to its signatures 250 / 400 / 400 ms (min / median / max)"
+        );
+    }
+
+    #[test]
+    fn a_signature_without_an_offer_has_no_wait() {
+        let lines = [line(10, "signed", "a")];
+        assert!(summary(&lines).ends_with("no offer with signatures"));
+    }
 }
