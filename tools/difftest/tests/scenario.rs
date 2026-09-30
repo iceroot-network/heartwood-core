@@ -1,0 +1,1561 @@
+//! The scenario compiler and runner: the format's schema, the triggers, the planning of nonces and
+//! heights, every action and check against a fake backend, the run records and their comparison,
+//! the external backend's calls against a stub executable and a stub API, and the lockstep
+//! backend on the fixtures under `tests/fixtures/scenario` (integration tests, ignored for the
+//! reason `integration`: they run the real reference, `DIFFTEST_TEST_SOLAR_DIR` or
+//! `DIFFTEST_TEST_IMAGE`, and fail without one unless `DIFFTEST_TEST_NO_ORACLE` says to skip).
+
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+
+use heartwood_difftest::report::{Outcome, Report};
+use heartwood_difftest::scenario::backend::Answer;
+use heartwood_difftest::scenario::backends::{external, heartwood};
+use heartwood_difftest::scenario::chain::Chain;
+use heartwood_difftest::scenario::compile::{fire_heights, specs};
+use heartwood_difftest::scenario::format::{
+    Compiled, CompiledTx, Level, Part, RestartModes, Scenario, Via,
+};
+use heartwood_difftest::scenario::record::{Record, StepRecord, compare};
+use heartwood_difftest::scenario::runner::{Seen, due, run};
+use heartwood_difftest::scenario::{self, Backend, BackendError, Submitted, Tip};
+use heartwood_difftest::store::ScratchDir;
+use serde_json::{Value, json};
+
+fn fixtures() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scenario")
+}
+
+// The schema.
+
+fn scenario_json(steps: Value) -> Value {
+    json!({
+        "id": "fake", "title": "t", "levels": ["L2", "L3"], "network": "devnet",
+        "genesisSeed": "seed", "actors": {"alice": {"seed": 1}, "bob": {"seed": 2}},
+        "steps": steps,
+    })
+}
+
+#[test]
+fn every_object_of_the_format_refuses_a_key_it_does_not_know() {
+    let full = scenario_json(json!([{
+        "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+        "txs": [{"ref": "t", "type": "transfer", "from": "alice", "to": [["bob", "1"]]}],
+        "check": {"accept": ["t"], "api": {"projection": "wallets"}, "missed": {"node": 1, "atLeast": 1}},
+        "mode": {"heartwood": "replay"},
+    }]));
+    serde_json::from_value::<Scenario>(full.clone()).expect("the base file reads");
+    let paths: [&[&str]; 9] = [
+        &[],
+        &["actors", "alice"],
+        &["steps", "0"],
+        &["steps", "0", "at"],
+        &["steps", "0", "txs", "0"],
+        &["steps", "0", "check"],
+        &["steps", "0", "check", "api"],
+        &["steps", "0", "check", "missed"],
+        &["steps", "0", "mode"],
+    ];
+    for path in paths {
+        let mut value = full.clone();
+        let mut at = &mut value;
+        for key in path {
+            at = match key.parse::<usize>() {
+                Ok(index) => &mut at[index],
+                Err(_) => &mut at[*key],
+            };
+        }
+        at["surprise"] = json!(1);
+        let error = serde_json::from_value::<Scenario>(value)
+            .expect_err(&format!("a stray key at {path:?} is refused"))
+            .to_string();
+        assert!(error.contains("unknown field `surprise`"), "{error}");
+    }
+    for (bad, why) in [
+        (json!({"nonce": "last"}), "a nonce is next or a number"),
+        (json!({"via": "http"}), "via is api or p2p"),
+        (json!({"do": "explode"}), "an action of the list"),
+    ] {
+        let mut value = full.clone();
+        let step = &mut value["steps"][0];
+        for (key, item) in bad.as_object().expect("object") {
+            if key == "nonce" {
+                step["txs"][0][key] = item.clone();
+            } else {
+                step[key] = item.clone();
+            }
+        }
+        assert!(serde_json::from_value::<Scenario>(value).is_err(), "{why}");
+    }
+}
+
+#[test]
+fn the_fixtures_are_scenarios_with_content_names_that_fit_a_short_chain() {
+    let mut found = 0;
+    for entry in std::fs::read_dir(fixtures()).expect("fixtures") {
+        let path = entry.expect("entry").path();
+        let scenario = scenario::load(&path).expect("the fixture reads");
+        let stem = path.file_stem().and_then(|s| s.to_str()).expect("stem");
+        assert_eq!(scenario.id, stem);
+        assert!(
+            scenario
+                .id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b == b'-'),
+            "{} is a content name",
+            scenario.id
+        );
+        assert_eq!(scenario.levels, [Level::L2]);
+        let chain = Chain::new(&scenario).expect("chain");
+        let fires = fire_heights(&scenario, chain.round_length).expect("fires");
+        assert!(
+            fires.iter().all(|h| *h <= 5 * chain.round_length),
+            "{} stays within five rounds",
+            scenario.id
+        );
+        found += 1;
+    }
+    assert_eq!(found, 3);
+}
+
+// The triggers.
+
+fn seen(height: u32) -> Seen {
+    Seen {
+        height,
+        slot: u64::from(height) * 2,
+    }
+}
+
+fn trigger(value: Value) -> heartwood_difftest::scenario::format::Trigger {
+    serde_json::from_value(value).expect("trigger")
+}
+
+#[test]
+fn a_trigger_is_due_when_the_recorded_tips_first_satisfy_it() {
+    let at = |t: Value, previous: u32, now: u32| due(&trigger(t), 53, seen(previous), seen(now));
+    // A height is a lower bound.
+    assert!(!at(json!({"height": 5}), 1, 4));
+    assert!(at(json!({"height": 5}), 1, 5));
+    assert!(at(json!({"height": 5}), 1, 9));
+    // Blocks after the previous step.
+    assert!(!at(json!({"afterBlocks": 3}), 10, 12));
+    assert!(at(json!({"afterBlocks": 3}), 10, 13));
+    // Slots: on the slot of the tips, not their height.
+    assert!(!at(json!({"slot": 20}), 1, 9));
+    assert!(at(json!({"slot": 20}), 1, 10));
+    assert!(!at(json!({"slotsAfter": 4}), 10, 11));
+    assert!(at(json!({"slotsAfter": 4}), 10, 12));
+    // The start and the end of a round.
+    assert!(!at(json!({"round": 2, "position": "start"}), 1, 53));
+    assert!(at(json!({"round": 2, "position": "start"}), 1, 54));
+    assert!(at(json!({"round": 1, "position": "start"}), 1, 2));
+    assert!(!at(json!({"round": 2, "position": "end"}), 1, 105));
+    assert!(at(json!({"round": 2, "position": "end"}), 1, 106));
+    // The end of the round the previous step fired in.
+    assert!(!at(json!({"roundEnd": true}), 20, 52));
+    assert!(at(json!({"roundEnd": true}), 20, 53));
+    assert!(at(json!({"roundEnd": true}), 53, 53));
+    assert!(!at(json!({"roundEnd": true}), 54, 106 - 1));
+    assert!(at(json!({"roundEnd": true}), 54, 106));
+    // A trigger of no form is never due.
+    assert!(!at(json!({}), 1, 1000));
+}
+
+#[test]
+fn a_trigger_gives_the_tip_it_fires_at() {
+    let scenario: Scenario = serde_json::from_value(scenario_json(json!([
+        {"at": {"height": 5}},
+        {"at": {"afterBlocks": 2}},
+        {"at": {"round": 2, "position": "start"}},
+        {"at": {"round": 2, "position": "end"}},
+        {"at": {"roundEnd": true}},
+        {"at": {"afterBlocks": 1}},
+        {"at": {"height": 3}},
+        {"at": {"slotsAfter": 4}},
+    ])))
+    .expect("scenario");
+    // A height below the previous step's does not send the plan back.
+    assert_eq!(
+        fire_heights(&scenario, 53).expect("fires"),
+        [5, 7, 54, 106, 106, 107, 107, 111]
+    );
+    for bad in [
+        json!({"height": 5, "afterBlocks": 1}),
+        json!({"round": 2}),
+        json!({"position": "start"}),
+        json!({}),
+    ] {
+        let scenario: Scenario =
+            serde_json::from_value(scenario_json(json!([{"at": bad}]))).expect("scenario");
+        assert!(fire_heights(&scenario, 53).is_err(), "{bad}");
+    }
+}
+
+// The planning of nonces, heights and fees.
+
+#[test]
+fn a_transaction_is_planned_after_its_step_with_the_nonces_of_its_sender() {
+    let scenario: Scenario = serde_json::from_value(scenario_json(json!([
+        {"at": {"height": 2}, "do": "submit", "node": 1, "txs": [
+            {"ref": "a1", "type": "transfer", "from": "alice", "to": [["bob", "10"]]},
+            {"ref": "a2", "type": "transfer", "from": "alice", "nonce": 7, "to": [["bob", "20"]],
+             "fee": "5", "memo": "m"},
+            {"ref": "b1", "type": "vote", "from": "bob", "asset": {"votes": [["genesis_2", 100]]}},
+            {"ref": "grant", "type": "transfer", "from": "genesis", "to": [["alice", "30"]]}]},
+        {"at": {"afterBlocks": 3}, "do": "submit", "node": 1, "txs": [
+            {"ref": "a3", "type": "transfer", "from": "alice", "to": [["bob", "40"]]}]},
+    ])))
+    .expect("scenario");
+    let chain = Chain::new(&scenario).expect("chain");
+    let planned = specs(&scenario, &chain).expect("specs");
+    let heights: Vec<(usize, u32, &str)> = planned
+        .iter()
+        .map(|(step, height, name, _)| (*step, *height, name.as_str()))
+        .collect();
+    assert_eq!(
+        heights,
+        [
+            (0, 3, "a1"),
+            (0, 3, "a2"),
+            (0, 3, "b1"),
+            (0, 3, "grant"),
+            (1, 6, "a3")
+        ]
+    );
+    let nonces: Vec<&str> = planned
+        .iter()
+        .map(|(.., spec)| spec["nonce"].as_str().expect("nonce"))
+        .collect();
+    assert_eq!(nonces, ["1", "7", "1", "1", "8"]);
+    let spec = |name: &str| {
+        &planned
+            .iter()
+            .find(|(_, _, n, _)| n == name)
+            .expect("planned")
+            .3
+    };
+    // The fee is the oracle's floor unless the file gives one.
+    assert!(spec("a1").get("fee").is_none());
+    assert_eq!(spec("a2")["fee"], "5");
+    assert_eq!(spec("a2")["memo"], "m");
+    let alice = chain.person("alice").expect("alice");
+    assert_eq!(spec("a1")["passphrase"], alice.passphrase.as_str());
+    assert_eq!(
+        spec("a1")["asset"]["recipients"],
+        json!([[chain.person("bob").expect("bob").address, "10"]])
+    );
+    assert_eq!(spec("b1")["asset"]["votes"], json!([["genesis_2", 100]]));
+    assert_ne!(
+        spec("grant")["passphrase"],
+        alice.passphrase.as_str(),
+        "the genesis wallet is its own"
+    );
+    // The same file plans the same specs.
+    assert_eq!(planned, specs(&scenario, &chain).expect("again"));
+}
+
+#[test]
+fn a_scenario_that_cannot_be_planned_is_refused() {
+    let plan = |steps: Value| {
+        let scenario: Scenario =
+            serde_json::from_value(scenario_json(steps)).expect("the file reads");
+        let chain = Chain::new(&scenario).expect("chain");
+        specs(&scenario, &chain).expect_err("refused").to_string()
+    };
+    let tx = |name: &str, kind: &str| json!({"ref": name, "type": kind, "from": "alice", "to": [["bob", "1"]]});
+    let twice = plan(json!([
+        {"at": {"height": 2}, "do": "submit", "node": 1, "txs": [tx("t", "transfer"), tx("t", "transfer")]},
+    ]));
+    assert!(twice.contains("named twice"), "{twice}");
+    let no_submit = plan(json!([{"at": {"height": 2}, "txs": [tx("t", "transfer")]}]));
+    assert!(no_submit.contains("without a submit"), "{no_submit}");
+    let unknown = plan(json!([
+        {"at": {"height": 2}, "do": "submit", "node": 1, "txs": [tx("t", "frobnicate")]},
+    ]));
+    assert!(unknown.contains("no such type"), "{unknown}");
+    let stranger = plan(json!([
+        {"at": {"height": 2}, "do": "submit", "node": 1,
+         "txs": [{"ref": "t", "type": "transfer", "from": "mallory", "to": [["bob", "1"]]}]},
+    ]));
+    assert!(stranger.contains("mallory"), "{stranger}");
+}
+
+// A fake backend.
+
+/// A network of `nodes` nodes that grows a block whenever the runner waits, keeps a log of what it
+/// is asked and answers the API from pages the test sets.
+struct Fake {
+    nodes: u32,
+    height: Cell<u32>,
+    /// The height the network stops growing at: a wait beyond it fails.
+    limit: u32,
+    log: RefCell<Vec<String>>,
+    /// The transactions the pools refuse, by reference, with the code.
+    refuse: HashMap<String, String>,
+    /// The ids accepted and not yet in a block.
+    pool: RefCell<Vec<String>>,
+    chain: RefCell<HashSet<String>>,
+    pages: HashMap<(u32, String), Value>,
+    verdicts: HashMap<&'static str, Result<(), String>>,
+    /// Blocks a node's tip is behind the network's.
+    lag: HashMap<u32, u32>,
+    delegates: Vec<String>,
+    unsupported: HashSet<&'static str>,
+}
+
+impl Fake {
+    fn new(nodes: u32) -> Fake {
+        Fake {
+            nodes,
+            height: Cell::new(1),
+            limit: 200,
+            log: RefCell::default(),
+            refuse: HashMap::new(),
+            pool: RefCell::default(),
+            chain: RefCell::default(),
+            pages: HashMap::new(),
+            verdicts: HashMap::new(),
+            lag: HashMap::new(),
+            delegates: Vec::new(),
+            unsupported: HashSet::new(),
+        }
+    }
+
+    fn page(&mut self, node: u32, path: &str, body: Value) {
+        self.pages.insert((node, path.to_owned()), body);
+    }
+
+    fn page_everywhere(&mut self, path: &str, body: Value) {
+        for node in 1..=self.nodes {
+            self.page(node, path, body.clone());
+        }
+    }
+
+    fn note(&self, line: String) {
+        self.log.borrow_mut().push(line);
+    }
+
+    fn refused(&self, action: &'static str) -> Result<(), BackendError> {
+        if self.unsupported.contains(action) {
+            return Err(BackendError::Unsupported {
+                backend: "fake",
+                action,
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Backend for Fake {
+    fn name(&self) -> &'static str {
+        "fake"
+    }
+
+    fn nodes(&self) -> u32 {
+        self.nodes
+    }
+
+    fn start(&mut self, node: u32, part: Part) -> Result<(), BackendError> {
+        self.note(format!("start {node} {part:?}"));
+        self.refused("start")
+    }
+
+    fn stop(&mut self, node: u32, part: Part, kill: bool) -> Result<(), BackendError> {
+        self.note(format!("stop {node} {part:?} {kill}"));
+        self.refused("stop")
+    }
+
+    fn restart(&mut self, node: u32, part: Part, modes: RestartModes) -> Result<(), BackendError> {
+        self.note(format!("restart {node} {part:?} {modes:?}"));
+        self.refused("restart")
+    }
+
+    fn partition(&mut self, groups: &[Vec<u32>]) -> Result<(), BackendError> {
+        self.note(format!("partition {groups:?}"));
+        self.refused("partition")
+    }
+
+    fn heal(&mut self) -> Result<(), BackendError> {
+        self.note("heal".into());
+        self.refused("heal")
+    }
+
+    fn api_url(&self, node: u32) -> Result<String, BackendError> {
+        Ok(format!("http://fake-{node}"))
+    }
+
+    fn archive(&mut self, _: &Path) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    fn submit(
+        &mut self,
+        node: u32,
+        via: Via,
+        transactions: &[CompiledTx],
+    ) -> Result<Vec<Submitted>, BackendError> {
+        let names: Vec<&str> = transactions.iter().map(|t| t.reference.as_str()).collect();
+        self.note(format!("submit {node} {via:?} {}", names.join(",")));
+        Ok(transactions
+            .iter()
+            .map(|t| {
+                let code = self.refuse.get(&t.reference).cloned();
+                if code.is_none() {
+                    self.pool.borrow_mut().push(t.id.clone());
+                }
+                Submitted {
+                    reference: t.reference.clone(),
+                    accepted: code.is_none(),
+                    code,
+                }
+            })
+            .collect())
+    }
+
+    fn tip(&self, node: u32) -> Result<Tip, BackendError> {
+        let height = self.height.get() - self.lag.get(&node).copied().unwrap_or(0);
+        Ok(Tip {
+            height,
+            id: format!("block-{height}"),
+        })
+    }
+
+    fn revert(&mut self, blocks: u32) -> Result<(), BackendError> {
+        self.note(format!("revert {blocks}"));
+        self.refused("revert")
+    }
+
+    fn fork(&mut self, branch: &str) -> Result<(), BackendError> {
+        self.note(format!("fork {branch}"));
+        self.refused("fork")
+    }
+
+    fn get(&self, node: u32, path: &str) -> Result<Answer, BackendError> {
+        Ok(match self.pages.get(&(node, path.to_owned())) {
+            Some(body) => Answer {
+                status: 200,
+                body: body.clone(),
+            },
+            None => Answer {
+                status: 404,
+                body: json!({}),
+            },
+        })
+    }
+
+    fn forged(&self, _: u32, id: &str) -> Result<bool, BackendError> {
+        Ok(self.chain.borrow().contains(id))
+    }
+
+    fn wait(&mut self) -> Result<(), BackendError> {
+        if self.height.get() >= self.limit {
+            return Err(BackendError::Failed {
+                action: "wait",
+                message: "the chain ends".into(),
+            });
+        }
+        self.height.set(self.height.get() + 1);
+        let taken: Vec<String> = self.pool.borrow_mut().drain(..).collect();
+        self.chain.borrow_mut().extend(taken);
+        Ok(())
+    }
+
+    fn verified(&self, name: &str) -> Option<Result<(), String>> {
+        self.verdicts.get(name).cloned()
+    }
+
+    fn forger_delegates(&self, _: u32) -> Result<Vec<String>, BackendError> {
+        Ok(self.delegates.clone())
+    }
+}
+
+/// A compiled scenario of `steps`, its transactions `(reference, step)` with the ids `id-<ref>`.
+fn compiled(steps: Value, transactions: &[(&str, usize)]) -> Compiled {
+    Compiled {
+        scenario: serde_json::from_value(scenario_json(steps)).expect("scenario"),
+        transactions: transactions
+            .iter()
+            .map(|(reference, step)| CompiledTx {
+                reference: (*reference).to_owned(),
+                step: *step,
+                height: 3,
+                id: format!("id-{reference}"),
+                bytes: format!("00{reference}"),
+            })
+            .collect(),
+    }
+}
+
+fn run_on(fake: &mut Fake, compiled: &Compiled) -> (Report, Record) {
+    run(compiled, fake, Level::L3).expect("the run")
+}
+
+/// The outcome of the case whose label holds `part`.
+fn outcome<'a>(report: &'a Report, part: &str) -> &'a Outcome {
+    let mut found = report.results.iter().filter(|c| c.label.contains(part));
+    let case = found
+        .next()
+        .unwrap_or_else(|| panic!("no case {part}: {:#?}", report.results));
+    assert!(found.next().is_none(), "two cases {part}");
+    &case.outcome
+}
+
+fn mismatch(want: &str, got: &str) -> Outcome {
+    Outcome::VerdictMismatch {
+        oracle: want.into(),
+        heartwood: got.into(),
+    }
+}
+
+// Every action.
+
+#[test]
+fn every_action_reaches_the_backend_in_step_order() {
+    let compiled = compiled(
+        json!([
+            {"at": {"height": 2}, "do": "submit", "node": 1, "via": "p2p"},
+            {"at": {"afterBlocks": 1}, "do": "wait", "blocks": 2},
+            {"at": {"afterBlocks": 1}, "do": "stop", "node": 2, "role": "forger"},
+            {"at": {"afterBlocks": 1}, "do": "start", "node": 2, "role": "forger"},
+            {"at": {"afterBlocks": 1}, "do": "restart", "node": 1, "role": "relay",
+             "mode": {"reference": "rebuild", "heartwood": "replay"}},
+            {"at": {"afterBlocks": 1}, "do": "partition", "groups": [[1], [2]]},
+            {"at": {"afterBlocks": 1}, "do": "heal"},
+            {"at": {"afterBlocks": 1}, "do": "revert", "blocks": 2},
+            {"at": {"afterBlocks": 1}, "do": "fork", "branch": "later"},
+            {"at": {"afterBlocks": 1}, "do": "stop", "node": 1},
+        ]),
+        &[("t1", 0), ("t2", 0)],
+    );
+    let mut fake = Fake::new(2);
+    let (report, record) = run_on(&mut fake, &compiled);
+    assert_eq!(report.failed(), 0, "{:#?}", report.results);
+    assert_eq!(
+        *fake.log.borrow(),
+        [
+            "submit 1 P2p t1,t2",
+            "stop 2 Forger false",
+            "start 2 Forger",
+            "restart 1 Relay RestartModes { reference: Rebuild, heartwood: Replay }",
+            "partition [[1], [2]]",
+            "heal",
+            "revert 2",
+            "fork later",
+            "stop 1 Node false",
+        ]
+    );
+    assert_eq!(record.steps.len(), 10);
+    // The wait took two blocks: the step after it fired at the tip they brought.
+    assert_eq!(record.steps[2].tip.0, record.steps[1].tip.0 + 2);
+    assert_eq!(record.steps[0].submitted.len(), 2);
+    assert_eq!(record.tip.as_ref().map(|t| t.0), Some(fake.height.get()));
+}
+
+#[test]
+fn an_action_a_backend_does_not_offer_fails_its_step_and_the_run_goes_on() {
+    let compiled = compiled(
+        json!([
+            {"at": {"height": 2}, "do": "partition", "groups": [[1], [2]]},
+            {"at": {"afterBlocks": 1}, "do": "heal"},
+        ]),
+        &[],
+    );
+    let mut fake = Fake::new(2);
+    fake.unsupported.insert("partition");
+    let (report, record) = run_on(&mut fake, &compiled);
+    assert!(matches!(
+        outcome(&report, "action"),
+        Outcome::HarnessError(m) if m.contains("the fake backend cannot partition")
+    ));
+    assert!(matches!(outcome(&report, "heal"), Outcome::Pass));
+    assert_eq!(record.steps.len(), 2);
+    // A step that names what it needs but lacks it is the harness's error, not a panic.
+    let incomplete = self::compiled(
+        json!([
+            {"at": {"height": 2}, "do": "fork"},
+            {"at": {"afterBlocks": 1}, "do": "revert"},
+            {"at": {"afterBlocks": 1}, "do": "wait"},
+            {"at": {"afterBlocks": 1}, "do": "stop"},
+        ]),
+        &[],
+    );
+    let (report, _) = run_on(&mut Fake::new(1), &incomplete);
+    assert_eq!(report.failed(), 4, "{:#?}", report.results);
+}
+
+#[test]
+fn a_trigger_that_never_comes_ends_the_run_with_the_harness_error() {
+    let compiled = compiled(
+        json!([
+            {"at": {"height": 2}, "do": "heal"},
+            {"at": {"height": 99}, "do": "heal"},
+            {"at": {"afterBlocks": 1}, "do": "heal"},
+        ]),
+        &[],
+    );
+    let mut fake = Fake::new(1);
+    fake.limit = 6;
+    let (report, record) = run_on(&mut fake, &compiled);
+    assert_eq!(report.failed(), 1, "{:#?}", report.results);
+    assert!(matches!(
+        outcome(&report, "step 2"),
+        Outcome::HarnessError(m) if m.contains("the trigger") && m.contains("the chain ends")
+    ));
+    assert_eq!(record.steps.len(), 1, "later steps do not fire");
+}
+
+// Every check.
+
+#[test]
+fn a_submit_is_checked_against_the_answers_of_the_pool() {
+    let compiled = compiled(
+        json!([{
+            "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+            "check": {
+                "accept": ["ok", "no", "ghost"], "invalid": ["ok", "no"],
+                "codes": {"no": "ERR_APPLY", "ok": "ERR_APPLY", "other": "ERR_APPLY"},
+            },
+        }]),
+        &[("ok", 0), ("no", 0), ("other", 0)],
+    );
+    let mut fake = Fake::new(1);
+    fake.refuse.insert("no".into(), "ERR_OFFLINE".into());
+    fake.refuse.insert("other".into(), "ERR_APPLY".into());
+    let (report, record) = run_on(&mut fake, &compiled);
+    assert_eq!(*outcome(&report, "accept ok"), Outcome::Pass);
+    assert_eq!(
+        *outcome(&report, "accept no"),
+        mismatch("accepted", "refused: ERR_OFFLINE")
+    );
+    assert!(matches!(
+        outcome(&report, "accept ghost"),
+        Outcome::HarnessError(m) if m.contains("ghost was not submitted")
+    ));
+    assert_eq!(*outcome(&report, "invalid no"), Outcome::Pass);
+    assert_eq!(
+        *outcome(&report, "invalid ok"),
+        mismatch("refused", "accepted")
+    );
+    assert_eq!(
+        *outcome(&report, "code no"),
+        mismatch("ERR_APPLY", "refused: ERR_OFFLINE")
+    );
+    assert_eq!(
+        *outcome(&report, "code ok"),
+        mismatch("ERR_APPLY", "accepted")
+    );
+    assert_eq!(*outcome(&report, "code other"), Outcome::Pass);
+    let answers = &record.steps[0].submitted;
+    assert_eq!(answers[0], ("ok".to_owned(), true, None));
+    assert_eq!(
+        answers[1],
+        ("no".to_owned(), false, Some("ERR_OFFLINE".to_owned()))
+    );
+    assert!(
+        record.steps[0]
+            .outcomes
+            .iter()
+            .any(|(label, how)| label.ends_with("accept no") && how.starts_with("failed"))
+    );
+}
+
+#[test]
+fn forged_and_absent_look_in_the_chain_within_the_blocks_given() {
+    let compiled = compiled(
+        json!([
+            {"at": {"height": 2}, "do": "submit", "node": 1,
+             "check": {"forged": ["in"], "withinBlocks": 2}},
+            {"at": {"afterBlocks": 0}, "check": {"forged": ["out"], "withinBlocks": 3, "absent": ["out"]}},
+            {"at": {"afterBlocks": 0}, "check": {"absent": ["in", "unknown"], "forged": ["unknown"]}},
+        ]),
+        &[("in", 0), ("out", 0)],
+    );
+    let mut fake = Fake::new(1);
+    fake.refuse.insert("out".into(), "ERR_APPLY".into());
+    let (report, _) = run_on(&mut fake, &compiled);
+    assert_eq!(*outcome(&report, "forged in"), Outcome::Pass);
+    let forged_out = report
+        .results
+        .iter()
+        .find(|c| c.label.contains("forged out"))
+        .expect("case");
+    assert_eq!(forged_out.outcome, mismatch("in the chain", "in no block"));
+    // It looked through the whole window before it gave up.
+    assert!(forged_out.height >= 5, "{}", forged_out.height);
+    let absent: Vec<_> = report
+        .results
+        .iter()
+        .filter(|c| c.label.contains("absent"))
+        .collect();
+    assert_eq!(absent[0].outcome, Outcome::Pass, "out is in no block");
+    assert_eq!(absent[1].outcome, mismatch("in no block", "in the chain"));
+    assert!(matches!(&absent[2].outcome, Outcome::HarnessError(m) if m.contains("unknown")));
+}
+
+#[test]
+fn digest_and_invariants_are_the_backends_to_vouch_for_or_a_comparison_of_two_runs() {
+    let compiled = compiled(
+        json!([{
+            "at": {"height": 3},
+            "check": {"digest": true, "invariant": ["revertSymmetry", "restartEqual", "singleTip"]},
+        }]),
+        &[],
+    );
+    // A backend that says nothing: the checks of two runs are skipped, one tip is judged.
+    let (report, _) = run_on(&mut Fake::new(2), &compiled);
+    assert!(matches!(outcome(&report, "digest"), Outcome::Skipped(_)));
+    assert!(matches!(
+        outcome(&report, "revertsymmetry"),
+        Outcome::Skipped(_)
+    ));
+    assert!(matches!(
+        outcome(&report, "restartequal"),
+        Outcome::Skipped(_)
+    ));
+    assert_eq!(*outcome(&report, "singletip"), Outcome::Pass);
+    // Nodes on different tips.
+    let mut behind = Fake::new(2);
+    behind.lag.insert(2, 1);
+    let (report, _) = run_on(&mut behind, &compiled);
+    assert!(matches!(
+        outcome(&report, "singletip"),
+        Outcome::VerdictMismatch { oracle, .. } if oracle == "one tip"
+    ));
+    // A backend that vouches.
+    let mut vouching = Fake::new(1);
+    vouching.verdicts.insert("digest", Ok(()));
+    vouching
+        .verdicts
+        .insert("revertSymmetry", Err("a line differs".into()));
+    vouching.verdicts.insert("restartEqual", Ok(()));
+    let (report, _) = run_on(&mut vouching, &compiled);
+    assert_eq!(*outcome(&report, "digest"), Outcome::Pass);
+    assert_eq!(
+        *outcome(&report, "revertsymmetry"),
+        mismatch("it holds", "a line differs")
+    );
+    assert_eq!(*outcome(&report, "restartequal"), Outcome::Pass);
+}
+
+fn wallet_pages(fake: &mut Fake, chain: &Chain, node: u32, alice: &str) {
+    for (actor, balance) in [("genesis", "1000"), ("alice", alice), ("bob", "7")] {
+        let address = &chain.person(actor).expect("actor").address;
+        fake.page(
+            node,
+            &format!("/api/wallets/{address}"),
+            json!({"data": {"balance": balance, "nonce": "2", "unrelated": node}}),
+        );
+    }
+}
+
+#[test]
+fn an_api_projection_is_equal_on_every_node_or_a_mismatch() {
+    let compiled = compiled(
+        json!([{
+            "at": {"height": 2},
+            "check": {"api": {"projection": "wallets"}},
+        }, {
+            "at": {"afterBlocks": 0},
+            "check": {"api": {"projection": "wallets", "nodes": [1]}},
+        }, {
+            "at": {"afterBlocks": 0},
+            "check": {"api": {"projection": "delegates"}},
+        }, {
+            "at": {"afterBlocks": 0},
+            "check": {"api": {"projection": "supply"}},
+        }, {
+            "at": {"afterBlocks": 0},
+            "check": {"api": {"projection": "weather"}},
+        }]),
+        &[],
+    );
+    let chain = Chain::new(&compiled.scenario).expect("chain");
+    let mut fake = Fake::new(2);
+    wallet_pages(&mut fake, &chain, 1, "5");
+    wallet_pages(&mut fake, &chain, 2, "6");
+    let delegates = json!({"data": [
+        {"username": "genesis_1", "rank": 1, "votes": "0", "noise": 1},
+        {"username": "genesis_2", "rank": 2, "votes": "5"},
+    ]});
+    fake.page_everywhere("/api/delegates?limit=100", delegates);
+    fake.page(
+        1,
+        "/api/blockchain",
+        json!({"data": {"supply": "10", "burned": "0"}}),
+    );
+    fake.page(
+        2,
+        "/api/blockchain",
+        json!({"data": {"supply": "11", "burned": "0"}}),
+    );
+    let (report, _) = run_on(&mut fake, &compiled);
+    let cases: Vec<&Outcome> = report.results.iter().map(|c| &c.outcome).collect();
+    // The wallets differ between the nodes (alice's balance); on one node they cannot.
+    assert!(
+        matches!(cases[0], Outcome::Mismatch(d) if !d.is_empty()),
+        "{cases:?}"
+    );
+    assert_eq!(*cases[1], Outcome::Pass);
+    assert_eq!(*cases[2], Outcome::Pass);
+    assert!(matches!(cases[3], Outcome::Mismatch(_)), "supply differs");
+    assert!(
+        matches!(cases[4], Outcome::HarnessError(m) if m.contains("no projection is named weather"))
+    );
+    // What is kept of a wallet is its balance and nonce: a difference elsewhere is not one.
+    let mut equal = Fake::new(2);
+    wallet_pages(&mut equal, &chain, 1, "5");
+    wallet_pages(&mut equal, &chain, 2, "5");
+    let (report, _) = run_on(&mut equal, &compiled);
+    assert_eq!(report.results[0].outcome, Outcome::Pass);
+}
+
+#[test]
+fn a_projection_is_read_again_when_a_block_came_in_between() {
+    // A node whose tip moves at every look never gives a settled read: the check is skipped.
+    struct Restless(Fake);
+    impl Backend for Restless {
+        fn name(&self) -> &'static str {
+            "restless"
+        }
+        fn nodes(&self) -> u32 {
+            1
+        }
+        fn start(&mut self, n: u32, p: Part) -> Result<(), BackendError> {
+            self.0.start(n, p)
+        }
+        fn stop(&mut self, n: u32, p: Part, k: bool) -> Result<(), BackendError> {
+            self.0.stop(n, p, k)
+        }
+        fn restart(&mut self, n: u32, p: Part, m: RestartModes) -> Result<(), BackendError> {
+            self.0.restart(n, p, m)
+        }
+        fn partition(&mut self, g: &[Vec<u32>]) -> Result<(), BackendError> {
+            self.0.partition(g)
+        }
+        fn heal(&mut self) -> Result<(), BackendError> {
+            self.0.heal()
+        }
+        fn api_url(&self, n: u32) -> Result<String, BackendError> {
+            self.0.api_url(n)
+        }
+        fn archive(&mut self, d: &Path) -> Result<(), BackendError> {
+            self.0.archive(d)
+        }
+        fn submit(
+            &mut self,
+            n: u32,
+            v: Via,
+            t: &[CompiledTx],
+        ) -> Result<Vec<Submitted>, BackendError> {
+            self.0.submit(n, v, t)
+        }
+        fn tip(&self, node: u32) -> Result<Tip, BackendError> {
+            self.0.height.set(self.0.height.get() + 1);
+            self.0.tip(node)
+        }
+        fn get(&self, node: u32, path: &str) -> Result<Answer, BackendError> {
+            self.0.get(node, path)
+        }
+    }
+    let compiled = compiled(
+        json!([{"at": {"height": 2}, "check": {"api": {"projection": "supply"}}}]),
+        &[],
+    );
+    let mut fake = Fake::new(1);
+    fake.page(1, "/api/blockchain", json!({"data": {"supply": "10"}}));
+    let (report, _) = run(&compiled, &mut Restless(fake), Level::L3).expect("run");
+    assert!(
+        matches!(outcome(&report, "api supply"), Outcome::Skipped(m) if m.contains("kept moving")),
+        "{:#?}",
+        report.results
+    );
+}
+
+#[test]
+fn missed_slots_are_counted_for_the_delegates_of_the_forger() {
+    let compiled = compiled(
+        json!([
+            {"at": {"height": 2}, "check": {"missed": {"node": 1, "atLeast": 2}}},
+            {"at": {"afterBlocks": 0}, "check": {"missed": {"node": 1, "atLeast": 4}}},
+        ]),
+        &[],
+    );
+    // Without the forger's delegates every missed slot counts.
+    let mut all = Fake::new(1);
+    all.page(
+        1,
+        "/api/blocks/missed?limit=1",
+        json!({"meta": {"totalCount": 3}}),
+    );
+    let (report, _) = run_on(&mut all, &compiled);
+    assert_eq!(report.results[0].outcome, Outcome::Pass);
+    assert_eq!(
+        report.results[1].outcome,
+        mismatch("at least 4 missed", "3")
+    );
+    // With them, the missed slots of each delegate are added.
+    let mut own = Fake::new(1);
+    own.delegates = vec!["genesis_1".into(), "genesis_2".into()];
+    for name in ["genesis_1", "genesis_2"] {
+        own.page(
+            1,
+            &format!("/api/delegates/{name}/blocks/missed?limit=1"),
+            json!({"meta": {"totalCount": 2}}),
+        );
+    }
+    let (report, _) = run_on(&mut own, &compiled);
+    assert_eq!(report.results[0].outcome, Outcome::Pass);
+    assert_eq!(report.results[1].outcome, Outcome::Pass);
+}
+
+const BLOCKS: &str = "/api/blocks?limit=100&page=1&orderBy=height:asc";
+
+#[test]
+fn the_supply_is_the_genesis_supply_plus_the_rewards_less_the_burns() {
+    let compiled = compiled(
+        json!([{"at": {"height": 3}, "check": {"invariant": ["supply"]}}]),
+        &[],
+    );
+    let genesis: u64 = Chain::new(&compiled.scenario)
+        .expect("chain")
+        .supply
+        .parse()
+        .expect("supply");
+    let blocks = json!({"data": [
+        {"height": 1, "reward": "0"}, {"height": 2, "reward": "10"}, {"height": 3, "reward": 10},
+        {"height": 4, "reward": "10"},
+    ]});
+    let run_with = |supply: u64, burned: u64| {
+        let mut fake = Fake::new(1);
+        fake.page(
+            1,
+            "/api/blockchain",
+            json!({"data": {
+                "supply": supply.to_string(), "burned": {"total": burned.to_string()},
+                "block": {"height": 3},
+            }}),
+        );
+        fake.page(1, BLOCKS, blocks.clone());
+        run_on(&mut fake, &compiled).0
+    };
+    // Blocks above the tip are not counted; the burns are taken off.
+    assert_eq!(
+        run_with(genesis + 20 - 4, 4).results[0].outcome,
+        Outcome::Pass
+    );
+    assert_eq!(
+        run_with(genesis + 20, 4).results[0].outcome,
+        mismatch(&(genesis + 16).to_string(), &(genesis + 20).to_string())
+    );
+    let mut bare = Fake::new(1);
+    bare.page(1, "/api/blockchain", json!({"data": {"supply": "1"}}));
+    let (report, _) = run_on(&mut bare, &compiled);
+    assert!(
+        matches!(&report.results[0].outcome, Outcome::HarnessError(m) if m.contains("no supply"))
+    );
+}
+
+#[test]
+fn every_block_is_forged_by_a_delegate_of_its_round_and_none_twice() {
+    let compiled = compiled(
+        json!([{"at": {"height": 3}, "check": {"invariant": ["schedule"]}}]),
+        &[],
+    );
+    let run_with = |generators: [&str; 2]| {
+        let mut fake = Fake::new(1);
+        fake.page(
+            1,
+            BLOCKS,
+            json!({"data": [
+                {"height": 1, "generator": {"publicKey": "genesis"}},
+                {"height": 2, "generator": {"publicKey": generators[0]}},
+                {"height": 3, "generatorPublicKey": generators[1]},
+            ]}),
+        );
+        fake.page(
+            1,
+            "/api/rounds/1/delegates",
+            json!({"data": [{"publicKey": "aa"}, {"publicKey": "bb"}]}),
+        );
+        run_on(&mut fake, &compiled).0.results.remove(0).outcome
+    };
+    assert_eq!(run_with(["aa", "bb"]), Outcome::Pass);
+    assert_eq!(
+        run_with(["aa", "cc"]),
+        mismatch("a delegate of round 1", "cc at 3")
+    );
+    assert_eq!(
+        run_with(["aa", "aa"]),
+        mismatch("one block a round", "aa twice in round 1")
+    );
+}
+
+// The records and their comparison.
+
+fn record(id: &str, backend: &str, tip: (u32, &str), answer: bool, digest: Outcome) -> Record {
+    let mut step = StepRecord::new(
+        0,
+        "first",
+        &Tip {
+            height: tip.0,
+            id: tip.1.into(),
+        },
+    );
+    step.answered(&[Submitted {
+        reference: "t".into(),
+        accepted: answer,
+        code: None,
+    }]);
+    step.checked("first: digest", &digest);
+    Record::new(
+        id,
+        backend,
+        vec![step],
+        Some(Tip {
+            height: tip.0,
+            id: tip.1.into(),
+        }),
+    )
+}
+
+fn suite(dir: &Path, name: &str, record: &Record) {
+    record.write(&dir.join(name)).expect("write");
+}
+
+#[test]
+fn a_record_reads_back_as_written() {
+    let scratch = ScratchDir::new("scenario-record").expect("scratch");
+    let written = record("one", "fake", (5, "b5"), true, Outcome::Pass);
+    let path = written.write(scratch.path()).expect("write");
+    assert_eq!(path, Record::path(scratch.path(), "one"));
+    assert_eq!(Record::read(&path).expect("read"), written);
+    let mut other = written.clone();
+    other.steps[0].checked("first: skip", &Outcome::Skipped("no".into()));
+    assert_eq!(other.steps[0].outcomes[1].1, "skipped: no");
+    other.steps[0].checked("first: bad", &mismatch("a", "b"));
+    assert!(other.steps[0].outcomes[2].1.starts_with("failed"));
+}
+
+#[test]
+fn a_suite_compares_the_pool_answers_the_checks_and_the_chain_at_the_digests() {
+    let scratch = ScratchDir::new("scenario-compare").expect("scratch");
+    let dir = scratch.path();
+    let same = |backend, tip: (u32, &str), answer| record("s", backend, tip, answer, Outcome::Pass);
+    // Equal runs pass, and the chain at the digest is compared by the tip's id.
+    suite(dir, "a-reference", &same("reference", (5, "x"), true));
+    suite(dir, "a-heartwood", &same("heartwood", (5, "x"), true));
+    // Another answer of the pool, another chain, and a check that came out otherwise.
+    suite(dir, "b-reference", &same("reference", (5, "x"), true));
+    suite(dir, "b-heartwood", &same("heartwood", (5, "y"), false));
+    suite(dir, "c-reference", &same("reference", (5, "x"), true));
+    suite(
+        dir,
+        "c-heartwood",
+        &record("s", "heartwood", (5, "x"), true, mismatch("a", "b")),
+    );
+    // Tips at other heights are not comparable.
+    suite(dir, "d-reference", &same("reference", (5, "x"), true));
+    suite(dir, "d-heartwood", &same("heartwood", (6, "y"), true));
+    let report = compare(dir, None).expect("compare");
+    let of = |suite: &str| -> Vec<&Outcome> {
+        report
+            .results
+            .iter()
+            .filter(|c| c.file.starts_with(&format!("{suite}/")))
+            .map(|c| &c.outcome)
+            .collect()
+    };
+    assert!(
+        of("a").iter().all(|o| **o == Outcome::Pass),
+        "{:?}",
+        of("a")
+    );
+    assert_eq!(of("a").len(), 3, "answers, the check, the chain");
+    assert!(
+        of("b").iter().filter(|o| o.is_failure()).count() == 2,
+        "{:?}",
+        of("b")
+    );
+    assert!(of("c").iter().any(|o| o.is_failure()), "{:?}", of("c"));
+    assert!(
+        of("d")
+            .iter()
+            .any(|o| matches!(o, Outcome::Skipped(m) if m.contains("stood at 5 and 6")))
+    );
+    // One suite alone.
+    let only = compare(dir, Some("a")).expect("compare");
+    assert_eq!(only.files, 1);
+    assert!(only.results.iter().all(|c| c.outcome == Outcome::Pass));
+}
+
+#[test]
+fn a_suite_of_one_run_or_none_is_the_harness_error() {
+    let scratch = ScratchDir::new("scenario-compare-missing").expect("scratch");
+    let dir = scratch.path();
+    let empty = compare(dir, None).expect("compare");
+    assert!(matches!(
+        &empty.results[0].outcome,
+        Outcome::HarnessError(m) if m.contains("holds no suite")
+    ));
+    suite(
+        dir,
+        "a-reference",
+        &record("s", "reference", (5, "x"), true, Outcome::Pass),
+    );
+    let lonely = compare(dir, None).expect("compare");
+    assert!(matches!(
+        &lonely.results[0].outcome,
+        Outcome::HarnessError(m) if m.contains("only one of its two runs")
+    ));
+    // A scenario one run lacks.
+    suite(
+        dir,
+        "a-heartwood",
+        &record("t", "heartwood", (5, "x"), true, Outcome::Pass),
+    );
+    let unpaired = compare(dir, None).expect("compare");
+    assert_eq!(unpaired.failed(), 2, "{:#?}", unpaired.results);
+    let elsewhere = compare(dir, Some("z")).expect("compare");
+    assert!(elsewhere.results[0].outcome.is_failure());
+}
+
+// The backends.
+
+fn difftest(args: &[&str], oracle: &[String]) -> (bool, String) {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_difftest"))
+        .args(args)
+        .args(oracle)
+        .output()
+        .expect("difftest runs");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.success(), text)
+}
+
+#[test]
+fn the_heartwood_backend_calls_the_devnet_commands_and_needs_a_manifest() {
+    let root = Path::new("/net");
+    assert_eq!(
+        heartwood::devnet_args(root, "start-node", 3, Part::Node, false),
+        ["devnet", "--dir", "/net", "start-node", "3"]
+    );
+    assert_eq!(
+        heartwood::devnet_args(root, "stop-node", 2, Part::Forger, true),
+        [
+            "devnet",
+            "--dir",
+            "/net",
+            "stop-node",
+            "2",
+            "--role",
+            "forger",
+            "--kill"
+        ]
+    );
+    assert_eq!(
+        heartwood::devnet_args(root, "restart-node", 1, Part::Relay, false)[5..],
+        ["--role", "relay"]
+    );
+    let scratch = ScratchDir::new("scenario-heartwood").expect("scratch");
+    let error = heartwood::Heartwood::open(scratch.path())
+        .err()
+        .expect("no manifest");
+    assert!(
+        matches!(&error, BackendError::Failed { action, .. } if action.contains("manifest")),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_run_without_a_devnet_says_so_before_it_starts_anything() {
+    // Files that cannot run are cases of the run, and the oracle is not needed for them.
+    let scratch = ScratchDir::new("scenario-files").expect("scratch");
+    let dir = scratch.path();
+    std::fs::write(dir.join("broken.json"), r#"{"id": "x", "bogus": 1}"#).expect("write");
+    let l3 = std::fs::read_to_string(fixtures().join("zero-vote-ties.json"))
+        .expect("fixture")
+        .replace("\"L2\"", "\"L3\"");
+    std::fs::write(dir.join("later.json"), l3).expect("write");
+    let d = dir.to_str().expect("utf-8");
+    let (ok, text) = difftest(
+        &[
+            "scenario",
+            "run",
+            "--backend",
+            "lockstep",
+            "--level",
+            "l2",
+            d,
+        ],
+        &["--solar-dir".into(), "/nonexistent".into()],
+    );
+    assert!(!ok, "{text}");
+    assert!(text.contains("unknown field `bogus`"), "{text}");
+    assert!(text.contains("does not run at L2"), "{text}");
+    assert!(text.contains("2 records in 2 files"), "{text}");
+}
+
+/// A stub API of a node: a tip, and a verdict for every transaction of a `POST`.
+fn stub_api() -> String {
+    let listener = TcpListener::bind("127.24.0.200:0").expect("bind");
+    let address = listener.local_addr().expect("address");
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            let body_at = loop {
+                let n = stream.read(&mut buffer).expect("read");
+                request.extend_from_slice(&buffer[..n]);
+                if let Some(at) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break at + 4;
+                }
+                assert!(n > 0, "the request ends before its head does");
+            };
+            let head = String::from_utf8_lossy(&request[..body_at]).to_lowercase();
+            let wanted = head
+                .split("content-length: ")
+                .nth(1)
+                .and_then(|r| r.split("\r\n").next())
+                .and_then(|n| n.parse::<usize>().ok())
+                .unwrap_or(0);
+            while request.len() < body_at + wanted {
+                let n = stream.read(&mut buffer).expect("read");
+                request.extend_from_slice(&buffer[..n]);
+            }
+            let line = head.lines().next().unwrap_or_default().to_owned();
+            let (status, body) = if line.starts_with("get /api/blockchain") {
+                (200, json!({"data": {"block": {"height": 7, "id": "abc"}}}))
+            } else if line.starts_with("post /api/transactions") {
+                let sent = String::from_utf8_lossy(&request[body_at..]).into_owned();
+                assert!(sent.contains("00t1") && sent.contains("00t2"), "{sent}");
+                (
+                    422,
+                    json!({
+                        "data": {"accept": ["id-t1"], "broadcast": ["id-t1"], "invalid": ["id-t2"]},
+                        "errors": {"id-t2": [{"type": "ERR_APPLY", "message": "no"}]},
+                    }),
+                )
+            } else {
+                (404, json!({}))
+            };
+            let body = body.to_string();
+            let reply = format!(
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(reply.as_bytes()).expect("write");
+        }
+    });
+    format!("http://{address}")
+}
+
+#[test]
+fn the_external_backend_calls_its_executable_once_per_action() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = ScratchDir::new("scenario-external").expect("scratch");
+    let dir = scratch.path();
+    let log = dir.join("calls.log");
+    let api = stub_api();
+    let script = dir.join("backend.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/bash\necho \"$*\" >> {log}\ncase \"$1\" in\n\
+             info) echo '{{\"nodes\": 2}}' ;;\n\
+             api-url) echo '{api}' ;;\n\
+             heal) exit 3 ;;\n\
+             archive) echo 'disk full' >&2; exit 1 ;;\n\
+             post-transactions) cat \"$4\" >> {log}; echo '{{\"id\":\"id-t1\",\"accepted\":true}}'; echo '{{\"id\":\"id-t2\",\"accepted\":false}}' ;;\n\
+             esac\n",
+            log = log.display(),
+        ),
+    )
+    .expect("script");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("mode");
+    let root = dir.join("net");
+    let mut backend = external::External::open(&script, &root).expect("open");
+    assert_eq!(backend.nodes(), 2);
+    assert_eq!(backend.name(), "external");
+    backend.start(1, Part::Relay).expect("start");
+    backend.stop(2, Part::Forger, true).expect("stop");
+    backend.stop(2, Part::Node, false).expect("stop");
+    let modes: RestartModes =
+        serde_json::from_value(json!({"reference": "rebuild", "heartwood": "replay"}))
+            .expect("modes");
+    backend.restart(1, Part::Node, modes).expect("restart");
+    backend
+        .partition(&[vec![1, 2], vec![3]])
+        .expect("partition");
+    // A verb the network does not offer, and one that fails with its reason.
+    assert!(matches!(
+        backend.heal(),
+        Err(BackendError::Unsupported {
+            backend: "external",
+            ..
+        })
+    ));
+    assert!(matches!(
+        backend.archive(dir),
+        Err(BackendError::Failed { message, .. }) if message == "disk full"
+    ));
+    // The tip and the API submit go to the address the executable gave.
+    assert_eq!(backend.api_url(1).expect("url"), api);
+    assert_eq!(
+        backend.tip(1).expect("tip"),
+        Tip {
+            height: 7,
+            id: "abc".into()
+        }
+    );
+    let txs: Vec<CompiledTx> = ["t1", "t2"]
+        .iter()
+        .map(|r| CompiledTx {
+            reference: (*r).into(),
+            step: 0,
+            height: 3,
+            id: format!("id-{r}"),
+            bytes: format!("00{r}"),
+        })
+        .collect();
+    let answers = backend.submit(1, Via::Api, &txs).expect("submit");
+    assert_eq!(
+        answers,
+        [
+            Submitted {
+                reference: "t1".into(),
+                accepted: true,
+                code: None
+            },
+            Submitted {
+                reference: "t2".into(),
+                accepted: false,
+                code: Some("ERR_APPLY".into())
+            },
+        ]
+    );
+    // The peer-to-peer way in hands the executable a file of the transactions.
+    let answers = backend.submit(2, Via::P2p, &txs).expect("submit");
+    assert!(answers[0].accepted && !answers[1].accepted);
+    let calls = std::fs::read_to_string(&log).expect("log");
+    let r = root.display();
+    for want in [
+        format!("info {r}"),
+        format!("start {r} 1 relay"),
+        format!("stop {r} 2 forger --kill"),
+        format!("stop {r} 2 node\n"),
+        format!("restart {r} 1 node --reference rebuild --heartwood replay"),
+        format!("partition {r} 1,2 3"),
+        format!("archive {r} {}", dir.display()),
+        format!("post-transactions {r} 2 "),
+        "00t1\n00t2\n".to_owned(),
+    ] {
+        assert!(calls.contains(&want), "{want:?} in\n{calls}");
+    }
+    // An executable that is not there is the harness's failure.
+    let missing = external::External::open(&dir.join("absent.sh"), &root);
+    assert!(matches!(missing, Err(BackendError::Failed { .. })));
+}
+
+#[test]
+fn the_restart_verb_names_the_modes_only_when_they_are_not_the_default() {
+    let modes = |v: Value| -> RestartModes { serde_json::from_value(v).expect("modes") };
+    assert_eq!(
+        external::restart_args(3, Part::Relay, RestartModes::default()),
+        ["3", "relay"]
+    );
+    assert_eq!(
+        external::restart_args(3, Part::Forger, modes(json!({"heartwood": "replay"}))),
+        ["3", "forger", "--heartwood", "replay"]
+    );
+    assert_eq!(
+        external::restart_args(1, Part::Node, modes(json!({"reference": "rebuild"}))),
+        ["1", "node", "--reference", "rebuild"]
+    );
+}
+
+// Integration: the real reference.
+
+fn oracle_flags() -> Option<Vec<String>> {
+    if let Ok(dir) = std::env::var("DIFFTEST_TEST_SOLAR_DIR") {
+        return Some(vec!["--solar-dir".into(), dir]);
+    }
+    std::env::var("DIFFTEST_TEST_IMAGE")
+        .ok()
+        .map(|image| vec!["--image".into(), image])
+}
+
+/// The oracle of the integration test `test`; `None` when the run skips it on purpose
+/// (`DIFFTEST_TEST_NO_ORACLE`). Without either, the test fails: it must not pass unrun.
+fn oracle_or_skip(test: &str) -> Option<Vec<String>> {
+    if let Some(flags) = oracle_flags() {
+        return Some(flags);
+    }
+    assert!(
+        std::env::var_os("DIFFTEST_TEST_NO_ORACLE").is_some(),
+        "{test}: no test oracle configured: set DIFFTEST_TEST_IMAGE or DIFFTEST_TEST_SOLAR_DIR \
+         (make test-integration sets the image when it is built), or DIFFTEST_TEST_NO_ORACLE to \
+         skip the test"
+    );
+    eprintln!("{test}: skipped (DIFFTEST_TEST_NO_ORACLE)");
+    None
+}
+
+fn lockstep(file: &Path, oracle: &[String]) -> (bool, String) {
+    let f = file.to_str().expect("utf-8");
+    difftest(
+        &[
+            "scenario",
+            "run",
+            "--backend",
+            "lockstep",
+            "--level",
+            "l2",
+            f,
+            "--strict",
+        ],
+        oracle,
+    )
+}
+
+#[test]
+#[ignore = "integration"]
+fn a_scenario_compiles_to_the_same_bytes_twice_with_the_fee_floor_and_the_nonces_asked() {
+    let Some(oracle) = oracle_or_skip("the compiler") else {
+        return;
+    };
+    let scratch = ScratchDir::new("scenario-compile").expect("scratch");
+    let file = fixtures().join("zero-vote-ties.json");
+    let compile = |name: &str| -> Compiled {
+        let out = scratch.path().join(name);
+        let (ok, text) = difftest(
+            &[
+                "scenario",
+                "compile",
+                file.to_str().expect("utf-8"),
+                "--out",
+                out.to_str().expect("utf-8"),
+            ],
+            &oracle,
+        );
+        assert!(ok, "{text}");
+        serde_json::from_str(&std::fs::read_to_string(out).expect("out")).expect("compiled")
+    };
+    let first = compile("one.json");
+    assert_eq!(first, compile("two.json"), "the same bytes and ids");
+    let refs: Vec<&str> = first
+        .transactions
+        .iter()
+        .map(|t| t.reference.as_str())
+        .collect();
+    assert_eq!(refs, ["fund", "a-tenth", "b-ninth", "c-split", "nobody"]);
+    let ids: HashSet<&str> = first.transactions.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(ids.len(), 5, "five ids");
+    // Planned after their steps: the fund at height 2 goes into block 3.
+    assert_eq!(first.transactions[0].height, 3);
+    assert!(first.transactions.iter().all(|t| !t.bytes.is_empty()));
+    // The first byte after the header of a v3 transaction is the type group's; the nonce of alice's
+    // first vote is 1 and of her second, 2, on the wire (eight bytes after the public key).
+    let alice_nonce = |tx: &CompiledTx| -> u64 {
+        let bytes: Vec<u8> = (0..tx.bytes.len() / 2)
+            .map(|i| u8::from_str_radix(&tx.bytes[2 * i..2 * i + 2], 16).expect("hex"))
+            .collect();
+        // Header: 0xff, version, network, type group (u32), type (u16), nonce (u64).
+        u64::from_le_bytes(bytes[9..17].try_into().expect("eight bytes"))
+    };
+    assert_eq!(alice_nonce(&first.transactions[1]), 1);
+    assert_eq!(alice_nonce(&first.transactions[4]), 2);
+}
+
+#[test]
+#[ignore = "integration"]
+fn zero_vote_ties_and_numeric_names_run_on_the_lockstep_chain() {
+    let Some(oracle) = oracle_or_skip("zero-vote-ties") else {
+        return;
+    };
+    let (ok, text) = lockstep(&fixtures().join("zero-vote-ties.json"), &oracle);
+    assert!(ok, "{text}");
+    assert!(text.contains("0 failed"), "{text}");
+}
+
+#[test]
+#[ignore = "integration"]
+fn a_milestone_activation_runs_on_the_lockstep_chain() {
+    let Some(oracle) = oracle_or_skip("milestone-activation") else {
+        return;
+    };
+    let (ok, text) = lockstep(&fixtures().join("milestone-activation.json"), &oracle);
+    assert!(ok, "{text}");
+    assert!(text.contains("0 failed"), "{text}");
+}
+
+#[test]
+#[ignore = "integration"]
+fn a_reorg_across_a_round_end_with_reverted_votes_runs_on_the_lockstep_chain() {
+    let Some(oracle) = oracle_or_skip("reorg-reverts-votes") else {
+        return;
+    };
+    let (ok, text) = lockstep(&fixtures().join("reorg-reverts-votes.json"), &oracle);
+    assert!(ok, "{text}");
+    assert!(text.contains("0 failed"), "{text}");
+}
+
+#[test]
+#[ignore = "integration"]
+fn the_lockstep_backend_fails_what_the_chain_does_not_do_and_refuses_what_it_cannot() {
+    let Some(oracle) = oracle_or_skip("lockstep refusals") else {
+        return;
+    };
+    let scratch = ScratchDir::new("scenario-lockstep").expect("scratch");
+    let text = std::fs::read_to_string(fixtures().join("zero-vote-ties.json")).expect("fixture");
+    let write = |name: &str, text: String| {
+        let path = scratch.path().join(name);
+        std::fs::write(&path, text).expect("write");
+        path
+    };
+    // The refusal code the pools give is what the file must say.
+    let (ok, out) = lockstep(
+        &write(
+            "code.json",
+            text.replace("\"ERR_APPLY\"", "\"ERR_OFFLINE\""),
+        ),
+        &oracle,
+    );
+    assert!(!ok, "{out}");
+    assert!(out.contains("the recipe expects ERR_OFFLINE"), "{out}");
+    // A refusal without its code cannot be told to the reference.
+    let (ok, out) = lockstep(
+        &write(
+            "nocode.json",
+            text.replace(", \"codes\": {\"nobody\": \"ERR_APPLY\"}", ""),
+        ),
+        &oracle,
+    );
+    assert!(!ok, "{out}");
+    assert!(out.contains("name its refusal code"), "{out}");
+    // A node cannot be stopped in a chain the producer made.
+    let stop = text.replace(
+        "\"do\": \"wait\", \"blocks\": 5",
+        "\"do\": \"stop\", \"node\": 1",
+    );
+    let (ok, out) = lockstep(&write("stop.json", stop), &oracle);
+    assert!(!ok, "{out}");
+    assert!(out.contains("which a lockstep chain cannot"), "{out}");
+    // A revert that returns to the last block of a round is the producer's refusal.
+    let round_end = std::fs::read_to_string(fixtures().join("reorg-reverts-votes.json"))
+        .expect("fixture")
+        .replace(
+            "\"do\": \"fork\", \"blocks\": 6",
+            "\"do\": \"revert\", \"blocks\": 3",
+        );
+    let (ok, out) = lockstep(&write("round-end.json", round_end), &oracle);
+    assert!(!ok, "{out}");
+    assert!(out.contains("last block of a round"), "{out}");
+}
