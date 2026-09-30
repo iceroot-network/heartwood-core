@@ -650,12 +650,20 @@ const RECONNECT_AFTER_MS: i64 = 60_000;
 /// How many blocks behind node 1, on another tip, a node the recipe reconnects must be.
 const RECONNECT_BEHIND: u64 = 10;
 
+/// The heal a reconnect `step` counts from: the one it records (`heal`, when the recipe opened
+/// the routes), else `heal`, the start of the run's heal step, which comes a few seconds earlier.
+fn reconnect_heal(step: &run::Step, heal: Option<i64>) -> Option<i64> {
+    (step.text("heal").as_deref())
+        .and_then(run::parse_time)
+        .or(heal)
+}
+
 /// Why the recipe's reconnect `step` (`reconnect-<node>`) is outside its rule, or `None` when it is
-/// inside: 60 s or more after the heal at `heal`, while the node was 10 or more blocks behind
-/// node 1 on another tip. The step records both tips (`height`, `tip`, `node1Height`, `node1Tip`);
-/// a record without them is judged on its time alone.
+/// inside: 60 s or more after the heal ([`reconnect_heal`]), while the node was 10 or more blocks
+/// behind node 1 on another tip. The step records both tips (`height`, `tip`, `node1Height`,
+/// `node1Tip`); a record without them is judged on its time alone.
 fn reconnect_outside_the_rule(step: &run::Step, heal: Option<i64>) -> Option<String> {
-    let (Some(start), Some(heal)) = (step.start, heal) else {
+    let (Some(start), Some(heal)) = (step.start, reconnect_heal(step, heal)) else {
         return Some("the run records no heal, or the step no start".to_owned());
     };
     if start - heal < RECONNECT_AFTER_MS {
@@ -725,7 +733,8 @@ fn check_reconnect(manifest: &Manifest, steps: &[run::Step], cases: &mut Cases) 
                 );
                 continue;
             }
-            let after = (s.start.unwrap_or_default() - heal.unwrap_or_default()) / 1_000;
+            let after =
+                (s.start.unwrap_or_default() - reconnect_heal(s, heal).unwrap_or_default()) / 1_000;
             let behind = match (s.number("node1Height"), s.number("height")) {
                 (Some(control), Some(height)) => format!(
                     ", {} blocks behind node 1 on its own tip",
@@ -1602,6 +1611,21 @@ mod tests {
                 .iter()
                 .any(|r| r.outcome.is_failure() && r.label.contains("node4")),
             "{early:?}"
+        );
+        // The rule counts from the heal the step records (the routes' opening, 5 s after the heal
+        // step's start here), so a reconnect 61 s after the step's start is 56 s after the heal.
+        let mut reopened_late = behind("reconnect-node4");
+        reopened_late["heal"] = json!("1970-01-01T00:16:45.000Z");
+        let before_the_recorded_heal = judged(&[
+            heal.clone(),
+            reconnect("node4", 61, reopened_late),
+            step("converged"),
+        ]);
+        assert!(
+            before_the_recorded_heal
+                .iter()
+                .any(|r| r.outcome.is_failure() && r.label.contains("node4")),
+            "{before_the_recorded_heal:?}"
         );
         let on_the_tip = json!({"height": 140, "tip": "a", "node1Height": 140, "node1Tip": "a"});
         let near = json!({"height": 131, "tip": "b", "node1Height": 140, "node1Tip": "a"});
