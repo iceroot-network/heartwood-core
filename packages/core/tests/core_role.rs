@@ -4,10 +4,11 @@
 //! in its own process group with `--daemon=false`, forging on a one-node devnet, and stopped by
 //! SIGINT within 30 s in the core order (the relay's first two steps, the forger's three, then the
 //! relay's last two). A `remoteAccess` that admits no loopback address, and a core profile with
-//! no forger, stop the start. `version --verbose` names a test seam only in a build that has it.
+//! no forger, stop the start; a forger that fails once it runs stops the whole node with its
+//! error. `version --verbose` names a test seam only in a build that has it.
 //!
 //! Each test's node listens at its own address of the loopback block of these tests (127.13.0.41
-//! to 127.13.0.47, or the same last octets of the block `HEARTWOOD_TEST_LOOPBACK` names; P2P port
+//! to 127.13.0.49, or the same last octets of the block `HEARTWOOD_TEST_LOOPBACK` names; P2P port
 //! 6002, API port 6003), and its forger connects from the same address, which the node's
 //! `remoteAccess` lists. Its `peers.json` names the node itself, as a one-node devnet's does.
 
@@ -517,6 +518,23 @@ fn a_core_profile_without_the_forger_stops_the_start_naming_it() {
         "{}",
         text(&refused)
     );
+}
+
+#[test]
+fn a_forger_that_fails_after_the_start_stops_the_core_node_with_its_error() {
+    let node = Node::new("forger-failed", host(49));
+    // A signing record that is not JSON: the forger refuses it once the relay listens.
+    let record = node.root.join("data/forger");
+    fs::create_dir_all(&record).unwrap();
+    fs::write(record.join("signing-record.json"), "not json").unwrap();
+    let mut core = node.start("core", &["core", "run", "--networkStart"]);
+    let status = exit_within(&mut core, Duration::from_secs(60));
+    assert!(!status.success(), "{}", node.output("core"));
+    let log = node.log();
+    let failed = position(&log, "the forger stopped: ", 0);
+    position(&log, "its store is closed", 0);
+    assert!(log[failed..].contains("not JSON"), "{log}");
+    assert!(!node.locked("core") && !node.locked("relay") && !node.locked("forger"));
 }
 
 #[test]
