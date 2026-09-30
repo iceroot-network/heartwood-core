@@ -3,7 +3,8 @@
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use heartwood_cli::instance::InstanceFlags;
+use heartwood_cli::Role;
+use heartwood_cli::instance::{InstanceFlags, resolve};
 
 /// An `env` command.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
@@ -53,11 +54,25 @@ pub struct EnvSet {
 
 /// Run `command`.
 pub fn run(command: EnvCommand) -> ExitCode {
-    let what = match command {
-        EnvCommand::Get(_) => "env get",
-        EnvCommand::List(_) => "env list",
-        EnvCommand::Set(_) => "env set",
-        EnvCommand::Paths(_) => "env paths",
+    use heartwood_cli::env as e;
+    let (flags, act): (_, e::Action) = match command {
+        EnvCommand::Get(k) => (k.instance, Box::new(move |i| e::get_text(i, &k.key))),
+        EnvCommand::List(f) => (f.instance, Box::new(e::list_text)),
+        EnvCommand::Paths(f) => (f.instance, Box::new(e::paths_text)),
+        EnvCommand::Set(s) => (
+            s.instance,
+            Box::new(move |i| e::set_text(i, &s.key, &s.value)),
+        ),
     };
-    super::not_built(what)
+    let env = |name: &str| std::env::var(name).ok();
+    let (home, cwd) = (
+        std::env::home_dir().unwrap_or_default(),
+        std::env::current_dir().unwrap_or_default(),
+    );
+    let instance = resolve(Role::Relay, &flags, &env, &home, &cwd).map_err(|e| e.to_string());
+    crate::exit(
+        instance
+            .and_then(|i| act(&i).map_err(|e| e.to_string()))
+            .map(|text| print!("{text}")),
+    )
 }

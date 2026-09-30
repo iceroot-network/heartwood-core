@@ -14,6 +14,12 @@ pub struct Top {
 
 /// Run `top`.
 pub fn run(top: Top) -> ExitCode {
-    let _ = top;
-    super::not_built("top")
+    let token = top.token.unwrap_or_else(|| "solar".to_owned());
+    let root = heartwood_cli::instance_index::process_data_root(&token);
+    let rows = heartwood_cli::top::top(&token, &root).map_err(|e| e.to_string());
+    let table = rows.and_then(|rows| match rows.is_empty() {
+        true => Err(heartwood_cli::top::NONE_RUNNING.to_owned()),
+        false => Ok(heartwood_cli::process_table::render(&rows)),
+    });
+    crate::exit(table.map(|text| print!("{text}")))
 }
