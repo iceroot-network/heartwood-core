@@ -30,7 +30,8 @@ use crate::errors::Result;
 
 const SECTION: &str = "churn";
 
-/// The seconds a graceful stop may take.
+/// The seconds after which the supervisor ends a stop by SIGKILL: a graceful stop takes less (the
+/// recipe counts whole seconds, so a stop the SIGKILL ended reads 30 or more).
 const STOP_LIMIT_SECONDS: u64 = 30;
 
 /// The nodes restarted in turn in round 2.
@@ -102,9 +103,9 @@ fn cycle_problems(steps: &[Step]) -> Vec<String> {
             problems.push(format!("{name}: the stop did not exit cleanly"));
         }
         match s.number("stopSeconds") {
-            Some(t) if t <= STOP_LIMIT_SECONDS => {}
+            Some(t) if t < STOP_LIMIT_SECONDS => {}
             Some(t) => problems.push(format!(
-                "{name}: the stop took {t} seconds, more than {STOP_LIMIT_SECONDS}"
+                "{name}: the stop took {t} seconds, not less than {STOP_LIMIT_SECONDS}: the supervisor's SIGKILL ended it"
             )),
             None => problems.push(format!("{name}: the stop records no duration")),
         }
@@ -708,7 +709,7 @@ mod tests {
     fn a_slow_or_unclean_stop_or_a_node_not_synced_again_is_a_problem() {
         assert!(cycle_problems(&cycles()).is_empty());
         let mut steps = cycles();
-        steps[1].record["stopSeconds"] = json!(31);
+        steps[1].record["stopSeconds"] = json!(30);
         steps[2].record["remaining"] = json!("pids 41 42");
         steps[3].record["synced"] = json!(false);
         steps.remove(4);

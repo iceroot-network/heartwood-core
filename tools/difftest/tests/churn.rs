@@ -360,7 +360,7 @@ fn the_resource_report_reads_the_recorded_series() {
 fn a_slow_or_unclean_stop_fails() {
     let f = fixture();
     quiet_series(&f.run);
-    edit_step(&f.run, "cycle-node2", |row| row["stopSeconds"] = json!(31));
+    edit_step(&f.run, "cycle-node2", |row| row["stopSeconds"] = json!(30));
     edit_step(&f.run, "cycle-node3", |row| {
         row["remaining"] = json!("pids 4242");
     });
@@ -368,7 +368,7 @@ fn a_slow_or_unclean_stop_fails() {
     assert!(
         has(
             &failed,
-            "cycle-node2: the stop took 31 seconds, more than 30"
+            "cycle-node2: the stop took 30 seconds, not less than 30"
         ),
         "{failed:#?}"
     );
