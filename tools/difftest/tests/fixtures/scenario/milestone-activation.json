@@ -1,0 +1,22 @@
+{
+  "id": "milestone-activation",
+  "title": "Transactions cross the donations milestone and a round end",
+  "levels": ["L2"],
+  "network": "devnet",
+  "genesisSeed": "scenario-fixture-seed",
+  "actors": {"alice": {"seed": 1}, "bob": {"seed": 2}},
+  "steps": [
+    {"name": "fund at the milestone", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [{"ref": "fund", "type": "transfer", "from": "genesis", "to": [["alice", "500000000000"]]}],
+     "check": {"accept": ["fund"]}},
+    {"name": "spend", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api",
+     "txs": [{"ref": "spend", "type": "transfer", "from": "alice", "nonce": 1, "to": [["bob", "100000000000"]], "memo": "after the milestone"}],
+     "check": {"accept": ["spend"]}},
+    {"name": "checked", "at": {"afterBlocks": 2}, "check": {"forged": ["fund", "spend"], "digest": true}},
+    {"name": "round end", "at": {"round": 1, "position": "end"}, "check": {"digest": true}},
+    {"name": "next round", "at": {"round": 2, "position": "start"}, "do": "submit", "node": 1, "via": "api",
+     "txs": [{"ref": "again", "type": "transfer", "from": "bob", "to": [["alice", "50000000000"]]}],
+     "check": {"accept": ["again"]}},
+    {"name": "final", "at": {"afterBlocks": 3}, "check": {"forged": ["again"], "digest": true}}
+  ]
+}
