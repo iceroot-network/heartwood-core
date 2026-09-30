@@ -121,7 +121,7 @@ pub struct Recorded {
 }
 
 /// The chain's milestones, from the control node's crypto files.
-fn milestones(dir: &Path, manifest: &Manifest) -> Result<Milestones> {
+pub(super) fn milestones(dir: &Path, manifest: &Manifest) -> Result<Milestones> {
     let crypto = run::crypto_dir(dir, &dir.join("nodes").join(&manifest.control));
     let read = |name: &str| {
         let p = crypto.join(name);
