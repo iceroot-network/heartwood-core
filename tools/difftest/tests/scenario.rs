@@ -1442,6 +1442,47 @@ fn a_run_without_a_devnet_says_so_before_it_starts_anything() {
     assert!(text.contains("no scenario of"), "{text}");
 }
 
+#[test]
+fn a_request_the_rate_limit_refused_is_sent_again_after_a_pause() {
+    // The API refuses the first two requests with 429, then answers.
+    let listener = TcpListener::bind("127.24.0.201:0").expect("bind");
+    let address = listener.local_addr().expect("address");
+    std::thread::spawn(move || {
+        for (n, stream) in listener.incoming().enumerate() {
+            let Ok(mut stream) = stream else { return };
+            let mut buffer = [0_u8; 4096];
+            let _ = stream.read(&mut buffer).expect("read");
+            let (status, body) = if n < 2 {
+                (
+                    429,
+                    json!({"statusCode": 429, "error": "Too Many Requests"}),
+                )
+            } else {
+                (200, json!({"data": {"block": {"height": 9, "id": "b9"}}}))
+            };
+            let body = body.to_string();
+            let reply = format!(
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(reply.as_bytes()).expect("write");
+        }
+    });
+    let started = std::time::Instant::now();
+    let tip = scenario::backends::http::tip(&format!("http://{address}")).expect("the tip");
+    assert_eq!(
+        tip,
+        Tip {
+            height: 9,
+            id: "b9".into()
+        }
+    );
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(750),
+        "two pauses"
+    );
+}
+
 /// A stub API of a node: a tip, and a verdict for every transaction of a `POST`.
 fn stub_api() -> String {
     let listener = TcpListener::bind("127.24.0.200:0").expect("bind");

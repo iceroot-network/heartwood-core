@@ -1,5 +1,7 @@
 //! The API calls of the live backends, over the route corpus's HTTP client.
 
+use std::time::Duration;
+
 use heartwood_crypto::utils::hex;
 use heartwood_crypto::{Milestones, Network, Transaction};
 use serde_json::{Value, json};
@@ -48,16 +50,40 @@ fn failed(action: &'static str, message: impl ToString) -> BackendError {
     }
 }
 
-/// Send `request` to the API at `base` and wait for the answer.
+/// The pauses before each new try of a request the API's rate limit refused (429): about a minute
+/// in all, the reference limiter's window (100 requests a minute from one address by default).
+const RATE_LIMITED: [Duration; 9] = [
+    Duration::from_millis(250),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(8),
+    Duration::from_secs(16),
+    Duration::from_secs(16),
+    Duration::from_secs(16),
+];
+
+/// Send `request` to the API at `base` and wait for the answer; a request the rate limit refused
+/// is sent again after a pause, until the limiter's window has passed.
 fn send(base: &str, request: Request) -> Result<Answer, BackendError> {
     let node = Node::parse(base).map_err(|e| failed("call the API", e))?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| failed("call the API", e))?;
-    match runtime.block_on(node.send(&request, None)) {
-        Reply::Answer { status, body, .. } => Ok(Answer { status, body }),
-        Reply::Failed { error } => Err(failed("call the API", format!("{base}: {error}"))),
+    let mut pauses = RATE_LIMITED.iter();
+    loop {
+        let answer = match runtime.block_on(node.send(&request, None)) {
+            Reply::Answer { status, body, .. } => Answer { status, body },
+            Reply::Failed { error } => {
+                return Err(failed("call the API", format!("{base}: {error}")));
+            }
+        };
+        match pauses.next() {
+            Some(pause) if answer.status == 429 => std::thread::sleep(*pause),
+            _ => return Ok(answer),
+        }
     }
 }
 

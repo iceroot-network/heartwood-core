@@ -68,8 +68,9 @@ pub struct Answer {
     pub body: Value,
 }
 
-/// How long the runner waits between two looks at a live network.
-const POLL: Duration = Duration::from_millis(1000);
+/// How long the runner waits between two looks at a live network: a quarter of a block time, so
+/// that a look at every node's tip stays well inside the API's rate limit.
+const POLL: Duration = Duration::from_millis(2000);
 
 /// One network the runner drives.
 pub trait Backend {
@@ -153,7 +154,7 @@ pub trait Backend {
         }
     }
 
-    /// Give the network time to grow: return when it may have. A live network takes a second; a
+    /// Give the network time to grow: return when it may have. A live network takes two seconds; a
     /// backend that replays a recorded chain moves on to its next block, and fails at its end.
     fn wait(&mut self) -> Result<(), BackendError> {
         std::thread::sleep(POLL);
