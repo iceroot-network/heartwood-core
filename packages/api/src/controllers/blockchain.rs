@@ -12,12 +12,15 @@ use serde_json::{Map, Value, json};
 use crate::context::{ApiContext, ApiReply, ApiRequest};
 use crate::controllers::transactions::{Shape, present, read};
 use crate::errors::ApiError;
+use crate::resources::delegate::supply;
 use crate::search::wallets_like;
 
 /// How many blocks and transactions a search lists.
 const LIMIT: u64 = 100;
 
-/// `GET /blockchain`: the tip, the burned totals and the supply, all as decimal strings.
+/// `GET /blockchain`: the tip, the burned totals and the supply, all as decimal strings. The supply
+/// is the sum of the balances, as the reference's calculator gives it, not the store's sums, which
+/// count a genesis fee as partly burned where the state burns all of it.
 pub async fn index(ctx: Arc<ApiContext>, _request: ApiRequest) -> Result<ApiReply, ApiError> {
     let state = ctx.state();
     let tip = Arc::clone(&state.last_block);
@@ -35,7 +38,7 @@ pub async fn index(ctx: Arc<ApiContext>, _request: ApiRequest) -> Result<ApiRepl
             "transactions": totals.burned_transactions.to_string(),
             "total": burned.to_string(),
         },
-        "supply": totals.supply.to_string(),
+        "supply": supply(&state.wallets).to_string(),
     })))
 }
 

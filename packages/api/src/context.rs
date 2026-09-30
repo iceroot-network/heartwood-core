@@ -96,7 +96,9 @@ pub struct ChainTotals {
     pub burned_fees: u128,
     /// The amounts of every burn transaction.
     pub burned_transactions: u128,
-    /// The supply.
+    /// The supply as the store's sums give it: what the genesis block issued and the blocks
+    /// rewarded, less what they burned. `GET /blockchain` shows the sum of the balances, as the
+    /// reference does; the two differ by the unburned share of a genesis transaction's fee.
     pub supply: i128,
 }
 

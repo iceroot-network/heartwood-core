@@ -142,9 +142,13 @@ async fn the_chain_summary_writes_the_tip_and_the_totals_as_text() {
         config: Arc::clone(&base.config),
     });
     let request = request(RouteId::BlockchainIndex, &[], json!({}));
-    let reply = blockchain::index(ctx, request).await.unwrap();
+    let reply = blockchain::index(Arc::clone(&ctx), request).await.unwrap();
     assert_eq!(reply.status, 200);
     let tip = fixture.block(fixture.tip());
+    // The supply is the balances' sum, as the reference's calculator gives it, whatever the
+    // store's sums say.
+    let supply = heartwood_state::supply::total_balance(&ctx.state().wallets);
+    assert!(supply > 0);
     let expected = json!({
         "data": {
             "block": { "height": fixture.tip(), "id": tip.id().to_hex() },
@@ -153,7 +157,7 @@ async fn the_chain_summary_writes_the_tip_and_the_totals_as_text() {
                 "transactions": "18446744073709551616",
                 "total": "18446744073709563961",
             },
-            "supply": "7000000000000000000",
+            "supply": supply.to_string(),
         }
     });
     // The keys in the reference's order too.
