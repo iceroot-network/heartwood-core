@@ -11,15 +11,10 @@ use heartwood_p2p::utils::npm_semver;
 use serde_json::{Map, Value};
 
 use super::rb_tree::top;
-use super::{Direction, ResultsPage, Sorting};
+use super::{BIG_NUMBER, Direction, ResultsPage, SEMVER, Sorting};
 use crate::errors::ApiError;
 use crate::pagination::Pagination;
 
-/// The key of a BigNumber in a resource (`{"$bigNumber": "<decimal>"}`); the reference's own
-/// property of it is `value`, a bigint.
-const BIG_NUMBER: &str = "$bigNumber";
-/// The key of a Semver in a resource (`{"$semver": "<version>"}`); its own property is `value`.
-const SEMVER: &str = "$semver";
 /// The path segments the reference's `get` refuses: a path with one reads the object itself.
 const DISALLOWED: [&str; 3] = ["__proto__", "prototype", "constructor"];
 
