@@ -14,7 +14,7 @@
 //! |---|---|
 //! | [`Source::Process`] | `Denied` (another user's run directory), `Unreadable`, `NotBuilt` |
 //! | [`Source::Api`] | `ApiOff`, `ApiNotLoopback`, `NotRunning`, `TimedOut`, `RateLimited`, `ApiBudget`, `Unreadable`, `Unparsed`, `RunBudget` |
-//! | [`Source::Store`] | `NotRunning`, `TimedOut`, `Unreadable`, `KeysDirUnsafe`, `LoaderRefused` |
+//! | [`Source::Store`] | `NotRunning`, `TimedOut`, `Unreadable`, `KeysDirUnsafe`, `LoaderRefused`, `Missing` (no block, so no tip) |
 //! | [`Source::RelayLog`], [`Source::ForgerLog`] | `Missing`, `Denied`, `Unreadable`, `LogLevel`, `RunBudget` |
 //! | [`Source::ErrorCapture`] | `Missing`, `Denied`, `Unreadable` |
 //! | [`Source::SigningRecord`] | `Denied`, `TooLarge`, `Unparsed`, `KeyFile` |

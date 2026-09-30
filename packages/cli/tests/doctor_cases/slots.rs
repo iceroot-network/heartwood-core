@@ -557,10 +557,44 @@ fn missed_slots_match_log_times_in_network_epoch_seconds_over_a_window_bounded_b
         .find(|(name, _)| *name == "time")
         .unwrap();
     assert_eq!(time.1, heartwood_cli::doctor::report::Fact::Time(at(60)));
-    // The window of 60 minutes is 450 slots of 8 s: the store is read from the tip less 451.
+    // The window of 60 minutes is 450 slots of 8 s: the store is read from its own tip less 451.
     let calls = view.store_calls.borrow();
-    let from = WindowStart::Height(TIP - 451);
+    let from = WindowStart::BelowTip(451);
     assert_eq!(calls.as_slice(), [(vec![OURS.to_owned()], from)]);
+}
+
+#[test]
+fn with_the_relays_api_off_the_slot_checks_and_the_floor_read_the_store() {
+    use heartwood_cli::doctor::report::{Basis, Fact};
+    use heartwood_cli::doctor::seams::FloorFacts;
+    let off = || unknown(Source::Api, Reason::ApiOff);
+    // Our last two slots missed; the store's own tip is at TIP.
+    let mut view = missing(&[2, 1], &[7], vec![]);
+    (view.api_address, view.api_status, view.api_last_block) = (Err(off()), Err(off()), Err(off()));
+    let (refused_now, refused_from) = (false, Vec::new());
+    let floor = FloorFacts {
+        refused_now,
+        refused_from,
+    };
+    view.floors
+        .insert(("4.3.1-heartwood.0.1.0".into(), TIP), Ok(floor));
+    let options = DoctorOptions::default();
+    let missed = run("slots.missed", &view, &options);
+    let floor = run("version.floor", &view, &options);
+    let height = ("height", Fact::Int(i64::from(TIP)));
+    let judged = [&missed[0], &floor[0]].map(|f| {
+        let at_tip = f.facts.contains(&height);
+        (f.status, f.basis, f.advice.key, at_tip)
+    });
+    let judged_well = [
+        (Status::Fail, Basis::Chain, "cause-none", false),
+        (Status::Pass, Basis::Config, "ok", true),
+    ];
+    assert_eq!(judged, judged_well, "{missed:#?} {floor:#?}");
+    // The window ends at the store's own tip (the 450 slots of 60 minutes, and one more), and the
+    // floor asks the store as the slot checks do: one read of the store serves both.
+    let window = (vec![OURS.to_owned()], WindowStart::BelowTip(451));
+    assert_eq!(*view.store_calls.borrow(), [window.clone(), window]);
 }
 
 #[test]
@@ -636,7 +670,7 @@ fn a_window_past_the_stores_row_cap_reads_the_latest_blocks_and_a_cut_window_is_
     let _ = run("slots.missed", &long, &DoctorOptions::default());
     let calls = long.store_calls.borrow();
     assert_eq!(MAX_WINDOW_BLOCKS, 4_900);
-    let from = WindowStart::Height(TIP - MAX_WINDOW_BLOCKS);
+    let from = WindowStart::BelowTip(MAX_WINDOW_BLOCKS);
     assert_eq!(calls.as_slice(), [(vec![OURS.to_owned()], from)]);
     // A cut window holds the oldest blocks and every missed row: two missed slots after its last
     // block are not "our last 2 slots".

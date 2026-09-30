@@ -41,7 +41,7 @@
         "pass": "No slot of ours missed in the last 5 rounds, fewer than 1% missed over the window once it holds 100 or more of our slots, and no block the forger logged as forged that the chain holds with another generator.",
         "warn": "One or two slots missed in the last 5 rounds; 1% or more missed over the window (with 100 or more of our slots); or one block the forger logged as forged that the chain holds with another generator or not at all.",
         "fail": "Our last 2 slots both missed; 3 or more missed in the last 5 rounds; or two or more blocks the forger logged as forged that the chain does not hold as ours.",
-        "unknown": "The relay's store (read only while the relay runs), the chain definition or the tip's height cannot be read, the store's row cap cut the window, or no delegate of ours is known. The store is read for at most the latest 4,900 blocks, so a longer window is judged on those.",
+        "unknown": "The relay's store (read only while the relay runs) or the chain definition cannot be read, the store's row cap cut the window, or no delegate of ours is known. The store is read from its own tip, so the relay's API may be off; it is read for at most the latest 4,900 blocks, so a longer window is judged on those.",
         "skipped": "No forger runs on this host."
       },
       "advice": {

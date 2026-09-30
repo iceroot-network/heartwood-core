@@ -10,6 +10,7 @@
       ],
       "sources": [
         "the relay's API",
+        "the relay's store",
         "the configuration",
         "the process table",
         "this build"
@@ -18,7 +19,7 @@
         "pass": "No version floor refuses the running version at the relay's height or later.",
         "warn": "A later milestone will refuse the running version.",
         "fail": "The version floor refuses the running version now.",
-        "unknown": "The floor or the relay's height could not be read.",
+        "unknown": "The floor or the relay's height could not be read. The height comes from the relay's API, else from its store, so the API may be off.",
         "skipped": "This host does not run a relay."
       },
       "advice": {

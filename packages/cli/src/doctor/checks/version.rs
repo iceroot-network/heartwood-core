@@ -42,13 +42,14 @@ fn relay_version(view: &dyn View) -> String {
         .unwrap_or_else(|| view.build().version.into())
 }
 
-/// `version.floor`.
+/// `version.floor`: the tip's height from the API, else from the store (the relay's API may be off).
 pub fn floor(input: &CheckInput<'_>) -> Vec<Finding> {
     relay(input, |view| {
         let text = relay_version(view);
         let height = match view.api_status() {
             Ok(status) => status.now,
-            Err(_) => view.api_last_block()?.height,
+            Err(_) => (view.api_last_block().map(|block| block.height))
+                .or_else(|_| super::slots::store_tip(view, input.options))?,
         };
         let verdict = view.floor(&text, height)?;
         let mut facts: Facts = vec![("height", int(height))];

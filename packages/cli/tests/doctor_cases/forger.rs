@@ -630,6 +630,23 @@ fn a_logged_claim_is_a_warn_on_the_log_until_the_chain_confirms_it() {
 }
 
 #[test]
+fn with_the_relays_api_off_a_claim_is_still_confirmed_by_the_store() {
+    let off = || unknown(Source::Api, Reason::ApiOff);
+    let mut view = claimed(Some(record(SLOT - 20, block_id(9))), vec![]);
+    (view.api_address, view.api_status, view.api_last_block) = (Err(off()), Err(off()), Err(off()));
+    let findings = run(
+        "forger.one-key-one-forger",
+        &view,
+        &DoctorOptions::default(),
+    );
+    let found: Vec<_> = findings
+        .iter()
+        .map(|f| (f.status, f.basis, f.advice.key))
+        .collect();
+    assert_eq!(found, [(Status::Fail, Basis::Chain, "another-forger")]);
+}
+
+#[test]
 fn a_forger_restarted_inside_a_slot_it_signed_gives_nothing_to_act_on() {
     let restarted = claimed(Some(record(SLOT - 20, chain_block().id)), vec![]);
     let findings = run(

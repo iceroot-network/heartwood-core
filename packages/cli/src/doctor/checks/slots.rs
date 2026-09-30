@@ -201,19 +201,23 @@ pub(super) fn unix_ms(chain: &ChainFacts, epoch_s: u32) -> i64 {
     chain.epoch_ms.saturating_add(since)
 }
 
-/// The store from the height the window reaches back to (the tip less the window's blocks, at
-/// most [`MAX_WINDOW_BLOCKS`]), with our delegates' missed rows. Every check asks with the same
-/// bounds, so the store is read once.
+/// The store from its own tip back by the window's blocks (at most [`MAX_WINDOW_BLOCKS`]), with our
+/// delegates' missed rows: the store alone, which the relay keeps with its API off, gives the tip
+/// in the same read. Every check asks with the same bounds, so the store is read once.
 pub(super) fn store(view: &dyn View, ours: &Ours, chain: &ChainFacts) -> Stored {
-    let tip = match view.api_last_block() {
-        Ok(block) => block.height,
-        Err(_) => view.api_status()?.now,
-    };
     let window = view.window();
     let back = window.to_ms.saturating_sub(window.from_ms) / slot_ms(chain);
     let back = u32::try_from(back.saturating_add(1)).unwrap_or(u32::MAX);
-    let from = tip.saturating_sub(back.min(MAX_WINDOW_BLOCKS));
-    view.store_window(&ours.names, WindowStart::Height(from))
+    let start = WindowStart::BelowTip(back.min(MAX_WINDOW_BLOCKS));
+    view.store_window(&ours.names, start)
+}
+
+/// The store's tip, read as [`store`] reads the window, so that the slot checks' read serves it.
+pub(crate) fn store_tip(view: &dyn View, options: &DoctorOptions) -> Result<u32, Unknown> {
+    let stored = store(view, &ours(view, options), chain(view)?)?;
+    stored
+        .tip
+        .ok_or(Unknown::new(Source::Store, Reason::Missing))
 }
 
 /// `slots.active`.

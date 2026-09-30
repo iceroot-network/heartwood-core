@@ -240,7 +240,7 @@ pub static ENTRIES: [CheckEntry; 47] = [
     CheckEntry { id: "keys.dir", area: Area::Config, subjects: &[HOST], sources: &[S::Files], statuses: &[P, F, U], profiles: DEFAULT, run: checks::config::keys_dir },
     CheckEntry { id: "keys.stray", area: Area::Config, subjects: &[RELAY], sources: &[S::KeyFiles, S::Process, S::Files], statuses: &[P, W, U, K], profiles: DEFAULT, run: checks::config::keys_stray },
     // Versions.
-    CheckEntry { id: "version.floor", area: Area::Version, subjects: &[RELAY], sources: &[S::Api, S::Config, S::Process, S::Build], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::version::floor },
+    CheckEntry { id: "version.floor", area: Area::Version, subjects: &[RELAY], sources: &[S::Api, S::Store, S::Config, S::Process, S::Build], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::version::floor },
     CheckEntry { id: "version.installed", area: Area::Version, subjects: &[RELAY, FORGER], sources: &[S::Process, S::Api, S::Build], statuses: &[P, W, U, K], profiles: DEFAULT, run: checks::version::installed },
     CheckEntry { id: "version.build", area: Area::Version, subjects: &[HOST], sources: &[S::Build], statuses: &[P, F], profiles: DEFAULT, run: checks::version::build },
     CheckEntry { id: "version.peers", area: Area::Version, subjects: &[RELAY], sources: &[S::Api, S::Build], statuses: &[P, W, U, K], profiles: DEFAULT, run: checks::version::peers },
