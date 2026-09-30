@@ -3,6 +3,7 @@
 
 use crate::doctor::registry::CheckInput;
 use crate::doctor::report::{Basis, Fact, Finding, Status};
+use crate::doctor::seams::WindowStart;
 
 use crate::doctor::sources::logs::{LineKind, LogEvent};
 use crate::doctor::sources::probes::LeapStatus;
@@ -83,9 +84,8 @@ pub fn vs_chain(input: &CheckInput<'_>) -> Vec<Finding> {
         let slot_ms = i64::from(config.chain.block_time_s.max(1)).saturating_mul(1000);
         let span = window.to_ms.saturating_sub(window.from_ms) / slot_ms + 1;
         let span = u32::try_from(span).unwrap_or(u32::MAX);
-        let window = input
-            .view
-            .store_window(&[], lowest.max(middle.saturating_sub(span)))?;
+        let from = WindowStart::Height(lowest.max(middle.saturating_sub(span)));
+        let window = input.view.store_window(&[], from)?;
         let offset = |&(height, at): &(u32, i64)| {
             let block = window.blocks.iter().find(|block| block.height == height)?;
             let slot_ms = i64::from(block.timestamp).saturating_mul(1000);

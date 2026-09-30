@@ -10,7 +10,7 @@ use heartwood_cli::doctor::registry::{CheckInput, ENTRIES};
 use heartwood_cli::doctor::report::{Finding, Id, IdKind, Status};
 use heartwood_cli::doctor::seams::{
     AccessEntry, ChainFacts, ForgerFacts, MissedSlot, RelayFacts, RoleState, StoreWindow,
-    StoredBlock, Subject, SupervisorFacts,
+    StoredBlock, Subject, SupervisorFacts, WindowStart,
 };
 use heartwood_cli::doctor::sources::logs::{Covered, LineKind, LogEvent, LogWindow};
 use heartwood_cli::doctor::view::{ProcessFacts, Reason, RolePresence, Source, Unknown};
@@ -285,6 +285,7 @@ fn store(missed: &[i64], forged: &[i64]) -> StoreWindow {
     let mut blocks: Vec<StoredBlock> = blocks.collect();
     blocks.sort_by_key(|block| block.height);
     StoreWindow {
+        tip: Some(TIP),
         missed: missed.iter().map(|back| miss(*back)).collect(),
         blocks,
         capped: false,
@@ -558,7 +559,8 @@ fn missed_slots_match_log_times_in_network_epoch_seconds_over_a_window_bounded_b
     assert_eq!(time.1, heartwood_cli::doctor::report::Fact::Time(at(60)));
     // The window of 60 minutes is 450 slots of 8 s: the store is read from the tip less 451.
     let calls = view.store_calls.borrow();
-    assert_eq!(calls.as_slice(), [(vec![OURS.to_owned()], TIP - 451)]);
+    let from = WindowStart::Height(TIP - 451);
+    assert_eq!(calls.as_slice(), [(vec![OURS.to_owned()], from)]);
 }
 
 #[test]
@@ -634,10 +636,8 @@ fn a_window_past_the_stores_row_cap_reads_the_latest_blocks_and_a_cut_window_is_
     let _ = run("slots.missed", &long, &DoctorOptions::default());
     let calls = long.store_calls.borrow();
     assert_eq!(MAX_WINDOW_BLOCKS, 4_900);
-    assert_eq!(
-        calls.as_slice(),
-        [(vec![OURS.to_owned()], TIP - MAX_WINDOW_BLOCKS)]
-    );
+    let from = WindowStart::Height(TIP - MAX_WINDOW_BLOCKS);
+    assert_eq!(calls.as_slice(), [(vec![OURS.to_owned()], from)]);
     // A cut window holds the oldest blocks and every missed row: two missed slots after its last
     // block are not "our last 2 slots".
     let mut cut = missing(&[3, 2], &[400, 300], vec![]);

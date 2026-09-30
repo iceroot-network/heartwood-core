@@ -18,7 +18,7 @@ use heartwood_cli::doctor::report::HostFacts;
 use heartwood_cli::doctor::seams::{
     BuildFacts, Clock, DoctorApi, DoctorFs, FileFacts, FloorFacts, ForgerFacts, FsError, FsStats,
     NodeView, NodeViewError, Probe, ProbeError, ProbeOutput, Probes, ProcFile, ProcView,
-    ProcessView, Readable, RelayFacts, StoreWindow, SupervisorFacts, Tail, World,
+    ProcessView, Readable, RelayFacts, StoreWindow, SupervisorFacts, Tail, WindowStart, World,
 };
 use heartwood_cli::doctor::sources::api::{
     ApiBlock, ApiConfiguration, ApiPeers, ApiStatus, ApiSyncing, ApiWallet,
@@ -85,9 +85,9 @@ pub struct FakeView {
     pub relay_config: Result<RelayFacts, Unknown>,
     pub forger_config: Result<ForgerFacts, Unknown>,
     pub floors: BTreeMap<(String, u32), Result<FloorFacts, Unknown>>,
-    /// The store window, whatever the usernames and height; each call's arguments are recorded.
+    /// The store window, whatever the usernames and start; each call's arguments are recorded.
     pub store_window: Result<StoreWindow, Unknown>,
-    pub store_calls: RefCell<Vec<(Vec<String>, u32)>>,
+    pub store_calls: RefCell<Vec<(Vec<String>, WindowStart)>>,
     pub signing_record: Result<Option<SigningRecordFacts>, Unknown>,
     pub api_address: Result<SocketAddr, Unknown>,
     pub api_status: Result<ApiStatus, Unknown>,
@@ -238,10 +238,14 @@ impl View for FakeView {
     fn floor(&self, version: &str, height: u32) -> Result<FloorFacts, Unknown> {
         keyed(&self.floors, &(version.to_owned(), height), Source::Config).cloned()
     }
-    fn store_window(&self, usernames: &[String], from_height: u32) -> Result<StoreWindow, Unknown> {
+    fn store_window(
+        &self,
+        usernames: &[String],
+        start: WindowStart,
+    ) -> Result<StoreWindow, Unknown> {
         self.store_calls
             .borrow_mut()
-            .push((usernames.to_vec(), from_height));
+            .push((usernames.to_vec(), start));
         self.store_window.clone()
     }
     fn signing_record(&self) -> Result<Option<&SigningRecordFacts>, Unknown> {
@@ -442,7 +446,7 @@ impl NodeView for FakeNode {
         &self,
         _relay: &Instance,
         _usernames: &[String],
-        _from_height: u32,
+        _start: WindowStart,
     ) -> Result<StoreWindow, NodeViewError> {
         self.calls.borrow_mut().push("store_window");
         self.store_window.clone()

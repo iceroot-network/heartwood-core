@@ -346,10 +346,21 @@ pub struct StoredBlock {
     pub username: Option<String>,
 }
 
-/// One read transaction on the relay's store: our delegates' missed rows and the blocks from a
-/// height on, each at most 5,000 rows, in height order.
+/// Where a store window starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum WindowStart {
+    /// At this height.
+    Height(u32),
+    /// This many blocks below the store's own tip, as the same read transaction finds it.
+    BelowTip(u32),
+}
+
+/// One read transaction on the relay's store: its tip, and our delegates' missed rows and the
+/// blocks from a height on, each at most 5,000 rows, in height order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StoreWindow {
+    /// The store's highest height at the read; `None` for a store without blocks.
+    pub tip: Option<u32>,
     /// The missed slots of the named usernames.
     pub missed: Vec<MissedSlot>,
     /// The blocks.
@@ -375,14 +386,14 @@ pub trait NodeView {
         version: &str,
         height: u32,
     ) -> Result<FloorFacts, NodeViewError>;
-    /// One read transaction on the relay's store, only while the relay's lock is held: the
-    /// missed rows of `usernames` and every block from `from_height` on. Opened read-only; a
+    /// One read transaction on the relay's store, only while the relay's lock is held: its tip,
+    /// and the missed rows of `usernames` and every block from `start` on. Opened read-only; a
     /// stopped relay gives [`NodeViewError::RelayNotRunning`] and nothing is opened.
     fn store_window(
         &self,
         relay: &Instance,
         usernames: &[String],
-        from_height: u32,
+        start: WindowStart,
     ) -> Result<StoreWindow, NodeViewError>;
 }
 

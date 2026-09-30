@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use heartwood_cli::doctor::registry::{CheckInput, ENTRIES};
 use heartwood_cli::doctor::report::{Id, IdKind, Status};
-use heartwood_cli::doctor::seams::{RoleState, StoreWindow, StoredBlock, Subject, SupervisorFacts};
+use heartwood_cli::doctor::seams::{
+    RoleState, StoreWindow, StoredBlock, Subject, SupervisorFacts, WindowStart,
+};
 use heartwood_cli::doctor::sources::logs::{Covered, LineKind, LogEvent, LogWindow};
 use heartwood_cli::doctor::sources::probes::{ChronyTracking, LeapStatus, NtpState};
 use heartwood_cli::doctor::view::ProcessFacts;
@@ -208,6 +210,7 @@ fn receipts_view(offsets: &[i64], stored: u32) -> FakeView {
     view.logs
         .insert(Role::Relay, Ok(log(Role::Relay, Level::Info, events)));
     view.store_window = Ok(StoreWindow {
+        tip: None,
         missed: Vec::new(),
         blocks,
         capped: false,
@@ -666,7 +669,10 @@ fn store_bound(view: &FakeView) -> u32 {
         findings.iter().all(|f| f.status == Status::Pass),
         "{findings:#?}"
     );
-    view.store_calls.borrow().first().unwrap().1
+    match view.store_calls.borrow().first().unwrap().1 {
+        WindowStart::Height(height) => height,
+        start => panic!("the store is read from {start:?}"),
+    }
 }
 
 #[test]

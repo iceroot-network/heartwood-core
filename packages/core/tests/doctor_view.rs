@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use doctor_support::{AUX, ENV_CANARY, Node};
-use heartwood_cli::doctor::seams::{AccessEntry, LoadRefusal, NodeView, NodeViewError};
+use heartwood_cli::doctor::seams::{
+    AccessEntry, LoadRefusal, NodeView, NodeViewError, WindowStart,
+};
 use heartwood_cli::{Instance, Role};
 use heartwood_core::app::{api_options, check_floor};
 use heartwood_core::commands::forger::ForgerRun;
@@ -301,20 +303,24 @@ fn a_stopped_relays_store_is_never_opened_and_stays_byte_for_byte() {
         .map(|(path, _)| path.file_name().unwrap().to_owned())
         .collect();
     assert_eq!(names, ["blockchain.db"]);
-    let window = node.view().store_window(&relay, &["genesis_1".into()], 1);
+    let window = node
+        .view()
+        .store_window(&relay, &["genesis_1".into()], WindowStart::Height(1));
     assert_eq!(window, Err(NodeViewError::RelayNotRunning));
     assert_eq!(tree(&node.paths().data), before);
     // The lock held, the store not yet opened by the relay: still nothing is opened.
     let lock = ProcessLock::acquire(&relay).unwrap();
     let before = tree(&node.paths().data);
-    let window = node.view().store_window(&relay, &["genesis_1".into()], 1);
+    let window = node
+        .view()
+        .store_window(&relay, &["genesis_1".into()], WindowStart::Height(1));
     assert_eq!(window, Err(NodeViewError::RelayNotRunning));
     assert_eq!(tree(&node.paths().data), before);
     // The lock held and a writer: the window is read.
     let writer = Database::open(&settings).unwrap();
     let window = node
         .view()
-        .store_window(&relay, &["genesis_1".into()], 1)
+        .store_window(&relay, &["genesis_1".into()], WindowStart::Height(1))
         .unwrap();
     assert!(window.blocks.is_empty() && window.missed.is_empty() && !window.capped);
     drop((writer, lock));
@@ -397,9 +403,15 @@ fn the_store_window_reads_a_forging_relays_store_while_it_commits() {
     let (start, mut tips, mut reads) = (clock.now_ms(), Vec::new(), 0);
     while clock.now_ms() - start < 30_000 {
         let window = view
-            .store_window(&instance(Role::Relay), &["genesis_1".into()], 1)
+            .store_window(
+                &instance(Role::Relay),
+                &["genesis_1".into()],
+                WindowStart::Height(1),
+            )
             .unwrap();
         let tip = window.blocks.last().unwrap();
+        // The same read transaction gives the store's own tip.
+        assert_eq!(window.tip, Some(tip.height));
         // Network-epoch seconds, against the milestones' epoch: the tip is from the last minute.
         let unix_ms = relay.chain.epoch_ms + i64::from(tip.timestamp) * 1000;
         assert!(
@@ -415,6 +427,12 @@ fn the_store_window_reads_a_forging_relays_store_while_it_commits() {
     }
     // The relay kept committing a block per slot while it was read.
     assert!(tips.len() >= 3, "{tips:?} in {reads} reads");
+    // Two blocks below the store's own tip: the tip and the two before it, whatever the API says.
+    let below = view.store_window(&instance(Role::Relay), &[], WindowStart::BelowTip(2));
+    let below = below.unwrap();
+    let heights: Vec<u32> = below.blocks.iter().map(|block| block.height).collect();
+    let tip = below.tip.unwrap();
+    assert_eq!(heights, [tip - 2, tip - 1, tip]);
     let last = *tips.last().unwrap();
     devnet(
         &root,
@@ -430,6 +448,6 @@ fn the_store_window_reads_a_forging_relays_store_while_it_commits() {
     assert!(!floor.refused_now);
     devnet(&root, &["stop"]);
     // Stopped, the store is not opened again.
-    let stopped = view.store_window(&instance(Role::Relay), &[], 1);
+    let stopped = view.store_window(&instance(Role::Relay), &[], WindowStart::Height(1));
     assert_eq!(stopped, Err(NodeViewError::RelayNotRunning));
 }

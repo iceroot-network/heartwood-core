@@ -37,7 +37,7 @@ use crate::doctor::checks::config::loader_gate;
 use crate::doctor::report::HostFacts;
 use crate::doctor::seams::{
     BuildFacts, FileFacts, ForgerFacts, FsError, FsStats, NodeViewError, ProbeError, ProcFile,
-    RelayFacts, RoleState, StoreWindow, SupervisorFacts, World, role_state,
+    RelayFacts, RoleState, StoreWindow, SupervisorFacts, WindowStart, World, role_state,
 };
 use crate::doctor::sources::api::{
     self, ApiBlock, ApiConfiguration, ApiContext, ApiPeers, ApiStatus, ApiSyncing, ApiWallet,
@@ -443,8 +443,12 @@ pub trait View {
         version: &str,
         height: u32,
     ) -> Result<crate::doctor::seams::FloorFacts, Unknown>;
-    /// The relay's store from `from_height` on, with the missed rows of `usernames`.
-    fn store_window(&self, usernames: &[String], from_height: u32) -> Result<StoreWindow, Unknown>;
+    /// The relay's store from `start` on, with its tip and the missed rows of `usernames`.
+    fn store_window(
+        &self,
+        usernames: &[String],
+        start: WindowStart,
+    ) -> Result<StoreWindow, Unknown>;
     /// The forger's signing record; `None` when there is none.
     fn signing_record(&self) -> Result<Option<&SigningRecordFacts>, Unknown>;
 
@@ -513,7 +517,7 @@ struct Cells {
     relay: Slot<RelayFacts>,
     forger: Slot<ForgerFacts>,
     floors: Memo<(String, u32), crate::doctor::seams::FloorFacts>,
-    windows: Memo<(Vec<String>, u32), StoreWindow>,
+    windows: Memo<(Vec<String>, WindowStart), StoreWindow>,
     record: Slot<Option<SigningRecordFacts>>,
     address: Slot<SocketAddr>,
     status: Slot<ApiStatus>,
@@ -912,8 +916,12 @@ impl View for Gathered<'_> {
         floor
     }
 
-    fn store_window(&self, usernames: &[String], from_height: u32) -> Result<StoreWindow, Unknown> {
-        let key = (usernames.to_vec(), from_height);
+    fn store_window(
+        &self,
+        usernames: &[String],
+        start: WindowStart,
+    ) -> Result<StoreWindow, Unknown> {
+        let key = (usernames.to_vec(), start);
         if let Some(known) = self.cells.windows.borrow().get(&key) {
             return known.clone();
         }
@@ -924,10 +932,7 @@ impl View for Gathered<'_> {
                 return Err(Unknown::new(Source::Store, Reason::NotRunning));
             }
             let relay = self.scope.instance(Role::Relay);
-            let window = self
-                .world
-                .node()
-                .store_window(&relay, usernames, from_height);
+            let window = self.world.node().store_window(&relay, usernames, start);
             window.map_err(|error| Unknown::from_node(Source::Store, &error))
         });
         self.cells.windows.borrow_mut().insert(key, window.clone());

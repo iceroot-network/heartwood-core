@@ -16,7 +16,9 @@ use crate::doctor::registry::{CheckId, CheckInput};
 use crate::doctor::report::Basis::{Chain, Log};
 use crate::doctor::report::Status::{Fail, Pass, Warn};
 use crate::doctor::report::{Advice, Basis, Fact, Finding, Id, IdKind, Status, keys};
-use crate::doctor::seams::{ChainFacts, MissedSlot, RoleState, StoreWindow, StoredBlock, Subject};
+use crate::doctor::seams::{
+    ChainFacts, MissedSlot, RoleState, StoreWindow, StoredBlock, Subject, WindowStart,
+};
 use crate::doctor::sources::logs::{LineKind as K, LogWindow};
 use crate::doctor::view::{Reason, Source, Unknown, View};
 use crate::seams::Role;
@@ -210,7 +212,8 @@ pub(super) fn store(view: &dyn View, ours: &Ours, chain: &ChainFacts) -> Stored 
     let window = view.window();
     let back = window.to_ms.saturating_sub(window.from_ms) / slot_ms(chain);
     let back = u32::try_from(back.saturating_add(1)).unwrap_or(u32::MAX);
-    view.store_window(&ours.names, tip.saturating_sub(back.min(MAX_WINDOW_BLOCKS)))
+    let from = tip.saturating_sub(back.min(MAX_WINDOW_BLOCKS));
+    view.store_window(&ours.names, WindowStart::Height(from))
 }
 
 /// `slots.active`.

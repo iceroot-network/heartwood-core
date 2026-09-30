@@ -11,7 +11,9 @@
 //! them changed and refuses too, having read nothing. A file made anew may take its old inode
 //! number, so the files are told apart by their creation time as well; on a file system that
 //! keeps none, only the device and inode tell. The two queries select by `height` in one read
-//! transaction, each capped at a row count. The node itself never uses this module.
+//! transaction, each capped at a row count, from a height given or from a number of blocks below
+//! the store's own tip, which the same transaction reads: a reader needs no other source for the
+//! tip. The node itself never uses this module.
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -56,9 +58,20 @@ pub struct WindowBlock {
     pub username: Option<String>,
 }
 
+/// Where a window starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum WindowStart {
+    /// At this height.
+    Height(u32),
+    /// This many blocks below the store's tip, as the same read transaction finds it.
+    BelowTip(u32),
+}
+
 /// What one read transaction of the window gives.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WindowRows {
+    /// The store's highest height at the read; `None` for a store without blocks.
+    pub tip: Option<u32>,
     /// The missed rows of the named usernames from the height on, by height.
     pub missed: Vec<WindowMissed>,
     /// The blocks from the height on, by height.
@@ -177,15 +190,21 @@ impl ReadOnlyStore {
         Ok(self.connection.progress_handler(CHECK_EVERY, handler)?)
     }
 
-    /// In one read transaction: the missed rows of `usernames` and the blocks, both from
-    /// `from_height` on, each at most [`MAX_ROWS`].
+    /// In one read transaction: the store's tip, and the missed rows of `usernames` and the blocks,
+    /// both from `start` on, each at most [`MAX_ROWS`].
     pub fn window(
         &self,
         usernames: &[String],
-        from_height: u32,
+        start: WindowStart,
     ) -> Result<WindowRows, ReadOnlyError> {
         self.arm()?;
         let read = self.connection.unchecked_transaction()?;
+        let tip: Option<u32> =
+            read.query_row("SELECT MAX(height) FROM blocks", [], |r| r.get(0))?;
+        let from_height = match start {
+            WindowStart::Height(height) => height,
+            WindowStart::BelowTip(blocks) => tip.unwrap_or(0).saturating_sub(blocks),
+        };
         // One row more than the cap, to know whether it cut the list.
         let limit = MAX_ROWS as i64 + 1;
         let blocks = "SELECT height, timestamp, id, generator_public_key, username FROM blocks \
@@ -221,6 +240,7 @@ impl ReadOnlyStore {
         blocks.truncate(MAX_ROWS);
         missed.truncate(MAX_ROWS);
         Ok(WindowRows {
+            tip,
             missed,
             blocks,
             capped,

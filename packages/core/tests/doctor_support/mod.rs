@@ -17,7 +17,7 @@ use heartwood_cli::doctor::HostProcesses;
 use heartwood_cli::doctor::seams::{
     BuildFacts, Clock, DoctorApi, DoctorFs, FileFacts, FileKind, FloorFacts, ForgerFacts, FsError,
     FsStats, Meta, NodeView, NodeViewError, Probe, ProbeError, ProbeOutput, Probes, ProcFile,
-    ProcView, ProcessView, Readable, RelayFacts, StoreWindow, Tail, World,
+    ProcView, ProcessView, Readable, RelayFacts, StoreWindow, Tail, WindowStart, World,
 };
 use heartwood_cli::http::Response;
 use heartwood_cli::{HttpError, Instance, Role};
@@ -209,10 +209,10 @@ impl NodeView for Recording<'_> {
         &self,
         relay: &Instance,
         usernames: &[String],
-        from_height: u32,
+        start: WindowStart,
     ) -> Result<StoreWindow, NodeViewError> {
         self.calls.borrow_mut().push("store_window");
-        self.inner.store_window(relay, usernames, from_height)
+        self.inner.store_window(relay, usernames, start)
     }
 }
 

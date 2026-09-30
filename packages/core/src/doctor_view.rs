@@ -15,13 +15,13 @@ use std::time::Duration;
 use heartwood_cli::Instance;
 use heartwood_cli::doctor::seams::{
     AccessEntry, BuildFacts, ChainFacts, FloorFacts, ForgerFacts, LoadRefusal, MissedSlot,
-    NodeView, NodeViewError, RelayFacts, StoreWindow, StoredBlock,
+    NodeView, NodeViewError, RelayFacts, StoreWindow, StoredBlock, WindowStart,
 };
 use heartwood_cli::supervisor::signals::is_locked;
 use heartwood_crypto::Params;
 use heartwood_crypto::crypto::slots;
 use heartwood_database::Settings;
-use heartwood_database::reader_ro::{ReadOnlyError, ReadOnlyStore};
+use heartwood_database::reader_ro::{self, ReadOnlyError, ReadOnlyStore};
 use heartwood_kernel::config::{self, CryptoFiles, dot_env, floor};
 use heartwood_logger::Level;
 use heartwood_p2p::P2pOptions;
@@ -243,7 +243,7 @@ impl NodeView for CoreNodeView {
         &self,
         relay: &Instance,
         usernames: &[String],
-        from_height: u32,
+        start: WindowStart,
     ) -> Result<StoreWindow, NodeViewError> {
         // The lock's momentary shared probe, as `status` takes it: no writer, no open.
         if !is_locked(&relay.lock_path()).unwrap_or(false) {
@@ -255,7 +255,11 @@ impl NodeView for CoreNodeView {
         if !is_locked(&relay.lock_path()).unwrap_or(false) {
             return Err(NodeViewError::RelayNotRunning);
         }
-        let rows = store.window(usernames, from_height).map_err(store_error)?;
+        let start = match start {
+            WindowStart::Height(height) => reader_ro::WindowStart::Height(height),
+            WindowStart::BelowTip(blocks) => reader_ro::WindowStart::BelowTip(blocks),
+        };
+        let rows = store.window(usernames, start).map_err(store_error)?;
         let missed = rows.missed.into_iter().map(|row| MissedSlot {
             timestamp: row.timestamp,
             height: row.height,
@@ -270,6 +274,7 @@ impl NodeView for CoreNodeView {
         });
         let (missed, blocks, capped) = (missed.collect(), blocks.collect(), rows.capped);
         Ok(StoreWindow {
+            tip: rows.tip,
             missed,
             blocks,
             capped,

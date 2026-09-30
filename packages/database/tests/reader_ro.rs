@@ -12,7 +12,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use common::{chain, open, write_block};
-use heartwood_database::reader_ro::{MAX_ROWS, ReadOnlyError, ReadOnlyStore, WriterFiles};
+use heartwood_database::reader_ro::{
+    MAX_ROWS, ReadOnlyError, ReadOnlyStore, WindowStart, WriterFiles,
+};
 use heartwood_database::{MissedRow, Settings};
 
 const TIMEOUT: Duration = Duration::from_secs(1);
@@ -52,7 +54,9 @@ fn the_window_reads_the_blocks_and_the_named_missed_rows_from_a_height() {
     let before = store_and_log(&settings);
 
     let store = ReadOnlyStore::open(&settings, TIMEOUT).unwrap();
-    let rows = store.window(&["late".into()], 15).unwrap();
+    let rows = store
+        .window(&["late".into()], WindowStart::Height(15))
+        .unwrap();
     let heights: Vec<u32> = rows.blocks.iter().map(|block| block.height).collect();
     assert_eq!(heights, (15..=20).collect::<Vec<_>>());
     for block in &rows.blocks {
@@ -69,31 +73,70 @@ fn the_window_reads_the_blocks_and_the_named_missed_rows_from_a_height() {
     assert_eq!(missed, late);
     assert!(!rows.capped);
 
-    let both = store.window(&["other".into(), "late".into()], 18).unwrap();
+    let both = store
+        .window(&["other".into(), "late".into()], WindowStart::Height(18))
+        .unwrap();
     assert_eq!(both.missed.len(), 4);
     assert_eq!(both.missed[1].username, "other");
-    assert!(store.window(&[], 1).unwrap().missed.is_empty());
     assert!(
         store
-            .window(&["nobody".into()], 1)
+            .window(&[], WindowStart::Height(1))
             .unwrap()
             .missed
             .is_empty()
     );
     assert!(
         store
-            .window(&["late".into()], 21)
+            .window(&["nobody".into()], WindowStart::Height(1))
+            .unwrap()
+            .missed
+            .is_empty()
+    );
+    assert!(
+        store
+            .window(&["late".into()], WindowStart::Height(21))
             .unwrap()
             .blocks
             .is_empty()
     );
     // A name is a bound value, never SQL.
-    let quoted = store.window(&["late') OR ('1'='1".into()], 1).unwrap();
+    let quoted = store
+        .window(&["late') OR ('1'='1".into()], WindowStart::Height(1))
+        .unwrap();
     assert!(quoted.missed.is_empty());
     drop(store);
     // The reader wrote nothing to the store or its log.
     assert_eq!(store_and_log(&settings), before);
     drop(database);
+}
+
+#[test]
+fn the_window_reads_the_stores_own_tip_and_can_start_below_it() {
+    let (database, settings) = chain("ro-below-tip", 20);
+    let store = ReadOnlyStore::open(&settings, TIMEOUT).unwrap();
+    let rows = store
+        .window(&["late".into()], WindowStart::Height(15))
+        .unwrap();
+    assert_eq!(rows.tip, Some(20));
+    // Five blocks below the tip: from height 15 on, as the same transaction reads the tip.
+    let below = store
+        .window(&["late".into()], WindowStart::BelowTip(5))
+        .unwrap();
+    assert_eq!(below, rows);
+    let all = store.window(&[], WindowStart::BelowTip(u32::MAX)).unwrap();
+    let heights: Vec<u32> = all.blocks.iter().map(|block| block.height).collect();
+    assert_eq!(heights, (1..=20).collect::<Vec<_>>());
+    let tip = store.window(&[], WindowStart::BelowTip(0)).unwrap();
+    assert_eq!((tip.tip, tip.blocks.len()), (Some(20), 1));
+    drop((store, database));
+    // A store without blocks has no tip.
+    let (database, settings) = open("ro-no-tip");
+    let store = ReadOnlyStore::open(&settings, TIMEOUT).unwrap();
+    let rows = store
+        .window(&["late".into()], WindowStart::BelowTip(10))
+        .unwrap();
+    assert_eq!(rows, Default::default());
+    drop((store, database));
 }
 
 #[test]
@@ -106,11 +149,15 @@ fn each_list_is_capped_at_the_row_count() {
     }
     chunk.commit().unwrap();
     let store = ReadOnlyStore::open(&settings, TIMEOUT).unwrap();
-    let rows = store.window(&["late".into()], 1).unwrap();
+    let rows = store
+        .window(&["late".into()], WindowStart::Height(1))
+        .unwrap();
     assert_eq!((rows.blocks.len(), rows.missed.len()), (MAX_ROWS, MAX_ROWS));
     assert!(rows.capped);
     assert_eq!(rows.blocks.last().unwrap().height, tip - 2);
-    let rows = store.window(&["late".into()], 3).unwrap();
+    let rows = store
+        .window(&["late".into()], WindowStart::Height(3))
+        .unwrap();
     assert_eq!((rows.blocks.len(), rows.missed.len()), (MAX_ROWS, MAX_ROWS));
     assert!(!rows.capped);
     drop(database);
@@ -126,7 +173,7 @@ fn a_statement_past_its_timeout_is_interrupted() {
     chunk.commit().unwrap();
     let store = ReadOnlyStore::open(&settings, Duration::ZERO).unwrap();
     assert_eq!(
-        store.window(&["late".into()], 1),
+        store.window(&["late".into()], WindowStart::Height(1)),
         Err(ReadOnlyError::TimedOut)
     );
     drop(database);
@@ -180,7 +227,9 @@ fn the_window_reads_while_the_writer_commits_and_never_holds_a_commit_back() {
             let store = ReadOnlyStore::open(&settings, TIMEOUT).unwrap();
             let (mut reads, mut last) = (0_u32, 0);
             while !done.load(Ordering::Relaxed) {
-                let rows = store.window(&["late".into()], 1).unwrap();
+                let rows = store
+                    .window(&["late".into()], WindowStart::Height(1))
+                    .unwrap();
                 let tip = rows.blocks.last().unwrap().height;
                 assert!(tip >= last, "the tip went back from {last} to {tip}");
                 assert_eq!(rows.blocks.len(), usize::try_from(tip).unwrap());
