@@ -333,7 +333,8 @@ fn cause(view: &dyn View, chain: &ChainFacts, log: Option<&LogWindow>, slot: &Mi
 
 /// The blocks the forger logged as forged whose height the chain holds with another generator,
 /// or not at all: a forger signing outside its slot, or blocks the network refused. One is a
-/// warn, two or more a fail.
+/// warn, two or more a fail. The chain only fails to hold them, which is true of every height
+/// this forger did not sign, so the finding rests on the log lines alone.
 fn lost(out: Out, ours: &Ours, store: &StoreWindow, log: &LogWindow) -> Option<Finding> {
     let heights = store.blocks.iter().map(|block| block.height);
     let (low, high) = (heights.clone().min()?, heights.max()?);
@@ -347,5 +348,5 @@ fn lost(out: Out, ours: &Ours, store: &StoreWindow, log: &LogWindow) -> Option<F
     }
     let status = if lost.len() > 1 { Fail } else { Warn };
     let values = vec![("count", int(lost.len())), ("height", int(*lost.last()?))];
-    Some(out.to(status, Chain, "not-on-chain", values))
+    Some(out.to(status, Log, "not-on-chain", values))
 }

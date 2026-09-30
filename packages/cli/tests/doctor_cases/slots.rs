@@ -596,3 +596,26 @@ fn our_delegates_come_from_the_flag_then_the_log_then_the_signing_record() {
         [&vec!["genesis_7".to_owned()], &vec!["genesis_9".to_owned()]]
     );
 }
+
+#[test]
+fn blocks_logged_as_forged_that_the_chain_does_not_hold_rest_on_the_log() {
+    use heartwood_cli::doctor::report::Basis;
+    let mut twice = missing(
+        &[60],
+        &[7, 113],
+        vec![forged(60, TIP - 59), forged(33, TIP - 32)],
+    );
+    if let Ok(store) = &mut twice.store_window {
+        store.blocks.push(block(59, TIP - 59, 2, "genesis_2"));
+        store.blocks.push(block(32, TIP - 32, 2, "genesis_2"));
+        store.blocks.sort_by_key(|block| block.height);
+    }
+    let findings = run("slots.missed", &twice, &DoctorOptions::default());
+    let basis = |key: &str| {
+        let finding = findings.iter().find(|f| f.advice.key == key).unwrap();
+        (finding.status, finding.basis)
+    };
+    // The missed slot is the store's; the blocks the chain does not hold are the log's alone.
+    assert_eq!(basis("cause-not-on-chain"), (Status::Warn, Basis::Chain));
+    assert_eq!(basis("not-on-chain"), (Status::Fail, Basis::Log));
+}
