@@ -272,6 +272,7 @@ pub fn run(args: &[String]) -> Result<bool> {
         .max()
         .unwrap_or(0)
         + 2;
+    let (problems, hits) = judge_hits(criteria, &evidence.records);
     for entry in &criteria.register.entries {
         let mut finding = judge_entry(entry, &setup.sources, &evidence, passed.as_ref());
         if !seen.insert(entry.id.as_str()) {
@@ -286,18 +287,28 @@ pub fn run(args: &[String]) -> Result<bool> {
             EntryStatus::Active => "active",
             EntryStatus::Deferred => "deferred",
         };
+        // The runs' hits of the entry's code names, counted per entry.
+        let met: u64 = entry
+            .code_names
+            .iter()
+            .filter_map(|name| hits.get(name))
+            .sum();
+        let met = if met > 0 {
+            format!("  {met} hit{}", if met == 1 { "" } else { "s" })
+        } else {
+            String::new()
+        };
         if finding.problems.is_empty() {
             ok += 1;
-            let _ = writeln!(text, "{:<id_width$}{word:<9}ok", entry.id);
+            let _ = writeln!(text, "{:<id_width$}{word:<9}ok{met}", entry.id);
         } else {
             bad += 1;
-            let _ = writeln!(text, "{:<id_width$}{word:<9}FAIL", entry.id);
+            let _ = writeln!(text, "{:<id_width$}{word:<9}FAIL{met}", entry.id);
             for problem in &finding.problems {
                 let _ = writeln!(text, "      {problem}");
             }
         }
     }
-    let (problems, hits) = judge_hits(criteria, &evidence.records);
     if !problems.is_empty() {
         let _ = writeln!(text, "hits");
         for problem in &problems {

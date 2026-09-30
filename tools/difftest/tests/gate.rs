@@ -930,6 +930,16 @@ fn an_honest_run_that_hits_an_entry_fails_and_an_intended_hit_is_counted() {
     assert!(ran.ok, "{}", ran.text);
     assert!(ran.text.contains("counted hits"), "{}", ran.text);
     assert!(
+        ran.text.contains("E-1  active   ok  10 hits"),
+        "{}",
+        ran.text
+    );
+    assert!(
+        ran.text.contains("E-2  active   ok  6 hits"),
+        "{}",
+        ran.text
+    );
+    assert!(
         ran.text.contains("10  Documented::ReplayIndexOrder"),
         "{}",
         ran.text
