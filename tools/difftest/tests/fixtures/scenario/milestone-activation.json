@@ -1,12 +1,12 @@
 {
   "id": "milestone-activation",
-  "title": "Transactions cross the donations milestone and a round end",
+  "title": "A transfer in the block where the donations milestone activates, then across a round end",
   "levels": ["L2"],
   "network": "devnet",
   "genesisSeed": "scenario-fixture-seed",
   "actors": {"alice": {"seed": 1}, "bob": {"seed": 2}},
   "steps": [
-    {"name": "fund at the milestone", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+    {"name": "fund at the milestone", "at": {"height": 1}, "do": "submit", "node": 1, "via": "api",
      "txs": [{"ref": "fund", "type": "transfer", "from": "genesis", "to": [["alice", "500000000000"]]}],
      "check": {"accept": ["fund"]}},
     {"name": "spend", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api",
