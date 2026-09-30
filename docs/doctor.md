@@ -13,6 +13,12 @@ a peer-to-peer port, and makes no network request except HTTP GETs to its own re
 loopback address: at most 12 in a run, with no retry. It needs no privilege: run it as the node's
 user. A run takes at most 5 seconds.
 
+Its only other programs are three fixed probes, each at its fixed path with `LANG=C` as its whole
+environment: `timedatectl show --property=NTPSynchronized --property=NTP`, `chronyc -n tracking`
+and `systemctl is-active ufw nftables firewalld`. `timedatectl` and `systemctl` ask the system
+manager over the system bus. On a host where the time service (`systemd-timedated`) is not
+running, the question starts it, as any `timedatectl` call does: it is a read-only service that
+exits again once idle.
 
 It reads the relay's store through a read-only connection, and only while the relay runs. A relay
 that stops at the very moment the doctor opens its store can leave the store's two empty
@@ -22,6 +28,7 @@ doctor reads nothing from such a store.
 It takes the home directory from `HOME` and the user's name from `USER`, and never looks either
 up in the system's user database. Without `HOME` it does not run (exit code 3), as a role's start
 does not.
+
 Each check has a page on the documentation site,
 <https://docs.iceroot.com/validators/doctor/>, and `heartwood doctor explain <check>` prints the
 same text.
