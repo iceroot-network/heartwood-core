@@ -3,9 +3,9 @@
 //!
 //! Most tests run against a twin: a reference made of Heartwood's own state, pool and builder,
 //! which can also be told to answer another digest line or another verdict, so the producer's
-//! stops are tested without the oracle. The integration tests (`#[ignore = "integration"]`) run
-//! the chain against the real reference (`DIFFTEST_TEST_SOLAR_DIR` or `DIFFTEST_TEST_IMAGE`) and
-//! through the judge and the replays.
+//! stops are tested without the oracle. The integration tests (ignored for the reason
+//! `integration`, which `make test-integration` runs) run the chain against the real reference
+//! (`DIFFTEST_TEST_SOLAR_DIR` or `DIFFTEST_TEST_IMAGE`) and through the judge and the replays.
 
 use std::path::{Path, PathBuf};
 
