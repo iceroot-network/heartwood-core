@@ -272,7 +272,9 @@ pub fn missed(input: &CheckInput<'_>) -> Vec<Finding> {
         let forged = store.blocks.iter().filter(|block| ours.holds(block));
         taken.extend(forged.map(|block| (block.timestamp, false)));
         taken.sort_unstable();
-        let rounds_s = 5 * i64::from(chain.active_delegates) * i64::from(chain.block_time_s);
+        let round_s =
+            i64::from(chain.active_delegates).saturating_mul(i64::from(chain.block_time_s));
+        let rounds_s = round_s.saturating_mul(5);
         let since = slots::epoch_time(view.now_ms(), chain.epoch_ms).saturating_sub(rounds_s);
         let recent = missed.iter().filter(|m| i64::from(m.timestamp) >= since);
         let recent = recent.count();

@@ -37,7 +37,8 @@ pub fn forging_allowed(input: &CheckInput<'_>) -> Vec<Finding> {
         let slot_ms = chain.map_or(DEFAULT_SLOT_MS, slots::slot_ms);
         let slot = |at: i64| chain.map_or(at / slot_ms, |chain| slots::slot_at(chain, at));
         // A cold start in the relay's first round after its start is by design.
-        let round_ms = slot_ms * i64::from(chain.map_or(DEFAULT_ACTIVE, |c| c.active_delegates));
+        let active = i64::from(chain.map_or(DEFAULT_ACTIVE, |c| c.active_delegates));
+        let round_ms = slot_ms.saturating_mul(active);
         let relay = view.process(Role::Relay).ok();
         let relay_start = relay.and_then(|facts| facts.supervisor.as_ref()?.started_at_ms);
         let settled = |at: i64| relay_start.is_none_or(|start| at > start.saturating_add(round_ms));

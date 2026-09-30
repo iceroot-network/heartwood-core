@@ -681,3 +681,36 @@ fn our_delegates_come_from_the_forger_s_lines_since_its_start_before_the_window_
         [("count", heartwood_cli::doctor::report::Fact::Int(2))]
     );
 }
+
+#[test]
+fn a_chain_definition_at_the_limits_of_its_numbers_gives_findings_and_no_panic() {
+    let limits = [
+        (u32::MAX, u32::MAX),
+        (1 << 31, 1 << 31),
+        (100_000_000, 100_000_000),
+        (u32::MAX, 53),
+        (8, u32::MAX),
+    ];
+    for (block_time_s, active_delegates) in limits {
+        let mut view = missing(&[3, 2], &[7, 113], vec![quorum(3), forged(7, TIP - 6)]);
+        let facts = ChainFacts {
+            block_time_s,
+            active_delegates,
+            ..chain()
+        };
+        if let Ok(relay) = &mut view.relay_config {
+            relay.chain = facts.clone();
+        }
+        if let Ok(forger) = &mut view.forger_config {
+            forger.chain = facts;
+        }
+        for entry in ENTRIES.iter() {
+            let findings = run(entry.id, &view, &DoctorOptions::default());
+            assert!(
+                !findings.is_empty(),
+                "{} at {block_time_s}/{active_delegates}",
+                entry.id
+            );
+        }
+    }
+}
