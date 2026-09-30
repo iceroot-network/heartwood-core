@@ -101,7 +101,11 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 #   live in heartwood-cli, where they need only paths.
 # - heartwood-cli goes from 3,500 to 3,600: it measured 3,347; the recovery commands (the markers,
 #   the question, the temp directory's trust rule and the clears' bodies, up to 175 lines) and
-#   their colon spellings (4) join it. The recovery commands are listed on their own.
+#   their colon spellings (4) join it. The recovery commands are listed on their own. It goes to
+#   3,700 with the supervisor's run-file checks (the run directory's files opened relative to the
+#   directory that was checked, and a run file that is not a regular file refused): they took it
+#   from 3,347 to 3,405 without the recovery commands, and with the recovery commands' 229 lines
+#   (225 in recovery.rs and the colon spellings' 4) it measures 3,634.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"
@@ -132,7 +136,7 @@ CHECKS=(
     "heartwood-forger loop and relay client:packages/forger/src/forger_service.rs packages/forger/src/client.rs packages/forger/src/deadlines.rs:"
     "heartwood-forger forging, keys, record and attester:packages/forger/src/delegate.rs packages/forger/src/keys.rs packages/forger/src/signing_record.rs packages/forger/src/signer.rs packages/forger/src/attestation.rs:"
     "heartwood-forger test support (difftest only):packages/forger/src/bin:"
-    "heartwood-cli:packages/cli/src !packages/cli/src/bin:3600"
+    "heartwood-cli:packages/cli/src !packages/cli/src/bin:3700"
     "heartwood-cli supervisor, commands and network generate:packages/cli/src/argv.rs packages/cli/src/instance.rs packages/cli/src/supervisor packages/cli/src/process.rs packages/cli/src/process_table.rs packages/cli/src/network.rs:"
     "heartwood-cli devnet:packages/cli/src/devnet packages/cli/src/http.rs:"
     "heartwood-cli recovery commands:packages/cli/src/recovery.rs:"
