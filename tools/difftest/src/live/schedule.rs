@@ -233,8 +233,8 @@ pub(super) fn stop_height(run: &str) -> Option<u32> {
     match run {
         "w" | "w0" => Some(212),
         "p" => Some(159),
-        "s" | "mixed-short" => Some(106),
-        "mixed" | "mixed-split" => Some(265),
+        "s" | "mixed-short" | "core" => Some(106),
+        "mixed" | "mixed-split" | "churn" => Some(265),
         _ => None,
     }
 }

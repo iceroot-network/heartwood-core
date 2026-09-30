@@ -92,6 +92,7 @@ pub fn required(run: &str) -> Vec<String> {
             "conflict-outcome",
         ],
         "mixed-short" | "mixed" | "mixed-split" => &["api-pool", "api-rate-limit"],
+        "core" => &["locks", "relay-start-refused", "stop"],
         _ => &[],
     };
     // The steps of a mixed run, with their planned rounds, are the schedule's.
@@ -138,6 +139,8 @@ pub fn problems(run: &str, steps: &[Step]) -> Vec<String> {
             | "mixed-short"
             | "mixed"
             | "mixed-split"
+            | "churn"
+            | "core"
     ) {
         out.push(format!("unknown live run {run}"));
     }
