@@ -5,10 +5,23 @@
 //! ledger and the criteria file), `gate coverage` (the coverage rows' records) and `gate register`
 //! (every register entry's trigger, test and hits).
 
+pub mod coverage;
+pub mod criteria;
+pub mod flags;
+pub mod git;
 pub mod ledger;
+pub mod make_record;
+pub mod names;
+pub mod needs;
+pub mod output;
 pub mod record;
+pub mod register;
+pub mod s1;
+pub mod store;
+pub mod time;
+pub mod totals;
 
-use crate::errors::{Error, Result};
+use crate::errors::Result;
 
 pub use ledger::{LEDGER_FORMAT, LedgerEntry, LedgerKind};
 pub use record::{Counts, GateRecord, GateResult, RECORD_FORMAT};
@@ -52,8 +65,11 @@ impl GateVerb {
 
 /// Run a gate command; whether its checks passed.
 pub fn run(args: &GateArgs) -> Result<bool> {
-    Err(Error::NotYet(format!(
-        "gate {} is not built yet",
-        args.verb.name()
-    )))
+    match args.verb {
+        GateVerb::Record => make_record::run(&args.args),
+        GateVerb::Ledger => totals::run(&args.args),
+        GateVerb::S1 => s1::run(&args.args),
+        GateVerb::Coverage => coverage::run(&args.args),
+        GateVerb::Register => register::run(&args.args),
+    }
 }

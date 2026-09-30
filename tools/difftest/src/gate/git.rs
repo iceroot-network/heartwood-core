@@ -1,0 +1,202 @@
+//! The git questions the path rule asks, through the `git` command in a chosen tree.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use crate::errors::{Error, Result};
+
+/// A working tree, addressed by its root.
+#[derive(Debug, Clone)]
+pub struct Repo {
+    root: PathBuf,
+}
+
+impl Repo {
+    /// The tree rooted at `root`.
+    pub fn open(root: &Path) -> Repo {
+        Repo {
+            root: root.to_path_buf(),
+        }
+    }
+
+    fn run(&self, args: &[&str]) -> Result<Output> {
+        Command::new("git")
+            .arg("-C")
+            .arg(&self.root)
+            .args(args)
+            .output()
+            .map_err(|e| Error::io(&self.root, e))
+    }
+
+    fn checked(&self, args: &[&str]) -> Result<String> {
+        let output = self.run(args)?;
+        if !output.status.success() {
+            return Err(Error::Corpus {
+                path: self.root.clone(),
+                message: format!(
+                    "git {}: {}",
+                    args.join(" "),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            });
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    /// The full commit id `rev` names.
+    pub fn resolve(&self, rev: &str) -> Result<String> {
+        let spec = format!("{rev}^{{commit}}");
+        Ok(self
+            .checked(&["rev-parse", "--verify", "--quiet", &spec])?
+            .trim()
+            .to_owned())
+    }
+
+    /// Whether the tree has changes beside its head: tracked changes or files git does not
+    /// ignore and does not track.
+    pub fn dirty(&self) -> Result<bool> {
+        Ok(!self.checked(&["status", "--porcelain"])?.trim().is_empty())
+    }
+
+    /// Whether `commit` exists in the tree.
+    pub fn knows(&self, commit: &str) -> bool {
+        let spec = format!("{commit}^{{commit}}");
+        self.run(&["cat-file", "-e", &spec])
+            .is_ok_and(|o| o.status.success())
+    }
+
+    /// Whether `ancestor` is an ancestor of `descendant` (or the same commit).
+    pub fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool> {
+        let output = self.run(&["merge-base", "--is-ancestor", ancestor, descendant])?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(Error::Corpus {
+                path: self.root.clone(),
+                message: format!(
+                    "git merge-base --is-ancestor {ancestor} {descendant}: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            }),
+        }
+    }
+
+    /// The files under `paths` (the whole tree when there are none) that differ between the
+    /// commits `from` and `to`, sorted.
+    pub fn changed(&self, from: &str, to: &str, paths: &[String]) -> Result<Vec<String>> {
+        let mut args = vec!["diff", "--name-only", "-z", from, to, "--"];
+        let specs: Vec<String> = paths.iter().map(|p| format!(":(literal){p}")).collect();
+        args.extend(specs.iter().map(String::as_str));
+        let text = self.checked(&args)?;
+        let mut files: Vec<String> = text
+            .split('\0')
+            .filter(|f| !f.is_empty())
+            .map(str::to_owned)
+            .collect();
+        files.sort();
+        Ok(files)
+    }
+}
+
+/// Whether an entry made at one head still counts at another.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Validity {
+    /// Its head is an ancestor of the final head and none of its paths changed since.
+    Valid,
+    /// It ran on a tree with changes beside its head.
+    Dirty,
+    /// Its head is not a commit of this tree.
+    Unknown,
+    /// Its head is not an ancestor of the final head.
+    NotAncestor,
+    /// One of its paths changed since; the changed files (the first few).
+    Stale(Vec<String>),
+}
+
+impl Validity {
+    /// Whether the entry counts.
+    pub fn counts(&self) -> bool {
+        matches!(self, Validity::Valid)
+    }
+
+    /// One phrase for a table.
+    pub fn describe(&self) -> String {
+        match self {
+            Validity::Valid => "valid".to_owned(),
+            Validity::Dirty => "dirty tree".to_owned(),
+            Validity::Unknown => "head unknown to this tree".to_owned(),
+            Validity::NotAncestor => "head is not an ancestor".to_owned(),
+            Validity::Stale(files) => {
+                let shown: Vec<&str> = files.iter().take(3).map(String::as_str).collect();
+                let more = files.len().saturating_sub(3);
+                if more == 0 {
+                    format!("stale: {} changed", shown.join(", "))
+                } else {
+                    format!("stale: {} and {more} more changed", shown.join(", "))
+                }
+            }
+        }
+    }
+}
+
+/// The path rule against one final head.
+#[derive(Debug)]
+pub struct PathRule {
+    repo: Repo,
+    head: String,
+    allow_dirty: bool,
+    cache: std::cell::RefCell<std::collections::HashMap<(String, Vec<String>), Validity>>,
+}
+
+impl PathRule {
+    /// The rule for `head` (a revision) in `repo`; dirty entries count only with `allow_dirty`.
+    pub fn new(repo: Repo, head: &str, allow_dirty: bool) -> Result<PathRule> {
+        let head = repo.resolve(head)?;
+        Ok(PathRule {
+            repo,
+            head,
+            allow_dirty,
+            cache: std::cell::RefCell::default(),
+        })
+    }
+
+    /// The final head, in full.
+    pub fn head(&self) -> &str {
+        &self.head
+    }
+
+    /// Whether something that ran at `entry_head` on a tree that was `dirty` or not, testing
+    /// `paths` (the whole tree when empty), counts at the final head.
+    pub fn check(&self, entry_head: &str, dirty: bool, paths: &[String]) -> Result<Validity> {
+        if dirty && !self.allow_dirty {
+            return Ok(Validity::Dirty);
+        }
+        let key = (entry_head.to_owned(), paths.to_vec());
+        if let Some(found) = self.cache.borrow().get(&key) {
+            return Ok(found.clone());
+        }
+        let found = self.compute(entry_head, paths)?;
+        self.cache.borrow_mut().insert(key, found.clone());
+        Ok(found)
+    }
+
+    fn compute(&self, entry_head: &str, paths: &[String]) -> Result<Validity> {
+        let well_formed =
+            entry_head.len() == 40 && entry_head.bytes().all(|b| b.is_ascii_hexdigit());
+        if !well_formed || !self.repo.knows(entry_head) {
+            return Ok(Validity::Unknown);
+        }
+        if entry_head == self.head {
+            return Ok(Validity::Valid);
+        }
+        if !self.repo.is_ancestor(entry_head, &self.head)? {
+            return Ok(Validity::NotAncestor);
+        }
+        let changed = self.repo.changed(entry_head, &self.head, paths)?;
+        Ok(if changed.is_empty() {
+            Validity::Valid
+        } else {
+            Validity::Stale(changed)
+        })
+    }
+}
