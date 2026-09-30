@@ -127,15 +127,16 @@ const DELEGATE_KEYS: &[(&str, Node)] = &[
 
 /// The query of `route`, validated: defaults added and values coerced, or 422.
 pub fn validate_query(route: RouteId, query: &Value) -> Result<Value, ApiError> {
+    // A query the reference's plugins throw on (the grammar's `null`) is a 500 on every route.
+    let Value::Object(input) = query else {
+        return Err(ApiError::internal());
+    };
     let (keys, wildcard): (&[(&str, Node)], &[&str]) = match route {
         RouteId::DelegatesIndex => (DELEGATE_KEYS, &[]),
         RouteId::WalletsIndex | RouteId::WalletsTop | RouteId::DelegatesVoters => {
             (WALLET_KEYS, &["attributes"])
         }
         _ => return Ok(query.clone()),
-    };
-    let Value::Object(input) = query else {
-        return Err(ApiError::internal());
     };
     let mut input = Cow::Borrowed(input);
     let beyond = input.contains_key(BEYOND);

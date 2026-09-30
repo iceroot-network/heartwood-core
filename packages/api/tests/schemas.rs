@@ -89,8 +89,9 @@ fn queries_on_which_the_reference_plugins_throw_are_500_everywhere() {
     ];
     for raw in throws {
         assert_eq!(parse_query(raw), Value::Null, "{raw}");
-        for route in [RouteId::TransactionsIndex, RouteId::NodeStatus] {
-            assert_eq!(status(validate_query(route, &parse_query(raw))), 500);
+        for route in RouteId::ALL {
+            let answer = validate_query(route, &parse_query(raw));
+            assert_eq!(status(answer), 500, "{route:?} {raw}");
         }
     }
 }
