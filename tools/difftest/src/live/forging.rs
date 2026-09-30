@@ -219,6 +219,11 @@ pub struct Answer {
     pub node_height: Option<u64>,
     /// The delegates counted for the quorum.
     pub has_quorum: u64,
+    /// The delegates counted against the quorum.
+    pub no_quorum: u64,
+    /// The network state's status, the reference's `NetworkStateStatus` (0 the default state, 1
+    /// below the minimum delegate reach), when the answer records it.
+    pub status: Option<u64>,
     /// The round's delegates in no list, when the answer lists them.
     pub no_response: Option<usize>,
 }
@@ -257,6 +262,8 @@ pub fn answers(dir: &Path, manifest: &Manifest) -> Result<(Vec<Answer>, Vec<Stri
                 caller: text(&v, "caller").to_owned(),
                 node_height: v["nodeHeight"].as_u64(),
                 has_quorum,
+                no_quorum: v["noQuorum"].as_u64().unwrap_or(0),
+                status: v["status"].as_u64(),
                 no_response: v
                     .pointer("/delegates/noResponse")
                     .and_then(Value::as_array)
@@ -1084,6 +1091,8 @@ mod tests {
             caller: caller.into(),
             node_height: Some(height),
             has_quorum: 53,
+            no_quorum: 0,
+            status: Some(0),
             no_response: Some(0),
         }
     }

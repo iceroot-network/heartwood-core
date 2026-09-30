@@ -225,10 +225,18 @@ fn production(run: &ForgingRun<'_>, data: &Data) -> Vec<String> {
     problems
 }
 
+/// Whether the reference's forger forges on `answer` (`isForgingAllowed`): the network state is
+/// the default one (not below the run's `minimumDelegateReach`, not a cold start), and it can forge
+/// (`canForge`): of the delegates counted either way, at least the milestone's quorum (27 of 53)
+/// agree, or all of them when fewer are counted. A partition side of 21 delegates thus forges when
+/// all 21 agree; with 27 or more counted, 27 must agree whatever the run's reach.
+fn allows_forging(answer: &Answer) -> bool {
+    let counted = answer.has_quorum + answer.no_quorum;
+    answer.status == Some(0) && counted > 0 && answer.has_quorum >= QUORUM.min(counted)
+}
+
 /// Every block a Heartwood-hosted delegate forged followed, in its slot, an answer of its own
-/// relay at the height below it that counted the delegates' reach: the run's
-/// `minimumDelegateReach`, which a partition side with fewer delegates than the full quorum meets
-/// when the run sets it lower.
+/// relay at the height below it on which the reference's forger forges ([`allows_forging`]).
 fn quorum_before(data: &Data) -> Vec<String> {
     let mut problems = Vec::new();
     for b in data.blocks.values() {
@@ -246,12 +254,12 @@ fn quorum_before(data: &Data) -> Vec<String> {
             a.relay == holder.name
                 && data.slots.at(a.at) == b.slot
                 && a.node_height == Some(u64::from(b.height) - 1)
-                && a.has_quorum >= data.reach
+                && allows_forging(a)
         });
         if !evidence {
             problems.push(format!(
-                "block {} at height {} (slot {}): no answer of {}'s relay in its slot at height {} with hasQuorum at least {}",
-                b.id, b.height, b.slot, holder.name, b.height - 1, data.reach
+                "block {} at height {} (slot {}): no answer of {}'s relay in its slot at height {} on which the reference forges (the default status, and hasQuorum at least {QUORUM} or every delegate counted)",
+                b.id, b.height, b.slot, holder.name, b.height - 1
             ));
         }
     }
@@ -477,7 +485,7 @@ fn one_tip(run: &ForgingRun<'_>) -> Vec<String> {
 mod tests {
     use super::*;
 
-    fn data(reach: u64, has_quorum: u64) -> Data {
+    fn data(reach: u64, has_quorum: u64, no_quorum: u64, status: u64) -> Data {
         let validator = Validator {
             name: "node2".into(),
             forger: "192.0.2.2".into(),
@@ -499,6 +507,8 @@ mod tests {
                 caller: "192.0.2.2".into(),
                 node_height: Some(9),
                 has_quorum,
+                no_quorum,
+                status: Some(status),
                 no_response: None,
             }],
             slots: Slots {
@@ -511,9 +521,16 @@ mod tests {
     }
 
     #[test]
-    fn a_block_needs_an_answer_that_counted_the_runs_reach() {
-        assert!(quorum_before(&data(15, 21)).is_empty());
-        assert_eq!(quorum_before(&data(27, 21)).len(), 1);
-        assert_eq!(quorum_before(&data(15, 14)).len(), 1);
+    fn a_block_needs_an_answer_on_which_the_reference_would_forge() {
+        // A side of 21 delegates that all agree forges; the reference's quorum is then all of them.
+        assert!(quorum_before(&data(15, 21, 0, 0)).is_empty());
+        assert_eq!(quorum_before(&data(15, 20, 1, 0)).len(), 1);
+        // With 27 or more counted, 27 must agree, whatever the run's delegate reach.
+        assert!(quorum_before(&data(15, 27, 5, 0)).is_empty());
+        assert_eq!(quorum_before(&data(15, 20, 12, 0)).len(), 1);
+        assert_eq!(quorum_before(&data(27, 26, 27, 0)).len(), 1);
+        // An answer below the minimum delegate reach (status 1) allows no block.
+        assert_eq!(quorum_before(&data(15, 14, 0, 1)).len(), 1);
+        assert_eq!(quorum_before(&data(15, 0, 0, 0)).len(), 1);
     }
 }
