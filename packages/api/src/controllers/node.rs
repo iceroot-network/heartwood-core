@@ -15,7 +15,9 @@ use heartwood_state::StateView;
 use serde_json::{Map, Value, json};
 
 use crate::context::{ApiContext, ApiReply, ApiRequest, NodeInfo, NodeStatus, Route, RouteId};
+use crate::controllers::transactions::read;
 use crate::errors::ApiError;
+use crate::resources::fee_statistics;
 
 /// The routes of this controller.
 pub fn routes() -> Vec<Route> {
@@ -202,11 +204,27 @@ pub fn genesis_as_held(genesis: &Value) -> Value {
     genesis
 }
 
-/// `GET /node/fees`: the fee statistics of the kept types.
-///
-/// Not served yet: until its handler is written, the route answers what an unmatched path
-/// answers, 404 "Not Found".
+/// `GET /node/fees`: the fee statistics of the kept types, over the last `days` days when the
+/// query gives them and over each type's last 20 transactions when it does not.
 pub async fn fees(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
-    let _ = (ctx, request);
-    Err(ApiError::not_found("Not Found"))
+    fees_at(&ctx, &request, SystemClock.now_ms()).await
+}
+
+/// [`fees`] at `now_ms`, the time the window counts back from.
+async fn fees_at(
+    ctx: &Arc<ApiContext>,
+    request: &ApiRequest,
+    now_ms: i64,
+) -> Result<ApiReply, ApiError> {
+    let days = request.query.get("days").and_then(Value::as_i64);
+    let window = match days {
+        Some(days) => {
+            let epoch = slots::epoch_unix_ms(ctx.node.crypto.milestones.at(1).epoch())
+                .ok_or_else(ApiError::internal)?;
+            Some(fee_statistics::window(days, now_ms, epoch).ok_or_else(ApiError::internal)?)
+        }
+        None => None,
+    };
+    let rows = read(ctx, move |reader| reader.fee_statistics(window)).await?;
+    Ok(ApiReply::ok(fee_statistics::response(days, &rows)))
 }

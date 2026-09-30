@@ -1,3 +1,103 @@
-//! The fee statistics resource of `GET /node/fees`.
-//!
-//! Not written yet.
+//! The fee statistics resource of `GET /node/fees`: the window of the `days` query, and the
+//! statistics grouped by type group and keyed by the type's handler key.
+
+use heartwood_crypto::TransactionType;
+use heartwood_database::FeeStatisticsRow;
+use serde_json::{Map, Value, json};
+
+use heartwood_crypto::crypto::slots;
+
+/// Milliseconds in a day.
+const DAY_MS: i64 = 86_400_000;
+
+/// The window of the last `days` days at `now_ms` (Unix milliseconds), as timestamps in seconds
+/// since the network's epoch (`epoch`, its Unix milliseconds): from `now - days` on, with no end.
+/// The reference asks only for `timestamp >= age`, so a block from the future still counts.
+/// `None` when `days` is out of the range where the arithmetic is exact, which the query's schema
+/// already refuses.
+pub fn window(days: i64, now_ms: i64, epoch: i64) -> Option<(i64, i64)> {
+    let age = now_ms.checked_sub(days.checked_mul(DAY_MS)?)?;
+    Some((slots::epoch_time(age, epoch), i64::MAX))
+}
+
+/// The response of `GET /node/fees`: `{ meta, data }`, where `meta` holds `days` when the query
+/// gave it, and `data` maps each type group to its types' `{ avg, burned, max, min, sum }`, every
+/// value a decimal string. A row of a type this implementation does not carry is left out.
+pub fn response(days: Option<i64>, rows: &[FeeStatisticsRow]) -> Value {
+    let mut groups: Map<String, Value> = Map::new();
+    for row in rows {
+        let Ok(kind) = TransactionType::from_wire(row.type_group, row.kind) else {
+            continue;
+        };
+        let entry = groups
+            .entry(row.type_group.to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Some(group) = entry.as_object_mut() {
+            group.insert(kind.key().to_owned(), statistics(row));
+        }
+    }
+    let meta = match days {
+        Some(days) => json!({ "days": days }),
+        None => json!({}),
+    };
+    json!({ "meta": meta, "data": groups })
+}
+
+/// One type's statistics.
+fn statistics(row: &FeeStatisticsRow) -> Value {
+    json!({
+        "avg": row.avg.to_string(),
+        "burned": row.burned.to_string(),
+        "max": row.max.to_string(),
+        "min": row.min.to_string(),
+        "sum": row.sum.to_string(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(type_group: u32, kind: u16, fee: u64) -> FeeStatisticsRow {
+        FeeStatisticsRow {
+            type_group,
+            kind,
+            avg: fee,
+            min: fee,
+            max: fee,
+            sum: u128::from(fee) * 2,
+            burned: u128::from(fee) / 2,
+        }
+    }
+
+    #[test]
+    fn the_window_starts_days_before_now_and_has_no_end() {
+        let epoch = 1_000_000;
+        let now = epoch + 40 * DAY_MS + 999;
+        assert_eq!(window(1, now, epoch), Some((39 * 86_400, i64::MAX)));
+        assert_eq!(window(30, now, epoch), Some((10 * 86_400, i64::MAX)));
+        // Before the epoch, the seconds are negative, as the reference's slot time is.
+        assert_eq!(window(30, epoch, epoch), Some((-30 * 86_400, i64::MAX)));
+        assert_eq!(window(i64::MAX, now, epoch), None);
+    }
+
+    #[test]
+    fn the_statistics_group_by_type_group_and_key() {
+        let rows = [row(1, 6, 10), row(1, 2, 20), row(2, 0, 30)];
+        let out = response(Some(3), &rows);
+        assert_eq!(out["meta"], json!({ "days": 3 }));
+        assert_eq!(
+            out["data"]["1"]["transfer"],
+            json!({ "avg": "10", "burned": "5", "max": "10", "min": "10", "sum": "20" })
+        );
+        assert_eq!(out["data"]["1"]["delegateRegistration"]["avg"], "20");
+        assert_eq!(out["data"]["2"]["burn"]["sum"], "60");
+        assert_eq!(response(None, &rows)["meta"], json!({}));
+    }
+
+    #[test]
+    fn a_type_this_node_does_not_carry_is_left_out() {
+        let out = response(None, &[row(1, 8, 1), row(3, 0, 1)]);
+        assert_eq!(out["data"], json!({}));
+    }
+}
