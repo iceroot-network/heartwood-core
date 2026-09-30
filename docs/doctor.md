@@ -184,10 +184,11 @@ By default the report is safe to paste where others can read it:
   `unspecified`. Ports stay. Relations between addresses (for example "3 peers share one /24")
   are computed before the labels and kept as counts.
 - **This host.** The home directory is printed as `~`, the operating system's user name as `user`
-  and the host's name as `host`, in paths, in untrusted text and in the messages on standard
-  error. The home and the user's name are the `HOME` and `USER` variables: a path outside `HOME`
-  is printed whole, and without `USER` a user name in such a path stays, so set both where the
-  doctor runs with a cleared environment (see [doctor-mcp.md](doctor-mcp.md)).
+  and the host's name as `host`, in paths and in untrusted text; a message on standard error
+  prints the home as `~` and the user's name as `user` too. The home and the user's name are the
+  `HOME` and `USER` variables: a path outside `HOME` is printed whole, and without `USER` a user
+  name in such a path stays, so set both where the doctor runs with a cleared environment (see
+  [doctor-mcp.md](doctor-mcp.md)).
 - **Long hex runs.** In untrusted text, any run of 64 hexadecimal characters or more becomes
   `[hex, N characters]`. Block ids in the typed facts stay: they are public chain data.
 - **Delegate names and public keys** stay by default, since they are public on the chain and
