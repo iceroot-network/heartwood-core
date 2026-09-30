@@ -7,7 +7,7 @@ use heartwood_cli::doctor::DoctorOptions;
 use heartwood_cli::doctor::report::Status::{self, Fail, Pass, Skipped, Unknown as U, Warn};
 use heartwood_cli::doctor::report::keys;
 use heartwood_cli::doctor::seams::{
-    ChainFacts, FileFacts, FileKind, ForgerFacts, Meta, RelayFacts, Subject,
+    ChainFacts, FileFacts, FileKind, ForgerFacts, Meta, RelayFacts, RoleState, Subject,
 };
 use heartwood_cli::doctor::view::Unknown;
 use heartwood_cli::doctor::view::{NodeDir, NodeFile, ProcessFacts, Reason, RolePresence, Source};
@@ -490,9 +490,18 @@ fn key_dir_cases() -> Vec<Case> {
 
 fn stray_cases() -> Vec<Case> {
     let relay = Subject::Relay;
+    // The forger's presence, as its process and run files give it; `None`: unreadable.
     let with = |key: Option<FileFacts>, forger: Option<ProcessFacts>| {
         let mut view = relay_only();
         view.files.insert(NodeFile::KeyFile, Ok(key));
+        let present = forger.as_ref().map(|facts| {
+            let ran = facts.state != RoleState::Stopped || facts.supervisor.is_some();
+            RolePresence {
+                relay: true,
+                forger: ran,
+            }
+        });
+        view.roles_present = present.ok_or(unknown(Source::Process, Reason::Unreadable));
         let forger = forger.ok_or(unknown(Source::Process, Reason::Unreadable));
         view.processes.insert(Role::Forger, forger);
         view

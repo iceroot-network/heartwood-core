@@ -9,7 +9,7 @@ use heartwood_kernel::log::Level;
 use crate::doctor::registry::CheckInput;
 use crate::doctor::report::{Advice, Basis, Fact, Finding, Status, Untrusted, UntrustedSource};
 use crate::doctor::report::{Status::Fail, Status::Pass, Status::Warn, keys};
-use crate::doctor::seams::{FileFacts, FileKind, Meta, RoleState, Subject, subject_of};
+use crate::doctor::seams::{FileFacts, FileKind, Meta, Subject, subject_of};
 use crate::doctor::view::{NodeDir, NodeFile, Reason, Source, Unknown};
 use crate::seams::Role;
 
@@ -189,13 +189,14 @@ pub fn keys_dir(input: &CheckInput<'_>) -> Vec<Finding> {
     }]
 }
 
-/// `keys.stray`: a key file on a host where no forger of the instance has run.
+/// `keys.stray`: a key file on a host where no forger of the instance runs or has run, by the
+/// same presence the other checks read (its process and run files), so that it never names a key
+/// file stray beside a forger the doctor asks to start.
 pub fn keys_stray(input: &CheckInput<'_>) -> Vec<Finding> {
     per_role(input, |_, subject| {
         let finding =
             |status, key, values| found(input, subject, (status, Basis::System), key, values);
-        let process = input.view.process(Role::Forger);
-        let forger = process.map(|p| p.state != RoleState::Stopped || p.supervisor.is_some());
+        let forger = input.view.roles_present().map(|p| p.has(Role::Forger));
         match (input.view.file(NodeFile::KeyFile), forger) {
             (Ok(None), _) => finding(Pass, "none", Vec::new()),
             (Err(unknown), _) | (_, Err(unknown)) => {

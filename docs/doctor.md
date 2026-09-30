@@ -49,8 +49,11 @@ heartwood doctor mcp [--token T] [--network N]
 - The instance is found as every role command finds it, from the same flags, `config.json` and
   `CORE_PATH_*` variables. An instance whose directories come from `CORE_PATH_*` needs the same
   variables when the doctor runs.
-- `--role all`, the default, examines every role found on this host. `--role relay` or
-  `--role forger` limits the run to one; the other role's checks are listed as skipped.
+- `--role all`, the default, examines every role found on this host: a role that runs, or whose
+  run files (its lock, pid or supervisor state) are there. A key file alone is not a forger: on a
+  host where no forger runs or ran, `keys.stray` reports it and the forger's checks are skipped.
+  `--role relay` or `--role forger` limits the run to one; the other role's checks are listed as
+  skipped.
 - `--check ID` runs only the named checks (repeat it for several); `heartwood doctor checks`
   lists the ids.
 - `--window` sets how far back the log and store checks look, from `5m` to `24h` (default

@@ -96,6 +96,78 @@ fn the_registry_holds_47_checks_with_unique_ids_and_declared_statuses() {
 }
 
 #[test]
+fn a_relay_only_host_with_a_stray_key_file_runs_no_forger_checks() {
+    use heartwood_cli::doctor::seams::{FileFacts, FileKind, Meta, Subject, SupervisorFacts};
+    use heartwood_cli::{Role, StatusRow, SupervisedStatus};
+    let mut world = FakeWorld::default();
+    let scope = scope("/nodes/node1");
+    // The relay runs under its supervisor; no forger ever ran here (no lock, pid or state file),
+    // and a key file was left in the configuration directory.
+    let relay = StatusRow {
+        pid: Some(4242),
+        name: "solar-testnet-relay".into(),
+        version: "4.3.1-heartwood.0.1.0".into(),
+        status: SupervisedStatus::Online,
+        uptime: None,
+        restarts: 0,
+        cpu_percent: None,
+        rss_bytes: None,
+    };
+    let supervisor = SupervisorFacts {
+        started_at_ms: Some(doctor_support::NOW_MS - 3_600_000),
+        restarts: 0,
+        unstable: 0,
+        version: "4.3.1-heartwood.0.1.0".into(),
+    };
+    world
+        .processes
+        .rows
+        .insert(Role::Relay, (relay, Some(supervisor)));
+    let key = scope.paths.config.join("delegates.json");
+    let own = Meta {
+        kind: FileKind::File,
+        mode: 0o600,
+        uid: 1000,
+        gid: 1000,
+        size: 12,
+        dev: 1,
+        ino: 7,
+        nlink: 1,
+        modified_ms: 0,
+    };
+    let (target, link_target) = (None, None);
+    let facts = FileFacts {
+        path: key.clone(),
+        own,
+        target,
+        link_target,
+    };
+    world.fs.facts.insert(key, Ok(facts));
+    let report = run(&world, &scope, &DoctorOptions::default());
+    assert_eq!(report.scope.roles, [Role::Relay]);
+    let found = |id: &str, subject: Subject| {
+        let mut found = report.findings.iter();
+        let finding = found.find(|f| f.id.as_str() == id && f.subject == subject);
+        finding.map(|f| (f.status, f.advice.key))
+    };
+    // No "start the forger": the key file alone is not a forger.
+    assert_eq!(found("process.roles", Subject::Forger), None);
+    assert_eq!(
+        found("keys.stray", Subject::Relay),
+        Some((Status::Warn, "stray"))
+    );
+    let absent = Some((Status::Skipped, "skipped-absent"));
+    for id in [
+        "keys.file",
+        "slots.missed",
+        "forger.link",
+        "forger.signing-record",
+    ] {
+        assert_eq!(found(id, Subject::Forger), absent, "{id}");
+    }
+}
+
+#[test]
 fn a_run_over_fakes_gives_one_finding_per_check_and_the_same_json_each_time() {
     let world = FakeWorld::default();
     let scope = scope("/nodes/node1");

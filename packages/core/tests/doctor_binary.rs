@@ -15,14 +15,15 @@ use doctor_support::{AUX, ENV_CANARY, Node, heartwood, program};
 use heartwood_kernel::Clock;
 use serde_json::Value;
 
-/// A node with both roles present (a relay's lock file, a private key file), and the variables of
-/// its directories, home and user.
+/// A node with both roles present (each role's lock file) and a private key file, and the
+/// variables of its directories, home and user.
 fn stopped(name: &str) -> (Node, Vec<(String, String)>) {
     let node = Node::new(name, "CORE_P2P_PORT=6102\nCORE_API_PORT=6103\n");
     let run = node.paths().data.join("run");
     std::fs::create_dir_all(&run).unwrap();
     node.chmod(&run, 0o700);
     std::fs::write(run.join("relay.lock"), "").unwrap();
+    std::fs::write(run.join("forger.lock"), "").unwrap();
     let key = node.config().join(heartwood_forger::keys::FILE);
     std::fs::write(&key, format!("{{\"canary\": \"{ENV_CANARY}\"}}")).unwrap();
     node.chmod(&key, 0o600);

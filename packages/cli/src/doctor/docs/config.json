@@ -137,7 +137,7 @@
         "the node's files"
       ],
       "rules": {
-        "pass": "There is no key file, or a forger of the instance runs or has run on this host.",
+        "pass": "There is no key file, or a forger of the instance runs or has run on this host (its process or its run files: lock, pid, supervisor state).",
         "warn": "A key file is on a host where no forger of the instance runs or has run.",
         "unknown": "The key file's metadata or the process table could not be read.",
         "skipped": "No relay runs on this host."

@@ -361,7 +361,8 @@ impl NodeFile {
 }
 
 /// Which roles this host runs for the instance: a role is present when it runs, or when its run
-/// files (its lock, pid or supervisor state) exist; the forger also when the key file exists.
+/// files (its lock, pid or supervisor state) exist. A key file alone makes no forger present: on a
+/// host where no forger ran, it is a stray key file (`keys.stray`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RolePresence {
     /// The relay.
@@ -814,10 +815,9 @@ impl View for Gathered<'_> {
                 }
                 Ok(false)
             };
-            let key_file = self.file(NodeFile::KeyFile)?.is_some();
             Ok(RolePresence {
                 relay: run(Role::Relay)?,
-                forger: run(Role::Forger)? || key_file,
+                forger: run(Role::Forger)?,
             })
         });
         get(slot).copied()

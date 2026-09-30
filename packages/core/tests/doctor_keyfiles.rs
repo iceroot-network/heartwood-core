@@ -33,13 +33,14 @@ fn the_key_file_list_is_the_forgers_key_file() {
     assert!(!KEY_FILE_NAMES.contains(&heartwood_forger::signing_record::FILE));
 }
 
-/// A node with both roles present: a relay's lock file and a forger's key file of `mode`.
+/// A node with both roles present: each role's lock file, and a forger's key file of `mode`.
 fn node(name: &str, key_mode: u32) -> Node {
     let node = Node::new(name, "CORE_P2P_PORT=6102\n");
     let run = node.paths().data.join("run");
     std::fs::create_dir_all(&run).unwrap();
     node.chmod(&run, 0o700);
     std::fs::write(run.join("relay.lock"), "").unwrap();
+    std::fs::write(run.join("forger.lock"), "").unwrap();
     let key = node.config().join(heartwood_forger::keys::FILE);
     std::fs::write(&key, "{}").unwrap();
     node.chmod(&key, key_mode);
@@ -150,7 +151,14 @@ fn the_key_file_check_reads_the_real_files_metadata() {
     let (report, _) = run(&node);
     let found = finding(&report, "keys.file", Subject::Forger);
     assert_eq!((found.status, found.advice.key), (Status::Warn, "link"));
-    // A relay-only host with a key file: a stray key.
+    let stray = finding(&report, "keys.stray", Subject::Relay);
+    assert_eq!((stray.status, stray.advice.key), (Status::Pass, "forger"));
+    // A relay-only host with a key file (no forger's run file): a stray key, and no forger.
+    std::fs::remove_file(node.paths().data.join("run").join("forger.lock")).unwrap();
+    let (report, _) = run(&node);
     let stray = finding(&report, "keys.stray", Subject::Relay);
     assert_eq!((stray.status, stray.advice.key), (Status::Warn, "stray"));
+    let found = finding(&report, "keys.file", Subject::Forger);
+    assert_eq!(found.status, Status::Skipped);
+    assert_eq!(report.scope.roles, [Role::Relay]);
 }
