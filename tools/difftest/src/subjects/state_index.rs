@@ -104,15 +104,19 @@ fn index_orders(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         "replayed": replayed,
         NOTES: { STORED_ROWS: rows },
     });
-    // A name that the reference's saved state reads back as a number changes its saved-state
-    // start (the oracle's note shows it); every other case is judged by the restart orders' mask.
-    Ok(Verdict::DiffersWhereShown {
-        difference: Documented::SavedStateUsername,
-        verdict: Box::new(Verdict::DiffersWhereShown {
-            difference: Documented::ReplayIndexOrder,
-            verdict: Box::new(Verdict::Output(ours)),
-        }),
-    })
+    Ok(verdict(ours))
+}
+
+/// Heartwood's verdict on a case it answers with `ours`: the restart orders are judged by the
+/// mask of [`Documented::ReplayIndexOrder`], everything else exactly. A delegate name that the
+/// reference's saved state reads back as a number (the oracle's note `savedStateUsername`) excuses
+/// nothing here: the saved-state order then lists another key, which the mask refuses, so such a
+/// corpus shows as a failure until its records are judged part by part.
+fn verdict(ours: Value) -> Verdict {
+    Verdict::DiffersWhereShown {
+        difference: Documented::ReplayIndexOrder,
+        verdict: Box::new(Verdict::Output(ours)),
+    }
 }
 
 /// The note of Heartwood's output that holds the stored rows' order ([`row_orders`]).
@@ -228,6 +232,21 @@ pub fn masked(theirs: &Value, ours: &Value) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::levels::l0::judge_case;
+    use crate::subject::{Registry, Subject, SubjectError};
+    use crate::vectors::Expected;
+
+    /// A subject that answers every case with the verdict of `ours`.
+    struct Answer(Value);
+
+    impl Subject for Answer {
+        fn op(&self) -> &'static str {
+            "state.indexOrders"
+        }
+        fn run(&self, _case: &Case<'_>) -> Result<Verdict, SubjectError> {
+            Ok(verdict(self.0.clone()))
+        }
+    }
 
     fn orders(addresses: &[&str], keys: &[&str], names: &[&str]) -> Value {
         json!({ "addresses": addresses, "publicKeys": keys, "usernames": names })
@@ -277,5 +296,27 @@ mod tests {
         let mut equal = theirs.clone();
         equal["rebuild"] = live.clone();
         assert_eq!(masked(&equal, &same), None);
+    }
+
+    #[test]
+    fn a_name_that_reads_as_a_number_excuses_no_order() {
+        let mut theirs = theirs();
+        theirs[NOTES]["savedStateUsername"] = json!(true);
+        let rows = orders(&["b", "a", "c"], &["k1", "k2"], &["n1", "n2"]);
+        let mut ours = ours(&rows, &rows, &theirs["live"]);
+        ours["live"] = orders(&["c", "b", "a"], &["k1", "k2"], &["n1", "n2"]);
+        let mut registry = Registry::new();
+        registry
+            .register(Box::new(Answer(ours)))
+            .expect("one subject");
+        let input = json!({});
+        let case = Case {
+            op: "state.indexOrders",
+            network: "devnet",
+            height: 9,
+            input: &input,
+        };
+        let outcome = judge_case(&case, &Expected::Output(theirs), &registry);
+        assert!(outcome.is_failure(), "{outcome:?}");
     }
 }
