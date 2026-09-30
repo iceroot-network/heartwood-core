@@ -13,7 +13,9 @@ use heartwood_crypto::identities::{Address, PublicKeyBytes};
 use heartwood_crypto::{Milestones, Network, Transaction, TransactionId};
 use heartwood_database::{Database, Settings};
 use heartwood_kernel::clock::ManualClock;
-use heartwood_pool::{DelegateVersions, Entry, Options, Pool, PoolContext, Processor, collate};
+use heartwood_pool::{
+    DelegateVersions, Entry, Options, Pool, PoolContext, Processor, Reindexed, collate,
+};
 use heartwood_state::WalletRepository;
 use serde_json::{Map, Value, json};
 
@@ -105,6 +107,7 @@ impl Session<'_> {
             milestones: self.milestones,
             network: self.network,
             online: &self.online,
+            reindexed: &Reindexed::default(),
         };
         let storage = |e: heartwood_pool::StorageError| e.to_string();
         Ok(match op {

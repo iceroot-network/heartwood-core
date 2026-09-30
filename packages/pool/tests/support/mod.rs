@@ -15,7 +15,7 @@ use heartwood_crypto::{Aux, KeyPair, Params, Transaction};
 use heartwood_kernel::clock::ManualClock;
 use heartwood_pool::{
     Checked, DelegateVersions, Entry, Options, Pool, PoolContext, Processor, ProcessorResult,
-    Refusal,
+    Refusal, Reindexed,
 };
 use heartwood_state::wallets::WalletRepository;
 
@@ -173,6 +173,8 @@ pub struct Fixture {
     pub carol: Account,
     pub dave: Account,
     pub online: DelegateVersions,
+    /// What the pool's handler runs leave for the state to re-index.
+    pub reindexed: Reindexed,
 }
 
 impl Fixture {
@@ -205,6 +207,7 @@ impl Fixture {
             carol,
             dave,
             online,
+            reindexed: Reindexed::default(),
         }
     }
 
@@ -216,6 +219,7 @@ impl Fixture {
             milestones,
             network: &NETWORK_FILE,
             online: &self.online,
+            reindexed: &self.reindexed,
         }
     }
 }

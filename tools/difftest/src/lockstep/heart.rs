@@ -11,7 +11,7 @@ use heartwood_kernel::clock::ManualClock;
 use heartwood_kernel::config::crypto::CryptoFiles;
 use heartwood_kernel::utils::calculate_forging_info::calculate_forging_info;
 use heartwood_kernel::utils::round_calculator::is_new_round;
-use heartwood_pool::{DelegateVersions, Entry, Pool, PoolContext, Processor, collate};
+use heartwood_pool::{DelegateVersions, Entry, Pool, PoolContext, Processor, Reindexed, collate};
 use heartwood_state::State;
 use heartwood_state::digest::{self, Step};
 use heartwood_transactions::Handlers;
@@ -150,32 +150,38 @@ impl Heart {
 
     /// The batch `entries` at `now` milliseconds through the processor: its result as JSON.
     pub fn submit(&mut self, now: i64, entries: Vec<Vec<u8>>) -> Result<Value, LockstepError> {
+        let reindexed = Reindexed::default();
         let ctx = PoolContext {
             wallets: self.state.wallets(),
             tip: self.state.height(),
             milestones: &self.milestones,
             network: &self.network,
             online: &self.online,
+            reindexed: &reindexed,
         };
         let batch = entries.into_iter().map(Entry::Bytes).collect();
         let result = self
             .processor
             .process(&mut self.pool, &ctx, &ManualClock::new(now), batch)
             .map_err(|e| heartwood("the processor", e))?;
+        self.state.reindex_parties(reindexed.take());
         Ok(result.to_json())
     }
 
     /// The transactions of the next block, from the pool's collation at the tip plus one.
     pub fn candidates(&mut self) -> Result<Vec<Transaction>, LockstepError> {
+        let reindexed = Reindexed::default();
         let ctx = PoolContext {
             wallets: self.state.wallets(),
             tip: self.state.height(),
             milestones: &self.milestones,
             network: &self.network,
             online: &self.online,
+            reindexed: &reindexed,
         };
         let collated =
             collate(&mut self.pool, &ctx, true, &[]).map_err(|e| heartwood("the collation", e))?;
+        self.state.reindex_parties(reindexed.take());
         Ok(collated.candidates)
     }
 
@@ -281,12 +287,14 @@ impl Heart {
             self.online.expire(round);
         }
         let network = self.network_byte();
+        let reindexed = Reindexed::default();
         let ctx = PoolContext {
             wallets: self.state.wallets(),
             tip: self.state.height(),
             milestones: &self.milestones,
             network: &self.network,
             online: &self.online,
+            reindexed: &reindexed,
         };
         for t in block.transactions() {
             let sender = Address::from_public_key(&t.data().sender_public_key, network);
@@ -300,6 +308,7 @@ impl Heart {
         self.pool
             .readd(&ctx, &[])
             .map_err(|e| heartwood("the pool", e))?;
+        self.state.reindex_parties(reindexed.take());
         Ok(Posted {
             line,
             expire_at,
@@ -336,16 +345,19 @@ impl Heart {
             .rev()
             .flat_map(|b| b.transactions().iter().cloned())
             .collect();
+        let reindexed = Reindexed::default();
         let ctx = PoolContext {
             wallets: self.state.wallets(),
             tip: self.state.height(),
             milestones: &self.milestones,
             network: &self.network,
             online: &self.online,
+            reindexed: &reindexed,
         };
         self.pool
             .readd(&ctx, &forged)
             .map_err(|e| heartwood("the pool", e))?;
+        self.state.reindex_parties(reindexed.take());
         Ok((lines, blocks))
     }
 }

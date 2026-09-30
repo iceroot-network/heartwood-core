@@ -33,7 +33,9 @@ use heartwood_crypto::{Block, Transaction, TransactionId};
 use heartwood_database::{Database, Settings};
 use heartwood_kernel::clock::ManualClock;
 use heartwood_kernel::utils::round_calculator::is_new_round;
-use heartwood_pool::{DelegateVersions, Entry, Options, Pool, PoolContext, Processor, collate};
+use heartwood_pool::{
+    DelegateVersions, Entry, Options, Pool, PoolContext, Processor, Reindexed, collate,
+};
 use serde_json::{Value, json};
 
 use crate::corpus::Corpus;
@@ -163,6 +165,7 @@ impl<'a> PoolSides<'a> {
             milestones: &self.s.milestones,
             network: &self.s.corpus.network,
             online: &online,
+            reindexed: &Reindexed::default(),
         };
         match guarded(|| f(side, &ctx)) {
             Ok(Ok(value)) => Some(value),
