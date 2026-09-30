@@ -1163,3 +1163,19 @@ fn every_documented_reason_a_report_lists_is_a_hit() {
     assert!(ran.text.contains("an honest run hits none"), "{}", ran.text);
     assert!(ran.text.contains("which no entry claims"), "{}", ran.text);
 }
+
+#[test]
+fn a_documentation_file_a_record_tests_makes_it_stale() {
+    let rig = Rig::new();
+    let mut criteria = base_criteria();
+    criteria["narrowing"]["guide-check"] = json!(["docs/notes.md"]);
+    criteria["rows"][0]["needs"] = json!([{"kind": "record", "target": "guide-check"}]);
+    rig.criteria(&criteria);
+    assert!(rig.record("guide-check", "check the guide", 0, "", T1).ok);
+    assert!(s1(&rig, &[]).text.contains("R1       pass"));
+    rig.write("docs/notes.md", "the guide changed\n");
+    rig.commit("guide");
+    let ran = s1(&rig, &[]);
+    assert!(ran.text.contains("R1       FAIL"), "{}", ran.text);
+    assert!(ran.text.contains("docs/notes.md"), "{}", ran.text);
+}

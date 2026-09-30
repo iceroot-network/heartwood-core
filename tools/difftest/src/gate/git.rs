@@ -82,24 +82,40 @@ impl Repo {
     }
 
     /// The files under `paths` (the whole tree when there are none) that differ between the
-    /// commits `from` and `to`, sorted.
+    /// commits `from` and `to`, sorted. Documentation files (`*.md`) under a tested directory
+    /// are left out, so a commit that changes documentation only leaves every record valid; a
+    /// tested path that is itself a documentation file (a guide a command checks) is kept.
     pub fn changed(&self, from: &str, to: &str, paths: &[String]) -> Result<Vec<String>> {
-        let mut args = vec!["diff", "--name-only", "-z", from, to, "--"];
-        let mut specs: Vec<String> = paths.iter().map(|p| format!(":(literal){p}")).collect();
-        if specs.is_empty() {
-            specs.push(":(top)".to_owned());
+        let (documents, others): (Vec<&String>, Vec<&String>) =
+            paths.iter().partition(|p| p.ends_with(".md"));
+        let literal = |p: &&String| format!(":(literal){p}");
+        let mut files = Vec::new();
+        if !others.is_empty() || documents.is_empty() {
+            let mut specs: Vec<String> = others.iter().map(literal).collect();
+            if specs.is_empty() {
+                specs.push(":(top)".to_owned());
+            }
+            specs.push(":(top,exclude,glob)**/*.md".to_owned());
+            files.extend(self.diff(from, to, &specs)?);
         }
-        // A commit that changes documentation files only leaves every record valid.
-        specs.push(":(top,exclude,glob)**/*.md".to_owned());
+        if !documents.is_empty() {
+            let specs: Vec<String> = documents.iter().map(literal).collect();
+            files.extend(self.diff(from, to, &specs)?);
+        }
+        files.sort();
+        files.dedup();
+        Ok(files)
+    }
+
+    fn diff(&self, from: &str, to: &str, specs: &[String]) -> Result<Vec<String>> {
+        let mut args = vec!["diff", "--name-only", "-z", from, to, "--"];
         args.extend(specs.iter().map(String::as_str));
         let text = self.checked(&args)?;
-        let mut files: Vec<String> = text
+        Ok(text
             .split('\0')
             .filter(|f| !f.is_empty())
             .map(str::to_owned)
-            .collect();
-        files.sort();
-        Ok(files)
+            .collect())
     }
 }
 
