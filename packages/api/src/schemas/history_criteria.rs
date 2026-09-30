@@ -152,7 +152,7 @@ pub fn validate_query(route: RouteId, query: &Value) -> Result<Value, ApiError> 
     };
     let mut out = validate_keys(&schema, &input)?;
     if let Some(sorting) = sorting {
-        sort_and_patterns(&mut out, sorting)?;
+        sort_and_patterns(&mut out, sorting, input.len())?;
     }
     if beyond {
         return Err(ApiError::internal());
@@ -163,8 +163,14 @@ pub fn validate_query(route: RouteId, query: &Value) -> Result<Value, ApiError> 
     Ok(Value::Object(out))
 }
 
-/// The checks of a block route after its generic rules: the two patterns, and the sort keys.
-fn sort_and_patterns(out: &mut Map<String, Value>, sorting: &Sorting) -> Result<(), ApiError> {
+/// The checks of a block route after its generic rules: the two patterns, and the sort keys. A
+/// missing order gets the route's default where Joi puts it: after the `given` keys of the query,
+/// before the other defaults, which follow it in the schema.
+fn sort_and_patterns(
+    out: &mut Map<String, Value>,
+    sorting: &Sorting,
+    given: usize,
+) -> Result<(), ApiError> {
     for (name, accepts) in [
         ("username", username as fn(&str) -> bool),
         ("payloadHash", payload_hash),
@@ -181,7 +187,8 @@ fn sort_and_patterns(out: &mut Map<String, Value>, sorting: &Sorting) -> Result<
     match out.get("orderBy") {
         Some(order) => known_order(order, sorting.known),
         None => {
-            out.insert("orderBy".to_owned(), Value::from(sorting.default));
+            let place = given.min(out.len());
+            out.shift_insert(place, "orderBy".to_owned(), Value::from(sorting.default));
             Ok(())
         }
     }

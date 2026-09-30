@@ -402,3 +402,46 @@ fn offset_zero_is_ignored_and_another_offset_replaces_the_page() {
     assert_eq!(meta["self"], "/peers?offset=0&page=2&limit=1");
     assert_eq!(meta["previous"], "/peers?offset=0&page=1&limit=1");
 }
+
+/// The keys of a block route's validated query in Joi's order: the given keys, then the defaults
+/// in the schema's order, the default order first.
+#[test]
+fn a_block_route_adds_its_default_order_before_the_other_defaults() {
+    let keys = |route: RouteId, raw: &str| -> Vec<String> {
+        let validated = query(route, raw).unwrap();
+        let keys = validated.as_object().unwrap().keys();
+        keys.filter(|key| *key != PARSED).cloned().collect()
+    };
+    assert_eq!(
+        keys(RouteId::BlocksIndex, ""),
+        ["orderBy", "transform", "page", "limit"]
+    );
+    assert_eq!(
+        keys(RouteId::BlocksIndex, "username=genesis_1&height.from=2"),
+        [
+            "username",
+            "height",
+            "orderBy",
+            "transform",
+            "page",
+            "limit"
+        ]
+    );
+    assert_eq!(
+        keys(RouteId::BlocksMissed, ""),
+        ["orderBy", "page", "limit"]
+    );
+    assert_eq!(
+        keys(RouteId::DelegatesBlocks, "transform=false&totalFee.from=0"),
+        ["transform", "totalFee", "orderBy", "page", "limit"]
+    );
+    assert_eq!(
+        keys(RouteId::DelegatesMissedBlocks, "totalAmount=1"),
+        ["totalAmount", "orderBy", "page", "limit"]
+    );
+    // A given order keeps its place.
+    assert_eq!(
+        keys(RouteId::BlocksIndex, "limit=3&orderBy=height:asc"),
+        ["limit", "orderBy", "transform", "page"]
+    );
+}
