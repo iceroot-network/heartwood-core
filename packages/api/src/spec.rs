@@ -3,7 +3,8 @@
 //! options, the version), listing the kept routes and the kept transaction types; and
 //! `GET /transactions/schemas`' answer, the schema properties of the kept types.
 //!
-//! The OpenAPI document derives from the reference's, which is MIT-licensed; see the NOTICE file.
+//! The OpenAPI document derives from the reference implementation's, which descends from ARK
+//! Core's (MIT License); the NOTICE file carries that notice.
 //! Both files are in `assets/`, parsed once.
 
 use std::sync::OnceLock;
