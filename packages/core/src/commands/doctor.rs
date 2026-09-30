@@ -16,18 +16,20 @@
 
 use std::ffi::OsString;
 use std::io::{IsTerminal, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use heartwood_cli::Role;
+use heartwood_cli::doctor::redact::Redactor;
 use heartwood_cli::doctor::registry::{CheckId, ENTRIES};
-use heartwood_cli::doctor::report::{FailOn, Status, exit_code};
+use heartwood_cli::doctor::report::{FailOn, HostIdentity, Status, exit_code};
 use heartwood_cli::doctor::{
     DoctorOptions, DoctorProfile, DoctorScope, HostWorld, MAX_WINDOW, MIN_WINDOW, Redaction,
     RoleSelection, docs, mcp, render,
 };
 use heartwood_cli::instance::InstanceFlags;
+use heartwood_cli::{InstanceError, Role};
 use serde_json::json;
 
 use crate::doctor_view::CoreNodeView;
@@ -222,15 +224,51 @@ fn cannot_run(error: impl std::fmt::Display) -> ExitCode {
     ExitCode::from(CANNOT_RUN)
 }
 
-/// The scope of the instance `flags` name, resolved as every role command resolves it.
+/// The scope of the instance `flags` name, resolved as every role command resolves it: from the
+/// `HOME` variable, which a role's start requires too (the home is never looked up through the
+/// system's name services), and `USER` for the redaction.
 fn scope(flags: &InstanceFlags) -> Result<DoctorScope, String> {
     let env = |name: &str| std::env::var(name).ok();
-    let home = std::env::home_dir().unwrap_or_default();
+    let (home, user) = (std::env::var_os("HOME"), env("USER"));
+    let home = home.filter(|home| !home.is_empty()).map(PathBuf::from);
+    let Some(home) = home else {
+        return Err("HOME is not set".to_owned());
+    };
     let cwd = std::env::current_dir().unwrap_or_default();
     let instance = heartwood_cli::instance::resolve(Role::Relay, flags, &env, &home, &cwd);
-    let instance = instance.map_err(|error| error.to_string())?;
-    let home = (!home.as_os_str().is_empty()).then_some(home);
-    Ok(DoctorScope::of(&instance, home, env("USER")))
+    let identity = HostIdentity {
+        home: Some(home.clone()),
+        user: user.clone(),
+        host_name: None,
+    };
+    let instance = instance.map_err(|error| instance_error(&error, &identity))?;
+    Ok(DoctorScope::of(&instance, Some(home), user))
+}
+
+/// `error` as the doctor prints it: the path it names with the home directory as `~` and the
+/// user's name as `user`, and its reason cleaned and redacted as untrusted text, as the report
+/// prints them (standard error reaches an SSH client too).
+fn instance_error(error: &InstanceError, identity: &HostIdentity) -> String {
+    let mut redactor = Redactor::new(identity, true);
+    match error {
+        InstanceError::MissingToken { config } => {
+            format!(
+                "no token: pass --token or set it in {}",
+                redactor.path(config)
+            )
+        }
+        InstanceError::MissingNetwork { config } => {
+            format!(
+                "no network: pass --network or set it in {}",
+                redactor.path(config)
+            )
+        }
+        InstanceError::Config { path, reason } => {
+            let file = redactor.path(path);
+            format!("{file} is not valid: {}", redactor.untrusted(reason))
+        }
+        other => redactor.untrusted(&other.to_string()),
+    }
 }
 
 fn run_checks(flags: &RunFlags) -> ExitCode {
@@ -387,6 +425,40 @@ mod tests {
             assert!(error.use_stderr(), "{bad}");
         }
         assert!(!line("--help").unwrap_err().use_stderr());
+    }
+
+    #[test]
+    fn an_instance_error_prints_no_home_directory_and_no_user_name() {
+        let identity = HostIdentity {
+            home: Some(PathBuf::from("/srv/fakehome-secretname")),
+            user: Some("secretname".to_owned()),
+            host_name: None,
+        };
+        let config = PathBuf::from("/srv/fakehome-secretname/.config/solar-core/config.json");
+        let errors = [
+            InstanceError::MissingNetwork {
+                config: config.clone(),
+            },
+            InstanceError::MissingToken {
+                config: config.clone(),
+            },
+            InstanceError::Config {
+                path: PathBuf::from("/srv/secretname/config.json"),
+                reason: "expected value at /srv/fakehome-secretname\u{1b}[2J".to_owned(),
+            },
+        ];
+        let printed: Vec<String> = errors
+            .iter()
+            .map(|e| instance_error(e, &identity))
+            .collect();
+        assert_eq!(
+            printed,
+            [
+                "no network: pass --network or set it in ~/.config/solar-core/config.json",
+                "no token: pass --token or set it in ~/.config/solar-core/config.json",
+                "/srv/user/config.json is not valid: expected value at ~",
+            ]
+        );
     }
 
     #[test]

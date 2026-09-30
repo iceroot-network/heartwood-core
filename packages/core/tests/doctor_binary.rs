@@ -124,11 +124,19 @@ fn it_exits_with_3_when_it_cannot_run_and_its_lists_work() {
     ] {
         assert_eq!(code(&heartwood(args, &vars)), 3, "{args:?}");
     }
-    // No network named anywhere: no instance.
-    let home = vec![("HOME".into(), node.home().display().to_string())];
-    let none = heartwood(&["doctor", "--json"], &home);
-    assert_eq!(code(&none), 3);
-    assert!(none.stdout.is_empty());
+    // No network named anywhere: no instance, and standard error names the file without the
+    // home directory or the user's name.
+    let home = node.home().display().to_string();
+    let user = ("USER".to_owned(), "binary-cannot-run".to_owned());
+    for args in [&["doctor", "--json"][..], &["doctor", "mcp"]] {
+        let none = heartwood(args, &[("HOME".into(), home.clone()), user.clone()]);
+        assert_eq!(code(&none), 3, "{args:?}");
+        assert!(none.stdout.is_empty());
+        let said = String::from_utf8_lossy(&none.stderr);
+        let file = "~/.config/solar-core/config.json";
+        assert!(said.contains("no network") && said.contains(file), "{said}");
+        assert!(!said.contains(&home) && !said.contains(&user.1), "{said}");
+    }
     assert_eq!(code(&heartwood(&["doctor", "--help"], &vars)), 0);
     let checks = heartwood(&["doctor", "checks", "--json"], &vars);
     assert_eq!(code(&checks), 0);
@@ -136,6 +144,39 @@ fn it_exits_with_3_when_it_cannot_run_and_its_lists_work() {
     let explain = heartwood(&["doctor:explain", "keys.file"], &vars);
     assert_eq!(code(&explain), 0);
     assert!(String::from_utf8_lossy(&explain.stdout).starts_with("keys.file: "));
+}
+
+#[test]
+fn without_a_home_directory_it_exits_with_3_and_looks_up_no_name() {
+    let (node, mut vars) = stopped("binary-no-home");
+    vars.retain(|(name, _)| name != "HOME");
+    let args = [
+        "doctor",
+        "--token",
+        "solar",
+        "--network",
+        "testnet",
+        "--json",
+    ];
+    let empty = [vars.clone(), vec![("HOME".into(), String::new())]].concat();
+    for vars in [&vars, &empty] {
+        let output = heartwood(&args, vars);
+        assert_eq!(code(&output), 3);
+        let said = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(said, "heartwood doctor: HOME is not set\n");
+    }
+    // The home is not looked up in the user database, through its daemon or its files.
+    let log = node.root.join("..").join("binary-no-home.trace");
+    let Some(output) = traced(&args, &vars, &log) else {
+        return;
+    };
+    assert_eq!(code(&output), 3);
+    let text = std::fs::read_to_string(&log).unwrap();
+    for lookup in ["nscd", "/etc/passwd", "/etc/nsswitch.conf", "/var/lib/sss"] {
+        assert!(!text.contains(lookup), "{lookup} in the trace");
+    }
+    let broken = broken(&log, &node.root, None, None);
+    assert!(broken.is_empty(), "{broken:#?}");
 }
 
 /// `heartwood doctor mcp` on the stopped instance of `vars`, given `input` then the end of its

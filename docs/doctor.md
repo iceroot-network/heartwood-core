@@ -13,6 +13,10 @@ a peer-to-peer port, and makes no network request except HTTP GETs to its own re
 loopback address: at most 12 in a run, with no retry. It needs no privilege: run it as the node's
 user. A run takes at most 5 seconds.
 
+
+It takes the home directory from `HOME` and the user's name from `USER`, and never looks either
+up in the system's user database. Without `HOME` it does not run (exit code 3), as a role's start
+does not.
 Each check has a page on the documentation site,
 <https://docs.iceroot.com/validators/doctor/>, and `heartwood doctor explain <check>` prints the
 same text.
@@ -168,7 +172,10 @@ By default the report is safe to paste where others can read it:
   `unspecified`. Ports stay. Relations between addresses (for example "3 peers share one /24")
   are computed before the labels and kept as counts.
 - **This host.** The home directory is printed as `~`, the operating system's user name as `user`
-  and the host's name as `host`, in paths and in untrusted text.
+  and the host's name as `host`, in paths, in untrusted text and in the messages on standard
+  error. The home and the user's name are the `HOME` and `USER` variables: a path outside `HOME`
+  is printed whole, and without `USER` a user name in such a path stays, so set both where the
+  doctor runs with a cleared environment (see [doctor-mcp.md](doctor-mcp.md)).
 - **Long hex runs.** In untrusted text, any run of 64 hexadecimal characters or more becomes
   `[hex, N characters]`. Block ids in the typed facts stay: they are public chain data.
 - **Delegate names and public keys** stay by default, since they are public on the chain and
