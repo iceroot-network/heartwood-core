@@ -11,12 +11,12 @@
      "txs": [
        {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["voter-early", "10000000000"], ["voter-restart", "10000000000"], ["voter-round", "10000000000"], ["extra-a", "20000000000"], ["extra-b", "20000000000"], ["extra-c", "20000000000"], ["pool-a", "10000000000"], ["pool-b", "10000000000"], ["payee", "100000000"], ["miss-user", "10000000000"], ["restart-user", "10000000000"], ["split-user", "10000000000"]]}
      ]},
-    {"name": "stop a forger", "at": {"height": 86}, "do": "stop", "node": 4, "role": "forger"},
+    {"name": "stop a forger", "at": {"height": 79}, "do": "stop", "node": 4, "role": "forger"},
     {"name": "a transfer while it is down", "at": {"afterBlocks": 2}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["while-down"]},
      "txs": [
        {"ref": "while-down", "type": "transfer", "from": "miss-user", "nonce": 1, "to": [["payee", "100000000"]]}
      ]},
-    {"name": "start the forger again", "at": {"afterBlocks": 5}, "do": "start", "node": 4, "role": "forger"},
+    {"name": "start the forger again", "at": {"afterBlocks": 12}, "do": "start", "node": 4, "role": "forger"},
     {"name": "the slots were missed", "at": {"afterBlocks": 1}, "check": {"missed": {"node": 4, "atLeast": 1}, "forged": ["while-down"], "withinBlocks": 10}},
     {"name": "every relay records the same", "at": {"afterBlocks": 2}, "check": {"api": {"projection": "missed(2, 100)"}, "invariant": ["schedule"], "withinBlocks": 10}}
   ]
