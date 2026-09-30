@@ -476,10 +476,11 @@ fn merge(args: &[String]) -> Result<bool> {
     }
     let found = store::load_all::<LedgerEntry>(std::slice::from_ref(&from), LEDGER_FORMAT)?;
     if found.is_empty() {
-        return Err(Error::Usage(format!(
-            "no ledger entries under {} (a server's ledger directory, not its records)",
-            from.display()
-        )));
+        return Err(Error::Corpus {
+            path: from,
+            message: "no ledger entries here (a server's ledger directory, not its records)"
+                .to_owned(),
+        });
     }
     // The runs the ledger holds, whatever machine they are named for: a copy of one of them in
     // FROM (a server that was given the ledger) is the same run, not another.
