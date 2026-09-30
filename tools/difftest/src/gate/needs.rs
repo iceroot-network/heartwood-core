@@ -11,9 +11,42 @@ use super::store::{Evidence, Item};
 use super::totals::{self, Totals, group};
 
 /// Whether a record names `term`: one of the words of its variables is `term` (so `RUN=mixed`
-/// does not match `RUN=mixed-short`), or its command contains it.
+/// does not match `RUN=mixed-short`), or its command contains it. A term with `{n}` in it is a
+/// pattern for a variable's whole word, `{n}` standing for a number (`NAME=live-mixed-{n}` names
+/// `NAME=live-mixed-3`, not `NAME=live-mixed-short-3`).
 pub(super) fn mentions(record: &GateRecord, term: &str) -> bool {
+    if term.contains(NUMBER) {
+        return record
+            .variables
+            .split_whitespace()
+            .any(|word| matches_pattern(word, term));
+    }
     record.variables.split_whitespace().any(|word| word == term) || record.command.contains(term)
+}
+
+/// The place of a number in a term's pattern.
+const NUMBER: &str = "{n}";
+
+/// Whether `word` is `pattern` with each `{n}` replaced by one or more digits.
+fn matches_pattern(word: &str, pattern: &str) -> bool {
+    let mut parts = pattern.split(NUMBER);
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    let Some(mut rest) = word.strip_prefix(first) else {
+        return false;
+    };
+    for part in parts {
+        let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+        if digits == 0 {
+            return false;
+        }
+        let Some(after) = rest[digits..].strip_prefix(part) else {
+            return false;
+        };
+        rest = after;
+    }
+    rest.is_empty()
 }
 
 /// A need's status, worst first.
@@ -456,5 +489,29 @@ mod tests {
         assert!(!mentions(&short, "RUN=mixed"));
         assert!(!mentions(&short, "SEED=30"));
         assert!(mentions(&short, "--run mixed-short"));
+    }
+
+    #[test]
+    fn a_numbered_term_names_one_run_name_and_not_a_longer_one() {
+        let named = |variables: &str, term: &str| mentions(&record(variables, "x"), term);
+        assert!(named("NAME=live-mixed-3", "NAME=live-mixed-{n}"));
+        assert!(named(
+            "NAME=live-mixed-17 PROCESSOR=1",
+            "NAME=live-mixed-{n}"
+        ));
+        assert!(!named("NAME=live-mixed-short-3", "NAME=live-mixed-{n}"));
+        assert!(!named("NAME=live-mixed-split-3", "NAME=live-mixed-{n}"));
+        assert!(!named("NAME=live-mixed-", "NAME=live-mixed-{n}"));
+        assert!(!named("NAME=live-mixed-3x", "NAME=live-mixed-{n}"));
+        assert!(named(
+            "NAME=live-mixed-split-4-minority",
+            "NAME=live-mixed-split-{n}-minority"
+        ));
+        assert!(!named(
+            "NAME=live-mixed-split-4",
+            "NAME=live-mixed-split-{n}-minority"
+        ));
+        // A pattern is never looked for in the command.
+        assert!(!mentions(&record("", "run live-mixed-3"), "live-mixed-{n}"));
     }
 }
