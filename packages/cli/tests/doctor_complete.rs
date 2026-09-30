@@ -1,6 +1,6 @@
 //! The doctor is complete: every check of the registry is built, the two checks that are not in
 //! this release report that they are skipped, every status a check declares has a case, and every
-//! advice a case gives has its text.
+//! advice a case gives has its text and a value for each name in it.
 
 mod doctor_cases;
 mod doctor_support;
@@ -89,6 +89,54 @@ fn every_advice_a_case_gives_has_its_text() {
     missing.sort();
     missing.dedup();
     assert!(missing.is_empty(), "advice without a text: {missing:#?}");
+}
+
+/// The names an advice text puts between braces.
+fn placeholders(text: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut rest = text;
+    while let Some((_, after)) = rest.split_once('{') {
+        let Some((name, tail)) = after.split_once('}') else {
+            break;
+        };
+        names.push(name);
+        rest = tail;
+    }
+    names
+}
+
+#[test]
+fn every_value_an_advice_text_names_is_given() {
+    let docs = docs().unwrap();
+    let mut missing = Vec::new();
+    for case in doctor_cases::all() {
+        let entry = ENTRIES.iter().find(|entry| entry.id == case.check).unwrap();
+        let id = CheckId::parse(entry.id).unwrap();
+        let input = CheckInput {
+            entry,
+            view: &case.view,
+            options: &case.options,
+        };
+        for finding in (entry.run)(&input) {
+            let Some(text) = docs.template(id, finding.advice.key) else {
+                continue;
+            };
+            let given: Vec<&str> = finding
+                .advice
+                .values
+                .iter()
+                .map(|(name, _)| *name)
+                .collect();
+            for name in placeholders(text) {
+                if !given.contains(&name) {
+                    missing.push(format!("{} {} {{{name}}}", entry.id, finding.advice.key));
+                }
+            }
+        }
+    }
+    missing.sort();
+    missing.dedup();
+    assert!(missing.is_empty(), "advice values not given: {missing:#?}");
 }
 
 #[test]
