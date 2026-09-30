@@ -7,7 +7,10 @@
 //                   memory no longer holds), ten ids, duplicates, an id in capitals
 //   getPeers        equal latencies, port -1, the caller listed (also as an IPv4-mapped address),
 //                   2,001 peers, peers without a latency
-//   getUnconfirmedTransactions, postTransactions, getStatus
+//   getUnconfirmedTransactions, postTransactions, getStatus; the records with countOnly are the
+//                   controller's answer alone: the server's request schema has no countOnly key, so
+//                   the validation step refuses such a request (400 "Validation failed", a ban)
+//                   before any controller runs, and a served request never takes that path
 //   postBlock       pinged, not chaining, unregistered and unranked generators, a new valid block, a
 //                   block from the forger, the reduced reward, above maxTransactions, and the blocks
 //                   the reference receives that Heartwood refuses at the receipt (a memo that is not
