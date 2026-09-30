@@ -371,6 +371,12 @@ fn a_documentation_only_commit_keeps_a_record_valid_and_a_change_to_a_tested_fil
     let text = row1(&rig);
     assert!(text.contains("R1       pass"), "still valid: {text}");
 
+    // A documentation file inside a tested directory changes no record either.
+    rig.write("src/README.md", "about the module\n");
+    rig.commit("readme");
+    let text = row1(&rig);
+    assert!(text.contains("R1       pass"), "still valid: {text}");
+
     // A commit that changes a tested file.
     rig.write("src/a.rs", "fn a() { let _ = 3; }\n");
     rig.commit("change a");

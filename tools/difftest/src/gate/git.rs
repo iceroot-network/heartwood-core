@@ -85,7 +85,12 @@ impl Repo {
     /// commits `from` and `to`, sorted.
     pub fn changed(&self, from: &str, to: &str, paths: &[String]) -> Result<Vec<String>> {
         let mut args = vec!["diff", "--name-only", "-z", from, to, "--"];
-        let specs: Vec<String> = paths.iter().map(|p| format!(":(literal){p}")).collect();
+        let mut specs: Vec<String> = paths.iter().map(|p| format!(":(literal){p}")).collect();
+        if specs.is_empty() {
+            specs.push(":(top)".to_owned());
+        }
+        // A commit that changes documentation files only leaves every record valid.
+        specs.push(":(top,exclude,glob)**/*.md".to_owned());
         args.extend(specs.iter().map(String::as_str));
         let text = self.checked(&args)?;
         let mut files: Vec<String> = text
