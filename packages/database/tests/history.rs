@@ -750,6 +750,24 @@ fn a_store_of_schema_version_1_gets_the_recipients_of_its_transfers() {
         )
         .unwrap();
     assert_eq!(meta, SCHEMA_VERSION.to_string());
+    // The listings' indices of version 3 are there too.
+    let indices: Vec<String> = connection
+        .prepare("SELECT name FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    for index in [
+        "blocks_username_height",
+        "missed_blocks_username_timestamp",
+        "transactions_type_group_type_block_height_sequence",
+    ] {
+        assert!(
+            indices.iter().any(|name| name == index),
+            "{index}: {indices:?}"
+        );
+    }
     drop(database);
     // The upgraded store answers the address criteria.
     let readers = Readers::open(&settings, 1).unwrap();
