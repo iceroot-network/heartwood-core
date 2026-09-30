@@ -60,8 +60,9 @@ fn minimums() -> Vec<(String, usize)> {
     minimums
 }
 
-/// Operations the class may hold besides the minimums' (records the parts add beyond them).
-const EXTRA: [&str; 1] = ["api.fuzzQuery"];
+/// Operations the class may hold besides the minimums' (records the parts add beyond them): the
+/// query fuzz target's inputs and the SQL records' provenance.
+const EXTRA: [&str; 2] = ["api.fuzzQuery", "sql.meta"];
 
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
