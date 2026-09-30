@@ -6,6 +6,18 @@
 //! after it, and a request after the commit finds the new tip. The forger's own public calls are
 //! recorded too, and no line names an internal route.
 //!
+//! The network's block time is 20 s, not the devnet profile's 8 s. A block of the node's own
+//! forger that its job finishes with less than 2 s left in the block's slot is discarded as
+//! "processed too late" and rolled back by a fork recovery, as the reference does; with 8 s slots
+//! the held block always was, and a request that ended at the drain read either the new tip or
+//! the tip after the rollback, whichever came first. With 20 s slots the held block ends its job
+//! in its own slot and stays, and the forger's next slot comes after the hold. The relay's API has
+//! no rate limit (the test polls the tip ten times a second, and 100 requests a minute would lock
+//! it out for the rest of the minute), so the stall is armed as soon as the chain is at height 3.
+//!
+//! A failure prints the relay's log from a little before the hold, the forger's log and every
+//! record line.
+//!
 //! The relay listens at the address `.33` of the loopback block of these tests (P2P 6002, API
 //! 6003; the block `HEARTWOOD_TEST_LOOPBACK` names, else 127.13.0), and the client connects from
 //! `.34`.
@@ -30,6 +42,14 @@ use tokio::time::Instant;
 const P2P_PORT: u16 = 6002;
 const API_PORT: u16 = 6003;
 
+/// The block time of the test's network, in seconds: the hold (12 s) and the 2 s that a block of
+/// the node's own forger needs left in its slot fit in one slot, with 6 s to spare for the time
+/// the block takes to reach its job.
+const BLOCK_TIME_S: u64 = 20;
+
+/// The relay's log line when the stall holds a job.
+const HOLD_LINE: &str = "difftest: holding the job for 12000 ms";
+
 /// A process killed when dropped.
 struct Killed(Child);
 
@@ -47,11 +67,16 @@ fn host(last: u8) -> String {
     format!("{block}.{last}")
 }
 
-/// The scratch root of a node whose chain `network generate` makes now: `config/`, the other
-/// four directories and the harness's `harness/` beside it.
+/// The scratch root of a node whose chain `network generate` makes now, from the devnet profile
+/// with a block time of [`BLOCK_TIME_S`] (`profile.json`): `config/`, the other four directories
+/// and the harness's `harness/` beside it.
 fn generate(root: &Path, host: &str) {
     let _ = fs::remove_dir_all(root);
     fs::create_dir_all(root.join("harness")).unwrap();
+    let mut profile: Value = serde_json::from_str(heartwood_cli::network::DEVNET_PROFILE).unwrap();
+    profile["rules"]["blockTime"] = json!(BLOCK_TIME_S);
+    let profile_file = root.join("profile.json");
+    fs::write(&profile_file, profile.to_string()).unwrap();
     let config = root.join("config");
     let generated = Command::new(env!("CARGO_BIN_EXE_heartwood"))
         .args([
@@ -62,6 +87,8 @@ fn generate(root: &Path, host: &str) {
             "--seed",
             "await",
         ])
+        .arg("--profile")
+        .arg(&profile_file)
         .args(["--out"])
         .arg(&config)
         .arg("--chainOnly")
@@ -69,7 +96,7 @@ fn generate(root: &Path, host: &str) {
         .unwrap();
     assert!(generated.status.success(), "{generated:?}");
     let env = format!(
-        "CORE_P2P_HOST={host}\nCORE_P2P_PORT={P2P_PORT}\nCORE_API_HOST={host}\nCORE_API_PORT={API_PORT}\nCORE_P2P_MIN_NETWORK_REACH=0\nCORE_LOG_LEVEL=debug\nHEARTWOOD_DIFFTEST_DIR={}\n",
+        "CORE_P2P_HOST={host}\nCORE_P2P_PORT={P2P_PORT}\nCORE_API_HOST={host}\nCORE_API_PORT={API_PORT}\nCORE_API_RATE_LIMIT_DISABLED=true\nCORE_P2P_MIN_NETWORK_REACH=0\nCORE_LOG_LEVEL=debug\nHEARTWOOD_DIFFTEST_DIR={}\n",
         root.join("harness").display()
     );
     fs::write(config.join(".env"), env).unwrap();
@@ -168,12 +195,79 @@ fn records(dir: &Path) -> Vec<Value> {
         .collect()
 }
 
+/// Prints, when the test panics while it lives, what the node at its root did: the relay's log
+/// from 20 lines before the hold (its last 80 lines when it has none), the forger's log and every
+/// line of the await records, so that a failure away from this machine can be read.
+struct Diagnosis<'a>(&'a Path);
+
+impl Drop for Diagnosis<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("{}", diagnosis(self.0));
+        }
+    }
+}
+
+/// The diagnosis of the node at `root` (see [`Diagnosis`]).
+fn diagnosis(root: &Path) -> String {
+    let relay = log_text(&root.join("relay.log"));
+    let lines: Vec<&str> = relay.lines().collect();
+    let hold = lines.iter().position(|line| line.contains(HOLD_LINE));
+    let from = hold.map_or(lines.len().saturating_sub(80), |at| at.saturating_sub(20));
+    let forger = log_text(&root.join("forger.log"));
+    let harness = root.join("harness");
+    let mut files: Vec<PathBuf> = fs::read_dir(&harness)
+        .map(|entries| {
+            entries
+                .filter_map(|entry| Some(entry.ok()?.path()))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.retain(|path| {
+        let name = path.file_name().and_then(|name| name.to_str());
+        name.is_some_and(|name| name.starts_with("await-") && name.ends_with(".jsonl"))
+    });
+    files.sort();
+    let records: Vec<String> = files.iter().map(|file| log_text(file)).collect();
+    format!(
+        "==== relay.log from line {} of {}:\n{}\n==== forger.log:\n{}\n==== await records ({} files):\n{}",
+        from + 1,
+        lines.len(),
+        lines[from..].join("\n"),
+        forger.trim_end(),
+        files.len(),
+        records.concat().trim_end(),
+    )
+}
+
+/// The text of the file at `path` without its terminal colour sequences, or why it could not be
+/// read.
+fn log_text(path: &Path) -> String {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) => return format!("({} not read: {error})\n", path.display()),
+    };
+    let mut plain = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // `ESC [`, its parameters and the letter that ends the sequence.
+            chars.by_ref().find(char::is_ascii_alphabetic);
+        } else {
+            plain.push(c);
+        }
+    }
+    plain
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "integration"]
 async fn a_held_job_ends_waits_by_the_bound_and_the_record_shows_it() {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("await-record");
     let (relay_host, client_host) = (host(33), host(34));
     generate(&root, &relay_host);
+    // Dropped after the processes, so it reads their whole logs.
+    let _diagnosis = Diagnosis(&root);
     let _relay = start(&root, "relay", &["--networkStart"]);
     wait_until(Duration::from_secs(60), "API", || {
         height(&relay_host).is_some()
@@ -216,10 +310,10 @@ async fn a_held_job_ends_waits_by_the_bound_and_the_record_shows_it() {
     session.terminate();
 
     let log = fs::read_to_string(root.join("relay.log")).unwrap_or_default();
-    assert!(
-        log.contains("difftest: holding the job for 12000 ms"),
-        "{log}"
-    );
+    assert!(log.contains(HOLD_LINE), "no hold in the relay's log");
+    // The held block finished its job in its own slot and stays (see the module documentation).
+    let late = "because it was processed too late";
+    assert!(!log.contains(late), "the relay discarded a block: {late}");
     let all = records(&root.join("harness"));
     let caller = client_host.as_str();
     let ours: Vec<&Value> = all.iter().filter(|line| line["caller"] == caller).collect();

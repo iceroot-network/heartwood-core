@@ -1630,7 +1630,10 @@ per start, and also records every public request's AwaitBlock step in `await-NNN
 the start's digest file (the time, the route, the caller, the wait, how it ended: at once, by the
 queue's drain, by the bound or after the caller's socket closed, and the tips before and after);
 a `stall-next-job` file there holding a number of milliseconds holds the next job of one block
-that long before its commit, with the debug line "difftest: holding the job for N ms".
+that long before its commit, with the debug line "difftest: holding the job for N ms". A block of
+the relay's own forger whose held job ends with less than 2 s left in the block's slot is then
+discarded as processed too late and removed by a fork recovery of one block, as any late block of
+the forger is, so a test that holds one needs slots longer than the hold.
 
 ```sh
 cargo test -p heartwood-core --locked                               # the command line, the configuration, the lock and the views
