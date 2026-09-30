@@ -33,7 +33,7 @@ use crate::doctor::render::render_json;
 use crate::doctor::report::HostIdentity;
 use crate::doctor::seams::{ProcFile, ProcView, World};
 use crate::doctor::sources::logs::LineKind;
-use crate::doctor::sources::procfs::parse_status;
+use crate::doctor::sources::procfs::{heartwood_of, parse_status};
 use crate::doctor::view::{Gathered, View};
 use crate::doctor::{DoctorOptions, DoctorProfile, DoctorScope, RoleSelection};
 use crate::seams::Role;
@@ -154,12 +154,16 @@ fn failure(id: Value, (code, message, data): Refusal) -> Value {
 }
 
 /// The running `heartwood doctor mcp` processes of this process's user, this one included; 0 when
-/// `/proc` does not tell.
+/// `/proc` does not tell. Only the command lines of the user's processes named heartwood are read
+/// ([`heartwood_of`]).
 fn servers(procfs: &dyn ProcView) -> usize {
-    let uid = |file| Some(parse_status(&procfs.read(file).ok()?).ok()?.uid);
-    let own = uid(ProcFile::SelfStatus);
+    let own = procfs.read(ProcFile::SelfStatus).ok();
+    let Some(own) = own.and_then(|bytes| parse_status(&bytes).ok()) else {
+        return 0;
+    };
     let pids = procfs.pids().unwrap_or_default().into_iter();
-    let ours = pids.filter(|pid| own.is_some() && uid(ProcFile::PidStatus(*pid)) == own);
+    let status = |pid| procfs.read(ProcFile::PidStatus(pid));
+    let ours = pids.filter(|pid| status(*pid).is_ok_and(|bytes| heartwood_of(&bytes, own.uid)));
     let argv = ours.filter_map(|pid| procfs.read(ProcFile::PidCmdline(pid)).ok());
     argv.filter(|argv| is_server(argv)).count()
 }

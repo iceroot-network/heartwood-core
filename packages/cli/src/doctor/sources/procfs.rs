@@ -265,14 +265,25 @@ pub fn is_doctor_mcp(cmdline: &[u8]) -> bool {
     mcp && program == Some(Some(b"heartwood".as_slice()))
 }
 
+/// Whether the `/proc/<pid>/status` `bytes` are a process of the user `uid` whose program name
+/// (`Name:`, the kernel's name of its program file, at most 15 bytes) is heartwood's: only such a
+/// process has its command line read, since another program's may hold a secret.
+pub fn heartwood_of(bytes: &[u8], uid: u32) -> bool {
+    let named = text(bytes, "status")
+        .ok()
+        .and_then(|text| value(text, "Name"));
+    let owned = parse_status(bytes).is_ok_and(|status| status.uid == uid);
+    owned && named.is_some_and(|name| name.starts_with("heartwood"))
+}
+
 /// The number of `heartwood doctor mcp` servers of the user `uid` running now ([`is_doctor_mcp`]),
-/// this process included when it is one. Only the command lines of `uid`'s own processes are
-/// read; a process that ends meanwhile is not counted.
+/// this process included when it is one. Only the command lines of `uid`'s own processes named
+/// heartwood are read ([`heartwood_of`]); a process that ends meanwhile is not counted.
 pub fn doctor_mcp_servers(proc: &dyn ProcView, uid: u32) -> Result<usize, FsError> {
     let server = |pid: u32| {
         let status = proc.read(ProcFile::PidStatus(pid));
-        let owned = matches!(status.map(|b| parse_status(&b)), Ok(Ok(s)) if s.uid == uid);
-        owned && matches!(proc.read(ProcFile::PidCmdline(pid)), Ok(line) if is_doctor_mcp(&line))
+        let ours = status.is_ok_and(|bytes| heartwood_of(&bytes, uid));
+        ours && matches!(proc.read(ProcFile::PidCmdline(pid)), Ok(line) if is_doctor_mcp(&line))
     };
     Ok(proc.pids()?.into_iter().filter(|pid| server(*pid)).count())
 }

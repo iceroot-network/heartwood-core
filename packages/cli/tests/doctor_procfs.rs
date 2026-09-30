@@ -389,3 +389,57 @@ fn the_view_reads_this_hosts_root_device_and_own_user() {
     let unknown = view.role_status(heartwood_cli::Role::Relay).unwrap_err();
     assert_eq!(unknown.reason, Reason::NotRunning);
 }
+
+/// A `/proc` view that records every file read through it.
+struct Recorded<'a> {
+    inner: &'a dyn ProcView,
+    reads: std::cell::RefCell<Vec<PathBuf>>,
+}
+
+impl ProcView for Recorded<'_> {
+    fn read(&self, file: ProcFile) -> Result<Vec<u8>, FsError> {
+        self.reads.borrow_mut().push(file.path());
+        self.inner.read(file)
+    }
+    fn fd_targets(&self, pid: u32) -> Result<Vec<OsString>, FsError> {
+        self.inner.fd_targets(pid)
+    }
+    fn pids(&self) -> Result<Vec<u32>, FsError> {
+        self.inner.pids()
+    }
+}
+
+#[test]
+fn the_command_line_of_a_program_not_named_heartwood_is_never_read() {
+    let mut world = FakeWorld::default();
+    let status = |name: &str| format!("Name:\t{name}\nUid:\t1000\t1000\t1000\t1000\n");
+    // A database client whose command line holds a password, and a server named heartwood.
+    let processes = [
+        (
+            20,
+            "psql",
+            &b"psql\0--password=secret\0heartwood\0doctor\0mcp\0"[..],
+        ),
+        (21, "heartwood", b"heartwood\0doctor\0mcp\0"),
+    ];
+    for (pid, name, cmdline) in processes {
+        world.procfs.pids.push(pid);
+        let files = &mut world.procfs.files;
+        files.insert(ProcFile::PidStatus(pid).path(), status(name).into_bytes());
+        files.insert(ProcFile::PidCmdline(pid).path(), cmdline.to_vec());
+    }
+    let recorded = Recorded {
+        inner: &world.procfs,
+        reads: Default::default(),
+    };
+    assert_eq!(doctor_mcp_servers(&recorded, 1000), Ok(1));
+    let reads = recorded.reads.borrow();
+    assert!(
+        reads.contains(&ProcFile::PidCmdline(21).path()),
+        "{reads:?}"
+    );
+    assert!(
+        !reads.contains(&ProcFile::PidCmdline(20).path()),
+        "{reads:?}"
+    );
+}
