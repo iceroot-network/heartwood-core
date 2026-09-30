@@ -4,8 +4,8 @@
 //!
 //! [`Readable::new`] refuses a path that is not absolute, that has a `.` or `..` component, whose
 //! file name is on [`KEY_FILE_NAMES`] in any letter case, or that is outside [`ReadableRoots`]:
-//! the instance's five directories, `/proc`, `/sys`, and exactly two files the firewall and clock
-//! checks read. A name check alone can be beaten by a link with an innocent name, so [`HostFs`]
+//! the instance's five directories and exactly two files the firewall and clock checks read. The
+//! fixed files of `/proc` and `/sys` are read through [`ProcFile`] alone, never as a `Readable`. A name check alone can be beaten by a link with an innocent name, so [`HostFs`]
 //! opens every file with `O_NOFOLLOW`, takes the open descriptor's device and inode, and closes it
 //! unread when they are a key file's ([`FsError::KeyFile`]).
 
@@ -38,8 +38,8 @@ pub struct ReadableRoots {
 }
 
 impl ReadableRoots {
-    /// The roots of an instance with the directories `paths`: its five directories, `/proc`,
-    /// `/sys` and [`READABLE_FILES`].
+    /// The roots of an instance with the directories `paths`: its five directories and
+    /// [`READABLE_FILES`].
     pub fn for_paths(paths: &Paths) -> ReadableRoots {
         let own = [
             &paths.config,
@@ -48,10 +48,8 @@ impl ReadableRoots {
             &paths.log,
             &paths.temp,
         ];
-        let mut dirs: Vec<PathBuf> = own.into_iter().cloned().collect();
-        dirs.extend(["/proc", "/sys"].map(PathBuf::from));
         ReadableRoots {
-            dirs,
+            dirs: own.into_iter().cloned().collect(),
             files: READABLE_FILES.map(PathBuf::from).to_vec(),
         }
     }

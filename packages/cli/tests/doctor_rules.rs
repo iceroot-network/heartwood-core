@@ -157,6 +157,9 @@ fn the_key_file_list_holds_the_forgers_key_file_and_readable_refuses_it() {
     }
     let refused = [
         ("/etc/passwd", RefusedPath::OutsideRoots),
+        // /proc and /sys are read through their fixed files alone.
+        ("/proc/net/tcp", RefusedPath::OutsideRoots),
+        ("/proc/1/environ", RefusedPath::OutsideRoots),
         ("config/app.json", RefusedPath::NotAbsolute),
         (
             "/nodes/node1/config/../../../etc/passwd",
@@ -169,7 +172,6 @@ fn the_key_file_list_holds_the_forgers_key_file_and_readable_refuses_it() {
     for path in [
         "/nodes/node1/config/app.json",
         "/nodes/node1/log/solar-testnet-relay-current.log",
-        "/proc/net/tcp",
         "/etc/ufw/ufw.conf",
         "/run/systemd/timesync/synchronized",
     ] {

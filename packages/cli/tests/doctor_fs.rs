@@ -10,7 +10,8 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
 use heartwood_cli::doctor::seams::{
-    DoctorFs, FileKind, FsError, KEY_FILE_NAMES, KeyFile, Readable, ReadableRoots, RefusedPath,
+    DoctorFs, FileKind, FsError, KEY_FILE_NAMES, KeyFile, ProcFile, ProcView, Readable,
+    ReadableRoots, RefusedPath,
 };
 use heartwood_cli::doctor::sources::ParseError;
 use heartwood_cli::doctor::sources::fs::{
@@ -134,6 +135,10 @@ fn paths_outside_the_readable_roots_are_refused() {
         "/run/systemd/timesync/synchronized.old",
         "/procfs/net/tcp",
         "/system/x",
+        // The fixed files of /proc and /sys are read through ProcFile alone.
+        "/proc/self/status",
+        "/proc/4242/environ",
+        "/sys/dev/block/259:0/queue/rotational",
         config2.as_str(),
         parent.to_str().unwrap(),
     ];
@@ -194,10 +199,9 @@ fn a_plain_file_is_read_whole_or_by_its_tail() {
         fs_.read(&missing, 10),
         Err(FsError::Io(ErrorKind::NotFound))
     );
-    let proc = node.readable(Path::new("/proc/self/status"));
-    let status = fs_.read(&proc, 1024 * 1024).unwrap();
+    let status = heartwood_cli::doctor::sources::procfs::HostProc.read(ProcFile::SelfStatus);
     assert!(
-        status.starts_with(b"Name:"),
+        status.unwrap().starts_with(b"Name:"),
         "a /proc file reads to its end although its size is 0"
     );
 }
