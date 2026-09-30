@@ -199,7 +199,7 @@ impl Manifest {
             "format": FORMAT, "version": env!("CARGO_PKG_VERSION"), "network": NETWORK,
             "seed": self.seed, "addressPrefix": format!("{a}.{b}.{c}"),
             "validators": self.validators, "relays": self.relays, "failover": failover,
-            "epochDelay": self.epoch_delay, "epoch": self.epoch, "genesisId": self.genesis_id,
+            "epochDelay": self.epoch_delay, "core": self.core, "epoch": self.epoch, "genesisId": self.genesis_id,
             "nethash": self.nethash, "crypto": crypto,
             "nodes": self.nodes.iter().map(node).collect::<Vec<_>>(),
         });
@@ -243,7 +243,11 @@ fn parse(root: &Path, value: &Value) -> Result<Manifest, String> {
     let crypto_hashes = CRYPTO_FILES.iter().map(hash).collect::<Option<Vec<_>>>();
     let crypto_hashes = crypto_hashes.ok_or_else(|| invalid("crypto"))?;
     let (validators, relays) = (count("validators")?, count("relays")?);
-    let planned = plan(root, address_prefix, validators, relays, &failover);
+    // A manifest with no `core` key is a devnet of relays and forgers.
+    let core = value.get("core").map_or(Ok(false), |core| {
+        core.as_bool().ok_or_else(|| invalid("core"))
+    })?;
+    let planned = plan(root, address_prefix, validators, relays, &failover, core);
     let mut nodes = planned.map_err(|error| error.to_string())?;
     let listed = list("nodes")?;
     if listed.len() != nodes.len() {
@@ -266,6 +270,7 @@ fn parse(root: &Path, value: &Value) -> Result<Manifest, String> {
         relays,
         failover,
         epoch_delay: count("epochDelay")?,
+        core,
         nethash: text("nethash")?,
         genesis_id: text("genesisId")?,
         epoch: text("epoch")?,
