@@ -5,7 +5,9 @@
 //! lockstep producer, where `revert` and `fork` exist too. Nodes are numbered from 1.
 
 use std::path::Path;
+use std::time::Duration;
 
+use serde_json::Value;
 use thiserror::Error;
 
 use super::format::{CompiledTx, Part, RestartModes, Via};
@@ -56,6 +58,18 @@ pub struct Submitted {
     /// The refusal's code (`ERR_OFFLINE`, ...), when it was refused.
     pub code: Option<String>,
 }
+
+/// A node's answer to a request of its public API.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Answer {
+    /// The HTTP status.
+    pub status: u16,
+    /// The body: JSON when it parses.
+    pub body: Value,
+}
+
+/// How long the runner waits between two looks at a live network.
+const POLL: Duration = Duration::from_millis(1000);
 
 /// One network the runner drives.
 pub trait Backend {
@@ -113,5 +127,45 @@ pub trait Backend {
             backend: self.name(),
             action: "fork",
         })
+    }
+
+    /// A `GET` of node `node`'s public API (the runner's way of observing a network).
+    fn get(&self, node: u32, path: &str) -> Result<Answer, BackendError> {
+        super::backends::http::get(&self.api_url(node)?, path)
+    }
+
+    /// Whether node `node`'s chain holds the transaction `id`.
+    fn forged(&self, node: u32, id: &str) -> Result<bool, BackendError> {
+        let answer = self.get(node, &format!("/api/transactions/{id}"))?;
+        match answer.status {
+            200 => Ok(true),
+            404 => Ok(false),
+            status => Err(BackendError::Failed {
+                action: "look up a transaction",
+                message: format!("the API answers {status}"),
+            }),
+        }
+    }
+
+    /// Give the network time to grow: return when it may have. A live network takes a second; a
+    /// backend that replays a recorded chain moves on to its next block, and fails at its end.
+    fn wait(&mut self) -> Result<(), BackendError> {
+        std::thread::sleep(POLL);
+        Ok(())
+    }
+
+    /// What the backend itself says of the check `name` (`digest`, `revertSymmetry`,
+    /// `restartEqual` or `singleTip`) by how it works: `None` when it cannot say, as a network of
+    /// one implementation cannot (those checks compare two runs, in `scenario compare`), else
+    /// whether it holds and why not.
+    fn verified(&self, name: &str) -> Option<Result<(), String>> {
+        let _ = name;
+        None
+    }
+
+    /// The usernames of the delegates node `node`'s forger forges for, when the backend knows them.
+    fn forger_delegates(&self, node: u32) -> Result<Vec<String>, BackendError> {
+        let _ = node;
+        Ok(Vec::new())
     }
 }
