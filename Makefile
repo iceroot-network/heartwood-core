@@ -209,10 +209,11 @@ vectors-local: build ## L0 vectors from LOCAL_SOLAR into VECTORS/local
 vectors-diff: build ## the container and local runs must agree on every record
 	$(DIFFTEST) vectors diff $(VECTORS)/container $(VECTORS)/local
 
-# Each crate gets its classes (VECTOR_CRATES) and a manifest of them. A run that lacks a class
-# VECTOR_CRATES routes, or a file a committed manifest lists, is refused, and the committed files
-# are kept: the genesis class (V10) and the genesis-state class (V18) are written only with
-# DEVNET_GENERATOR. So is a run with a kind below its minimum record count
+# Each crate gets its classes (VECTOR_CRATES; a crate named in more than one spec gets the classes
+# of all of them) and one manifest of them, which must list every class routed there. A run that
+# lacks a class VECTOR_CRATES routes, or a file a committed manifest lists, is refused, and the
+# committed files are kept: the genesis class (V10) and the genesis-state class (V18) are written
+# only with DEVNET_GENERATOR. So is a run with a kind below its minimum record count
 # (tools/oracle/vector-minimums.json).
 vectors-install: vectors-diff ## copy the container run into each crate's tests/vectors, with a manifest per crate
 	@missing=; \
@@ -235,11 +236,18 @@ vectors-install: vectors-diff ## copy the container run into each crate's tests/
 	@$(TOOLCHAIN) && node tools/oracle/check-minimums.js $(VECTORS)/container || { \
 	    echo "vectors-install: a class of tools/oracle/vector-minimums.json is missing or has a kind" \
 	         "below its minimum; nothing was installed" >&2; exit 1; }
-	@for spec in $(VECTOR_CRATES); do \
-	    dir=packages/$${spec%%=*}/tests/vectors; \
+	@crates=; \
+	for spec in $(VECTOR_CRATES); do \
+	    case " $$crates " in *" $${spec%%=*} "*) ;; *) crates="$$crates $${spec%%=*}" ;; esac; \
+	done; \
+	for crate in $$crates; do \
+	    dir=packages/$$crate/tests/vectors; \
 	    files=; \
-	    for class in $$(echo $${spec#*=} | tr ',' ' '); do \
-	        files="$$files $$(cd $(VECTORS)/container && ls $$class*.jsonl 2>/dev/null)"; \
+	    for spec in $(VECTOR_CRATES); do \
+	        [ "$${spec%%=*}" = "$$crate" ] || continue; \
+	        for class in $$(echo $${spec#*=} | tr ',' ' '); do \
+	            files="$$files $$(cd $(VECTORS)/container && ls $$class*.jsonl 2>/dev/null)"; \
+	        done; \
 	    done; \
 	    files=$$(echo $$files); \
 	    [ -n "$$files" ] || continue; \
@@ -249,6 +257,16 @@ vectors-install: vectors-diff ## copy the container run into each crate's tests/
 	    (cd $$dir && sha256sum $$files > MANIFEST.sha256); \
 	    echo "vectors-install: $$dir: $$files"; \
 	    $(DIFFTEST) vectors verify $$dir >/dev/null || exit 1; \
+	done
+	@for spec in $(VECTOR_CRATES); do \
+	    dir=packages/$${spec%%=*}/tests/vectors; \
+	    for class in $$(echo $${spec#*=} | tr ',' ' '); do \
+	        for f in $$(cd $(VECTORS)/container && ls $$class*.jsonl 2>/dev/null); do \
+	            grep -q "  $$f$$" $$dir/MANIFEST.sha256 2>/dev/null || { \
+	                echo "vectors-install: $$dir/MANIFEST.sha256 does not list $$f, which" \
+	                     "VECTOR_CRATES routes there" >&2; exit 1; }; \
+	        done; \
+	    done; \
 	done
 
 l0: build ## compare VECTORS/container with Heartwood's subjects
