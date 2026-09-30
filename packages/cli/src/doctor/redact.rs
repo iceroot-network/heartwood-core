@@ -274,33 +274,15 @@ fn v6_in(run: &str, before: Option<char>, after: Option<char>) -> Option<(usize,
     None
 }
 
-/// The invisible characters [`clean`] removes: every format character (Unicode's general category
-/// Cf: soft hyphen, zero-width and bidirectional marks, tag characters and the rest), the variation
-/// selectors, the combining grapheme joiner and the Mongolian free variation selectors.
-const INVISIBLE: [(char, char); 23] = [
-    ('\u{ad}', '\u{ad}'),
-    ('\u{34f}', '\u{34f}'),
-    ('\u{600}', '\u{605}'),
-    ('\u{61c}', '\u{61c}'),
-    ('\u{6dd}', '\u{6dd}'),
-    ('\u{70f}', '\u{70f}'),
-    ('\u{890}', '\u{891}'),
-    ('\u{8e2}', '\u{8e2}'),
-    ('\u{180b}', '\u{180f}'),
-    ('\u{200b}', '\u{200f}'),
-    ('\u{202a}', '\u{202e}'),
-    ('\u{2060}', '\u{206f}'),
-    ('\u{fe00}', '\u{fe0f}'),
-    ('\u{feff}', '\u{feff}'),
-    ('\u{fff9}', '\u{fffb}'),
-    ('\u{110bd}', '\u{110bd}'),
-    ('\u{110cd}', '\u{110cd}'),
-    ('\u{13430}', '\u{1343f}'),
-    ('\u{1bca0}', '\u{1bca3}'),
-    ('\u{1d173}', '\u{1d17a}'),
-    ('\u{e0001}', '\u{e0001}'),
-    ('\u{e0020}', '\u{e007f}'),
-    ('\u{e0100}', '\u{e01ef}'),
+/// The invisible characters [`clean`] removes, as the first and last code point of each range:
+/// every format character (Unicode's general category Cf: soft hyphen, zero-width and
+/// bidirectional marks, tag characters and the rest), the variation selectors, the combining
+/// grapheme joiner and the Mongolian free variation selectors.
+const INVISIBLE: [u32; 46] = [
+    0xad, 0xad, 0x34f, 0x34f, 0x600, 0x605, 0x61c, 0x61c, 0x6dd, 0x6dd, 0x70f, 0x70f, 0x890, 0x891,
+    0x8e2, 0x8e2, 0x180b, 0x180f, 0x200b, 0x200f, 0x202a, 0x202e, 0x2060, 0x206f, 0xfe00, 0xfe0f,
+    0xfeff, 0xfeff, 0xfff9, 0xfffb, 0x110bd, 0x110bd, 0x110cd, 0x110cd, 0x13430, 0x1343f, 0x1bca0,
+    0x1bca3, 0x1d173, 0x1d17a, 0xe0001, 0xe0001, 0xe0020, 0xe007f, 0xe0100, 0xe01ef,
 ];
 
 /// The Hangul fillers: blank letters, shown as a space.
@@ -308,9 +290,8 @@ const FILLERS: [char; 4] = ['\u{115f}', '\u{1160}', '\u{3164}', '\u{ffa0}'];
 
 /// Whether `c` is one of the [`INVISIBLE`] characters.
 fn invisible(c: char) -> bool {
-    INVISIBLE
-        .iter()
-        .any(|(from, to)| (*from..=*to).contains(&c))
+    let (c, (ranges, _)) = (u32::from(c), INVISIBLE.as_chunks::<2>());
+    ranges.iter().any(|&[from, to]| (from..=to).contains(&c))
 }
 
 /// `text` without escape sequences and invisible characters (bidirectional marks, format

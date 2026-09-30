@@ -622,8 +622,21 @@ impl Scan {
             if let Some(emoji) = patterns::continues(role, level, message) {
                 open = Some((emoji, 0));
             }
+            let event = |kind| LogEvent {
+                kind,
+                level,
+                at_ms,
+                offset: at,
+                rotated,
+            };
+            // Before the window, only the forger's start and the lines that list its delegates.
             if at_ms < window.from_ms {
-                self.before(role, level, message, at_ms, at, rotated);
+                match roster_line(role, level, message) {
+                    Some(LineKind::ForgerStarted | LineKind::ForgerManagerStarted) => {
+                        (self.roster, self.restarted) = (Vec::new(), true);
+                    }
+                    kind => self.roster.extend(kind.map(event)),
+                }
                 continue;
             }
             if at_ms > window.to_ms {
@@ -636,13 +649,7 @@ impl Scan {
                     if carries_outside(&kind) {
                         self.keep(excerpt(source, Some(at_ms), message));
                     }
-                    self.events.push(LogEvent {
-                        kind,
-                        level,
-                        at_ms,
-                        offset: at,
-                        rotated,
-                    });
+                    self.events.push(event(kind));
                 }
                 None => {
                     self.other += 1;
@@ -655,38 +662,18 @@ impl Scan {
     }
 }
 
-impl Scan {
-    /// A line before the window: kept only when it is the forger's start or lists its delegates.
-    fn before(
-        &mut self,
-        role: Role,
-        level: Level,
-        message: &str,
-        at_ms: i64,
-        at: u64,
-        rotated: bool,
-    ) {
-        const OPENINGS: [&str; 4] = ["Loaded ", "Delegate", "Heartwood Core ", "Forger Manager "];
-        let opens = OPENINGS.iter().any(|opening| message.starts_with(opening));
-        if role != Role::Forger || level != Level::Info || !opens {
-            return;
-        }
-        match patterns::classify(role, level, message) {
-            Some(LineKind::ForgerStarted | LineKind::ForgerManagerStarted) => {
-                self.roster.clear();
-                self.restarted = true;
-            }
-            Some(kind @ (LineKind::DelegatesLoaded { .. } | LineKind::ActivePosition { .. })) => {
-                self.roster.push(LogEvent {
-                    kind,
-                    level,
-                    at_ms,
-                    offset: at,
-                    rotated,
-                });
-            }
-            _ => {}
-        }
+/// The kind of a line before the window that the roster needs: the forger's start, or a line
+/// that lists its delegates. A test of the line's opening spares the other lines the patterns.
+fn roster_line(role: Role, level: Level, message: &str) -> Option<LineKind> {
+    const OPENINGS: [&str; 4] = ["Loaded ", "Delegate", "Heartwood Core ", "Forger Manager "];
+    let opens = OPENINGS.iter().any(|opening| message.starts_with(opening));
+    if role != Role::Forger || level != Level::Info || !opens {
+        return None;
+    }
+    match patterns::classify(role, level, message)? {
+        kind @ (LineKind::ForgerStarted | LineKind::ForgerManagerStarted) => Some(kind),
+        kind @ (LineKind::DelegatesLoaded { .. } | LineKind::ActivePosition { .. }) => Some(kind),
+        _ => None,
     }
 }
 
