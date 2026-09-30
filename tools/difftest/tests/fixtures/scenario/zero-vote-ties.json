@@ -1,6 +1,6 @@
 {
   "id": "zero-vote-ties",
-  "title": "Delegates with no votes and equal votes rank by numeric name order",
+  "title": "Delegates with equal votes and names that collate alike (a9, a09) rank by public key",
   "levels": ["L2"],
   "network": "devnet",
   "genesisSeed": "scenario-fixture-seed",
@@ -8,20 +8,28 @@
   "steps": [
     {"name": "fund", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
      "txs": [{"ref": "fund", "type": "transfer", "from": "genesis",
-              "to": [["alice", "1000000000000"], ["bob", "1000000000000"], ["carol", "1000000000000"]]}],
+              "to": [["alice", "1000000000000"], ["bob", "1000000000000"], ["carol", "1000000000000"], ["genesis_4", "100000000000"]]}],
      "check": {"accept": ["fund"]}},
     {"name": "votes", "at": {"afterBlocks": 2}, "do": "submit", "node": 1, "via": "api",
      "txs": [{"ref": "a-tenth", "type": "vote", "from": "alice", "asset": {"votes": [["genesis_10", 100]]}},
-             {"ref": "b-ninth", "type": "vote", "from": "bob", "asset": {"votes": [["genesis_9", 100]]}},
+             {"ref": "b-ninth", "type": "vote", "from": "bob", "fee": "30000000", "asset": {"votes": [["genesis_9", 100]]}},
              {"ref": "c-split", "type": "vote", "from": "carol",
-              "asset": {"votes": [["genesis_2", 50], ["genesis_10", 50]]}}],
-     "check": {"accept": ["a-tenth", "b-ninth", "c-split"]}},
+              "asset": {"votes": [["genesis_2", 50], ["genesis_10", 50]]}},
+             {"ref": "d-moved", "type": "vote", "from": "genesis_4", "asset": {"votes": [["genesis_2", 100]]}}],
+     "check": {"accept": ["a-tenth", "b-ninth", "c-split", "d-moved"]}},
     {"name": "unknown delegate", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api",
      "txs": [{"ref": "nobody", "type": "vote", "from": "alice", "asset": {"votes": [["genesis_99", 100]]}}],
      "check": {"invalid": ["nobody"], "codes": {"nobody": "ERR_APPLY"}}},
-    {"name": "votes forged", "at": {"afterBlocks": 3}, "check": {"forged": ["a-tenth", "b-ninth", "c-split"], "absent": ["nobody"]}},
+    {"name": "names that collate alike", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api",
+     "txs": [{"ref": "a9", "type": "delegateRegistration", "from": "bob", "asset": {"username": "a9"}},
+             {"ref": "a09", "type": "delegateRegistration", "from": "carol", "asset": {"username": "a09"}}],
+     "check": {"accept": ["a9", "a09"]}},
+    {"name": "votes forged", "at": {"afterBlocks": 3}, "check": {"forged": ["a-tenth", "b-ninth", "c-split", "d-moved", "a9", "a09"], "absent": ["nobody"]}},
     {"name": "first round end", "at": {"roundEnd": true}, "check": {"digest": true}},
-    {"name": "second round start", "at": {"round": 2, "position": "start"}, "do": "wait", "blocks": 5,
-     "check": {"digest": true}}
+    {"name": "second round start", "at": {"round": 2, "position": "start"}, "do": "submit", "node": 1, "via": "api",
+     "txs": [{"ref": "both-names", "type": "vote", "from": "genesis_4", "asset": {"votes": [["a9", 50], ["a09", 50]]}}],
+     "check": {"invalid": ["both-names"], "codes": {"both-names": "ERR_OFFLINE"}}},
+    {"name": "second round", "at": {"afterBlocks": 2}, "do": "wait", "blocks": 5,
+     "check": {"absent": ["both-names"], "digest": true}}
   ]
 }

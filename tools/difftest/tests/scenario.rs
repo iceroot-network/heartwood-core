@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use heartwood_crypto::transactions::TransactionBuilder;
 use heartwood_crypto::utils::hex;
-use heartwood_crypto::{Aux, KeyPair, Milestones, Network};
+use heartwood_crypto::{Aux, KeyPair, Milestones, Network, Transaction};
 use heartwood_difftest::report::{Outcome, Report};
 use heartwood_difftest::scenario::backend::Answer;
 use heartwood_difftest::scenario::backends::{external, heartwood};
@@ -1648,23 +1648,60 @@ fn a_scenario_compiles_to_the_same_bytes_twice_with_the_fee_floor_and_the_nonces
         .iter()
         .map(|t| t.reference.as_str())
         .collect();
-    assert_eq!(refs, ["fund", "a-tenth", "b-ninth", "c-split", "nobody"]);
+    assert_eq!(
+        refs,
+        [
+            "fund",
+            "a-tenth",
+            "b-ninth",
+            "c-split",
+            "d-moved",
+            "nobody",
+            "a9",
+            "a09",
+            "both-names"
+        ]
+    );
     let ids: HashSet<&str> = first.transactions.iter().map(|t| t.id.as_str()).collect();
-    assert_eq!(ids.len(), 5, "five ids");
+    assert_eq!(ids.len(), 9, "nine ids");
     // Planned after their steps: the fund at height 2 goes into block 3.
     assert_eq!(first.transactions[0].height, 3);
-    assert!(first.transactions.iter().all(|t| !t.bytes.is_empty()));
-    // The first byte after the header of a v3 transaction is the type group's; the nonce of alice's
-    // first vote is 1 and of her second, 2, on the wire (eight bytes after the public key).
-    let alice_nonce = |tx: &CompiledTx| -> u64 {
-        let bytes: Vec<u8> = (0..tx.bytes.len() / 2)
-            .map(|i| u8::from_str_radix(&tx.bytes[2 * i..2 * i + 2], 16).expect("hex"))
-            .collect();
-        // Header: 0xff, version, network, type group (u32), type (u16), nonce (u64).
-        u64::from_le_bytes(bytes[9..17].try_into().expect("eight bytes"))
+    // Each one decodes by the rules of its planned height, with the nonce asked and the dynamic
+    // fee floor for its type and length.
+    let scenario = scenario::load(&file).expect("scenario");
+    let chain = Chain::new(&scenario).expect("chain");
+    let network = Network::load(&chain.crypto["network"].to_string()).expect("network");
+    let milestones = Milestones::load(&chain.crypto["milestones"].to_string(), &network)
+        .expect("milestones");
+    let decoded = |reference: &str| {
+        let tx = first
+            .transactions
+            .iter()
+            .find(|t| t.reference == reference)
+            .expect("compiled");
+        let params = milestones.at(tx.height);
+        let bytes = hex::decode(&tx.bytes).expect("hex");
+        let decoded = Transaction::decode_trusted(&bytes, params).expect("decodes");
+        let floor = heartwood_transactions::minimum_fee(&decoded, params);
+        (decoded.data().nonce, i128::from(decoded.data().fee), floor)
     };
-    assert_eq!(alice_nonce(&first.transactions[1]), 1);
-    assert_eq!(alice_nonce(&first.transactions[4]), 2);
+    for tx in &first.transactions {
+        let (_, fee, floor) = decoded(&tx.reference);
+        assert!(floor > 0, "{}: a floor above nothing", tx.reference);
+        if tx.reference == "b-ninth" {
+            assert_eq!(fee, 30_000_000, "the fee the file gives");
+            assert_ne!(fee, floor);
+        } else {
+            assert_eq!(fee, floor, "{} is built at the floor", tx.reference);
+        }
+    }
+    // alice's first vote is her nonce 1 and her refused one 2; a genesis delegate signed nonces
+    // 1 and 2 in the genesis block, so its next are 3 and 4.
+    let nonces: Vec<u64> = ["a-tenth", "nobody", "d-moved", "both-names"]
+        .into_iter()
+        .map(|r| decoded(r).0)
+        .collect();
+    assert_eq!(nonces, [1, 2, 3, 4]);
 }
 
 #[test]
