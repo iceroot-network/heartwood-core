@@ -1118,3 +1118,14 @@ fn two_records_of_one_target_started_in_one_second_are_both_kept() {
     let results: Vec<&Value> = records.iter().map(|r| &r["result"]).collect();
     assert!(results.contains(&&json!("pass")) && results.contains(&&json!("fail")));
 }
+
+#[test]
+fn a_record_file_that_is_not_json_is_an_error_not_a_skip() {
+    let rig = Rig::new();
+    rig.criteria(&base_criteria());
+    assert!(rig.record("l0", "difftest run l0", 0, "", T1).ok);
+    std::fs::write(rig.path("records").join("cut-short.json"), "{\"format\": ").expect("write");
+    let ran = s1(&rig, &[]);
+    assert!(!ran.ok);
+    assert!(ran.text.contains("cut-short.json"), "{}", ran.text);
+}

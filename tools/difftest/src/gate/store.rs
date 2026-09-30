@@ -101,9 +101,10 @@ fn entry_paths(criteria: &Criteria, entry: &LedgerEntry) -> Vec<String> {
 }
 
 /// Every JSON file under `dirs` (recursively, symbolic links not followed) whose `format` is
-/// `format`, parsed strictly and sorted by path. Other JSON files are not this store's and are
-/// skipped; a file of the format that does not parse is an error. A directory that is not there
-/// holds nothing.
+/// `format`, parsed strictly and sorted by path. JSON files of another format are not this
+/// store's and are skipped; a file that is not JSON (one cut short, say) and a file of the format
+/// that does not parse are errors, since skipping them could hide a failed run. A directory that
+/// is not there holds nothing.
 pub fn load_all<T: DeserializeOwned>(dirs: &[PathBuf], format: &str) -> Result<Vec<(PathBuf, T)>> {
     let mut files = Vec::new();
     for dir in dirs {
@@ -117,9 +118,11 @@ pub fn load_all<T: DeserializeOwned>(dirs: &[PathBuf], format: &str) -> Result<V
     let mut found = Vec::new();
     for path in files {
         let text = std::fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-            continue;
-        };
+        let value =
+            serde_json::from_str::<serde_json::Value>(&text).map_err(|e| Error::Corpus {
+                path: path.clone(),
+                message: format!("not a JSON file: {e}"),
+            })?;
         if value.get("format").and_then(|f| f.as_str()) != Some(format) {
             continue;
         }
