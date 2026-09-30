@@ -817,6 +817,7 @@ fn a_log_line_telling_the_client_what_to_do_appears_only_inside_untrusted_cleane
         file_level: Some(Level::Info),
         excerpts,
         capped: false,
+        roster: Vec::new(),
     };
     view.logs.insert(Role::Relay, Ok(window));
     let summary = mcp::log_summary(&view, Role::Relay);

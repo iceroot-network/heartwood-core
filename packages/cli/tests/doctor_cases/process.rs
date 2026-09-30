@@ -97,6 +97,7 @@ pub fn log(kinds: Vec<LineKind>) -> LogWindow {
         file_level: Some(Level::Info),
         excerpts: Vec::new(),
         capped: false,
+        roster: Vec::new(),
     }
 }
 

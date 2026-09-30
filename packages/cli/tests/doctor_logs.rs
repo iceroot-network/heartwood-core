@@ -1152,3 +1152,39 @@ fn the_error_capture_is_read_by_the_same_caps_and_its_excerpts_are_capped() {
         (Source::ErrorCapture, Reason::Missing)
     );
 }
+
+#[test]
+fn the_forger_s_delegate_lines_before_the_window_since_its_last_start_are_kept_apart() {
+    let text = "\
+[2026-10-02 09:00:00.000] INFO: Loaded 2 active delegates: genesis_8, genesis_9
+[2026-10-02 10:00:00.000] INFO: Forger Manager started 🔨
+[2026-10-02 10:00:08.000] INFO: Loaded 2 active delegates: genesis_1, genesis_2
+[2026-10-02 10:00:08.000] INFO: Loaded 1 inactive delegate: genesis_3
+[2026-10-02 11:00:00.000] INFO: Delegate genesis_4 is now in an active forging position 🎉
+[2026-10-02 11:00:08.000] WARNING: Loaded 1 active delegate: genesis_7
+[2026-10-02 13:10:00.000] INFO: Loaded 1 active delegate: genesis_5
+";
+    let window = read(Role::Forger, text);
+    let listed = |events: &[heartwood_cli::doctor::sources::logs::LogEvent]| {
+        let names = events.iter().map(|event| match &event.kind {
+            LineKind::DelegatesLoaded { names, .. } | LineKind::ActivePosition { names, .. } => {
+                names.iter().map(|name| name.as_str().to_owned()).collect()
+            }
+            other => vec![format!("{other:?}")],
+        });
+        names.collect::<Vec<Vec<String>>>()
+    };
+    // The lines since the last start, before the window; not the start before it, nor a line of
+    // another level.
+    assert_eq!(
+        listed(&window.roster),
+        [
+            vec!["genesis_1", "genesis_2"],
+            vec!["genesis_3"],
+            vec!["genesis_4"]
+        ]
+    );
+    assert_eq!(listed(&window.events), [vec!["genesis_5"]]);
+    // The relay's log keeps no such lines.
+    assert!(read(Role::Relay, text).roster.is_empty());
+}

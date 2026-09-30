@@ -123,6 +123,7 @@ pub fn log(role: Role, events: Vec<(i64, LineKind)>) -> LogWindow {
         file_level: None,
         excerpts: Vec::new(),
         capped: false,
+        roster: Vec::new(),
     }
 }
 
@@ -646,4 +647,37 @@ fn a_window_past_the_stores_row_cap_reads_the_latest_blocks_and_a_cut_window_is_
     let findings = run("slots.missed", &cut, &DoctorOptions::default());
     assert_eq!(findings.len(), 1, "{findings:#?}");
     assert_eq!(findings[0].status, Status::Unknown);
+}
+
+#[test]
+fn our_delegates_come_from_the_forger_s_lines_since_its_start_before_the_window_too() {
+    let mut view = missing(&[], &[7], vec![]);
+    let mut window = log(Role::Forger, Vec::new());
+    let (at_ms, _) = loaded();
+    let kind = LineKind::DelegatesLoaded {
+        active: true,
+        count: 2,
+        names: vec![username(OURS), username("genesis_3")],
+    };
+    window.roster = vec![LogEvent {
+        kind,
+        level: Level::Info,
+        at_ms: at_ms - 7_200_000,
+        offset: 0,
+        rotated: false,
+    }];
+    view.logs.insert(Role::Forger, Ok(window));
+    let _ = run("slots.missed", &view, &DoctorOptions::default());
+    let calls = view.store_calls.borrow();
+    let names: Vec<&Vec<String>> = calls.iter().map(|(names, _)| names).collect();
+    assert_eq!(names, [&vec![OURS.to_owned(), "genesis_3".to_owned()]]);
+    let active = run("slots.active", &view, &DoctorOptions::default());
+    assert_eq!(
+        (active.len(), active[0].status, active[0].advice.key),
+        (1, Status::Pass, "active")
+    );
+    assert_eq!(
+        active[0].facts,
+        [("count", heartwood_cli::doctor::report::Fact::Int(2))]
+    );
 }

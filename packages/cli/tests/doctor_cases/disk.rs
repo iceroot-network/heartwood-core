@@ -495,6 +495,7 @@ fn slow_view(millis: &[u64]) -> FakeView {
         file_level: None,
         excerpts: Vec::new(),
         capped: false,
+        roster: Vec::new(),
     };
     view.logs.insert(Role::Forger, Ok(window));
     view

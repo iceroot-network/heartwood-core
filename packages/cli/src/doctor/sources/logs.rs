@@ -393,6 +393,11 @@ pub struct LogWindow {
     pub excerpts: Vec<Untrusted>,
     /// Whether a byte cap cut the read.
     pub capped: bool,
+    /// The forger's lines that list its delegates ("Loaded" and "active forging position") from
+    /// its last start read before the window up to the window's start, in order: the forger
+    /// writes "Loaded" once a start, so a window that starts later holds none. The window's own
+    /// lines are among [`LogWindow::events`].
+    pub roster: Vec<LogEvent>,
 }
 
 impl LogWindow {
@@ -564,6 +569,10 @@ struct Scan {
     last: Option<i64>,
     /// The time of the first line read, whatever the window.
     earliest: Option<i64>,
+    /// The forger's delegate lines before the window, since the last start line read.
+    roster: Vec<LogEvent>,
+    /// Whether a start line of the forger came before the window.
+    restarted: bool,
 }
 
 impl Scan {
@@ -612,7 +621,11 @@ impl Scan {
             if let Some(emoji) = patterns::continues(role, level, message) {
                 open = Some((emoji, 0));
             }
-            if at_ms < window.from_ms || at_ms > window.to_ms {
+            if at_ms < window.from_ms {
+                self.before(role, level, message, at_ms, at, rotated);
+                continue;
+            }
+            if at_ms > window.to_ms {
                 continue;
             }
             self.first.get_or_insert(at_ms);
@@ -637,6 +650,41 @@ impl Scan {
                     }
                 }
             }
+        }
+    }
+}
+
+impl Scan {
+    /// A line before the window: kept only when it is the forger's start or lists its delegates.
+    fn before(
+        &mut self,
+        role: Role,
+        level: Level,
+        message: &str,
+        at_ms: i64,
+        at: u64,
+        rotated: bool,
+    ) {
+        const OPENINGS: [&str; 4] = ["Loaded ", "Delegate", "Heartwood Core ", "Forger Manager "];
+        let opens = OPENINGS.iter().any(|opening| message.starts_with(opening));
+        if role != Role::Forger || level != Level::Info || !opens {
+            return;
+        }
+        match patterns::classify(role, level, message) {
+            Some(LineKind::ForgerStarted | LineKind::ForgerManagerStarted) => {
+                self.roster.clear();
+                self.restarted = true;
+            }
+            Some(kind @ (LineKind::DelegatesLoaded { .. } | LineKind::ActivePosition { .. })) => {
+                self.roster.push(LogEvent {
+                    kind,
+                    level,
+                    at_ms,
+                    offset: at,
+                    rotated,
+                });
+            }
+            _ => {}
         }
     }
 }
@@ -779,6 +827,10 @@ pub fn read_log(context: &LogContext<'_>) -> Result<LogWindow, Unknown> {
     let surplus = excerpts.len().saturating_sub(MAX_EXCERPTS);
     excerpts.drain(..surplus);
     older.events.extend(current.events);
+    let roster = match current.restarted {
+        true => current.roster,
+        false => [older.roster, current.roster].concat(),
+    };
     Ok(LogWindow {
         role: context.role,
         events: older.events,
@@ -788,6 +840,7 @@ pub fn read_log(context: &LogContext<'_>) -> Result<LogWindow, Unknown> {
         file_level: context.file_level,
         excerpts,
         capped: tail.start > 0,
+        roster,
     })
 }
 

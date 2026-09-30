@@ -167,6 +167,7 @@ fn log(role: Role, level: Level, events: Vec<(i64, LineKind)>) -> LogWindow {
         file_level: None,
         excerpts: Vec::new(),
         capped: false,
+        roster: Vec::new(),
     }
 }
 

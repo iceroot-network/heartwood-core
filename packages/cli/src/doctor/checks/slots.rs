@@ -127,14 +127,16 @@ impl Ours {
 }
 
 /// Our delegates, in this order: the `--delegate` names; the names of the forger's "Loaded"
-/// and "active forging position" lines; the signing record's keys, looked up through the API.
+/// and "active forging position" lines since its last start, before the window included; the
+/// signing record's keys, looked up through the API.
 pub(super) fn ours(view: &dyn View, options: &DoctorOptions) -> Ours {
     let valid = |name: &String| Id::new(IdKind::Username, name).is_some();
     let mut names = BTreeSet::new();
     names.extend(options.delegates.iter().filter(|n| valid(n)).cloned());
-    let log = view.log(Role::Forger).ok().filter(|_| names.is_empty());
-    for event in log.map_or(&[][..], |log| &log.events) {
-        names.extend(listed(&event.kind).iter().map(|id| id.as_str().to_owned()));
+    if let Some(log) = view.log(Role::Forger).ok().filter(|_| names.is_empty()) {
+        for event in log.roster.iter().chain(&log.events) {
+            names.extend(listed(&event.kind).iter().map(|id| id.as_str().to_owned()));
+        }
     }
     let mut keys = Vec::new();
     if let Ok(Some(record)) = view.signing_record() {
@@ -224,7 +226,8 @@ pub fn active(input: &CheckInput<'_>) -> Vec<Finding> {
         for delegate in &ours.names {
             let named = |names: &[Id]| names.iter().any(|name| name.as_str() == delegate);
             // The latest line that shows the delegate in or out of the active set.
-            let said = log.events.iter().rev().find_map(|event| match &event.kind {
+            let lines = log.roster.iter().chain(&log.events);
+            let said = lines.rev().find_map(|event| match &event.kind {
                 K::DelegatesLoaded { active, .. } => named(listed(&event.kind)).then_some(*active),
                 K::ActivePosition { entered, .. } => named(listed(&event.kind)).then_some(*entered),
                 K::DueToForge { username, .. } | K::Forged { username, .. } => {

@@ -39,7 +39,10 @@ heartwood doctor mcp [--token T] [--network N]
 - `--window` sets how far back the log and store checks look, from `5m` to `24h` (default
   `60m`). A round is 53 slots of 8 seconds, about 7 minutes.
 - `--delegate NAME` names a delegate this host forges for. Without it the doctor finds them in the
-  forger's log and its signing record; with none known, the slot checks say so.
+  forger's log: the lines that list its delegates since its last start, before the window too,
+  in the current log file and the newest rotated one. When the log names none, it looks up at
+  most four keys of the signing record through the relay's API. With none known, the slot checks
+  say so: a forger started long ago, whose start lines have rotated out, needs `--delegate`.
 - `--profile onboarding` adds the checks that matter when a new validator joins the network.
 - The colon forms work as for every command: `heartwood doctor:checks`, `heartwood doctor:mcp`.
 
