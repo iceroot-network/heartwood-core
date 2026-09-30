@@ -3,8 +3,8 @@
 //!
 //! A log line is evidence that something was logged, not that it happened: a relay can put text
 //! into the forger's log. So `forger.one-key-one-forger` fails only when the chain agrees (a block
-//! signed with our key in that slot that this forger did not sign, by its signing record and its
-//! own log); a line the chain does not confirm is a warn that says to confirm first.
+//! signed with our key in that slot while the forger's signing record holds that slot with another
+//! block); a line nothing confirms is a warn that says to confirm first.
 
 use std::net::{IpAddr, SocketAddr};
 
@@ -152,8 +152,11 @@ fn evidence<'a>(input: &CheckInput<'a>) -> Evidence<'a> {
 type Confirmed = Result<Option<Values>, ()>;
 
 /// The block that confirms the claim `event` about `delegate`: the chain's block in that slot,
-/// signed with our key, that this forger did not sign. `Ok(None)` when the chain's block is this
-/// forger's own (it restarted inside a slot it had signed); `Err` when nothing confirms the line.
+/// signed with our key, while the signing record holds that slot with another block. `Ok(None)`
+/// when the chain's block is this forger's own (it restarted inside a slot it had signed), by the
+/// record or by the forger's own "forged" line for its height; `Err` when nothing confirms the
+/// line. A missing "forged" line confirms nothing: the record may have moved on since, and the
+/// file log level may hide info lines.
 fn confirm(evidence: &Evidence<'_>, log: &LogWindow, at_ms: i64, delegate: &Id) -> Confirmed {
     let (ours, chain, store, record) = evidence.as_ref().ok_or(())?;
     let slot = slots::slot_at(chain, at_ms);
@@ -165,9 +168,11 @@ fn confirm(evidence: &Evidence<'_>, log: &LogWindow, at_ms: i64, delegate: &Id) 
     let entries = record.map(|r| r.entries.as_slice()).unwrap_or_default();
     let key = &block.generator_public_key;
     let forged = |e: &LogEvent| slots::forged(&e.kind).is_some_and(|f| f.1 == block.height);
+    let logged = log.shows(Level::Info).is_ok() && log.events.iter().any(forged);
     let signed_here = match entries.iter().find(|entry| entry.public_key == *key) {
         Some(entry) if entry.slot == slot => entry.block_id == block.id,
-        _ => log.events.iter().any(forged),
+        _ if logged => true,
+        _ => return Err(()),
     };
     let delegate = ("delegate", Fact::Id(delegate.clone()));
     let mut values = vec![("height", int(block.height)), delegate];

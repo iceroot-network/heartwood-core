@@ -379,15 +379,26 @@ pub fn cases() -> Vec<Case> {
             "one key: the record holds another slot, no forged line",
             "forger.one-key-one-forger",
             claimed(Some(record(other, block_id(9))), vec![]),
-            &[(F, Status::Fail, "another-forger")],
+            &[(F, Status::Warn, "logged-only")],
         ),
         case(
             "one key: no record, no forged line",
             "forger.one-key-one-forger",
             claimed(None, vec![]),
-            &[(F, Status::Fail, "another-forger")],
+            &[(F, Status::Warn, "logged-only")],
         ),
     ]);
+    // The file log level hides the "forged" line: its absence confirms nothing.
+    let mut hidden = claimed(Some(record(other, block_id(9))), vec![]);
+    if let Some(Ok(log)) = hidden.logs.get_mut(&Role::Forger) {
+        log.file_level = Some(Level::Warning);
+    }
+    cases.push(case(
+        "one key: the record holds another slot, the level hides info lines",
+        "forger.one-key-one-forger",
+        hidden,
+        &[(F, Status::Warn, "logged-only")],
+    ));
     let mut logged = claimed(Some(record(other, block_id(9))), vec![]);
     if let Ok(store) = &mut logged.store_window {
         store
@@ -598,7 +609,14 @@ fn a_logged_claim_is_a_warn_on_the_log_until_the_chain_confirms_it() {
         ),
         (Status::Warn, Basis::Log, "logged-only")
     );
-    let confirmed = claimed(Some(record(SLOT - 100, block_id(9))), vec![]);
+    let moved_on = claimed(Some(record(SLOT - 100, block_id(9))), vec![]);
+    let findings = run("forger.one-key-one-forger", &moved_on, &options);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(
+        (findings[0].status, findings[0].basis),
+        (Status::Warn, Basis::Log)
+    );
+    let confirmed = claimed(Some(record(SLOT - 20, block_id(9))), vec![]);
     let findings = run("forger.one-key-one-forger", &confirmed, &options);
     assert_eq!(findings.len(), 1);
     assert_eq!(

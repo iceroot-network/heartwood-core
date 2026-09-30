@@ -93,7 +93,7 @@
       "rules": {
         "pass": "No line of the forger saying our delegate has already forged on another node or already forged a block; or each such line is cleared by the chain: the chain's block in that slot is this forger's own (a forger restarted inside a slot it had signed).",
         "warn": "Such a line that the chain does not confirm. A log line alone is not proof: text a relay sends can reach the forger's log.",
-        "fail": "The chain holds a block signed with our key in that slot that this forger did not sign: the signing record holds that slot with another block id, or holds another slot and the forger's log has no \"forged a new block\" line at that height.",
+        "fail": "The chain holds a block signed with our key in that slot that this forger did not sign: the signing record holds that slot with another block id. A record that has moved on to a later slot, or a log with no \"forged a new block\" line at that height, confirms nothing.",
         "unknown": "The forger's log cannot be read, or its file level hides warnings.",
         "skipped": "No forger runs on this host."
       },
