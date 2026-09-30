@@ -148,5 +148,23 @@
   "name": "fees/days-key-case",
   "path": "/api/node/fees",
   "query": "Days=1"
+ },
+ {
+  "name": "schemas/all",
+  "path": "/api/transactions/schemas"
+ },
+ {
+  "name": "schemas/trailing-slash",
+  "path": "/api/transactions/schemas/"
+ },
+ {
+  "name": "schemas/ignored-query",
+  "path": "/api/transactions/schemas",
+  "query": "foo=bar&limit=1"
+ },
+ {
+  "name": "schemas/lone-comma-throws",
+  "path": "/api/transactions/schemas",
+  "query": "a=1&a=,"
  }
 ]
