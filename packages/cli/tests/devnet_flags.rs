@@ -418,6 +418,29 @@ fn start_runs_one_core_process_per_validator_and_stop_ends_them() {
 }
 
 #[test]
+fn a_core_nodes_listeners_are_read_from_its_core_profile() {
+    let bench = Bench::new("core-guard");
+    bench.init(&core(1, 0)).unwrap();
+    bench.api.every(1, &["genesis"]);
+    // Only the core profile, the one a core node loads, binds its P2P server beyond loopback.
+    let path = bench.root.join("node1/config/app.json");
+    let mut app: Value = serde_json::from_str(&bench.file("node1/config/app.json")).unwrap();
+    let plugins = app["core"]["plugins"].as_array_mut().unwrap();
+    let p2p = plugins
+        .iter_mut()
+        .find(|plugin| plugin["package"] == "@solar-network/p2p")
+        .unwrap();
+    p2p["options"]["server"] = json!({ "hostname": "0.0.0.0" });
+    fs::write(&path, serde_json::to_string_pretty(&app).unwrap()).unwrap();
+    let refused = bench.start(&StartOptions::default());
+    assert!(
+        matches!(&refused, Err(DevnetError::Guard(text)) if text.contains("0.0.0.0")),
+        "{refused:?}"
+    );
+    assert!(bench.ops.calls().is_empty());
+}
+
+#[test]
 fn status_json_gives_each_node_its_processes_api_and_the_address_its_peers_report() {
     let bench = Bench::new("status-json");
     bench

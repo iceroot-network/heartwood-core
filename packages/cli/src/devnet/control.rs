@@ -228,7 +228,7 @@ fn preflight(root: &Path, manifest: &Manifest, picked: &[u32], tools: &Tools<'_>
 }
 
 /// The hosts a node's listeners would take, each with where it comes from: the P2P server's and
-/// the API's, as the relay reads them. The API's is the `server.http.host` option of its entry in
+/// the API's, as the relay (a core node's `core` process) reads them. The API's is the `server.http.host` option of its entry in
 /// `app.json` when that gives one, else `CORE_API_HOST`; the environment is the process's, the
 /// node's own `.env`, and `~/.<token>/.env` over both, as the node loads it. A host that is
 /// missing reads as the empty text, which is not loopback.
@@ -244,7 +244,12 @@ fn listener_hosts(node: &ManifestNode, tools: &Tools<'_>) -> Result<Vec<(String,
     let token = format!("node{}", node.index);
     let env = env::load(&config, tools.home, &token, vars);
     let env = env.map_err(|error| DevnetError::Guard(format!("node {}: {error}", node.index)))?;
-    let app = app::load(&config, AppRole::Relay);
+    let profile = if node.core {
+        AppRole::Core
+    } else {
+        AppRole::Relay
+    };
+    let app = app::load(&config, profile);
     let app = app.map_err(|error| DevnetError::Guard(format!("node {}: {error}", node.index)))?;
     let option = |package: &str, pointer: &str| {
         let entry = app.plugins.iter().find(|entry| entry.package == package);
