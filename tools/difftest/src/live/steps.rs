@@ -93,7 +93,7 @@ pub fn required(run: &str) -> Vec<String> {
         ],
         "mixed-short" | "mixed" | "mixed-split" => &["api-pool", "api-rate-limit"],
         "core" => &["locks", "relay-start-refused", "stop"],
-        "churn" => &["final-status", "api-pool"],
+        "churn" => &["final-status", "api-pool", "api-corpus-node6"],
         _ => &[],
     };
     // The steps of a mixed run, with their planned rounds, are the schedule's.

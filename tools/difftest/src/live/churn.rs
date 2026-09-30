@@ -5,6 +5,10 @@
 //! reference relay reaching the tip from one Heartwood relay alone, its judged digests equal to the
 //! Heartwood lines; the pool filled to its limit and drained.
 //!
+//! Beside the checks of every run, the relay-only node's route corpus (its answers against the
+//! reference relay's at the pause) is judged by status: the bodies of the delegate routes differ by
+//! design, since the reference relay learns delegate versions from its one peer.
+//!
 //! The recipe restarts nodes 1 to 5 in turn (both roles, by the product's stop and start), kills a
 //! relay and a forger under their supervisors, fills the transaction pool with the forgers paused,
 //! stops two and then three nodes, and starts an empty reference relay that may only reach node 2.
@@ -331,6 +335,69 @@ fn sync_problems(manifest: &Manifest, steps: &[Step]) -> Vec<String> {
     problems
 }
 
+/// Where the recipe records the route corpus of the relay-only node against the reference relay.
+const ROUTES: &str = "api-node6";
+
+/// The fewest answered routes a full route corpus holds (it sends about 1,900).
+const MIN_ROUTES: usize = 1_000;
+
+/// The problems of the relay-only node's routes: node 6 (left) and the reference relay (right)
+/// answered the whole route corpus at the pause, and node 6 answered every route with the
+/// reference's status or a documented difference. The bodies are not compared: the reference
+/// relay learnt the delegates' versions from node 2 alone, so its delegate answers differ by
+/// design.
+fn route_problems(run_dir: &Path) -> Vec<String> {
+    let dir = run_dir.join(ROUTES);
+    let mut problems = Vec::new();
+    match run::read_json(&dir.join("route-record.json")) {
+        Ok(r) if r["left"] == "node6" && r["right"] == SYNCED => {}
+        Ok(r) => problems.push(format!(
+            "the route corpus compared {} with {}, not node6 with {SYNCED}",
+            r["left"], r["right"]
+        )),
+        Err(e) => problems.push(format!("no route corpus of node6: {e}")),
+    }
+    let text = match std::fs::read_to_string(dir.join("answers.jsonl")) {
+        Ok(t) => t,
+        Err(e) => {
+            problems.push(format!("no answers of node6's route corpus: {e}"));
+            return problems;
+        }
+    };
+    let mut answered = 0_usize;
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<Value>(line) else {
+            problems.push(format!("line {} of the answers is not JSON", index + 1));
+            continue;
+        };
+        if record.get("skipped").is_some() {
+            continue;
+        }
+        let name = record["name"].as_str().unwrap_or("?");
+        let (left, right) = (
+            record["left"]["status"].as_u64(),
+            record["right"]["status"].as_u64(),
+        );
+        match (left, right) {
+            (Some(l), Some(r)) if l == r || record.get("documented").is_some() => answered += 1,
+            (Some(l), Some(r)) => problems.push(format!(
+                "{name}: node6 answered {l}, the reference relay {r}"
+            )),
+            (None, _) => problems.push(format!("{name}: node6 gave no answer")),
+            (Some(_), None) => problems.push(format!("{name}: the reference relay gave no answer")),
+        }
+    }
+    if answered < MIN_ROUTES {
+        problems.push(format!(
+            "node6 answered {answered} routes, a full corpus answers at least {MIN_ROUTES}"
+        ));
+    }
+    problems
+}
+
 /// The problems of the processes' final status: every role of every Heartwood node online and
 /// stable, and none errored.
 fn status_problems(manifest: &Manifest, json: &Value) -> Vec<String> {
@@ -545,6 +612,11 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
     }
     verdict(
         cases,
+        "the relay-only node 6 answered every route with the reference relay's status or a documented difference",
+        route_problems(run.run_dir),
+    );
+    verdict(
+        cases,
         "every scripted event has its fault window",
         window_problems(run.windows),
     );
@@ -727,6 +799,46 @@ mod tests {
         let problems = window_problems(&windows);
         assert!(problems.iter().any(|p| p.contains("`supervised-relay`")));
         assert!(problems.iter().any(|p| p.contains("`fresh-sync`")));
+    }
+
+    #[test]
+    fn the_relay_only_node_answers_every_route_with_the_references_status() {
+        let dir = std::env::temp_dir().join(format!("hw-churn-routes-{}", std::process::id()));
+        let routes = dir.join(ROUTES);
+        std::fs::create_dir_all(&routes).unwrap();
+        std::fs::write(
+            routes.join("route-record.json"),
+            json!({"left": "node6", "right": "node7"}).to_string(),
+        )
+        .unwrap();
+        let answer = |name: &str, l: u64, r: u64, documented: bool| {
+            let mut v = json!({"name": name, "left": {"status": l}, "right": {"status": r}});
+            if documented {
+                v["documented"] = json!("heightAboveTip");
+            }
+            format!("{v}\n")
+        };
+        let mut lines: String = (0..MIN_ROUTES)
+            .map(|n| answer(&format!("r{n}"), 200, 200, false))
+            .collect();
+        lines.push_str(&answer("above-tip", 404, 500, true));
+        lines.push_str("{\"name\": \"outside\", \"skipped\": \"not sent\"}\n");
+        std::fs::write(routes.join("answers.jsonl"), &lines).unwrap();
+        assert!(
+            route_problems(&dir).is_empty(),
+            "{:?}",
+            route_problems(&dir)
+        );
+        lines.push_str(&answer("blocks/last", 500, 200, false));
+        std::fs::write(routes.join("answers.jsonl"), &lines).unwrap();
+        assert_eq!(
+            route_problems(&dir),
+            vec!["blocks/last: node6 answered 500, the reference relay 200".to_owned()]
+        );
+        std::fs::write(routes.join("answers.jsonl"), answer("one", 200, 200, false)).unwrap();
+        assert_eq!(route_problems(&dir).len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(route_problems(&dir).len(), 2);
     }
 
     #[test]
