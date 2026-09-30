@@ -163,6 +163,11 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 #   refusals by column type 579 (500), the chain routes, the fees and the document 478 (350), the
 #   pagination 376, the wallet search 427 and the productivity 151; the API root (20 lines) joins it
 #   when the listings are carried onto it.
+# With the listings carried onto the recovery commands and the diagnostics command (the same rule):
+# - heartwood-database goes from 3,300 to 3,400: the listings' 3,300 counted the rollback's
+#   planned store work but not the diagnostics command's read-only store opener and its reads, so
+#   the merged crate measures 3,330 (2,699 before the listings, which added 631); no further store
+#   work is planned.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"
@@ -172,7 +177,7 @@ CHECKS=(
     "heartwood-state wallets, ranking and rounds:packages/state/src/wallets packages/state/src/dpos packages/state/src/round_state.rs:"
     "heartwood-transactions:packages/transactions/src:2500"
     "heartwood-p2p-wire:packages/p2p-wire/src:3200"
-    "heartwood-database:packages/database/src:3300"
+    "heartwood-database:packages/database/src:3400"
     "heartwood-database listing readers:packages/database/src/history/blocks_list.rs packages/database/src/history/missed.rs packages/database/src/history/productivity.rs packages/database/src/history/fees.rs packages/database/src/history/totals.rs packages/database/src/filters/block.rs packages/database/src/filters/missed_block.rs:"
     "heartwood-pool:packages/pool/src:2000"
     "heartwood-blockchain:packages/blockchain/src !packages/blockchain/src/difftest.rs:3900"
