@@ -201,6 +201,18 @@ fn the_flags_read_as_the_reference_argument_parser_reads_them() {
         ("00.5", "00.5"),
         ("--x", "--x"),
         ("a b", "a b"),
+        ("0", "0"),
+        ("-0", "0"),
+        ("+5", "+5"),
+        ("0.0", "0"),
+        ("1e-7", "1e-7"),
+        ("-.5", "-0.5"),
+        ("0e5", "0e5"),
+        ("08.5", "08.5"),
+        ("Infinity", "Infinity"),
+        ("NaN", "NaN"),
+        ("1_000", "1_000"),
+        (" 5", " 5"),
     ] {
         assert_eq!(flag_text(given), read, "{given}");
     }
@@ -210,9 +222,21 @@ fn the_flags_read_as_the_reference_argument_parser_reads_them() {
 fn the_texts_of_the_commands() {
     let instance = with_env("text", Some("A=1\nLONGER_KEY=two words\nEMPTY=\n"));
     assert_eq!(get_text(&instance, "A").unwrap(), "1\n");
+    // The reference validates `--key` as text before it reads the file: a key its argument
+    // parser reads as a number, or an empty one, is refused whatever the file holds.
+    let absent = with_env("text-absent", None);
+    for (key, message) in [
+        ("0x10", "\"key\" must be a string"),
+        ("42", "\"key\" must be a string"),
+        ("", "\"key\" is not allowed to be empty"),
+    ] {
+        for on in [&instance, &absent] {
+            assert_eq!(get_text(on, key).unwrap_err().to_string(), message, "{key}");
+        }
+    }
     assert_eq!(
-        get_text(&instance, "0x10").unwrap_err().to_string(),
-        "The \"16\" doesn't exist"
+        get_text(&instance, "007").unwrap_err().to_string(),
+        "The \"007\" doesn't exist"
     );
     // The node's parser leaves out a variable whose value is empty, so it does not exist.
     assert_eq!(
@@ -231,9 +255,11 @@ fn the_texts_of_the_commands() {
     assert_eq!(rows[0], "Type    Path");
     for (row, kind) in rows[1..]
         .iter()
-        .zip(["config", "data", "cache", "log", "temp"])
+        .zip(["data", "config", "cache", "log", "temp"])
     {
         assert!(row.starts_with(kind), "{row}");
     }
-    assert!(rows[1].ends_with(&instance.paths.config.display().to_string()));
+    // The reference's order: env-paths' keys, data first.
+    assert!(rows[1].ends_with(&instance.paths.data.display().to_string()));
+    assert!(rows[2].ends_with(&instance.paths.config.display().to_string()));
 }

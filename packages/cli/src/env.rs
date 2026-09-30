@@ -57,6 +57,9 @@ pub enum EnvError {
     /// A key or a value that is empty, which the reference's flags refuse.
     #[error("\"{0}\" is not allowed to be empty")]
     Empty(&'static str),
+    /// A flag that must be text and that the reference's argument parser reads as a number.
+    #[error("\"{0}\" must be a string")]
+    NotText(&'static str),
 }
 
 impl From<ProcessError> for EnvError {
@@ -122,11 +125,16 @@ fn assign(vars: &mut Vec<(String, String)>, key: &str, value: &str) {
 /// like a number (`-5`, `.5`, `1e3`, `0x10`, but not `007`) whose integer part is at most 2^53 - 1
 /// is that number, written as JavaScript writes it; any other value is as it is.
 pub fn flag_text(text: &str) -> String {
+    flag_number(text).map_or_else(|| text.to_owned(), js::number_to_string)
+}
+
+/// The number the reference's argument parser reads a flag's value `text` as, if it reads one.
+fn flag_number(text: &str) -> Option<f64> {
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     let hex = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X"));
     if let Some(hex) = hex.filter(|h| !h.is_empty() && h.bytes().all(|b| b.is_ascii_hexdigit())) {
         let read = |c: char| f64::from(c.to_digit(16).unwrap_or(0));
-        return js::number_to_string(hex.chars().fold(0.0, |sum, c| sum * 16.0 + read(c)));
+        return Some(hex.chars().fold(0.0, |sum, c| sum * 16.0 + read(c)));
     }
     let body = text.strip_prefix('-').unwrap_or(text);
     let (mantissa, exponent) = body.split_once('e').unzip();
@@ -142,10 +150,7 @@ pub fn flag_text(text: &str) -> String {
     // A leading zero and then no point reads as octal, which the parser leaves as text.
     let octal = text.starts_with('0') && text.chars().nth(1).is_some_and(|c| c != '.');
     let number = text.parse::<f64>().ok();
-    match number.filter(|n| n.floor().abs() <= MAX_SAFE) {
-        Some(number) if mantissa && exponent && !octal => js::number_to_string(number),
-        _ => text.to_owned(),
-    }
+    number.filter(|n| mantissa && exponent && !octal && n.floor().abs() <= MAX_SAFE)
 }
 
 /// A file read: its directory held, its path, its variables and its mode.
@@ -232,13 +237,18 @@ pub fn set(instance: &Instance, key: &str, value: &str) -> Result<(), EnvError> 
 /// A command's work on an instance: the text it prints.
 pub type Action = Box<dyn FnOnce(&Instance) -> Result<String, EnvError>>;
 
-/// What `env get --key key` prints: the variable's value and a line break. The reference's
-/// argument parser reads `key` first ([`flag_text`]), and a variable that is empty is none.
+/// What `env get --key key` prints: the variable's value and a line break, and a variable that
+/// is empty is none. The reference validates `--key` as text before it reads the file: a key
+/// that is empty, or that its argument parser reads as a number ([`flag_text`]), is refused.
 pub fn get_text(instance: &Instance, key: &str) -> Result<String, EnvError> {
-    let key = flag_text(key);
-    match get(instance, &key)?.filter(|value| !value.is_empty()) {
+    match (key.is_empty(), flag_number(key)) {
+        (true, _) => return Err(EnvError::Empty("key")),
+        (_, Some(_)) => return Err(EnvError::NotText("key")),
+        _ => {}
+    }
+    match get(instance, key)?.filter(|value| !value.is_empty()) {
         Some(value) => Ok(value + "\n"),
-        None => Err(EnvError::Missing(key)),
+        None => Err(EnvError::Missing(key.to_owned())),
     }
 }
 
@@ -253,10 +263,11 @@ pub fn set_text(instance: &Instance, key: &str, value: &str) -> Result<String, E
     set(instance, &flag_text(key), &flag_text(value)).map(|()| String::new())
 }
 
-/// What `env paths` prints: the instance's directories in a table.
+/// What `env paths` prints: the instance's directories in a table, in the reference's order
+/// (env-paths' keys: data, config, cache, log and temp).
 pub fn paths_text(instance: &Instance) -> Result<String, EnvError> {
-    let rows: Vec<_> = paths(instance)
-        .into_iter()
+    let [config, data, rest @ ..] = paths(instance);
+    let rows: Vec<_> = ([data, config].into_iter().chain(rest))
         .map(|(kind, path)| (kind.to_owned(), path.display().to_string()))
         .collect();
     Ok(table(["Type", "Path"], &rows))
