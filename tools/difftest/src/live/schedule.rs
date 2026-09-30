@@ -98,6 +98,7 @@ pub(super) fn plan(run: &str) -> Vec<Planned> {
             planned("api-corpus", 2, 2, 0),
         ],
         "mixed-short" | "mixed" | "mixed-split" => forging_plan(run),
+        "churn" => churn_plan(),
         _ => Vec::new(),
     }
 }
@@ -146,6 +147,36 @@ fn forging_plan(run: &str) -> Vec<Planned> {
         _ => {}
     }
     steps
+}
+
+/// The steps of the churn run, which has five rounds. Round 1 funds the wallets and polls the peers of
+/// nodes 5 and 6. Round 2 stops and starts nodes 1 to 5 in turn and kills a relay and a forger under
+/// their supervisors. Round 3 places the refused vote for node 5's delegate and fills the pool with the
+/// forgers paused (its step is written when the pool has drained, in a later round, with the start
+/// of the fill). Round 4 takes two and then three nodes out and brings them back. In round 5 the
+/// reference relay syncs from one relay alone. The route corpus is not compared: that relay knows only
+/// one relay, so it lists the version of few delegates.
+fn churn_plan() -> Vec<Planned> {
+    vec![
+        planned("txgen-fund", 1, 1, 0),
+        planned("peers-node5", 1, 1, 0),
+        planned("peers-node6", 1, 1, 0),
+        planned("cycle-node1", 2, 3, 54),
+        planned("cycle-node2", 2, 3, 54),
+        planned("cycle-node3", 2, 3, 54),
+        planned("cycle-node4", 2, 3, 54),
+        planned("cycle-node5", 2, 3, 54),
+        planned("crash-relay-node3", 2, 3, 54),
+        planned("crash-forger-node2", 2, 3, 54),
+        planned("vote-node5", 3, 3, 107),
+        planned("full-pool", 3, 3, 107),
+        planned("outage-two", 4, 4, 160),
+        planned("outage-three", 4, 4, 160),
+        planned("resume", 4, 4, 160),
+        planned("return-node4", 4, 5, 160),
+        planned("return-node5", 4, 5, 160),
+        planned("sync-node7", 5, 5, 213),
+    ]
 }
 
 /// The steps that must run in this order (each pair: the one that starts first, the one after).
@@ -207,6 +238,22 @@ pub(super) fn order(run: &str) -> &'static [(&'static str, &'static str)] {
             ],
             _ => &[("attest-wait", "txgen-once")],
         },
+        "churn" => &[
+            ("cycle-node1", "cycle-node2"),
+            ("cycle-node2", "cycle-node3"),
+            ("cycle-node3", "cycle-node4"),
+            ("cycle-node4", "cycle-node5"),
+            ("cycle-node5", "crash-relay-node3"),
+            ("crash-relay-node3", "crash-forger-node2"),
+            ("crash-forger-node2", "vote-node5"),
+            ("vote-node5", "full-pool"),
+            ("full-pool", "outage-two"),
+            ("outage-two", "outage-three"),
+            ("outage-three", "resume"),
+            ("resume", "return-node4"),
+            ("return-node4", "return-node5"),
+            ("return-node5", "sync-node7"),
+        ],
         _ => &[],
     }
 }
@@ -224,6 +271,19 @@ pub(super) fn waits(run: &str) -> &'static [(&'static str, &'static str)] {
             ("stall-node4", "restart-node4"),
         ],
         "mixed" => &[("partition", "heal")],
+        "churn" => &[
+            ("cycle-node1", "cycle-node2"),
+            ("cycle-node2", "cycle-node3"),
+            ("cycle-node3", "cycle-node4"),
+            ("cycle-node4", "cycle-node5"),
+            ("cycle-node5", "crash-relay-node3"),
+            ("crash-relay-node3", "crash-forger-node2"),
+            ("outage-two", "outage-three"),
+            ("outage-three", "resume"),
+            ("resume", "return-node4"),
+            ("return-node4", "return-node5"),
+            ("return-node5", "sync-node7"),
+        ],
         _ => &[],
     }
 }
@@ -603,6 +663,43 @@ mod tests {
             let found = problems(run, &forging(run), 53, stop);
             assert_eq!(found, Vec::<String>::new(), "{run}");
         }
+    }
+
+    #[test]
+    fn the_churn_run_has_its_plan_and_keeps_to_it() {
+        assert_eq!(stop_height("churn"), Some(265));
+        let names: Vec<&str> = plan("churn").iter().map(|p| p.name).collect();
+        for name in ["cycle-node5", "full-pool", "outage-three", "sync-node7"] {
+            assert!(names.contains(&name), "{name}");
+        }
+        assert_eq!(
+            problems("churn", &forging("churn"), 53, 265),
+            Vec::<String>::new()
+        );
+        // The outage of three nodes before the outage of two, and the sync in round 4.
+        let mut steps = forging("churn");
+        let (a, b) = (
+            steps.iter().position(|s| s.name == "outage-two").unwrap(),
+            steps.iter().position(|s| s.name == "outage-three").unwrap(),
+        );
+        let start = steps[a].start;
+        steps[a].start = steps[b].start;
+        steps[b].start = start;
+        let i = steps.iter().position(|s| s.name == "sync-node7").unwrap();
+        steps[i].record["startHeight"] = json!(200);
+        let found = problems("churn", &steps, 53, 265);
+        assert!(
+            found
+                .iter()
+                .any(|p| p.contains("step outage-two started after step outage-three")),
+            "{found:?}"
+        );
+        assert!(
+            found
+                .iter()
+                .any(|p| p.contains("step sync-node7 started at height 200, in round 4")),
+            "{found:?}"
+        );
     }
 
     #[test]
