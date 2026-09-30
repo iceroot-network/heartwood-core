@@ -44,6 +44,11 @@ pub struct Criteria {
     /// The scope audit's document, when the criteria check one.
     #[serde(default)]
     pub scope: Option<ScopeSpec>,
+    /// The names the repository and the records use, by kind (runs, suites, implementations,
+    /// make targets, code names), each mapped onto the name the plans and the register give it.
+    /// For people reading the table; the gate itself reads the names in the needs.
+    #[serde(default)]
+    pub names: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 /// The totals of the long compute.
