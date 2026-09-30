@@ -680,6 +680,17 @@ fn our_delegates_come_from_the_forger_s_lines_since_its_start_before_the_window_
         active[0].facts,
         [("count", heartwood_cli::doctor::report::Fact::Int(2))]
     );
+    // A stopped forger logs no change of the active set: its lines from before the window say
+    // nothing of the window.
+    view.processes.insert(
+        Role::Forger,
+        Ok(process(RoleState::Stopped, NOW_MS - 7_200_000)),
+    );
+    let active = run("slots.active", &view, &DoctorOptions::default());
+    assert_eq!(
+        (active.len(), active[0].status, active[0].advice.key),
+        (1, Status::Unknown, "no-evidence")
+    );
 }
 
 #[test]

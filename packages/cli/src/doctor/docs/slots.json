@@ -12,9 +12,9 @@
         "the forger's log"
       ],
       "rules": {
-        "pass": "The forger's latest line about each of our delegates in the window (loaded as active, entering the active forging positions, due to forge, or forged) shows it active.",
+        "pass": "The forger's latest line about each of our delegates (loaded as active, entering the active forging positions, due to forge, or forged) shows it active: a line in the window or, while the forger runs, since its last start.",
         "warn": "The latest such line shows a delegate of ours out of the active set: loaded as inactive, or no longer in an active forging position.",
-        "unknown": "The forger's log cannot be read, its file level hides info lines, or no line in the window says whether our delegates are active.",
+        "unknown": "The forger's log cannot be read, its file level hides info lines, or no line says whether our delegates are active (only the window's lines count while the forger is stopped).",
         "skipped": "No forger runs on this host, or no delegate of ours is known (name it with --delegate)."
       },
       "advice": {

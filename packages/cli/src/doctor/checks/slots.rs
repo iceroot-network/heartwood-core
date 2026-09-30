@@ -222,11 +222,17 @@ pub fn active(input: &CheckInput<'_>) -> Vec<Finding> {
         if ours.names.is_empty() {
             return out.one(Status::Skipped, Log, "no-delegates", Vec::new());
         }
+        // Lines from before the window speak for it only while the forger runs: a stopped forger
+        // logs no change of the active set.
+        let before = match super::running(input.view, Role::Forger) {
+            Ok(()) => log.roster.as_slice(),
+            Err(_) => &[],
+        };
         let (mut findings, mut count) = (Vec::new(), 0);
         for delegate in &ours.names {
             let named = |names: &[Id]| names.iter().any(|name| name.as_str() == delegate);
             // The latest line that shows the delegate in or out of the active set.
-            let lines = log.roster.iter().chain(&log.events);
+            let lines = before.iter().chain(&log.events);
             let said = lines.rev().find_map(|event| match &event.kind {
                 K::DelegatesLoaded { active, .. } => named(listed(&event.kind)).then_some(*active),
                 K::ActivePosition { entered, .. } => named(listed(&event.kind)).then_some(*entered),
