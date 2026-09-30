@@ -6,6 +6,9 @@
 //! after it, and a request after the commit finds the new tip. The forger's own public calls are
 //! recorded too, and no line names an internal route.
 //!
+//! A failure prints the relay's log from a little before the hold, the forger's log and every
+//! record line.
+//!
 //! The relay listens at the address `.33` of the loopback block of these tests (P2P 6002, API
 //! 6003; the block `HEARTWOOD_TEST_LOOPBACK` names, else 127.13.0), and the client connects from
 //! `.34`.
@@ -29,6 +32,9 @@ use tokio::time::Instant;
 
 const P2P_PORT: u16 = 6002;
 const API_PORT: u16 = 6003;
+
+/// The relay's log line when the stall holds a job.
+const HOLD_LINE: &str = "difftest: holding the job for 12000 ms";
 
 /// A process killed when dropped.
 struct Killed(Child);
@@ -168,12 +174,79 @@ fn records(dir: &Path) -> Vec<Value> {
         .collect()
 }
 
+/// Prints, when the test panics while it lives, what the node at its root did: the relay's log
+/// from 20 lines before the hold (its last 80 lines when it has none), the forger's log and every
+/// line of the await records, so that a failure away from this machine can be read.
+struct Diagnosis<'a>(&'a Path);
+
+impl Drop for Diagnosis<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("{}", diagnosis(self.0));
+        }
+    }
+}
+
+/// The diagnosis of the node at `root` (see [`Diagnosis`]).
+fn diagnosis(root: &Path) -> String {
+    let relay = log_text(&root.join("relay.log"));
+    let lines: Vec<&str> = relay.lines().collect();
+    let hold = lines.iter().position(|line| line.contains(HOLD_LINE));
+    let from = hold.map_or(lines.len().saturating_sub(80), |at| at.saturating_sub(20));
+    let forger = log_text(&root.join("forger.log"));
+    let harness = root.join("harness");
+    let mut files: Vec<PathBuf> = fs::read_dir(&harness)
+        .map(|entries| {
+            entries
+                .filter_map(|entry| Some(entry.ok()?.path()))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.retain(|path| {
+        let name = path.file_name().and_then(|name| name.to_str());
+        name.is_some_and(|name| name.starts_with("await-") && name.ends_with(".jsonl"))
+    });
+    files.sort();
+    let records: Vec<String> = files.iter().map(|file| log_text(file)).collect();
+    format!(
+        "==== relay.log from line {} of {}:\n{}\n==== forger.log:\n{}\n==== await records ({} files):\n{}",
+        from + 1,
+        lines.len(),
+        lines[from..].join("\n"),
+        forger.trim_end(),
+        files.len(),
+        records.concat().trim_end(),
+    )
+}
+
+/// The text of the file at `path` without its terminal colour sequences, or why it could not be
+/// read.
+fn log_text(path: &Path) -> String {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) => return format!("({} not read: {error})\n", path.display()),
+    };
+    let mut plain = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // `ESC [`, its parameters and the letter that ends the sequence.
+            chars.by_ref().find(char::is_ascii_alphabetic);
+        } else {
+            plain.push(c);
+        }
+    }
+    plain
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "integration"]
 async fn a_held_job_ends_waits_by_the_bound_and_the_record_shows_it() {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("await-record");
     let (relay_host, client_host) = (host(33), host(34));
     generate(&root, &relay_host);
+    // Dropped after the processes, so it reads their whole logs.
+    let _diagnosis = Diagnosis(&root);
     let _relay = start(&root, "relay", &["--networkStart"]);
     wait_until(Duration::from_secs(60), "API", || {
         height(&relay_host).is_some()
@@ -216,10 +289,7 @@ async fn a_held_job_ends_waits_by_the_bound_and_the_record_shows_it() {
     session.terminate();
 
     let log = fs::read_to_string(root.join("relay.log")).unwrap_or_default();
-    assert!(
-        log.contains("difftest: holding the job for 12000 ms"),
-        "{log}"
-    );
+    assert!(log.contains(HOLD_LINE), "no hold in the relay's log");
     let all = records(&root.join("harness"));
     let caller = client_host.as_str();
     let ours: Vec<&Value> = all.iter().filter(|line| line["caller"] == caller).collect();
