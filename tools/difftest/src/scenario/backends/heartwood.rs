@@ -5,7 +5,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use heartwood_cli::devnet::Manifest;
+use heartwood_cli::Role;
+use heartwood_cli::devnet::{Manifest, ManifestNode};
+use heartwood_cli::recovery::{self, Marker};
 
 use super::super::backend::{Backend, BackendError, Submitted, Tip};
 use super::super::format::{CompiledTx, HeartwoodRestart, Part, RestartModes, Via};
@@ -55,6 +57,20 @@ pub fn devnet_args(root: &Path, command: &str, node: u32, part: Part, kill: bool
     args
 }
 
+/// Ask node `node`'s relay to restore its state by a replay at its next start: the reference's
+/// marker `clear-saved-states.lock` in the relay's temp directory, as `heartwood state clear
+/// --force` writes it. The marker's path.
+pub fn request_replay(node: &ManifestNode) -> Result<PathBuf, BackendError> {
+    let instance = node.instance(Role::Relay);
+    recovery::request(
+        &instance,
+        Marker::ClearSavedStates,
+        true,
+        &mut std::io::stdin(),
+    )
+    .map_err(|e| failed("ask for a replay", e))
+}
+
 /// A devnet of this tree.
 pub struct Heartwood {
     root: PathBuf,
@@ -76,7 +92,7 @@ impl Heartwood {
         })
     }
 
-    fn node(&self, node: u32) -> Result<&heartwood_cli::devnet::ManifestNode, BackendError> {
+    fn node(&self, node: u32) -> Result<&ManifestNode, BackendError> {
         self.manifest
             .nodes
             .iter()
@@ -144,10 +160,13 @@ impl Backend for Heartwood {
 
     fn restart(&mut self, node: u32, part: Part, modes: RestartModes) -> Result<(), BackendError> {
         if modes.heartwood == HeartwoodRestart::Replay {
-            return Err(BackendError::Unsupported {
-                backend: "heartwood",
-                action: "restart by replaying the stored blocks",
-            });
+            if part == Part::Forger {
+                return Err(BackendError::Unsupported {
+                    backend: "heartwood",
+                    action: "restart a forger by a replay (a forger keeps no state)",
+                });
+            }
+            request_replay(self.node(node)?)?;
         }
         self.control("restart a node", "restart-node", node, part, false)
     }

@@ -1335,6 +1335,21 @@ fn the_heartwood_backend_calls_the_devnet_commands_and_needs_a_manifest() {
         matches!(&error, BackendError::Failed { action, .. } if action.contains("manifest")),
         "{error}"
     );
+    // A restart by a replay places the reference's marker where the relay reads it at its start.
+    let node = heartwood_cli::devnet::ManifestNode {
+        index: 2,
+        address: "127.24.0.2".parse().expect("address"),
+        forger_address: None,
+        forger_hosts: Vec::new(),
+        delegates: Vec::new(),
+        dir: scratch.path().join("node2"),
+    };
+    let marker = heartwood::request_replay(&node).expect("the marker");
+    assert_eq!(
+        marker,
+        scratch.path().join("node2/temp/clear-saved-states.lock")
+    );
+    assert!(marker.is_file());
 }
 
 #[test]
