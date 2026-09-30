@@ -1,6 +1,8 @@
 //! The fee statistics resource of `GET /node/fees`: the window of the `days` query, and the
 //! statistics grouped by type group and keyed by the type's handler key.
 
+use std::collections::BTreeMap;
+
 use heartwood_crypto::TransactionType;
 use heartwood_database::FeeStatisticsRow;
 use serde_json::{Map, Value, json};
@@ -20,22 +22,39 @@ pub fn window(days: i64, now_ms: i64, epoch: i64) -> Option<(i64, i64)> {
     Some((slots::epoch_time(age, epoch), i64::MAX))
 }
 
+/// The types this implementation carries, in the order of the reference's handler registry (the
+/// order its statistics list them in, and its OpenAPI document's type list).
+pub const REGISTERED: [TransactionType; 6] = [
+    TransactionType::DelegateRegistration,
+    TransactionType::DelegateResignation,
+    TransactionType::Transfer,
+    TransactionType::SecondSignature,
+    TransactionType::Burn,
+    TransactionType::Vote,
+];
+
 /// The response of `GET /node/fees`: `{ meta, data }`, where `meta` holds `days` when the query
-/// gave it, and `data` maps each type group to its types' `{ avg, burned, max, min, sum }`, every
-/// value a decimal string. A row of a type this implementation does not carry is left out.
+/// gave it, and `data` maps each type group (in ascending order, as a JavaScript object lists
+/// its integer keys) to its types' `{ avg, burned, max, min, sum }`, every value a decimal string,
+/// the types in the registry's order. A row of a type this implementation does not carry is left
+/// out.
 pub fn response(days: Option<i64>, rows: &[FeeStatisticsRow]) -> Value {
-    let mut groups: Map<String, Value> = Map::new();
-    for row in rows {
-        let Ok(kind) = TransactionType::from_wire(row.type_group, row.kind) else {
-            continue;
-        };
-        let entry = groups
-            .entry(row.type_group.to_string())
-            .or_insert_with(|| Value::Object(Map::new()));
-        if let Some(group) = entry.as_object_mut() {
-            group.insert(kind.key().to_owned(), statistics(row));
+    let mut groups: BTreeMap<u32, Map<String, Value>> = BTreeMap::new();
+    for kind in REGISTERED {
+        let found = rows
+            .iter()
+            .find(|row| row.type_group == kind.type_group() && row.kind == kind.type_id());
+        if let Some(row) = found {
+            groups
+                .entry(kind.type_group())
+                .or_default()
+                .insert(kind.key().to_owned(), statistics(row));
         }
     }
+    let groups: Map<String, Value> = groups
+        .into_iter()
+        .map(|(group, types)| (group.to_string(), Value::Object(types)))
+        .collect();
     let meta = match days {
         Some(days) => json!({ "days": days }),
         None => json!({}),
@@ -93,6 +112,25 @@ mod tests {
         assert_eq!(out["data"]["1"]["delegateRegistration"]["avg"], "20");
         assert_eq!(out["data"]["2"]["burn"]["sum"], "60");
         assert_eq!(response(None, &rows)["meta"], json!({}));
+    }
+
+    #[test]
+    fn the_groups_and_types_come_in_the_order_the_reference_lists_them() {
+        let rows = [
+            row(2, 2, 1),
+            row(2, 0, 1),
+            row(1, 1, 1),
+            row(1, 6, 1),
+            row(1, 2, 1),
+        ];
+        let out = response(None, &rows);
+        let groups: Vec<&String> = out["data"].as_object().unwrap().keys().collect();
+        assert_eq!(groups, ["1", "2"]);
+        let types: Vec<&String> = out["data"]["1"].as_object().unwrap().keys().collect();
+        assert_eq!(
+            types,
+            ["delegateRegistration", "transfer", "secondSignature"]
+        );
     }
 
     #[test]

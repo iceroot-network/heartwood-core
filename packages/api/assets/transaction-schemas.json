@@ -1,0 +1,826 @@
+{
+  "1": {
+    "1": {
+      "id": {
+        "anyOf": [
+          {
+            "$ref": "transactionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "headerType": {
+        "enum": [
+          0,
+          1
+        ]
+      },
+      "version": {
+        "enum": [
+          2,
+          3
+        ]
+      },
+      "network": {
+        "$ref": "networkByte"
+      },
+      "nonce": {
+        "bignumber": {
+          "minimum": 0
+        }
+      },
+      "typeGroup": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "fee": {
+        "bignumber": {
+          "minimum": 1,
+          "bypassGenesis": true
+        }
+      },
+      "burnedFee": {
+        "bignumber": {
+          "minimum": 0
+        }
+      },
+      "senderId": {
+        "$ref": "address"
+      },
+      "senderPublicKey": {
+        "$ref": "publicKey"
+      },
+      "memo": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "format": "memo"
+          }
+        ]
+      },
+      "signature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "secondSignature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ],
+        "type": "null"
+      },
+      "signSignature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "signatures": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "additionalItems": false,
+        "uniqueItems": true,
+        "items": {
+          "allOf": [
+            {
+              "minLength": 130,
+              "maxLength": 130
+            },
+            {
+              "$ref": "hex"
+            }
+          ]
+        }
+      },
+      "type": {
+        "transactionType": 1
+      },
+      "asset": {
+        "type": "object",
+        "required": [
+          "signature"
+        ],
+        "properties": {
+          "signature": {
+            "type": "object",
+            "required": [
+              "publicKey"
+            ],
+            "properties": {
+              "publicKey": {
+                "$ref": "publicKey"
+              }
+            }
+          }
+        }
+      }
+    },
+    "2": {
+      "id": {
+        "anyOf": [
+          {
+            "$ref": "transactionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "headerType": {
+        "enum": [
+          0,
+          1
+        ]
+      },
+      "version": {
+        "enum": [
+          2,
+          3
+        ]
+      },
+      "network": {
+        "$ref": "networkByte"
+      },
+      "nonce": {
+        "bignumber": {
+          "minimum": 0
+        }
+      },
+      "typeGroup": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "fee": {
+        "bignumber": {
+          "minimum": 1,
+          "bypassGenesis": true
+        }
+      },
+      "burnedFee": {
+        "bignumber": {
+          "minimum": 0
+        }
+      },
+      "senderId": {
+        "$ref": "address"
+      },
+      "senderPublicKey": {
+        "$ref": "publicKey"
+      },
+      "memo": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "format": "memo"
+          }
+        ]
+      },
+      "signature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "secondSignature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "signSignature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "signatures": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "additionalItems": false,
+        "uniqueItems": true,
+        "items": {
+          "allOf": [
+            {
+              "minLength": 130,
+              "maxLength": 130
+            },
+            {
+              "$ref": "hex"
+            }
+          ]
+        }
+      },
+      "type": {
+        "transactionType": 2
+      },
+      "asset": {
+        "type": "object",
+        "required": [
+          "delegate"
+        ],
+        "properties": {
+          "delegate": {
+            "type": "object",
+            "required": [
+              "username"
+            ],
+            "properties": {
+              "username": {
+                "$ref": "delegateUsername"
+              }
+            }
+          }
+        }
+      }
+    },
+    "6": {
+      "id": {
+        "anyOf": [
+          {
+            "$ref": "transactionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "headerType": {
+        "enum": [
+          0,
+          1
+        ]
+      },
+      "version": {
+        "enum": [
+          2,
+          3
+        ]
+      },
+      "network": {
+        "$ref": "networkByte"
+      },
+      "nonce": {
+        "bignumber": {
+          "minimum": 0
+        }
+      },
+      "typeGroup": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "fee": {
+        "bignumber": {
+          "minimum": 1,
+          "bypassGenesis": true
+        }
+      },
+      "burnedFee": {
+        "bignumber": {
+          "minimum": 0
+        }
+      },
+      "senderId": {
+        "$ref": "address"
+      },
+      "senderPublicKey": {
+        "$ref": "publicKey"
+      },
+      "memo": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "format": "memo"
+          }
+        ]
+      },
+      "signature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "secondSignature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "signSignature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "signatures": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "additionalItems": false,
+        "uniqueItems": true,
+        "items": {
+          "allOf": [
+            {
+              "minLength": 130,
+              "maxLength": 130
+            },
+            {
+              "$ref": "hex"
+            }
+          ]
+        }
+      },
+      "type": {
+        "transactionType": 6
+      },
+      "asset": {
+        "type": "object",
+        "required": [
+          "transfers"
+        ],
+        "properties": {
+          "transfers": {
+            "type": "array",
+            "minItems": 1,
+            "additionalItems": false,
+            "uniqueItems": false,
+            "items": {
+              "type": "object",
+              "required": [
+                "amount",
+                "recipientId"
+              ],
+              "properties": {
+                "amount": {
+                  "bignumber": {
+                    "minimum": 1
+                  }
+                },
+                "recipientId": {
+                  "$ref": "address"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "7": {
+      "id": {
+        "anyOf": [
+          {
+            "$ref": "transactionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "headerType": {
+        "enum": [
+          0,
+          1
+        ]
+      },
+      "version": {
+        "enum": [
+          2,
+          3
+        ]
+      },
+      "network": {
+        "$ref": "networkByte"
+      },
+      "nonce": {
+        "bignumber": {
+          "minimum": 0
+        }
+      },
+      "typeGroup": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "fee": {
+        "bignumber": {
+          "minimum": 0,
+          "bypassGenesis": true
+        }
+      },
+      "burnedFee": {
+        "bignumber": {
+          "minimum": 0
+        }
+      },
+      "senderId": {
+        "$ref": "address"
+      },
+      "senderPublicKey": {
+        "$ref": "publicKey"
+      },
+      "memo": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "format": "memo"
+          }
+        ]
+      },
+      "signature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "secondSignature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "signSignature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "signatures": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "additionalItems": false,
+        "uniqueItems": true,
+        "items": {
+          "allOf": [
+            {
+              "minLength": 130,
+              "maxLength": 130
+            },
+            {
+              "$ref": "hex"
+            }
+          ]
+        }
+      },
+      "type": {
+        "transactionType": 7
+      },
+      "asset": {
+        "type": "object",
+        "required": [
+          "resignationType"
+        ],
+        "properties": {
+          "resignationType": {
+            "enum": [
+              0,
+              1,
+              2
+            ]
+          }
+        }
+      }
+    }
+  },
+  "2": {
+    "0": {
+      "id": {
+        "anyOf": [
+          {
+            "$ref": "transactionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "headerType": {
+        "enum": [
+          0,
+          1
+        ]
+      },
+      "version": {
+        "enum": [
+          2,
+          3
+        ]
+      },
+      "network": {
+        "$ref": "networkByte"
+      },
+      "nonce": {
+        "bignumber": {
+          "minimum": 0
+        }
+      },
+      "typeGroup": {
+        "type": "integer",
+        "minimum": 0,
+        "const": 2
+      },
+      "fee": {
+        "bignumber": {
+          "minimum": 0,
+          "bypassGenesis": true
+        }
+      },
+      "burnedFee": {
+        "bignumber": {
+          "minimum": 0
+        }
+      },
+      "senderId": {
+        "$ref": "address"
+      },
+      "senderPublicKey": {
+        "$ref": "publicKey"
+      },
+      "memo": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "format": "memo"
+          }
+        ]
+      },
+      "signature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "secondSignature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "signSignature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "signatures": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "additionalItems": false,
+        "uniqueItems": true,
+        "items": {
+          "allOf": [
+            {
+              "minLength": 130,
+              "maxLength": 130
+            },
+            {
+              "$ref": "hex"
+            }
+          ]
+        }
+      },
+      "type": {
+        "transactionType": 0
+      },
+      "amount": {
+        "bignumber": {
+          "minimum": 0
+        }
+      }
+    },
+    "2": {
+      "id": {
+        "anyOf": [
+          {
+            "$ref": "transactionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "headerType": {
+        "enum": [
+          0,
+          1
+        ]
+      },
+      "version": {
+        "enum": [
+          2,
+          3
+        ]
+      },
+      "network": {
+        "$ref": "networkByte"
+      },
+      "nonce": {
+        "bignumber": {
+          "minimum": 0
+        }
+      },
+      "typeGroup": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "fee": {
+        "bignumber": {
+          "minimum": 1,
+          "bypassGenesis": true
+        }
+      },
+      "burnedFee": {
+        "bignumber": {
+          "minimum": 0
+        }
+      },
+      "senderId": {
+        "$ref": "address"
+      },
+      "senderPublicKey": {
+        "$ref": "publicKey"
+      },
+      "memo": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "format": "memo"
+          }
+        ]
+      },
+      "signature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "secondSignature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "signSignature": {
+        "allOf": [
+          {
+            "minLength": 128,
+            "maxLength": 128
+          },
+          {
+            "$ref": "hex"
+          }
+        ]
+      },
+      "signatures": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "additionalItems": false,
+        "uniqueItems": true,
+        "items": {
+          "allOf": [
+            {
+              "minLength": 130,
+              "maxLength": 130
+            },
+            {
+              "$ref": "hex"
+            }
+          ]
+        }
+      },
+      "type": {
+        "transactionType": 2
+      },
+      "asset": {
+        "type": "object",
+        "required": [
+          "votes"
+        ],
+        "properties": {
+          "votes": {
+            "patternProperties": {
+              "^(?!_)(?=.*[a-z!@$&_.])([a-z0-9!@$&_.]?){1,20}$": {
+                "type": "number",
+                "multipleOf": 0.01,
+                "minimum": 0.01,
+                "maximum": 100
+              }
+            },
+            "additionalProperties": false,
+            "sumOfVotesEquals100": true
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  }
+}
