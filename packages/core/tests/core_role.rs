@@ -284,8 +284,9 @@ fn a_core_process_holds_all_three_locks_and_refuses_a_relay_and_a_forger() {
             let args: Vec<&str> = [role].into_iter().chain(flags.iter().copied()).collect();
             let refused = node.run(&args);
             assert!(!refused.status.success(), "{args:?}: {}", text(&refused));
+            // A start names the core process that runs, as the reference's aborts do.
             let said = match flags[0] {
-                "start" => "already running".to_owned(),
+                "start" => format!("{TOKEN}-{NETWORK}-core is already running"),
                 _ => format!("another {role} of this instance holds"),
             };
             assert!(
@@ -369,10 +370,25 @@ fn core_start_detaches_by_default_and_core_stop_ends_it() {
         "{}",
         text(&status)
     );
-    // Another start of the instance is refused while the daemon runs.
-    let again = node.run(&["core", "start"]);
-    assert!(!again.status.success());
-    assert!(text(&again).contains("already running"), "{}", text(&again));
+    // Another start of the instance, of its relay or of its forger is refused while the daemon
+    // runs, naming the core process; and so is a rollback of its store.
+    let core = format!("{TOKEN}-{NETWORK}-core is already running");
+    for command in [["core", "start"], ["relay", "start"], ["forger", "start"]] {
+        let again = node.run(&command);
+        assert!(!again.status.success(), "{command:?}");
+        assert!(
+            text(&again).contains(&core),
+            "{command:?}: {}",
+            text(&again)
+        );
+    }
+    let rollback = node.run(&["snapshot", "rollback", "--number", "1"]);
+    assert!(!rollback.status.success(), "{}", text(&rollback));
+    assert!(
+        text(&rollback).contains("already running"),
+        "{}",
+        text(&rollback)
+    );
     let stop = node.run(&["core", "stop"]);
     assert!(stop.status.success(), "{}", text(&stop));
     for name in ["core", "relay", "forger", "core.supervisor"] {

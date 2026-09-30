@@ -49,13 +49,15 @@ pub struct CoreStart {
     pub daemon: bool,
 }
 
-/// Refuse the start of the core role while a relay or a forger of its instance runs, under a
-/// supervisor or not: the roles are one node's two halves, and a core process holds both.
-fn refuse_beside(core: &Instance) -> Result<(), ProcessError> {
-    for role in Role::ALL {
+/// Refuse a start while a process of `roles` of the instance runs, under its supervisor or not,
+/// naming the first that does, as the reference's starts abort on a running `<token>-<role>`: a
+/// relay's or a forger's start on the core role, the core role's on itself, its forger and its
+/// relay (a running core process holds the relay's and the forger's locks, so it comes first).
+pub(crate) fn refuse_running(instance: &Instance, roles: &[Role]) -> Result<(), ProcessError> {
+    for &role in roles {
         let other = Instance {
             role,
-            ..core.clone()
+            ..instance.clone()
         };
         if is_locked(&other.supervisor_lock_path())? || is_locked(&other.lock_path())? {
             return Err(ProcessError::AlreadyRunning { name: other.name() });
@@ -69,7 +71,7 @@ pub fn run(command: CoreCommand) -> ExitCode {
     match command {
         CoreCommand::Run(run) => crate::exit(crate::app::core::run_core(&run)),
         CoreCommand::Start(start) => on_instance(Role::Core, &start.run.relay.instance(), |i| {
-            refuse_beside(i)?;
+            refuse_running(i, &[Role::Core, Role::Forger, Role::Relay])?;
             super::start(i, start.run.relay.args(), start.daemon)
         }),
         CoreCommand::Manage(command) => super::manage(Role::Core, command),
