@@ -28,7 +28,7 @@
 use heartwood_crypto::Transaction;
 use heartwood_crypto::utils::hex;
 use heartwood_kernel::clock::ManualClock;
-use heartwood_pool::{DelegateVersions, Entry, Pool, PoolContext, Processor};
+use heartwood_pool::{DelegateVersions, Entry, Pool, PoolContext, Processor, Reindexed};
 use heartwood_state::State;
 use serde_json::{Value, json};
 
@@ -290,16 +290,20 @@ impl PoolSide {
         let fresh = Pool::open(options, None).map_err(|e| Error::Oracle(format!("pool: {e}")))?;
         drop(std::mem::replace(&mut self.pool, fresh));
         let online = DelegateVersions::new();
-        let ctx = context(state, corpus, &online);
+        let reindexed = Reindexed::default();
+        let ctx = context(state, corpus, &online, &reindexed);
         (self.pool.readd(&ctx, &[])).map_err(|e| Error::Oracle(format!("pool: {e}")))?;
         contents(&self.pool).map_err(Error::Oracle)
     }
 }
 
+/// The pool's context over `state`. The parties the handlers leave in `reindexed` are not read:
+/// these cases compare the pools' contents, not the state's index orders.
 fn context<'a>(
     state: &'a State,
     corpus: &'a Corpus,
     online: &'a DelegateVersions,
+    reindexed: &'a Reindexed,
 ) -> PoolContext<'a> {
     PoolContext {
         wallets: state.wallets(),
@@ -307,6 +311,7 @@ fn context<'a>(
         milestones: &corpus.milestones,
         network: &corpus.network,
         online,
+        reindexed,
     }
 }
 
@@ -357,7 +362,8 @@ fn stored_pool(
         .iter()
         .map(|t| Entry::Bytes(t.bytes().to_vec()))
         .collect();
-    let ctx = context(&s.state, corpus, &online);
+    let reindexed = Reindexed::default();
+    let ctx = context(&s.state, corpus, &online, &reindexed);
     let ours_result = Processor::new()
         .process(&mut side.pool, &ctx, &clock, entries_ours)
         .map_err(|e| Error::Oracle(format!("pool: {e}")))?;

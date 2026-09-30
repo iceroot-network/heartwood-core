@@ -29,7 +29,7 @@ use heartwood_core::markers::honoured;
 use heartwood_crypto::Block;
 use heartwood_crypto::identities::PublicKeyBytes;
 use heartwood_kernel::clock::ManualClock;
-use heartwood_pool::{DelegateVersions, Entry, Pool, PoolContext, Processor};
+use heartwood_pool::{DelegateVersions, Entry, Pool, PoolContext, Processor, Reindexed};
 use heartwood_state::State;
 use heartwood_state::digest::{self, Step};
 use heartwood_transactions::{Handlers, OnlineDelegates};
@@ -341,6 +341,7 @@ fn heartwood_pool_clear(
         milestones: &s.milestones,
         network: &s.corpus.network,
         online: &online,
+        reindexed: &Reindexed::default(),
     };
     let stored_id = guarded(|| -> std::result::Result<String, String> {
         let mut pool = Pool::open(opened.clone(), None).map_err(|e| e.to_string())?;
