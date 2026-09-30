@@ -17,8 +17,8 @@ use libfuzzer_sys::fuzz_target;
 use serde_json::{Map, Value};
 
 /// The routes with a query schema, the path a request of each has, and whether it paginates; and
-/// one route without a schema, which takes any query.
-const ROUTES: [(RouteId, &str, bool); 7] = [
+/// the routes without one, which take any query (the fee statistics' `days` is checked).
+const ROUTES: [(RouteId, &str, bool); 11] = [
     (RouteId::TransactionsIndex, "/transactions", true),
     (RouteId::BlocksTransactions, "/blocks/12/transactions", true),
     (
@@ -34,6 +34,10 @@ const ROUTES: [(RouteId, &str, bool); 7] = [
     ),
     (RouteId::BlocksShow, "/blocks/12", false),
     (RouteId::NodeStatus, "/node/status", false),
+    (RouteId::BlockchainIndex, "/blockchain", false),
+    (RouteId::BlockchainSearch, "/blockchain/search/abc", false),
+    (RouteId::NodeFees, "/node/fees", false),
+    (RouteId::TransactionsSchemas, "/transactions/schemas", false),
 ];
 
 /// The most holes of sparse lists a parse is written out with (the grammar's own bound).
