@@ -227,7 +227,7 @@ fn has(list: &[String], needle: &str) -> bool {
 }
 
 /// Rewrite every series so each node stays within its memory and disk budgets: a forger at 10 MB,
-/// a relay at 50 MB and half a megabyte written over the run.
+/// a relay at 50 MB and a tenth of a megabyte written by each process over the run.
 fn quiet_series(run: &Path) {
     for entry in std::fs::read_dir(run.join("resources")).unwrap() {
         let path = entry.unwrap().path();
@@ -243,7 +243,7 @@ fn quiet_series(run: &Path) {
                 let value = row[key].as_u64().unwrap_or(0).min(cap);
                 row[key] = json!(value);
             }
-            row["written"] = json!(500_000 * (i as u64 + 1) / last);
+            row["written"] = json!(100_000 * (i as u64 + 1) / last);
         }
         write_lines(&path, &rows);
     }
@@ -311,12 +311,17 @@ fn over_budget_series_are_reported_with_their_numbers() {
         "relay node1 resident memory with a full pool (highest)",
         "forger node1 resident memory (95th percentile)",
         "the five nodes' resident memory together (highest pass outside a full pool)",
-        "node1 disk writes in a day (extrapolated)",
-        "node6 disk writes in a day (extrapolated)",
+        "the five nodes' disk writes in a day (extrapolated from the quiet windows)",
     ] {
         assert!(has(&failed, needle), "{needle}\n{failed:#?}");
     }
     assert!(has(&failed, "not re-baselined"), "{failed:#?}");
+    // Each node's writes over the whole run, the full pool included, are recorded beside it.
+    let all = labels(&check(&f));
+    assert!(
+        has(&all, "recorded: node6 disk writes over the whole run"),
+        "{all:#?}"
+    );
 }
 
 #[test]
@@ -333,7 +338,10 @@ fn the_resource_report_reads_the_recorded_series() {
     let report = resources::report(&f.run).expect("the report is made");
     let failed = failures(&report);
     assert!(
-        has(&failed, "node1 disk writes in a day (extrapolated)"),
+        has(
+            &failed,
+            "the five nodes' disk writes in a day (extrapolated from the quiet windows)"
+        ),
         "{failed:#?}"
     );
     assert!(

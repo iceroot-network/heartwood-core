@@ -1,8 +1,11 @@
 //! The resource report of a forging run: each node's whole process tree sampled every 10 s (resident
 //! and proportional memory, CPU time, written bytes) into the run's series, against the budgets (a
 //! relay at 60 MB typical and 120 MB with a full pool, a forger at 15 MB, five nodes at 0.5 GB,
-//! five nodes at 5 % of one core with empty blocks, 100 MB a day of disk); a budget missed is
-//! reported with its cause, never re-baselined.
+//! five nodes at 5 % of one core with empty blocks, five nodes at 100 MB a day of disk); a budget
+//! missed is reported with its cause, never re-baselined. The budgets are the mixed forging runs'
+//! and the churn run's; any other run's figures (the core run's) are recorded, not judged. CPU time
+//! and disk writes are taken over the quiet intervals, which no fault window and no full pool
+//! touch; each node's writes over the whole run are recorded beside them.
 //!
 //! The series are `resources/<node>-<role>.jsonl` (role `relay`, `forger`, or `core` for the
 //! combined role's one process), one line per sample: `{t, pid, rss, pss, cpuMs, written}`. A
@@ -182,15 +185,40 @@ fn mb(bytes: u64) -> String {
     format!("{}.{} MB", bytes / MB, bytes % MB / 100_000)
 }
 
-/// One budget's verdict for one subject.
+/// One budget's verdict for one subject, or a figure recorded beside them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
     /// What was measured (the subject and the budget).
     pub label: String,
     /// The figures: what was measured, where, and what the budget is.
     pub detail: String,
-    /// Whether the budget held.
-    pub ok: bool,
+    /// The verdict.
+    pub verdict: Verdict,
+}
+
+/// A finding's verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// The budget held.
+    Held,
+    /// The figure is over its budget.
+    Over,
+    /// The series hold too little to measure the figure.
+    NoEvidence,
+    /// A figure recorded beside the budgets, never a failure.
+    Recorded,
+}
+
+impl Finding {
+    /// Whether the finding is no failure.
+    pub fn ok(&self) -> bool {
+        matches!(self.verdict, Verdict::Held | Verdict::Recorded)
+    }
+
+    /// Whether the finding is judged against a budget (a recorded figure is not).
+    pub fn gated(&self) -> bool {
+        self.verdict != Verdict::Recorded
+    }
 }
 
 /// What the assessment reads besides the series.
@@ -213,7 +241,46 @@ pub struct Inputs<'a> {
 }
 
 fn finding(label: String, ok: bool, detail: String) -> Finding {
-    Finding { label, detail, ok }
+    let verdict = if ok { Verdict::Held } else { Verdict::Over };
+    Finding {
+        label,
+        detail,
+        verdict,
+    }
+}
+
+fn missing(label: String, detail: String) -> Finding {
+    Finding {
+        label,
+        detail,
+        verdict: Verdict::NoEvidence,
+    }
+}
+
+fn recorded(label: String, detail: String) -> Finding {
+    Finding {
+        label,
+        detail,
+        verdict: Verdict::Recorded,
+    }
+}
+
+/// Turn every finding into a recorded figure: for a run the budgets are not set for (they are
+/// measured on the mixed forging runs and the churn run), whose figures are still reported.
+pub fn record_only(found: &mut [Finding]) {
+    for f in found {
+        match f.verdict {
+            Verdict::Over => f.detail.push_str(" (over the budget)"),
+            Verdict::NoEvidence => f.detail.push_str(" (not measured)"),
+            Verdict::Held | Verdict::Recorded => {}
+        }
+        f.verdict = Verdict::Recorded;
+    }
+}
+
+/// Whether the budgets are this run's to meet: the mixed forging runs and the churn run.
+fn budgets_apply(run: &str) -> bool {
+    matches!(run, "mixed-short" | "mixed" | "mixed-split" | "churn")
 }
 
 /// Every budget against the series.
@@ -270,9 +337,8 @@ fn memory(i: &Inputs<'_>, s: &Series) -> Vec<Finding> {
                 ),
             ));
         }
-        _ => out.push(finding(
+        _ => out.push(missing(
             label(what),
-            false,
             "no sample outside the full-pool window".into(),
         )),
     }
@@ -291,18 +357,13 @@ fn memory(i: &Inputs<'_>, s: &Series) -> Vec<Finding> {
                     mb(RELAY_FULL_POOL)
                 ),
             )),
-            None => out.push(finding(
-                l,
-                false,
-                "no sample while the pool was full".into(),
-            )),
+            None => out.push(missing(l, "no sample while the pool was full".into())),
         }
     }
     if let Some(pss) = s.samples.iter().filter_map(|x| x.pss).max() {
         // The proportional figure is recorded for the report; the budgets are the resident size's.
-        out.push(finding(
-            format!("{} proportional memory (highest, recorded)", s.label()),
-            true,
+        out.push(recorded(
+            format!("{} proportional memory (highest)", s.label()),
             mb(pss),
         ));
     }
@@ -331,23 +392,25 @@ fn total(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
                 mb(FIVE_NODES)
             ),
         )],
-        None => vec![finding(label.into(), false, "no sample".into())],
+        None => vec![missing(label.into(), "no sample".into())],
     }
+}
+
+/// Whether the interval from `from` to `to` is quiet: no fault window and no full pool touches it.
+fn quiet(i: &Inputs<'_>, from: i64, to: i64) -> bool {
+    !i.windows.iter().any(|w| w.start <= to && from <= w.end)
+        && !i.pool.is_some_and(|(a, b)| a <= to && from <= b)
 }
 
 /// The CPU time the five nodes' trees used in the intervals between samples that no fault window
 /// and no full pool touched, against the time those intervals span.
 fn cpu(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
-    let quiet = |from: i64, to: i64| {
-        !i.windows.iter().any(|w| w.start <= to && from <= w.end)
-            && !i.pool.is_some_and(|(a, b)| a <= to && from <= b)
-    };
     let (mut cpu_ms, mut quiet_ms) = (0_u64, 0_i64);
     for s in mine.iter().filter(|s| i.five.contains(&s.node)) {
         let mut span = 0_i64;
         for pair in s.samples.windows(2) {
             let (a, b) = (&pair[0], &pair[1]);
-            if a.pid == b.pid && b.cpu_ms >= a.cpu_ms && quiet(a.at, b.at) {
+            if a.pid == b.pid && b.cpu_ms >= a.cpu_ms && quiet(i, a.at, b.at) {
                 cpu_ms += b.cpu_ms - a.cpu_ms;
                 span += b.at - a.at;
             }
@@ -356,9 +419,8 @@ fn cpu(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
     }
     let label = "the five nodes' CPU time in quiet windows (of one core)";
     if quiet_ms < MIN_QUIET_MS {
-        return vec![finding(
+        return vec![missing(
             label.into(),
-            false,
             format!(
                 "only {} s of quiet samples, at least 60 s are needed",
                 quiet_ms / 1_000
@@ -397,9 +459,88 @@ fn written(s: &Series) -> u64 {
     sum
 }
 
-/// Each node's disk writes (the larger of the bytes its trees wrote and the bytes of its logs)
-/// extrapolated to a day.
+/// The bytes a series wrote in its quiet intervals (between two samples of one process, no fault
+/// window and no full pool touching them) and the milliseconds those intervals span.
+fn quiet_written(i: &Inputs<'_>, s: &Series) -> (u64, i64) {
+    let (mut bytes, mut span) = (0_u64, 0_i64);
+    for pair in s.samples.windows(2) {
+        let (a, b) = (&pair[0], &pair[1]);
+        let (Some(was), Some(now)) = (a.written, b.written) else {
+            continue;
+        };
+        if a.pid == b.pid && now >= was && quiet(i, a.at, b.at) {
+            bytes += now - was;
+            span += b.at - a.at;
+        }
+    }
+    (bytes, span)
+}
+
+/// Bytes over `span_ms` milliseconds, extrapolated to a day.
+fn per_day(bytes: u64, span_ms: i64) -> u64 {
+    let day = u128::from(bytes) * DAY_MS / u128::try_from(span_ms.max(1)).unwrap_or(1);
+    u64::try_from(day).unwrap_or(u64::MAX)
+}
+
+/// The five nodes' disk writes together (their data and their logs, which are one copy: the
+/// sampled trees write each line once), extrapolated to a day from the quiet intervals, where the
+/// chain runs on its own; and each node's writes over the whole run, the restarts and the full pool
+/// included, recorded beside it.
 fn disk(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
+    let label = "the five nodes' disk writes in a day (extrapolated from the quiet windows)";
+    let mut out = Vec::new();
+    let (mut day, mut short, mut top) = (0_u64, Vec::new(), None::<(u64, String)>);
+    let (mut relays, mut forgers) = (0_u64, 0_u64);
+    for s in mine.iter().filter(|s| i.five.contains(&s.node)) {
+        let (bytes, span) = quiet_written(i, s);
+        if span < MIN_SPAN_MS {
+            short.push(format!("{} ({} s)", s.label(), span / 1_000));
+            continue;
+        }
+        let rate = per_day(bytes, span);
+        day = day.saturating_add(rate);
+        match s.role {
+            Role::Forger => forgers = forgers.saturating_add(rate),
+            Role::Relay | Role::Core => relays = relays.saturating_add(rate),
+        }
+        if top.as_ref().is_none_or(|(r, _)| rate > *r) {
+            top = Some((rate, s.label()));
+        }
+    }
+    if !short.is_empty() || top.is_none() {
+        out.push(missing(
+            label.into(),
+            format!(
+                "too few quiet samples, at least 60 s a series are needed: {}",
+                if short.is_empty() {
+                    "no series".to_owned()
+                } else {
+                    short.join(", ")
+                }
+            ),
+        ));
+    } else if let Some((rate, most)) = top {
+        let logs: u64 = i
+            .logs
+            .iter()
+            .filter(|(n, _)| i.five.contains(n.as_str()))
+            .map(|(_, b)| *b)
+            .sum();
+        out.push(finding(
+            label.into(),
+            day <= DISK_PER_DAY,
+            format!(
+                "{} a day (the relays' processes {}, the forgers' {}; the most {} at {}), budget {}; the log files hold {} in all",
+                mb(day),
+                mb(relays),
+                mb(forgers),
+                most,
+                mb(rate),
+                mb(DISK_PER_DAY),
+                mb(logs)
+            ),
+        ));
+    }
     let mut nodes: BTreeMap<&str, (u64, i64, i64)> = BTreeMap::new();
     for s in mine {
         let (Some(first), Some(last)) = (s.samples.first(), s.samples.last()) else {
@@ -412,32 +553,20 @@ fn disk(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
         e.1 = e.1.min(first.at);
         e.2 = e.2.max(last.at);
     }
-    nodes
-        .into_iter()
-        .map(|(node, (bytes, from, to))| {
-            let label = format!("{node} disk writes in a day (extrapolated)");
-            let span = to - from;
-            if span < MIN_SPAN_MS {
-                return finding(label, false, format!("only {} s of samples", span / 1_000));
-            }
-            let logs = i.logs.get(node).copied().unwrap_or(0);
-            let basis = bytes.max(logs);
-            let day = u128::from(basis) * DAY_MS / u128::try_from(span).unwrap_or(1);
-            let day = u64::try_from(day).unwrap_or(u64::MAX);
-            finding(
-                label,
-                day <= DISK_PER_DAY,
-                format!(
-                    "{} a day from {} written and {} of logs over {} s, budget {}",
-                    mb(day),
-                    mb(bytes),
-                    mb(logs),
-                    span / 1_000,
-                    mb(DISK_PER_DAY)
-                ),
-            )
-        })
-        .collect()
+    for (node, (bytes, from, to)) in nodes {
+        let logs = i.logs.get(node).copied().unwrap_or(0);
+        out.push(recorded(
+            format!("{node} disk writes over the whole run"),
+            format!(
+                "{} written and {} of logs over {} s ({} a day), the restarts and the full pool included",
+                mb(bytes),
+                mb(logs),
+                (to - from) / 1_000,
+                mb(per_day(bytes, to - from))
+            ),
+        ));
+    }
+    out
 }
 
 /// What `steps` say ran at `at`: the last step that began by then and had not ended, or else the
@@ -513,7 +642,7 @@ fn findings(dir: &Path, manifest: &Manifest, windows: &[Window]) -> Result<Vec<F
                 .iter()
                 .any(|s| s.node == n.name && s.role == role && s.samples.len() >= 2)
         };
-        let combined = has(Role::Core);
+        let combined = manifest.run == "core" || has(Role::Core);
         let roles: &[Role] = if combined {
             &[Role::Core]
         } else if n.forger {
@@ -522,14 +651,15 @@ fn findings(dir: &Path, manifest: &Manifest, windows: &[Window]) -> Result<Vec<F
             &[Role::Relay]
         };
         for role in roles {
-            out.push(finding(
-                format!("a resource series for {} {}", role.name(), n.name),
-                has(*role),
-                "at least two samples".into(),
-            ));
+            let label = format!("a resource series for {} {}", role.name(), n.name);
+            out.push(if has(*role) {
+                finding(label, true, "at least two samples".into())
+            } else {
+                missing(label, "fewer than two samples".into())
+            });
         }
     }
-    out.extend(assess(&Inputs {
+    let mut measured = assess(&Inputs {
         series: &series,
         counted: &counted,
         five: &five,
@@ -537,23 +667,28 @@ fn findings(dir: &Path, manifest: &Manifest, windows: &[Window]) -> Result<Vec<F
         windows,
         logs: &log_bytes(dir, manifest),
         what: &what,
-    }));
+    });
+    if !budgets_apply(&manifest.run) {
+        record_only(&mut measured);
+    }
+    out.extend(measured);
     Ok(out)
 }
 
 fn push(cases: &mut Cases, found: Vec<Finding>) {
     for f in found {
-        if f.ok {
-            cases.pass(SECTION, format!("{}: {}", f.label, f.detail));
-        } else {
-            cases.fail(
+        match f.verdict {
+            Verdict::Recorded => cases.record(SECTION, format!("{}: {}", f.label, f.detail)),
+            Verdict::Held => cases.pass(SECTION, format!("{}: {}", f.label, f.detail)),
+            Verdict::NoEvidence => cases.fail(SECTION, f.label, f.detail),
+            Verdict::Over => cases.fail(
                 SECTION,
                 format!("{}: over its budget", f.label),
                 format!(
                     "{}; reported with the series as its evidence, not re-baselined: its cause and the work that removes it are to be named",
                     f.detail
                 ),
-            );
+            ),
         }
     }
 }
@@ -645,7 +780,7 @@ mod tests {
             .collect();
         let found = run_findings(&[series("node1", Role::Relay, samples)], None, &[]);
         let f = find(&found, "relay node1 resident memory outside");
-        assert!(!f.ok);
+        assert!(!f.ok());
         assert!(f.detail.contains("70.0 MB"), "{}", f.detail);
         assert!(f.detail.contains("step x"), "{}", f.detail);
     }
@@ -661,14 +796,14 @@ mod tests {
         let pool = Some((T0 + 10 * 10_000, T0 + 19 * 10_000));
         let all = [series("node1", Role::Relay, samples)];
         let found = run_findings(&all, pool, &[]);
-        assert!(find(&found, "outside a full pool").ok);
-        assert!(find(&found, "with a full pool").ok);
+        assert!(find(&found, "outside a full pool").ok());
+        assert!(find(&found, "with a full pool").ok());
         // 130 MB while the pool is full misses the full-pool budget only.
         let mut over = all.clone();
         over[0].samples[12].rss = 130 * MB;
         let found = run_findings(&over, pool, &[]);
-        assert!(find(&found, "outside a full pool").ok);
-        assert!(!find(&found, "with a full pool").ok);
+        assert!(find(&found, "outside a full pool").ok());
+        assert!(!find(&found, "with a full pool").ok());
     }
 
     #[test]
@@ -687,14 +822,14 @@ mod tests {
                 &run_findings(&[series("node1", Role::Forger, ok)], None, &[]),
                 "forger node1"
             )
-            .ok
+            .ok()
         );
         assert!(
             !find(
                 &run_findings(&[series("node1", Role::Forger, over)], None, &[]),
                 "forger node1"
             )
-            .ok
+            .ok()
         );
     }
 
@@ -715,10 +850,10 @@ mod tests {
             ]
         };
         let ok = run_findings(&two(240 * MB), None, &[]);
-        assert!(find(&ok, "the five nodes' resident memory").ok);
+        assert!(find(&ok, "the five nodes' resident memory").ok());
         let over = run_findings(&two(260 * MB), None, &[]);
         let f = find(&over, "the five nodes' resident memory");
-        assert!(!f.ok);
+        assert!(!f.ok());
         assert!(f.detail.contains("520.0 MB"), "{}", f.detail);
     }
 
@@ -732,7 +867,7 @@ mod tests {
         let all = [series("node1", Role::Relay, samples)];
         let found = run_findings(&all, None, &[]);
         let f = find(&found, "CPU time");
-        assert!(!f.ok);
+        assert!(!f.ok());
         assert!(f.detail.contains("10.0 %"), "{}", f.detail);
         // The same CPU time inside a fault window is not quiet time: nothing is left to judge.
         let window = Window {
@@ -748,12 +883,66 @@ mod tests {
             .map(|n| sample(n, 1, MB, 200 * n as u64, 0))
             .collect();
         let found = run_findings(&[series("node1", Role::Relay, quiet)], None, &[]);
-        assert!(find(&found, "CPU time").ok);
+        assert!(find(&found, "CPU time").ok());
+    }
+
+    #[test]
+    fn the_disk_budget_is_the_five_nodes_together() {
+        // Each node writes 60 MB a day (6,944 bytes every 10 s): within 100 MB alone, 120 MB
+        // together.
+        let steady = |pid: u64| {
+            (0..100)
+                .map(|n| sample(n, pid, MB, 0, 6_944 * n as u64))
+                .collect()
+        };
+        let all = [
+            series("node1", Role::Relay, steady(1)),
+            series("node2", Role::Relay, steady(2)),
+        ];
+        let found = run_findings(&all, None, &[]);
+        let f = find(&found, "the five nodes' disk writes in a day");
+        assert!(!f.ok(), "{f:?}");
+        assert!(f.detail.contains("119.9 MB a day"), "{}", f.detail);
+    }
+
+    #[test]
+    fn the_full_pools_writes_are_not_a_days_writes() {
+        // 1 kB every 10 s, and 50 MB in the ten samples of the full pool.
+        let samples: Vec<Sample> = (0..100)
+            .map(|n| {
+                let burst = if n >= 20 {
+                    50 * MB
+                } else {
+                    (n.max(10) - 10) as u64 * 5 * MB
+                };
+                sample(n, 1, MB, 0, 1_000 * n as u64 + burst)
+            })
+            .collect();
+        let pool = Some((T0 + 10 * 10_000, T0 + 20 * 10_000));
+        let all = [series("node1", Role::Relay, samples)];
+        let found = run_findings(&all, pool, &[]);
+        let f = find(&found, "the five nodes' disk writes in a day");
+        assert!(f.ok(), "{f:?}");
+        assert!(f.detail.contains("8.6 MB a day"), "{}", f.detail);
+        // The whole run's figure, full pool included, is recorded, not judged.
+        let whole = find(&found, "node1 disk writes over the whole run");
+        assert!(whole.ok() && !whole.gated(), "{whole:?}");
+    }
+
+    #[test]
+    fn a_run_whose_budgets_are_not_its_own_records_them() {
+        let samples = (0..40)
+            .map(|n| sample(n, 7, 500 * MB, 100 * n as u64, MB * n as u64))
+            .collect();
+        let mut found = run_findings(&[series("node1", Role::Relay, samples)], None, &[]);
+        assert!(found.iter().any(|f| !f.ok()));
+        record_only(&mut found);
+        assert!(found.iter().all(|f| !f.gated()));
     }
 
     #[test]
     fn disk_is_extrapolated_from_what_was_written_and_a_restart_counts_from_zero() {
-        // 2 MB over 100 s is 1.7 GB a day.
+        // 100 kB every 10 s is 864 MB a day; the interval of the restart is left out of the rate.
         let mut samples: Vec<Sample> = (0..6)
             .map(|n| sample(n, 1, MB, 0, 100_000 * n as u64))
             .collect();
@@ -761,17 +950,16 @@ mod tests {
         let s = series("node1", Role::Relay, samples);
         assert_eq!(written(&s), 500_000 + 500_000 + 100_000 - 100_000);
         let found = run_findings(&[s], None, &[]);
-        assert!(!find(&found, "disk writes").ok);
+        let f = find(&found, "the five nodes' disk writes");
+        assert!(!f.ok());
+        assert!(f.detail.contains("864.0 MB a day"), "{}", f.detail);
         // A quiet node: 100 kB in a long enough run is under 100 MB a day.
         let quiet = (0..200)
             .map(|n| sample(n, 1, MB, 0, 50 * n as u64))
             .collect();
         let found = run_findings(&[series("node1", Role::Relay, quiet)], None, &[]);
-        assert!(
-            find(&found, "disk writes").ok,
-            "{:?}",
-            find(&found, "disk writes")
-        );
+        let f = find(&found, "the five nodes' disk writes");
+        assert!(f.ok(), "{f:?}");
     }
 
     #[test]
