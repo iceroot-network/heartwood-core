@@ -2,14 +2,26 @@
 
 use std::sync::Arc;
 
-use crate::context::{ApiContext, ApiReply, ApiRequest};
-use crate::errors::ApiError;
+use heartwood_database::filters::js_number;
 
-/// `GET /rounds/{id}/delegates`: a round's delegates, in their stored order.
-///
-/// Not served yet: until its handler is written, the route answers what an unmatched path
-/// answers, 404 "Not Found".
+use crate::context::{ApiContext, ApiReply, ApiRequest};
+use crate::controllers::transactions::read;
+use crate::errors::ApiError;
+use crate::resources::round::round_delegate;
+
+/// `GET /rounds/{id}/delegates`: a round's delegates, in their stored order (by balance from the
+/// highest, then by public key); 404 "Round not found" when the store holds none.
 pub async fn delegates(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
-    let _ = (ctx, request);
-    Err(ApiError::not_found("Not Found"))
+    let not_found = || ApiError::not_found("Round not found");
+    // The parameter is a whole number from 1 (a safe one), so the conversion is exact.
+    let round = request
+        .param("id")
+        .map(js_number)
+        .filter(|round| *round >= 1.0);
+    let round = round.ok_or_else(not_found)?;
+    let rows = read(&ctx, move |reader| reader.round(round as u64)).await?;
+    if rows.is_empty() {
+        return Err(not_found());
+    }
+    Ok(ApiReply::data(rows.iter().map(round_delegate).collect()))
 }

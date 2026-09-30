@@ -112,10 +112,17 @@ impl RateLimiter {
 /// semaphore reads the store.
 fn route_options(route: RouteId) -> Option<bool> {
     match route {
-        RouteId::BlocksShow | RouteId::BlocksTransactions | RouteId::TransactionsShow => {
-            Some(false)
-        }
-        RouteId::TransactionsIndex | RouteId::WalletsTransactions => Some(true),
+        RouteId::BlocksShow
+        | RouteId::BlocksTransactions
+        | RouteId::TransactionsShow
+        | RouteId::RoundsDelegates
+        | RouteId::VotesShow => Some(false),
+        RouteId::TransactionsIndex
+        | RouteId::WalletsTransactions
+        | RouteId::WalletsTransactionsSent
+        | RouteId::WalletsTransactionsReceived
+        | RouteId::WalletsVotes
+        | RouteId::VotesIndex => Some(true),
         _ => None,
     }
 }
@@ -254,4 +261,25 @@ fn over(query: &Value, max_offset: u64) -> bool {
         value => value.and_then(Value::as_u64).unwrap_or(0),
     };
     number("offset") > max_offset || number("page").saturating_mul(number("limit")) > max_offset
+}
+
+#[cfg(test)]
+mod tests {
+    use super::route_options;
+    use crate::context::RouteId;
+
+    #[test]
+    fn the_history_routes_take_the_levels_the_reference_gives_them() {
+        for route in [
+            RouteId::VotesIndex,
+            RouteId::WalletsTransactionsSent,
+            RouteId::WalletsTransactionsReceived,
+            RouteId::WalletsVotes,
+        ] {
+            assert_eq!(route_options(route), Some(true), "{route:?}");
+        }
+        for route in [RouteId::RoundsDelegates, RouteId::VotesShow] {
+            assert_eq!(route_options(route), Some(false), "{route:?}");
+        }
+    }
 }

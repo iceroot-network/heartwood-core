@@ -10,7 +10,10 @@ use heartwood_crypto::identities::{Address, PublicKeyBytes};
 use heartwood_state::{StateView, Wallet, WalletRepository};
 use serde_json::Value;
 
+use heartwood_database::TransactionCriteria;
+
 use crate::context::{ApiContext, ApiReply, ApiRequest, Route, RouteId};
+use crate::controllers::transactions::{Shape, criteria, listing};
 use crate::errors::ApiError;
 use crate::pagination::{Pagination, envelope};
 
@@ -91,29 +94,57 @@ pub fn find_in(wallets: &WalletRepository, id: &str) -> Result<Wallet, ApiError>
     }
 }
 
-/// `GET /wallets/{id}/transactions/sent`: the transactions a wallet sent.
-///
-/// Not served yet: until its handler is written, the route answers what an unmatched path
-/// answers, 404 "Not Found".
+/// `GET /wallets/{id}/transactions/sent`: the transactions a wallet sent, as the block-joined
+/// resource; a wallet without a public key has sent none, and the answer is an empty page.
 pub async fn sent(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
-    let _ = (ctx, request);
-    Err(ApiError::not_found("Not Found"))
+    let wallet = find(&ctx.state(), request.param("id").unwrap_or_default())?;
+    if wallet.public_key().is_none() {
+        return Ok(empty_page(&request));
+    }
+    let query = without(&request.query, "senderId");
+    let sender_id = vec![wallet.address().to_base58()];
+    let criteria = criteria(&query)?.map(|criteria| TransactionCriteria {
+        sender_id,
+        ..criteria
+    });
+    listing(&ctx, &request, criteria, Shape::WithBlock).await
 }
 
-/// `GET /wallets/{id}/transactions/received`: the transactions a wallet received.
-///
-/// Not served yet: until its handler is written, the route answers what an unmatched path
-/// answers, 404 "Not Found".
+/// `GET /wallets/{id}/transactions/received`: the transactions sent to a wallet. Unlike the sent
+/// ones, a wallet without a public key has its page.
 pub async fn received(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
-    let _ = (ctx, request);
-    Err(ApiError::not_found("Not Found"))
+    let wallet = find(&ctx.state(), request.param("id").unwrap_or_default())?;
+    let query = without(&request.query, "recipientId");
+    let recipient_id = vec![wallet.address().to_base58()];
+    let criteria = criteria(&query)?.map(|criteria| TransactionCriteria {
+        recipient_id,
+        ..criteria
+    });
+    listing(&ctx, &request, criteria, Shape::WithBlock).await
 }
 
-/// `GET /wallets/{id}/votes`: the vote transactions a wallet sent.
-///
-/// Not served yet: until its handler is written, the route answers what an unmatched path
-/// answers, 404 "Not Found".
+/// `GET /wallets/{id}/votes`: the vote transactions a wallet sent; an empty page for a wallet
+/// without a public key.
 pub async fn votes(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
-    let _ = (ctx, request);
-    Err(ApiError::not_found("Not Found"))
+    let wallet = find(&ctx.state(), request.param("id").unwrap_or_default())?;
+    if wallet.public_key().is_none() {
+        return Ok(empty_page(&request));
+    }
+    let sender = Some(wallet.address().to_base58());
+    super::votes::votes(&ctx, &request, sender, Shape::WithBlock).await
+}
+
+/// The query without `name`, which the route sets itself.
+fn without(query: &Value, name: &str) -> Value {
+    let mut query = query.clone();
+    if let Value::Object(map) = &mut query {
+        map.shift_remove(name);
+    }
+    query
+}
+
+/// The page of a wallet with nothing to list: no data, a count of 0 and no estimate.
+fn empty_page(request: &ApiRequest) -> ApiReply {
+    let pagination = Pagination::of(&request.query);
+    ApiReply::ok(envelope(request, pagination, 0, false, Vec::new()))
 }
