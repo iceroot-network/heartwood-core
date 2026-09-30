@@ -30,6 +30,7 @@ use std::path::Path;
 use heartwood_crypto::Block;
 use serde_json::{Value, json};
 
+use super::digest;
 use super::fresh;
 use super::mixed::{self, guard};
 use super::nodes::{self, rows_of};
@@ -94,16 +95,44 @@ impl Summary {
     }
 }
 
-/// The rows a chain's first block leaves behind it in the reference's backfill: one per slot
-/// before the block's own, the slot 0 being the genesis block's.
-pub(super) fn backfilled(corpus: &Corpus, block_time: u32) -> u64 {
+/// The times of the rows a start writes for the slots between the genesis block's and block 2's
+/// when its store holds no missed-slot row, as the reference's start does
+/// (`calculateMissedBlocks`): one row per slot, at height 2, a block time apart from the genesis
+/// block's slot. None when block 2 is in the slot after the genesis block's.
+pub(super) fn backfill_times(corpus: &Corpus, block_time: u32) -> Vec<i64> {
     let Some(block) = corpus.blocks.iter().find(|b| b.height == 2) else {
-        return 0;
+        return Vec::new();
     };
     let Ok(decoded) = Block::decode(&block.bytes, &corpus.milestones) else {
-        return 0;
+        return Vec::new();
     };
-    (u64::from(decoded.header().timestamp) / u64::from(block_time.max(1))).saturating_sub(1)
+    let slot = |timestamp: u32| i64::from(timestamp / block_time.max(1));
+    let first = slot(corpus.genesis.header().timestamp) + 1;
+    (first..slot(decoded.header().timestamp))
+        .map(|s| s * i64::from(block_time))
+        .collect()
+}
+
+/// The number of rows of [`backfill_times`].
+pub(super) fn backfilled(corpus: &Corpus, block_time: u32) -> u64 {
+    backfill_times(corpus, block_time).len() as u64
+}
+
+/// Whether a Heartwood node 6 wrote the backfill's rows at a start before its rollback
+/// ([`nodes::backfilling_start`]): they are then in its store before and after the command, and the
+/// start after it, which finds them, writes none. The start's tip when it did.
+fn backfilled_before_rollback(run: &MixedRun<'_>, dir: &Path) -> Result<Option<u32>> {
+    if !heartwood_node6(run) {
+        return Ok(None);
+    }
+    let digest = digest::read(&run.run_dir.join("nodes/node6/difftest"))?;
+    let rows = rows_of(dir)?;
+    Ok(nodes::backfilling_start(
+        &digest::starts_of(&digest),
+        &rows.missed,
+        &rows.refused,
+        true,
+    ))
 }
 
 /// The summary of the corpus cut at `cut`, from its blocks and its reference rows: the tip, the
@@ -361,12 +390,14 @@ const BEFORE: (&str, &str) = ("summary-before", "before");
 const ROLLED_BACK: (&str, &str) = ("summary-rolled-back", "rolled-back");
 const RESTARTED: (&str, &str) = ("summary-restarted", "restarted");
 
-/// One summary against another: the fields that differ, as a problem list.
+/// One summary against another, whose store also holds `backfill` rows of the slots before
+/// block 2 that node 6's own start wrote: the fields that differ, as a problem list.
 fn differences(
     cases: &mut Cases,
     label: &str,
     theirs: &Summary,
     ours: &Summary,
+    backfill: u64,
     theirs_name: &str,
 ) -> bool {
     let mut problems = Vec::new();
@@ -388,9 +419,14 @@ fn differences(
             ours.transactions, theirs.transactions
         ));
     }
-    if theirs.missed != ours.missed {
+    if theirs.missed + backfill != ours.missed {
+        let start = if backfill > 0 {
+            format!(" and the start's {backfill} rows before block 2")
+        } else {
+            String::new()
+        };
         problems.push(format!(
-            "{} missed rows against {theirs_name}'s {}",
+            "{} missed rows against {theirs_name}'s {}{start}",
             ours.missed, theirs.missed
         ));
     }
@@ -443,11 +479,25 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
     }
     let corpus = Corpus::load(&last.dir)?;
     let backfill = backfilled(&corpus, run.manifest.block_time);
+    // The rows of the slots before block 2 that a Heartwood node 6 wrote at a start before the
+    // command: node 1's corpus never holds them (its node never started so), the reference's start
+    // in node 6's place writes them too, and a rollback to 2 or more keeps them.
+    let earlier = match backfilled_before_rollback(run, &last.dir)? {
+        Some(tip) if backfill > 0 => {
+            cases.record(
+                SECTION,
+                format!(
+                    "node6: its start at {tip} found no missed-slot row and wrote the {backfill} rows of the slots before block 2, as the reference's start does: they are in its summaries"
+                ),
+            );
+            backfill
+        }
+        _ => 0,
+    };
     // The corpus cut at node 6's tip.
     let cut_summary = cut_summary(&corpus, &last.dir, cut, length)?;
     let label = "node6: the summary before the rollback equals the corpus cut at its tip";
-    // Neither side has started since the chain began: no backfilled row on either.
-    if differences(cases, label, &cut_summary, &before, "the cut") {
+    if differences(cases, label, &cut_summary, &before, earlier, "the cut") {
         cases.pass(SECTION, format!("{label} ({})", before.describe()));
     }
     // The oracle's rollback over the cut: node 6's summary after the command.
@@ -465,6 +515,8 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
             return Ok(());
         }
     };
+    // The backfilled rows are at height 2: a rollback to 2 or more keeps them.
+    let kept = if predicted.target >= 2 { earlier } else { 0 };
     if predicted.target != after.tip {
         cases.fail(
             SECTION,
@@ -474,13 +526,22 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
                 after.tip, predicted.target
             ),
         );
-    } else if differences(cases, &label, &predicted.summary, &after, "the oracle") {
+    } else if differences(
+        cases,
+        &label,
+        &predicted.summary,
+        &after,
+        kept,
+        "the oracle",
+    ) {
         cases.pass(SECTION, format!("{label} ({})", after.describe()));
     }
     // The start after it, as the reference's start after that rollback: the same tip and
     // transactions, the next round's rows saved, and, when the rollback left no missed row, the
     // productivity backfill's rows for the slots before block 2 (none when block 2 is in slot 1),
-    // which both the reference (run w0) and Heartwood (run w) write; any difference fails.
+    // which both the reference (run w0) and Heartwood (run w) write; any difference fails. A store
+    // that kept the rows an earlier start wrote holds a row: that start writes none, and the
+    // oracle's store, which never had them, is compared with them added.
     let label =
         "node6: the summary after the start equals the oracle's restart after that rollback";
     let adds = if predicted.summary.missed == 0 {
@@ -489,12 +550,15 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
         0
     };
     // The oracle's own start after the rollback, else the same derived by the reference's rules.
-    let wanted = predicted.restart.unwrap_or_else(|| {
+    let mut wanted = predicted.restart.unwrap_or_else(|| {
         let mut derived = predicted.summary;
         derived.round = predicted.target / u64::from(length.max(1)) + 1;
         derived.missed += adds;
         derived
     });
+    if kept > 0 {
+        wanted.missed = predicted.summary.missed;
+    }
     if started.round != wanted.round {
         cases.fail(
             SECTION,
@@ -504,7 +568,7 @@ fn summaries(run: &MixedRun<'_>, steps: &[Step], cases: &mut Cases) -> Result<()
                 wanted.round, started.round
             ),
         );
-    } else if differences(cases, label, &wanted, &started, "the oracle") {
+    } else if differences(cases, label, &wanted, &started, kept, "the oracle") {
         cases.pass(SECTION, format!("{label} ({})", started.describe()));
     }
     Ok(())

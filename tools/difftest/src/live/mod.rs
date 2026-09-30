@@ -945,7 +945,7 @@ fn check_nodes(
                     node,
                     &last.dir,
                     last.tip,
-                    manifest.round_length,
+                    (manifest.round_length, manifest.block_time),
                 ));
                 c.extend(nodes::heartwood_logs(run_dir, node, &references));
                 c

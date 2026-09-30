@@ -1593,6 +1593,110 @@ fn the_backfill_excuses_no_difference_before_the_start() {
     );
 }
 
+/// Node 6's digest files in `run`: a first start to `first_end`, a restart there that reaches the
+/// cut, and the start after the rollback, at its target.
+fn restart_node6_at(chain: &Chain, run: &Path, first_end: u32) {
+    let dir = run.join("nodes/node6/difftest");
+    let lines = |range: std::ops::RangeInclusive<u32>| -> Vec<Value> {
+        range
+            .filter_map(|h| chain.forward.get(&h).cloned())
+            .collect()
+    };
+    let tip = *chain.forward.keys().max().unwrap();
+    let mut second = vec![restart_line(chain, first_end)];
+    second.extend(lines(first_end + 1..=MIXED.cut));
+    let mut third = vec![restart_line(chain, MIXED.target())];
+    third.extend(lines(MIXED.target() + 1..=tip));
+    write(&dir.join("digest-0001.jsonl"), jsonl(&lines(1..=first_end)));
+    write(&dir.join("digest-0002.jsonl"), jsonl(&second));
+    write(&dir.join("digest-0003.jsonl"), jsonl(&third));
+}
+
+/// Node 6's three summaries in run w with `extra` missed rows each.
+fn node6_summaries_with(f: &Fixture, extra: u64) {
+    let chain = chain();
+    let target = MIXED.target();
+    let with = |height: u32, round: u64| {
+        let sum = chain.sum_at(height, round, &chain.missed);
+        Sum {
+            missed: sum.missed + extra,
+            ..sum
+        }
+    };
+    let l = u64::from(ROUND);
+    write_summary(
+        &f.w,
+        "before",
+        &with(MIXED.cut, u64::from(MIXED.cut) / l + 1),
+        true,
+    );
+    write_summary(
+        &f.w,
+        "rolled-back",
+        &with(target, u64::from(target) / l),
+        true,
+    );
+    write_summary(
+        &f.w,
+        "restarted",
+        &with(target, u64::from(target) / l + 1),
+        true,
+    );
+}
+
+#[test]
+fn rows_a_start_before_the_rollback_backfilled_are_in_node_6s_every_summary() {
+    let f = fixture();
+    move_block_2_to_slot_3(&f, "w");
+    // Node 6 also restarted at 50, below the chain's first missed row: that start found no row and
+    // wrote the two rows of the slots before block 2, as the reference's start does; they stay
+    // through the rollback, and the start after it, which finds them, writes none.
+    restart_node6_at(&chain(), &f.w, 50);
+    node6_summaries_with(&f, 2);
+    let report = check_run(&f, &f.w);
+    for summary in [
+        "the summary before the rollback",
+        "the summary after the rollback",
+        "the summary after the start",
+    ] {
+        assert_passes(&report, "recovery", summary);
+    }
+    // One row fewer is a difference.
+    node6_summaries_with(&f, 1);
+    let report = check_run(&f, &f.w);
+    assert_fails(
+        &report,
+        "recovery",
+        "the summary before the rollback",
+        "3 missed rows against the cut's 2 and the start's 2 rows before block 2",
+    );
+}
+
+#[test]
+fn backfilled_rows_without_a_start_that_wrote_them_fail() {
+    let f = fixture();
+    move_block_2_to_slot_3(&f, "w");
+    // Node 6 never started with an empty table before the rollback: its first start was on an
+    // empty store and the next is the one after the rollback.
+    node6_summaries_with(&f, 2);
+    let report = check_run(&f, &f.w);
+    assert_fails(
+        &report,
+        "recovery",
+        "the summary before the rollback",
+        "4 missed rows against the cut's 2",
+    );
+    // A restart at a tip above the chain's first missed row (154) found rows: it wrote none.
+    restart_node6_at(&chain(), &f.w, 170);
+    let report = check_run(&f, &f.w);
+    assert_fails(
+        &report,
+        "recovery",
+        "the summary before the rollback",
+        "4 missed rows against the cut's 2",
+    );
+}
+
 #[test]
 fn a_transport_line_outside_every_window_fails_even_when_the_baseline_has_one() {
     let f = fixture();

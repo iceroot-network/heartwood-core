@@ -122,6 +122,40 @@ pub fn read(dir: &Path) -> Result<NodeDigest> {
     Ok(out)
 }
 
+/// One start of a relay, from its digest file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Start {
+    /// The start's number (from 1).
+    pub number: u32,
+    /// The tip of the store it opened: its `restart` line's height, else 1 (a start on an empty
+    /// store, which opens with the genesis line or the apply line of height 2).
+    pub tip: u32,
+    /// The highest height its lines name.
+    pub reached: u32,
+}
+
+/// The starts of `digest`, in order.
+pub fn starts_of(digest: &NodeDigest) -> Vec<Start> {
+    let mut out: Vec<Start> = Vec::new();
+    for line in &digest.lines {
+        match out.last_mut() {
+            Some(start) if start.number == line.start => {
+                start.reached = start.reached.max(line.height());
+            }
+            _ => out.push(Start {
+                number: line.start,
+                tip: if line.step() == "restart" {
+                    line.height()
+                } else {
+                    1
+                },
+                reached: line.height(),
+            }),
+        }
+    }
+    out
+}
+
 /// A judged chain: its name and the judge's forward line (genesis and apply) of each height.
 #[derive(Debug, Clone, PartialEq)]
 pub struct JudgedChain {

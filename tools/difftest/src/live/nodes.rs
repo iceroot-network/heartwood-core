@@ -161,13 +161,88 @@ fn reference_rows(dir: &Path) -> Result<(Vec<MissedKey>, BTreeSet<u64>)> {
     Ok((rows, refused))
 }
 
+/// The first of a Heartwood relay's `starts` that found no missed-slot row in its store on a chain
+/// of 2 blocks or more, its tip: `chain` (node 1's rows) holds none at or below that tip but at
+/// the `refused` heights, where Heartwood writes none. Such a start writes the rows of the slots
+/// before block 2, as the reference's start does ([`super::recovery::backfill_times`]). With
+/// `before_rollback`, only the starts before the first one that opened below the height the one
+/// before it reached (the start after a rollback).
+pub(super) fn backfilling_start(
+    starts: &[digest::Start],
+    chain: &[MissedKey],
+    refused: &BTreeSet<u64>,
+    before_rollback: bool,
+) -> Option<u32> {
+    let rolled_back = starts
+        .windows(2)
+        .position(|pair| pair[1].tip < pair[0].reached)
+        .map_or(starts.len(), |i| i + 1);
+    let considered = if before_rollback {
+        &starts[..rolled_back]
+    } else {
+        starts
+    };
+    considered
+        .iter()
+        .filter(|start| start.tip >= 2)
+        .find(|start| {
+            !chain
+                .iter()
+                .any(|row| row.1 <= u64::from(start.tip) && !refused.contains(&row.1))
+        })
+        .map(|start| start.tip)
+}
+
+/// The rows of the slots before block 2 in the Heartwood relay `node`'s store (`missed`), which
+/// node 1 never writes: when one of its starts found no missed-slot row ([`backfilling_start`]),
+/// they must be exactly the reference's (their height 2 and times, [`super::recovery::backfill_times`];
+/// the delegates are the relay's own tests'), and they are taken out of `missed` for the anchors;
+/// otherwise they are left for the anchors to find. The passing case's text, if any.
+fn backfill_in_store(
+    run_dir: &Path,
+    node: &Node,
+    corpus_dir: &Path,
+    block_time: u32,
+    missed: &mut Vec<heartwood_database::MissedRow>,
+) -> std::result::Result<Option<String>, String> {
+    let corpus = Corpus::load(corpus_dir).map_err(|e| e.to_string())?;
+    let times = super::recovery::backfill_times(&corpus, block_time);
+    if times.is_empty() {
+        return Ok(None);
+    }
+    let dir = run_dir.join("nodes").join(&node.name).join("difftest");
+    let read = digest::read(&dir).map_err(|e| e.to_string())?;
+    let (chain, refused) = reference_rows(corpus_dir).map_err(|e| e.to_string())?;
+    let Some(tip) = backfilling_start(&digest::starts_of(&read), &chain, &refused, false) else {
+        return Ok(None);
+    };
+    let last = times.last().copied().unwrap_or(0);
+    let mut held: Vec<i64> = missed
+        .iter()
+        .filter(|m| m.height == 2 && m.timestamp <= last)
+        .map(|m| m.timestamp)
+        .collect();
+    held.sort_unstable();
+    if held != times {
+        return Err(format!(
+            "its start at {tip} found no missed-slot row, so the {} rows of the slots before block 2 at {times:?} are expected at height 2; the store holds {held:?}",
+            times.len()
+        ));
+    }
+    missed.retain(|m| !(m.height == 2 && m.timestamp <= last));
+    Ok(Some(format!(
+        "its start at {tip} found no missed-slot row and wrote the {} rows of the slots before block 2, as the reference's start does (node 1's store has none)",
+        times.len()
+    )))
+}
+
 /// The store of the Heartwood relay `node` against the final chain's corpus in `corpus_dir`.
 pub fn heartwood_store(
     run_dir: &Path,
     node: &Node,
     corpus_dir: &Path,
     tip: u32,
-    round_length: u32,
+    (round_length, block_time): (u32, u32),
 ) -> Vec<Check> {
     let label = format!("{}: store", node.name);
     let data = run_dir.join("nodes").join(&node.name).join("data");
@@ -208,13 +283,18 @@ pub fn heartwood_store(
         Err(e) => out.push(fail(&label, e.to_string())),
     }
     let last_round = store::last_round(tip, round_length);
-    let rows = match store::read_rows(&database, tip, last_round) {
+    let mut rows = match store::read_rows(&database, tip, last_round) {
         Ok(r) => r,
         Err(e) => {
             out.push(fail(&label, e));
             return out;
         }
     };
+    match backfill_in_store(run_dir, node, corpus_dir, block_time, &mut rows.missed) {
+        Ok(Some(text)) => out.push(pass(format!("{}: {text}", node.name))),
+        Ok(None) => {}
+        Err(e) => out.push(fail(&label, e)),
+    }
     for (anchor, outcome) in store::anchors(corpus_dir, &rows, tip, last_round) {
         out.push((format!("{}: {anchor}", node.name), 0, outcome));
     }
@@ -669,6 +749,43 @@ mod tests {
     use super::*;
     use crate::live::run::Implementation;
     use crate::vectors::testutil::TestDir;
+
+    #[test]
+    fn a_start_that_found_no_missed_row_on_a_stored_chain_is_the_backfilling_one() {
+        let start = |number, tip, reached| digest::Start {
+            number,
+            tip,
+            reached,
+        };
+        let chain: Vec<MissedKey> = vec![(1224, 151, "d".into()), (1704, 210, "d".into())];
+        let none = BTreeSet::new();
+        // Run w's node 6: a first start, three at 56, and the start after the rollback at 106.
+        let node6 = [
+            start(1, 1, 56),
+            start(2, 56, 56),
+            start(3, 56, 56),
+            start(4, 56, 160),
+            start(5, 106, 212),
+        ];
+        assert_eq!(backfilling_start(&node6, &chain, &none, true), Some(56));
+        // Its node 4: a first start and a restart at 130.
+        let node4 = [start(1, 1, 130), start(2, 130, 212)];
+        assert_eq!(backfilling_start(&node4, &chain, &none, false), Some(130));
+        // A restart above the chain's first missed row found a row; a first start found no chain.
+        let late = [start(1, 1, 160), start(2, 160, 212)];
+        assert_eq!(backfilling_start(&late, &chain, &none, false), None);
+        assert_eq!(backfilling_start(&late[..1], &chain, &none, false), None);
+        // Node 1's row of a block it refused is one Heartwood does not write.
+        let refused = BTreeSet::from([151]);
+        assert_eq!(backfilling_start(&late, &chain, &refused, false), Some(160));
+        // The start after a rollback counts only when the starts after it may.
+        let rolled_back = [start(1, 1, 160), start(2, 106, 212)];
+        assert_eq!(backfilling_start(&rolled_back, &chain, &none, true), None);
+        assert_eq!(
+            backfilling_start(&rolled_back, &chain, &none, false),
+            Some(106)
+        );
+    }
 
     #[test]
     fn log_lines_are_read_as_events() {
