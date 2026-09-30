@@ -11,13 +11,15 @@
 #   make l1             the L1 properties against the oracle
 #   make corpus-import corpus-judge l2 l2-synthetic   the L2 chains: import, judge, replay
 #   make l2-restart crash-test   the L2 chains restarted at planned heights, and killed mid-commit
-#   make pool-bench     the cost of the pool's per-sender views and of the store's commit
+#   make pool-bench     the cost of the pool's per-sender views, of the store's commit and of a re-index
 #   make l2-processor   the L2 chains through the processor and the job, as a relay imports them
 #   make relay-image live live-check api-compare   the relay on a devnet, and its comparisons
 #   make p2p-compare await-report   a mixed run's reference-client probe and its AwaitBlock report
 #   make rollback-replay   the L2 chains rolled back, started again and re-synced
 #   make fuzz-server binary-tests devnet-smoke   the server's fuzz target, the binary's tests and
 #                       a forging devnet's smoke test
+#   make lockstep       a chain forged by Heartwood while the reference applies every block beside it
+#   make fuzz-api replay-api   the API's query fuzz target, and its corpus through the oracle
 #
 # Settings for this machine (SOLAR_REPO, LOCAL_SOLAR, TOOLCHAIN_ENV, ...) go in local.mk, which is
 # git-ignored, or on the command line: make e2e SOLAR_REPO=/path/to/solar-core-ref
@@ -52,7 +54,9 @@ GENERATOR_ARG := $(if $(DEVNET_GENERATOR),--devnet-generator '$(DEVNET_GENERATOR
 VECTOR_CRATES ?= crypto=V01,V02,V03,V04,V05,V06,V07,V10,V11,V12,V19,V22 kernel=V09-rounds,V16,V23,V28 \
                  logger=V20 pool=V21 state=V08,V09-shuffle,V15,V18 transactions=V17 p2p-wire=V13,V24,V29 \
                  p2p=V25,V26,V30,V31,V32 blockchain=V27,V33 api=V28 forger=V29
-# L1: cases per property, the generator's seed, the properties (P1 to P20 or their names, comma
+# The API's listings (V34) go to the state, the API and the store, whose tests read each its kinds.
+VECTOR_CRATES += state=V34 api=V34 database=V34
+# L1: cases per property, the generator's seed, the properties (P1 to P23 or their names, comma
 # separated; all when empty); L1_MIN_REACH, how often P13 must reach each reachable result of the
 # processor and each unchained status (when empty: 20 from 1,000 cases per property, else none);
 # L1_DECISION_REACH, how often P19 must reach each action and refusal of the reference (when
@@ -162,8 +166,20 @@ test: ## cargo test: each library crate alone, with no features and with all, th
 # The tests marked `#[ignore = "integration"]` (the served API over a store, a relay importing from
 # a mock peer, the kill test through the runtime, ...): each by its exact name, with its crate's
 # features; a marked test that its target does not list fails.
-test-integration: build ## the integration-tagged tests of every crate
-	$(TOOLCHAIN) && tools/test-integration.sh
+# The tests that need the reference run against the oracle image when it is built (or against
+# DIFFTEST_TEST_IMAGE or DIFFTEST_TEST_SOLAR_DIR when set); without one they are skipped, and the
+# run says so (DIFFTEST_TEST_NO_ORACLE), rather than passing unrun.
+test-integration: build ## the integration-tagged tests of every crate (the oracle's against IMAGE when it is built)
+	$(TOOLCHAIN) && if [ -z "$$DIFFTEST_TEST_IMAGE$$DIFFTEST_TEST_SOLAR_DIR" ]; then \
+	    if $(DIFFTEST_DOCKER) image inspect '$(IMAGE)' >/dev/null 2>&1; then \
+	        export DIFFTEST_TEST_IMAGE='$(IMAGE)'; \
+	        echo "test-integration: the tests that need the reference run against $(IMAGE)"; \
+	    else \
+	        export DIFFTEST_TEST_NO_ORACLE=1; \
+	        echo "test-integration: no oracle image $(IMAGE): the tests that need the reference are skipped"; \
+	    fi; \
+	fi; \
+	tools/test-integration.sh
 
 # Every crate's documentation, with every feature: a warning (a link to a private item, a broken
 # link) fails.
@@ -205,10 +221,12 @@ vectors-local: build ## L0 vectors from LOCAL_SOLAR into VECTORS/local
 vectors-diff: build ## the container and local runs must agree on every record
 	$(DIFFTEST) vectors diff $(VECTORS)/container $(VECTORS)/local
 
-# Each crate gets its classes (VECTOR_CRATES) and a manifest of them. A run that lacks a class
-# VECTOR_CRATES routes, or a file a committed manifest lists, is refused, and the committed files
-# are kept: the genesis class (V10) and the genesis-state class (V18) are written only with
-# DEVNET_GENERATOR.
+# Each crate gets its classes (VECTOR_CRATES; a crate named in more than one spec gets the classes
+# of all of them) and one manifest of them, which must list every class routed there. A run that
+# lacks a class VECTOR_CRATES routes, or a file a committed manifest lists, is refused, and the
+# committed files are kept: the genesis class (V10) and the genesis-state class (V18) are written
+# only with DEVNET_GENERATOR. So is a run with a kind below its minimum record count
+# (tools/oracle/vector-minimums.json).
 vectors-install: vectors-diff ## copy the container run into each crate's tests/vectors, with a manifest per crate
 	@missing=; \
 	for spec in $(VECTOR_CRATES); do \
@@ -227,11 +245,21 @@ vectors-install: vectors-diff ## copy the container run into each crate's tests/
 	         "installed" >&2; \
 	    exit 1; \
 	fi
-	@for spec in $(VECTOR_CRATES); do \
-	    dir=packages/$${spec%%=*}/tests/vectors; \
+	@$(TOOLCHAIN) && node tools/oracle/check-minimums.js $(VECTORS)/container || { \
+	    echo "vectors-install: a class of tools/oracle/vector-minimums.json is missing or has a kind" \
+	         "below its minimum; nothing was installed" >&2; exit 1; }
+	@crates=; \
+	for spec in $(VECTOR_CRATES); do \
+	    case " $$crates " in *" $${spec%%=*} "*) ;; *) crates="$$crates $${spec%%=*}" ;; esac; \
+	done; \
+	for crate in $$crates; do \
+	    dir=packages/$$crate/tests/vectors; \
 	    files=; \
-	    for class in $$(echo $${spec#*=} | tr ',' ' '); do \
-	        files="$$files $$(cd $(VECTORS)/container && ls $$class*.jsonl 2>/dev/null)"; \
+	    for spec in $(VECTOR_CRATES); do \
+	        [ "$${spec%%=*}" = "$$crate" ] || continue; \
+	        for class in $$(echo $${spec#*=} | tr ',' ' '); do \
+	            files="$$files $$(cd $(VECTORS)/container && ls $$class*.jsonl 2>/dev/null)"; \
+	        done; \
 	    done; \
 	    files=$$(echo $$files); \
 	    [ -n "$$files" ] || continue; \
@@ -241,6 +269,16 @@ vectors-install: vectors-diff ## copy the container run into each crate's tests/
 	    (cd $$dir && sha256sum $$files > MANIFEST.sha256); \
 	    echo "vectors-install: $$dir: $$files"; \
 	    $(DIFFTEST) vectors verify $$dir >/dev/null || exit 1; \
+	done
+	@for spec in $(VECTOR_CRATES); do \
+	    dir=packages/$${spec%%=*}/tests/vectors; \
+	    for class in $$(echo $${spec#*=} | tr ',' ' '); do \
+	        for f in $$(cd $(VECTORS)/container && ls $$class*.jsonl 2>/dev/null); do \
+	            grep -q "  $$f$$" $$dir/MANIFEST.sha256 2>/dev/null || { \
+	                echo "vectors-install: $$dir/MANIFEST.sha256 does not list $$f, which" \
+	                     "VECTOR_CRATES routes there" >&2; exit 1; }; \
+	        done; \
+	    done; \
 	done
 
 l0: build ## compare VECTORS/container with Heartwood's subjects
@@ -312,9 +350,10 @@ crash-test: build ## CORPUS/NAME replayed through the store (or a relay, RUNTIME
 	$(DIFFTEST) store crash $(CORPUS)/$(NAME) --kills $(KILLS) $(if $(KILL_SEED),--seed $(KILL_SEED)) \
 	    $(if $(RUNTIME),--runtime) $(STRICT)
 
-pool-bench: ## the cost of the pool's per-sender views and of the store's commit (release build)
+pool-bench: ## the cost of the pool's per-sender views, of the store's commit and of a re-index (release build)
 	$(TOOLCHAIN) && cargo test --release --locked -p heartwood-pool --test view_cost -- --ignored --nocapture
 	$(TOOLCHAIN) && cargo test --release --locked -p heartwood-blockchain --test commit_cost -- --ignored --nocapture
+	$(TOOLCHAIN) && cargo test --release --locked -p heartwood-state --test reindex_cost -- --ignored --nocapture
 
 layers: ## crate edges follow the layers; no async, storage or HTTP crate in the consensus crates
 	$(TOOLCHAIN) && tools/check-layers.sh
@@ -535,12 +574,22 @@ API_COMPARE_OUT    ?= target/api-compare
 DEVNET_RUNS        := t m f
 MIXED_RUNS         := w0 w p s
 is-mixed = $(filter $(MIXED_RUNS),$(RUN))
+# The observer run: LIVE_RECIPE's run h (a reference devnet with a Heartwood observer relay) under
+# OBSERVER_ENV, the recipe's environment (its network's name and subnet, its host ports, its stop
+# height and its RESULTS directory), whose run directory is OBSERVER_RESULTS/h. Both are set in
+# local.mk.
+OBSERVER_ENV       ?=
+OBSERVER_RESULTS   ?=
+OBSERVER_RUNS      := observer
+is-observer = $(filter $(OBSERVER_RUNS),$(RUN))
+need-observer = $(if $(is-observer),$(if $(OBSERVER_ENV),,$(error set OBSERVER_ENV, the observer run's environment (NAME, SUBNET, HOST_PORT_BASE, STOP_HEIGHT, RESULTS), in local.mk)))
 recipe-name-of-run = $(if $(filter $(DEVNET_RUNS),$(RUN)),DEVNET_RECIPE,$(if $(is-mixed),MIXED_RECIPE,LIVE_RECIPE))
 recipe-of-run = $($(recipe-name-of-run))
-results-name-of-run = $(if $(is-mixed),MIXED_RESULTS,LIVE_RESULTS)
+results-name-of-run = $(if $(is-mixed),MIXED_RESULTS,$(if $(is-observer),OBSERVER_RESULTS,LIVE_RESULTS))
 results-of-run = $($(results-name-of-run))
+run-dir = $(results-of-run)/$(if $(is-observer),h,$(RUN))
 need-live = $(if $(recipe-of-run),,$(error set $(recipe-name-of-run), the devnet tooling's recipe, in local.mk))
-need-run = $(if $(RUN),,$(error set RUN, the live run: r, h, m1, m2, t, m, f, w0, w, p or s))
+need-run = $(if $(RUN),,$(error set RUN, the live run: r, h, m1, m2, t, m, f, w0, w, p, s or observer))
 need-results = $(if $(results-of-run),,$(error set $(results-name-of-run), the live runs' directory, in local.mk))
 need-mixed = $(if $(is-mixed),,$(error set RUN to a mixed run: w0, w, p or s))
 # The two relays a mixed run's probe compares: the Heartwood relay against a reference relay (node
@@ -569,31 +618,32 @@ relay-image: relay-binary ## the relay's release binary and its devnet image (RE
 # their live target builds the binary only: `make relay-image` runs once before them, and
 # MIXED_RECIPE checks that the image holds this tree's binary.
 relay-of-run = $(if $(filter-out r t w0,$(RUN)),$(1))
-live-prerequisite = $(if $(filter m f,$(RUN)),relay-binary,$(if $(is-mixed),$(call relay-of-run,relay-binary),$(call relay-of-run,relay-image)))
+live-prerequisite = $(if $(is-observer),build relay-image,$(if $(filter m f,$(RUN)),relay-binary,$(if $(is-mixed),$(call relay-of-run,relay-binary),$(call relay-of-run,relay-image))))
 
-live: $(live-prerequisite) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2 with LIVE_RECIPE, t|m|f with DEVNET_RECIPE, w0|w|p|s with MIXED_RECIPE)
+live: $(live-prerequisite) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2 with LIVE_RECIPE, t|m|f with DEVNET_RECIPE, w0|w|p|s with MIXED_RECIPE, observer with LIVE_RECIPE and OBSERVER_ENV)
 	$(need-run)
 	$(need-live)
-	$(recipe-of-run) $(RUN) $(CURDIR)
+	$(need-observer)
+	$(if $(is-observer),env $(OBSERVER_ENV) $(recipe-of-run) h,$(recipe-of-run) $(RUN)) $(CURDIR)
 
 # A mixed run's check reads the oracle's image (its rollback's prediction), and its baseline run
 # from --compare, not from COMPARE in difftest's environment. The baseline of runs w, p and s is
 # w0 unless COMPARE names it.
 mixed-compare = $(if $(COMPARE),$(COMPARE),$(if $(filter-out w0,$(is-mixed)),w0))
 mixed-spread = $(if $(and $(is-mixed),$(mixed-compare)),$(foreach d,$(MIXED_SPREAD),--spread $(d)))
-live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS or MIXED_RESULTS; COMPARE, for w, p and s w0 by default)
+live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS, MIXED_RESULTS or OBSERVER_RESULTS; COMPARE, for w, p and s w0 by default)
 	$(need-run)
 	$(need-results)
 	$(if $(is-mixed),$(need-image))
 	$(TOOLCHAIN) && $(if $(is-mixed),env -u COMPARE DIFFTEST_IMAGE='$(IMAGE)') $(DIFFTEST) live check \
-	    $(results-of-run)/$(RUN) $(if $(and $(is-mixed),$(mixed-compare)),--compare $(results-of-run)/$(mixed-compare)) $(mixed-spread) $(STRICT)
+	    $(run-dir) $(if $(and $(is-mixed),$(mixed-compare)),--compare $(results-of-run)/$(mixed-compare)) $(mixed-spread) $(STRICT)
 
-api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the API answers a live run recorded (RUN, LIVE_RESULTS or MIXED_RESULTS), or two nodes' (LEFT, RIGHT)
+api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the API answers a live run recorded (RUN, LIVE_RESULTS, MIXED_RESULTS or OBSERVER_RESULTS), or two nodes' (LEFT, RIGHT)
 	$(TOOLCHAIN) && if [ -n '$(LEFT)' ] && [ -n '$(RIGHT)' ]; then \
 	    $(DIFFTEST) api compare --left '$(LEFT)' --right '$(RIGHT)' --out $(API_COMPARE_OUT) $(STRICT); \
 	else \
 	    [ -n '$(RUN)' ] && [ -n '$(results-of-run)' ] || { echo "api-compare: set RUN and $(results-name-of-run), or LEFT and RIGHT" >&2; exit 2; }; \
-	    $(DIFFTEST) api compare --run $(results-of-run)/$(RUN) $(STRICT); \
+	    $(DIFFTEST) api compare --run $(run-dir) $(STRICT); \
 	fi
 
 p2p-compare: build $(call relay-of-run,relay-binary) ## the reference-client probe's records of a mixed run's two relays (RUN=w0|w|s, MIXED_RESULTS)
@@ -729,3 +779,72 @@ devnet-smoke: build ## a forging devnet of this tree's binary: 1 node for 20 blo
 	$(TOOLCHAIN) && HEARTWOOD_DEVNET_PREFIX=$(DEVNET_PREFIX) cargo test --locked -p heartwood-core --all-features \
 	    --test devnet_smoke -- --ignored
 # ---- end of the peer-to-peer server, the node's wiring and the forging devnet ----
+
+# ---- the API's listings: the lockstep producer and the query fuzz target ----
+# lockstep makes a chain forged by Heartwood's forger from SEED and the genesis profile PROFILE as
+# the recipe RECIPE says, with the reference (ORACLE_ARGS) building every transaction and applying
+# every block beside it, into the corpus CORPUS/NAME. A chain has ROUNDS rounds: 5 at most, more
+# only with LONG=1 (and 50 at most).
+SEED          ?=
+PROFILE       ?=
+RECIPE        ?=
+ROUNDS        ?= 5
+LONG          ?=
+# The API's query fuzz target runs on a corpus of its own (git-ignored), with the wire targets'
+# libFuzzer options, seeded from the queries of the vector classes in API_SEEDS (the API's installed
+# classes by default) when it exists; its replay sends each input through the oracle's grammar,
+# the route's validation and the pagination (api.fuzzQuery) and through Heartwood's.
+API_FUZZ      := api_query
+API_REPLAY    := api_query=api.fuzzQuery
+API_SEEDS     ?= packages/api/tests/vectors
+API_LOGS      ?= target/api-fuzz
+
+.PHONY: lockstep fuzz-api replay-api
+
+lockstep: build ## a lockstep chain CORPUS/NAME from SEED, PROFILE and RECIPE, ROUNDS rounds (5; more only with LONG=1)
+	$(need-name)
+	$(need-image)
+	$(if $(SEED),,$(error set SEED, the chain's seed))
+	$(if $(PROFILE),,$(error set PROFILE, the genesis profile))
+	$(if $(RECIPE),,$(error set RECIPE, the recipe file))
+	@if [ '$(ROUNDS)' -gt 5 ] 2>/dev/null && [ -z '$(LONG)' ]; then \
+	    echo "lockstep: ROUNDS=$(ROUNDS) is a long chain; set LONG=1 for more than 5 rounds" >&2; exit 2; \
+	fi
+	$(TOOLCHAIN) && $(DIFFTEST) lockstep make --seed '$(SEED)' --profile '$(PROFILE)' --rounds $(ROUNDS) \
+	    --recipe '$(RECIPE)' --out $(CORPUS)/$(NAME) $(if $(LONG),--long) $(ORACLE_ARGS)
+
+fuzz-api: ## the API's query fuzz target, FUZZ_SECONDS (nightly and cargo-fuzz); logs in API_LOGS
+	@$(TOOLCHAIN) && if [ -d '$(API_SEEDS)' ]; then \
+	    node tools/api-fuzz-seeds.js '$(API_SEEDS)' $(FUZZ_CORPUS) $(WIRE_SEED_MAX); \
+	else \
+	    echo "fuzz-api: no seeds: $(API_SEEDS) does not exist"; \
+	fi
+	$(TOOLCHAIN) && cargo +nightly fuzz build $(API_FUZZ)
+	@$(TOOLCHAIN) && mkdir -p $(API_LOGS) $(FUZZ_CORPUS)/$(API_FUZZ) && \
+	echo "fuzz-api: $(API_FUZZ) running for $(FUZZ_SECONDS) s, $(FUZZ_FORK) jobs; logs in $(API_LOGS)" && \
+	fail=0; cargo +nightly fuzz run $(API_FUZZ) -- $(WIRE_LIBFUZZER) > $(API_LOGS)/$(API_FUZZ).log 2>&1 || fail=1; \
+	last=$$(grep -E '^#[0-9]+: cov: ' $(API_LOGS)/$(API_FUZZ).log | tail -n 1); \
+	files=$$(find $(FUZZ_CORPUS)/$(API_FUZZ) -type f | wc -l); \
+	echo "fuzz-api: $(API_FUZZ): $${last:-no status line}; corpus $$files files"; \
+	case "$$last" in *'oom/timeout/crash: 0/0/0 '*) ;; *) fail=1 ;; esac; \
+	exit $$fail
+
+# Every input of the corpus must be compared, as in replay-wire.
+replay-api: build ## the api_query corpus through the oracle (ORACLE_ARGS) and Heartwood; logs in API_LOGS
+	$(need-image)
+	@$(TOOLCHAIN) && mkdir -p $(API_LOGS) && fail=0; \
+	for pair in $(API_REPLAY); do \
+	    target=$${pair%%=*}; op=$${pair#*=}; log=$(API_LOGS)/replay-$$target.log; \
+	    if [ -z "$$(ls -A $(FUZZ_CORPUS)/$$target 2>/dev/null)" ]; then \
+	        echo "replay-api: $(FUZZ_CORPUS)/$$target is missing or empty (make fuzz-api)" >&2; fail=1; continue; \
+	    fi; \
+	    $(DIFFTEST) oracle replay $$op $(FUZZ_CORPUS)/$$target --vectors packages/crypto/tests/vectors $(ORACLE_ARGS) \
+	        > $$log 2>&1; status=$$?; cat $$log; \
+	    if [ $$status != 0 ]; then \
+	        echo "replay-api: $$target: the replay failed (exit $$status)" >&2; fail=1; \
+	    elif grep -qE '^  [0-9]+ (skipped|records have no Rust implementation)' $$log; then \
+	        echo "replay-api: $$target: some inputs were not compared" >&2; fail=1; \
+	    fi; \
+	done; \
+	exit $$fail
+# ---- end of the API's listings ----

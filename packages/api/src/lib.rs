@@ -9,6 +9,9 @@
 //! - [`controllers`]: the routes' handlers; [`resources`]: the response shapes.
 //! - [`schemas`]: the query grammar and the routes' validation; [`pagination`]: the list
 //!   envelope.
+//! - [`search`]: the in-memory listings' criteria, pagination and search over the state;
+//!   [`productivity`]: the delegates' productivity and the chain's totals over the store;
+//!   [`spec`]: the OpenAPI document.
 //! - [`plugins`]: what wraps every route; [`server`]: the options and the accept loop.
 //! - [`errors`]: [`ApiError`], Boom's error answer, and [`ServeError`].
 //!
@@ -32,9 +35,12 @@ pub mod controllers;
 pub mod errors;
 pub mod pagination;
 pub mod plugins;
+pub mod productivity;
 pub mod resources;
 pub mod schemas;
+pub mod search;
 pub mod server;
+pub mod spec;
 
 use std::sync::Arc;
 
@@ -42,10 +48,11 @@ use heartwood_kernel::errors::BootError;
 use heartwood_kernel::lifecycle::Component;
 
 pub use crate::context::{
-    ApiContext, ApiReply, ApiRequest, NodeInfo, NodeStatus, PeerList, Route, RouteId,
-    SubmitTransactions,
+    ApiContext, ApiReply, ApiRequest, ChainTotals, DelegateProduction, Hundredths, NodeInfo,
+    NodeStatus, PeerList, Productivity, ProductivityTable, Route, RouteId, SubmitTransactions,
 };
 pub use crate::errors::{ApiError, ServeError};
+pub use crate::productivity::StoreProductivity;
 pub use crate::server::{ApiConfig, ServerHandle};
 
 /// The API component: the server of [`ApiContext`], on a runtime of its own.

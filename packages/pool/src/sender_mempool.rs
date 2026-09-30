@@ -204,6 +204,7 @@ mod tests {
 
     use super::*;
     use crate::online::DelegateVersions;
+    use crate::service::Reindexed;
 
     #[test]
     fn a_failed_revert_empties_the_sender_mempool() {
@@ -239,6 +240,7 @@ mod tests {
             milestones: &milestones,
             network: &network,
             online: &online,
+            reindexed: &Reindexed::default(),
         };
         let options = Options::defaults(&|_| None, std::path::Path::new("unused"), 1);
         let tx = |nonce| {

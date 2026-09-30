@@ -57,10 +57,20 @@
 //!
 //! With the store: `rollback`, `snapshot rollback` of a chain's store (`chain.rollback`).
 //!
+//! With the API's listings: `state_index` (the state's index orders, `state.indexOrders`),
+//! `api_state` (the delegate and wallet listings), `api_page` (the pagination service and its
+//! tree), `api_js` (the wallet search and its collation), `api_spec` (the OpenAPI document, the
+//! transaction schemas, the fee statistics and the query fuzz target's inputs) and `sql_records`
+//! (the store's arithmetic against the reference's PostgreSQL).
+//!
 //! Most operations run under the devnet configuration the oracle was set up with, which the
 //! [`Devnet`] context carries; a case that brings its own milestone file runs under that file.
 
 mod api;
+mod api_js;
+mod api_page;
+mod api_spec;
+mod api_state;
 mod blocks;
 mod config;
 mod config_app;
@@ -85,7 +95,11 @@ pub use relay_round::masked as round_wallets_masked;
 mod served;
 mod server;
 mod signatures;
+mod sql_records;
 mod state;
+mod state_index;
+
+pub use state_index::masked as index_orders_masked;
 mod status_serve;
 mod text;
 mod transactions;
@@ -324,7 +338,8 @@ const OPS: &[(&str, Run)] = &[
 ];
 
 /// Every operation: [`OPS`], then the tables of the wire, `config`, `text`, `pool`, the peer
-/// network, the processor and the job, the API and the node's configuration.
+/// network, the processor and the job, the API and the node's configuration, the forger, the
+/// server, the store's rollback and the API's listings.
 fn all_ops() -> impl Iterator<Item = &'static (&'static str, Run)> {
     OPS.iter()
         .chain(wire::OPS)
@@ -347,6 +362,12 @@ fn all_ops() -> impl Iterator<Item = &'static (&'static str, Run)> {
         .chain(status_serve::OPS)
         .chain(served::OPS)
         .chain(rollback::OPS)
+        .chain(state_index::OPS)
+        .chain(api_state::OPS)
+        .chain(api_page::OPS)
+        .chain(api_js::OPS)
+        .chain(api_spec::OPS)
+        .chain(sql_records::OPS)
 }
 
 /// Register every operation of [`all_ops`] in `registry`.
@@ -536,7 +557,8 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
         | Documented::EscapedLogText
         | Documented::Api(_)
         | Documented::OverHeightOwnBlock
-        | Documented::RoundWallets => false,
+        | Documented::RoundWallets
+        | Documented::ReplayIndexOrder => false,
     }
 }
 

@@ -21,19 +21,25 @@
 //!   reference's expansion of the query's strings ([`asset_alternatives`]), decided without
 //!   building them ([`contains_alternative`]).
 //!
+//! The block and missed-block criteria of the block routes are [`block`] and [`missed_block`].
+//!
 //! [`js_number`] is JavaScript's `Number` of a string, which the expansion and the API's block
 //! lookup both follow; [`jsonb_order_key`] sorts assets as PostgreSQL's `jsonb` does.
 
 mod asset;
+pub mod block;
 mod js;
 mod jsonb;
 mod like;
+pub mod missed_block;
 pub(crate) mod sql;
 
 pub use self::asset::{CastLimit, Casts, asset_alternatives, check_casts};
+pub use self::block::{BlockCriteria, BlockFilter};
 pub use self::js::js_number;
 pub use self::jsonb::{contains, contains_alternative, jsonb_order_key};
 pub use self::like::{PatternError, like_bytes};
+pub use self::missed_block::{MissedBlockCriteria, MissedBlockFilter};
 
 use serde_json::Value;
 

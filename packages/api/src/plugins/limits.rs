@@ -5,7 +5,8 @@
 //! a point charged at or after its end starts a new one; points beyond the limit still count.
 //!
 //! The semaphore bounds the requests that the store's routes serve at once (the reference's
-//! `database` settings; the `memory` ones concern routes a relay does not serve), at two levels: a
+//! `database` settings; its `memory` ones, of `/wallets` and `/wallets/top`, are not applied, since
+//! those listings read the state and no store), at two levels: a
 //! request that asks for more work than the first level allows (a large offset or page, an order
 //! or a criterion the route's indexes do not serve) takes the second. A request finds a free place
 //! or waits in its level's queue; with the queue full it is refused with 429.
@@ -112,10 +113,17 @@ impl RateLimiter {
 /// semaphore reads the store.
 fn route_options(route: RouteId) -> Option<bool> {
     match route {
-        RouteId::BlocksShow | RouteId::BlocksTransactions | RouteId::TransactionsShow => {
-            Some(false)
-        }
-        RouteId::TransactionsIndex | RouteId::WalletsTransactions => Some(true),
+        RouteId::BlocksShow
+        | RouteId::BlocksTransactions
+        | RouteId::TransactionsShow
+        | RouteId::RoundsDelegates
+        | RouteId::VotesShow => Some(false),
+        RouteId::TransactionsIndex
+        | RouteId::WalletsTransactions
+        | RouteId::WalletsTransactionsSent
+        | RouteId::WalletsTransactionsReceived
+        | RouteId::WalletsVotes
+        | RouteId::VotesIndex => Some(true),
         _ => None,
     }
 }
@@ -254,4 +262,25 @@ fn over(query: &Value, max_offset: u64) -> bool {
         value => value.and_then(Value::as_u64).unwrap_or(0),
     };
     number("offset") > max_offset || number("page").saturating_mul(number("limit")) > max_offset
+}
+
+#[cfg(test)]
+mod tests {
+    use super::route_options;
+    use crate::context::RouteId;
+
+    #[test]
+    fn the_history_routes_take_the_levels_the_reference_gives_them() {
+        for route in [
+            RouteId::VotesIndex,
+            RouteId::WalletsTransactionsSent,
+            RouteId::WalletsTransactionsReceived,
+            RouteId::WalletsVotes,
+        ] {
+            assert_eq!(route_options(route), Some(true), "{route:?}");
+        }
+        for route in [RouteId::RoundsDelegates, RouteId::VotesShow] {
+            assert_eq!(route_options(route), Some(false), "{route:?}");
+        }
+    }
 }

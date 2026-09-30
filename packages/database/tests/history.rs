@@ -616,6 +616,12 @@ fn orders_break_ties_by_the_unique_key_and_put_null_where_postgresql_does() {
         .transactions(&all, &[order("address", Direction::Asc)], ALL)
         .unwrap();
     assert_eq!((listing.rows.len(), listing.total_count), (0, 0));
+    // A property ordered twice keeps its first place and its last direction, as the reference's
+    // query builder keeps one direction per column.
+    let (up, down) = (Direction::Asc, Direction::Desc);
+    let twice = by(&[("fee", up), ("sequence", up), ("fee", down)]);
+    assert_eq!(twice, by(&[("fee", down), ("sequence", up)]));
+    assert_ne!(twice, by(&[("fee", up), ("sequence", up)]));
 }
 
 #[test]
@@ -744,6 +750,24 @@ fn a_store_of_schema_version_1_gets_the_recipients_of_its_transfers() {
         )
         .unwrap();
     assert_eq!(meta, SCHEMA_VERSION.to_string());
+    // The listings' indices of version 3 are there too.
+    let indices: Vec<String> = connection
+        .prepare("SELECT name FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    for index in [
+        "blocks_username_height",
+        "missed_blocks_username_timestamp",
+        "transactions_type_group_type_block_height_sequence",
+    ] {
+        assert!(
+            indices.iter().any(|name| name == index),
+            "{index}: {indices:?}"
+        );
+    }
     drop(database);
     // The upgraded store answers the address criteria.
     let readers = Readers::open(&settings, 1).unwrap();

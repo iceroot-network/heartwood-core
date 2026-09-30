@@ -376,7 +376,7 @@ pub fn paginate_case(case: &Case<'_>) -> std::result::Result<Verdict, SubjectErr
 }
 
 /// The path parameters of `path` under the route pattern `pattern`.
-fn params(pattern: &str, path: &str) -> Map<String, Value> {
+pub(crate) fn params(pattern: &str, path: &str) -> Map<String, Value> {
     let path = path.strip_prefix("/api").unwrap_or(path);
     pattern
         .split('/')

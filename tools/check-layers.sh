@@ -2,7 +2,8 @@
 # check-layers.sh: the dependency edges between the workspace's crates follow the layer map, no
 # async runtime, storage or HTTP crate is in the dependency tree of the consensus crates, only the
 # store and the pool use SQLite directly, and the forger's tree holds no node crate and builds the
-# peer-to-peer crate without its `node` feature.
+# peer-to-peer crate without its `node` feature; heartwood-api's in-memory listings (its `search`
+# module) read no store connection.
 #
 #   tools/check-layers.sh
 #
@@ -129,6 +130,18 @@ if cargo tree --locked --offline -p heartwood-forger -e features,normal -i heart
     fail=1
 fi
 echo "check-layers: heartwood-forger links no node crate and heartwood-p2p without node"
+
+# heartwood-api's `search` module serves the listings over the state: it reads the published
+# state and the productivity seam only, never the store's connections, so it never waits on them.
+SEARCH=packages/api/src/search
+if [ -d "$SEARCH" ]; then
+    if grep -rnwE 'heartwood_database|Readers|Reader|history' "$SEARCH"; then
+        echo "check-layers: heartwood-api's search module reads the store (above)" >&2
+        fail=1
+    else
+        echo "check-layers: heartwood-api's search module reads no store connection"
+    fi
+fi
 
 [ "$fail" = 0 ] && echo "check-layers: every edge follows the layers; no $FORBIDDEN in $CONSENSUS"
 exit "$fail"

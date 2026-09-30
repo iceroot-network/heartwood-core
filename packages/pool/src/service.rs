@@ -5,6 +5,7 @@
 //! for each of the block's transactions, then `clean_up`, then `readd(&[], true)`, when its block
 //! queue drains; after a revert, `readd` with the reverted blocks' transactions.
 
+use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ use heartwood_crypto::transactions::types::Asset;
 use heartwood_crypto::utils::format_satoshi;
 use heartwood_crypto::{Milestones, Network, Params, Transaction, TransactionId};
 use heartwood_state::ApplyContext;
-use heartwood_state::wallets::{Wallet, WalletRepository};
+use heartwood_state::wallets::{Wallet, WalletRepository, parties};
 
 use crate::dynamic_fee_matcher::check_enter_pool;
 use crate::errors::{AddError, PoolCode, Refusal, StorageError};
@@ -26,7 +27,7 @@ use crate::storage::{Storage, StoredTransaction, TABLE};
 use crate::verifier::Checked;
 
 /// What every operation of the pool reads besides the pool: the state's wallets and tip, the
-/// rules, and the online record.
+/// rules, and the online record; and where it leaves the parties its handler runs re-index.
 #[derive(Debug, Clone, Copy)]
 pub struct PoolContext<'a> {
     /// The wallets of the state at the tip. A sender mempool's view starts as a copy of them.
@@ -39,6 +40,27 @@ pub struct PoolContext<'a> {
     pub network: &'a Network,
     /// Which delegates operate a node.
     pub online: &'a DelegateVersions,
+    /// Where the handler runs on the sender views and the collation's copy leave their parties.
+    pub reindexed: &'a Reindexed,
+}
+
+/// The sender and the recipients of each transaction the handlers applied or reverted on a
+/// sender's view or on a collation's copy, whether they refused it or not, in order: the
+/// reference's handlers re-index them in the state's wallets too, so the node re-indexes them in
+/// its state after each operation of the pool (`State::reindex_parties`).
+#[derive(Debug, Default)]
+pub struct Reindexed(RefCell<Vec<Address>>);
+
+impl Reindexed {
+    /// Leave the parties of `transaction`, on the network with address byte `network`.
+    pub fn record(&self, transaction: &Transaction, network: u8) {
+        self.0.borrow_mut().extend(parties(transaction, network));
+    }
+
+    /// The parties left so far, in order, leaving none.
+    pub fn take(&self) -> Vec<Address> {
+        self.0.take()
+    }
 }
 
 impl<'a> PoolContext<'a> {
@@ -355,7 +377,8 @@ impl Pool {
 
     /// Run the per-sender and sender-state steps for `transaction` on a copy of its sender
     /// mempool, against the pool as evicting the transaction `id` of `sender` (with that sender's
-    /// later ones) would leave it; the pool is not changed.
+    /// later ones) would leave it; the pool is not changed, and the check leaves no party to
+    /// re-index.
     fn check_before_eviction(
         &self,
         ctx: &PoolContext<'_>,
@@ -363,6 +386,11 @@ impl Pool {
         sender: &Address,
         id: &TransactionId,
     ) -> Result<(), Refusal> {
+        let scratch = Reindexed::default();
+        let ctx = &PoolContext {
+            reindexed: &scratch,
+            ..*ctx
+        };
         let address = transaction.data().sender_address(ctx.params());
         let ids =
             |removed: Vec<Arc<Transaction>>| removed.iter().map(|pending| *pending.id()).collect();

@@ -19,7 +19,13 @@
 //! - [`quorum`]: the network state a relay gives its forger.
 //! - [`served`]: requests of the public routes over a chain, a pool and a peer repository, for the
 //!   served answers.
+//! - [`api_state`] and [`api_page`]: the listings over the state and their pagination (P21);
+//!   [`api_js`]: the wallet search (P22); [`api_query`]: the API's query grammar (P23).
 
+pub mod api_js;
+pub mod api_page;
+pub mod api_query;
+pub mod api_state;
 pub mod config;
 pub mod exchange;
 pub mod forger_decide;
@@ -284,6 +290,7 @@ fn assemble(
                     .then(|| second_keys(i).public_key().to_compressed()),
                 delegate,
                 votes: if keyed { votes } else { Votes::new() },
+                second_key_first: false,
             }
         })
         .collect();

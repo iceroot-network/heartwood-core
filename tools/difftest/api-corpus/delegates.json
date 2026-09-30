@@ -1,0 +1,643 @@
+[
+ {
+  "name": "delegates/list",
+  "path": "/api/delegates"
+ },
+ {
+  "name": "delegates/list/username",
+  "path": "/api/delegates",
+  "query": "username=${delegateName}"
+ },
+ {
+  "name": "delegates/list/username-list",
+  "path": "/api/delegates",
+  "query": "username=${delegateName},${gName}"
+ },
+ {
+  "name": "delegates/list/username-repeated",
+  "path": "/api/delegates",
+  "query": "username=${delegateName}&username=${gName}"
+ },
+ {
+  "name": "delegates/list/username-unknown",
+  "path": "/api/delegates",
+  "query": "username=nosuchdelegate1"
+ },
+ {
+  "name": "delegates/list/username-percent",
+  "path": "/api/delegates",
+  "query": "username=%25"
+ },
+ {
+  "name": "delegates/list/username-percent-affix",
+  "path": "/api/delegates",
+  "query": "username=genesis%25"
+ },
+ {
+  "name": "delegates/list/username-upper",
+  "path": "/api/delegates",
+  "query": "username=GENESIS_1"
+ },
+ {
+  "name": "delegates/list/username-empty",
+  "path": "/api/delegates",
+  "query": "username="
+ },
+ {
+  "name": "delegates/list/username-too-long",
+  "path": "/api/delegates",
+  "query": "username=aaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "delegates/list/address",
+  "path": "/api/delegates",
+  "query": "address=${delegateAddress}"
+ },
+ {
+  "name": "delegates/list/address-list",
+  "path": "/api/delegates",
+  "query": "address=${delegateAddress},${voter}"
+ },
+ {
+  "name": "delegates/list/address-pattern",
+  "path": "/api/delegates",
+  "query": "address=${delegateAddress|head:4}%25"
+ },
+ {
+  "name": "delegates/list/address-invalid",
+  "path": "/api/delegates",
+  "query": "address=zz"
+ },
+ {
+  "name": "delegates/list/public-key",
+  "path": "/api/delegates",
+  "query": "publicKey=${delegateKey}"
+ },
+ {
+  "name": "delegates/list/public-key-pattern",
+  "path": "/api/delegates",
+  "query": "publicKey=${delegateKey|head:6}%25"
+ },
+ {
+  "name": "delegates/list/public-key-invalid",
+  "path": "/api/delegates",
+  "query": "publicKey=zz"
+ },
+ {
+  "name": "delegates/list/percent-exact",
+  "path": "/api/delegates",
+  "query": "votesReceived.percent=0"
+ },
+ {
+  "name": "delegates/list/percent-from",
+  "path": "/api/delegates",
+  "query": "votesReceived.percent.from=0.01"
+ },
+ {
+  "name": "delegates/list/percent-to",
+  "path": "/api/delegates",
+  "query": "votesReceived.percent.to=1.5"
+ },
+ {
+  "name": "delegates/list/percent-range",
+  "path": "/api/delegates",
+  "query": "votesReceived.percent.from=0.5&votesReceived.percent.to=3"
+ },
+ {
+  "name": "delegates/list/percent-list",
+  "path": "/api/delegates",
+  "query": "votesReceived.percent=0,1.25"
+ },
+ {
+  "name": "delegates/list/percent-over",
+  "path": "/api/delegates",
+  "query": "votesReceived.percent=101"
+ },
+ {
+  "name": "delegates/list/percent-negative",
+  "path": "/api/delegates",
+  "query": "votesReceived.percent=-1"
+ },
+ {
+  "name": "delegates/list/votes-exact",
+  "path": "/api/delegates",
+  "query": "votesReceived.votes=0"
+ },
+ {
+  "name": "delegates/list/votes-from",
+  "path": "/api/delegates",
+  "query": "votesReceived.votes.from=1"
+ },
+ {
+  "name": "delegates/list/votes-range",
+  "path": "/api/delegates",
+  "query": "votesReceived.votes.from=1&votesReceived.votes.to=100000000000000"
+ },
+ {
+  "name": "delegates/list/votes-negative",
+  "path": "/api/delegates",
+  "query": "votesReceived.votes=-1"
+ },
+ {
+  "name": "delegates/list/voters-exact",
+  "path": "/api/delegates",
+  "query": "votesReceived.voters=1"
+ },
+ {
+  "name": "delegates/list/voters-range",
+  "path": "/api/delegates",
+  "query": "votesReceived.voters.from=0&votesReceived.voters.to=2"
+ },
+ {
+  "name": "delegates/list/voters-invalid",
+  "path": "/api/delegates",
+  "query": "votesReceived.voters=x"
+ },
+ {
+  "name": "delegates/list/rank-exact",
+  "path": "/api/delegates",
+  "query": "rank=1"
+ },
+ {
+  "name": "delegates/list/rank-list",
+  "path": "/api/delegates",
+  "query": "rank=1,2,3"
+ },
+ {
+  "name": "delegates/list/rank-range",
+  "path": "/api/delegates",
+  "query": "rank.from=2&rank.to=10"
+ },
+ {
+  "name": "delegates/list/rank-zero",
+  "path": "/api/delegates",
+  "query": "rank=0"
+ },
+ {
+  "name": "delegates/list/rank-fraction",
+  "path": "/api/delegates",
+  "query": "rank=1.5"
+ },
+ {
+  "name": "delegates/list/is-resigned-true",
+  "path": "/api/delegates",
+  "query": "isResigned=true"
+ },
+ {
+  "name": "delegates/list/is-resigned-false",
+  "path": "/api/delegates",
+  "query": "isResigned=false"
+ },
+ {
+  "name": "delegates/list/is-resigned-both",
+  "path": "/api/delegates",
+  "query": "isResigned=true,false"
+ },
+ {
+  "name": "delegates/list/is-resigned-invalid",
+  "path": "/api/delegates",
+  "query": "isResigned=maybe"
+ },
+ {
+  "name": "delegates/list/resignation-permanent",
+  "path": "/api/delegates",
+  "query": "resignationType=permanent"
+ },
+ {
+  "name": "delegates/list/resignation-temporary",
+  "path": "/api/delegates",
+  "query": "resignationType=temporary"
+ },
+ {
+  "name": "delegates/list/resignation-invalid",
+  "path": "/api/delegates",
+  "query": "resignationType=other"
+ },
+ {
+  "name": "delegates/list/produced-exact",
+  "path": "/api/delegates",
+  "query": "blocks.produced=0"
+ },
+ {
+  "name": "delegates/list/produced-range",
+  "path": "/api/delegates",
+  "query": "blocks.produced.from=1&blocks.produced.to=1000"
+ },
+ {
+  "name": "delegates/list/missed-from",
+  "path": "/api/delegates",
+  "query": "blocks.missed.from=0"
+ },
+ {
+  "name": "delegates/list/missed-exact",
+  "path": "/api/delegates",
+  "query": "blocks.missed=0"
+ },
+ {
+  "name": "delegates/list/productivity-from",
+  "path": "/api/delegates",
+  "query": "blocks.productivity.from=50"
+ },
+ {
+  "name": "delegates/list/productivity-exact",
+  "path": "/api/delegates",
+  "query": "blocks.productivity=100"
+ },
+ {
+  "name": "delegates/list/last-id",
+  "path": "/api/delegates",
+  "query": "blocks.last.id=${tipId}"
+ },
+ {
+  "name": "delegates/list/last-height",
+  "path": "/api/delegates",
+  "query": "blocks.last.height.from=1"
+ },
+ {
+  "name": "delegates/list/last-timestamp",
+  "path": "/api/delegates",
+  "query": "blocks.last.timestamp.unix=1"
+ },
+ {
+  "name": "delegates/list/fees-from",
+  "path": "/api/delegates",
+  "query": "forged.fees.from=0"
+ },
+ {
+  "name": "delegates/list/fees-exact",
+  "path": "/api/delegates",
+  "query": "forged.fees=0"
+ },
+ {
+  "name": "delegates/list/burned-from",
+  "path": "/api/delegates",
+  "query": "forged.burnedFees.from=1"
+ },
+ {
+  "name": "delegates/list/rewards-range",
+  "path": "/api/delegates",
+  "query": "forged.rewards.from=1&forged.rewards.to=100000000000000000"
+ },
+ {
+  "name": "delegates/list/donations-from",
+  "path": "/api/delegates",
+  "query": "forged.donations.from=0"
+ },
+ {
+  "name": "delegates/list/total-from",
+  "path": "/api/delegates",
+  "query": "forged.total.from=1"
+ },
+ {
+  "name": "delegates/list/total-negative",
+  "path": "/api/delegates",
+  "query": "forged.total=-1"
+ },
+ {
+  "name": "delegates/list/version-exact",
+  "path": "/api/delegates",
+  "query": "version=4.3.1"
+ },
+ {
+  "name": "delegates/list/version-list",
+  "path": "/api/delegates",
+  "query": "version=4.3.0,4.3.1"
+ },
+ {
+  "name": "delegates/list/version-range",
+  "path": "/api/delegates",
+  "query": "version.from=4.0.0&version.to=5.0.0"
+ },
+ {
+  "name": "delegates/list/version-from",
+  "path": "/api/delegates",
+  "query": "version.from=4.3.1"
+ },
+ {
+  "name": "delegates/list/version-invalid",
+  "path": "/api/delegates",
+  "query": "version=>=4.3.0"
+ },
+ {
+  "name": "delegates/list/several",
+  "path": "/api/delegates",
+  "query": "isResigned=false&blocks.produced.from=1&rank.from=1"
+ },
+ {
+  "name": "delegates/list/unknown-key",
+  "path": "/api/delegates",
+  "query": "nosuchkey=1"
+ },
+ {
+  "name": "delegates/list/attributes-key",
+  "path": "/api/delegates",
+  "query": "attributes.a=1"
+ },
+ {
+  "name": "delegates/list/order-username-desc",
+  "path": "/api/delegates",
+  "query": "orderBy=username:desc"
+ },
+ {
+  "name": "delegates/list/order-rank",
+  "path": "/api/delegates",
+  "query": "orderBy=rank:desc"
+ },
+ {
+  "name": "delegates/list/order-produced",
+  "path": "/api/delegates",
+  "query": "orderBy=blocks.produced:desc"
+ },
+ {
+  "name": "delegates/list/order-two",
+  "path": "/api/delegates",
+  "query": "orderBy=blocks.produced:desc,forged.fees:asc"
+ },
+ {
+  "name": "delegates/list/order-votes",
+  "path": "/api/delegates",
+  "query": "orderBy=votesReceived.votes:desc"
+ },
+ {
+  "name": "delegates/list/order-percent",
+  "path": "/api/delegates",
+  "query": "orderBy=votesReceived.percent:asc"
+ },
+ {
+  "name": "delegates/list/order-voters",
+  "path": "/api/delegates",
+  "query": "orderBy=votesReceived.voters:desc"
+ },
+ {
+  "name": "delegates/list/order-forged-total",
+  "path": "/api/delegates",
+  "query": "orderBy=forged.total:desc"
+ },
+ {
+  "name": "delegates/list/order-version",
+  "path": "/api/delegates",
+  "query": "orderBy=version:desc"
+ },
+ {
+  "name": "delegates/list/order-last-height",
+  "path": "/api/delegates",
+  "query": "orderBy=blocks.last.height:desc"
+ },
+ {
+  "name": "delegates/list/order-productivity",
+  "path": "/api/delegates",
+  "query": "orderBy=blocks.productivity:asc"
+ },
+ {
+  "name": "delegates/list/order-missed",
+  "path": "/api/delegates",
+  "query": "orderBy=blocks.missed:desc"
+ },
+ {
+  "name": "delegates/list/order-resigned",
+  "path": "/api/delegates",
+  "query": "orderBy=isResigned:desc,username:desc"
+ },
+ {
+  "name": "delegates/list/order-public-key",
+  "path": "/api/delegates",
+  "query": "orderBy=publicKey:desc"
+ },
+ {
+  "name": "delegates/list/order-address",
+  "path": "/api/delegates",
+  "query": "orderBy=address"
+ },
+ {
+  "name": "delegates/list/order-unknown",
+  "path": "/api/delegates",
+  "query": "orderBy=nosuch"
+ },
+ {
+  "name": "delegates/list/order-object",
+  "path": "/api/delegates",
+  "query": "orderBy=blocks.last"
+ },
+ {
+  "name": "delegates/list/order-direction",
+  "path": "/api/delegates",
+  "query": "orderBy=username:up"
+ },
+ {
+  "name": "delegates/list/order-empty",
+  "path": "/api/delegates",
+  "query": "orderBy="
+ },
+ {
+  "name": "delegates/list/page-limit",
+  "path": "/api/delegates",
+  "query": "limit=5"
+ },
+ {
+  "name": "delegates/list/page-second",
+  "path": "/api/delegates",
+  "query": "limit=5&page=2"
+ },
+ {
+  "name": "delegates/list/page-third-desc",
+  "path": "/api/delegates",
+  "query": "limit=10&page=3&orderBy=username:desc"
+ },
+ {
+  "name": "delegates/list/page-offset",
+  "path": "/api/delegates",
+  "query": "offset=4&limit=3"
+ },
+ {
+  "name": "delegates/list/page-beyond",
+  "path": "/api/delegates",
+  "query": "page=999"
+ },
+ {
+  "name": "delegates/list/page-zero-limit",
+  "path": "/api/delegates",
+  "query": "limit=0"
+ },
+ {
+  "name": "delegates/list/page-over-limit",
+  "path": "/api/delegates",
+  "query": "limit=101"
+ },
+ {
+  "name": "delegates/list/page-zero",
+  "path": "/api/delegates",
+  "query": "page=0"
+ },
+ {
+  "name": "delegates/list/page-max",
+  "path": "/api/delegates",
+  "query": "limit=100"
+ },
+ {
+  "name": "delegates/list/page-with-criteria",
+  "path": "/api/delegates",
+  "query": "isResigned=false&limit=7&page=2&orderBy=rank:asc"
+ },
+ {
+  "name": "delegates/show/by-name",
+  "path": "/api/delegates/${delegateName}"
+ },
+ {
+  "name": "delegates/show/by-address",
+  "path": "/api/delegates/${delegateAddress}"
+ },
+ {
+  "name": "delegates/show/by-key",
+  "path": "/api/delegates/${delegateKey}"
+ },
+ {
+  "name": "delegates/show/genesis",
+  "path": "/api/delegates/${gName}"
+ },
+ {
+  "name": "delegates/show/genesis-1",
+  "path": "/api/delegates/genesis_1"
+ },
+ {
+  "name": "delegates/show/unknown-name",
+  "path": "/api/delegates/nosuchdelegate1"
+ },
+ {
+  "name": "delegates/show/non-delegate-address",
+  "path": "/api/delegates/${voter}"
+ },
+ {
+  "name": "delegates/show/non-delegate-key",
+  "path": "/api/delegates/${gKey}x"
+ },
+ {
+  "name": "delegates/show/upper",
+  "path": "/api/delegates/UPPER"
+ },
+ {
+  "name": "delegates/show/too-long",
+  "path": "/api/delegates/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "delegates/show/dots",
+  "path": "/api/delegates/a.b"
+ },
+ {
+  "name": "delegates/show/percent",
+  "path": "/api/delegates/%25"
+ },
+ {
+  "name": "delegates/show/ignored-query",
+  "path": "/api/delegates/${delegateName}",
+  "query": "foo=bar"
+ },
+ {
+  "name": "delegates/show/ignored-order",
+  "path": "/api/delegates/${delegateName}",
+  "query": "orderBy=nosuch"
+ },
+ {
+  "name": "delegates/voters/by-name",
+  "path": "/api/delegates/${delegateName}/voters"
+ },
+ {
+  "name": "delegates/voters/by-address",
+  "path": "/api/delegates/${delegateAddress}/voters"
+ },
+ {
+  "name": "delegates/voters/by-key",
+  "path": "/api/delegates/${delegateKey}/voters"
+ },
+ {
+  "name": "delegates/voters/genesis",
+  "path": "/api/delegates/${gName}/voters"
+ },
+ {
+  "name": "delegates/voters/unknown",
+  "path": "/api/delegates/nosuchdelegate1/voters"
+ },
+ {
+  "name": "delegates/voters/not-a-delegate",
+  "path": "/api/delegates/${voter}/voters"
+ },
+ {
+  "name": "delegates/voters/order-balance",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "orderBy=balance:asc"
+ },
+ {
+  "name": "delegates/voters/order-nonce",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "orderBy=nonce:desc"
+ },
+ {
+  "name": "delegates/voters/order-address",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "orderBy=address:desc"
+ },
+ {
+  "name": "delegates/voters/order-key",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "orderBy=publicKey:desc,address:asc"
+ },
+ {
+  "name": "delegates/voters/balance-from",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "balance.from=1"
+ },
+ {
+  "name": "delegates/voters/balance-range",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "balance.from=1&balance.to=100000000000000"
+ },
+ {
+  "name": "delegates/voters/address",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "address=${voter}"
+ },
+ {
+  "name": "delegates/voters/address-pattern",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "address=${voter|head:3}%25"
+ },
+ {
+  "name": "delegates/voters/key-pattern",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "publicKey=02%25"
+ },
+ {
+  "name": "delegates/voters/nonce",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "nonce.from=1"
+ },
+ {
+  "name": "delegates/voters/attributes",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "attributes.delegate.username=${delegateName}"
+ },
+ {
+  "name": "delegates/voters/second-key",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "attributes.secondPublicKey.from=1&attributes.secondPublicKey.to=2"
+ },
+ {
+  "name": "delegates/voters/voting-for",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "votingFor=x"
+ },
+ {
+  "name": "delegates/voters/page",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "limit=1&page=2"
+ },
+ {
+  "name": "delegates/voters/page-beyond",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "page=999"
+ },
+ {
+  "name": "delegates/voters/limit-zero",
+  "path": "/api/delegates/${delegateName}/voters",
+  "query": "limit=0"
+ }
+]

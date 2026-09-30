@@ -13,4 +13,4 @@ pub mod wallet_repository;
 
 pub use self::indexes::Indexes;
 pub use self::wallet::{Delegate, Resignation, Wallet};
-pub use self::wallet_repository::WalletRepository;
+pub use self::wallet_repository::{WalletRepository, parties};

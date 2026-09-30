@@ -113,6 +113,12 @@ pub enum Documented {
     /// The wallets of a relay's getCurrentRound answer: their fields, and the order of
     /// `allDelegates`.
     RoundWallets,
+    /// The address, public-key and username index orders after a restart: the reference's
+    /// StateBuilder rebuilds them in its handlers' order and its saved-state start in the saved
+    /// address order, and both re-index the wallets of the current round's transactions;
+    /// Heartwood's replay sets them in the order the chain set them, its table path in the order
+    /// of the stored rows.
+    ReplayIndexOrder,
 }
 
 /// A served route's documented difference from the reference.
@@ -136,6 +142,49 @@ pub enum ApiDifference {
     /// Pagination links under another base path than `/api`: the reference strips a hard-coded
     /// `/api`; Heartwood strips the configured base path.
     BasePathLinks,
+    /// A round's delegates (`GET /rounds/{id}/delegates`): the reference's query has no order;
+    /// Heartwood lists them in their stored order (balance descending, then public key).
+    RoundOrder,
+    /// A listing's `totalCount` where the reference reports an estimate: the reference counts
+    /// with its planner's estimate; Heartwood counts exactly and keeps `totalCountIsEstimate`.
+    EstimatedCount,
+    /// `GET /node/fees` without `days`: the reference lists every registered type, the removed
+    /// ones with zeros; Heartwood lists the kept types.
+    FeeTypes,
+    /// `GET /api.json`: the reference's document lists every registered route and type, the
+    /// removed ones included; Heartwood's lists the kept ones.
+    SpecKeptOnly,
+    /// The order of a wallet's attributes: the reference keeps the order they were set in, a
+    /// start from its store setting the second key before the delegate record; Heartwood keeps
+    /// the delegate first.
+    AttributeOrder,
+    /// The query grammar's bounds: a query value nested more than 128 levels below the query, or
+    /// with more than 16,384 holes, which a schema key that takes any object accepts (`asset` on
+    /// the transaction lists and histories, `attributes` on the wallet listings): the reference
+    /// answers it, Heartwood answers 500.
+    QueryBounds,
+}
+
+impl ApiDifference {
+    /// The documented differences a route-corpus case may name, by the name it gives.
+    pub const NAMED: [(&'static str, ApiDifference); 8] = [
+        ("heightAboveTip", ApiDifference::HeightAboveTip),
+        ("storeFailure", ApiDifference::StoreFailure),
+        ("peersIpFilter", ApiDifference::PeersIpFilter),
+        ("tieOrder", ApiDifference::TieOrder),
+        ("roundOrder", ApiDifference::RoundOrder),
+        ("estimatedCount", ApiDifference::EstimatedCount),
+        ("feeTypes", ApiDifference::FeeTypes),
+        ("specKeptOnly", ApiDifference::SpecKeptOnly),
+    ];
+
+    /// The difference a route-corpus case names `name`.
+    pub fn named(name: &str) -> Option<ApiDifference> {
+        let mut named = ApiDifference::NAMED.iter();
+        named
+            .find(|(n, _)| *n == name)
+            .map(|&(_, difference)| difference)
+    }
 }
 
 impl Documented {
@@ -261,6 +310,14 @@ impl Documented {
                  verifies the header's signature and does not forge (the same key forging on two \
                  nodes only)"
             }
+            Documented::ReplayIndexOrder => {
+                "the index orders after a restart: the reference's StateBuilder rebuilds its \
+                 address, public-key and username indexes in its handlers' order and its \
+                 saved-state start in the saved address order, and both then re-index the \
+                 wallets of the current round's transactions; Heartwood's replay sets them in the \
+                 chain's order and its table path in the order of the stored rows; only a tie of \
+                 a listing sorted by index order shows it, on a restarted node"
+            }
             Documented::RoundWallets => {
                 "the wallets of the relay's round answer: the reference writes its wallet data \
                  (the attribute map with its known attributes, and for the round's delegates the \
@@ -301,13 +358,50 @@ impl ApiDifference {
                 "pagination links under another base path: the reference strips a hard-coded \
                  /api, Heartwood strips the configured base path"
             }
+            ApiDifference::RoundOrder => {
+                "a round's delegates: the reference's query has no order and usually returns the \
+                 stored one, Heartwood always lists them by balance descending, then public key"
+            }
+            ApiDifference::EstimatedCount => {
+                "a listing's count where the reference reports an estimate: the reference counts \
+                 with its planner's estimate, Heartwood counts exactly and keeps the estimate flag"
+            }
+            ApiDifference::FeeTypes => {
+                "the fee statistics without days: the reference lists every registered type, the \
+                 removed ones with zeros, Heartwood lists the kept types with the same values"
+            }
+            ApiDifference::SpecKeptOnly => {
+                "the OpenAPI document: the reference lists every registered route and transaction \
+                 type, the removed ones included, Heartwood lists the kept ones"
+            }
+            ApiDifference::QueryBounds => {
+                "a query value nested more than 128 levels below the query or with more than \
+                 16,384 holes, under a key that takes any object (asset on the transaction lists \
+                 and histories, attributes on the wallet listings): the reference answers it up \
+                 to its stack's and its strings' limits, Heartwood answers 500 (untrusted input \
+                 may not cause unbounded work)"
+            }
+            ApiDifference::AttributeOrder => {
+                "the order of a wallet's attributes: the reference keeps the order they were set \
+                 in (a start from its store sets the second key first), Heartwood writes the \
+                 delegate first; a listed wallet's attribute keys show it, and an attributes \
+                 wildcard criterion given an object (attributes.*.username=...) on a delegate \
+                 with a second key, which the reference's search tests on the second key first \
+                 and answers 500 where Heartwood's matches the delegate"
+            }
         }
     }
 }
 
 /// The key of an oracle output that holds the oracle's notes: what it observed of the reference
-/// that the output's value cannot show, for [`Documented::shown_by`]. L0 does not compare it.
+/// that the output's value cannot show, for [`Documented::shown_by`]; and of a subject's output
+/// that holds what Heartwood observed for a documented difference's mask. L0 does not compare it.
 pub const NOTES: &str = "notes";
+
+/// The note of a listing's oracle answer that holds the reference's answer with every wallet's
+/// delegate attribute before its second key, as Heartwood keeps them
+/// ([`ApiDifference::AttributeOrder`]).
+pub const DELEGATE_FIRST: &str = "delegateFirst";
 
 /// The start of the message of the `RangeError` that Node raises when its stack overflows.
 const STACK_OVERFLOW: &str = "Maximum call stack size exceeded";
@@ -347,12 +441,16 @@ impl Documented {
 
     /// The oracle's answer `expected` without the part this difference changes, when Heartwood's
     /// verdict `ours` and the answer both have that part; the case is then the documented
-    /// difference if `ours` equals what is left. Three differences have one: the missed rows of a
+    /// difference if `ours` equals what is left. Five differences have one: the missed rows of a
     /// refused block (the rows the reference recorded for a block both refused, in a
     /// `chain.process` answer refused by the accept handler, or in each job of a `chain.job`
     /// answer), the wallets of a round answer (the answer with Heartwood's wallets in the places
-    /// where the key and the name agree, [`crate::subjects::round_wallets_masked`]), and an escaped
-    /// log text (the reference's line with its message escaped).
+    /// where the key and the name agree, [`crate::subjects::round_wallets_masked`]), an escaped
+    /// log text (the reference's line with its message escaped), and the index orders after a
+    /// restart (the answer with Heartwood's restart orders where they list the same keys and its
+    /// table path is the stored rows' order, [`crate::subjects::index_orders_masked`]), and the
+    /// attribute order of a listing (the reference's own answer with each wallet's delegate first,
+    /// which the oracle notes as [`DELEGATE_FIRST`] where a wallet's second key came first).
     pub fn masked(self, expected: &Expected, ours: &Verdict) -> Option<Expected> {
         if self == Documented::EscapedLogText {
             return crate::subjects::escaped_line(expected);
@@ -361,6 +459,22 @@ impl Documented {
             (self, expected, ours)
         {
             return crate::subjects::round_wallets_masked(theirs, ours).map(Expected::Output);
+        }
+        if let (Documented::ReplayIndexOrder, Expected::Output(theirs), Verdict::Output(ours)) =
+            (self, expected, ours)
+        {
+            return crate::subjects::index_orders_masked(theirs, ours).map(Expected::Output);
+        }
+        if let (Documented::Api(ApiDifference::AttributeOrder), Expected::Output(theirs)) =
+            (self, expected)
+        {
+            // The reference's own answer with the delegate first on every wallet, where that order
+            // changes the answer, its keys' order included (which `==` on values does not see).
+            let other = theirs.get(NOTES)?.get(DELEGATE_FIRST)?;
+            let mut own = theirs.clone();
+            own.as_object_mut()?.shift_remove(NOTES);
+            let changes = !crate::compare::diff(&own, other).is_empty();
+            return changes.then(|| Expected::Output(other.clone()));
         }
         let (Documented::MissedRowsOfRefusedBlock, Expected::Output(theirs), Verdict::Output(ours)) =
             (self, expected, ours)
@@ -480,6 +594,36 @@ pub fn heartwood(devnet: Option<Devnet>) -> Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_attribute_order_takes_the_references_delegate_first_answer_where_it_differs() {
+        let listed = |keys: [&str; 2]| {
+            let mut attributes = serde_json::Map::new();
+            for key in keys {
+                attributes.insert(key.to_owned(), Value::from(key));
+            }
+            serde_json::json!({ "status": 200, "body": { "data": [{ "attributes": attributes }] } })
+        };
+        let own = listed(["secondPublicKey", "delegate"]);
+        let first = listed(["delegate", "secondPublicKey"]);
+        let answer = |other: &Value| {
+            let mut answer = own.clone();
+            answer[NOTES] = serde_json::json!({ DELEGATE_FIRST: other });
+            Expected::Output(answer)
+        };
+        let difference = Documented::Api(ApiDifference::AttributeOrder);
+        let ours = Verdict::Output(first.clone());
+        // Only the keys' order differs: the delegate-first answer is the expectation.
+        match difference.masked(&answer(&first), &ours) {
+            Some(Expected::Output(taken)) => {
+                assert!(crate::compare::diff(&taken, &first).is_empty());
+            }
+            other => panic!("the delegate-first answer is not taken: {other:?}"),
+        }
+        // The order changes nothing, or the oracle noted nothing: the answer is compared as it is.
+        assert!(difference.masked(&answer(&own), &ours).is_none());
+        assert!(difference.masked(&Expected::Output(own), &ours).is_none());
+    }
 
     struct Echo;
 

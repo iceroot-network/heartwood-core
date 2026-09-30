@@ -486,17 +486,14 @@ impl Pipeline {
         Ok(Answer::json(reply.status, reply.body))
     }
 
-    /// The route of `method` at `path` under the base path, and its decoded parameters: a literal
-    /// segment wins over a parameter. `Ok(None)` when none matches, or when the path is one of a
-    /// route of the reference that is not served here; 400 for a parameter that is not
+    /// The route of `method` at `path` under the base path, and its decoded parameters: the route
+    /// with the most literal segments wins, as in hapi's router (`/wallets/top` over
+    /// `/wallets/{id}`). `Ok(None)` when none matches; 400 for a parameter that is not
     /// percent-encoded UTF-8.
     fn lookup(&self, method: Method, path: &str) -> Result<Option<(RouteId, Params)>, ApiError> {
         let Some(rest) = path.strip_prefix(self.host.config.base_path.as_str()) else {
             return Ok(None);
         };
-        if method == Method::Get && UNSERVED.contains(&rest) {
-            return Ok(None);
-        }
         let segments: Vec<&str> = rest.split('/').collect();
         let routes = self.routes.iter().filter(|route| route.method() == method);
         let matched = routes.filter_map(|&route| Some((route, matches(route, &segments)?)));
@@ -638,16 +635,6 @@ impl Pipeline {
         response
     }
 }
-
-/// The paths of the reference's routes that are not served here and that a served route with a
-/// parameter would take (`/blocks/{id}`, `/transactions/{id}`, `/wallets/{id}`): they are unmatched
-/// paths, as the paths of the other routes that are not served are.
-const UNSERVED: [&str; 4] = [
-    "/blocks/first",
-    "/blocks/missed",
-    "/transactions/schemas",
-    "/wallets/top",
-];
 
 fn not_found() -> ApiError {
     ApiError::not_found("Not Found")

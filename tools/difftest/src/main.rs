@@ -338,6 +338,17 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             print!("{report}");
             Ok(verdict(&report, strict))
         }
+        Command::LockstepMake(args) => {
+            let made = heartwood_difftest::lockstep::run(&args)?;
+            println!(
+                "lockstep make: {} to height {}, {} transactions, {} missed slots",
+                made.dir.display(),
+                made.tip,
+                made.transactions,
+                made.missed
+            );
+            Ok(true)
+        }
         Command::StoreSummary { dir } => {
             let summary = heartwood_difftest::store_summary::summary(&dir)?;
             println!("{summary}");

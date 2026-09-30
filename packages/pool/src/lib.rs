@@ -61,7 +61,7 @@ pub use crate::online::{DelegateVersions, OnlineEntry, OnlineView};
 pub use crate::options::{Options, PoolFees};
 pub use crate::processor::{Entry, Processor, ProcessorResult};
 pub use crate::query::Query;
-pub use crate::service::{Pool, PoolContext, Readded, Removed};
+pub use crate::service::{Pool, PoolContext, Readded, Reindexed, Removed};
 pub use crate::storage::{Storage, StoredTransaction};
 pub use crate::verifier::Checked;
 pub use crate::view::{PoolView, PoolViewOptions};

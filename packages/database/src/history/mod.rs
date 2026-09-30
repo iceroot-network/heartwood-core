@@ -1,13 +1,20 @@
 //! The queries of the served routes, on a [`Reader`]: blocks by id or height, the transactions of
 //! the criteria with the reference's orders and pages, a transaction by id, a block's
-//! transactions, and a round's rows; the peer-to-peer server's reads are in [`download`].
+//! transactions, and a round's rows; the peer-to-peer server's reads are in [`download`]. The
+//! listing routes' readers are [`blocks_list`] (the blocks), [`missed`] (the missed slots),
+//! [`productivity`], [`fees`] (the fee statistics) and [`totals`] (the burned totals).
 //!
 //! A listing counts every match (`totalCount`) and reads the page in one read transaction, so both
 //! see the same chain. Ties of the requested order are broken by the unique key (block height and
 //! sequence), so a page is the same on every call. A statement interrupted after
 //! [`crate::READ_TIMEOUT`] is a [`DatabaseError`], which the API answers with a logged 500.
 
+pub mod blocks_list;
 pub mod download;
+pub mod fees;
+pub mod missed;
+pub mod productivity;
+pub mod totals;
 
 use heartwood_crypto::{BlockId, TransactionId};
 use rusqlite::types::Value as SqlValue;
@@ -254,19 +261,38 @@ fn select_transactions(
         .collect()
 }
 
+/// The `ORDER BY` terms of `order`, whose properties `column` names, with the direction of the
+/// last term (ascending without one); `None` when a property is no column. A column ordered
+/// twice keeps the place of its first key and takes the direction of its last, as the
+/// reference's query builder keeps one direction per column.
+pub(super) fn order_terms(
+    order: &[Order],
+    column: fn(&str) -> Option<&'static str>,
+) -> Option<(Vec<String>, Direction)> {
+    let mut kept: Vec<(&'static str, Direction)> = Vec::with_capacity(order.len());
+    for key in order {
+        let column = column(&key.property)?;
+        match kept.iter_mut().find(|(kept, _)| *kept == column) {
+            Some(term) => term.1 = key.direction,
+            None => kept.push((column, key.direction)),
+        }
+    }
+    let last = kept
+        .last()
+        .map_or(Direction::Asc, |(_, direction)| *direction);
+    let terms = kept.into_iter().map(|(column, direction)| match direction {
+        Direction::Asc => format!("{column} ASC NULLS LAST"),
+        Direction::Desc => format!("{column} DESC NULLS FIRST"),
+    });
+    Some((terms.collect(), last))
+}
+
 /// The `ORDER BY` of `order`, with the unique key after it; `None` when a property is no column.
 fn order_clause(order: &[Order]) -> Option<String> {
-    let mut keys = Vec::with_capacity(order.len() + 2);
-    for key in order {
-        let column = sort_column(&key.property)?;
-        keys.push(match key.direction {
-            Direction::Asc => format!("{column} ASC NULLS LAST"),
-            Direction::Desc => format!("{column} DESC NULLS FIRST"),
-        });
-    }
-    let tie = match order.last().map(|key| key.direction) {
-        Some(Direction::Desc) => "DESC",
-        Some(Direction::Asc) | None => "ASC",
+    let (mut keys, last) = order_terms(order, sort_column)?;
+    let tie = match last {
+        Direction::Desc => "DESC",
+        Direction::Asc => "ASC",
     };
     keys.push(format!("block_height {tie}"));
     keys.push(format!("sequence {tie}"));

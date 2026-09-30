@@ -18,7 +18,9 @@ use heartwood_crypto::transactions::TransactionBuilder;
 use heartwood_crypto::transactions::types::{ResignationType, TransferItem};
 use heartwood_crypto::{Aux, KeyPair, Transaction, TransactionId};
 use heartwood_kernel::clock::ManualClock;
-use heartwood_pool::{DelegateVersions, Entry, Options, Pool, PoolContext, Processor, collate};
+use heartwood_pool::{
+    DelegateVersions, Entry, Options, Pool, PoolContext, Processor, Reindexed, collate,
+};
 use heartwood_state::wallets::WalletRepository;
 use heartwood_state::{ApplyContext, TransactionHandlers};
 use heartwood_transactions::Handlers;
@@ -255,6 +257,7 @@ fn run(case: Case) {
     let clock = ManualClock::new(1_800_000_000_000);
     let mut wallets = fixture.wallets.clone();
     let mut tip = TIP;
+    let reindexed = Reindexed::default();
     for step in case.steps.into_iter().take(12) {
         let ctx = PoolContext {
             wallets: &wallets,
@@ -262,6 +265,7 @@ fn run(case: Case) {
             milestones,
             network: &fixture.network,
             online: &fixture.online,
+            reindexed: &reindexed,
         };
         match step {
             Step::Process { entries, seconds } => {
@@ -320,6 +324,7 @@ fn run(case: Case) {
                     milestones,
                     network: &fixture.network,
                     online: &fixture.online,
+                    reindexed: &reindexed,
                 };
                 pool.clean_up(&ctx).expect("storage");
                 pool.readd(&ctx, &[]).expect("storage");
@@ -378,6 +383,7 @@ fn run(case: Case) {
             milestones,
             network: &fixture.network,
             online: &fixture.online,
+            reindexed: &reindexed,
         };
         check(&pool, &ctx, &options);
     }

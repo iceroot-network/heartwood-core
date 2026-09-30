@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use heartwood_crypto::crypto::hash::sha256;
 use heartwood_crypto::identities::Address;
-use proptest::strategy::{BoxedStrategy, Strategy};
+use proptest::strategy::{BoxedStrategy, Strategy, Union};
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestError, TestRng, TestRunner};
 use serde_json::{Value, json};
 
@@ -30,7 +30,8 @@ use crate::oracle::OracleServer;
 use crate::report::{CaseResult, Outcome, Report};
 use crate::strategies::transactions::{TxContext, fee_cases, handler_cases};
 use crate::strategies::{
-    exchange, fixtures, forger_decide, forging, kernel, monitor, quorum, served, state, verifier,
+    api_js, api_page, api_query, api_state, exchange, fixtures, forger_decide, forging, kernel,
+    monitor, quorum, served, state, verifier,
 };
 use crate::subject::{Case, Registry};
 use crate::vectors::Expected;
@@ -78,11 +79,18 @@ pub enum Property {
     Decisions,
     /// The public routes' answers (`p2p.controller`).
     Served,
+    /// The API's listings over the state and their pages (`api.delegatesPage`, `api.walletsPage`,
+    /// `api.searchPage`).
+    Listings,
+    /// The API's wallet search (`api.walletsLike`).
+    WalletSearch,
+    /// The API's query grammar (`api.parseQuery`).
+    QueryGrammar,
 }
 
 impl Property {
     /// Every property.
-    pub const ALL: [Property; 20] = [
+    pub const ALL: [Property; 23] = [
         Property::FeeFloor,
         Property::Rounds,
         Property::Slots,
@@ -103,6 +111,9 @@ impl Property {
         Property::Quorum,
         Property::Decisions,
         Property::Served,
+        Property::Listings,
+        Property::WalletSearch,
+        Property::QueryGrammar,
     ];
 
     /// The property's name on the command line.
@@ -128,10 +139,13 @@ impl Property {
             Property::Quorum => "quorum",
             Property::Decisions => "decisions",
             Property::Served => "served",
+            Property::Listings => "listings",
+            Property::WalletSearch => "wallet-search",
+            Property::QueryGrammar => "query-grammar",
         }
     }
 
-    /// The property's short name (P1 to P20), which the command line accepts too.
+    /// The property's short name (P1 to P23), which the command line accepts too.
     pub const fn number(self) -> &'static str {
         match self {
             Property::FeeFloor => "P1",
@@ -154,6 +168,9 @@ impl Property {
             Property::Quorum => "P18",
             Property::Decisions => "P19",
             Property::Served => "P20",
+            Property::Listings => "P21",
+            Property::WalletSearch => "P22",
+            Property::QueryGrammar => "P23",
         }
     }
 }
@@ -278,6 +295,18 @@ pub fn strategy(property: Property, context: &Arc<TxContext>) -> BoxedStrategy<L
             .prop_map(L1Case::plain)
             .boxed(),
         Property::Served => served::served_cases(context)
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::Listings => Union::new([
+            api_state::listing_cases(context),
+            api_page::page_cases(context),
+        ])
+        .prop_map(L1Case::plain)
+        .boxed(),
+        Property::WalletSearch => api_js::wallet_search_cases(context)
+            .prop_map(L1Case::plain)
+            .boxed(),
+        Property::QueryGrammar => api_query::query_cases(context)
             .prop_map(L1Case::plain)
             .boxed(),
     }
@@ -861,7 +890,13 @@ mod tests {
         assert_eq!("P18".parse::<Property>().unwrap(), Property::Quorum);
         assert_eq!("P19".parse::<Property>().unwrap(), Property::Decisions);
         assert_eq!("P20".parse::<Property>().unwrap(), Property::Served);
-        assert!("P21".parse::<Property>().is_err());
+        assert_eq!("P21".parse::<Property>().unwrap(), Property::Listings);
+        assert_eq!("p22".parse::<Property>().unwrap(), Property::WalletSearch);
+        assert_eq!(
+            "query-grammar".parse::<Property>().unwrap(),
+            Property::QueryGrammar
+        );
+        assert!("P24".parse::<Property>().is_err());
     }
 
     #[test]
