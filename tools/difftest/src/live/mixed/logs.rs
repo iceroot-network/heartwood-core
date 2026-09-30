@@ -120,7 +120,7 @@ fn named_by(
 /// table's spans between the same readers and nodes as windows of their own class.
 fn rule(cases: &mut Cases, what: &str, tally: &Tally, base: &Tally, windows: &[Window]) {
     let found = tally.compare(base, windows, FALLBACK);
-    let mut within = 0usize;
+    let mut within = Vec::new();
     for f in &found {
         match f.ruling {
             Ruling::Over(_) => cases.fail(
@@ -128,14 +128,18 @@ fn rule(cases: &mut Cases, what: &str, tally: &Tally, base: &Tally, windows: &[W
                 format!("{what}: {} in {}", f.kind, f.class),
                 f.describe(),
             ),
-            Ruling::Within(_) => within += 1,
+            Ruling::Within(n) => within.push(format!("{} {} {} ({n})", f.node, f.class, f.count)),
             Ruling::Left(_) => cases.record(SECTION, format!("{what}: {}", f.describe())),
         }
     }
-    if within > 0 {
+    if !within.is_empty() {
         cases.pass(
             SECTION,
-            format!("{what}: {within} counts per node and class, none above the baseline's"),
+            format!(
+                "{what}: {} counts per node and class, none above the baseline's: {}",
+                within.len(),
+                within.join(", ")
+            ),
         );
     }
 }
