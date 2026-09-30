@@ -261,19 +261,38 @@ fn select_transactions(
         .collect()
 }
 
+/// The `ORDER BY` terms of `order`, whose properties `column` names, with the direction of the
+/// last term (ascending without one); `None` when a property is no column. A column ordered
+/// twice keeps the place of its first key and takes the direction of its last, as the
+/// reference's query builder keeps one direction per column.
+pub(super) fn order_terms(
+    order: &[Order],
+    column: fn(&str) -> Option<&'static str>,
+) -> Option<(Vec<String>, Direction)> {
+    let mut kept: Vec<(&'static str, Direction)> = Vec::with_capacity(order.len());
+    for key in order {
+        let column = column(&key.property)?;
+        match kept.iter_mut().find(|(kept, _)| *kept == column) {
+            Some(term) => term.1 = key.direction,
+            None => kept.push((column, key.direction)),
+        }
+    }
+    let last = kept
+        .last()
+        .map_or(Direction::Asc, |(_, direction)| *direction);
+    let terms = kept.into_iter().map(|(column, direction)| match direction {
+        Direction::Asc => format!("{column} ASC NULLS LAST"),
+        Direction::Desc => format!("{column} DESC NULLS FIRST"),
+    });
+    Some((terms.collect(), last))
+}
+
 /// The `ORDER BY` of `order`, with the unique key after it; `None` when a property is no column.
 fn order_clause(order: &[Order]) -> Option<String> {
-    let mut keys = Vec::with_capacity(order.len() + 2);
-    for key in order {
-        let column = sort_column(&key.property)?;
-        keys.push(match key.direction {
-            Direction::Asc => format!("{column} ASC NULLS LAST"),
-            Direction::Desc => format!("{column} DESC NULLS FIRST"),
-        });
-    }
-    let tie = match order.last().map(|key| key.direction) {
-        Some(Direction::Desc) => "DESC",
-        Some(Direction::Asc) | None => "ASC",
+    let (mut keys, last) = order_terms(order, sort_column)?;
+    let tie = match last {
+        Direction::Desc => "DESC",
+        Direction::Asc => "ASC",
     };
     keys.push(format!("block_height {tie}"));
     keys.push(format!("sequence {tie}"));

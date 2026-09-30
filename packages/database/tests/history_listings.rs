@@ -274,6 +274,39 @@ fn missed_block_criteria_and_orders() {
 }
 
 #[test]
+fn a_property_ordered_twice_keeps_its_first_place_and_its_last_direction() {
+    let (_database, readers) = store("listings-repeated-order");
+    let keys = |keys: &[(&str, Direction)]| -> Vec<Order> {
+        keys.iter().flat_map(|(p, d)| order(p, *d)).collect()
+    };
+    let all = BlockCriteria::default;
+    let twice = keys(&[("height", Direction::Asc), ("height", Direction::Desc)]);
+    let down = order("height", Direction::Desc);
+    assert_eq!(
+        heights(&readers, all(), &twice, ALL),
+        heights(&readers, all(), &down, ALL)
+    );
+    // The name first, descending, then the height: the name's last direction, in its place.
+    let moved = keys(&[
+        ("username", Direction::Asc),
+        ("height", Direction::Asc),
+        ("username", Direction::Desc),
+    ]);
+    let kept = keys(&[("username", Direction::Desc), ("height", Direction::Asc)]);
+    assert_eq!(
+        heights(&readers, all(), &moved, ALL),
+        heights(&readers, all(), &kept, ALL)
+    );
+    let missed = |order: &[Order]| {
+        let filter = MissedBlockFilter::of(MissedBlockCriteria::default());
+        let listing = readers.get().missed_blocks(&filter, order, ALL).unwrap();
+        listing.rows.iter().map(|r| r.height).collect::<Vec<_>>()
+    };
+    let twice = keys(&[("height", Direction::Asc), ("height", Direction::Desc)]);
+    assert_eq!(missed(&twice), [7, 6, 5, 4]);
+}
+
+#[test]
 fn productivity_counts_each_side_from_the_window_start() {
     let (_database, readers) = store("listings-productivity");
     let rows = |since| -> Vec<(String, Option<u64>, Option<u64>)> {

@@ -616,6 +616,12 @@ fn orders_break_ties_by_the_unique_key_and_put_null_where_postgresql_does() {
         .transactions(&all, &[order("address", Direction::Asc)], ALL)
         .unwrap();
     assert_eq!((listing.rows.len(), listing.total_count), (0, 0));
+    // A property ordered twice keeps its first place and its last direction, as the reference's
+    // query builder keeps one direction per column.
+    let (up, down) = (Direction::Asc, Direction::Desc);
+    let twice = by(&[("fee", up), ("sequence", up), ("fee", down)]);
+    assert_eq!(twice, by(&[("fee", down), ("sequence", up)]));
+    assert_ne!(twice, by(&[("fee", up), ("sequence", up)]));
 }
 
 #[test]

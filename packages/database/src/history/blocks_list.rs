@@ -6,7 +6,7 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, Row, params_from_iter};
 
 use super::totals::amount_sum;
-use super::{Direction, Listing, Order, Page};
+use super::{Direction, Listing, Order, Page, order_terms};
 use crate::blocks::{self, BlockRow};
 use crate::errors::DatabaseError;
 use crate::filters::BlockFilter;
@@ -120,24 +120,18 @@ impl Reader<'_> {
     }
 }
 
-/// The `ORDER BY` terms of `order`, whose properties `column` names, with `tie` after them in the
-/// direction of the last key (ascending without one); `None` when a property is no column.
+/// The `ORDER BY` terms of `order` (see [`order_terms`]), whose properties `column` names, with
+/// `tie` after them in the direction of the last term (ascending without one); `None` when a
+/// property is no column.
 pub(super) fn order_by(
     order: &[Order],
     column: fn(&str) -> Option<&'static str>,
     tie: &str,
 ) -> Option<String> {
-    let mut keys = Vec::with_capacity(order.len() + 1);
-    for key in order {
-        let column = column(&key.property)?;
-        keys.push(match key.direction {
-            Direction::Asc => format!("{column} ASC NULLS LAST"),
-            Direction::Desc => format!("{column} DESC NULLS FIRST"),
-        });
-    }
-    let direction = match order.last().map(|key| key.direction) {
-        Some(Direction::Desc) => "DESC",
-        Some(Direction::Asc) | None => "ASC",
+    let (mut keys, last) = order_terms(order, column)?;
+    let direction = match last {
+        Direction::Desc => "DESC",
+        Direction::Asc => "ASC",
     };
     keys.push(format!("{tie} {direction}"));
     Some(keys.join(", "))
