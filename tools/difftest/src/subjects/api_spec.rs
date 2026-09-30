@@ -152,8 +152,7 @@ fn fuzz_query(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         Ok(query) => query,
         Err(error) => return status(error.status),
     };
-    let mut out = Map::new();
-    out.insert("status".into(), json!(200));
+    let mut page = None;
     if paginates {
         let pagination = Pagination::of(&query);
         let total = u64::from(choice) * 37;
@@ -170,11 +169,16 @@ fn fuzz_query(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         };
         let data = vec![Value::Null; usize::try_from(count).unwrap_or(0)];
         let body = envelope(&request, pagination, total, false, data);
-        out.insert("page".into(), body["meta"].clone());
+        page = Some(body["meta"].clone());
     }
     if let Some(map) = query.as_object_mut() {
         map.shift_remove(PARSED);
     }
+    let mut out = Map::new();
+    out.insert("status".into(), json!(200));
     out.insert("query".into(), query);
+    if let Some(page) = page {
+        out.insert("page".into(), page);
+    }
     Ok(Verdict::Output(Value::Object(out)))
 }

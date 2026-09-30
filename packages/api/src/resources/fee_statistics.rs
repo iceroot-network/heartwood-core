@@ -33,18 +33,33 @@ pub const REGISTERED: [TransactionType; 6] = [
     TransactionType::Vote,
 ];
 
+/// The rows of a query without a window in the order of the reference's handler registry, which
+/// is the order it asks for them and lists them in; a row of a type that is not registered goes
+/// last. A window's rows keep the store's order (by type group, then type).
+pub fn in_registry_order(mut rows: Vec<FeeStatisticsRow>) -> Vec<FeeStatisticsRow> {
+    let place = |row: &FeeStatisticsRow| {
+        REGISTERED
+            .iter()
+            .position(|kind| kind.type_group() == row.type_group && kind.type_id() == row.kind)
+            .unwrap_or(REGISTERED.len())
+    };
+    rows.sort_by_key(place);
+    rows
+}
+
 /// The response of `GET /node/fees`: `{ meta, data }`, where `meta` holds `days` when the query
-/// gave it, and `data` maps each type group (in ascending order, as a JavaScript object lists
-/// its integer keys) to its types' `{ avg, burned, max, min, sum }`, every value a decimal string,
-/// the types in the registry's order. A row of a type this implementation does not carry is left
-/// out.
+/// gave it, and `data` maps each type group (in ascending order, as a JavaScript object lists its
+/// integer keys) to its types' `{ avg, burned, max, min, sum }`, every value a decimal string.
+/// The types come in the order of the rows, a later row of a type replacing an earlier one where
+/// that one stood, as the reference's assignments do. A row of a type this implementation does
+/// not carry is left out.
 pub fn response(days: Option<i64>, rows: &[FeeStatisticsRow]) -> Value {
     let mut groups: BTreeMap<u32, Map<String, Value>> = BTreeMap::new();
-    for kind in REGISTERED {
-        let found = rows
+    for row in rows {
+        let carried = REGISTERED
             .iter()
-            .find(|row| row.type_group == kind.type_group() && row.kind == kind.type_id());
-        if let Some(row) = found {
+            .find(|kind| kind.type_group() == row.type_group && kind.type_id() == row.kind);
+        if let Some(kind) = carried {
             groups
                 .entry(kind.type_group())
                 .or_default()
@@ -115,22 +130,49 @@ mod tests {
     }
 
     #[test]
-    fn the_groups_and_types_come_in_the_order_the_reference_lists_them() {
+    fn the_types_follow_the_rows_and_a_later_row_replaces_an_earlier_one() {
         let rows = [
             row(2, 2, 1),
             row(2, 0, 1),
             row(1, 1, 1),
             row(1, 6, 1),
             row(1, 2, 1),
+            row(1, 6, 7),
         ];
-        let out = response(None, &rows);
+        let out = response(Some(1), &rows);
         let groups: Vec<&String> = out["data"].as_object().unwrap().keys().collect();
         assert_eq!(groups, ["1", "2"]);
         let types: Vec<&String> = out["data"]["1"].as_object().unwrap().keys().collect();
         assert_eq!(
             types,
-            ["delegateRegistration", "transfer", "secondSignature"]
+            ["secondSignature", "transfer", "delegateRegistration"]
         );
+        assert_eq!(out["data"]["1"]["transfer"]["avg"], "7");
+    }
+
+    #[test]
+    fn a_query_without_a_window_lists_the_types_in_the_registry_order() {
+        let rows = vec![
+            row(2, 2, 1),
+            row(1, 1, 1),
+            row(2, 0, 1),
+            row(1, 6, 1),
+            row(1, 2, 1),
+            row(1, 7, 1),
+        ];
+        let out = response(None, &in_registry_order(rows));
+        let types: Vec<&String> = out["data"]["1"].as_object().unwrap().keys().collect();
+        assert_eq!(
+            types,
+            [
+                "delegateRegistration",
+                "delegateResignation",
+                "transfer",
+                "secondSignature"
+            ]
+        );
+        let types: Vec<&String> = out["data"]["2"].as_object().unwrap().keys().collect();
+        assert_eq!(types, ["burn", "vote"]);
     }
 
     #[test]

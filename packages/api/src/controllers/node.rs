@@ -226,5 +226,9 @@ async fn fees_at(
         None => None,
     };
     let rows = read(ctx, move |reader| reader.fee_statistics(window)).await?;
+    let rows = match days {
+        Some(_) => rows,
+        None => fee_statistics::in_registry_order(rows),
+    };
     Ok(ApiReply::ok(fee_statistics::response(days, &rows)))
 }
