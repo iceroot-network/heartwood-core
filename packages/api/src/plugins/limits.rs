@@ -5,7 +5,8 @@
 //! a point charged at or after its end starts a new one; points beyond the limit still count.
 //!
 //! The semaphore bounds the requests that the store's routes serve at once (the reference's
-//! `database` settings; the `memory` ones concern routes a relay does not serve), at two levels: a
+//! `database` settings; its `memory` ones, of `/wallets` and `/wallets/top`, are not applied, since
+//! those listings read the state and no store), at two levels: a
 //! request that asks for more work than the first level allows (a large offset or page, an order
 //! or a criterion the route's indexes do not serve) takes the second. A request finds a free place
 //! or waits in its level's queue; with the queue full it is refused with 429.
