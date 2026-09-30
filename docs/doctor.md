@@ -8,10 +8,11 @@ report for the same inputs, byte for byte.
 
 The doctor only reads. It writes no file, sends no signal, changes no mode or setting and holds no
 lock (it takes the same momentary shared probes of the lock files that `heartwood relay status`
-takes). It never opens a key file (it reads its metadata only), never connects to
-a peer-to-peer port, and makes no network request except HTTP GETs to its own relay's API on a
-loopback address: at most 12 in a run, with no retry. It needs no privilege: run it as the node's
-user. A run takes at most 5 seconds.
+takes). It never reads a key file: it refuses a key file's name before opening anything and reads
+only its metadata, and a file that proves to be a key file by its device and inode (a link under
+another name) is closed unread. It never connects to a peer-to-peer port, and makes no network
+request except HTTP GETs to its own relay's API on a loopback address: at most 12 in a run, with
+no retry. It needs no privilege: run it as the node's user. A run takes at most 5 seconds.
 
 Its only other programs are three fixed probes, each at its fixed path with `LANG=C` as its whole
 environment: `timedatectl show --property=NTPSynchronized --property=NTP`, `chronyc -n tracking`
@@ -26,8 +27,8 @@ companion files (`-wal` and `-shm`) behind; the relay's next start takes them ov
 doctor reads nothing from such a store.
 
 It takes the home directory from `HOME` and the user's name from `USER`, and never looks either
-up in the system's user database. Without `HOME` it does not run (exit code 3), as a role's start
-does not.
+up in the system's user database. Without `HOME` it does not run (exit code 3), as `relay run` and
+`forger run` do not.
 
 Each check has a page on the documentation site,
 <https://docs.iceroot.com/validators/doctor/>, and `heartwood doctor explain <check>` prints the
@@ -176,8 +177,8 @@ example below is shortened.
 ## What the doctor never prints
 
 Keys, the forger's secrets, passphrases and tokens are never read, so they can never be printed.
-`.env` values do not appear; an unknown variable appears by name only. The node's command line
-from the supervisor's state file is not read.
+`.env` values do not appear; an unknown variable appears by name only. The node's command line in
+the supervisor's state file is read with that file and dropped at once: it is never kept or shown.
 
 By default the report is safe to paste where others can read it:
 

@@ -7,7 +7,7 @@ the client runs, never on the validator host.
 
 The server only reads. It has no listener and opens no port. No tool writes a file, changes a
 setting, starts, stops or signals anything, or names a path, a command or another instance. It
-never opens a key file. It serves the one instance its command line and its environment name.
+never reads a key file. It serves the one instance its command line and its environment name.
 
 ## What a client sees
 
@@ -56,9 +56,13 @@ The report is the same as `heartwood doctor --json` gives (see [the doctor](doct
   profile and window it covers, and `cachedForSeconds` how old it is. A run takes at most 5
   seconds and 12 requests to the relay's API, so the doctor stays near a quarter of the API's
   limit of 100 requests a minute for a loopback client.
-- A fresh read of each role's log also happens at most once every 30 seconds.
-- At most two `heartwood doctor mcp` servers of one user run at once: a third refuses to start.
-  Several SSH sessions therefore cannot multiply the doctor's cost.
+- A fresh read of each role's log also happens at most once every 30 seconds. Within that time
+  `read_log_summary` returns that role's last summary as it is, whatever its window; the summary's
+  `windowMinutes` says which window it covers, and `cachedForSeconds` how old it is.
+- At most two `heartwood doctor mcp` servers of one user run at once: a third refuses to start, so
+  parallel SSH sessions cannot multiply the doctor's cost. The cache belongs to one server, and a
+  new server runs the checks afresh: a client should keep one session open rather than connect
+  again for each request.
 - Idle, the server waits on its input and uses no CPU. It ends when its input ends (the SSH session
   closes) and on SIGTERM or SIGHUP.
 

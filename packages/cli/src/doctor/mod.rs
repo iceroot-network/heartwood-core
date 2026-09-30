@@ -4,7 +4,7 @@
 //! its files' metadata, its logs, the process table, its own relay's API on a loopback address,
 //! `/proc`, `/sys` and three fixed probes; it applies fixed rules and gives each check's findings
 //! as pass, warn, fail, unknown or skipped, with plain advice. It writes no file, sends no signal,
-//! holds no lock beyond the momentary shared probes of `status`, never opens a key file, never
+//! holds no lock beyond the momentary shared probes of `status`, never reads a key file, never
 //! connects to a P2P port, and its only network use is an HTTP GET to its own relay's API on a
 //! loopback address. The same inputs give the same report, byte for byte.
 //!

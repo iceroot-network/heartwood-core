@@ -91,7 +91,8 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # logs and the API 1,212 (every log template as ordered literal pieces with its level and emoji,
 # line integrity, rotated files, the loopback address rule and the request budget); the 47 checks
 # 2,016, with the confirmations and boundaries of their rules; the protocol server 369. No
-# reviewed line was cut to meet the earlier ceiling.
+# reviewed line was cut to meet the earlier ceiling. The review's fixes took heartwood-cli to 10,295
+# (the doctor 6,946), heartwood-core to 3,500 and heartwood-database to 2,627.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"

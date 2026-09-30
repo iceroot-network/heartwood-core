@@ -223,8 +223,8 @@ fn cannot_run(error: impl std::fmt::Display) -> ExitCode {
 }
 
 /// The scope of the instance `flags` name, resolved as every role command resolves it: from the
-/// `HOME` variable, which a role's start requires too (the home is never looked up through the
-/// system's name services), and `USER` for the redaction.
+/// `HOME` variable, which `relay run` and `forger run` require too (the home is never looked up
+/// through the system's name services), and `USER` for the redaction.
 fn scope(flags: &InstanceFlags) -> Result<DoctorScope, String> {
     let env = |name: &str| std::env::var(name).ok();
     let home = std::env::var_os("HOME").filter(|home| !home.is_empty());
