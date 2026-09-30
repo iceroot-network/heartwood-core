@@ -1189,3 +1189,49 @@ fn a_documentation_file_a_record_tests_makes_it_stale() {
     assert!(ran.text.contains("R1       FAIL"), "{}", ran.text);
     assert!(ran.text.contains("docs/notes.md"), "{}", ran.text);
 }
+
+#[test]
+fn a_register_run_fails_an_entry_whose_test_fails() {
+    let rig = Rig::new();
+    rig.write(
+        "Cargo.toml",
+        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n",
+    );
+    rig.write("src/lib.rs", "");
+    rig.write(".gitignore", "target/\n");
+    rig.write(
+        "tests/shows.rs",
+        "#[test]\nfn it_passes() {}\n\n#[test]\nfn it_fails() {\n    panic!(\"on purpose\");\n}\n\n\
+         #[test]\n#[ignore = \"integration\"]\nfn an_ignored_test_that_passes() {}\n",
+    );
+    let lock = Command::new("cargo")
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(rig.tree())
+        .output()
+        .expect("cargo runs");
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    rig.commit("a package");
+    let test = |name: &str| json!([{"kind": "cargo", "package": "probe", "test": "shows", "file": "tests/shows.rs", "name": name}]);
+    rig.criteria(&register_criteria(
+        json!([
+            entry("E-1", "when a", test("it_passes"), &[]),
+            entry("E-2", "when b", test("it_fails"), &[]),
+            entry("E-3", "when c", test("an_ignored_test_that_passes"), &[]),
+        ]),
+        json!([]),
+    ));
+    let ran = register(&rig, &["--run", "--strict"]);
+    assert!(!ran.ok, "{}", ran.text);
+    assert!(ran.text.contains("E-1  active   ok"), "{}", ran.text);
+    assert!(ran.text.contains("E-2  active   FAIL"), "{}", ran.text);
+    assert!(
+        ran.text.contains("probe test it_fails did not pass"),
+        "{}",
+        ran.text
+    );
+    assert!(ran.text.contains("E-3  active   ok"), "{}", ran.text);
+}
