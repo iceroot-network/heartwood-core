@@ -292,7 +292,7 @@ fn devnet_command(dir: &Path, command: DevnetCommand, tools: &Tools) -> Result<(
             resources: true, ..
         }) => {
             for (name, used) in devnet::resources(dir, tools)? {
-                println!("{name}: {used:?}");
+                println!("{name}: {used}");
             }
         }
         DevnetCommand::Status(_) => {
