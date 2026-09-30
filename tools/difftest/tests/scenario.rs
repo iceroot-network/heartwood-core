@@ -905,7 +905,8 @@ fn the_projections_read_the_routes_they_name_without_what_may_differ() {
     fake.page(
         1,
         "/api/delegates/genesis_1/voters?page=2&limit=100",
-        one_page(json!([{"address": "2"}])),
+        one_page(json!([{"address": "2",
+            "attributes": {"delegate": {"username": "d", "version": "1.0.0"}}}])),
     );
     let runner_chain = Chain::new(&compiled.scenario).expect("chain");
     let names = Names {
@@ -935,9 +936,10 @@ fn the_projections_read_the_routes_they_name_without_what_may_differ() {
         read("config"),
         json!({"data": {"core": {}, "nethash": "n"}})
     );
+    // A voter that is a delegate shows the version its node attested to this relay: node-local.
     assert_eq!(
         read("voters(genesis_1)"),
-        json!([{"address": "1"}, {"address": "2"}])
+        json!([{"address": "1"}, {"address": "2", "attributes": {"delegate": {"username": "d"}}}])
     );
     // A route that answers another status is compared with its status.
     assert_eq!(read("tx(elsewhere)"), json!({"status": 404, "body": {}}));

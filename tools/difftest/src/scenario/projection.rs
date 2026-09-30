@@ -13,7 +13,7 @@
 //! | `block(h)` | `/blocks/{h}` | `confirmations` |
 //! | `block_txs(h)` | `/blocks/{h}/transactions`, all pages | nothing |
 //! | `delegates` | `/delegates`, all pages | `version`, `blocks.productivity`, `blocks.missed` |
-//! | `voters(name)` | `/delegates/{name}/voters`, all pages | nothing |
+//! | `voters(name)` | `/delegates/{name}/voters`, all pages | as `wallet`, in each row |
 //! | `round(r)` | `/rounds/{r}/delegates` | nothing; sorted by votes (descending), then public key |
 //! | `missed(from, to)` | `/blocks/missed` over those heights, all pages | nothing |
 //! | `pool` | `/transactions/unconfirmed`, all pages | all but the ids, as a sorted set |
@@ -23,7 +23,9 @@
 //! | `supply` | `/blockchain` | nothing |
 //! | `status` | `/node/syncing` | `blocks` |
 //!
-//! Productivity and missed counts are removed at every height (the design removes them unless the
+//! A delegate's `version` is node-local (each relay records the version its own attestations
+//! carried), so it is removed wherever a wallet is shown. Productivity and missed counts are
+//! removed at every height (the design removes them unless the
 //! height is quiescent, which a running network's never is for sure). A name is a wallet of the
 //! scenario (an actor, `genesis`, a delegate's username or a key's role) or an address; a `ref` is
 //! a transaction of the scenario or an id.
@@ -41,6 +43,14 @@ const MAX_PAGES: u32 = 1000;
 
 /// The rows a page of a list holds.
 const PAGE: u32 = 100;
+
+/// What a wallet shows that each node keeps for itself: the version a delegate's node attested to
+/// this relay, and the counts that depend on when the node looked.
+const NODE_LOCAL: [&str; 3] = [
+    "attributes.delegate.version",
+    "attributes.delegate.productivity",
+    "attributes.delegate.missedBlocks",
+];
 
 /// What the names of a projection resolve against.
 pub struct Names<'a> {
@@ -202,8 +212,10 @@ pub fn read(
         }
         "wallet" => {
             let mut body = get(&format!("/api/wallets/{}", names.address(one()?)))?;
-            for field in ["version", "productivity", "missedBlocks"] {
-                remove(&mut body, &format!("data.attributes.delegate.{field}"));
+            if let Some(data) = body.get_mut("data") {
+                for field in NODE_LOCAL {
+                    remove(data, field);
+                }
             }
             Ok(body)
         }
@@ -237,7 +249,7 @@ pub fn read(
         }
         "voters" => {
             let path = format!("/api/delegates/{}/voters", one()?);
-            Ok(Value::Array(all_pages(backend, node, &path)?))
+            Ok(without(all_pages(backend, node, &path)?, &NODE_LOCAL))
         }
         "round" => {
             let mut body = get(&format!("/api/rounds/{}/delegates", one()?))?;
