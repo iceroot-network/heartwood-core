@@ -129,6 +129,26 @@
   "query": "attributes.delegate.username=genesis%25"
  },
  {
+  "name": "wallets/list/attr-wildcard-username",
+  "path": "/api/wallets",
+  "query": "attributes.*.username=genesis_1"
+ },
+ {
+  "name": "wallets/list/attr-wildcard-produced",
+  "path": "/api/wallets",
+  "query": "attributes.*.producedBlocks.from=1"
+ },
+ {
+  "name": "wallets/list/attr-wildcard-text",
+  "path": "/api/wallets",
+  "query": "attributes.*=genesis_1"
+ },
+ {
+  "name": "wallets/list/attr-wildcard-unknown",
+  "path": "/api/wallets",
+  "query": "attributes.*.nosuch=1"
+ },
+ {
   "name": "wallets/list/attr-produced",
   "path": "/api/wallets",
   "query": "attributes.delegate.producedBlocks=0"
@@ -366,5 +386,10 @@
   "name": "wallets/top/unknown-key",
   "path": "/api/wallets/top",
   "query": "nosuchkey=1"
+ },
+ {
+  "name": "wallets/top/attr-wildcard-username",
+  "path": "/api/wallets/top",
+  "query": "attributes.*.username=genesis_2"
  }
 ]
