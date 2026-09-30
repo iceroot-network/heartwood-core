@@ -126,7 +126,7 @@ const STOPPED_LINE: &str = "The node has stopped";
 const RELAY_LOG: &str = "log/solar-testnet-relay-current.log";
 
 /// The milliseconds since the epoch of a log line's `[YYYY-MM-DD HH:MM:SS.fff]` prefix (UTC).
-fn log_time(line: &str) -> Option<i64> {
+pub(super) fn log_time(line: &str) -> Option<i64> {
     let stamp = line.strip_prefix('[')?.split_once(']')?.0;
     run::parse_time(&format!("{stamp}Z"))
 }

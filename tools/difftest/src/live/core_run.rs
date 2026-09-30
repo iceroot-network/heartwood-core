@@ -7,12 +7,14 @@
 //! process's children), the steps `locks`, `relay-start-refused` and `stop`, and the run's common
 //! files. The chain is judged with every run's checks; here its delegates' blocks are read from the
 //! nodes' block files as the mixed forging runs' are, and each block must follow, in its slot, an
-//! answer to its own node's forger with a quorum.
+//! answer to its own node's forger with a quorum. The resource series are recorded, not judged: the
+//! budgets are the mixed forging runs' and the churn run's.
 
 use std::path::Path;
 
 use serde_json::Value;
 
+use super::churn;
 use super::forging;
 use super::mixed;
 use super::mixed_forging;
@@ -125,8 +127,9 @@ fn status_problems(manifest: &Manifest, json: &Value) -> Vec<String> {
     problems
 }
 
-/// The problems of the refused `relay start`: it exited with a failure and a message, and no node's
-/// processes changed.
+/// The problems of the refused `relay start`: it exited with a failure and a message that names the
+/// running core process (the reference's start aborts with its `<token>-core` process's name), and
+/// no node's processes changed.
 fn refusal_problems(step: Option<&Step>) -> Vec<String> {
     let Some(step) = step else {
         return vec!["no relay-start-refused step".into()];
@@ -138,8 +141,13 @@ fn refusal_problems(step: Option<&Step>) -> Vec<String> {
     if step.number("exit").is_none_or(|e| e == 0) {
         problems.push("`relay start` exited with success while core runs".into());
     }
-    if step.text("message").is_none_or(|m| m.trim().is_empty()) {
-        problems.push("`relay start` printed no refusal".into());
+    match step.text("message") {
+        Some(m) if m.contains("-core") && m.contains("already running") => {}
+        Some(m) if !m.trim().is_empty() => problems.push(format!(
+            "`relay start` was refused with `{}`, which does not name the running core process",
+            m.trim()
+        )),
+        _ => problems.push("`relay start` printed no refusal".into()),
     }
     match (step.text("pidsBefore"), step.text("pidsAfter")) {
         (Some(before), Some(after)) if !before.trim().is_empty() && before == after => {}
@@ -170,9 +178,10 @@ fn stop_problems(step: Option<&Step>) -> Vec<String> {
     problems
 }
 
-/// The nodes whose log does not end with the line of a clean stop.
-fn log_problems(run_dir: &Path, manifest: &Manifest) -> Vec<String> {
+/// The nodes whose log does not end with the line of a clean stop, logged during `devnet stop`.
+fn log_problems(run_dir: &Path, manifest: &Manifest, stop: Option<&Step>) -> Vec<String> {
     let mut problems = Vec::new();
+    let span = stop.and_then(|s| Some((s.start?, s.time("end")?)));
     for node in &manifest.nodes {
         let dir = run_dir.join("nodes").join(&node.name).join("log");
         let log = std::fs::read_dir(&dir).ok().and_then(|entries| {
@@ -185,10 +194,27 @@ fn log_problems(run_dir: &Path, manifest: &Manifest) -> Vec<String> {
                 })
                 .and_then(|p| std::fs::read_to_string(p).ok())
         });
-        match log {
-            Some(text) if text.contains(STOPPED) => {}
-            Some(_) => problems.push(format!("{}: its log has no `{STOPPED}` line", node.name)),
-            None => problems.push(format!("{}: no core log under {}", node.name, "log")),
+        let Some(text) = log else {
+            problems.push(format!("{}: no core log under log", node.name));
+            continue;
+        };
+        let last = text
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("");
+        if !last.contains(STOPPED) {
+            problems.push(format!(
+                "{}: its log does not end with a `{STOPPED}` line",
+                node.name
+            ));
+        } else if !span.is_some_and(|(from, to)| {
+            churn::log_time(last).is_some_and(|t| (from..=to).contains(&t))
+        }) {
+            problems.push(format!(
+                "{}: its `{STOPPED}` line is not within `devnet stop`",
+                node.name
+            ));
         }
     }
     problems
@@ -266,8 +292,8 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
     );
     verdict(
         cases,
-        "every node's log ends with the clean stop",
-        log_problems(run.run_dir, m),
+        "every node's log ends with the clean stop, logged during `devnet stop`",
+        log_problems(run.run_dir, m, mixed::step(&steps, "stop")),
     );
     verdict(
         cases,
@@ -314,14 +340,20 @@ mod tests {
     fn a_relay_start_that_succeeded_or_moved_a_process_is_a_problem() {
         let ok = step(
             "relay-start-refused",
-            json!({"exit": 1, "message": "already running", "pidsBefore": "1 2", "pidsAfter": "1 2"}),
+            json!({"exit": 1, "message": "node1-devnet-core is already running", "pidsBefore": "1 2", "pidsAfter": "1 2"}),
         );
         assert!(refusal_problems(Some(&ok)).is_empty());
+        let other = step(
+            "relay-start-refused",
+            json!({"exit": 1, "message": "no such network", "pidsBefore": "1 2", "pidsAfter": "1 2"}),
+        );
+        assert_eq!(refusal_problems(Some(&other)).len(), 1);
         let started = step(
             "relay-start-refused",
             json!({"exit": 0, "message": "started", "pidsBefore": "1 2", "pidsAfter": "1 2 3"}),
         );
-        assert_eq!(refusal_problems(Some(&started)).len(), 2);
+        // A success, a message that is no refusal, and a new process.
+        assert_eq!(refusal_problems(Some(&started)).len(), 3);
         assert_eq!(refusal_problems(None).len(), 1);
     }
 }

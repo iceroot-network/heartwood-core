@@ -8,8 +8,8 @@
 //! documentation addresses. Its chain is the judged corpus in `corpus/`, so no oracle runs. The
 //! nodes' stores are the corpus replayed through Heartwood's store.
 //!
-//! The recorded series wrote more to disk than the node budget allows, so the recording fails
-//! exactly that case; the tests that need a clean run rewrite the written bytes.
+//! The resource series are recorded beside the checks, not judged: the budgets are the mixed
+//! forging runs' and the churn run's.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -149,19 +149,6 @@ fn has(list: &[String], needle: &str) -> bool {
     list.iter().any(|l| l.contains(needle))
 }
 
-/// Rewrite every series so each node wrote half a megabyte over the run: within the disk budget.
-fn quiet_disks(run: &Path) {
-    for node in NODES {
-        let path = run.join("resources").join(format!("{node}-core.jsonl"));
-        let mut rows = read_lines(&path);
-        let last = rows.len() as u64;
-        for (i, row) in rows.iter_mut().enumerate() {
-            row["written"] = json!(500_000 * (i as u64 + 1) / last);
-        }
-        write_lines(&path, &rows);
-    }
-}
-
 /// Replace the recorded step `name` with `change` applied to it.
 fn edit_step(run: &Path, name: &str, change: impl FnOnce(&mut Value)) {
     let path = run.join("steps.jsonl");
@@ -181,21 +168,10 @@ fn edit_json(path: &Path, change: impl FnOnce(&mut Value)) {
 }
 
 #[test]
-fn a_recorded_run_passes_every_section_but_its_disk_writes() {
+fn a_recorded_run_passes_every_section_and_records_its_resources() {
     let f = fixture();
     let report = check(&f);
-    let failed = failures(&report);
-    // The recorded nodes wrote about fourteen megabytes in fourteen minutes: over the day's budget.
-    assert_eq!(failed.len(), 3, "{failed:#?}");
-    for node in NODES {
-        assert!(
-            has(
-                &failed,
-                &format!("{node} disk writes in a day (extrapolated)")
-            ),
-            "{failed:#?}"
-        );
-    }
+    assert!(report.is_success(), "{report}\n{:#?}", failures(&report));
     let all = labels(&report);
     for needle in [
         "each node runs one process holding the core, relay and forger locks",
@@ -206,47 +182,56 @@ fn a_recorded_run_passes_every_section_but_its_disk_writes() {
         "every node counted all 53 delegates in one answer after height 10",
         "one tip at the end",
         "`devnet stop` stopped every node within 30 seconds",
-        "every node's log ends with the clean stop",
+        "every node's log ends with the clean stop, logged during `devnet stop`",
         "every step in its planned round and order",
-        "core node1 resident memory outside a full pool (95th percentile)",
-        "the five nodes' CPU time in quiet windows",
+        "a resource series for core node1",
+        "recorded: core node1 resident memory outside a full pool (95th percentile)",
+        "recorded: the five nodes' CPU time in quiet windows",
+        "recorded: node3 disk writes over the whole run",
     ] {
         assert!(has(&all, needle), "{needle}\n{all:#?}");
     }
-}
-
-#[test]
-fn a_recorded_run_with_quiet_disks_passes() {
-    let f = fixture();
-    quiet_disks(&f.run);
-    let report = check(&f);
-    assert!(report.is_success(), "{report}\n{:#?}", failures(&report));
+    // The recorded nodes wrote about fourteen megabytes in fourteen minutes: the figure says it is
+    // over the budget the churn run is judged by.
+    assert!(
+        has(
+            &all,
+            "recorded: the five nodes' disk writes in a day (extrapolated from the quiet windows)"
+        ) && has(&all, "(over the budget)"),
+        "{all:#?}"
+    );
 }
 
 #[test]
 fn the_resource_report_reads_the_recorded_series() {
     let f = fixture();
     let report = resources::report(&f.run).expect("the report is made");
-    let failed = failures(&report);
-    assert_eq!(failed.len(), 3, "{failed:#?}");
-    assert!(
-        failed.iter().all(|m| m.contains("disk writes in a day")),
-        "{failed:#?}"
-    );
+    assert!(report.is_success(), "{:#?}", failures(&report));
     let all = labels(&report);
     assert!(
-        has(&all, "core node3 proportional memory (highest, recorded)"),
+        has(&all, "recorded: core node3 proportional memory (highest)"),
         "{all:#?}"
     );
-    quiet_disks(&f.run);
-    let clean = resources::report(&f.run).expect("the report is made");
-    assert!(clean.is_success(), "{:#?}", failures(&clean));
+    assert!(
+        has(&all, "recorded: node1 disk writes over the whole run"),
+        "{all:#?}"
+    );
+}
+
+#[test]
+fn a_run_without_its_resource_series_fails() {
+    let f = fixture();
+    std::fs::remove_file(f.run.join("resources/node2-core.jsonl")).unwrap();
+    let failed = failures(&check(&f));
+    assert!(
+        has(&failed, "a resource series for core node2"),
+        "{failed:#?}"
+    );
 }
 
 #[test]
 fn a_lock_held_by_another_process_fails() {
     let f = fixture();
-    quiet_disks(&f.run);
     edit_json(&f.run.join("locks.json"), |v| {
         v["nodes"]["node2"]["holders"]["forger.lock"] = json!([4242]);
         v["nodes"]["node3"]["children"] = json!(1);
@@ -265,7 +250,6 @@ fn a_lock_held_by_another_process_fails() {
 #[test]
 fn a_node_with_a_separate_relay_process_fails() {
     let f = fixture();
-    quiet_disks(&f.run);
     edit_json(&f.run.join("status.json"), |v| {
         let first = &mut v["nodes"][0]["processes"];
         let relay = json!({"role": "relay", "status": "online", "restarts": 0});
@@ -278,7 +262,6 @@ fn a_node_with_a_separate_relay_process_fails() {
 #[test]
 fn a_relay_start_that_was_not_refused_fails() {
     let f = fixture();
-    quiet_disks(&f.run);
     edit_step(&f.run, "relay-start-refused", |row| {
         row["exit"] = json!(0);
         row["pidsAfter"] = json!("1512312 1512354 1512396 77 ");
@@ -292,9 +275,42 @@ fn a_relay_start_that_was_not_refused_fails() {
 }
 
 #[test]
+fn a_refusal_that_does_not_name_the_core_process_fails() {
+    let f = fixture();
+    edit_step(&f.run, "relay-start-refused", |row| {
+        row["message"] = json!("the lock cannot be taken");
+    });
+    let failed = failures(&check(&f));
+    assert!(
+        has(&failed, "which does not name the running core process"),
+        "{failed:#?}"
+    );
+}
+
+#[test]
+fn a_stop_line_from_before_the_stop_fails() {
+    let f = fixture();
+    // The node logged its stop a minute before `devnet stop` ran.
+    let log = f.run.join("nodes/node3/log/node3-devnet-core-current.log");
+    let text = std::fs::read_to_string(&log).unwrap();
+    std::fs::write(
+        &log,
+        text.replace("[2026-09-30 20:31:12.748]", "[2026-09-30 20:30:12.748]"),
+    )
+    .unwrap();
+    let failed = failures(&check(&f));
+    assert!(
+        has(
+            &failed,
+            "node3: its `The node has stopped` line is not within `devnet stop`"
+        ),
+        "{failed:#?}"
+    );
+}
+
+#[test]
 fn a_slow_stop_fails() {
     let f = fixture();
-    quiet_disks(&f.run);
     edit_step(&f.run, "stop", |row| row["seconds"] = json!(31.5));
     let failed = failures(&check(&f));
     assert!(
@@ -306,7 +322,6 @@ fn a_slow_stop_fails() {
 #[test]
 fn a_log_without_the_clean_stop_fails() {
     let f = fixture();
-    quiet_disks(&f.run);
     let log = f.run.join("nodes/node2/log/node2-devnet-core-current.log");
     let text = std::fs::read_to_string(&log).unwrap();
     std::fs::write(
@@ -316,7 +331,10 @@ fn a_log_without_the_clean_stop_fails() {
     .unwrap();
     let failed = failures(&check(&f));
     assert!(
-        has(&failed, "node2: its log has no `The node has stopped` line"),
+        has(
+            &failed,
+            "node2: its log does not end with a `The node has stopped` line"
+        ),
         "{failed:#?}"
     );
 }
@@ -324,7 +342,6 @@ fn a_log_without_the_clean_stop_fails() {
 #[test]
 fn a_node_whose_blocks_are_missing_fails() {
     let f = fixture();
-    quiet_disks(&f.run);
     // Node 3's block file ends at height 50: its delegates' later blocks are nowhere to be read.
     let path = f.run.join("nodes/node3/difftest/digest-0001.jsonl");
     let rows: Vec<Value> = read_lines(&path)
@@ -339,7 +356,6 @@ fn a_node_whose_blocks_are_missing_fails() {
 #[test]
 fn a_dry_run_of_the_recipe_is_no_evidence() {
     let f = fixture();
-    quiet_disks(&f.run);
     edit_json(&f.run.join("run.json"), |m| m["dryRun"] = json!(true));
     let report = check(&f);
     assert!(!report.is_success(), "{report}");
