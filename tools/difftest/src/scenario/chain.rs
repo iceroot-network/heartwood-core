@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use heartwood_crypto::genesis::DerivedKey;
 use heartwood_crypto::genesis::derive::role_key;
 use serde_json::{Map, Value};
 
@@ -27,6 +28,8 @@ pub struct Person {
     pub passphrase: String,
     /// The address.
     pub address: String,
+    /// The public key, in hex.
+    pub public_key: String,
 }
 
 /// The chain of a scenario.
@@ -46,6 +49,8 @@ pub struct Chain {
     pub delegates: Vec<String>,
     people: HashMap<String, Person>,
     labels: HashMap<String, String>,
+    /// The nonce each sender of the genesis block reaches there, by public key.
+    genesis_nonces: HashMap<String, u64>,
 }
 
 /// The profile file the network `network` names: a profile of the CLI by that name, or without
@@ -88,14 +93,11 @@ impl Chain {
             .chain(&definition.wallets)
             .chain(&definition.delegates)
         {
-            people.insert(key.role.clone(), person(&key.passphrase, &key.address));
+            people.insert(key.role.clone(), person(key));
         }
         let mut delegates = Vec::new();
         for (delegate, key) in built.input.delegates.iter().zip(&definition.delegates) {
-            people.insert(
-                delegate.username.clone(),
-                person(&key.passphrase, &key.address),
-            );
+            people.insert(delegate.username.clone(), person(key));
             delegates.push(delegate.username.clone());
         }
         let mut labels = HashMap::new();
@@ -107,7 +109,7 @@ impl Chain {
                 seed,
                 built.profile.network.pub_key_hash,
             )?;
-            people.insert(name.clone(), person(&key.passphrase, &key.address));
+            people.insert(name.clone(), person(&key));
             labels.insert(name.clone(), label);
         }
         if let Some(genesis) = people.get(GENESIS_LABEL).cloned() {
@@ -123,6 +125,7 @@ impl Chain {
         };
         let round_length = u32::try_from(number("activeDelegates")?)
             .map_err(|e| Error::Fixture(format!("activeDelegates: {e}")))?;
+        let genesis_nonces = genesis_nonces(&crypto["genesisBlock"])?;
         Ok(Chain {
             crypto: Value::Object(crypto),
             profile,
@@ -132,6 +135,7 @@ impl Chain {
             delegates,
             people,
             labels,
+            genesis_nonces,
         })
     }
 
@@ -142,6 +146,17 @@ impl Chain {
                 "no wallet is named {name}: an actor, genesis, a delegate or a role"
             ))
         })
+    }
+
+    /// The nonce the wallet `name` has after the genesis block: the last one it signed there, or
+    /// 0.
+    pub fn genesis_nonce(&self, name: &str) -> Result<u64> {
+        let person = self.person(name)?;
+        Ok(self
+            .genesis_nonces
+            .get(&person.public_key)
+            .copied()
+            .unwrap_or(0))
     }
 
     /// The label the lockstep producer knows the wallet `name` by.
@@ -161,9 +176,27 @@ impl Chain {
     }
 }
 
-fn person(passphrase: &str, address: &impl ToString) -> Person {
+fn person(key: &DerivedKey) -> Person {
     Person {
-        passphrase: passphrase.to_owned(),
-        address: address.to_string(),
+        passphrase: key.passphrase.to_string(),
+        address: key.address.to_string(),
+        public_key: key.keys.public_key().to_hex(),
     }
+}
+
+/// The highest nonce of each sender of the genesis block `block`, by public key.
+fn genesis_nonces(block: &Value) -> Result<HashMap<String, u64>> {
+    let mut out = HashMap::new();
+    for tx in block["transactions"].as_array().into_iter().flatten() {
+        let key = tx["senderPublicKey"].as_str();
+        let nonce = tx["nonce"].as_str().and_then(|n| n.parse::<u64>().ok());
+        let (Some(key), Some(nonce)) = (key, nonce) else {
+            return Err(Error::Fixture(
+                "a genesis transaction without its sender or nonce".into(),
+            ));
+        };
+        let last = out.entry(key.to_owned()).or_insert(0);
+        *last = (*last).max(nonce);
+    }
+    Ok(out)
 }

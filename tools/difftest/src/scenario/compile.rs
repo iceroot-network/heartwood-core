@@ -5,9 +5,10 @@
 //! or slots after the previous step, the start or the end of a round; a slot counts as a height,
 //! which holds on a chain without missed slots), and a submit's transactions are planned for the
 //! block after that tip: the height their fee floor and their strict decode use. A nonce is `next`
-//! (one more than the sender's last nonce in the scenario, from 0) or a number, which the sender's
-//! later `next` follows. A fee that is absent is the dynamic floor at the planned height.
+//! (one more than the sender's last nonce: its last in the scenario, else the one it reached in the
+//! genesis block, else 0) or a number, which the sender's later `next` follows. A fee that is absent is the dynamic floor at the planned height.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use serde_json::{Value, json};
@@ -120,7 +121,10 @@ pub fn specs(scenario: &Scenario, chain: &Chain) -> Result<Vec<(usize, u32, Stri
             if !seen.insert(tx.reference.as_str()) {
                 return Err(Error::Usage(format!("{} is named twice", tx.reference)));
             }
-            let last = nonces.entry(tx.from.as_str()).or_insert(0);
+            let last = match nonces.entry(tx.from.as_str()) {
+                Entry::Occupied(known) => known.into_mut(),
+                Entry::Vacant(first) => first.insert(chain.genesis_nonce(&tx.from)?),
+            };
             let nonce = match tx.nonce {
                 Nonce::Next => *last + 1,
                 Nonce::At(nonce) => nonce,

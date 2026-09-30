@@ -208,7 +208,8 @@ fn a_transaction_is_planned_after_its_step_with_the_nonces_of_its_sender() {
             {"ref": "a2", "type": "transfer", "from": "alice", "nonce": 7, "to": [["bob", "20"]],
              "fee": "5", "memo": "m"},
             {"ref": "b1", "type": "vote", "from": "bob", "asset": {"votes": [["genesis_2", 100]]}},
-            {"ref": "grant", "type": "transfer", "from": "genesis", "to": [["alice", "30"]]}]},
+            {"ref": "grant", "type": "transfer", "from": "genesis", "to": [["alice", "30"]]},
+            {"ref": "d1", "type": "vote", "from": "genesis_3", "asset": {"votes": [["genesis_3", 100]]}}]},
         {"at": {"afterBlocks": 3}, "do": "submit", "node": 1, "txs": [
             {"ref": "a3", "type": "transfer", "from": "alice", "to": [["bob", "40"]]}]},
     ])))
@@ -226,6 +227,7 @@ fn a_transaction_is_planned_after_its_step_with_the_nonces_of_its_sender() {
             (0, 3, "a2"),
             (0, 3, "b1"),
             (0, 3, "grant"),
+            (0, 3, "d1"),
             (1, 6, "a3")
         ]
     );
@@ -233,7 +235,11 @@ fn a_transaction_is_planned_after_its_step_with_the_nonces_of_its_sender() {
         .iter()
         .map(|(.., spec)| spec["nonce"].as_str().expect("nonce"))
         .collect();
-    assert_eq!(nonces, ["1", "7", "1", "1", "8"]);
+    // A genesis delegate signed its registration (1) and its vote (2) in the genesis block: its
+    // next nonce is 3.
+    assert_eq!(nonces, ["1", "7", "1", "1", "3", "8"]);
+    assert_eq!(chain.genesis_nonce("genesis_3").expect("delegate"), 2);
+    assert_eq!(chain.genesis_nonce("alice").expect("actor"), 0);
     let spec = |name: &str| {
         &planned
             .iter()
