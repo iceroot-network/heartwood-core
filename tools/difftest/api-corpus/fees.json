@@ -1,0 +1,152 @@
+[
+ {
+  "name": "fees/last-transactions",
+  "path": "/api/node/fees",
+  "documented": "feeTypes"
+ },
+ {
+  "name": "fees/last-transactions/trailing-slash",
+  "path": "/api/node/fees/",
+  "documented": "feeTypes"
+ },
+ {
+  "name": "fees/days-1",
+  "path": "/api/node/fees",
+  "query": "days=1",
+  "documented": "feeTypes"
+ },
+ {
+  "name": "fees/days-2",
+  "path": "/api/node/fees",
+  "query": "days=2",
+  "documented": "feeTypes"
+ },
+ {
+  "name": "fees/days-7",
+  "path": "/api/node/fees",
+  "query": "days=7",
+  "documented": "feeTypes"
+ },
+ {
+  "name": "fees/days-29",
+  "path": "/api/node/fees",
+  "query": "days=29",
+  "documented": "feeTypes"
+ },
+ {
+  "name": "fees/days-30",
+  "path": "/api/node/fees",
+  "query": "days=30",
+  "documented": "feeTypes"
+ },
+ {
+  "name": "fees/days-padded",
+  "path": "/api/node/fees",
+  "query": "days=07",
+  "documented": "feeTypes"
+ },
+ {
+  "name": "fees/days-plus",
+  "path": "/api/node/fees",
+  "query": "days=%2B7",
+  "documented": "feeTypes"
+ },
+ {
+  "name": "fees/days-fraction-zero",
+  "path": "/api/node/fees",
+  "query": "days=7.0",
+  "documented": "feeTypes"
+ },
+ {
+  "name": "fees/days-exponent",
+  "path": "/api/node/fees",
+  "query": "days=1e1",
+  "documented": "feeTypes"
+ },
+ {
+  "name": "fees/days-spaces",
+  "path": "/api/node/fees",
+  "query": "days=%207%20",
+  "documented": "feeTypes"
+ },
+ {
+  "name": "fees/days-zero",
+  "path": "/api/node/fees",
+  "query": "days=0"
+ },
+ {
+  "name": "fees/days-31",
+  "path": "/api/node/fees",
+  "query": "days=31"
+ },
+ {
+  "name": "fees/days-negative",
+  "path": "/api/node/fees",
+  "query": "days=-1"
+ },
+ {
+  "name": "fees/days-fraction",
+  "path": "/api/node/fees",
+  "query": "days=1.5"
+ },
+ {
+  "name": "fees/days-word",
+  "path": "/api/node/fees",
+  "query": "days=abc"
+ },
+ {
+  "name": "fees/days-empty",
+  "path": "/api/node/fees",
+  "query": "days="
+ },
+ {
+  "name": "fees/days-huge",
+  "path": "/api/node/fees",
+  "query": "days=9007199254740992"
+ },
+ {
+  "name": "fees/days-beyond-safe",
+  "path": "/api/node/fees",
+  "query": "days=1e400"
+ },
+ {
+  "name": "fees/days-list",
+  "path": "/api/node/fees",
+  "query": "days=1,2"
+ },
+ {
+  "name": "fees/days-twice",
+  "path": "/api/node/fees",
+  "query": "days=1&days=2"
+ },
+ {
+  "name": "fees/days-nested",
+  "path": "/api/node/fees",
+  "query": "days.a=1"
+ },
+ {
+  "name": "fees/days-brackets",
+  "path": "/api/node/fees",
+  "query": "days[]=1"
+ },
+ {
+  "name": "fees/unknown-key",
+  "path": "/api/node/fees",
+  "query": "foo=bar"
+ },
+ {
+  "name": "fees/page-not-allowed",
+  "path": "/api/node/fees",
+  "query": "page=1"
+ },
+ {
+  "name": "fees/days-and-unknown-key",
+  "path": "/api/node/fees",
+  "query": "days=1&foo=bar"
+ },
+ {
+  "name": "fees/days-key-case",
+  "path": "/api/node/fees",
+  "query": "Days=1"
+ }
+]

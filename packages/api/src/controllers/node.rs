@@ -15,7 +15,9 @@ use heartwood_state::StateView;
 use serde_json::{Map, Value, json};
 
 use crate::context::{ApiContext, ApiReply, ApiRequest, NodeInfo, NodeStatus, Route, RouteId};
+use crate::controllers::transactions::read;
 use crate::errors::ApiError;
+use crate::resources::fee_statistics;
 
 /// The routes of this controller.
 pub fn routes() -> Vec<Route> {
@@ -177,10 +179,12 @@ pub fn crypto_data(node: &NodeInfo) -> Value {
 }
 
 /// The genesis block `genesis` as loaded, as the reference's configuration holds it once it has
-/// booted: building the block serialises each of its transactions, and the serialiser sets on the
-/// transaction's own object, in this order, `version` to 3 and `headerType` to 0 when they are
-/// not truthy, and `typeGroup` to 1 when it is missing. A key it adds comes last; a key it sets
-/// keeps its place.
+/// booted: building the block turns each transaction's `amount`, `fee` and `nonce`, and the
+/// amounts of its transfers, into the decimal strings of big numbers, and serialises the
+/// transaction, which sets on its own object, in this order, `version` to 3 and `headerType` to 0
+/// when they are not truthy, and `typeGroup` to 1 when it is missing. A key it adds comes last; a
+/// key it sets keeps its place. A key that the transaction's schema does not list is kept, as the
+/// reference keeps it.
 pub fn genesis_as_held(genesis: &Value) -> Value {
     let mut genesis = genesis.clone();
     let transactions = genesis
@@ -190,6 +194,19 @@ pub fn genesis_as_held(genesis: &Value) -> Value {
         let Some(transaction) = transaction.as_object_mut() else {
             continue;
         };
+        for key in ["amount", "fee", "nonce"] {
+            as_text(transaction.get_mut(key));
+        }
+        let transfers = transaction
+            .get_mut("asset")
+            .and_then(|asset| asset.get_mut("transfers"));
+        for transfer in transfers
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            as_text(transfer.get_mut("amount"));
+        }
         for (key, default) in [("version", 3), ("headerType", 0)] {
             if !transaction.get(key).is_some_and(js::is_truthy) {
                 transaction.insert(key.to_owned(), Value::from(default));
@@ -202,11 +219,42 @@ pub fn genesis_as_held(genesis: &Value) -> Value {
     genesis
 }
 
-/// `GET /node/fees`: the fee statistics of the kept types.
-///
-/// Not served yet: until its handler is written, the route answers what an unmatched path
-/// answers, 404 "Not Found".
+/// A whole number that is not negative, written as a JSON number, becomes its decimal string, as
+/// a big number is served.
+fn as_text(value: Option<&mut Value>) {
+    if let Some(value) = value
+        && let Some(number) = value.as_u64()
+    {
+        *value = Value::from(number.to_string());
+    }
+}
+
+/// `GET /node/fees`: the fee statistics of the kept types, over the last `days` days when the
+/// query gives them and over each type's last 20 transactions when it does not.
 pub async fn fees(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
-    let _ = (ctx, request);
-    Err(ApiError::not_found("Not Found"))
+    fees_at(&ctx, &request, SystemClock.now_ms()).await
+}
+
+/// [`fees`] at `now_ms` (Unix milliseconds), the time the window of `days` counts back from; a
+/// test gives its own clock here.
+pub async fn fees_at(
+    ctx: &Arc<ApiContext>,
+    request: &ApiRequest,
+    now_ms: i64,
+) -> Result<ApiReply, ApiError> {
+    let days = request.query.get("days").and_then(Value::as_i64);
+    let window = match days {
+        Some(days) => {
+            let epoch = slots::epoch_unix_ms(ctx.node.crypto.milestones.at(1).epoch())
+                .ok_or_else(ApiError::internal)?;
+            Some(fee_statistics::window(days, now_ms, epoch).ok_or_else(ApiError::internal)?)
+        }
+        None => None,
+    };
+    let rows = read(ctx, move |reader| reader.fee_statistics(window)).await?;
+    let rows = match days {
+        Some(_) => rows,
+        None => fee_statistics::in_registry_order(rows),
+    };
+    Ok(ApiReply::ok(fee_statistics::response(days, &rows)))
 }

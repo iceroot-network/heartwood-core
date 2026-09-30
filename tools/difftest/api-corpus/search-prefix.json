@@ -1,0 +1,267 @@
+[
+ {
+  "name": "search/delegate-name",
+  "path": "/api/blockchain/search/${delegateName}"
+ },
+ {
+  "name": "search/delegate-name-upper",
+  "path": "/api/blockchain/search/${delegateName|upper}"
+ },
+ {
+  "name": "search/delegate-name-prefix",
+  "path": "/api/blockchain/search/${delegateName|head:3}"
+ },
+ {
+  "name": "search/delegate-name-one-letter",
+  "path": "/api/blockchain/search/${delegateName|head:1}"
+ },
+ {
+  "name": "search/delegate-address",
+  "path": "/api/blockchain/search/${delegateAddress}"
+ },
+ {
+  "name": "search/delegate-address-upper",
+  "path": "/api/blockchain/search/${delegateAddress|upper}"
+ },
+ {
+  "name": "search/delegate-address-prefix-21",
+  "path": "/api/blockchain/search/${delegateAddress|head:21}"
+ },
+ {
+  "name": "search/delegate-address-prefix-25",
+  "path": "/api/blockchain/search/${delegateAddress|head:25}"
+ },
+ {
+  "name": "search/delegate-address-prefix-33",
+  "path": "/api/blockchain/search/${delegateAddress|head:33}"
+ },
+ {
+  "name": "search/address-short",
+  "path": "/api/blockchain/search/${delegateAddress|head:10}"
+ },
+ {
+  "name": "search/public-key",
+  "path": "/api/blockchain/search/${delegateKey}"
+ },
+ {
+  "name": "search/public-key-upper",
+  "path": "/api/blockchain/search/${delegateKey|upper}"
+ },
+ {
+  "name": "search/public-key-prefix-21",
+  "path": "/api/blockchain/search/${delegateKey|head:21}"
+ },
+ {
+  "name": "search/public-key-prefix-40",
+  "path": "/api/blockchain/search/${delegateKey|head:40}"
+ },
+ {
+  "name": "search/public-key-prefix-20",
+  "path": "/api/blockchain/search/${delegateKey|head:20}"
+ },
+ {
+  "name": "search/voter-address",
+  "path": "/api/blockchain/search/${voter}"
+ },
+ {
+  "name": "search/voter-address-prefix",
+  "path": "/api/blockchain/search/${voter|head:22}"
+ },
+ {
+  "name": "search/burner-address",
+  "path": "/api/blockchain/search/${burner}"
+ },
+ {
+  "name": "search/sender-address-upper",
+  "path": "/api/blockchain/search/${txSender|upper}"
+ },
+ {
+  "name": "search/transaction-id",
+  "path": "/api/blockchain/search/${tx}"
+ },
+ {
+  "name": "search/transaction-id-upper",
+  "path": "/api/blockchain/search/${tx|upper}"
+ },
+ {
+  "name": "search/transaction-id-prefix-21",
+  "path": "/api/blockchain/search/${tx|head:21}"
+ },
+ {
+  "name": "search/transaction-id-prefix-32",
+  "path": "/api/blockchain/search/${tx|head:32}"
+ },
+ {
+  "name": "search/transaction-id-prefix-63",
+  "path": "/api/blockchain/search/${tx|head:63}"
+ },
+ {
+  "name": "search/transaction-id-prefix-20",
+  "path": "/api/blockchain/search/${tx|head:20}"
+ },
+ {
+  "name": "search/transaction-id-prefix-8",
+  "path": "/api/blockchain/search/${tx|head:8}"
+ },
+ {
+  "name": "search/memo-transaction",
+  "path": "/api/blockchain/search/${memoTx}"
+ },
+ {
+  "name": "search/vote-transaction",
+  "path": "/api/blockchain/search/${voteTx}"
+ },
+ {
+  "name": "search/vote-transaction-prefix",
+  "path": "/api/blockchain/search/${voteTx|head:24}"
+ },
+ {
+  "name": "search/genesis-transaction",
+  "path": "/api/blockchain/search/${gTx}"
+ },
+ {
+  "name": "search/genesis-transaction-prefix",
+  "path": "/api/blockchain/search/${gTx|head:21}"
+ },
+ {
+  "name": "search/block-id",
+  "path": "/api/blockchain/search/${tipId}"
+ },
+ {
+  "name": "search/block-id-upper",
+  "path": "/api/blockchain/search/${tipId|upper}"
+ },
+ {
+  "name": "search/block-id-prefix-21",
+  "path": "/api/blockchain/search/${tipId|head:21}"
+ },
+ {
+  "name": "search/block-id-prefix-30",
+  "path": "/api/blockchain/search/${tipId|head:30}"
+ },
+ {
+  "name": "search/block-id-prefix-63",
+  "path": "/api/blockchain/search/${tipId|head:63}"
+ },
+ {
+  "name": "search/block-id-prefix-20",
+  "path": "/api/blockchain/search/${tipId|head:20}"
+ },
+ {
+  "name": "search/block-height",
+  "path": "/api/blockchain/search/${tipHeight}"
+ },
+ {
+  "name": "search/digits-only",
+  "path": "/api/blockchain/search/12345"
+ },
+ {
+  "name": "search/digits-21",
+  "path": "/api/blockchain/search/123456789012345678901"
+ },
+ {
+  "name": "search/underscore-first",
+  "path": "/api/blockchain/search/_abc"
+ },
+ {
+  "name": "search/underscore-only",
+  "path": "/api/blockchain/search/_"
+ },
+ {
+  "name": "search/marks-only",
+  "path": "/api/blockchain/search/!@$&_."
+ },
+ {
+  "name": "search/marks-and-letters",
+  "path": "/api/blockchain/search/a!b@c$d&e_f.g"
+ },
+ {
+  "name": "search/twenty-a",
+  "path": "/api/blockchain/search/aaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "search/twenty-one-a",
+  "path": "/api/blockchain/search/aaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "search/sixty-four-a",
+  "path": "/api/blockchain/search/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "search/sixty-five-a",
+  "path": "/api/blockchain/search/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "search/sixty-six-a",
+  "path": "/api/blockchain/search/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "search/sixty-seven-a",
+  "path": "/api/blockchain/search/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "search/mixed-case",
+  "path": "/api/blockchain/search/GeNeSiS_1"
+ },
+ {
+  "name": "search/genesis-names",
+  "path": "/api/blockchain/search/genesis_1"
+ },
+ {
+  "name": "search/dash",
+  "path": "/api/blockchain/search/a-b"
+ },
+ {
+  "name": "search/plus",
+  "path": "/api/blockchain/search/a%2Bb"
+ },
+ {
+  "name": "search/space",
+  "path": "/api/blockchain/search/a%20b"
+ },
+ {
+  "name": "search/slash",
+  "path": "/api/blockchain/search/a%2Fb"
+ },
+ {
+  "name": "search/percent",
+  "path": "/api/blockchain/search/%25"
+ },
+ {
+  "name": "search/unicode",
+  "path": "/api/blockchain/search/%C3%A9"
+ },
+ {
+  "name": "search/dot",
+  "path": "/api/blockchain/search/..."
+ },
+ {
+  "name": "search/zero-key-prefix",
+  "path": "/api/blockchain/search/02aaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "search/zero-key-prefix-03",
+  "path": "/api/blockchain/search/03aaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "search/zero-key-prefix-04",
+  "path": "/api/blockchain/search/04aaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "search/ignored-query",
+  "path": "/api/blockchain/search/genesis_1",
+  "query": "foo=bar&page=2"
+ },
+ {
+  "name": "search/trailing-slash",
+  "path": "/api/blockchain/search/genesis_1/"
+ },
+ {
+  "name": "search/no-id",
+  "path": "/api/blockchain/search"
+ },
+ {
+  "name": "search/empty-id",
+  "path": "/api/blockchain/search/"
+ }
+]
