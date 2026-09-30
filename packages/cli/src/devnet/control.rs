@@ -33,30 +33,17 @@ const RECORD_DIR: &str = "forger";
 /// Roles of nodes to act on, in order.
 type Targets = Vec<(u32, Role)>;
 /// The roles in the order a start acts on them, and a stop in the other.
-const START: [Role; 2] = Role::ALL;
-const STOP: [Role; 2] = [Role::Forger, Role::Relay];
+const START: [Role; 3] = Role::SUPERVISED;
+const STOP: [Role; 3] = [Role::Forger, Role::Core, Role::Relay];
 
-/// Start the selected nodes: the relays, then, once their APIs answer (30 s at most), the
-/// forgers. Refused when a crypto file differs from the manifest, a node's P2P or API listener
+/// Start the selected nodes: the relays (a core node's one process among them), then, once their
+/// APIs answer (30 s at most), the forgers. Refused when a crypto file differs from the manifest, a node's P2P or API listener
 /// would bind outside loopback, a selected role runs, or a relay's address is taken. Before any
 /// process starts, the epoch is re-stamped `epoch_delay` seconds after the clock's time when it
 /// is less than 10 s away or past, no process of the devnet runs and no node has a chain store;
 /// the re-stamp also removes every forger's signing record.
 pub fn start(root: &Path, selection: &NodeSelection, tools: &Tools<'_>) -> Result<()> {
-    let (root, mut manifest) = open(root)?;
-    let (picked, role) = (manifest.select(selection)?, selection.role);
-    preflight(&root, &manifest, &picked, tools)?;
-    for (k, role) in targets(&manifest, &picked, role, START)? {
-        let instance = manifest.node(k)?.instance(role);
-        if tools.ops.status(&instance)?.status.is_running() {
-            let name = instance.name();
-            return Err(ProcessError::AlreadyRunning { name }.into());
-        }
-    }
-    if restamp_due(&root, &manifest, tools.ops, tools.clock)? {
-        restamp(&root, &mut manifest, tools.clock)?;
-    }
-    launch(&manifest, &picked, role, tools)
+    start_with(root, selection, &StartOptions::default(), tools)
 }
 
 /// The flags of `start` beside the node selection.
@@ -68,19 +55,28 @@ pub struct StartOptions {
     pub no_wait: bool,
 }
 
-/// [`start`] with `options`; with the default options it is [`start`].
+/// [`start`] with `options`: with `keep_epoch` the epoch is never re-stamped; with `no_wait` the
+/// forgers start as soon as the relays do, not once the relays' APIs answer.
 pub fn start_with(
     root: &Path,
     selection: &NodeSelection,
     options: &StartOptions,
     tools: &Tools<'_>,
 ) -> Result<()> {
-    if *options != StartOptions::default() {
-        return Err(DevnetError::NotBuilt(
-            "devnet start --keep-epoch and --no-wait",
-        ));
+    let (root, mut manifest) = open(root)?;
+    let (picked, role) = (manifest.select(selection)?, selection.role);
+    preflight(&root, &manifest, &picked, tools)?;
+    for (k, role) in targets(&manifest, &picked, role, START)? {
+        let instance = manifest.node(k)?.instance(role);
+        if tools.ops.status(&instance)?.status.is_running() {
+            let name = instance.name();
+            return Err(ProcessError::AlreadyRunning { name }.into());
+        }
     }
-    start(root, selection, tools)
+    if !options.keep_epoch && restamp_due(&root, &manifest, tools.ops, tools.clock)? {
+        restamp(&root, &mut manifest, tools.clock)?;
+    }
+    launch(&manifest, &picked, role, !options.no_wait, tools)
 }
 
 /// Start node `node` (`start-node`): [`start`] of that node alone.
@@ -119,7 +115,7 @@ pub fn restart_node(root: &Path, node: u32, role: Option<Role>, tools: &Tools<'_
         }
     }
     stop_nodes(&manifest, &picked, role, false, tools.ops)?;
-    launch(&manifest, &picked, role, tools)
+    launch(&manifest, &picked, role, true, tools)
 }
 
 /// Stop node `node`, then delete its data, logs, temp and cache. The forger's signing record
@@ -188,7 +184,7 @@ fn open(root: &Path) -> Result<(PathBuf, Manifest)> {
 }
 
 /// The roles to act on, role by role in `order`, node by node within a role.
-fn targets(m: &Manifest, picked: &[u32], role: Option<Role>, order: [Role; 2]) -> Result<Targets> {
+fn targets(m: &Manifest, picked: &[u32], role: Option<Role>, order: [Role; 3]) -> Result<Targets> {
     let mut targets = Vec::new();
     for r in order {
         for k in picked {
@@ -269,27 +265,36 @@ fn listener_hosts(node: &ManifestNode, tools: &Tools<'_>) -> Result<Vec<(String,
     Ok(hosts.into_iter().map(host).collect())
 }
 
-/// Start the picked roles: the relays (their listeners test-bound first), then, once their APIs
-/// answer, the forgers.
-fn launch(manifest: &Manifest, picked: &[u32], role: Option<Role>, tools: &Tools) -> Result<()> {
+/// Start the picked roles: the relays and core processes (their listeners test-bound first),
+/// then, once their APIs answer when `wait` is set, the forgers.
+fn launch(
+    manifest: &Manifest,
+    picked: &[u32],
+    role: Option<Role>,
+    wait: bool,
+    tools: &Tools,
+) -> Result<()> {
     let all = targets(manifest, picked, role, START)?;
-    let nodes = |r: Role| -> Result<Vec<&ManifestNode>> {
-        let of = all.iter().filter(|(_, role)| *role == r);
-        of.map(|(k, _)| manifest.node(*k)).collect()
+    let nodes = |split: bool| -> Result<Vec<(&ManifestNode, Role)>> {
+        let of = all
+            .iter()
+            .filter(|(_, role)| (*role == Role::Forger) != split);
+        of.map(|(k, role)| Ok((manifest.node(*k)?, *role)))
+            .collect()
     };
-    let relays = nodes(Role::Relay)?;
-    test_bind(relays.iter().flat_map(|node| [node.p2p(), node.api()]))?;
-    for node in &relays {
-        begin(tools, node, Role::Relay)?;
+    let relays = nodes(true)?;
+    test_bind(relays.iter().flat_map(|(node, _)| [node.p2p(), node.api()]))?;
+    for (node, role) in &relays {
+        begin(tools, node, *role)?;
     }
     // Any answer shows that an API listens, a refusal or an unready node's included.
     let answers = |node: &ManifestNode| match tools.api.node_status(node.api()) {
         Ok(_) => true,
         Err(error) => matches!(error, HttpError::Status { .. } | HttpError::Body { .. }),
     };
-    let mut waiting = relays;
+    let mut waiting: Vec<&ManifestNode> = relays.iter().map(|(node, _)| *node).collect();
     for poll in 0..=API_POLLS {
-        waiting.retain(|node| !answers(node));
+        waiting.retain(|node| wait && !answers(node));
         if waiting.is_empty() {
             break;
         }
@@ -302,8 +307,8 @@ fn launch(manifest: &Manifest, picked: &[u32], role: Option<Role>, tools: &Tools
         }
         (tools.pause)(Duration::from_secs(1));
     }
-    for node in nodes(Role::Forger)? {
-        begin(tools, node, Role::Forger)?;
+    for (node, role) in nodes(false)? {
+        begin(tools, node, role)?;
     }
     Ok(())
 }
