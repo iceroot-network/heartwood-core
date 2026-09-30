@@ -19,10 +19,10 @@ use heartwood_difftest::scenario::backend::Answer;
 use heartwood_difftest::scenario::backends::{external, heartwood};
 use heartwood_difftest::scenario::chain::Chain;
 use heartwood_difftest::scenario::compile::{fire_heights, specs};
-use heartwood_difftest::scenario::projection::{self, Names};
 use heartwood_difftest::scenario::format::{
     Compiled, CompiledTx, Level, Part, RestartModes, Scenario, Via,
 };
+use heartwood_difftest::scenario::projection::{self, Names};
 use heartwood_difftest::scenario::record::{Record, StepRecord, compare};
 use heartwood_difftest::scenario::runner::{Seen, due, run};
 use heartwood_difftest::scenario::{self, Backend, BackendError, Submitted, Tip};
@@ -852,30 +852,61 @@ fn an_api_projection_is_equal_on_every_node_or_a_mismatch() {
 
 #[test]
 fn the_projections_read_the_routes_they_name_without_what_may_differ() {
-    let compiled = compiled(
-        json!([{"at": {"height": 2}}]),
-        &[("fund", 0)],
-    );
+    let compiled = compiled(json!([{"at": {"height": 2}}]), &[("fund", 0)]);
     let chain = Chain::new(&compiled.scenario).expect("chain");
     let alice = chain.person("alice").expect("alice").address.clone();
     let mut fake = Fake::new(1);
-    fake.page(1, &format!("/api/wallets/{alice}"), json!({"data": {"balance": "5",
-        "attributes": {"delegate": {"username": "a", "version": "1.0.0", "productivity": 1}}}}));
-    fake.page(1, "/api/transactions/id-fund", json!({"data": {"id": "id-fund", "confirmations": 3}}));
-    fake.page(1, "/api/blocks/4", json!({"data": {"height": 4, "confirmations": 1}}));
-    fake.page(1, "/api/rounds/1/delegates", json!({"data": [
+    fake.page(
+        1,
+        &format!("/api/wallets/{alice}"),
+        json!({"data": {"balance": "5",
+        "attributes": {"delegate": {"username": "a", "version": "1.0.0", "productivity": 1}}}}),
+    );
+    fake.page(
+        1,
+        "/api/transactions/id-fund",
+        json!({"data": {"id": "id-fund", "confirmations": 3}}),
+    );
+    fake.page(
+        1,
+        "/api/blocks/4",
+        json!({"data": {"height": 4, "confirmations": 1}}),
+    );
+    fake.page(
+        1,
+        "/api/rounds/1/delegates",
+        json!({"data": [
         {"publicKey": "bb", "votes": "5"}, {"publicKey": "aa", "votes": "5"},
-        {"publicKey": "cc", "votes": "10"}]}));
-    fake.page(1, "/api/transactions/unconfirmed?page=1&limit=100",
-        one_page(json!([{"id": "b"}, {"id": "a"}])));
-    fake.page(1, "/api/blocks/missed?height.from=2&height.to=9&page=1&limit=100",
-        one_page(json!([{"height": 3}])));
-    fake.page(1, "/api/node/syncing", json!({"data": {"syncing": false, "blocks": 0, "height": 4}}));
-    fake.page(1, "/api/node/configuration", json!({"data": {"core": {"version": "x"}, "nethash": "n"}}));
+        {"publicKey": "cc", "votes": "10"}]}),
+    );
+    fake.page(
+        1,
+        "/api/transactions/unconfirmed?page=1&limit=100",
+        one_page(json!([{"id": "b"}, {"id": "a"}])),
+    );
+    fake.page(
+        1,
+        "/api/blocks/missed?height.from=2&height.to=9&page=1&limit=100",
+        one_page(json!([{"height": 3}])),
+    );
+    fake.page(
+        1,
+        "/api/node/syncing",
+        json!({"data": {"syncing": false, "blocks": 0, "height": 4}}),
+    );
+    fake.page(
+        1,
+        "/api/node/configuration",
+        json!({"data": {"core": {"version": "x"}, "nethash": "n"}}),
+    );
     // Two pages, the first pointing at the second.
     fake.page(1, "/api/delegates/genesis_1/voters?page=1&limit=100",
         json!({"meta": {"next": "/delegates/genesis_1/voters?page=2&limit=100"}, "data": [{"address": "1"}]}));
-    fake.page(1, "/api/delegates/genesis_1/voters?page=2&limit=100", one_page(json!([{"address": "2"}])));
+    fake.page(
+        1,
+        "/api/delegates/genesis_1/voters?page=2&limit=100",
+        one_page(json!([{"address": "2"}])),
+    );
     let runner_chain = Chain::new(&compiled.scenario).expect("chain");
     let names = Names {
         chain: &runner_chain,
@@ -896,9 +927,18 @@ fn the_projections_read_the_routes_they_name_without_what_may_differ() {
     );
     assert_eq!(read("pool"), json!(["a", "b"]));
     assert_eq!(read("missed(2, 9)"), json!([{"height": 3}]));
-    assert_eq!(read("status"), json!({"data": {"syncing": false, "height": 4}}));
-    assert_eq!(read("config"), json!({"data": {"core": {}, "nethash": "n"}}));
-    assert_eq!(read("voters(genesis_1)"), json!([{"address": "1"}, {"address": "2"}]));
+    assert_eq!(
+        read("status"),
+        json!({"data": {"syncing": false, "height": 4}})
+    );
+    assert_eq!(
+        read("config"),
+        json!({"data": {"core": {}, "nethash": "n"}})
+    );
+    assert_eq!(
+        read("voters(genesis_1)"),
+        json!([{"address": "1"}, {"address": "2"}])
+    );
     // A route that answers another status is compared with its status.
     assert_eq!(read("tx(elsewhere)"), json!({"status": 404, "body": {}}));
     for bad in ["wallet", "delegates(1)", "missed(1)", "tx(a"] {
@@ -1386,7 +1426,16 @@ fn a_run_without_a_devnet_says_so_before_it_starts_anything() {
     // A run with no scenario at its level at all is the harness's error, not an empty pass.
     std::fs::remove_file(dir.join("broken.json")).expect("remove");
     let (ok, text) = difftest(
-        &["scenario", "run", "--backend", "lockstep", "--level", "l2", d, "--strict"],
+        &[
+            "scenario",
+            "run",
+            "--backend",
+            "lockstep",
+            "--level",
+            "l2",
+            d,
+            "--strict",
+        ],
         &["--solar-dir".into(), "/nonexistent".into()],
     );
     assert!(!ok, "{text}");
@@ -1698,8 +1747,8 @@ fn a_scenario_compiles_to_the_same_bytes_twice_with_the_fee_floor_and_the_nonces
     let scenario = scenario::load(&file).expect("scenario");
     let chain = Chain::new(&scenario).expect("chain");
     let network = Network::load(&chain.crypto["network"].to_string()).expect("network");
-    let milestones = Milestones::load(&chain.crypto["milestones"].to_string(), &network)
-        .expect("milestones");
+    let milestones =
+        Milestones::load(&chain.crypto["milestones"].to_string(), &network).expect("milestones");
     let decoded = |reference: &str| {
         let tx = first
             .transactions

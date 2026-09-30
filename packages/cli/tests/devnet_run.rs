@@ -66,10 +66,7 @@ fn takes_the_harness_build_next_to_the_binary_but_not_from_path() {
     fs::rename(&runner, &built).unwrap();
     assert_eq!(locate(Some(&dir), OsStr::new("")), Ok(built.clone()));
     let path = std::env::join_paths([&dir]).unwrap();
-    assert_eq!(
-        locate(None, &path),
-        Err(DevnetError::RunnerMissing(RUNNER))
-    );
+    assert_eq!(locate(None, &path), Err(DevnetError::RunnerMissing(RUNNER)));
     // The installed name comes first, from the directories of PATH too.
     let (installed, _) = fake_runner("installed");
     let path = std::env::join_paths([installed.parent().unwrap()]).unwrap();

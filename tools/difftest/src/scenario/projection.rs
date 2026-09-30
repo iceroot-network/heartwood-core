@@ -70,7 +70,9 @@ pub fn parse(text: &str) -> Result<(&str, Vec<&str>), BackendError> {
         .ok_or_else(|| failed(format!("the projection {text} does not end its arguments")))?;
     let args: Vec<&str> = inner.split(',').map(str::trim).collect();
     if args.iter().any(|a| a.is_empty()) {
-        return Err(failed(format!("the projection {text} has an empty argument")));
+        return Err(failed(format!(
+            "the projection {text} has an empty argument"
+        )));
     }
     Ok((name.trim(), args))
 }
@@ -207,7 +209,10 @@ pub fn read(
         }
         "wallet_history" => {
             let path = format!("/api/wallets/{}/transactions", names.address(one()?));
-            Ok(without(all_pages(backend, node, &path)?, &["confirmations"]))
+            Ok(without(
+                all_pages(backend, node, &path)?,
+                &["confirmations"],
+            ))
         }
         "tx" => {
             let mut body = get(&format!("/api/transactions/{}", names.id(one()?)))?;

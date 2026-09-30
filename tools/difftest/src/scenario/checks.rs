@@ -145,10 +145,21 @@ impl Ctx<'_, '_> {
     }
 
     /// One read of `api` on `nodes`: `None` when the tips moved or differed.
-    fn projection_once(&mut self, api: &ApiCheck, nodes: &[u32]) -> Result<Option<Outcome>, BackendError> {
+    fn projection_once(
+        &mut self,
+        api: &ApiCheck,
+        nodes: &[u32],
+    ) -> Result<Option<Outcome>, BackendError> {
         let names = Names {
             chain: &self.runner.chain,
-            actors: self.runner.compiled.scenario.actors.keys().map(String::as_str).collect(),
+            actors: self
+                .runner
+                .compiled
+                .scenario
+                .actors
+                .keys()
+                .map(String::as_str)
+                .collect(),
             transactions: &self.runner.compiled.transactions,
         };
         let mut height = None;

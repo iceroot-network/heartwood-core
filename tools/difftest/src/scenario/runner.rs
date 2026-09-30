@@ -25,7 +25,11 @@ pub const MAX_ROUNDS: u32 = 5;
 pub fn last_height(scenario: &super::format::Scenario, round_length: u32) -> Result<u32> {
     let fires = super::compile::fire_heights(scenario, round_length)?;
     let reach = |(step, fire): (&Step, &u32)| {
-        let window = step.check.as_ref().and_then(|c| c.within_blocks).unwrap_or(0);
+        let window = step
+            .check
+            .as_ref()
+            .and_then(|c| c.within_blocks)
+            .unwrap_or(0);
         let wait = match step.action {
             Some(Action::Wait) => step.blocks.unwrap_or(0),
             Some(Action::Submit) => 1,
@@ -33,7 +37,13 @@ pub fn last_height(scenario: &super::format::Scenario, round_length: u32) -> Res
         };
         fire.saturating_add(wait).saturating_add(window)
     };
-    Ok(scenario.steps.iter().zip(&fires).map(reach).max().unwrap_or(0))
+    Ok(scenario
+        .steps
+        .iter()
+        .zip(&fires)
+        .map(reach)
+        .max()
+        .unwrap_or(0))
 }
 
 /// Where the network was when a step fired or is now: the tip's height and slot.
