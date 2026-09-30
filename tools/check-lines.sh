@@ -87,10 +87,14 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 #   of the next round's rows after it add up to 95, and the job stall's field 4. The rollback is
 #   listed on its own. Its `difftest` module (the job stall, behind the `difftest` feature, which no
 #   release build enables) is test support: it is left out and listed apart, as the other crates'
-#   are. With the bodies built it goes to 3,900: it measured 3,837, since the rollback took 140
-#   lines where 80 were planned (62 lines of signatures written before its bodies, and 78 of bodies:
-#   the refusals' lines, the plan, the store change with its row counts and the reference's three
-#   lines), the start's write 8 and the job stall's field and call 6.
+#   are. With the bodies built it goes to 3,900: it measured 3,837, 172 above 3,665, since the
+#   rollback took 140 lines where 80 were planned (62 lines of signatures written before its
+#   bodies, and 78 of bodies: the refusals' lines, the plan, the store change with its row counts
+#   and the reference's three lines), the start's write of the next round's rows 20 (16 in
+#   commit.rs, 4 in restore.rs), the job stall's field and call 8 (4 in node.rs, 4 in
+#   process_blocks_job.rs) and the rollback module's declaration and re-export 4. The start's
+#   productivity backfill (21 in restore.rs, 4 in commit.rs) and the rollback's first lines logged
+#   before its deletes (4) bring it to 3,866.
 # - heartwood-core goes from 3,100 to 3,200: it measured 3,009; the rollback command (up to 60
 #   lines), the two clears' dispatch and their marker check (20), the AwaitBlock record's override
 #   (10) and the three commands' flags and wiring (68) join the command tree. The clears' bodies
