@@ -101,7 +101,7 @@ pub fn run(args: &[String]) -> Result<bool> {
         started,
         finished,
     };
-    let path = record.write(&out)?;
+    let path = store::write_record(&record, &out)?;
     println!("gate record: {}", path.display());
 
     match (ledger, ledger_dir) {
@@ -114,7 +114,10 @@ pub fn run(args: &[String]) -> Result<bool> {
                 );
                 return Ok(false);
             }
-            let source = format!("gate record {}", record.file_name());
+            let written_name = path
+                .file_name()
+                .map_or_else(|| record.file_name(), |n| n.to_string_lossy().into_owned());
+            let source = format!("gate record {written_name}");
             let entry = entry_from(&spec, &record, &source)?;
             let written = store::write_entry(&entry, Path::new(&dir))?;
             println!("gate record: ledger entry {}", written.display());
@@ -176,7 +179,7 @@ pub fn write_own(
         started: own.started,
         finished: time::now_utc(),
     };
-    record.write(out)
+    store::write_record(&record, out)
 }
 
 /// The machine's name: the flag, `GATE_MACHINE`, the host name.

@@ -147,6 +147,44 @@ fn walk(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// Write `record` into `dir` under its file name, or, when a record of the same target started
+/// in the same second is there already, under that name with `-2`, `-3`, ... before `.json`, so
+/// that no record replaces another; its path.
+pub fn write_record(record: &GateRecord, dir: &Path) -> Result<PathBuf> {
+    std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
+    let name = record.file_name();
+    let stem = name.strip_suffix(".json").unwrap_or(&name);
+    let text = serde_json::to_string_pretty(record).map_err(|e| Error::Corpus {
+        path: dir.join(&name),
+        message: e.to_string(),
+    })? + "\n";
+    for n in 1..=1000u32 {
+        let path = if n == 1 {
+            dir.join(&name)
+        } else {
+            dir.join(format!("{stem}-{n}.json"))
+        };
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path);
+        match file {
+            Ok(mut file) => {
+                use std::io::Write as _;
+                file.write_all(text.as_bytes())
+                    .map_err(|e| Error::io(&path, e))?;
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(Error::io(&path, e)),
+        }
+    }
+    Err(Error::Corpus {
+        path: dir.join(name),
+        message: "a thousand records of this target started in this second".to_owned(),
+    })
+}
+
 /// The file name of a ledger entry: its start, kind, id, seed and machine.
 pub fn entry_file_name(entry: &LedgerEntry) -> String {
     let safe = |text: &str| -> String {

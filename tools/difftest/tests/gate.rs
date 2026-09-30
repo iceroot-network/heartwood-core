@@ -1106,3 +1106,15 @@ fn a_failed_record_blocks_its_row_even_beside_enough_passes() {
     assert!(rig.record("l0", "difftest run l0", 0, "", T3).ok);
     assert!(s1(&rig, &[]).text.contains("R1       pass"));
 }
+
+#[test]
+fn two_records_of_one_target_started_in_one_second_are_both_kept() {
+    let rig = Rig::new();
+    rig.criteria(&base_criteria());
+    assert!(rig.record("l0", "difftest run l0", 0, "", T1).ok);
+    assert!(rig.record("l0", "difftest run l0", 1, "", T1).ok);
+    let records = rig.records();
+    assert_eq!(records.len(), 2, "{records:?}");
+    let results: Vec<&Value> = records.iter().map(|r| &r["result"]).collect();
+    assert!(results.contains(&&json!("pass")) && results.contains(&&json!("fail")));
+}
