@@ -47,6 +47,8 @@ module.exports = async function operatorVectors({ rec, must, shared }) {
         ["an empty file", "", [["A", "1"]]],
         ["a value with an equals sign", "A=b=c\n", [["D", "e=f"]]],
         ["spaces around the separator are trimmed", " A = 1 \n", [["B", "2"]]],
+        ["a quoted, an empty and a zero-led value, which the node reads otherwise", 'A="x y"\nB=\nC=007\n', [["D", "1"]]],
+        ["a JSON file, which only the reference's CLI reads as JSON", '{"A":1,"B":"two"}', [["C", "3"]]],
     ];
     for (const [name, file, vars] of files) await push("env.stringify", { file, vars }, name);
 

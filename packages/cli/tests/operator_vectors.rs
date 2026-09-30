@@ -4,8 +4,8 @@
 //!   `env::set` on a real file (comments and blank lines dropped, the order of a JavaScript
 //!   object's keys, no final line break); one without is `env::stringify` over its variables.
 //! - `env.parseCli`: what the reference's CLI reads with envfile. Heartwood's commands read the
-//!   file with the node's parser, so a line the record notes `cliEnvParser` is read otherwise, and
-//!   every other record reads alike.
+//!   file with the node's parser, so a line the record notes `cliEnvParser` is read otherwise (as
+//!   the note's `node` reading), and every other record reads alike.
 //!
 //! The class is read from `tests/vectors`, or from the directory in `CLI_VECTORS` (a relative path
 //! is taken from the workspace root), such as a local oracle run in `target/vectors/local`. A
@@ -110,8 +110,12 @@ fn env_stringify_matches_the_records() {
             }
             None => stringify(&vars),
         };
-        if record["output"]["notes"]["cliEnvParser"] != true {
-            assert_eq!(got, wanted, "{name}");
+        // Where the parsers read the file differently, the bytes are those written from the
+        // node's reading, which the oracle notes beside the reference's.
+        let notes = &record["output"]["notes"];
+        match notes["cliEnvParser"] == true {
+            true => assert_eq!(Some(got.as_str()), notes["node"].as_str(), "{name}"),
+            false => assert_eq!(got, wanted, "{name}"),
         }
         compared += 1;
     }
@@ -132,10 +136,16 @@ fn env_parse_cli_matches_the_records_where_the_parsers_agree() {
             .into_iter()
             .map(|(k, v)| json!([k, v]))
             .collect();
-        let same = Value::Array(ours) == record["output"]["pairs"];
-        // The note is exactly where the two parsers read the text differently.
-        let noted = record["output"]["notes"]["cliEnvParser"] == true;
+        let ours = Value::Array(ours);
+        let same = ours == record["output"]["pairs"];
+        // The note is exactly where the two parsers read the text differently, and it carries
+        // the node's reading, which is Heartwood's.
+        let notes = &record["output"]["notes"];
+        let noted = notes["cliEnvParser"] == true;
         assert_eq!(same, !noted, "{}", record["name"]);
+        if noted {
+            assert_eq!(ours, notes["node"], "{}", record["name"]);
+        }
         differing += usize::from(noted);
         compared += 1;
     }
