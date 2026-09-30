@@ -14,19 +14,21 @@
 //! reference's StateBuilder rebuilds the indexes in its handlers' order and its saved-state start
 //! in the saved address order, and both then re-index the wallets of the current round's
 //! transactions; Heartwood's replay path gives the order the chain's blocks set, and its table
-//! path the order of the stored rows. [`masked`] accepts those two parts when they list the same
-//! keys as the reference's, and Heartwood's replay path is the reference's replayed order. A
-//! corpus with a delegate name or a voted name that reads as a number is answered as
-//! [`Documented::SavedStateUsername`] where the oracle notes it, as the restart lines are.
+//! path the order of the stored rows. The output's notes hold that order of the stored rows, read
+//! from the store apart from the restart (`storedRows`: each row's address while its wallet holds
+//! something, and the keys and names the rows hold, in row order). [`masked`] accepts the two
+//! restart parts when they list the same keys as the reference's, Heartwood's replay path is the
+//! reference's replayed order, and its table path is the stored rows' order.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use heartwood_blockchain::RestoreMode;
+use heartwood_blockchain::{ChainStore, RestoreMode};
 use heartwood_crypto::Block;
 use heartwood_crypto::crypto::hash::sha256;
 use heartwood_crypto::identities::PublicKey;
 use heartwood_crypto::utils::hex;
+use heartwood_state::persist::WalletRecord;
 use heartwood_state::{Wallet, WalletRepository};
 use heartwood_transactions::Handlers;
 use serde_json::{Value, json};
@@ -38,7 +40,7 @@ use crate::restart::HeartwoodMode;
 use crate::store::{
     ScratchDir, StartProblem, StoreNode, crypto_files, restore_mode, took_its_path,
 };
-use crate::subject::{Case, Documented, Verdict};
+use crate::subject::{Case, Documented, NOTES, Verdict};
 
 /// The operations of this module.
 pub(super) const OPS: &[(&str, Run)] = &[("state.indexOrders", index_orders)];
@@ -92,7 +94,7 @@ fn index_orders(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         .and_then(|taken| steps.get(..taken))
         .ok_or_else(|| failed("input.line is not a line of the corpus's replay"))?;
 
-    let (height, [live, saved, replayed]) =
+    let (height, [live, saved, replayed, rows]) =
         store_orders(&corpus, taken).map_err(|e| failed(format!("{name}: {e}")))?;
     let ours = json!({
         "height": height,
@@ -100,6 +102,7 @@ fn index_orders(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         "saved": saved,
         "rebuild": replayed,
         "replayed": replayed,
+        NOTES: { STORED_ROWS: rows },
     });
     // A name that the reference's saved state reads back as a number changes its saved-state
     // start (the oracle's note shows it); every other case is judged by the restart orders' mask.
@@ -112,10 +115,42 @@ fn index_orders(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     })
 }
 
+/// The note of Heartwood's output that holds the stored rows' order ([`row_orders`]).
+const STORED_ROWS: &str = "storedRows";
+
+/// The three orders the store's wallet rows give when each index takes them in row order, read
+/// from the rows apart from any restart: the address of each row whose wallet holds something (a
+/// key, a balance, a nonce, a second key or a delegate record), and the key and the name of each
+/// row that holds one.
+fn row_orders(store: &ChainStore, network: u8) -> Result<Value, String> {
+    let mut wallets = Vec::new();
+    for row in store.database().wallets().map_err(|e| e.to_string())? {
+        let record: WalletRecord = serde_json::from_str(&row.record).map_err(|e| e.to_string())?;
+        wallets.push(Wallet::from_record(record, network).map_err(|e| e.to_string())?);
+    }
+    let holds = |wallet: &&Wallet| {
+        wallet.public_key().is_some()
+            || wallet.balance() != 0
+            || wallet.nonce() != 0
+            || wallet.second_public_key().is_some()
+            || wallet.is_delegate()
+    };
+    let addresses: Vec<String> = (wallets.iter().filter(holds))
+        .map(|wallet| wallet.address().to_base58())
+        .collect();
+    let keys: Vec<String> = (wallets.iter().filter_map(Wallet::public_key))
+        .map(PublicKey::to_hex)
+        .collect();
+    let names: Vec<&str> = (wallets.iter().filter_map(Wallet::delegate))
+        .map(|delegate| delegate.username())
+        .collect();
+    Ok(json!({ "addresses": addresses, "publicKeys": keys, "usernames": names }))
+}
+
 /// The height and the orders after `taken`, the first steps of `corpus`'s replay, run through a
 /// new store as a node applies, reverts and commits them; then the orders after a restart from the
-/// state tables and after a replay restart of that store.
-fn store_orders(corpus: &Corpus, taken: &[Action]) -> Result<(u32, [Value; 3]), String> {
+/// state tables and after a replay restart of that store, and the stored rows' order.
+fn store_orders(corpus: &Corpus, taken: &[Action]) -> Result<(u32, [Value; 4]), String> {
     let problem = |e: StartProblem| e.into_error().to_string();
     let files = crypto_files(corpus).map_err(problem)?;
     let scratch = ScratchDir::new("state-index").map_err(|e| e.to_string())?;
@@ -145,6 +180,7 @@ fn store_orders(corpus: &Corpus, taken: &[Action]) -> Result<(u32, [Value; 3]), 
         }
     }
     writer.commit().map_err(|e| e.to_string())?;
+    let rows = row_orders(&store, state.wallets().network())?;
     drop(store);
     let restarted = |mode: HeartwoodMode| -> Result<Value, String> {
         let node = start(restore_mode(mode))?;
@@ -157,14 +193,15 @@ fn store_orders(corpus: &Corpus, taken: &[Action]) -> Result<(u32, [Value; 3]), 
     let table = restarted(HeartwoodMode::Table)?;
     Ok((
         state.height(),
-        [live, table, restarted(HeartwoodMode::Replay)?],
+        [live, table, restarted(HeartwoodMode::Replay)?, rows],
     ))
 }
 
 /// The reference's answer `theirs` with its restart orders replaced by Heartwood's (`ours`), when
 /// the two differ only as [`Documented::ReplayIndexOrder`] says: each of Heartwood's restart paths
-/// lists the same keys as the reference's restart, and Heartwood's replay path is the reference's
-/// replayed order. `None` otherwise, or when there is nothing to replace.
+/// lists the same keys as the reference's restart, Heartwood's replay path is the reference's
+/// replayed order, and its table path is the order of the stored rows (the note `storedRows`).
+/// `None` otherwise, or when there is nothing to replace.
 pub fn masked(theirs: &Value, ours: &Value) -> Option<Value> {
     let keys = |orders: &Value| -> Option<[BTreeSet<String>; 3]> {
         let set = |name: &str| -> Option<BTreeSet<String>> {
@@ -178,6 +215,7 @@ pub fn masked(theirs: &Value, ours: &Value) -> Option<Value> {
     let explained = same_keys("saved")
         && same_keys("rebuild")
         && ours["rebuild"] == theirs["replayed"]
+        && ours["saved"] == ours[NOTES][STORED_ROWS]
         && (theirs["saved"] != ours["saved"] || theirs["rebuild"] != ours["rebuild"]);
     explained.then(|| {
         let mut adjusted = theirs.clone();
@@ -185,4 +223,59 @@ pub fn masked(theirs: &Value, ours: &Value) -> Option<Value> {
         adjusted["rebuild"] = ours["rebuild"].clone();
         adjusted
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn orders(addresses: &[&str], keys: &[&str], names: &[&str]) -> Value {
+        json!({ "addresses": addresses, "publicKeys": keys, "usernames": names })
+    }
+
+    /// The reference's answer: every part in one order, the restarts in another.
+    fn theirs() -> Value {
+        let live = orders(&["a", "b", "c"], &["k1", "k2"], &["n1", "n2"]);
+        let restart = orders(&["c", "a", "b"], &["k2", "k1"], &["n2", "n1"]);
+        json!({
+            "height": 9, "live": live, "saved": restart, "rebuild": restart, "replayed": live,
+            NOTES: { "rebuildOrder": true },
+        })
+    }
+
+    /// Heartwood's answer: the table path in the rows' order `saved`, noted as `rows`, and the
+    /// replay path in `replayed`.
+    fn ours(saved: &Value, rows: &Value, replayed: &Value) -> Value {
+        let live = orders(&["a", "b", "c"], &["k1", "k2"], &["n1", "n2"]);
+        json!({
+            "height": 9, "live": live, "saved": saved, "rebuild": replayed, "replayed": replayed,
+            NOTES: { STORED_ROWS: rows },
+        })
+    }
+
+    #[test]
+    fn the_restart_orders_are_taken_only_as_the_difference_says() {
+        let theirs = theirs();
+        let live = &theirs["live"];
+        let rows = orders(&["b", "a", "c"], &["k1", "k2"], &["n1", "n2"]);
+        let taken = masked(&theirs, &ours(&rows, &rows, live)).expect("the difference");
+        assert_eq!(taken["saved"], rows);
+        assert_eq!(taken["rebuild"], *live);
+        assert_eq!(taken["live"], *live);
+
+        // The table path in another order than the stored rows'.
+        let other = orders(&["a", "b", "c"], &["k1", "k2"], &["n1", "n2"]);
+        assert_eq!(masked(&theirs, &ours(&other, &rows, live)), None);
+        // The replay path in another order than the reference's replayed one.
+        let replayed = orders(&["b", "a", "c"], &["k1", "k2"], &["n1", "n2"]);
+        assert_eq!(masked(&theirs, &ours(&rows, &rows, &replayed)), None);
+        // A restart that lists another wallet.
+        let more = orders(&["b", "a", "c", "d"], &["k1", "k2"], &["n1", "n2"]);
+        assert_eq!(masked(&theirs, &ours(&more, &more, live)), None);
+        // Nothing to replace: the case is compared as it is.
+        let same = ours(&theirs["saved"], &theirs["saved"], live);
+        let mut equal = theirs.clone();
+        equal["rebuild"] = live.clone();
+        assert_eq!(masked(&equal, &same), None);
+    }
 }

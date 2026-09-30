@@ -370,7 +370,8 @@ impl ApiDifference {
 }
 
 /// The key of an oracle output that holds the oracle's notes: what it observed of the reference
-/// that the output's value cannot show, for [`Documented::shown_by`]. L0 does not compare it.
+/// that the output's value cannot show, for [`Documented::shown_by`]; and of a subject's output
+/// that holds what Heartwood observed for a documented difference's mask. L0 does not compare it.
 pub const NOTES: &str = "notes";
 
 /// The start of the message of the `RangeError` that Node raises when its stack overflows.
@@ -417,8 +418,8 @@ impl Documented {
     /// answer), the wallets of a round answer (the answer with Heartwood's wallets in the places
     /// where the key and the name agree, [`crate::subjects::round_wallets_masked`]), an escaped
     /// log text (the reference's line with its message escaped), and the index orders after a
-    /// restart (the answer with Heartwood's restart orders where they list the same keys,
-    /// [`crate::subjects::index_orders_masked`]).
+    /// restart (the answer with Heartwood's restart orders where they list the same keys and its
+    /// table path is the stored rows' order, [`crate::subjects::index_orders_masked`]).
     pub fn masked(self, expected: &Expected, ours: &Verdict) -> Option<Expected> {
         if self == Documented::EscapedLogText {
             return crate::subjects::escaped_line(expected);
