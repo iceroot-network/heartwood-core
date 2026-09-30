@@ -153,6 +153,14 @@ fn control_characters_escape_sequences_and_bidirectional_marks_are_removed() {
         ),
         ("\u{200e}mark\u{200f}\u{61c}", "mark"),
         ("zero\u{200b}width\u{feff}\u{2060}", "zerowidth"),
+        // Format characters a terminal does not show but a reader of the text receives.
+        ("tag\u{e0001}\u{e0069}\u{e0067}\u{e006e}\u{e007f}s", "tags"),
+        ("soft\u{ad}hyphen\u{34f}\u{180e}", "softhyphen"),
+        ("selector\u{fe0f}\u{e0100}\u{180b}", "selector"),
+        ("anchor\u{fff9}\u{fffa}\u{fffb}", "anchor"),
+        ("arabic\u{600}\u{6dd}\u{70f}\u{890}\u{8e2}", "arabic"),
+        ("other\u{110bd}\u{13430}\u{1bca0}\u{1d173}\u{206a}", "other"),
+        ("filler\u{115f}\u{1160}\u{3164}\u{ffa0}end", "filler    end"),
         (
             "line\u{2028}break\u{2029}para\u{85}next",
             "line break para next",
@@ -169,6 +177,16 @@ fn control_characters_escape_sequences_and_bidirectional_marks_are_removed() {
         let out = redactor.untrusted(text);
         assert!(!out.chars().any(char::is_control), "{out:?}");
     }
+    // An invisible character inside a hex run or an address hides neither.
+    let split = format!("{}\u{e0041}{}", "ab".repeat(20), "cd".repeat(20));
+    assert_eq!(redactor.untrusted(&split), "[hex, 80 characters]");
+    let split = format!("{}\u{ad}{}", "ab".repeat(20), "cd".repeat(20));
+    assert_eq!(redactor.untrusted(&split), "[hex, 80 characters]");
+    assert_eq!(redactor.untrusted("192.0\u{ad}.2.1"), "addr-1 (public)");
+    assert_eq!(
+        redactor.untrusted("2001:db8:\u{e0041}:1"),
+        "addr-2 (public)"
+    );
 }
 
 #[test]
@@ -286,7 +304,7 @@ fn no_address_between_common_delimiters_survives_and_no_input_panics() {
         }
     }
     let alphabet: Vec<char> =
-        "0123456789abcdefABCDEF:.%[]-_ xé\u{1b}\u{9b}\u{7}\n\u{202e}\u{200b}\\;/"
+        "0123456789abcdefABCDEF:.%[]-_ xé\u{1b}\u{9b}\u{7}\n\u{202e}\u{200b}\u{ad}\u{e0041}\u{fe0f}\u{3164}\\;/"
             .chars()
             .collect();
     for _ in 0..5_000 {
@@ -297,8 +315,11 @@ fn no_address_between_common_delimiters_survives_and_no_input_panics() {
         let out = redactor.untrusted(&text);
         assert!(out.chars().count() <= MAX_EXCERPT_CHARS);
         assert!(
-            !out.chars()
-                .any(|c| c.is_control() || c == '\u{202e}' || c == '\u{200b}'),
+            !out.chars().any(|c| c.is_control()
+                || matches!(
+                    c,
+                    '\u{202e}' | '\u{200b}' | '\u{ad}' | '\u{e0041}' | '\u{fe0f}'
+                )),
             "{out:?}"
         );
     }

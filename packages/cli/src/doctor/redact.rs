@@ -3,11 +3,12 @@
 //! label); under `--hide-identity` delegate names become `delegate-N` and public keys `pk-N`; the
 //! home directory becomes `~`, the user's name `user` and the host's name `host`.
 //!
-//! Untrusted text is cleaned first: escape sequences, bidirectional marks and invisible format
-//! characters are removed and every other control character becomes a space, so no excerpt can
-//! move the cursor, recolour a terminal, reorder what is shown or start a line of its own. Then
-//! hex runs of 64 characters or more become `[hex, N characters]`, the names and addresses are
-//! replaced, and the excerpt is capped at [`MAX_EXCERPT_CHARS`] characters.
+//! Untrusted text is cleaned first: escape sequences, bidirectional marks, invisible format
+//! characters (tag characters and the soft hyphen among them) and variation selectors are removed
+//! and every other control character becomes a space, so no excerpt can move the cursor, recolour
+//! a terminal, reorder what is shown, start a line of its own or carry text a reader cannot see.
+//! Then hex runs of 64 characters or more become `[hex, N characters]`, the names and addresses
+//! are replaced, and the excerpt is capped at [`MAX_EXCERPT_CHARS`] characters.
 
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -273,8 +274,48 @@ fn v6_in(run: &str, before: Option<char>, after: Option<char>) -> Option<(usize,
     None
 }
 
-/// `text` without escape sequences, bidirectional marks and invisible format characters, with
-/// every other control character (line breaks and tabs included) as a space.
+/// The invisible characters [`clean`] removes: every format character (Unicode's general category
+/// Cf: soft hyphen, zero-width and bidirectional marks, tag characters and the rest), the variation
+/// selectors, the combining grapheme joiner and the Mongolian free variation selectors.
+const INVISIBLE: [(char, char); 23] = [
+    ('\u{ad}', '\u{ad}'),
+    ('\u{34f}', '\u{34f}'),
+    ('\u{600}', '\u{605}'),
+    ('\u{61c}', '\u{61c}'),
+    ('\u{6dd}', '\u{6dd}'),
+    ('\u{70f}', '\u{70f}'),
+    ('\u{890}', '\u{891}'),
+    ('\u{8e2}', '\u{8e2}'),
+    ('\u{180b}', '\u{180f}'),
+    ('\u{200b}', '\u{200f}'),
+    ('\u{202a}', '\u{202e}'),
+    ('\u{2060}', '\u{206f}'),
+    ('\u{fe00}', '\u{fe0f}'),
+    ('\u{feff}', '\u{feff}'),
+    ('\u{fff9}', '\u{fffb}'),
+    ('\u{110bd}', '\u{110bd}'),
+    ('\u{110cd}', '\u{110cd}'),
+    ('\u{13430}', '\u{1343f}'),
+    ('\u{1bca0}', '\u{1bca3}'),
+    ('\u{1d173}', '\u{1d17a}'),
+    ('\u{e0001}', '\u{e0001}'),
+    ('\u{e0020}', '\u{e007f}'),
+    ('\u{e0100}', '\u{e01ef}'),
+];
+
+/// The Hangul fillers: blank letters, shown as a space.
+const FILLERS: [char; 4] = ['\u{115f}', '\u{1160}', '\u{3164}', '\u{ffa0}'];
+
+/// Whether `c` is one of the [`INVISIBLE`] characters.
+fn invisible(c: char) -> bool {
+    INVISIBLE
+        .iter()
+        .any(|(from, to)| (*from..=*to).contains(&c))
+}
+
+/// `text` without escape sequences and invisible characters (bidirectional marks, format
+/// characters and variation selectors), with every other control character (line breaks and tabs
+/// included) and each blank filler letter as a space.
 pub fn clean(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
@@ -294,9 +335,9 @@ pub fn clean(text: &str) -> String {
                 _ => {}
             },
             '\u{9b}' => csi(&mut chars),
-            '\u{61c}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' => {}
-            '\u{2060}'..='\u{2069}' | '\u{feff}' => {}
+            c if invisible(c) => {}
             c if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') => out.push(' '),
+            c if FILLERS.contains(&c) => out.push(' '),
             c => out.push(c),
         }
     }
