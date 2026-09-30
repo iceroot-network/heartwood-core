@@ -6,9 +6,9 @@
 //! HTTPS is refused when the node starts ([`check_sources`]): the client has no TLS.
 //!
 //! A source that is a path starting with `/` is read as a local JSON file, as the reference's
-//! branch for one does. No configuration reaches that branch on either side: `peers.json` takes
-//! only URIs for its sources, as the reference's schema does, so only a caller that builds the
-//! options itself can give a path.
+//! branch for one does, but of at most [`MAX_SOURCE_BYTES`], as a response is. No configuration
+//! reaches that branch on either side: `peers.json` takes only URIs for its sources, as the
+//! reference's schema does, so only a caller that builds the options itself can give a path.
 //!
 //! The port probes are a hand-written HTTP `HEAD /`; the communicator records the port on a 200 and
 //! -1 otherwise. The reference writes the probe's URL as `http://<ip>:<port>/`, which for an IPv6
@@ -19,8 +19,9 @@
 //! source's whole fetch ends after [`SOURCE_DEADLINE`], and a port probe after the communicator's
 //! [`crate::communicator::PROBE_DEADLINE`].
 
+use std::fs::File;
 use std::future::Future;
-use std::io;
+use std::io::{self, Read as _};
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
@@ -73,7 +74,7 @@ pub async fn load_sources(sources: &[String]) -> Result<Vec<PeerAddress>, SeedEr
         return Ok(Vec::new());
     };
     let text = if source.starts_with('/') {
-        std::fs::read(source).map_err(|e| source_error(source, e.to_string()))?
+        read_file(source).map_err(|e| source_error(source, e.to_string()))?
     } else {
         heartwood_kernel::debug!("GET {source}");
         http_get(source, SOURCE_DEADLINE)
@@ -87,6 +88,19 @@ pub async fn load_sources(sources: &[String]) -> Result<Vec<PeerAddress>, SeedEr
         value = serde_json::from_str(inner).map_err(|e| source_error(source, e.to_string()))?;
     }
     parse_peers(&value).ok_or_else(|| source_error(source, "not a list of peers"))
+}
+
+/// The bytes of the file at `path`, an error when there are more than [`MAX_SOURCE_BYTES`].
+fn read_file(path: &str) -> io::Result<Vec<u8>> {
+    let mut text = Vec::new();
+    let cap = u64::try_from(MAX_SOURCE_BYTES).unwrap_or(u64::MAX);
+    File::open(path)?
+        .take(cap.saturating_add(1))
+        .read_to_end(&mut text)?;
+    if text.len() > MAX_SOURCE_BYTES {
+        return Err(io::Error::other("the file is too large"));
+    }
+    Ok(text)
 }
 
 /// The peers of a source's list: every entry with an address as text and a port (a number, or
@@ -292,6 +306,31 @@ mod tests {
             "{:?}",
             started.elapsed()
         );
+    }
+
+    /// A local file of `size` bytes: a valid peer list, then blanks.
+    fn source_file(name: &str, size: usize) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("heartwood-seeds-{}-{name}", std::process::id()));
+        let mut text = br#"[{"ip": "192.0.2.1", "port": 4002}]"#.to_vec();
+        text.resize(size, b' ');
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn a_local_source_over_the_cap_is_refused() {
+        let at_cap = source_file("at-cap", MAX_SOURCE_BYTES);
+        let over = source_file("over", MAX_SOURCE_BYTES + 1);
+        let read = |path: &std::path::Path| {
+            let source = path.to_string_lossy().into_owned();
+            async move { load_sources(&[source]).await }
+        };
+        let (held, refused) = (read(&at_cap).await, read(&over).await);
+        let _ = (std::fs::remove_file(&at_cap), std::fs::remove_file(&over));
+        assert_eq!(held.unwrap(), [peer("192.0.2.1", 4002)]);
+        let reason = refused.unwrap_err().to_string();
+        assert!(reason.contains("too large"), "{reason}");
     }
 
     #[test]

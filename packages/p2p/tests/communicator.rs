@@ -256,6 +256,7 @@ async fn each_route_sends_its_request_with_its_limit_and_timeout() {
     );
     let encoded = fixture.rules.encoded.lock().unwrap().clone();
     let non_zero = |n| std::num::NonZeroU32::new(n).unwrap();
+    let limit = |n| heartwood_p2p_wire::requests::BlockLimit::new(n).unwrap();
     assert_eq!(encoded[0], ClientRequest::GetPeers);
     assert!(
         matches!(&encoded[1], ClientRequest::GetCommonBlocks { ids: sent } if sent.ids() == ids(9))
@@ -264,7 +265,7 @@ async fn each_route_sends_its_request_with_its_limit_and_timeout() {
         encoded[3],
         ClientRequest::GetBlocks {
             last_block_height: non_zero(5),
-            block_limit: non_zero(400),
+            block_limit: limit(400),
             headers_only: false
         }
     );
@@ -272,7 +273,7 @@ async fn each_route_sends_its_request_with_its_limit_and_timeout() {
         encoded[4],
         ClientRequest::GetBlocks {
             last_block_height: non_zero(7),
-            block_limit: non_zero(10),
+            block_limit: limit(10),
             headers_only: true
         }
     );
@@ -341,20 +342,25 @@ async fn requests_the_reference_never_writes_are_not_sent() {
             .is_empty()
     );
     assert!(fixture.transport.sent().is_empty());
-    // A limit above 400 asks for 400, the most a reference server accepts.
-    let reply = Answer::Bytes(blocks_reply(&[]));
-    fixture.transport.answer(RouteId::GetBlocks, reply);
-    let many = BlocksRequest {
-        block_limit: 500,
-        ..BlocksRequest::after(3)
-    };
-    client.get_peer_blocks(&peer, many).await.unwrap();
+    // A limit above 400 asks for 400, the most a reference server accepts; 1 and 400 go as they
+    // are.
+    let asked = [1, 400, 401, 500, u32::MAX];
+    for block_limit in asked {
+        let reply = Answer::Bytes(blocks_reply(&[]));
+        fixture.transport.answer(RouteId::GetBlocks, reply);
+        let many = BlocksRequest {
+            block_limit,
+            ..BlocksRequest::after(3)
+        };
+        client.get_peer_blocks(&peer, many).await.unwrap();
+    }
     let encoded = fixture.rules.encoded.lock().unwrap().clone();
     let limit = |request: &ClientRequest| match request {
         ClientRequest::GetBlocks { block_limit, .. } => Some(block_limit.get()),
         _ => None,
     };
-    assert_eq!(encoded.iter().map(limit).collect::<Vec<_>>(), [Some(400)]);
+    let wanted = [1, 400, 400, 400, 400].map(Some);
+    assert_eq!(encoded.iter().map(limit).collect::<Vec<_>>(), wanted);
     assert_eq!(fixture.transport.sent()[0].limit, 20 * KIB * KIB);
     // Every request carries the node's version: a communicator cannot be made without one.
     let unversioned = heartwood_p2p::P2pOptions {

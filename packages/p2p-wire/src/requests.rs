@@ -4,14 +4,14 @@
 //! A reference server refuses some request shapes and bans the caller's IP for them: no `headers`
 //! on getStatus, getPeers, getCommonBlocks or getBlocks; `headers` without a version or with an
 //! empty one; `countOnly` on getUnconfirmedTransactions; no ids on getCommonBlocks; a
-//! `blockLimit` or `lastBlockHeight` that is absent or 0 on getBlocks. [`ClientRequest`] cannot
-//! express any of them: every request carries its [`Headers`], whose version is never empty, a
-//! getCommonBlocks request holds 1 to 10 ids ([`CommonBlockIds`]), getBlocks' height and limit
-//! are non-zero, and getUnconfirmedTransactions has no `countOnly`. Two more shapes are refused
-//! and banned, and the caller keeps them out: a `blockLimit` above 400, and more transactions
-//! than the receiver's `maxTransactionsPerRequest` (the peer client asks for at most 400 blocks,
-//! and its broadcaster sends batches of at most its own `maxTransactionsPerRequest`, as the
-//! reference's does).
+//! `blockLimit` that is absent, 0 or above 400, or a `lastBlockHeight` that is absent or 0 on
+//! getBlocks. [`ClientRequest`] cannot express any of them: every request carries its
+//! [`Headers`], whose version is never empty, a getCommonBlocks request holds 1 to 10 ids
+//! ([`CommonBlockIds`]), getBlocks' height is non-zero and its limit is 1 to 400
+//! ([`BlockLimit`]), and getUnconfirmedTransactions has no `countOnly`. One more shape is refused
+//! and banned, and the caller keeps it out: more transactions than the receiver's
+//! `maxTransactionsPerRequest` (the broadcaster sends batches of at most its own
+//! `maxTransactionsPerRequest`, as the reference's does).
 //!
 //! | Route | Payload |
 //! |---|---|
@@ -89,6 +89,42 @@ impl CommonBlockIds {
     }
 }
 
+/// The limit of a getBlocks request: 1 to 400 blocks, the range a reference server accepts (its
+/// request schema refuses any other, and bans the caller).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockLimit(NonZeroU32);
+
+impl BlockLimit {
+    /// The most blocks a reference server lets one request ask for.
+    pub const MAX: u32 = 400;
+
+    /// `limit` as a request's limit; `None` for 0 or more than [`BlockLimit::MAX`].
+    pub fn new(limit: u32) -> Option<BlockLimit> {
+        NonZeroU32::new(limit)
+            .filter(|limit| limit.get() <= BlockLimit::MAX)
+            .map(BlockLimit)
+    }
+
+    /// The limit, from 1 to [`BlockLimit::MAX`].
+    pub fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+/// A limit that is not a getBlocks request's (0, or more than [`BlockLimit::MAX`]), with its value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("a getBlocks request asks for 1 to 400 blocks, got {0}")]
+pub struct BlockLimitError(pub u32);
+
+/// As [`BlockLimit::new`], for a caller that converts a `u32` as it would to a `NonZeroU32`.
+impl TryFrom<u32> for BlockLimit {
+    type Error = BlockLimitError;
+
+    fn try_from(limit: u32) -> Result<BlockLimit, BlockLimitError> {
+        BlockLimit::new(limit).ok_or(BlockLimitError(limit))
+    }
+}
+
 /// A request of the reference's client.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientRequest {
@@ -106,10 +142,8 @@ pub enum ClientRequest {
     GetBlocks {
         /// The height after which blocks are wanted.
         last_block_height: NonZeroU32,
-        /// The most blocks wanted. A reference server accepts at most 400 (its request schema
-        /// refuses more, and bans the caller); the caller keeps to that, as the reference's
-        /// client does.
-        block_limit: NonZeroU32,
+        /// The most blocks wanted, 1 to 400.
+        block_limit: BlockLimit,
         /// Whether only the headers are wanted; `headersOnly` is written only when true.
         headers_only: bool,
     },

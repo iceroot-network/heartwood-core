@@ -5,7 +5,8 @@
 //! module is the only place in the crate that models either, together with the two other parts of
 //! JavaScript that decide how a parsed JSON value behaves: truthiness and the order in which an
 //! object's keys are enumerated. It also writes numbers as `toLocaleString` does in English,
-//! which the reference's messages use for amounts and counts.
+//! which the reference's messages use for amounts and counts, reads text as `BigInt(text)` and
+//! `Number(text) === 0` do, and quotes a string as `JSON.stringify` does.
 
 use serde_json::{Map, Number, Value};
 
@@ -253,7 +254,7 @@ fn write_value(out: &mut String, value: &Value, indent: usize, depth: usize) {
                 out.push_str("null");
             }
         }
-        Value::String(text) => write_string(out, text),
+        Value::String(text) => json_string(out, text),
         Value::Array(items) => {
             if items.is_empty() {
                 out.push_str("[]");
@@ -281,7 +282,7 @@ fn write_value(out: &mut String, value: &Value, indent: usize, depth: usize) {
                     out.push(',');
                 }
                 write_newline(out, indent, depth + 1);
-                write_string(out, key);
+                json_string(out, key);
                 out.push(':');
                 if indent > 0 {
                     out.push(' ');
@@ -301,8 +302,10 @@ fn write_newline(out: &mut String, indent: usize, depth: usize) {
     }
 }
 
-/// A JSON string literal as `JSON.stringify` quotes it.
-fn write_string(out: &mut String, text: &str) {
+/// Append `JSON.stringify(text)` to `out`: the text in double quotes, with `"` and `\` escaped,
+/// U+0008, U+0009, U+000A, U+000C and U+000D as `\b`, `\t`, `\n`, `\f` and `\r`, and the other
+/// code points below U+0020 as `\u00xx` in lowercase hex. Everything else is written as it is.
+pub fn json_string(out: &mut String, text: &str) {
     out.push('"');
     for character in text.chars() {
         match character {
@@ -320,6 +323,90 @@ fn write_string(out: &mut String, text: &str) {
         }
     }
     out.push('"');
+}
+
+/// Why `BigInt(text)` gives no `i128`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BigIntError {
+    /// The text is not a `StringIntegerLiteral`: `BigInt` throws a `SyntaxError`.
+    Syntax,
+    /// The text is an integer literal whose value needs more than 128 bits.
+    TooWide,
+}
+
+/// `BigInt(text)` for a string, as an `i128`.
+///
+/// White space and line terminators around the literal are ignored, and a text of white space
+/// only is 0. The literal is a decimal integer with an optional sign, or `0x`, `0o` or `0b` (either
+/// case) with at least one digit of that base and no sign. Anything else, including a fraction or
+/// an exponent, is a syntax error. The whole text is checked before its value is computed, so a
+/// syntax error wins over a value that is too wide.
+pub fn parse_bigint(text: &str) -> Result<i128, BigIntError> {
+    let literal = text.trim_matches(is_js_space);
+    if literal.is_empty() {
+        return Ok(0);
+    }
+    let prefixed = |upper: &str, lower: &str| {
+        literal
+            .strip_prefix(upper)
+            .or_else(|| literal.strip_prefix(lower))
+    };
+    let (negative, radix, digits) = if let Some(digits) = prefixed("0x", "0X") {
+        (false, 16, digits)
+    } else if let Some(digits) = prefixed("0o", "0O") {
+        (false, 8, digits)
+    } else if let Some(digits) = prefixed("0b", "0B") {
+        (false, 2, digits)
+    } else if let Some(digits) = literal.strip_prefix('-') {
+        (true, 10, digits)
+    } else {
+        (false, 10, literal.strip_prefix('+').unwrap_or(literal))
+    };
+    if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+        return Err(BigIntError::Syntax);
+    }
+    let mut magnitude: u128 = 0;
+    for c in digits.chars() {
+        let digit = u128::from(c.to_digit(radix).ok_or(BigIntError::Syntax)?);
+        magnitude = magnitude
+            .checked_mul(u128::from(radix))
+            .and_then(|m| m.checked_add(digit))
+            .ok_or(BigIntError::TooWide)?;
+    }
+    if negative {
+        0i128.checked_sub_unsigned(magnitude)
+    } else {
+        i128::try_from(magnitude).ok()
+    }
+    .ok_or(BigIntError::TooWide)
+}
+
+/// `Number(text) === 0` for a string: empty or white space, a zero in any base, or a decimal
+/// literal whose double value is 0 (`-0` and an underflow such as `1e-400` included).
+pub fn reads_as_zero(text: &str) -> bool {
+    let text = text.trim_matches(is_js_space);
+    parse_bigint(text) == Ok(0)
+        || (text
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b".+-eE".contains(&b))
+            && text.parse::<f64>() == Ok(0.0))
+}
+
+/// JavaScript's white space and line terminators (`StrWhiteSpaceChar`): tab, vertical tab, form
+/// feed, the byte-order mark, the space separators (Unicode category Zs), LF, CR, U+2028 and
+/// U+2029. Unlike [`char::is_whitespace`], U+0085 is not one of them and U+FEFF is.
+fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+    )
 }
 
 /// `value.toLocaleString("en", {minimumFractionDigits: 0, maximumFractionDigits})`, as Node's ICU
@@ -511,6 +598,116 @@ mod tests {
         );
         assert_eq!(stringify(&json!(8.0), 2), "8");
         assert_eq!(stringify(&json!([1]), 12), stringify(&json!([1]), 10));
+    }
+
+    #[test]
+    fn json_strings_are_escaped_as_json_stringify_does() {
+        let mut out = String::new();
+        json_string(
+            &mut out,
+            "a\"\\\u{08}\t\n\u{0B}\u{0C}\r\u{1F}\u{7F}\u{2028}\u{e9}",
+        );
+        assert_eq!(
+            out,
+            "\"a\\\"\\\\\\b\\t\\n\\u000b\\f\\r\\u001f\u{7F}\u{2028}\u{e9}\""
+        );
+    }
+
+    #[test]
+    fn bigint_reads_text_as_javascript_does() {
+        let ok = |text: &str| parse_bigint(text);
+        assert_eq!(ok(""), Ok(0));
+        assert_eq!(ok(" \t\n\u{FEFF}\u{3000}"), Ok(0));
+        assert_eq!(ok(" 12\n"), Ok(12));
+        assert_eq!(ok("-0"), Ok(0));
+        assert_eq!(ok("+5"), Ok(5));
+        assert_eq!(ok("-5"), Ok(-5));
+        assert_eq!(ok("0x10"), Ok(16));
+        assert_eq!(ok("0XfF"), Ok(255));
+        assert_eq!(ok("0o17"), Ok(15));
+        assert_eq!(ok("0b101"), Ok(5));
+        assert_eq!(ok("007"), Ok(7));
+        assert_eq!(
+            ok("-170141183460469231731687303715884105728"),
+            Ok(i128::MIN)
+        );
+        assert_eq!(ok("170141183460469231731687303715884105727"), Ok(i128::MAX));
+        for bad in [
+            "1.5", "1e3", "-0x10", "+0x1", "0x", "0b2", "--1", "+", "-", "1 2", "1_000", "\u{85}1",
+            "Infinity", "0n",
+        ] {
+            assert_eq!(ok(bad), Err(BigIntError::Syntax), "{bad:?}");
+        }
+        assert_eq!(
+            ok("170141183460469231731687303715884105728"),
+            Err(BigIntError::TooWide)
+        );
+        assert_eq!(
+            ok(&format!("0x{}", "f".repeat(40))),
+            Err(BigIntError::TooWide)
+        );
+        // A syntax error later in the text wins over the width.
+        assert_eq!(
+            ok(&format!("{}x", "9".repeat(60))),
+            Err(BigIntError::Syntax)
+        );
+    }
+
+    #[test]
+    fn texts_that_read_as_the_number_zero() {
+        for zero in [
+            "",
+            " \t\n\u{0B}\u{0C}\r",
+            "0",
+            "00",
+            "-0",
+            "+0",
+            "0.",
+            ".0",
+            "+.0",
+            "-.0e-0",
+            "0e5",
+            "0.0e+999999999999",
+            "1e-400",
+            "0x0",
+            "0X00",
+            "0o0",
+            "0b0",
+            " 0 ",
+            "\u{A0}0\u{FEFF}",
+            "\u{2028}0\u{2029}",
+            &format!("0x{}", "0".repeat(60)),
+        ] {
+            assert!(reads_as_zero(zero), "{zero:?}");
+        }
+        for other in [
+            "1",
+            "1e-300",
+            "5e-324",
+            "x",
+            "-0x0",
+            "+0x0",
+            "0x",
+            "0n",
+            "0e",
+            ".",
+            "e0",
+            "0_0",
+            "0\u{85}",
+            "\u{180E}0",
+            "Infinity",
+            "NaN",
+        ] {
+            assert!(!reads_as_zero(other), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn javascript_white_space_is_unicode_white_space_without_u0085_and_with_the_bom() {
+        for c in (0..=0x10_FFFF).filter_map(char::from_u32) {
+            let unicode = (c.is_whitespace() && c != '\u{85}') || c == '\u{FEFF}';
+            assert_eq!(is_js_space(c), unicode, "U+{:04X}", u32::from(c));
+        }
     }
 
     #[test]

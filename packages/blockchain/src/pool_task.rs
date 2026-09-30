@@ -21,6 +21,15 @@
 //! transactions: the age and expiry rules only widen as the tip rises, and the lowest-priority
 //! rule finds nothing to remove, since every addition already keeps the pool within
 //! `maxTransactionsInPool`.
+//!
+//! The re-add differs on one path, the fork check's re-enqueue. The queue ends a job at each
+//! milestone block ([`crate::blockchain::cut_jobs`]), but that re-enqueue first sets the last
+//! downloaded block to the tail of the blocks it enqueues, so no milestone between them cuts, and
+//! a milestone block can sit in the middle of a job. The reference re-adds at that block, and
+//! here the re-add runs at the job's tip: a transaction valid at the milestone block but not at
+//! the tip (its sender's balance spent by a later block of the job) stays in the reference's
+//! pool and leaves this one. Only the pool's contents differ, never a block's verdict or the
+//! state.
 
 use std::sync::Arc;
 

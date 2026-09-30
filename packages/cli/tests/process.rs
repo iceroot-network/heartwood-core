@@ -10,8 +10,9 @@ use std::time::Duration;
 use heartwood_cli::process::{Supervisors, path_env, tail};
 use heartwood_cli::process_table::{self, render};
 use heartwood_cli::seams::{Instance, Role, StatusRow, SupervisedStatus};
-use heartwood_cli::supervisor::signals::take_lock;
+use heartwood_cli::supervisor::signals::{is_locked, take_lock, take_lock_in};
 use heartwood_cli::supervisor::state::SupervisorState;
+use heartwood_cli::supervisor::{RunDir, run_dir};
 use heartwood_kernel::paths::Paths;
 use heartwood_kernel::{Clock, SystemClock};
 
@@ -232,6 +233,111 @@ fn the_devnet_runs_each_role_as_heartwood_role_run_with_its_directories() {
     );
 }
 
+/// The state a supervisor records for a relay that runs.
+fn online_state() -> SupervisorState {
+    SupervisorState {
+        name: "node1-devnet-relay".into(),
+        status: SupervisedStatus::Online,
+        supervisor_pid: 41,
+        pid: Some(42),
+        argv: vec!["heartwood".into()],
+        started_at_ms: None,
+        restarts: 0,
+        unstable: 0,
+        last_exit: None,
+        version: "4.3.1-heartwood.0.1.0".into(),
+    }
+}
+
+#[test]
+fn the_run_files_are_made_in_the_directory_that_was_checked() {
+    let root = scratch("swapped-run-dir");
+    let relay = instance(&root, Role::Relay);
+    let held = RunDir::open(&relay).unwrap();
+    let run = run_dir(&relay).unwrap();
+    // The checked directory is swapped for a link to another directory.
+    let (checked, elsewhere) = (root.join("checked"), root.join("elsewhere"));
+    fs::create_dir(&elsewhere).unwrap();
+    fs::rename(&run, &checked).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &run).unwrap();
+    let state = online_state();
+    // By path, no file is made through the link.
+    assert!(take_lock(&relay.lock_path()).is_err());
+    assert!(state.write(&relay.state_path()).is_err());
+    assert!(is_locked(&relay.lock_path()).is_err());
+    // By the directory held, the files are made in the directory that was checked.
+    let lock = take_lock_in(&held, &relay.lock_path()).unwrap().unwrap();
+    state.write_in(&held, &relay.state_path()).unwrap();
+    assert!(checked.join("relay.lock").is_file() && checked.join("relay.state.json").is_file());
+    drop(lock);
+    let landed: Vec<_> = fs::read_dir(&elsewhere).unwrap().collect();
+    assert!(
+        landed.is_empty(),
+        "files landed in the link's target: {landed:?}"
+    );
+}
+
+#[test]
+fn a_lock_left_as_a_link_is_refused_and_its_target_left_alone() {
+    let root = scratch("lock-link");
+    let relay = instance(&root, Role::Relay);
+    let run = run_dir(&relay).unwrap();
+    let target = root.join("target");
+    fs::write(&target, "kept").unwrap();
+    std::os::unix::fs::symlink(&target, run.join("relay.lock")).unwrap();
+    assert!(take_lock(&relay.lock_path()).is_err());
+    assert_eq!(fs::read_to_string(&target).unwrap(), "kept");
+}
+
+#[test]
+fn a_fifo_in_place_of_a_run_file_is_refused_without_blocking() {
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    let root = scratch("run-file-fifo");
+    let relay = instance(&root, Role::Relay);
+    run_dir(&relay).unwrap();
+    let (lock, probed, state) = (
+        relay.lock_path(),
+        relay.supervisor_lock_path(),
+        relay.state_path(),
+    );
+    for path in [&lock, &probed, &state, &state.with_extension("json.tmp")] {
+        nix::unistd::mkfifo(path, nix::sys::stat::Mode::S_IRWXU).unwrap();
+    }
+    // An open of a FIFO waits for its other end: each call runs on a thread of its own, on a FIFO
+    // of its own, so a call that blocks is named and hides none of the others.
+    let copy = state.clone();
+    let take = move || take_lock(&lock).is_err();
+    let probe = move || is_locked(&probed).is_err();
+    let read = move || SupervisorState::read(&copy).is_err();
+    let write = move || online_state().write(&state).is_err();
+    type Call = Box<dyn FnOnce() -> bool + Send>;
+    let calls: [(&str, Call); 4] = [
+        ("take_lock", Box::new(take)),
+        ("is_locked", Box::new(probe)),
+        ("read", Box::new(read)),
+        ("write", Box::new(write)),
+    ];
+    let (sender, results) = mpsc::channel();
+    for (name, call) in calls {
+        let sender = sender.clone();
+        std::thread::spawn(move || sender.send((name, call())));
+    }
+    drop(sender);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let left = || deadline.saturating_duration_since(Instant::now());
+    let mut returned: Vec<_> = std::iter::from_fn(|| results.recv_timeout(left()).ok()).collect();
+    returned.sort();
+    let refused = [
+        ("is_locked", true),
+        ("read", true),
+        ("take_lock", true),
+        ("write", true),
+    ];
+    assert_eq!(returned, refused, "a call missing blocked on its FIFO");
+}
+
 #[test]
 fn the_run_directory_is_made_private_a_wider_one_narrowed_and_a_file_refused() {
     use std::os::unix::fs::PermissionsExt;
@@ -297,10 +403,18 @@ fn the_run_directory_is_made_private_a_wider_one_narrowed_and_a_file_refused() {
 /// `test-child supervise`, for `heartwood supervise`.
 #[cfg(feature = "test-child")]
 mod with_child {
-    use std::ffi::OsString;
-    use std::process::{Command, Stdio};
+    use std::ffi::{CString, OsString};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+    use std::process::Command;
     use std::thread;
     use std::time::Instant;
+
+    use nix::spawn::{PosixSpawnAttr, PosixSpawnFileActions, PosixSpawnFlags, posix_spawnp};
+    use nix::sys::signal::SigSet;
+    use nix::sys::signal::Signal::SIGINT;
+    use nix::sys::wait::{WaitStatus, waitpid};
+    use nix::unistd::Pid;
 
     use heartwood_cli::seams::{Env, ProcessOps};
     use heartwood_cli::supervisor::VERSION;
@@ -443,6 +557,13 @@ mod with_child {
         let args = argv(&["env", "HW_TEST_VAR"]);
         process::start(&forger, &args, &env(&[("HW_TEST_VAR", "first")]), true).unwrap();
         online(&forger);
+        // Online is the child spawned, not yet its first line: a restart at once could end it
+        // before it wrote.
+        wait_for("the first run's line", || {
+            fs::read_to_string(forger.out_log_path())
+                .unwrap()
+                .contains("HW_TEST_VAR=first\n")
+        });
         let before = SupervisorState::read(&forger.state_path())
             .unwrap()
             .unwrap();
@@ -463,35 +584,131 @@ mod with_child {
         process::stop(&forger).unwrap();
     }
 
-    #[test]
-    fn a_node_without_a_supervisor_is_online_unsupervised_and_stop_signals_it() {
-        let root = scratch("unsupervised");
+    /// Where `SIGINT` is ignored, as a background job of a non-interactive shell has it and
+    /// every child inherits it: the variable that tells the test below it runs under such a shell.
+    const IGNORED: &str = "HW_TEST_SIGINT_IGNORED";
+
+    /// The test child started as a node without a supervisor, its output at `/dev/null` and its
+    /// `SIGINT` at the default whatever the caller ignores: a `Command` leaves an ignored signal
+    /// ignored, and `pre_exec` is unsafe, which the workspace forbids.
+    fn spawn_unsupervised(relay: &Instance) -> Pid {
+        let args = [CHILD, "relay", "run"].map(|arg| CString::new(arg).unwrap());
+        let paths = path_env(relay);
+        let inherited = std::env::vars_os().filter(|(key, _)| !paths.iter().any(|(k, _)| k == key));
+        let pair = |(key, value): (OsString, OsString)| {
+            CString::new([key.as_bytes(), b"=", value.as_bytes()].concat()).unwrap()
+        };
+        let env: Vec<CString> = inherited.chain(paths.clone()).map(pair).collect();
+        let mut actions = PosixSpawnFileActions::init().unwrap();
+        let null = fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+            .unwrap();
+        for fd in [1, 2] {
+            actions.add_dup2(null.as_raw_fd(), fd).unwrap();
+        }
+        let mut attributes = PosixSpawnAttr::init().unwrap();
+        attributes.set_sigdefault(&SigSet::from(SIGINT)).unwrap();
+        attributes
+            .set_flags(PosixSpawnFlags::POSIX_SPAWN_SETSIGDEF)
+            .unwrap();
+        posix_spawnp(&args[0], &actions, &attributes, &args, &env).unwrap()
+    }
+
+    /// A node started without a supervisor, which `stop` ends with `SIGINT`, named after
+    /// `scratch_name`.
+    fn an_unsupervised_node_is_stopped_by_sigint(scratch_name: &str) {
+        let root = scratch(scratch_name);
         let relay = instance(&root, Role::Relay);
         let _cleanup = Cleanup(&relay);
         fs::create_dir_all(relay.run_dir()).unwrap();
-        let mut node = Command::new(CHILD)
-            .args(["relay", "run"])
-            .envs(path_env(&relay))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let node = spawn_unsupervised(&relay);
         wait_for("the node's lock", || is_locked(&relay.lock_path()).unwrap());
         wait_for("the pid file", || relay.pid_path().exists());
         let row = process::status(&relay).unwrap();
         assert_eq!(
             (row.status, row.pid),
-            (SupervisedStatus::OnlineUnsupervised, Some(node.id()))
+            (
+                SupervisedStatus::OnlineUnsupervised,
+                Some(node.as_raw() as u32)
+            )
         );
         assert!(row.rss_bytes.is_some() && row.uptime.is_none());
         let refused = process::start(&relay, &argv(&["run"]), &env(&[]), true);
         assert!(matches!(refused, Err(ProcessError::AlreadyRunning { .. })));
         process::stop(&relay).unwrap();
-        use std::os::unix::process::ExitStatusExt;
-        assert_eq!(node.wait().unwrap().signal(), Some(2));
+        let ended = waitpid(node, None).unwrap();
+        assert!(
+            matches!(ended, WaitStatus::Signaled(_, SIGINT, _)),
+            "{ended:?}"
+        );
         assert_eq!(
             process::status(&relay).unwrap().status,
             SupervisedStatus::Stopped
+        );
+    }
+
+    #[test]
+    fn a_node_without_a_supervisor_is_online_unsupervised_and_stop_signals_it() {
+        an_unsupervised_node_is_stopped_by_sigint("unsupervised");
+    }
+
+    #[test]
+    fn stop_ends_a_node_by_sigint_although_the_caller_ignores_it() {
+        let name = "with_child::stop_ends_a_node_by_sigint_although_the_caller_ignores_it";
+        if std::env::var_os(IGNORED).is_none() {
+            // Run again, alone, under a shell that ignores SIGINT before it starts the test.
+            let shell = "trap '' INT; exec \"$0\" \"$@\"";
+            let run = Command::new("sh")
+                .args(["-c", shell])
+                .arg(std::env::current_exe().unwrap())
+                .args([name, "--exact"])
+                .env(IGNORED, "1")
+                .output()
+                .unwrap();
+            let out = String::from_utf8_lossy(&run.stdout);
+            let err = String::from_utf8_lossy(&run.stderr);
+            assert!(
+                run.status.success() && out.contains("1 passed"),
+                "{out}{err}"
+            );
+            return;
+        }
+        let status = fs::read_to_string("/proc/self/status").unwrap();
+        let ignored = status.lines().find_map(|line| line.strip_prefix("SigIgn:"));
+        let ignored = u64::from_str_radix(ignored.unwrap().trim(), 16).unwrap();
+        assert_ne!(
+            ignored & (1 << 1),
+            0,
+            "SIGINT is not ignored under the shell"
+        );
+        an_unsupervised_node_is_stopped_by_sigint("unsupervised-ignored");
+    }
+
+    #[test]
+    fn a_supervisor_keeps_to_the_run_directory_it_checked() {
+        let root = scratch("supervisor-swap");
+        let relay = instance(&root, Role::Relay);
+        let _cleanup = Cleanup(&relay);
+        process::start(&relay, &argv(&["run"]), &env(&[]), true).unwrap();
+        online(&relay);
+        let state = SupervisorState::read(&relay.state_path()).unwrap().unwrap();
+        // The directory is swapped for a link to another while the supervisor runs.
+        let (run, checked) = (relay.run_dir(), root.join("checked"));
+        let elsewhere = root.join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        fs::rename(&run, &checked).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &run).unwrap();
+        let supervisor = nix::unistd::Pid::from_raw(state.supervisor_pid.try_into().unwrap());
+        nix::sys::signal::kill(supervisor, nix::sys::signal::SIGTERM).unwrap();
+        let lock = checked.join("relay.supervisor.lock");
+        wait_for("the supervisor's stop", || !is_locked(&lock).unwrap());
+        let stopped = SupervisorState::read(&checked.join("relay.state.json"));
+        assert_eq!(stopped.unwrap().unwrap().status, SupervisedStatus::Stopped);
+        let landed: Vec<_> = fs::read_dir(&elsewhere).unwrap().collect();
+        assert!(
+            landed.is_empty(),
+            "files landed in the link's target: {landed:?}"
         );
     }
 
