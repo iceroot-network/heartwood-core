@@ -264,6 +264,14 @@ pub fn run(args: &[String]) -> Result<bool> {
     let mut text = String::new();
     let (mut ok, mut bad) = (0u64, 0u64);
     let mut seen = BTreeSet::new();
+    let id_width = criteria
+        .register
+        .entries
+        .iter()
+        .map(|e| e.id.chars().count())
+        .max()
+        .unwrap_or(0)
+        + 2;
     for entry in &criteria.register.entries {
         let mut finding = judge_entry(entry, &setup.sources, &evidence, passed.as_ref());
         if !seen.insert(entry.id.as_str()) {
@@ -280,10 +288,10 @@ pub fn run(args: &[String]) -> Result<bool> {
         };
         if finding.problems.is_empty() {
             ok += 1;
-            let _ = writeln!(text, "{:<8}{word:<9}ok", entry.id);
+            let _ = writeln!(text, "{:<id_width$}{word:<9}ok", entry.id);
         } else {
             bad += 1;
-            let _ = writeln!(text, "{:<8}{word:<9}FAIL", entry.id);
+            let _ = writeln!(text, "{:<id_width$}{word:<9}FAIL", entry.id);
             for problem in &finding.problems {
                 let _ = writeln!(text, "      {problem}");
             }
