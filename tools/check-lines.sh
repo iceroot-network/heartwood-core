@@ -112,6 +112,13 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # - heartwood-state goes from 3,000 to 3,100: it measured 2,861 with the index-order iterators'
 #   signatures; the indexes kept in the reference's insertion order (up to 120 lines) and a quarter
 #   of it join it.
+# With the listings written (the same rule, on the measured count):
+# - heartwood-api goes from 8,200 to 8,300: the listings measured 8,210, 3,164 lines above the
+#   5,046 of their seams where 2,500 were planned: the state listings with every criterion kind,
+#   its conversions and its validation 1,153 (650 planned), the history routes with the store's
+#   refusals by column type 579 (500), the chain routes, the fees and the document 478 (350), the
+#   pagination 376, the wallet search 427 and the productivity 151; the API root (20 lines) joins it
+#   when the listings are carried onto it.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"
@@ -136,7 +143,7 @@ CHECKS=(
     "heartwood-p2p server transport:packages/p2p/src/server !packages/p2p/src/server/controllers packages/p2p/src/node_services.rs packages/p2p/src/devnet.rs:"
     "heartwood-p2p server controllers and forger channel:packages/p2p/src/server/controllers packages/p2p/src/status_server.rs packages/p2p/src/attestation_session.rs packages/p2p/src/network_state.rs:"
     "heartwood-p2p test support (difftest only):packages/p2p/src/testing:"
-    "heartwood-api:packages/api/src:8200"
+    "heartwood-api:packages/api/src:8300"
     "heartwood-api in-memory listings:packages/api/src/search:"
     "heartwood-api store listings:packages/api/src/controllers/delegate_history.rs packages/api/src/controllers/rounds.rs packages/api/src/controllers/votes.rs packages/api/src/controllers/blockchain.rs packages/api/src/resources/missed_block.rs packages/api/src/resources/round.rs packages/api/src/resources/fee_statistics.rs:"
     "heartwood-core:packages/core/src !packages/core/src/harness.rs:3200"
