@@ -395,8 +395,9 @@ pub struct LogWindow {
     pub capped: bool,
     /// The forger's lines that list its delegates ("Loaded" and "active forging position") from
     /// its last start read before the window up to the window's start, in order: the forger
-    /// writes "Loaded" once a start, so a window that starts later holds none. The window's own
-    /// lines are among [`LogWindow::events`].
+    /// writes "Loaded" once a start, so a window that starts later holds none. Empty when the
+    /// forger started again inside the window, since the lines before are an earlier run's. The
+    /// window's own lines are among [`LogWindow::events`].
     pub roster: Vec<LogEvent>,
 }
 
@@ -827,9 +828,17 @@ pub fn read_log(context: &LogContext<'_>) -> Result<LogWindow, Unknown> {
     let surplus = excerpts.len().saturating_sub(MAX_EXCERPTS);
     excerpts.drain(..surplus);
     older.events.extend(current.events);
-    let roster = match current.restarted {
-        true => current.roster,
-        false => [older.roster, current.roster].concat(),
+    // A start inside the window makes the lines before it an earlier run's.
+    let started = |event: &LogEvent| {
+        matches!(
+            event.kind,
+            LineKind::ForgerStarted | LineKind::ForgerManagerStarted
+        )
+    };
+    let roster = match (older.events.iter().any(started), current.restarted) {
+        (true, _) => Vec::new(),
+        (false, true) => current.roster,
+        (false, false) => [older.roster, current.roster].concat(),
     };
     Ok(LogWindow {
         role: context.role,

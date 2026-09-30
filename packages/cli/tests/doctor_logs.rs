@@ -1188,3 +1188,21 @@ fn the_forger_s_delegate_lines_before_the_window_since_its_last_start_are_kept_a
     // The relay's log keeps no such lines.
     assert!(read(Role::Relay, text).roster.is_empty());
 }
+
+#[test]
+fn a_forger_start_inside_the_window_leaves_no_delegate_lines_from_before_it() {
+    let text = "\
+[2026-10-02 10:00:00.000] INFO: Forger Manager started 🔨
+[2026-10-02 10:00:08.000] INFO: Loaded 2 active delegates: genesis_1, genesis_2
+[2026-10-02 12:30:00.000] INFO: Forger Manager started 🔨
+[2026-10-02 12:30:08.000] INFO: Loaded 1 active delegate: genesis_5
+";
+    let window = read(Role::Forger, text);
+    // The lines before the start in the window are an earlier run's.
+    assert!(window.roster.is_empty(), "{:?}", window.roster);
+    let loaded = window.events.iter().filter(|event| {
+        matches!(&event.kind, LineKind::DelegatesLoaded { names, .. }
+            if names.iter().map(|name| name.as_str()).eq(["genesis_5"]))
+    });
+    assert_eq!(loaded.count(), 1);
+}
