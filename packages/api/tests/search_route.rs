@@ -1,12 +1,15 @@
 //! `GET /blockchain/search/{id}` over the committed chain's store: the id scans are prefix scans,
 //! and the input is lower-cased once, so an upper-case input finds what its lower-case form finds.
 //! The route reads the store and the state, so its tests run with the whole crate
-//! (`integration`).
+//! (`integration`). `GET /blockchain` is checked over the chain's tip with totals given.
 
 mod history_fixture;
 
-use heartwood_api::RouteId;
+use std::sync::Arc;
+
 use heartwood_api::controllers::blockchain;
+use heartwood_api::{ApiContext, ApiError, ChainTotals, Productivity, ProductivityTable, RouteId};
+use heartwood_crypto::Block;
 use heartwood_crypto::transactions::types::Asset;
 use serde_json::{Value, json};
 
@@ -104,4 +107,66 @@ async fn a_delegate_name_finds_its_wallet_in_either_case() {
             .any(|wallet| wallet["address"] == json!(address))
     );
     assert!(list(&search("no_such_name").await, "wallets").is_empty());
+}
+
+/// A node whose chain totals are fixed.
+struct FixedTotals;
+
+impl Productivity for FixedTotals {
+    fn table(&self, _tip: &Block) -> Result<Arc<ProductivityTable>, ApiError> {
+        Err(ApiError::internal())
+    }
+
+    fn totals(&self, _tip: &Block) -> Result<ChainTotals, ApiError> {
+        Ok(ChainTotals {
+            burned_fees: 12_345,
+            burned_transactions: u128::from(u64::MAX) + 1,
+            supply: 7_000_000_000_000_000_000,
+        })
+    }
+}
+
+#[tokio::test]
+async fn the_chain_summary_writes_the_tip_and_the_totals_as_text() {
+    let fixture = fixture();
+    let base = &fixture.ctx;
+    let ctx = Arc::new(ApiContext {
+        state: base.state.clone(),
+        pool: base.pool.clone(),
+        status: base.status.clone(),
+        peers: Arc::clone(&base.peers),
+        history: Arc::clone(&base.history),
+        submit: Arc::clone(&base.submit),
+        productivity: Arc::new(FixedTotals),
+        node: Arc::clone(&base.node),
+        config: Arc::clone(&base.config),
+    });
+    let request = request(RouteId::BlockchainIndex, &[], json!({}));
+    let reply = blockchain::index(ctx, request).await.unwrap();
+    assert_eq!(reply.status, 200);
+    let tip = fixture.block(fixture.tip());
+    let expected = json!({
+        "data": {
+            "block": { "height": fixture.tip(), "id": tip.id().to_hex() },
+            "burned": {
+                "fees": "12345",
+                "transactions": "18446744073709551616",
+                "total": "18446744073709563961",
+            },
+            "supply": "7000000000000000000",
+        }
+    });
+    // The keys in the reference's order too.
+    assert_eq!(
+        serde_json::to_string(&reply.body).unwrap(),
+        serde_json::to_string(&expected).unwrap()
+    );
+    // Without totals, the route fails as the reference's repository does.
+    let error = blockchain::index(
+        Arc::clone(base),
+        history_fixture::request(RouteId::BlockchainIndex, &[], json!({})),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.status, 500);
 }

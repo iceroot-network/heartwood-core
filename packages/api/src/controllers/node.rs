@@ -235,8 +235,9 @@ pub async fn fees(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply,
     fees_at(&ctx, &request, SystemClock.now_ms()).await
 }
 
-/// [`fees`] at `now_ms`, the time the window counts back from.
-async fn fees_at(
+/// [`fees`] at `now_ms` (Unix milliseconds), the time the window of `days` counts back from; a
+/// test gives its own clock here.
+pub async fn fees_at(
     ctx: &Arc<ApiContext>,
     request: &ApiRequest,
     now_ms: i64,
