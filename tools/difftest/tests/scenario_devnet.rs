@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use heartwood_difftest::scenario::compile::fire_heights;
-use heartwood_difftest::scenario::format::Level;
+use heartwood_difftest::scenario::format::{Action, Check, Level, Part, Step};
 use heartwood_difftest::scenario::{self, Scenario};
 
 /// Delegates per round on the devnet every scenario runs on.
@@ -299,6 +299,94 @@ fn the_split_suite_lowers_the_reach_its_minority_needs_on_every_node() {
         Some("20")
     );
     assert_eq!(split.env.len(), 1);
+}
+
+/// The scenario of the suite `dir` with the id `id`.
+fn scenario_in(dir: &str, id: &str) -> Scenario {
+    all()
+        .into_iter()
+        .find(|(d, _, s)| d == dir && s.id == id)
+        .map(|(_, _, s)| s)
+        .unwrap_or_else(|| panic!("{dir} holds no {id}"))
+}
+
+/// The references a step's check names in `pick`.
+fn named(step: &Step, pick: fn(&Check) -> &[String]) -> Vec<String> {
+    step.check
+        .as_ref()
+        .map(|c| pick(c).to_vec())
+        .unwrap_or_default()
+}
+
+#[test]
+fn the_partition_keeps_the_majority_side_transfer_and_drops_the_minority_one() {
+    let heal = scenario_in("network", "partition-heal");
+    let at = |action: Action| {
+        heal.steps
+            .iter()
+            .position(|s| s.action == Some(action))
+            .unwrap_or_else(|| panic!("partition-heal has no {action:?} step"))
+    };
+    let (split, joined) = (at(Action::Partition), at(Action::Heal));
+    let groups = &heal.steps[split].groups;
+    assert_eq!(groups.len(), 2, "one majority and one minority");
+    // A transfer to each side while the network is split, from one sender with one nonce.
+    let mut sides = Vec::new();
+    for group in groups {
+        let step = heal.steps[split + 1..joined]
+            .iter()
+            .find(|s| {
+                s.action == Some(Action::Submit) && s.node.is_some_and(|n| group.contains(&n))
+            })
+            .unwrap_or_else(|| panic!("no transfer is sent to {group:?} during the split"));
+        assert_eq!(step.txs.len(), 1);
+        assert_eq!(named(step, |c| &c.accept), [step.txs[0].reference.clone()]);
+        sides.push(&step.txs[0]);
+    }
+    assert_eq!(sides[0].from, sides[1].from);
+    assert_eq!(sides[0].nonce, sides[1].nonce);
+    assert_ne!(sides[0].to, sides[1].to, "two distinct transactions");
+    // After the heal the majority's is in the chain and the minority's in no block.
+    let after: Vec<_> = heal.steps[joined + 1..].iter().collect();
+    assert!(
+        after
+            .iter()
+            .any(|s| named(s, |c| &c.forged).contains(&sides[0].reference))
+    );
+    assert!(
+        after
+            .iter()
+            .any(|s| named(s, |c| &c.absent).contains(&sides[1].reference))
+    );
+    assert!(
+        heal.steps[split + 1..joined]
+            .iter()
+            .any(|s| s.action == Some(Action::Wait) && s.blocks.is_some_and(|b| b > 0)),
+        "both sides run a while before the heal"
+    );
+}
+
+#[test]
+fn the_failover_forger_keeps_its_relay_down_for_a_stretch_of_the_round() {
+    let split = scenario_in("lifecycle", "relay-forger-split");
+    let fires = fire_heights(&split, ROUND_LENGTH).expect("the triggers plan");
+    let relay_one = |action: Action| {
+        split
+            .steps
+            .iter()
+            .position(|s| {
+                s.action == Some(action) && s.node == Some(1) && s.role == Some(Part::Relay)
+            })
+            .unwrap_or_else(|| panic!("relay-forger-split does not {action:?} relay 1"))
+    };
+    let (down, up) = (relay_one(Action::Stop), relay_one(Action::Start));
+    // Node 1's forger holds 11 of 53 slots a round: a stretch of 12 blocks gives it one in all
+    // but about one run in sixteen.
+    assert!(
+        fires[up] - fires[down] >= 12,
+        "relay 1 is down for {} blocks",
+        fires[up] - fires[down]
+    );
 }
 
 #[test]

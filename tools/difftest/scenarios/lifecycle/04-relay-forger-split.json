@@ -18,7 +18,7 @@
     {"name": "start the relay again", "at": {"afterBlocks": 3}, "do": "start", "node": 3, "role": "relay"},
     {"name": "one tip again", "at": {"afterBlocks": 0}, "check": {"invariant": ["singleTip"], "withinBlocks": 10}},
     {"name": "stop the relay of the forger with failover", "at": {"afterBlocks": 1}, "do": "stop", "node": 1, "role": "relay"},
-    {"name": "start it again", "at": {"afterBlocks": 3}, "do": "start", "node": 1, "role": "relay"},
+    {"name": "start it again", "at": {"afterBlocks": 12}, "do": "start", "node": 1, "role": "relay"},
     {"name": "one tip after the failover", "at": {"afterBlocks": 0}, "check": {"invariant": ["singleTip"], "withinBlocks": 10}},
     {"name": "restart a forger", "at": {"afterBlocks": 1}, "do": "restart", "node": 4, "role": "forger"},
     {"name": "a transfer after the restarts", "at": {"afterBlocks": 1}, "do": "submit", "node": 3, "via": "api", "check": {"accept": ["after-split"]},
