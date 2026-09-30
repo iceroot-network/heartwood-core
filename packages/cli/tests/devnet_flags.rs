@@ -623,9 +623,6 @@ fn status_resources_lists_the_running_processes_by_node_and_role() {
 
 #[test]
 fn status_resources_reads_a_real_process_tree() {
-    if !Path::new("/proc/self/smaps_rollup").exists() {
-        return;
-    }
     // A shell with two sleeping children: the tree is three processes.
     let script = "sleep 60 & echo $!; sleep 60 & echo $!; wait";
     let mut shell = Command::new("sh")
@@ -642,12 +639,14 @@ fn status_resources_reads_a_real_process_tree() {
         devnet::tree_resources(proc, shell.id()),
         devnet::tree_resources(proc, children[0]),
     );
-    let (whole, alone) = (whole.unwrap(), alone.unwrap());
-    let mut down = children
+    // The children end before any assertion, so a failure leaves no process behind.
+    let down: Vec<_> = children
         .iter()
-        .map(|pid| Command::new("kill").arg(pid.to_string()).status());
-    assert!(down.all(|status| status.is_ok()));
+        .map(|pid| Command::new("kill").arg(pid.to_string()).status())
+        .collect();
     shell.wait().unwrap();
+    assert!(down.iter().all(|status| status.is_ok()));
+    let (whole, alone) = (whole.unwrap(), alone.unwrap());
     assert!(
         alone.rss > 0 && whole.rss > alone.rss,
         "{whole:?} {alone:?}"

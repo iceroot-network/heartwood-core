@@ -7,7 +7,8 @@ use std::path::Path;
 
 use crate::devnet::Resources;
 
-/// Milliseconds per clock tick: the kernel counts CPU time in ticks of 1/100 s.
+/// Milliseconds per clock tick: `/proc` counts CPU time in the kernel's user-visible ticks
+/// (`USER_HZ`), which Linux fixes at 100 a second on x86-64 and arm64 whatever its internal rate.
 const MS_PER_TICK: u64 = 10;
 
 /// What one process's `stat` says: its parent and the ticks it and its reaped children used.

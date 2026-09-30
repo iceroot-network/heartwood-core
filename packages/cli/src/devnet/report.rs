@@ -5,7 +5,7 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use heartwood_crypto::utils::js;
@@ -264,23 +264,16 @@ pub fn follow(
     out: &mut dyn Write,
     stop: &dyn Fn() -> bool,
 ) -> Result<()> {
-    logs(root, selection, stream, lines, out)?;
-    let manifest = Manifest::read(root)?;
-    let mut sources = Vec::new();
-    for k in manifest.select(selection)? {
-        let node = manifest.node(k)?;
-        for role in node.roles(selection.role) {
-            let path = log_path(&node.instance(role), stream);
-            let start = fs::metadata(&path).map_or(0, |meta| meta.len());
-            sources.push(Followed {
-                label: format!("node{k}/{role}: "),
-                path,
-                seen: start,
-                partial: Vec::new(),
-            });
-        }
-    }
-    let prefixed = sources.len() > 1;
+    // Each log is followed from where the last lines were read, so no line is lost or repeated.
+    let read = last_lines(root, selection, stream, lines, out)?;
+    let prefixed = read.len() > 1;
+    let follow = |(label, path, seen)| Followed {
+        label,
+        path,
+        seen,
+        partial: Vec::new(),
+    };
+    let mut sources: Vec<Followed> = read.into_iter().map(follow).collect();
     while !stop() {
         for source in &mut sources {
             source.read(prefixed, out)?;
@@ -294,7 +287,7 @@ pub fn follow(
 /// A log [`follow`] tails: how far it has been read, and the start of a line not yet ended.
 struct Followed {
     label: String,
-    path: std::path::PathBuf,
+    path: PathBuf,
     seen: u64,
     partial: Vec<u8>,
 }
@@ -330,7 +323,7 @@ impl Followed {
 }
 
 /// The path of `stream`'s log of `instance`.
-fn log_path(instance: &Instance, stream: LogStream) -> std::path::PathBuf {
+fn log_path(instance: &Instance, stream: LogStream) -> PathBuf {
     match stream {
         LogStream::Out => instance.out_log_path(),
         LogStream::Error => instance.error_log_path(),
@@ -360,6 +353,18 @@ pub fn logs(
     lines: usize,
     out: &mut dyn Write,
 ) -> Result<()> {
+    last_lines(root, selection, stream, lines, out).map(drop)
+}
+
+/// [`logs`], giving each log's label, path and the length read of it (0 for one that does not
+/// exist yet).
+fn last_lines(
+    root: &Path,
+    selection: &NodeSelection,
+    stream: LogStream,
+    lines: usize,
+    out: &mut dyn Write,
+) -> Result<Vec<(String, PathBuf, u64)>> {
     let manifest = Manifest::read(root)?;
     let mut sources = Vec::new();
     for k in manifest.select(selection)? {
@@ -370,23 +375,25 @@ pub fn logs(
         }
     }
     let (mut merged, prefixed) = (Vec::new(), sources.len() > 1);
-    for (label, path) in &sources {
-        let text = match tail(path) {
-            Err(error) if error.kind() == ErrorKind::NotFound => continue,
-            text => text.map_err(io(path))?,
+    let mut read = Vec::with_capacity(sources.len());
+    for (label, path) in sources {
+        let (text, end) = match tail(&path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => (String::new(), 0),
+            text => text.map_err(io(&path))?,
         };
         let all: Vec<&str> = text.lines().collect();
-        let (mut time, label) = ("", if prefixed { label.as_str() } else { "" });
+        let (mut time, shown) = ("", if prefixed { label.as_str() } else { "" });
         for line in all.iter().skip(all.len().saturating_sub(lines)) {
             time = stamp(line).unwrap_or(time);
-            merged.push((time.to_owned(), format!("{label}{line}")));
+            merged.push((time.to_owned(), format!("{shown}{line}")));
         }
+        read.push((label, path, end));
     }
     merged.sort_by(|a, b| a.0.cmp(&b.0));
     for (_, line) in merged {
         writeln!(out, "{line}").map_err(io(Path::new("the output")))?;
     }
-    Ok(())
+    Ok(read)
 }
 
 /// The time at the start of a log line, `[YYYY-MM-DD HH:MM:SS.mmm]`.
@@ -396,13 +403,14 @@ fn stamp(line: &str) -> Option<&str> {
 }
 
 /// The text of the last [`WINDOW`] bytes of the file `path`, from its first whole line when the
-/// window starts inside the file.
-fn tail(path: &Path) -> std::io::Result<String> {
+/// window starts inside the file, and the length read up to.
+fn tail(path: &Path) -> std::io::Result<(String, u64)> {
     let mut file = File::open(path)?;
     let start = file.metadata()?.len().saturating_sub(WINDOW);
     file.seek(SeekFrom::Start(start))?;
     let mut data = Vec::new();
     file.read_to_end(&mut data)?;
+    let end = start.saturating_add(u64::try_from(data.len()).unwrap_or(u64::MAX));
     let whole = if start > 0 {
         data.iter().position(|b| *b == b'\n')
     } else {
@@ -411,7 +419,7 @@ fn tail(path: &Path) -> std::io::Result<String> {
     let data = data
         .get(whole.map_or(0, |at| at.saturating_add(1))..)
         .unwrap_or_default();
-    Ok(String::from_utf8_lossy(data).into_owned())
+    Ok((String::from_utf8_lossy(data).into_owned(), end))
 }
 
 /// Node `node`'s environment: the values of its `.env`, then its five `CORE_PATH_*` variables.
