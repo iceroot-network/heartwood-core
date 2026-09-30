@@ -11,7 +11,7 @@
 #   make l1             the L1 properties against the oracle
 #   make corpus-import corpus-judge l2 l2-synthetic   the L2 chains: import, judge, replay
 #   make l2-restart crash-test   the L2 chains restarted at planned heights, and killed mid-commit
-#   make pool-bench     the cost of the pool's per-sender views and of the store's commit
+#   make pool-bench     the cost of the pool's per-sender views, of the store's commit and of a re-index
 #   make l2-processor   the L2 chains through the processor and the job, as a relay imports them
 #   make relay-image live live-check api-compare   the relay on a devnet, and its comparisons
 #   make p2p-compare await-report   a mixed run's reference-client probe and its AwaitBlock report
@@ -338,9 +338,10 @@ crash-test: build ## CORPUS/NAME replayed through the store (or a relay, RUNTIME
 	$(DIFFTEST) store crash $(CORPUS)/$(NAME) --kills $(KILLS) $(if $(KILL_SEED),--seed $(KILL_SEED)) \
 	    $(if $(RUNTIME),--runtime) $(STRICT)
 
-pool-bench: ## the cost of the pool's per-sender views and of the store's commit (release build)
+pool-bench: ## the cost of the pool's per-sender views, of the store's commit and of a re-index (release build)
 	$(TOOLCHAIN) && cargo test --release --locked -p heartwood-pool --test view_cost -- --ignored --nocapture
 	$(TOOLCHAIN) && cargo test --release --locked -p heartwood-blockchain --test commit_cost -- --ignored --nocapture
+	$(TOOLCHAIN) && cargo test --release --locked -p heartwood-state --test reindex_cost -- --ignored --nocapture
 
 layers: ## crate edges follow the layers; no async, storage or HTTP crate in the consensus crates
 	$(TOOLCHAIN) && tools/check-layers.sh
