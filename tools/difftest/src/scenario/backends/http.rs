@@ -28,12 +28,13 @@ impl Rules {
         Ok(Rules(Some(milestones)))
     }
 
-    /// The API's form of the transaction `hex_text` writes.
-    fn json(&self, hex_text: &str) -> Result<Value, BackendError> {
+    /// The API's form of the transaction `hex_text` writes, by the rules of the height it was
+    /// planned for.
+    fn json(&self, hex_text: &str, height: u32) -> Result<Value, BackendError> {
         let Some(milestones) = &self.0 else {
             return Err(failed("submit", "the runner gave no chain rules"));
         };
-        let params = milestones.at(1);
+        let params = milestones.at(height);
         let bytes = hex::decode(hex_text).map_err(|e| failed("submit", e))?;
         let tx = Transaction::decode_trusted(&bytes, params).map_err(|e| failed("submit", e))?;
         Ok(tx.to_json(params))
@@ -128,7 +129,7 @@ pub fn submit(
 ) -> Result<Vec<Submitted>, BackendError> {
     let wire = transactions
         .iter()
-        .map(|t| rules.json(&t.bytes))
+        .map(|t| rules.json(&t.bytes, t.height))
         .collect::<Result<Vec<_>, _>>()?;
     let answer = post_transactions(base, &wire)?;
     if !matches!(answer.status, 200 | 201 | 422) {

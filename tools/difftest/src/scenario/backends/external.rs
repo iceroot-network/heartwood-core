@@ -4,6 +4,8 @@
 //! transactions through the API, at the address the `api-url` verb prints; `post-transactions` is
 //! the peer-to-peer way in.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -14,6 +16,7 @@ use super::super::format::{
     CompiledTx, HeartwoodRestart, Part, ReferenceRestart, RestartModes, Via,
 };
 use super::http;
+use crate::store::ScratchDir;
 
 /// The variable that names the executable.
 pub const VARIABLE: &str = "DIFFTEST_SCENARIO_BACKEND";
@@ -54,6 +57,8 @@ pub struct External {
     root: PathBuf,
     nodes: u32,
     rules: http::Rules,
+    /// The API addresses the `api-url` verb printed, by node.
+    urls: RefCell<HashMap<u32, String>>,
 }
 
 impl External {
@@ -64,6 +69,7 @@ impl External {
             root: root.to_path_buf(),
             nodes: 0,
             rules: http::Rules::default(),
+            urls: RefCell::default(),
         };
         let info = external.call("read the network's description", "info", &[])?;
         let info: Value =
@@ -155,8 +161,13 @@ impl Backend for External {
     }
 
     fn api_url(&self, node: u32) -> Result<String, BackendError> {
+        if let Some(url) = self.urls.borrow().get(&node) {
+            return Ok(url.clone());
+        }
         let out = self.call("find a node's API", "api-url", &[node.to_string()])?;
-        Ok(out.trim().to_owned())
+        let url = out.trim().to_owned();
+        self.urls.borrow_mut().insert(node, url.clone());
+        Ok(url)
     }
 
     fn archive(&mut self, dir: &Path) -> Result<(), BackendError> {
@@ -178,8 +189,8 @@ impl Backend for External {
         if via == Via::Api {
             return http::submit(&self.api_url(node)?, &self.rules, transactions);
         }
-        let file =
-            std::env::temp_dir().join(format!("scenario-submit-{}-{node}.txt", std::process::id()));
+        let scratch = ScratchDir::new("scenario-submit").map_err(|e| failed("submit", e))?;
+        let file = scratch.path().join(format!("node{node}.txt"));
         let lines: Vec<&str> = transactions.iter().map(|t| t.bytes.as_str()).collect();
         std::fs::write(&file, lines.join("\n") + "\n").map_err(|e| failed("submit", e))?;
         let out = self.call(
@@ -187,7 +198,6 @@ impl Backend for External {
             "post-transactions",
             &[node.to_string(), file.display().to_string()],
         );
-        let _ = std::fs::remove_file(&file);
         let answers: Vec<Value> = out?
             .lines()
             .filter_map(|l| serde_json::from_str(l).ok())
