@@ -9,17 +9,23 @@
 # paths the command tests, which the criteria file GATE_CRITERIA may narrow), GATE_LEDGER and
 # LEDGER_DIR (a long run's ledger entry: `kind=property id=P cases=N seed=S` or `kind=target id=T
 # seconds=N forks=N`), GATE_DIFFTEST (the harness binary). The command runs as it is; its exit
-# status is this script's, or 1 when it passed and its record could not be written.
+# status is this script's, or 1 when it passed and its record could not be written. When a record
+# is written, what the command printed to its standard output is also kept in a temporary file
+# and given to `gate record`, which reads the record's counts and hits from it.
 set -uo pipefail
 
+if [ -z "${GATE_RECORDS:-}" ]; then
+    exec "$@"
+fi
+printed=$(mktemp "${TMPDIR:-/tmp}/gate-record.XXXXXX") || exit 1
+trap 'rm -f "$printed"' EXIT
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-"$@"
-status=$?
-[ -n "${GATE_RECORDS:-}" ] || exit "$status"
+"$@" | tee "$printed"
+status=${PIPESTATUS[0]}
 finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 args=(gate record --target "${GATE_TARGET:-}" --command "$*" --exit "$status"
-      --started "$started" --finished "$finished" --out "$GATE_RECORDS")
+      --started "$started" --finished "$finished" --out "$GATE_RECORDS" --output "$printed")
 [ -n "${GATE_VARIABLES:-}" ] && args+=(--variables "$GATE_VARIABLES")
 [ -n "${GATE_IMAGE:-}" ] && args+=(--image "$GATE_IMAGE")
 [ -n "${GATE_CRITERIA:-}" ] && args+=(--criteria "$GATE_CRITERIA")

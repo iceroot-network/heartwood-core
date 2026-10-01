@@ -5,10 +5,23 @@
 //! ledger and the criteria file), `gate coverage` (the coverage rows' records) and `gate register`
 //! (every register entry's trigger, test and hits).
 
+pub mod coverage;
+pub mod criteria;
+pub mod flags;
+pub mod git;
 pub mod ledger;
+pub mod make_record;
+pub mod names;
+pub mod needs;
+pub mod output;
 pub mod record;
+pub mod register;
+pub mod s1;
+pub mod store;
+pub mod time;
+pub mod totals;
 
-use crate::errors::{Error, Result};
+use crate::errors::Result;
 
 pub use ledger::{LEDGER_FORMAT, LedgerEntry, LedgerKind};
 pub use record::{Counts, GateRecord, GateResult, RECORD_FORMAT};
@@ -50,10 +63,24 @@ impl GateVerb {
     }
 }
 
-/// Run a gate command; whether its checks passed.
-pub fn run(args: &GateArgs) -> Result<bool> {
-    Err(Error::NotYet(format!(
-        "gate {} is not built yet",
-        args.verb.name()
-    )))
+/// Run a gate command; whether its checks passed. `strict` is the harness's `--strict`, which the
+/// command line takes out of the arguments before they get here: it makes `s1`, `coverage`,
+/// `register` and `ledger show|plan` demand everything, not only that nothing failed.
+pub fn run(args: &GateArgs, strict: bool) -> Result<bool> {
+    let mut rest = args.args.clone();
+    let takes_strict = match args.verb {
+        GateVerb::S1 | GateVerb::Coverage | GateVerb::Register => true,
+        GateVerb::Ledger => rest.first().is_some_and(|v| v == "show" || v == "plan"),
+        GateVerb::Record => false,
+    };
+    if strict && takes_strict {
+        rest.push("--strict".to_owned());
+    }
+    match args.verb {
+        GateVerb::Record => make_record::run(&rest),
+        GateVerb::Ledger => totals::run(&rest),
+        GateVerb::S1 => s1::run(&rest),
+        GateVerb::Coverage => coverage::run(&rest),
+        GateVerb::Register => register::run(&rest),
+    }
 }
