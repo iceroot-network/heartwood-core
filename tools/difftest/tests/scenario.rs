@@ -428,6 +428,7 @@ impl Backend for Fake {
                     reference: t.reference.clone(),
                     accepted: code.is_none(),
                     code,
+                    message: None,
                 }
             })
             .collect())
@@ -1206,6 +1207,7 @@ fn record(id: &str, backend: &str, tip: (u32, &str), answer: bool, digest: Outco
         reference: "t".into(),
         accepted: answer,
         code: None,
+        message: None,
     }]);
     step.checked("first: digest", &digest);
     Record::new(
@@ -1222,6 +1224,13 @@ fn record(id: &str, backend: &str, tip: (u32, &str), answer: bool, digest: Outco
 fn suite(dir: &Path, name: &str, record: &Record) {
     record.write(&dir.join(name)).expect("write");
     chain(dir, name, "g", "b2");
+    steps(dir, name, true);
+}
+
+/// A run's scripted steps: one, that met its expectation or not.
+fn steps(dir: &Path, name: &str, ok: bool) {
+    let line = json!({"step": "scenario-s", "node": "all", "ok": ok});
+    std::fs::write(dir.join(name).join("steps.jsonl"), format!("{line}\n")).expect("steps");
 }
 
 /// A run's chain as the devnet tooling leaves it: two nodes' archives (a reference run) or digest
@@ -1319,7 +1328,7 @@ fn a_suite_compares_the_pool_answers_the_checks_and_the_scenario_wallets() {
         "e-heartwood",
         &record("s", "heartwood", (5, "x"), true, Outcome::Pass),
     );
-    let report = compare(dir, None).expect("compare");
+    let report = compare(dir, None, None).expect("compare");
     let of = |suite: &str| -> Vec<&Outcome> {
         report
             .results
@@ -1335,8 +1344,8 @@ fn a_suite_compares_the_pool_answers_the_checks_and_the_scenario_wallets() {
     );
     assert_eq!(
         of("a").len(),
-        6,
-        "answers, the check, the wallets, each run's chain and their genesis"
+        8,
+        "answers, the check, the wallets, each run's steps, each run's chain and their genesis"
     );
     for (name, failures) in [("b", 1), ("c", 1), ("d", 1), ("e", 1)] {
         assert_eq!(
@@ -1348,7 +1357,7 @@ fn a_suite_compares_the_pool_answers_the_checks_and_the_scenario_wallets() {
     }
     assert!(of("d").iter().any(|o| matches!(o, Outcome::Mismatch(_))));
     // One suite alone.
-    let only = compare(dir, Some("a")).expect("compare");
+    let only = compare(dir, Some("a"), None).expect("compare");
     assert_eq!(only.files, 1);
     assert!(only.results.iter().all(|c| c.outcome == Outcome::Pass));
 }
@@ -1371,7 +1380,7 @@ fn a_suite_run_whose_nodes_hold_two_chains_fails_and_so_does_another_genesis() {
     suite(dir, "d-reference", &run("reference"));
     suite(dir, "d-heartwood", &run("heartwood"));
     chain(dir, "d-heartwood", "another", "b2");
-    let report = compare(dir, None).expect("compare");
+    let report = compare(dir, None, None).expect("compare");
     let failed = |suite: &str| -> Vec<String> {
         report
             .results
@@ -1393,7 +1402,7 @@ fn a_suite_run_whose_nodes_hold_two_chains_fails_and_so_does_another_genesis() {
     assert!(failed("b")[0].contains("height 2: node2 differs from node1"));
     // A run without a chain to read fails its case.
     std::fs::remove_dir_all(dir.join("a-heartwood/nodes")).expect("remove");
-    let bare = compare(dir, Some("a")).expect("compare");
+    let bare = compare(dir, Some("a"), None).expect("compare");
     assert!(
         bare.results
             .iter()
@@ -1407,7 +1416,7 @@ fn a_suite_run_whose_nodes_hold_two_chains_fails_and_so_does_another_genesis() {
 fn a_suite_of_one_run_or_none_is_the_harness_error() {
     let scratch = ScratchDir::new("scenario-compare-missing").expect("scratch");
     let dir = scratch.path();
-    let empty = compare(dir, None).expect("compare");
+    let empty = compare(dir, None, None).expect("compare");
     assert!(matches!(
         &empty.results[0].outcome,
         Outcome::HarnessError(m) if m.contains("holds no suite")
@@ -1417,7 +1426,7 @@ fn a_suite_of_one_run_or_none_is_the_harness_error() {
         "a-reference",
         &record("s", "reference", (5, "x"), true, Outcome::Pass),
     );
-    let lonely = compare(dir, None).expect("compare");
+    let lonely = compare(dir, None, None).expect("compare");
     assert!(matches!(
         &lonely.results[0].outcome,
         Outcome::HarnessError(m) if m.contains("only one of its two runs")
@@ -1428,10 +1437,250 @@ fn a_suite_of_one_run_or_none_is_the_harness_error() {
         "a-heartwood",
         &record("t", "heartwood", (5, "x"), true, Outcome::Pass),
     );
-    let unpaired = compare(dir, None).expect("compare");
+    let unpaired = compare(dir, None, None).expect("compare");
     assert_eq!(unpaired.failed(), 2, "{:#?}", unpaired.results);
-    let elsewhere = compare(dir, Some("z")).expect("compare");
+    let elsewhere = compare(dir, Some("z"), None).expect("compare");
     assert!(elsewhere.results[0].outcome.is_failure());
+}
+
+#[test]
+fn a_check_alike_on_both_runs_passes_only_when_it_passed() {
+    let scratch = ScratchDir::new("scenario-compare-alike").expect("scratch");
+    let dir = scratch.path();
+    let both = |name: &str, outcome: Outcome| {
+        suite(
+            dir,
+            &format!("{name}-reference"),
+            &record("s", "reference", (5, "x"), true, outcome.clone()),
+        );
+        suite(
+            dir,
+            &format!("{name}-heartwood"),
+            &record("s", "heartwood", (5, "x"), true, outcome),
+        );
+    };
+    both("passed", Outcome::Pass);
+    both("failed", mismatch("a", "b"));
+    both("skipped", Outcome::Skipped("not modelled".into()));
+    let live = "a live network's digests are judged against the reference when the suite's runs are compared";
+    both("digest", Outcome::Skipped(live.into()));
+    let report = compare(dir, None, None).expect("compare");
+    let digest_case = |suite: &str| -> Outcome {
+        report
+            .results
+            .iter()
+            .find(|c| c.file == format!("{suite}/s") && c.label == "first: digest")
+            .map(|c| c.outcome.clone())
+            .expect("the digest check's case")
+    };
+    assert_eq!(digest_case("passed"), Outcome::Pass);
+    assert!(
+        digest_case("failed").is_failure(),
+        "{:?}",
+        digest_case("failed")
+    );
+    assert_eq!(
+        digest_case("skipped"),
+        Outcome::Skipped("not modelled".into())
+    );
+    // Without the chains' judgement a live digest check stays skipped, so a strict run fails it.
+    assert!(matches!(digest_case("digest"), Outcome::Skipped(_)));
+    assert!(!report.passes(true));
+}
+
+#[test]
+fn a_scenario_without_a_record_on_either_side_and_a_failed_step_fail() {
+    let scratch = ScratchDir::new("scenario-compare-planned").expect("scratch");
+    let dir = scratch.path();
+    for side in ["reference", "heartwood"] {
+        let name = format!("a-{side}");
+        suite(
+            dir,
+            &name,
+            &record("s", side, (5, "x"), true, Outcome::Pass),
+        );
+        let scenarios = dir.join(&name).join("scenarios");
+        std::fs::create_dir_all(&scenarios).expect("scenarios");
+        for (file, id, levels) in [
+            ("s.json", "s", "L3"),
+            ("gone.json", "gone", "L3"),
+            ("l2.json", "l2-only", "L2"),
+        ] {
+            let scenario = json!({
+                "id": id, "title": "t", "levels": [levels], "network": "devnet",
+                "genesisSeed": "seed", "steps": []
+            });
+            std::fs::write(scenarios.join(file), scenario.to_string()).expect("scenario");
+        }
+    }
+    steps(dir, "a-heartwood", false);
+    let report = compare(dir, None, None).expect("compare");
+    let failed: Vec<String> = report
+        .results
+        .iter()
+        .filter(|c| c.outcome.is_failure())
+        .map(|c| format!("{}: {}: {:?}", c.file, c.label, c.outcome))
+        .collect();
+    assert_eq!(failed.len(), 2, "{failed:#?}");
+    assert!(
+        failed
+            .iter()
+            .any(|f| f.starts_with("a/gone: both runs") && f.contains("neither run")),
+        "{failed:#?}"
+    );
+    assert!(
+        failed
+            .iter()
+            .any(|f| f.contains("the heartwood run's scripted steps")
+                && f.contains("scenario-s (all)")),
+        "{failed:#?}"
+    );
+}
+
+#[test]
+fn the_pools_refusals_are_compared_up_to_the_numbers_of_each_network() {
+    let scratch = ScratchDir::new("scenario-compare-refusals").expect("scratch");
+    let dir = scratch.path();
+    let refused = |backend: &str, message: &str| {
+        let mut r = record("s", backend, (5, "x"), false, Outcome::Pass);
+        r.steps[0].answered(&[Submitted {
+            reference: "t".into(),
+            accepted: false,
+            code: Some("ERR_APPLY".into()),
+            message: Some(message.into()),
+        }]);
+        r
+    };
+    suite(
+        dir,
+        "same-reference",
+        &refused("reference", "5 more blocks must be produced"),
+    );
+    suite(
+        dir,
+        "same-heartwood",
+        &refused("heartwood", "7 more blocks must be produced"),
+    );
+    suite(
+        dir,
+        "other-reference",
+        &refused("reference", "Insufficient balance in the wallet"),
+    );
+    suite(
+        dir,
+        "other-heartwood",
+        &refused("heartwood", "The nonce is not the next one"),
+    );
+    let report = compare(dir, None, None).expect("compare");
+    let answers = |suite: &str| -> Outcome {
+        report
+            .results
+            .iter()
+            .find(|c| c.file == format!("{suite}/s") && c.label == "first: pool answers")
+            .map(|c| c.outcome.clone())
+            .expect("the answers' case")
+    };
+    assert_eq!(answers("same"), Outcome::Pass);
+    assert!(answers("other").is_failure(), "{:?}", answers("other"));
+}
+
+#[test]
+fn a_live_answer_names_the_offline_refusal_by_its_handler_s_code_and_keeps_the_reason() {
+    use heartwood_difftest::scenario::backends::http::verdict;
+    let body = json!({
+        "data": {"accept": ["a"], "broadcast": [], "excess": [], "invalid": ["v", "n"]},
+        "errors": {
+            "v": [{"type": "ERR_APPLY", "message": "Vote v cannot be applied: genesis_44 is not operating a node on the network"}],
+            "n": [{"type": "ERR_APPLY", "message": "Transfer n cannot be applied: Cannot apply a transaction with nonce 3"}]
+        }
+    });
+    assert_eq!(verdict(&body, "a"), Some((true, None, None)));
+    assert_eq!(
+        verdict(&body, "v"),
+        Some((
+            false,
+            Some("ERR_OFFLINE".into()),
+            Some("genesis_44 is not operating a node on the network".into())
+        ))
+    );
+    assert_eq!(
+        verdict(&body, "n"),
+        Some((
+            false,
+            Some("ERR_APPLY".into()),
+            Some("Cannot apply a transaction with nonce 3".into())
+        ))
+    );
+    // An id the answer does not name is no refusal: the submit fails on it.
+    assert_eq!(verdict(&body, "unnamed"), None);
+}
+
+/// Copy the directory `from` to `to`, recursively.
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("dir");
+    for entry in std::fs::read_dir(from).expect("read dir") {
+        let path = entry.expect("entry").path();
+        let target = to.join(path.file_name().expect("name"));
+        if path.is_dir() {
+            copy_tree(&path, &target);
+        } else {
+            std::fs::copy(&path, &target).expect("copy");
+        }
+    }
+}
+
+#[test]
+fn a_heartwood_suite_run_s_chain_is_judged_against_the_reference_s_lines() {
+    use heartwood_difftest::scenario::judge::{Side, judge};
+    let recorded = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/live/core");
+    let scratch = ScratchDir::new("scenario-judge").expect("scratch");
+    let run = scratch.path().join("transactions-heartwood");
+    let root = scratch.path().join("corpus");
+    copy_tree(&recorded, &run);
+    // A suite run's control node keeps its block files in its own directory, and the network's
+    // crypto files beside the run; the chain was judged before, so no oracle is asked for.
+    copy_tree(&run.join("nodes/node1"), &run.join("node1"));
+    copy_tree(&recorded.join("corpus/crypto"), &run.join("network/crypto"));
+    copy_tree(
+        &recorded.join("corpus"),
+        &root.join("suite-transactions-heartwood-1"),
+    );
+    let no_oracle = || -> heartwood_difftest::Result<_> {
+        Err(heartwood_difftest::Error::Usage("judged already".into()))
+    };
+    let held = judge(&run, Side::Heartwood, "transactions", &root, &no_oracle);
+    assert!(held.holds, "{:#?}", held.cases);
+    assert!(
+        held.cases
+            .iter()
+            .any(|(label, _)| label.contains("node2's final chain equals the judge's")),
+        "{:#?}",
+        held.cases
+    );
+    // One node's state at one height differs from the judge's: the chain is not held.
+    let digest = run.join("nodes/node2/difftest/digest-0001.jsonl");
+    let text = std::fs::read_to_string(&digest).expect("digest");
+    let mut lines: Vec<Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("line"))
+        .collect();
+    let at = lines
+        .iter()
+        .position(|l| l["step"] == "apply")
+        .expect("an apply line");
+    lines[at]["s"] = json!("not the judge's");
+    let edited: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    std::fs::write(&digest, edited).expect("edit");
+    let broken = judge(&run, Side::Heartwood, "transactions", &root, &no_oracle);
+    assert!(!broken.holds);
+    assert!(
+        broken
+            .cases
+            .iter()
+            .any(|(label, outcome)| label.contains("node2") && outcome.is_failure()),
+        "{:#?}",
+        broken.cases
+    );
 }
 
 // The backends.
@@ -1750,12 +1999,14 @@ fn the_external_backend_calls_its_executable_once_per_action() {
             Submitted {
                 reference: "t1".into(),
                 accepted: true,
-                code: None
+                code: None,
+                message: None,
             },
             Submitted {
                 reference: "t2".into(),
                 accepted: false,
-                code: Some("ERR_APPLY".into())
+                code: Some("ERR_APPLY".into()),
+                message: Some("no".into()),
             },
         ]
     );

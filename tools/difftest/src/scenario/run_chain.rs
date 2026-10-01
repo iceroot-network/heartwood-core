@@ -32,6 +32,8 @@ pub struct RunChain {
     pub genesis: BTreeSet<String>,
     /// What disagrees (the first few).
     pub problems: Vec<String>,
+    /// In a Heartwood run, each node's final chain: its last line of each height.
+    pub lines: BTreeMap<String, BTreeMap<u32, Value>>,
 }
 
 impl RunChain {
@@ -183,6 +185,7 @@ pub fn heartwood(run: &Path) -> Result<RunChain> {
     if more > 0 {
         out.problems.push(format!("and {more} more"));
     }
+    out.lines = chains;
     Ok(out)
 }
 

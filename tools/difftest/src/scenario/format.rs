@@ -381,9 +381,10 @@ pub struct MissedCheck {
 pub enum Invariant {
     /// The supply equals the genesis amount plus the rewards less the burns.
     Supply,
-    /// Every node is on one tip.
+    /// Every node that is meant to be up is on one tip.
     SingleTip,
-    /// Every block was forged by the scheduled delegate.
+    /// Every block was forged by a delegate of its round (round membership; that the forger is
+    /// the one its slot names is judged with the chain against the reference).
     Schedule,
     /// A revert and its reapply give the same states.
     RevertSymmetry,

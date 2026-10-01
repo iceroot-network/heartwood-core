@@ -213,6 +213,7 @@ impl Backend for External {
                     reference: t.reference.clone(),
                     accepted: answer["accepted"].as_bool().unwrap_or(false),
                     code: None,
+                    message: None,
                 })
             })
             .collect()

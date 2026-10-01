@@ -69,7 +69,7 @@ pub mod await_block;
 pub mod bans;
 mod churn;
 mod core_run;
-mod corpora;
+pub(crate) mod corpora;
 pub mod digest;
 pub mod forging;
 mod fresh;

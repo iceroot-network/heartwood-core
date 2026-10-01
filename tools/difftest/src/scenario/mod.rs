@@ -14,6 +14,7 @@ pub mod chain;
 pub mod checks;
 pub mod compile;
 pub mod format;
+pub mod judge;
 pub mod projection;
 pub mod record;
 pub mod run_chain;
@@ -273,7 +274,15 @@ pub fn run_command(args: &crate::cli::ScenarioRunArgs) -> Result<Report> {
 }
 
 /// Compare a suite's reference and Heartwood runs of one seed under `dir` (`<suite>-reference`
-/// and `<suite>-heartwood`), every suite there or `suite` alone.
+/// and `<suite>-heartwood`), every suite there or `suite` alone, each run's chain judged against
+/// the reference through the oracle of the environment (`DIFFTEST_IMAGE` or `SOLAR_DIR`), its
+/// corpus under the corpus root.
 pub fn compare(dir: &Path, suite: Option<&str>) -> Result<Report> {
-    record::compare(dir, suite)
+    let oracle =
+        || crate::cli::OracleArgs::default().resolve(|name: &str| std::env::var(name).ok());
+    let judging = record::Judging {
+        root: Path::new(crate::live::CORPUS_ROOT),
+        oracle: &oracle,
+    };
+    record::compare(dir, suite, Some(&judging))
 }

@@ -132,9 +132,35 @@ pub fn tip(base: &str) -> Result<super::super::backend::Tip, BackendError> {
     }
 }
 
-/// What a `POST /api/transactions` answer says of the transaction `id`: whether it was admitted
-/// and the refusal's code.
-pub fn verdict(body: &Value, id: &str) -> (bool, Option<String>) {
+/// The end of the message of a vote, or a revoke, for a delegate that is not operating a node.
+const OFFLINE: &str = "is not operating a node on the network";
+
+/// The text before the reason in a refusal's message: the reference's pool wraps every refusal of
+/// a handler as `<transaction> cannot be applied: <reason>`.
+const APPLY: &str = "cannot be applied: ";
+
+/// A refusal's code and its message without the transaction's own text. The reference's pool
+/// reports every refusal of a handler as `ERR_APPLY`, the handler's own reason in the message
+/// only: one whose reason is a delegate that is not operating a node is `ERR_OFFLINE`, the
+/// handler's code, as the lockstep backend names it too.
+pub fn refusal(error: &Value) -> (Option<String>, Option<String>) {
+    let message = error["message"].as_str().map(|m| {
+        m.split_once(APPLY)
+            .map_or(m, |(_, reason)| reason)
+            .to_owned()
+    });
+    let code = match error["type"].as_str() {
+        Some("ERR_APPLY") if message.as_deref().is_some_and(|m| m.ends_with(OFFLINE)) => {
+            Some("ERR_OFFLINE".to_owned())
+        }
+        other => other.map(str::to_owned),
+    };
+    (code, message)
+}
+
+/// What a `POST /api/transactions` answer says of the transaction `id`: whether it was admitted,
+/// and the refusal's code and message ([`refusal`]); `None` when the answer does not name it.
+pub fn verdict(body: &Value, id: &str) -> Option<(bool, Option<String>, Option<String>)> {
     let listed = |list: &str| {
         body["data"][list]
             .as_array()
@@ -142,9 +168,17 @@ pub fn verdict(body: &Value, id: &str) -> (bool, Option<String>) {
     };
     let accepted = listed("accept") || listed("broadcast");
     let error = &body["errors"][id];
+    let named = accepted || listed("invalid") || listed("excess") || !error.is_null();
+    if !named {
+        return None;
+    }
     let error = error.get(0).unwrap_or(error);
-    let code = error["type"].as_str().map(str::to_owned);
-    (accepted, if accepted { None } else { code })
+    let (code, message) = refusal(error);
+    Some(if accepted {
+        (true, None, None)
+    } else {
+        (false, code, message)
+    })
 }
 
 /// Submit `transactions` over `POST /api/transactions` at `base`: each one's answer, in order.
@@ -164,15 +198,21 @@ pub fn submit(
             format!("the API answers {}", answer.status),
         ));
     }
-    Ok(transactions
+    transactions
         .iter()
         .map(|t| {
-            let (accepted, code) = verdict(&answer.body, &t.id);
-            Submitted {
+            let (accepted, code, message) = verdict(&answer.body, &t.id).ok_or_else(|| {
+                failed(
+                    "submit",
+                    format!("the answer does not name {} ({})", t.reference, t.id),
+                )
+            })?;
+            Ok(Submitted {
                 reference: t.reference.clone(),
                 accepted,
                 code,
-            }
+                message,
+            })
         })
-        .collect())
+        .collect()
 }

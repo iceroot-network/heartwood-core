@@ -377,9 +377,11 @@ impl Ctx<'_, '_> {
         })
     }
 
-    /// Every block was forged by an active delegate of its round. A delegate may forge twice in
-    /// a round: after a missed slot the reference gives the round's later slots to delegates that
-    /// have forged in it already, at the milestone's `secondaryReward`.
+    /// Round membership: every block was forged by an active delegate of its round. A delegate
+    /// may forge twice in a round: after a missed slot the round's later slots fall to delegates
+    /// that have forged in it already, at the milestone's `secondaryReward`. That each block's
+    /// forger is the one its slot names is the reference's processing's to judge: a suite run's
+    /// chain is judged by it when the suite's runs are compared ([`super::judge`]).
     fn schedule(&mut self) -> Probe {
         let (node, tip) = self.runner.observe()?;
         let length = self.runner.chain.round_length.max(1);
@@ -487,7 +489,7 @@ pub fn evaluate(ctx: &mut Ctx<'_, '_>, check: &Check) -> Vec<CaseResult> {
                 said.map_or_else(|why| expected("digests agree", why), |()| Outcome::Pass)
             }
             None => Outcome::Skipped(
-                "a live network's digests are judged against the reference by live check".into(),
+                "a live network's digests are judged against the reference when the suite's runs are compared".into(),
             ),
         };
         cases.push(ctx.case("digest".into(), height(ctx), outcome));

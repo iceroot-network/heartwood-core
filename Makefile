@@ -148,7 +148,7 @@ GATE_LEDGER   ?=
 GATE_ORACLE_TARGETS := l0 l1 corpus-judge l2-synthetic rollback-replay lockstep replay-api scenario suites \
                        oracle-image vectors-diff vectors-install
 gate-reads-oracle = $(or $(filter $(1),$(GATE_ORACLE_TARGETS)),$(and $(filter forge-replay,$(1)),$(filter oracle,$(DIRECTION))))
-gate-image-of = $(if $(filter live-check,$(1)),$(if $(or $(is-mixed),$(is-forging)),$(IMAGE)),$(if $(and $(call gate-reads-oracle,$(1)),$(filter --image%,$(ORACLE_ARGS))),$(IMAGE)))
+gate-image-of = $(if $(filter live-check,$(1)),$(if $(or $(is-mixed),$(is-forging),$(filter suites,$(RUN))),$(IMAGE)),$(if $(and $(call gate-reads-oracle,$(1)),$(filter --image%,$(ORACLE_ARGS))),$(IMAGE)))
 # The run directories whose tooling.sha256 a live run's record names.
 gate-tooling-of = $(if $(filter suites,$(1)),$(suite-dir),$(if $(filter live-check api-compare live-resources,$(1)),$(if $(filter suites,$(RUN)),$(FORGING_RESULTS)/suites/$(SEED)$(if $(SUITE),/$(SUITE)-reference $(FORGING_RESULTS)/suites/$(SEED)/$(SUITE)-heartwood),$(if $(is-forging),$(run-dir)))))
 gate-for = GATE_RECORDS='$(GATE_RECORDS)' GATE_TARGET=$(1) GATE_VARIABLES='$(filter-out GATE_% GATED=% $(GATED) $(addsuffix \,$(GATED)),$(MAKEOVERRIDES))' \
@@ -714,15 +714,17 @@ live: $(live-prerequisite) ## one live run of at most 5 rounds on a devnet (RUN=
 mixed-compare = $(if $(COMPARE),$(COMPARE),$(if $(filter-out w0,$(is-mixed)),w0))
 mixed-spread = $(if $(and $(is-mixed),$(mixed-compare)),$(foreach d,$(MIXED_SPREAD),--spread $(d)))
 # The suites' check compares each suite's reference and Heartwood runs of a seed
-# (FORGING_RESULTS/suites/SEED/SUITE-IMPL), every suite or SUITE alone.
+# (FORGING_RESULTS/suites/SEED/SUITE-IMPL), every suite or SUITE alone, and judges each run's chain
+# against the reference through the oracle's IMAGE (its corpora under CORPUS).
 live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live run (RUN, LIVE_RESULTS, MIXED_RESULTS, OBSERVER_RESULTS or FORGING_RESULTS with SEED; COMPARE, for w, p and s w0 by default; RUN=suites with SEED and SUITE)
 	$(need-run)
 	$(if $(filter suites,$(RUN)),,$(need-results))
 	$(need-seed)
-	$(if $(or $(is-mixed),$(is-forging)),$(need-image))
+	$(if $(or $(is-mixed),$(is-forging),$(filter suites,$(RUN))),$(need-image))
 	$(TOOLCHAIN) && if [ '$(RUN)' = suites ]; then \
 	    [ -n '$(SEED)' ] && [ -n '$(FORGING_RESULTS)' ] || { echo "live-check: set SEED and FORGING_RESULTS for RUN=suites" >&2; exit 2; }; \
-	    $(gate) $(DIFFTEST) scenario compare $(FORGING_RESULTS)/suites/$(SEED) $(if $(SUITE),--suite $(SUITE)) $(STRICT); \
+	    $(gate) env DIFFTEST_IMAGE='$(IMAGE)' $(DIFFTEST) scenario compare $(FORGING_RESULTS)/suites/$(SEED) \
+	        $(if $(SUITE),--suite $(SUITE)) $(STRICT); \
 	else \
 	    $(gate) $(if $(or $(is-mixed),$(is-forging)),env -u COMPARE DIFFTEST_IMAGE='$(IMAGE)') $(DIFFTEST) live check \
 	        $(run-dir) $(if $(and $(is-mixed),$(mixed-compare)),--compare $(results-of-run)/$(mixed-compare)) $(mixed-spread) $(STRICT); \

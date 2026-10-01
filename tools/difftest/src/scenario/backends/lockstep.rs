@@ -20,9 +20,6 @@ use crate::lockstep::reference::{BlockAnswer, BuiltTransaction, Reference};
 use crate::lockstep::{Attested, BuildSpec, LockstepError, Recipe, SHORT_ROUNDS, Step, make_with};
 use crate::store::ScratchDir;
 
-/// The end of the message of a vote for a delegate that is not online.
-const OFFLINE: &str = "is not operating a node on the network";
-
 /// What happened to the chain, in order.
 #[derive(Debug, Clone)]
 enum Event {
@@ -43,7 +40,7 @@ struct Recording<'a> {
     inner: &'a mut dyn Reference,
     compiled: &'a [CompiledTx],
     queue: HashMap<u32, VecDeque<usize>>,
-    verdicts: HashMap<String, (bool, Option<String>)>,
+    verdicts: HashMap<String, (bool, Option<String>, Option<String>)>,
     events: Vec<Event>,
     genesis: Value,
 }
@@ -92,20 +89,15 @@ impl Reference for Recording<'_> {
             };
             let error = &result["errors"][&tx.id];
             let error = error.get(0).unwrap_or(error);
-            let code = match error["type"].as_str() {
-                Some("ERR_APPLY")
-                    if error["message"]
-                        .as_str()
-                        .is_some_and(|m| m.ends_with(OFFLINE)) =>
-                {
-                    Some("ERR_OFFLINE".to_owned())
-                }
-                other => other.map(str::to_owned),
-            };
+            let (code, message) = super::http::refusal(error);
             let accepted = listed("accept") || listed("broadcast");
             self.verdicts.insert(
                 tx.id.clone(),
-                (accepted, if accepted { None } else { code }),
+                if accepted {
+                    (true, None, None)
+                } else {
+                    (false, code, message)
+                },
             );
         }
         Ok(result)
@@ -169,7 +161,7 @@ struct Held {
 /// A chain the producer made, walked by the runner.
 pub struct Lockstep {
     events: Vec<Event>,
-    verdicts: HashMap<String, (bool, Option<String>)>,
+    verdicts: HashMap<String, (bool, Option<String>, Option<String>)>,
     position: usize,
     chain: Vec<Held>,
     lines: Vec<Value>,
@@ -425,7 +417,7 @@ impl Backend for Lockstep {
         transactions
             .iter()
             .map(|t| {
-                let (accepted, code) =
+                let (accepted, code, message) =
                     self.verdicts
                         .get(&t.id)
                         .cloned()
@@ -440,6 +432,7 @@ impl Backend for Lockstep {
                     reference: t.reference.clone(),
                     accepted,
                     code,
+                    message,
                 })
             })
             .collect()

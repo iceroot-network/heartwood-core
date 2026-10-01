@@ -1,6 +1,11 @@
 //! What a run kept of each step (`scenario-<id>.json` in the network's directory), and the
-//! comparison of a suite's two runs, the reference's and Heartwood's, from those records and from
-//! each run's chain (the digests on their common prefix, [`super::run_chain`]).
+//! comparison of a suite's two runs, the reference's and Heartwood's, from those records, from each
+//! run's chain (the digests on their common prefix, [`super::run_chain`]) and from each run's
+//! chain judged against the reference ([`super::judge`]). A check passes when it passed on both
+//! runs: one that failed on both fails, one skipped on both stays skipped (so a strict comparison
+//! fails it), except a digest check, which the chains' judgement settles. Every scenario a run's
+//! directory holds at L3 must have a record on both sides, and every scripted step of either run
+//! must have met its expectation.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -9,9 +14,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::backend::{Submitted, Tip};
+use super::format::Level;
+use super::judge::{self, Side};
 use super::run_chain::{self, RunChain};
 use crate::compare::diff;
 use crate::errors::{Error, Result};
+use crate::oracle::Oracle;
 use crate::report::{CaseResult, Outcome, Report};
 
 /// The directory suffixes of a suite's two runs.
@@ -45,6 +53,9 @@ pub struct StepRecord {
     /// The pools' answers to what it submitted: reference, admitted, refusal code.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub submitted: Vec<(String, bool, Option<String>)>,
+    /// The refusals' messages, without the transaction's own text, by reference.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refusals: Vec<(String, String)>,
     /// Each check's label and how it came out: `pass`, `skipped: why` or `failed: why`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outcomes: Vec<(String, String)>,
@@ -62,6 +73,7 @@ impl StepRecord {
             name: name.to_owned(),
             tip: (tip.height, tip.id.clone()),
             submitted: Vec::new(),
+            refusals: Vec::new(),
             outcomes: Vec::new(),
             projections: Vec::new(),
         }
@@ -72,6 +84,10 @@ impl StepRecord {
         self.submitted = answers
             .iter()
             .map(|a| (a.reference.clone(), a.accepted, a.code.clone()))
+            .collect();
+        self.refusals = answers
+            .iter()
+            .filter_map(|a| Some((a.reference.clone(), a.message.clone()?)))
             .collect();
     }
 
@@ -172,11 +188,62 @@ fn differs(
 /// hold what two independent networks do not share (the blocks, their forgers and rewards).
 const SHARED_PROJECTION: &str = ": api wallets";
 
-/// The two runs of one scenario, step by step: what the pools answered, how each check came out,
-/// and the scenario's wallets where a step read them. Two runs are two networks that forged their
-/// own blocks, so their chains are not compared step by step: [`chains`] holds each run to one
-/// chain and both to their common prefix.
-fn compare_runs(suite: &str, reference: &Record, heartwood: &Record) -> Vec<CaseResult> {
+/// The start of the reason a live run gives a digest check: its chain's judgement settles it.
+const LIVE_DIGESTS: &str = "skipped: a live network's digests are judged against the reference";
+
+/// A refusal's message as two networks can share it: its digits taken out (a height, a balance or
+/// a count of blocks belongs to each network).
+fn shared_message(message: &str) -> String {
+    let mut out = String::new();
+    for c in message.chars() {
+        if c.is_ascii_digit() {
+            if !out.ends_with('#') {
+                out.push('#');
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// How each run's chain came out of its judgement: `Some(true)` judged and held, `Some(false)`
+/// judged and not held, `None` not judged.
+type Chains = (Option<bool>, Option<bool>);
+
+/// A check that came out alike on both runs: passed on both, failed on both (a failure), skipped
+/// on both (skipped, so that a strict comparison fails it), or a digest check that the chains'
+/// judgement settles.
+fn alike(was: &str, chains: Chains) -> Outcome {
+    if was == "pass" {
+        return Outcome::Pass;
+    }
+    if was.starts_with(LIVE_DIGESTS) {
+        return match chains {
+            (Some(true), Some(true)) => Outcome::Pass,
+            (Some(false), _) | (_, Some(false)) => Outcome::HarnessError(
+                "a run's chain is not held to the reference's (see its chain cases)".into(),
+            ),
+            _ => Outcome::Skipped("the runs' chains were not judged".into()),
+        };
+    }
+    match was.strip_prefix("skipped: ") {
+        Some(why) => Outcome::Skipped(why.to_owned()),
+        None => Outcome::HarnessError(format!("on both runs: {was}")),
+    }
+}
+
+/// The two runs of one scenario, step by step: what the pools answered and why they refused, how
+/// each check came out, and the scenario's wallets where a step read them. Two runs are two
+/// networks that forged their own blocks, so their chains are not compared step by step: [`chains`]
+/// holds each run to one chain and both to their common prefix, and each chain is judged against
+/// the reference.
+fn compare_runs(
+    suite: &str,
+    reference: &Record,
+    heartwood: &Record,
+    judged: Chains,
+) -> Vec<CaseResult> {
     let id = &reference.scenario;
     let mut cases = Vec::new();
     if reference.steps.len() != heartwood.steps.len() {
@@ -192,10 +259,20 @@ fn compare_runs(suite: &str, reference: &Record, heartwood: &Record) -> Vec<Case
     for (r, h) in reference.steps.iter().zip(&heartwood.steps) {
         let height = r.tip.0.min(h.tip.0);
         if !r.submitted.is_empty() || !h.submitted.is_empty() {
-            let outcome = if r.submitted == h.submitted {
-                Outcome::Pass
-            } else {
+            // Two records that keep their refusals' messages compare them too.
+            let messages = |s: &StepRecord| -> Vec<(String, String)> {
+                s.refusals
+                    .iter()
+                    .map(|(reference, m)| (reference.clone(), shared_message(m)))
+                    .collect()
+            };
+            let both = !r.refusals.is_empty() && !h.refusals.is_empty();
+            let outcome = if r.submitted != h.submitted {
                 differs("answers", &r.submitted, &h.submitted)
+            } else if both && messages(r) != messages(h) {
+                differs("refusals", &r.refusals, &h.refusals)
+            } else {
+                Outcome::Pass
             };
             cases.push(case(
                 suite,
@@ -209,7 +286,7 @@ fn compare_runs(suite: &str, reference: &Record, heartwood: &Record) -> Vec<Case
         for (label, was) in &r.outcomes {
             let outcome = match h.outcomes.iter().find(|(l, _)| l == label) {
                 None => differs(label, was, "no such check"),
-                Some((_, now)) if now == was => Outcome::Pass,
+                Some((_, now)) if now == was => alike(was, judged),
                 Some((_, now)) => differs(label, was, now),
             };
             cases.push(case(suite, id, r.index, label.clone(), height, outcome));
@@ -297,9 +374,56 @@ fn chains(suite: &str, reference: &Path, heartwood: &Path) -> Vec<CaseResult> {
     out
 }
 
+/// The scenarios a run's directory holds (`scenarios/*.json`, as the recipe copied them) that run
+/// at L3, by id.
+fn planned(run: &Path) -> Result<Vec<String>> {
+    let dir = run.join("scenarios");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for entry in entries {
+        let path = entry.map_err(|e| Error::io(&dir, e))?.path();
+        if path.extension().is_some_and(|x| x == "json") {
+            let scenario = super::load(&path)?;
+            if scenario.levels.contains(&Level::L3) {
+                out.push(scenario.id);
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// The scripted steps of a run (`steps.jsonl`) that did not meet their expectation.
+fn failed_steps(run: &Path) -> std::result::Result<(usize, Vec<String>), String> {
+    let path = run.join("steps.jsonl");
+    let lines = crate::live::run::read_lines(&path).map_err(|e| e.to_string())?;
+    let failed = lines
+        .iter()
+        .filter(|l| l.get("ok") != Some(&Value::Bool(true)))
+        .map(|l| {
+            let step = l.get("step").and_then(Value::as_str).unwrap_or("?");
+            let node = l.get("node").and_then(Value::as_str).unwrap_or("?");
+            format!("{step} ({node})")
+        })
+        .collect();
+    Ok((lines.len(), failed))
+}
+
+/// Where a comparison judges the runs' chains: the corpus root, and the oracle when a chain has
+/// not been judged yet; without it, the chains are not judged.
+pub struct Judging<'a> {
+    /// Where the runs' corpora are imported and judged.
+    pub root: &'a Path,
+    /// The oracle.
+    pub oracle: &'a dyn Fn() -> Result<Oracle>,
+}
+
 /// Compare the suites under `dir` (`<suite>-reference` and `<suite>-heartwood`), every one or
-/// `only` alone: the scenarios' records side by side, and each run's chain.
-pub fn compare(dir: &Path, only: Option<&str>) -> Result<Report> {
+/// `only` alone: the scenarios' records side by side, each run's scripted steps, each run's chain,
+/// and, with `judging`, each run's chain judged against the reference.
+pub fn compare(dir: &Path, only: Option<&str>, judging: Option<&Judging<'_>>) -> Result<Report> {
     let mut suites: BTreeMap<String, [Option<PathBuf>; 2]> = BTreeMap::new();
     for entry in std::fs::read_dir(dir).map_err(|e| Error::io(dir, e))? {
         let path = entry.map_err(|e| Error::io(dir, e))?.path();
@@ -341,10 +465,61 @@ pub fn compare(dir: &Path, only: Option<&str>) -> Result<Report> {
             ));
             continue;
         };
+        let mut judged: Chains = (None, None);
+        if let Some(judging) = judging {
+            for (side, run, slot) in [
+                (Side::Reference, reference, &mut judged.0),
+                (Side::Heartwood, heartwood, &mut judged.1),
+            ] {
+                let judgement = judge::judge(run, side, suite, judging.root, judging.oracle);
+                for (label, outcome) in judgement.cases {
+                    results.push(case(suite, "chain", 0, label, 0, outcome));
+                }
+                *slot = Some(judgement.holds);
+            }
+        }
+        for (side, run) in [("reference", reference), ("heartwood", heartwood)] {
+            let (label, outcome) = match failed_steps(run) {
+                Err(e) => (
+                    format!("the {side} run's scripted steps"),
+                    Outcome::HarnessError(e),
+                ),
+                Ok((_, failed)) if !failed.is_empty() => (
+                    format!("the {side} run's scripted steps"),
+                    Outcome::HarnessError(format!(
+                        "{} step(s) did not meet their expectation: {}",
+                        failed.len(),
+                        failed.join(", ")
+                    )),
+                ),
+                Ok((all, _)) => (
+                    format!("the {side} run's {all} scripted steps met their expectations"),
+                    Outcome::Pass,
+                ),
+            };
+            results.push(case(suite, "steps", 0, label, 0, outcome));
+        }
         let (r, h) = (records(reference)?, records(heartwood)?);
+        let mut ids: Vec<String> = planned(reference)?;
+        ids.extend(planned(heartwood)?);
+        ids.sort();
+        ids.dedup();
+        for id in ids
+            .iter()
+            .filter(|id| !r.contains_key(*id) && !h.contains_key(*id))
+        {
+            results.push(case(
+                suite,
+                id,
+                0,
+                "both runs".into(),
+                0,
+                Outcome::HarnessError("neither run has a record of it".into()),
+            ));
+        }
         for (id, run) in &r {
             match h.get(id) {
-                Some(other) => results.extend(compare_runs(suite, run, other)),
+                Some(other) => results.extend(compare_runs(suite, run, other, judged)),
                 None => results.push(case(
                     suite,
                     id,

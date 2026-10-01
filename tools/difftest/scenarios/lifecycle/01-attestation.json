@@ -11,7 +11,7 @@
      "txs": [
        {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["voter-early", "10000000000"], ["voter-restart", "10000000000"], ["voter-round", "10000000000"], ["extra-a", "20000000000"], ["extra-b", "20000000000"], ["extra-c", "20000000000"], ["pool-a", "10000000000"], ["pool-b", "10000000000"], ["payee", "100000000"], ["miss-user", "10000000000"], ["restart-user", "10000000000"], ["split-user", "10000000000"]]}
      ]},
-    {"name": "a vote for a delegate that has not reported", "at": {"height": 16}, "do": "submit", "node": 1, "via": "api", "check": {"invalid": ["vote-early"], "codes": {"vote-early": "ERR_APPLY"}},
+    {"name": "a vote for a delegate that has not reported", "at": {"height": 16}, "do": "submit", "node": 1, "via": "api", "check": {"invalid": ["vote-early"], "codes": {"vote-early": "ERR_OFFLINE"}},
      "txs": [
        {"ref": "vote-early", "type": "vote", "from": "voter-early", "nonce": 1, "fee": "20000000", "asset": {"votes": [["genesis_44", 100]]}}
      ]},

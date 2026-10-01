@@ -57,6 +57,8 @@ pub struct Submitted {
     pub accepted: bool,
     /// The refusal's code (`ERR_OFFLINE`, ...), when it was refused.
     pub code: Option<String>,
+    /// The refusal's message without the transaction's own text, when the node gave one.
+    pub message: Option<String>,
 }
 
 /// A node's answer to a request of its public API.
