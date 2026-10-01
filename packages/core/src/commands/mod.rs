@@ -94,6 +94,17 @@ pub enum Command {
     },
 }
 
+/// A role command was refused before its process operation.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RoleError {
+    /// A process operation failed.
+    #[error(transparent)]
+    Process(#[from] ProcessError),
+    /// The signing keys could not be loaded.
+    #[error(transparent)]
+    Keys(#[from] heartwood_forger::KeysError),
+}
+
 /// The flags of `stop`, `restart` and `status`: the instance.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
 pub struct ProcessFlags {
@@ -128,10 +139,10 @@ pub(crate) fn program() -> Result<PathBuf, String> {
 
 /// Run `act` on the instance of `role` that `flags` name, resolved with the process's
 /// environment, home directory and working directory.
-pub(crate) fn on_instance(
+pub(crate) fn on_instance<E: std::fmt::Display>(
     role: Role,
     flags: &InstanceFlags,
-    act: impl FnOnce(&Instance) -> Result<(), ProcessError>,
+    act: impl FnOnce(&Instance) -> Result<(), E>,
 ) -> ExitCode {
     let env = |name: &str| std::env::var(name).ok();
     let (home, cwd) = (std::env::home_dir(), std::env::current_dir());

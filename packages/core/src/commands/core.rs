@@ -70,10 +70,15 @@ pub(crate) fn refuse_running(instance: &Instance, roles: &[Role]) -> Result<(), 
 pub fn run(command: CoreCommand) -> ExitCode {
     match command {
         CoreCommand::Run(run) => crate::exit(crate::app::core::run_core(&run)),
-        CoreCommand::Start(start) => on_instance(Role::Core, &start.run.relay.instance(), |i| {
-            refuse_running(i, &[Role::Core, Role::Forger, Role::Relay])?;
-            super::start(i, start.run.relay.args(), start.daemon)
-        }),
+        CoreCommand::Start(start) => on_instance(
+            Role::Core,
+            &start.run.relay.instance(),
+            |i| -> Result<(), super::RoleError> {
+                refuse_running(i, &[Role::Core, Role::Forger, Role::Relay])?;
+                heartwood_forger::load_keys(&i.paths.config)?;
+                Ok(super::start(i, start.run.relay.args(), start.daemon)?)
+            },
+        ),
         CoreCommand::Manage(command) => super::manage(Role::Core, command),
     }
 }

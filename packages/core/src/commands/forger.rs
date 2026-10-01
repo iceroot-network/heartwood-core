@@ -63,9 +63,10 @@ pub fn run(command: ForgerCommand) -> ExitCode {
             let args = (start.run.env.into_iter()).flat_map(|env| ["--env".into(), env.into()]);
             let args: Vec<OsString> = args.collect();
             let flags = InstanceFlags { token, network };
-            on_instance(Role::Forger, &flags, |i| {
+            on_instance(Role::Forger, &flags, |i| -> Result<(), super::RoleError> {
                 super::core::refuse_running(i, &[Role::Core])?;
-                super::start(i, args, start.daemon)
+                heartwood_forger::load_keys(&i.paths.config)?;
+                Ok(super::start(i, args, start.daemon)?)
             })
         }
         ForgerCommand::Manage(command) => super::manage(Role::Forger, command),

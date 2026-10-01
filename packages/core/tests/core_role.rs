@@ -588,3 +588,41 @@ fn remote_access_must_admit_the_exact_forger_source() {
         assert!(!node.locked("core") && !node.locked("relay") && !node.locked("forger"));
     }
 }
+
+/// Starts must reject unusable keys before acquiring a supervisor lock.
+fn rejects_keys(role: &str) {
+    let node = Node::new(&format!("{role}-keys"), host(50));
+    let file = node.config().join("delegates.json");
+    for empty in [false, true] {
+        if empty {
+            use std::os::unix::fs::PermissionsExt;
+            fs::write(&file, r#"{"keys": []}"#).unwrap();
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+        } else {
+            fs::remove_file(&file).unwrap();
+        }
+        let output = node.run(&[role, "start"]);
+        if output.status.success() {
+            let _ = node.run(&[role, "stop"]);
+        }
+        assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+        let expected = if empty {
+            "Unable to detect any private keys".to_owned()
+        } else {
+            format!("The {} file does not exist", file.display())
+        };
+        assert_eq!(String::from_utf8_lossy(&output.stderr).trim(), expected);
+        assert!(!node.locked(&format!("{role}.supervisor")));
+        assert!(!node.run_dir().join(format!("{role}.state.json")).exists());
+    }
+}
+
+#[test]
+fn core_start_checks_keys_before_spawning_a_supervisor() {
+    rejects_keys("core");
+}
+
+#[test]
+fn forger_start_checks_keys_before_spawning_a_supervisor() {
+    rejects_keys("forger");
+}
