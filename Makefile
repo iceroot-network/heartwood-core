@@ -132,16 +132,23 @@ need-name = $(if $(NAME),,$(error set NAME, the corpus under CORPUS=$(CORPUS)))
 # S1_CRITERIA narrows them where it names the command), the oracle image, the machine, the
 # command's exit status and its UTC start and end. It exits with the command's status, or 1 when
 # the record cannot be written. A long run (l1-long, fuzz-long) also writes its ledger entry into
-# LEDGER_DIR. The ledger and the baseline record read them (ledger-merge, gate-s1).
+# LEDGER_DIR. The ledger and the baseline record read them (ledger-merge, gate-s1). A record names the
+# oracle image only for a target that reads the oracle or its vectors (GATE_ORACLE_TARGETS; the
+# forge replay only with DIRECTION=oracle) with ORACLE_ARGS naming the image, and for a mixed or
+# forging run's live check, which reads IMAGE itself.
 GATE_RECORDS  ?=
 LEDGER_DIR    ?=
 S1_CRITERIA   ?=
 GATE_TESTED   ?= packages tools/difftest tools/oracle fuzz
 GATE_LEDGER   ?=
-gate-image = $(if $(filter --image%,$(ORACLE_ARGS)),$(IMAGE))
-gate = GATE_RECORDS='$(GATE_RECORDS)' GATE_TARGET='$@' GATE_VARIABLES='$(filter-out GATE_%,$(MAKEOVERRIDES))' \
-       GATE_IMAGE='$(gate-image)' GATE_TESTED='$(GATE_TESTED)' GATE_CRITERIA='$(S1_CRITERIA)' \
+GATE_ORACLE_TARGETS := l0 l1 corpus-judge l2-synthetic rollback-replay lockstep replay-api scenario suites \
+                       oracle-image vectors-diff vectors-install
+gate-reads-oracle = $(or $(filter $(1),$(GATE_ORACLE_TARGETS)),$(and $(filter forge-replay,$(1)),$(filter oracle,$(DIRECTION))))
+gate-image-of = $(if $(filter live-check,$(1)),$(if $(or $(is-mixed),$(is-forging)),$(IMAGE)),$(if $(and $(call gate-reads-oracle,$(1)),$(filter --image%,$(ORACLE_ARGS))),$(IMAGE)))
+gate-for = GATE_RECORDS='$(GATE_RECORDS)' GATE_TARGET=$(1) GATE_VARIABLES='$(filter-out GATE_%,$(MAKEOVERRIDES))' \
+       GATE_IMAGE='$(call gate-image-of,$(2))' GATE_TESTED='$(GATE_TESTED)' GATE_CRITERIA='$(S1_CRITERIA)' \
        GATE_LEDGER="$${GATE_LEDGER:-$(GATE_LEDGER)}" LEDGER_DIR='$(LEDGER_DIR)' GATE_DIFFTEST='$(DIFFTEST)' tools/gate-record.sh
+gate = $(call gate-for,'$@',$@)
 need-records = $(if $(GATE_RECORDS),,$(error set GATE_RECORDS, the gate records' directory, in local.mk))
 need-ledger = $(if $(LEDGER_DIR),,$(error set LEDGER_DIR, the cumulative ledger's directory, in local.mk))
 need-criteria = $(if $(S1_CRITERIA),,$(error set S1_CRITERIA, the S1 gate's criteria file, in local.mk))
