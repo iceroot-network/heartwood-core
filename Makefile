@@ -145,7 +145,7 @@ GATE_ORACLE_TARGETS := l0 l1 corpus-judge l2-synthetic rollback-replay lockstep 
                        oracle-image vectors-diff vectors-install
 gate-reads-oracle = $(or $(filter $(1),$(GATE_ORACLE_TARGETS)),$(and $(filter forge-replay,$(1)),$(filter oracle,$(DIRECTION))))
 gate-image-of = $(if $(filter live-check,$(1)),$(if $(or $(is-mixed),$(is-forging)),$(IMAGE)),$(if $(and $(call gate-reads-oracle,$(1)),$(filter --image%,$(ORACLE_ARGS))),$(IMAGE)))
-gate-for = GATE_RECORDS='$(GATE_RECORDS)' GATE_TARGET=$(1) GATE_VARIABLES='$(filter-out GATE_%,$(MAKEOVERRIDES))' \
+gate-for = GATE_RECORDS='$(GATE_RECORDS)' GATE_TARGET=$(1) GATE_VARIABLES='$(filter-out GATE_% GATED=% $(GATED),$(MAKEOVERRIDES))' \
        GATE_IMAGE='$(call gate-image-of,$(2))' GATE_TESTED='$(GATE_TESTED)' GATE_CRITERIA='$(S1_CRITERIA)' \
        GATE_LEDGER="$${GATE_LEDGER:-$(GATE_LEDGER)}" LEDGER_DIR='$(LEDGER_DIR)' GATE_DIFFTEST='$(DIFFTEST)' tools/gate-record.sh
 gate = $(call gate-for,'$@',$@)
@@ -158,7 +158,7 @@ need-criteria = $(if $(S1_CRITERIA),,$(error set S1_CRITERIA, the S1 gate's crit
         l1 corpus-import corpus-judge corpus-verify l2 l2-synthetic l2-restart crash-test pool-bench \
         layers lines lines-if-tokei l2-processor relay-binary relay-image live live-check api-compare doc \
         test-integration rollback-replay p2p-compare await-report scenario suites live-resources \
-        l1-long fuzz-long ledger-merge gate-s1
+        l1-long fuzz-long ledger-merge gate-s1 gated
 
 help: ## this list
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | awk -F'\t' '{ printf "  make %-15s %s\n", $$1, $$2 }'
@@ -1027,6 +1027,16 @@ ledger-merge: build ## another machine's gate records (FROM) into the ledger, as
 	$(if $(FROM),,$(error set FROM, the directory of the other machine's records))
 	$(if $(MACHINE),,$(error set MACHINE, the other machine's name))
 	$(DIFFTEST) gate ledger merge --from '$(FROM)' --machine '$(MACHINE)' --ledger '$(LEDGER_DIR)'
+
+# The targets whose recipe is not one command (a composite target such as check, or several
+# commands) run whole through the recorder, one gate record per target named by it. The inner make
+# is named through GATED_MAKE, so that `make -n gated` prints the commands and records nothing.
+GATED ?=
+GATED_MAKE = $(MAKE)
+gated: build ## each target of GATED run through the recorder, a gate record named by it per target (GATED)
+	$(if $(GATED),,$(error set GATED, the targets to run through the recorder))
+	$(need-records)
+	@fail=0; $(foreach t,$(GATED),$(call gate-for,'$(t)',$(t)) $(GATED_MAKE) --no-print-directory $(t) || fail=1;) exit $$fail
 
 gate-s1: build ## the S1 record's table from the gate records, the ledger and the criteria file (PART)
 	$(need-records)
