@@ -442,6 +442,33 @@ fn a_strict_run_fails_while_a_row_is_pending_and_a_part_selects_rows() {
     assert!(!unknown.ok);
 }
 
+#[test]
+fn a_stale_record_is_missing_evidence_so_a_waiting_row_stays_pending() {
+    let rig = Rig::new();
+    rig.criteria(&base_criteria());
+    // The live record tests src (it has no narrowing); the waiting row R3 reads it.
+    assert!(rig.record("live", "make live", 0, "", T1).ok);
+    assert!(s1(&rig, &[]).text.contains("R3       pass"));
+    rig.write("src/a.rs", "fn a() { let _ = 7; }\n");
+    rig.commit("change a");
+    let ran = s1(&rig, &["--verbose"]);
+    assert!(
+        ran.text.contains("R3       pending"),
+        "a stale run is no failed run: {}",
+        ran.text
+    );
+    assert!(ran.text.contains("missing live"), "{}", ran.text);
+    assert!(ran.text.contains("no longer count"), "{}", ran.text);
+    assert!(ran.text.contains("src/a.rs"), "{}", ran.text);
+    // A dirty record is still a fault, however the row waits.
+    rig.write("src/a.rs", "fn a() { let _ = 8; }\n");
+    assert!(rig.record("live", "make live", 0, "", T2).ok);
+    rig.git(&["checkout", "--", "src/a.rs"]);
+    let ran = s1(&rig, &[]);
+    assert!(ran.text.contains("R3       FAIL"), "{}", ran.text);
+    assert!(ran.text.contains("dirty tree"), "{}", ran.text);
+}
+
 // ----- the ledger
 
 fn ledger_run(rig: &Rig, dir: &str, machine: &str, spec: &str, started: &str) -> Ran {
@@ -654,6 +681,78 @@ fn a_ledger_entry_goes_stale_when_its_property_changed_and_only_then() {
         .expect("P1 line");
     assert!(p1.contains("0 cases") || p1.contains(" 0 cases"), "{p1}");
     assert!(show.text.contains("not counted"), "{}", show.text);
+}
+
+#[test]
+fn a_short_total_of_stale_runs_is_missing_so_a_waiting_row_stays_pending() {
+    let mut criteria = base_criteria();
+    criteria["rows"][1]["waits"] = json!("the long compute");
+    let rig = Rig::new();
+    rig.criteria(&criteria);
+    assert!(
+        ledger_run(
+            &rig,
+            "ledger",
+            "box-1",
+            "kind=property id=P1 cases=1000 seed=1",
+            T1
+        )
+        .ok
+    );
+    assert!(
+        ledger_run(
+            &rig,
+            "ledger",
+            "box-1",
+            "kind=target id=parse seconds=600 forks=1",
+            T1
+        )
+        .ok
+    );
+    // Both runs go stale: each tested file changes.
+    rig.write("src/p1.rs", "fn p1() { let _ = 9; }\n");
+    rig.write("src/a.rs", "fn a() { let _ = 9; }\n");
+    rig.commit("both changed");
+    assert!(rig.record("l0", "difftest run l0", 0, "", T1).ok);
+    let ran = s1(&rig, &[]);
+    assert!(ran.ok, "pending is not a failure: {}", ran.text);
+    assert!(ran.text.contains("R2       pending"), "{}", ran.text);
+    assert!(
+        ran.text.contains("waits on the long compute"),
+        "{}",
+        ran.text
+    );
+    assert!(ran.text.contains("1 stale run not counted"), "{}", ran.text);
+    let strict = s1(&rig, &["--strict"]);
+    assert!(!strict.ok, "the final gate still fails a short total");
+    // A failed run is a failure, waits or not.
+    assert!(
+        rig.gate(&[
+            "record",
+            "--target",
+            "l1-long",
+            "--command",
+            "difftest run l1 --property P1 --cases 10",
+            "--exit",
+            "1",
+            "--started",
+            T2,
+            "--finished",
+            T2,
+            "--out",
+            &rig.arg("records"),
+            "--criteria",
+            &rig.arg("criteria.json"),
+            "--ledger",
+            "kind=property id=P1 cases=10 seed=2",
+            "--ledger-dir",
+            &rig.arg("ledger"),
+        ])
+        .ok
+    );
+    let ran = s1(&rig, &[]);
+    assert!(ran.text.contains("R2       FAIL"), "{}", ran.text);
+    assert!(ran.text.contains("failed run"), "{}", ran.text);
 }
 
 #[test]

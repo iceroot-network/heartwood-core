@@ -52,9 +52,10 @@ fn matches_pattern(word: &str, pattern: &str) -> bool {
 /// A need's status, worst first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Status {
-    /// Evidence exists and it is failed, stale or from a dirty or foreign tree.
+    /// Evidence exists and it is failed, or from a dirty or foreign tree.
     Fail,
-    /// No evidence yet.
+    /// No evidence yet, or only evidence that no longer counts (stale by the path rule, or a
+    /// run below its reach): such a run is no evidence, and it is not a failed run either.
     Missing,
     /// Only a person can show it.
     Pending,
@@ -334,8 +335,20 @@ impl<'a> Judge<'a> {
         let stale: Vec<&&Item<GateRecord>> =
             matching.iter().filter(|i| !i.validity.counts()).collect();
         if let Some(first) = stale.first() {
+            // A record that went stale is no longer evidence, but it is no failure: the need is
+            // missing again. One from a dirty tree or from outside this history is a fault, and
+            // the detail names it first.
+            let fault = stale
+                .iter()
+                .find(|i| !matches!(i.validity, Validity::Stale(_)));
+            let only_stale = fault.is_none();
+            let first = fault.unwrap_or(first);
             return Verdict {
-                status: Status::Fail,
+                status: if only_stale {
+                    Status::Missing
+                } else {
+                    Status::Fail
+                },
                 detail: format!(
                     "{label}: {have} of {min} counted; {} record{} no longer count, such as {} ({})",
                     stale.len(),
@@ -361,7 +374,7 @@ impl<'a> Judge<'a> {
         let need_runs = runs.unwrap_or(self.criteria.totals.property_runs);
         let mut short = Vec::new();
         let mut failed = Vec::new();
-        let mut stale = false;
+        let (mut stale, mut unreached) = (0usize, 0usize);
         let mut checked = 0usize;
         for total in &self.totals.properties {
             if ids.as_ref().is_some_and(|ids| !ids.contains(&total.id)) {
@@ -376,7 +389,8 @@ impl<'a> Judge<'a> {
                     plural(total.failed.len())
                 ));
             } else if !total.meets(need_cases, need_runs) {
-                stale |= !total.stale.is_empty() || !total.unreached.is_empty();
+                stale += total.stale.len();
+                unreached += total.unreached.len();
                 short.push(format!(
                     "{} {} of {} cases, {} of {} runs",
                     total.id,
@@ -403,9 +417,15 @@ impl<'a> Judge<'a> {
                 detail: label,
             }
         } else {
+            // A short total is missing evidence, whatever runs no longer count: a failed run is
+            // the failure (above), a stale or reach-short one is simply not counted.
             Verdict {
-                status: if stale { Status::Fail } else { Status::Missing },
-                detail: format!("{label}: short: {}", short.join("; ")),
+                status: Status::Missing,
+                detail: format!(
+                    "{label}: short: {}{}",
+                    short.join("; "),
+                    not_counted(stale, unreached)
+                ),
             }
         }
     }
@@ -414,7 +434,7 @@ impl<'a> Judge<'a> {
         let need = hours.unwrap_or(self.criteria.totals.target_cpu_hours);
         let mut short = Vec::new();
         let mut failed = Vec::new();
-        let mut stale = false;
+        let mut stale = 0usize;
         let mut checked = 0usize;
         for total in &self.totals.targets {
             if ids.as_ref().is_some_and(|ids| !ids.contains(&total.id)) {
@@ -429,7 +449,7 @@ impl<'a> Judge<'a> {
                     plural(total.failed.len())
                 ));
             } else if !total.meets(need) {
-                stale |= !total.stale.is_empty();
+                stale += total.stale.len();
                 short.push(format!("{} {:.2} of {need} hours", total.id, total.hours));
             }
         }
@@ -449,10 +469,34 @@ impl<'a> Judge<'a> {
             }
         } else {
             Verdict {
-                status: if stale { Status::Fail } else { Status::Missing },
-                detail: format!("{label}: short: {}", short.join("; ")),
+                status: Status::Missing,
+                detail: format!(
+                    "{label}: short: {}{}",
+                    short.join("; "),
+                    not_counted(stale, 0)
+                ),
             }
         }
+    }
+}
+
+/// The runs of a short total that were not counted, for its detail: stale ones and ones below
+/// their reach.
+fn not_counted(stale: usize, unreached: usize) -> String {
+    let mut parts = Vec::new();
+    if stale > 0 {
+        parts.push(format!("{stale} stale run{}", plural(stale)));
+    }
+    if unreached > 0 {
+        parts.push(format!(
+            "{unreached} run{} below the reach",
+            plural(unreached)
+        ));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" ({} not counted)", parts.join(", "))
     }
 }
 
