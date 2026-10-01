@@ -43,7 +43,7 @@ fn per_role(input: &CheckInput<'_>, judge: impl Fn(Role, Subject) -> Finding) ->
         }
         Ok(_) => judge(role, subject_of(role)),
     };
-    Role::ALL.into_iter().filter(about).map(one).collect()
+    Role::SPLIT.into_iter().filter(about).map(one).collect()
 }
 
 /// The metadata that counts: a link's target's, when it has one.

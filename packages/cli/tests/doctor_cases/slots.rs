@@ -212,7 +212,7 @@ pub fn view() -> FakeView {
     view.logs
         .insert(Role::Relay, Ok(log(Role::Relay, Vec::new())));
     let started = NOW_MS - 7_200_000;
-    for role in Role::ALL {
+    for role in Role::SPLIT {
         view.processes.insert(role, Ok(process(RUNNING, started)));
     }
     view

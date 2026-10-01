@@ -593,7 +593,7 @@ fn the_schema_names_the_code_s_words() {
         names(&finding["subject"]["enum"]),
         subjects.map(|s| s.name())
     );
-    let roles: Vec<&str> = Role::ALL.iter().map(|r| r.name()).collect();
+    let roles: Vec<&str> = Role::SPLIT.iter().map(|r| r.name()).collect();
     assert_eq!(
         names(&schema["properties"]["scope"]["properties"]["roles"]["items"]["enum"]),
         roles

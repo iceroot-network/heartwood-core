@@ -45,7 +45,7 @@ fn free(available: u64) -> FakeView {
         swap_total: 0,
         swap_free: 0,
     });
-    for role in Role::ALL {
+    for role in Role::SPLIT {
         view.role_statuses
             .insert(role, Err(Unknown::new(Source::Process, Reason::NotRunning)));
     }

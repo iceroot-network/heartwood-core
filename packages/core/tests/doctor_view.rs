@@ -193,7 +193,7 @@ fn a_refused_configuration_names_its_kind_and_the_file() {
     assert_eq!(refused(&node, Role::Relay).0, LoadRefusal::Peers);
     node.write("peers.json", r#"{"list": []}"#);
     std::fs::remove_file(config.join("crypto/exceptions.json")).unwrap();
-    for role in Role::ALL {
+    for role in Role::SPLIT {
         assert_eq!(
             refused(&node, role),
             (LoadRefusal::Crypto, config.join("crypto"))
@@ -201,7 +201,7 @@ fn a_refused_configuration_names_its_kind_and_the_file() {
     }
     let node = Node::new("view-refused-app", ENV);
     node.write("app.json", "{");
-    for role in Role::ALL {
+    for role in Role::SPLIT {
         assert_eq!(
             refused(&node, role),
             (LoadRefusal::AppProfile, node.config().join("app.json"))
@@ -212,7 +212,7 @@ fn a_refused_configuration_names_its_kind_and_the_file() {
         "app.json",
         r#"{"relay": {"plugins": [{"package": "@solar-network/p2p"}]}, "forger": {"plugins": []}}"#,
     );
-    for role in Role::ALL {
+    for role in Role::SPLIT {
         assert_eq!(refused(&node, role).0, LoadRefusal::AppProfile);
     }
     let node = Node::new("view-refused-env", "CORE_P2P_PORT=abc\n");
@@ -235,11 +235,11 @@ fn a_refused_configuration_names_its_kind_and_the_file() {
         kind: LoadRefusal::Other,
         file: None,
     };
-    for role in Role::ALL {
+    for role in Role::SPLIT {
         let found = match role {
             Role::Relay => homeless.relay(&node.instance(role)).map(drop),
             Role::Forger => homeless.forger(&node.instance(role)).map(drop),
-            Role::Core => panic!("Role::ALL holds the split roles only"),
+            Role::Core => panic!("Role::SPLIT holds the split roles only"),
         };
         assert_eq!(found, Err(other.clone()));
     }

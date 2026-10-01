@@ -36,7 +36,7 @@ pub fn resources(input: &CheckInput<'_>) -> Vec<Finding> {
         let (memory, presence) = (view.meminfo()?.total, view.roles_present()?);
         let unparsed = Unknown::new(Source::Build, Reason::Unparsed);
         let planning: serde_json::Value = serde_json::from_str(PLANNING).map_err(|_| unparsed)?;
-        let present: Vec<Role> = Role::ALL
+        let present: Vec<Role> = Role::SPLIT
             .into_iter()
             .filter(|role| presence.has(*role))
             .collect();
@@ -88,7 +88,7 @@ pub fn memory(input: &CheckInput<'_>) -> Vec<Finding> {
         if let Some(verdict) = low {
             return done(verdict, percent);
         }
-        for role in Role::ALL {
+        for role in Role::SPLIT {
             match view.role_status(role) {
                 Ok(status) if status.swap_bytes.unwrap_or(0) > 0 => {
                     return done((Warn, "swap"), vec![("role", Fact::Word(role.name()))]);

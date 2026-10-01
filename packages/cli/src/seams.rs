@@ -38,8 +38,8 @@ pub enum Role {
 }
 
 impl Role {
-    /// The split roles, relays first, as a devnet starts them and the doctor judges them.
-    pub const ALL: [Role; 2] = [Role::Relay, Role::Forger];
+    /// The two split roles, relays first, as a devnet starts them and the doctor judges them.
+    pub const SPLIT: [Role; 2] = [Role::Relay, Role::Forger];
 
     /// Every role a supervisor runs: the split roles, then the combined one.
     pub const SUPERVISED: [Role; 3] = [Role::Relay, Role::Forger, Role::Core];
@@ -416,7 +416,7 @@ mod tests {
         assert_eq!("forger".parse::<Role>(), Ok(Role::Forger));
         assert_eq!("core".parse::<Role>(), Ok(Role::Core));
         assert!("node".parse::<Role>().is_err());
-        assert!(!Role::ALL.contains(&Role::Core));
+        assert!(!Role::SPLIT.contains(&Role::Core));
         assert_eq!(Role::Core.also_locks(), [Role::Relay, Role::Forger]);
         assert!(SupervisedStatus::Stopping.is_running());
         assert!(!SupervisedStatus::Errored.is_running());

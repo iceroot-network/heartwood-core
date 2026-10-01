@@ -107,7 +107,7 @@ pub fn installed(input: &CheckInput<'_>) -> Vec<Finding> {
             Ok(vec![fin(input, subject, (Process, verdict, facts))])
         })
     };
-    Role::ALL.into_iter().flat_map(judge).collect()
+    Role::SPLIT.into_iter().flat_map(judge).collect()
 }
 
 /// `version.build`: a build with test-only code fails; a devnet build is acceptable.
