@@ -1060,6 +1060,14 @@ fn check_nodes(
         .map(|w| (w.fault.clone(), w.nodes.clone()))
         .collect();
     let steps = run::steps(run_dir)?;
+    let records = match mixed_forging::minority_records(run_dir, manifest, windows, &steps) {
+        Ok(records) => records,
+        Err(e) => {
+            cases.fail("nodes", "the minority peer loss window", e.to_string());
+            BTreeMap::new()
+        }
+    };
+    let no_records = digest::RecordedBlocks::new();
     // The peers whose violations fail a relay: the reference nodes, and in a devnet of Heartwood
     // nodes every node and forger address (no violation is recorded against a devnet node).
     let forgers = forging::validators(run_dir).unwrap_or_default();
@@ -1095,7 +1103,14 @@ fn check_nodes(
                 let kill = steps
                     .iter()
                     .find(|s| s.name == "kill-during-sync" && s.node == node.name);
-                let mut c = nodes::heartwood_digest(run_dir, node, &judged, &faults, kill);
+                let mut c = nodes::heartwood_digest(
+                    run_dir,
+                    node,
+                    &judged,
+                    &faults,
+                    kill,
+                    records.get(&node.name).unwrap_or(&no_records),
+                );
                 c.extend(nodes::heartwood_store(
                     run_dir,
                     node,

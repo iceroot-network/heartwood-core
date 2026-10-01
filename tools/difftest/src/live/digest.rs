@@ -194,15 +194,38 @@ pub struct Judged {
     /// The number of starts whose first line is a restart line (every start but a first one
     /// from an empty store must begin with one).
     pub restarts: usize,
+    /// Unjudged minority lines recorded within the bounded peer loss window.
+    pub recorded: Vec<String>,
 }
 
 /// Compare `digest` with the judged `chains`; `chains[0]` is the final chain.
 pub fn judge(digest: &NodeDigest, chains: &[JudgedChain]) -> Judged {
+    judge_with_records(digest, chains, &RecordedBlocks::new())
+}
+
+/// A minority block's height and id, with the reason it can be recorded without a judged chain.
+pub type RecordedBlocks = BTreeMap<(u32, String), String>;
+
+/// Compare lines as usual, recording only apply and restart lines for explicitly allowed blocks.
+pub fn judge_with_records(
+    digest: &NodeDigest,
+    chains: &[JudgedChain],
+    records: &RecordedBlocks,
+) -> Judged {
     let mut out = Judged::default();
     let place = |l: &NodeLine| format!("start {} line {}", l.start, l.line);
     for l in &digest.lines {
         let (h, id, step) = (l.height(), l.id(), l.step());
         let Some(chain) = chains.iter().find(|c| c.holds(h, id)) else {
+            if matches!(step, "apply" | "restart")
+                && let Some(reason) = records.get(&(h, id.to_owned()))
+            {
+                out.recorded.push(format!(
+                    "{}: {step} at height {h} with block {id}: {reason}",
+                    place(l)
+                ));
+                continue;
+            }
             out.problems.push(format!(
                 "{}: {step} to {h} with block {id}, which no judged chain holds at that height",
                 place(l)
@@ -386,6 +409,63 @@ mod tests {
                 }));
         }
         out
+    }
+
+    #[test]
+    fn only_apply_and_restart_lines_of_allowed_unjudged_blocks_are_recorded() {
+        let majority = chain("live", &["g", "a2", "a3"]);
+        let mut genesis = line(1, "g", "w1");
+        genesis["step"] = json!("genesis");
+        let mut restart = line(2, "minority", "unjudged");
+        restart["step"] = json!("restart");
+        let read = digest_of(&[
+            &[genesis, line(2, "minority", "unjudged")],
+            &[restart, line(2, "a2", "w2"), line(3, "a3", "w3")],
+        ]);
+        let records =
+            RecordedBlocks::from([((2, "minority".into()), "minority peer loss window".into())]);
+        assert_eq!(
+            judge(&read, std::slice::from_ref(&majority)).problems.len(),
+            2
+        );
+        let result = judge_with_records(&read, std::slice::from_ref(&majority), &records);
+        assert!(result.problems.is_empty(), "{:?}", result.problems);
+        assert_eq!(result.recorded.len(), 2);
+        assert!(result.recorded[0].contains("height 2 with block minority"));
+        assert!(result.uncovered.is_empty());
+        for step in ["reapply", "revert", "genesis", "unknown"] {
+            let mut other = read.clone();
+            other.lines[1].value["step"] = json!(step);
+            assert!(
+                !judge_with_records(&other, std::slice::from_ref(&majority), &records)
+                    .problems
+                    .is_empty()
+            );
+        }
+        let mut other = read.clone();
+        other.lines[1].value["h"] = json!(3);
+        assert!(
+            !judge_with_records(&other, std::slice::from_ref(&majority), &records)
+                .problems
+                .is_empty()
+        );
+        other.lines[1].value["h"] = json!(2);
+        other.lines[1].value["id"] = json!("different");
+        assert!(
+            !judge_with_records(&other, std::slice::from_ref(&majority), &records)
+                .problems
+                .is_empty()
+        );
+        let mut unfinished = read;
+        unfinished.lines.truncate(3);
+        let result = judge_with_records(&unfinished, &[majority], &records);
+        assert!(!result.uncovered.is_empty());
+        assert!(
+            result
+                .problems
+                .iter()
+                .any(|p| p.contains("not at the final tip"))
+        );
     }
 
     #[test]

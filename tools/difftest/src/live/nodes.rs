@@ -53,13 +53,15 @@ fn listed(label: &str, problems: &[String], out: &mut Vec<Check>) {
 /// The digest lines of the Heartwood relay `node` in `run_dir` against `chains` (the final chain
 /// first); its starts against the run's scripted `faults` (each a fault's name and the nodes it
 /// concerns); and, when the run killed it during its initial sync (`kill`, that step), that the
-/// kill landed before the node caught up.
+/// kill landed before the node caught up. `records` names unjudged minority blocks allowed
+/// during the bounded peer loss window of a mixed run.
 pub fn heartwood_digest(
     run_dir: &Path,
     node: &Node,
     chains: &[JudgedChain],
     faults: &[(String, Vec<String>)],
     kill: Option<&Step>,
+    records: &digest::RecordedBlocks,
 ) -> Vec<Check> {
     let label = format!("{}: digest lines", node.name);
     let dir = run_dir.join("nodes").join(&node.name).join("difftest");
@@ -70,7 +72,7 @@ pub fn heartwood_digest(
         Ok(d) => d,
         Err(e) => return vec![fail(&label, e.to_string())],
     };
-    let judged = digest::judge(&read, chains);
+    let judged = digest::judge_with_records(&read, chains, records);
     let mut out = Vec::new();
     for (start, text) in &read.torn {
         out.push(pass(format!(
@@ -78,6 +80,9 @@ pub fn heartwood_digest(
             node.name,
             text.len()
         )));
+    }
+    for record in &judged.recorded {
+        out.push(pass(format!("{}: recorded: {record}", node.name)));
     }
     listed(&label, &judged.problems, &mut out);
     if !judged.uncovered.is_empty() {
@@ -105,7 +110,7 @@ pub fn heartwood_digest(
         out.push(pass(format!(
             "{}: {} digest lines in {} starts equal the judge's ({}), {} restart lines",
             node.name,
-            read.lines.len(),
+            read.lines.len() - judged.recorded.len(),
             read.files.len(),
             counts.join(", "),
             judged.restarts

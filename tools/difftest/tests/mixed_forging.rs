@@ -205,13 +205,17 @@ fn a_recorded_run_passes_every_section() {
     let report = check(&f);
     assert!(report.is_success(), "{report}\n{:#?}", failures(&report));
     let all = labels(&report);
+    assert!(!has(
+        &all,
+        "the partition's sides forged as their delegates' reach allows"
+    ));
     for needle in [
         "every forger produced in every round outside its fault windows",
         "every Heartwood-hosted block had a quorum answer in its slot",
         "every Heartwood relay counted all 53 delegates before the partition",
         "the votes were admitted, and none was placed for a restarted relay's own delegates",
         "every reference relay lists a version for every Heartwood-hosted delegate",
-        "the partition's sides forged as their delegates' reach allows",
+        "recorded: no partition in this run",
         "one tip at the end",
         "every step in its planned round and order",
         "node4: 384 offered",

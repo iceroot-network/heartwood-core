@@ -11,7 +11,8 @@
 //! each holds every block it applied, the blocks of an abandoned branch included. A delegate's
 //! blocks are found by its public key, and a validator's delegates come from `run.json`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use serde_json::Value;
 
@@ -24,7 +25,7 @@ const SECTION: &str = "mixed-forging";
 
 /// The slots after a partition starts that a side without the delegates' reach may still forge in:
 /// its relay drops the peers it can no longer reach one by one.
-const GRACE_SLOTS: i64 = 2;
+const MAX_GRACE_SLOTS: i64 = 4;
 
 /// What the checks read of the run: its validators, the blocks the Heartwood relays applied and
 /// the chain's slots.
@@ -52,24 +53,27 @@ impl Data {
 }
 
 pub(super) fn load(run: &ForgingRun<'_>) -> Result<Data> {
-    let m = run.manifest;
+    load_records(run.run_dir, run.manifest)
+}
+
+fn load_records(dir: &Path, m: &Manifest) -> Result<Data> {
     let mut heartwood = m.clone();
     heartwood
         .nodes
         .retain(|n| n.implementation == Implementation::Heartwood);
-    let milestones = forging::milestones(run.run_dir, m)?;
+    let milestones = forging::milestones(dir, m)?;
     let epoch_ms = heartwood_crypto::crypto::slots::epoch_unix_ms(milestones.at(1).epoch())
         .ok_or_else(|| Error::Usage("the chain's epoch is not a time".into()))?;
-    let (blocks, mut problems) = forging::recorded_blocks(run.run_dir, &heartwood, &milestones)?;
-    let (answers, more) = forging::answers(run.run_dir, &heartwood)?;
+    let (blocks, mut problems) = forging::recorded_blocks(dir, &heartwood, &milestones)?;
+    let (answers, more) = forging::answers(dir, &heartwood)?;
     problems.extend(more);
-    let validators = forging::validators(run.run_dir)?;
+    let validators = forging::validators(dir)?;
     let hosted = validators
         .iter()
         .filter(|v| heartwood.node(&v.name).is_some())
         .map(|v| v.name.clone())
         .collect();
-    let json = run::read_json(&run.run_dir.join("run.json"))?;
+    let json = run::read_json(&dir.join("run.json"))?;
     Ok(Data {
         validators,
         hosted,
@@ -147,12 +151,16 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
         "every reference relay lists a version for every Heartwood-hosted delegate",
         evidence(run, &data),
     );
-    let sides = partition(run, &data, &steps, cases);
-    verdict(
-        cases,
-        "the partition's sides forged as their delegates' reach allows",
-        sides,
-    );
+    if mixed::step(&steps, "partition").is_some() {
+        let sides = partition(run, &data, &steps, cases);
+        verdict(
+            cases,
+            "the partition's sides forged as their delegates' reach allows",
+            sides,
+        );
+    } else {
+        cases.record(SECTION, "no partition in this run");
+    }
     verdict(cases, "one tip at the end", one_tip(run));
     let m = run.manifest;
     verdict(
@@ -409,6 +417,131 @@ fn sides(step: &Step) -> Option<Vec<Vec<String>>> {
         .collect()
 }
 
+/// A minority relay's bounded interval for counting peers lost in the partition.
+struct GraceWindow {
+    from: i64,
+    until: i64,
+    keys: BTreeSet<String>,
+    bound: String,
+}
+
+impl GraceWindow {
+    fn contains(&self, data: &Data, block: &Recorded) -> bool {
+        self.keys.contains(&block.key)
+            && (self.from..self.until).contains(&data.slot_start(block.slot))
+    }
+}
+
+fn grace_windows(data: &Data, steps: &[Step], windows: &[Window]) -> BTreeMap<String, GraceWindow> {
+    let Some(step) = mixed::step(steps, "partition") else {
+        return BTreeMap::new();
+    };
+    let (Some(groups), Some(from), Some(heal)) = (
+        sides(step),
+        partition_start(windows),
+        mixed::step(steps, "heal").and_then(|s| s.start),
+    ) else {
+        return BTreeMap::new();
+    };
+    let cap = from.saturating_add(MAX_GRACE_SLOTS.saturating_mul(data.slots.slot_ms));
+    let mut out = BTreeMap::new();
+    for side in groups {
+        let keys: BTreeSet<String> = data
+            .validators
+            .iter()
+            .filter(|v| side.contains(&v.name))
+            .flat_map(|v| v.keys.keys().cloned())
+            .collect();
+        if keys.len() as u64 >= data.reach {
+            continue;
+        }
+        for node in side {
+            let answer = data
+                .answers
+                .iter()
+                .filter(|a| {
+                    a.relay == node
+                        && a.at >= from
+                        && (a.status.is_some_and(|s| s != 0) || a.has_quorum < data.reach)
+                })
+                .min_by_key(|a| a.at);
+            let (until, bound) = match answer {
+                Some(a) if a.at <= cap && a.at <= heal => (
+                    a.at,
+                    "first network-state answer below reach or with nonzero status",
+                ),
+                _ if heal < cap => (heal, "heal before the four-slot cap"),
+                _ => (cap, "four-slot cap; no earlier loss-of-quorum answer"),
+            };
+            out.insert(
+                node,
+                GraceWindow {
+                    from,
+                    until,
+                    keys: keys.clone(),
+                    bound: format!("{} ({bound})", run::format_time(until)),
+                },
+            );
+        }
+    }
+    out
+}
+
+/// Unjudged minority blocks that may be recorded in each relay's digest for the mixed run only.
+pub(super) fn minority_records(
+    dir: &Path,
+    manifest: &Manifest,
+    windows: &[Window],
+    steps: &[Step],
+) -> Result<BTreeMap<String, super::digest::RecordedBlocks>> {
+    if manifest.run != "mixed"
+        || manifest.minority.is_some()
+        || mixed::step(steps, "partition").is_none()
+    {
+        return Ok(BTreeMap::new());
+    }
+    let data = load_records(dir, manifest)?;
+    if !data.problems.is_empty() {
+        return Err(Error::Usage(format!(
+            "cannot establish the minority window: {}",
+            data.problems.join("; ")
+        )));
+    }
+    Ok(records_in_windows(
+        &data,
+        &grace_windows(&data, steps, windows),
+    ))
+}
+
+fn records_in_windows(
+    data: &Data,
+    windows: &BTreeMap<String, GraceWindow>,
+) -> BTreeMap<String, super::digest::RecordedBlocks> {
+    windows
+        .iter()
+        .map(|(node, window)| {
+            let blocks = data
+                .blocks
+                .values()
+                .filter(|b| {
+                    window.contains(data, b)
+                        && data.holder(&b.key)
+                            .and_then(|v| windows.get(&v.name))
+                            .is_some_and(|w| w.contains(data, b))
+                })
+                .map(|b| {
+                    let reason = format!(
+                        "minority delegate forged during peer loss detection; {node} window ends at {}",
+                        window.bound
+                    );
+                    ((b.height, b.id.clone()), reason)
+                })
+                .collect();
+            (node.clone(), blocks)
+        })
+        .collect()
+}
+
 /// During a partition a side with `reach` delegates or more forges, and a side with fewer forges
 /// nothing (beyond the slots its relay needs to drop its peers).
 fn partition(run: &ForgingRun<'_>, data: &Data, steps: &[Step], cases: &mut Cases) -> Vec<String> {
@@ -424,7 +557,13 @@ fn partition(run: &ForgingRun<'_>, data: &Data, steps: &[Step], cases: &mut Case
     ) else {
         return vec!["the run records no partition window or no heal".to_owned()];
     };
-    let from = from + GRACE_SLOTS * data.slots.slot_ms;
+    let grace = grace_windows(data, steps, run.windows);
+    for (node, window) in &grace {
+        cases.record(
+            SECTION,
+            format!("{node}: minority peer loss window ends at {}", window.bound),
+        );
+    }
     let mut problems = Vec::new();
     for side in &sides {
         let keys: Vec<&String> = data
@@ -437,6 +576,12 @@ fn partition(run: &ForgingRun<'_>, data: &Data, steps: &[Step], cases: &mut Case
             .blocks
             .values()
             .filter(|b| keys.contains(&&b.key) && (from..heal).contains(&data.slot_start(b.slot)))
+            .filter(|b| {
+                !data
+                    .holder(&b.key)
+                    .and_then(|v| grace.get(&v.name))
+                    .is_some_and(|w| w.contains(data, b))
+            })
             .count();
         let label = side.join(",");
         cases.record(
@@ -519,6 +664,187 @@ mod tests {
             reach,
             problems: Vec::new(),
         }
+    }
+
+    fn partition_steps(from: i64, heal: i64) -> (Vec<Step>, Vec<Window>) {
+        let step = |name: &str, at| Step {
+            name: name.into(),
+            node: "all".into(),
+            ok: true,
+            start: Some(at),
+            record: serde_json::json!({"groups": [["node1"], ["node2", "node3"]]}),
+        };
+        (
+            vec![step("partition", from), step("heal", heal)],
+            vec![Window {
+                fault: "partition".into(),
+                nodes: Vec::new(),
+                start: from,
+                end: heal,
+            }],
+        )
+    }
+
+    #[test]
+    fn the_partition_case_uses_the_forgers_observed_window() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/live/mixed-short");
+        let manifest = Manifest::load(&dir).unwrap();
+        let (steps, windows) = partition_steps(4_000, 20_000);
+        let oracle = || Err(Error::Usage("no oracle needed".into()));
+        let run = ForgingRun {
+            run_dir: &dir,
+            manifest: &manifest,
+            windows: &windows,
+            corpus_root: &dir,
+            oracle: &oracle,
+        };
+        let mut data = data(2, 0, 0, 1);
+        data.validators.push(Validator {
+            name: "node1".into(),
+            forger: "198.51.100.1".into(),
+            keys: BTreeMap::from([
+                ("majority".into(), "first".into()),
+                ("other".into(), "second".into()),
+            ]),
+        });
+        data.blocks.insert(
+            "majority-block".into(),
+            Recorded {
+                id: "majority-block".into(),
+                height: 11,
+                slot: 6,
+                key: "majority".into(),
+            },
+        );
+        let mut cases = Cases {
+            run: "mixed".into(),
+            results: Vec::new(),
+        };
+        assert!(partition(&run, &data, &steps, &mut cases).is_empty());
+        data.answers[0].at = 4_999;
+        assert!(
+            partition(&run, &data, &steps, &mut cases)
+                .iter()
+                .any(|p| p.contains("forged 1 blocks"))
+        );
+        data.answers.clear();
+        data.blocks.get_mut("b").unwrap().slot = 8;
+        assert!(
+            partition(&run, &data, &steps, &mut cases)
+                .iter()
+                .any(|p| p.contains("forged 1 blocks"))
+        );
+    }
+
+    #[test]
+    fn declared_minority_and_other_runs_never_get_unjudged_records() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/live/mixed-short");
+        let mut manifest = Manifest::load(&dir).unwrap();
+        let (steps, windows) = partition_steps(4_000, 20_000);
+        for name in ["mixed-short", "mixed-split", "churn", "core"] {
+            manifest.run = name.into();
+            assert!(
+                minority_records(Path::new("absent-records"), &manifest, &windows, &steps)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        manifest.run = "mixed".into();
+        manifest.minority = Some((vec!["node2".into()], "minority".into()));
+        assert!(
+            minority_records(Path::new("absent-records"), &manifest, &windows, &steps)
+                .unwrap()
+                .is_empty()
+        );
+        manifest.minority = None;
+        assert!(
+            minority_records(Path::new("absent-records"), &manifest, &windows, &steps).is_err()
+        );
+    }
+
+    #[test]
+    fn peer_loss_windows_follow_each_relay_and_stop_at_the_cap_or_heal() {
+        let mut data = data(27, 0, 0, 1);
+        let (steps, faults) = partition_steps(4_000, 20_000);
+        let mut other = data.answers[0].clone();
+        other.relay = "node3".into();
+        other.at = 7_000;
+        data.answers.push(other);
+        let windows = grace_windows(&data, &steps, &faults);
+        assert_eq!(windows["node2"].until, 5_500);
+        assert_eq!(windows["node3"].until, 7_000);
+        assert!(windows["node2"].bound.contains("first network-state"));
+        assert_eq!(records_in_windows(&data, &windows)["node2"].len(), 1);
+        // An answer before the partition does not close the window.
+        data.answers[0].at = 3_999;
+        let windows = grace_windows(&data, &steps, &faults);
+        assert_eq!(windows["node2"].until, 8_000);
+        assert!(windows["node2"].bound.contains("four-slot cap"));
+        // Quorum loss alone is sufficient, including an answer exactly at the partition.
+        data.answers[0].at = 4_000;
+        data.answers[0].status = Some(0);
+        let windows = grace_windows(&data, &steps, &faults);
+        assert!(records_in_windows(&data, &windows)["node2"].is_empty());
+        // A nonzero status alone is sufficient, even if the count still reaches the threshold.
+        data.answers[0].has_quorum = 53;
+        data.answers[0].status = Some(1);
+        assert_eq!(grace_windows(&data, &steps, &faults)["node2"].until, 4_000);
+        data.answers.clear();
+        let (steps, faults) = partition_steps(4_000, 4_500);
+        let windows = grace_windows(&data, &steps, &faults);
+        assert_eq!(windows["node2"].until, 4_500);
+        assert!(windows["node2"].bound.contains("heal"));
+        assert!(records_in_windows(&data, &windows)["node2"].is_empty());
+    }
+
+    #[test]
+    fn the_recorded_partition_timings_allow_only_the_attempt_with_a_minority_block() {
+        let time = |s| run::parse_time(s).unwrap();
+        // The two recordings put the same minority delegate in the first slot after partition.
+        for (from, slot, lost, expected) in [
+            (
+                "2026-09-30T18:03:26.381Z",
+                "2026-09-30T18:03:33.000Z",
+                "2026-09-30T18:03:36.534Z",
+                1,
+            ),
+            (
+                "2026-09-30T17:03:23.759Z",
+                "2026-09-30T17:03:31.000Z",
+                "2026-09-30T17:03:26.555Z",
+                0,
+            ),
+        ] {
+            let mut data = data(27, 0, 0, 1);
+            data.slots = Slots {
+                epoch_ms: time(slot),
+                slot_ms: 8_000,
+            };
+            data.answers[0].at = time(lost);
+            let block = data.blocks.get_mut("b").unwrap();
+            block.height = 156;
+            block.slot = 0;
+            let (steps, faults) = partition_steps(time(from), time(from) + 96_000);
+            let windows = grace_windows(&data, &steps, &faults);
+            assert_eq!(records_in_windows(&data, &windows)["node2"].len(), expected);
+        }
+    }
+
+    #[test]
+    fn only_minority_keys_and_slots_strictly_inside_the_window_can_be_recorded() {
+        let mut data = data(27, 0, 0, 1);
+        let (steps, faults) = partition_steps(4_000, 20_000);
+        let windows = grace_windows(&data, &steps, &faults);
+        assert_eq!(records_in_windows(&data, &windows)["node2"].len(), 1);
+        for slot in [3, 6, 8] {
+            data.blocks.get_mut("b").unwrap().slot = slot;
+            assert!(records_in_windows(&data, &windows)["node2"].is_empty());
+        }
+        data.blocks.get_mut("b").unwrap().slot = 5;
+        data.blocks.get_mut("b").unwrap().key = "another-side".into();
+        assert!(records_in_windows(&data, &windows)["node2"].is_empty());
+        data.reach = 1;
+        assert!(!grace_windows(&data, &steps, &faults).contains_key("node2"));
     }
 
     #[test]
