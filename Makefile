@@ -135,18 +135,25 @@ need-name = $(if $(NAME),,$(error set NAME, the corpus under CORPUS=$(CORPUS)))
 # LEDGER_DIR. The ledger and the baseline record read them (ledger-merge, gate-s1). A record names the
 # oracle image only for a target that reads the oracle or its vectors (GATE_ORACLE_TARGETS; the
 # forge replay only with DIRECTION=oracle) with ORACLE_ARGS naming the image, and for a mixed or
-# forging run's live check, which reads IMAGE itself.
+# forging run's live check, which reads IMAGE itself. A record of a live run's check (live-check,
+# api-compare, live-resources, suites) also names the devnet tooling the run was made with, from
+# the run directory's tooling.sha256. The default tested paths hold the code, the workspace's
+# manifest and lockfile, this file and the check scripts the gate targets run.
 GATE_RECORDS  ?=
 LEDGER_DIR    ?=
 S1_CRITERIA   ?=
-GATE_TESTED   ?= packages tools/difftest tools/oracle fuzz
+GATE_TESTED   ?= packages tools/difftest tools/oracle fuzz Cargo.toml Cargo.lock Makefile \
+                 tools/check-layers.sh tools/check-lines.sh tools/test-integration.sh tools/gate-record.sh
 GATE_LEDGER   ?=
 GATE_ORACLE_TARGETS := l0 l1 corpus-judge l2-synthetic rollback-replay lockstep replay-api scenario suites \
                        oracle-image vectors-diff vectors-install
 gate-reads-oracle = $(or $(filter $(1),$(GATE_ORACLE_TARGETS)),$(and $(filter forge-replay,$(1)),$(filter oracle,$(DIRECTION))))
 gate-image-of = $(if $(filter live-check,$(1)),$(if $(or $(is-mixed),$(is-forging)),$(IMAGE)),$(if $(and $(call gate-reads-oracle,$(1)),$(filter --image%,$(ORACLE_ARGS))),$(IMAGE)))
+# The run directories whose tooling.sha256 a live run's record names.
+gate-tooling-of = $(if $(filter suites,$(1)),$(suite-dir),$(if $(filter live-check api-compare live-resources,$(1)),$(if $(filter suites,$(RUN)),$(FORGING_RESULTS)/suites/$(SEED)$(if $(SUITE),/$(SUITE)-reference $(FORGING_RESULTS)/suites/$(SEED)/$(SUITE)-heartwood),$(if $(is-forging),$(run-dir)))))
 gate-for = GATE_RECORDS='$(GATE_RECORDS)' GATE_TARGET=$(1) GATE_VARIABLES='$(filter-out GATE_% GATED=% $(GATED) $(addsuffix \,$(GATED)),$(MAKEOVERRIDES))' \
        GATE_IMAGE='$(call gate-image-of,$(2))' GATE_TESTED='$(GATE_TESTED)' GATE_CRITERIA='$(S1_CRITERIA)' \
+       GATE_TOOLING='$(call gate-tooling-of,$(2))' \
        GATE_LEDGER="$${GATE_LEDGER:-$(GATE_LEDGER)}" LEDGER_DIR='$(LEDGER_DIR)' GATE_DIFFTEST='$(DIFFTEST)' tools/gate-record.sh
 gate = $(call gate-for,'$@',$@)
 need-records = $(if $(GATE_RECORDS),,$(error set GATE_RECORDS, the gate records' directory, in local.mk))
@@ -407,7 +414,7 @@ lines-if-tokei:
 # wrapper rules for crates outside their graph (the API's, the binary's) do not apply there.
 .PHONY: deny
 
-deny: ## advisories, licences, sources and bans of every dependency (cargo-deny; needs the network)
+deny: build ## advisories, licences, sources and bans of every dependency (cargo-deny; needs the network)
 	@$(TOOLCHAIN) && command -v cargo-deny >/dev/null 2>&1 || \
 	    { echo "deny: cargo-deny is not installed (cargo install --locked cargo-deny)" >&2; exit 1; }
 	$(TOOLCHAIN) && $(gate) cargo deny --locked --config deny.toml check
@@ -660,7 +667,7 @@ relay-image: relay-binary ## the relay's release binary and its devnet image (RE
 # check that it is this tree's relay. The mixed runs start at once and share one relay image, so
 # their live target builds the binary only: `make relay-image` runs once before them, and
 # MIXED_RECIPE checks that the image holds this tree's binary.
-relay-of-run = $(if $(filter-out r t w0,$(RUN)),$(1))
+relay-of-run = $(if $(filter-out r t w0 suites,$(RUN)),$(1))
 live-prerequisite = $(if $(is-observer),build relay-image,$(if $(filter m f $(FORGING_RUNS),$(RUN)),relay-binary,$(if $(is-mixed),$(call relay-of-run,relay-binary),$(call relay-of-run,relay-image))))
 
 # The planned stop height of each forging run and scenario suite: 2 rounds (106), the lifecycle
@@ -679,11 +686,14 @@ planned-network := 106
 planned-network-split := 106
 STOP_HEIGHT ?=
 define live-guard
-@planned='$(1)'; stop='$(STOP_HEIGHT)'; \
+@planned='$(1)'; stop='$(STOP_HEIGHT)'; seed='$(SEED)'; \
 	if [ -z "$$planned" ]; then echo "$@: no planned stop height for $(2)" >&2; exit 2; fi; \
-	if [ -n "$$stop" ] && ! { [ "$$stop" -le "$$planned" ] && [ "$$stop" -le 265 ]; } 2>/dev/null; then \
-	    echo "$@: STOP_HEIGHT=$$stop is beyond $(2)'s planned stop height $$planned (round 5 ends at 265)" >&2; exit 2; \
+	if [ -n "$$stop" ] && ! { [ "$$stop" -ge 1 ] && [ "$$stop" -le "$$planned" ] && [ "$$stop" -le 265 ]; } 2>/dev/null; then \
+	    echo "$@: STOP_HEIGHT=$$stop is not a height from 1 to $(2)'s planned stop height $$planned (round 5 ends at 265)" >&2; exit 2; \
 	fi; \
+	case "$$seed" in ''|*..*|*[!A-Za-z0-9._-]*) \
+	    echo "$@: SEED=$$seed is not a name of letters, digits, '.', '_' and '-' (it names the run's directory)" >&2; exit 2 ;; \
+	esac; \
 	now=$$(( 10#$$(date -u +%H) * 60 + 10#$$(date -u +%M) )); \
 	if [ $$now -ge 1400 ] || [ $$now -lt 40 ]; then \
 	    echo "$@: $$(date -u +%H:%M) UTC is within 40 minutes of 00:00 UTC, when the nodes' logs rotate" >&2; exit 2; \
@@ -907,7 +917,7 @@ lockstep: build ## a lockstep chain CORPUS/NAME from SEED, PROFILE and RECIPE, R
 	$(TOOLCHAIN) && $(gate) $(DIFFTEST) lockstep make --seed '$(SEED)' --profile '$(PROFILE)' --rounds $(ROUNDS) \
 	    --recipe '$(RECIPE)' --out $(CORPUS)/$(NAME) $(if $(LONG),--long) $(ORACLE_ARGS)
 
-fuzz-api: ## the API's query fuzz target, FUZZ_SECONDS (nightly and cargo-fuzz); logs in API_LOGS
+fuzz-api: build ## the API's query fuzz target, FUZZ_SECONDS (nightly and cargo-fuzz); logs in API_LOGS
 	@$(TOOLCHAIN) && if [ -d '$(API_SEEDS)' ]; then \
 	    node tools/api-fuzz-seeds.js '$(API_SEEDS)' $(FUZZ_CORPUS) $(WIRE_SEED_MAX); \
 	else \
@@ -948,7 +958,9 @@ replay-api: build ## the api_query corpus through the oracle (ORACLE_ARGS) and H
 # SCENARIOS by default) at LEVEL (l2, l3 or l4) through the runner's BACKEND (lockstep for l2,
 # heartwood for a devnet of this tree, external for the tooling's backend, DIFFTEST_SCENARIO_BACKEND
 # in local.mk), with the oracle of ORACLE_ARGS compiling their transactions; a level the backend
-# cannot run is named in its record as left to a live run.
+# cannot run is named in its record as left to a live run. At l3 and l4 the runner drives the
+# devnet in DEVNET_ROOT, which must already run (the suites recipe starts its own): the target
+# refuses those levels without it, and within 40 minutes of 00:00 UTC.
 # suites runs one scenario suite (SUITE: transactions, lifecycle, network or network-split) on one
 # implementation (IMPL: reference, on the tooling's Docker devnet; heartwood, on a devnet of this
 # tree in mode B) with the network seed SEED, by SUITES_RECIPE, into FORGING_RESULTS/suites/SEED/
@@ -960,6 +972,7 @@ replay-api: build ## the api_query corpus through the oracle (ORACLE_ARGS) and H
 # records, the ledger and the criteria file (PART, one part of it, or all).
 SCENARIOS          := tools/difftest/scenarios
 SCENARIO           ?=
+DEVNET_ROOT        ?=
 LEVEL              ?= l2
 BACKEND            ?= $(if $(filter l2,$(LEVEL)),lockstep,heartwood)
 DIFFTEST_SCENARIO_BACKEND ?=
@@ -978,14 +991,22 @@ FROM               ?=
 MACHINE            ?=
 PART               ?=
 suite-dir = $(FORGING_RESULTS)/suites/$(SEED)/$(SUITE)-$(IMPL)
-# The seeds of L1_SEEDS: a range A-B or a list.
-l1-seeds = $(if $(findstring -,$(L1_SEEDS)),$$(seq $(subst -, ,$(L1_SEEDS))),$(subst $(comma), ,$(L1_SEEDS)))
+# The seeds of L1_SEEDS: a range A-B (A no greater than B) or a list of numbers.
+l1-seeds = $(if $(findstring -,$(L1_SEEDS)),$$(seq $(word 1,$(subst -, ,$(L1_SEEDS))) $(word 2,$(subst -, ,$(L1_SEEDS)))),$(subst $(comma), ,$(L1_SEEDS)))
 
-scenario: build ## the scenarios at LEVEL through the runner's BACKEND (SCENARIO, LEVEL, BACKEND; ORACLE_ARGS compiles)
+scenario: build ## the scenarios at LEVEL through the runner's BACKEND (SCENARIO, LEVEL, BACKEND, DEVNET_ROOT at l3 and l4; ORACLE_ARGS compiles)
 	$(need-image)
 	$(if $(filter external,$(BACKEND)),$(if $(DIFFTEST_SCENARIO_BACKEND),,$(error set DIFFTEST_SCENARIO_BACKEND, the tooling's scenario backend, in local.mk)))
+	$(if $(filter-out lockstep,$(BACKEND)),$(if $(DEVNET_ROOT),,$(error set DEVNET_ROOT, the running devnet the $(BACKEND) backend drives at LEVEL=$(LEVEL))))
+	@if [ '$(BACKEND)' != lockstep ]; then \
+	    now=$$(( 10#$$(date -u +%H) * 60 + 10#$$(date -u +%M) )); \
+	    if [ $$now -ge 1400 ] || [ $$now -lt 40 ]; then \
+	        echo "scenario: $$(date -u +%H:%M) UTC is within 40 minutes of 00:00 UTC, when the nodes' logs rotate" >&2; exit 2; \
+	    fi; \
+	fi
 	$(TOOLCHAIN) && DIFFTEST_SCENARIO_BACKEND='$(DIFFTEST_SCENARIO_BACKEND)' $(gate) $(DIFFTEST) scenario run \
-	    --backend $(BACKEND) --level $(LEVEL) $(or $(SCENARIO),$(SCENARIOS)) $(STRICT) $(ORACLE_ARGS)
+	    --backend $(BACKEND) --level $(LEVEL) $(if $(DEVNET_ROOT),--devnet-root $(DEVNET_ROOT)) \
+	    $(or $(SCENARIO),$(SCENARIOS)) $(STRICT) $(ORACLE_ARGS)
 
 suites: build relay-binary ## one scenario suite on one implementation (SUITE, IMPL=reference|heartwood, SEED; SUITES_RECIPE)
 	$(if $(filter $(SUITES),$(SUITE)),,$(error set SUITE to one of $(SUITES)))
@@ -1004,12 +1025,19 @@ l1-long: build ## one L1 property over many seeds, each a gate record and a ledg
 	$(if $(L1_SEEDS),,$(error set L1_SEEDS, the seeds: A-B or a list))
 	$(need-records)
 	$(need-ledger)
-	@$(TOOLCHAIN) && fail=0; for seed in $(l1-seeds); do \
+	@case '$(L1_SEEDS)' in \
+	    *-*-*|-*|*-) echo "l1-long: L1_SEEDS=$(L1_SEEDS) is not a range A-B or a list" >&2; exit 2 ;; \
+	    *-*) a='$(word 1,$(subst -, ,$(L1_SEEDS)))'; b='$(word 2,$(subst -, ,$(L1_SEEDS)))'; \
+	         if ! [ "$$a" -le "$$b" ] 2>/dev/null; then echo "l1-long: L1_SEEDS=$(L1_SEEDS): $$a is not a number at most $$b" >&2; exit 2; fi ;; \
+	    *) for seed in $(subst $(comma), ,$(L1_SEEDS)); do [ "$$seed" -ge 0 ] 2>/dev/null || \
+	         { echo "l1-long: L1_SEEDS=$(L1_SEEDS): $$seed is not a number" >&2; exit 2; }; done ;; \
+	esac
+	@$(TOOLCHAIN) && fail=0; seeds=0; for seed in $(l1-seeds); do seeds=$$((seeds + 1)); \
 	    GATE_LEDGER="kind=property id=$(L1_PROPERTY) cases=$(L1_CASES) seed=$$seed" \
 	    $(MAKE) --no-print-directory l1 L1_PROPERTY=$(L1_PROPERTY) L1_CASES=$(L1_CASES) L1_SEED=$$seed || fail=1; \
-	done; exit $$fail
+	done; [ "$$seeds" -gt 0 ] || { echo "l1-long: L1_SEEDS=$(L1_SEEDS) names no seed" >&2; exit 2; }; exit $$fail
 
-fuzz-long: ## every target of FUZZ_TARGETS for FUZZ_SECONDS with FUZZ_FORK jobs, each a gate record and a ledger entry
+fuzz-long: build ## every target of FUZZ_TARGETS for FUZZ_SECONDS with FUZZ_FORK jobs, each a gate record and a ledger entry
 	$(if $(FUZZ_TARGETS),,$(error set FUZZ_TARGETS, targets of fuzz/fuzz_targets))
 	$(need-records)
 	$(need-ledger)
@@ -1034,8 +1062,14 @@ ledger-merge: build ## another machine's gate records (FROM) into the ledger, as
 # through GATED_MAKE, so that `make -n gated` prints the commands and records nothing.
 GATED ?=
 GATED_MAKE = $(MAKE)
+# The targets whose recipe writes its own record: run through gated, one run would be two records.
+GATE_SELF_RECORDING := l0 l1 corpus-judge l2 l2-synthetic l2-restart rollback-replay crash-test \
+                       l2-processor live-check api-compare p2p-compare await-report live-resources \
+                       forge-replay forger-crash binary-tests lockstep fuzz-api replay-api scenario \
+                       suites deny l1-long fuzz-long
 gated: build ## each target of GATED run through the recorder, a gate record named by it per target (GATED)
 	$(if $(GATED),,$(error set GATED, the targets to run through the recorder))
+	$(if $(filter $(GATE_SELF_RECORDING),$(GATED)),$(error $(filter $(GATE_SELF_RECORDING),$(GATED)) write their own records; run them without gated))
 	$(need-records)
 	@fail=0; $(foreach t,$(GATED),$(call gate-for,'$(t)',$(t)) $(GATED_MAKE) --no-print-directory $(t) || fail=1;) exit $$fail
 
