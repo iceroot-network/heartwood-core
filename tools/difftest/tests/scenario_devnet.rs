@@ -102,16 +102,15 @@ use Proof::{BootCheck, Lockstep, Mixed, MixedSplit, Suite, SyncFromHeartwood, Sy
 /// mixed forging runs. Four are exceptions: the boot check's L3 level is its own script's record,
 /// and the sync from genesis has no lockstep run (it needs a live reference network), so its L2
 /// level is the live record of the sync from reference peers and its L4 level the live records of
-/// the reference syncing from a Heartwood relay.
+/// the reference syncing from a Heartwood relay. The chained transfers and the double spend have
+/// no L4 level: no mixed run submits them through a Heartwood relay.
 const LEVEL_MAP: &[(&str, Level, Proof)] = &[
     ("boot-check", L2, Lockstep),
     ("boot-check", L3, BootCheck),
     ("chained-transfers", L2, Lockstep),
     ("chained-transfers", L3, Suite),
-    ("chained-transfers", L4, Mixed),
     ("double-spend", L2, Lockstep),
     ("double-spend", L3, Suite),
-    ("double-spend", L4, Mixed),
     ("large-transfers", L2, Lockstep),
     ("large-transfers", L3, Suite),
     ("burns-and-supply", L3, Suite),

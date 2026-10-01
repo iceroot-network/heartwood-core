@@ -1,7 +1,7 @@
 {
   "id": "double-spend",
   "title": "One wallet spends its balance twice, reuses a nonce and skips a nonce; only the first of each is kept",
-  "levels": ["L2", "L3", "L4"],
+  "levels": ["L2", "L3"],
   "network": "devnet",
   "genesisSeed": "solar-devnet",
   "settleBlocks": 0,

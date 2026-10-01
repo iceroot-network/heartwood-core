@@ -1,7 +1,7 @@
 {
   "id": "chained-transfers",
   "title": "Transfers chained from wallet to wallet in consecutive blocks, each spending what the last one gave",
-  "levels": ["L2", "L3", "L4"],
+  "levels": ["L2", "L3"],
   "network": "devnet",
   "genesisSeed": "solar-devnet",
   "settleBlocks": 0,
