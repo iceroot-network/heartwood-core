@@ -1,0 +1,39 @@
+{
+ "nodes": {
+  "node4": [
+   {
+    "start": "0001",
+    "digest": "digest-0001.jsonl",
+    "await": "await-0001.jsonl",
+    "awaitExists": true,
+    "lines": 3496,
+    "perRouteRound": {
+     "getStatus|?": 309,
+     "getPeers|?": 124,
+     "getBlocks|?": 1663,
+     "getUnconfirmedTransactions|?": 907,
+     "postBlock|?": 432,
+     "postTransactions|?": 61
+    }
+   }
+  ],
+  "node5": [
+   {
+    "start": "0001",
+    "digest": "digest-0001.jsonl",
+    "await": "await-0001.jsonl",
+    "awaitExists": true,
+    "lines": 3480,
+    "perRouteRound": {
+     "getStatus|?": 307,
+     "getPeers|?": 124,
+     "getBlocks|?": 1648,
+     "getUnconfirmedTransactions|?": 907,
+     "postBlock|?": 433,
+     "postTransactions|?": 61
+    }
+   }
+  ]
+ },
+ "ok": true
+}

@@ -1,0 +1,11 @@
+{"step":"generate","node":"all","start":"2026-09-30T20:16:52.607Z","startHeight":0,"round":1,"end":"2026-09-30T20:16:52.896Z","ok":true,"nodes":3,"prefix":"127.9.0","seed":1}
+{"step":"up","node":"all","start":"2026-09-30T20:16:52.912Z","startHeight":0,"round":1,"end":"2026-09-30T20:17:05.071Z","ok":true,"nodes":"node1 node2 node3"}
+{"step":"settle","node":"node1","start":"2026-09-30T20:16:52.912Z","startHeight":0,"round":1,"end":"2026-09-30T20:17:28.326Z","ok":true,"height":3}
+{"step":"locks","node":"all","start":"2026-09-30T20:17:28.341Z","startHeight":3,"round":1,"end":"2026-09-30T20:17:28.419Z","ok":true,"file":"locks.json"}
+{"step":"relay-start-refused","node":"node1","start":"2026-09-30T20:17:28.434Z","startHeight":3,"round":1,"end":"2026-09-30T20:17:28.455Z","ok":true,"exit":1,"message":"node1-devnet-core is already running","pidsBefore":"1512312 1512354 1512396 ","pidsAfter":"1512312 1512354 1512396 "}
+{"step":"check-chain","node":"node1","start":"2026-09-30T20:29:20.715Z","startHeight":92,"round":2,"end":"2026-09-30T20:29:21.305Z","ok":true,"read":"node1"}
+{"step":"pause","node":"all","start":"2026-09-30T20:29:21.323Z","startHeight":92,"round":2,"end":"2026-09-30T20:31:12.325Z","ok":true,"height":106,"stopHeight":106,"plannedStopHeight":106,"note":""}
+{"step":"tips","node":"all","start":"2026-09-30T20:31:12.189Z","startHeight":106,"round":2,"end":"2026-09-30T20:31:12.352Z","ok":true,"detail":{"ok":true,"step":"tips","tips":{"node1":{"height":106,"id":"d72df3bd1d1d499cd97ce10ac24a951827e6ac59a187f85e13e3f1f03242f576"},"node2":{"height":106,"id":"d72df3bd1d1d499cd97ce10ac24a951827e6ac59a187f85e13e3f1f03242f576"},"node3":{"height":106,"id":"d72df3bd1d1d499cd97ce10ac24a951827e6ac59a187f85e13e3f1f03242f576"}}}}
+{"step":"stop","node":"all","start":"2026-09-30T20:31:12.366Z","startHeight":106,"round":2,"end":"2026-09-30T20:31:12.844Z","ok":true,"exit":0,"seconds":0.45,"limitSeconds":30,"remaining":""}
+{"step":"archive","node":"node1","start":"2026-09-30T20:31:12.858Z","startHeight":106,"round":2,"end":"2026-09-30T20:31:12.880Z","ok":true,"files":5}
+{"step":"collect","node":"all","start":"2026-09-30T20:31:12.858Z","startHeight":106,"round":2,"end":"2026-09-30T20:31:12.897Z","ok":true,"bans":0}

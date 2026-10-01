@@ -1,0 +1,293 @@
+{
+ "format": "heartwood-live-run/1",
+ "run": "mixed-short",
+ "network": "mixed-short-net",
+ "dryRun": false,
+ "seed": "2",
+ "roundLength": 53,
+ "blockTime": 8,
+ "stopHeight": 106,
+ "plannedStopHeight": 106,
+ "control": "node1",
+ "gateway": "198.51.100.1",
+ "nodes": [
+  {
+   "name": "node1",
+   "ip": "198.51.100.11",
+   "implementation": "reference",
+   "role": "forger",
+   "delegates": [
+    {
+     "username": "genesis_1",
+     "publicKey": "027e48b49d337fcf48fbd0947c99ef067002507e99f74b598fa75aa2594a476dea"
+    },
+    {
+     "username": "genesis_2",
+     "publicKey": "02a38877c2a5328166cfcfffb596994b457bfbbf2a4fe069f4121128e4ff4d4943"
+    },
+    {
+     "username": "genesis_3",
+     "publicKey": "02f1074716acee849aaa2b606169c3ab0b955f1ce7995e2298e63cffec5e15359f"
+    },
+    {
+     "username": "genesis_4",
+     "publicKey": "02327c03ec205840911c051a01e422b772aa3ee1dd198bcedb689b937459972d99"
+    },
+    {
+     "username": "genesis_5",
+     "publicKey": "022b08a47632280efb24e2e5b693515011ce95068fb9672aa7c3302d3778b10c4a"
+    },
+    {
+     "username": "genesis_6",
+     "publicKey": "03140448c33fe5a08e3b9c5a9206de210bfdc114392e8bef4db8af7fe6aa2f5a14"
+    },
+    {
+     "username": "genesis_7",
+     "publicKey": "032631e87ae3db83939244e030e2e3b34f19434b3c0ad1eb8ac00293e61efc7b42"
+    },
+    {
+     "username": "genesis_8",
+     "publicKey": "02386a3314e8207f58402276e09fcbd24627e2fcd6cbb51ed3b706c2cdaf664688"
+    },
+    {
+     "username": "genesis_9",
+     "publicKey": "030cdc5d4a3083de75c740d2db300fca454ddb1f470bfe4fedef0abbf75fa82661"
+    },
+    {
+     "username": "genesis_10",
+     "publicKey": "036effe7dd18a7b97f650fa5be7985795d4aed329cc075684d2e00454c2385ca93"
+    },
+    {
+     "username": "genesis_11",
+     "publicKey": "0222237c1ee986d3781cab5b4dedc6ef17744d964770bd3cb0da26bf7340bf09b6"
+    }
+   ],
+   "delegateCount": 11,
+   "underTest": false
+  },
+  {
+   "name": "node2",
+   "ip": "198.51.100.12",
+   "implementation": "reference",
+   "role": "forger",
+   "delegates": [
+    {
+     "username": "genesis_12",
+     "publicKey": "036848a740582299c8900a28aa7425459fba5d4c20e2a6ff215c6f75ca57d87f23"
+    },
+    {
+     "username": "genesis_13",
+     "publicKey": "03a5620de4894e48cd7891803179701f7ce7e2503d76f250f85190c6fe84c6e082"
+    },
+    {
+     "username": "genesis_14",
+     "publicKey": "03e16aeec76a50aca31e652a5afb4b0e43722028021521dc768c079eeca65e129b"
+    },
+    {
+     "username": "genesis_15",
+     "publicKey": "02264373ef31d31a866316c941d07451c87233684e0b2935c00bf7b71ebc2c9ec1"
+    },
+    {
+     "username": "genesis_16",
+     "publicKey": "03563f34e8ee3c4d84db02ef56129d0e3db7d48ed65e5f11dc727d936c015cf094"
+    },
+    {
+     "username": "genesis_17",
+     "publicKey": "02b603433d3937754b6c79d2f5c798d34dc5744b038fec1d3309de063df038f431"
+    },
+    {
+     "username": "genesis_18",
+     "publicKey": "035487b7487a1347fbec58f97a2480aad6093cdb7ab8e3716d14034a0d669a070d"
+    },
+    {
+     "username": "genesis_19",
+     "publicKey": "03c6413bae9e6c0d34aea08596e98360c4be0d8fd192feb13ae74c3c4f6e7b08c0"
+    },
+    {
+     "username": "genesis_20",
+     "publicKey": "035b612dda4c0902e370c483f8e2a2f0bc684598229251baca8f8479c1d7194fc2"
+    },
+    {
+     "username": "genesis_21",
+     "publicKey": "03cec66767b19ac51fd75ab96cb0cdef8f46d4012ea3b07ccf286fbf6a7e8ecd17"
+    },
+    {
+     "username": "genesis_22",
+     "publicKey": "02166169d3cbaf4fb0f23727b08d8ff768c2cd0145d1a6e3544c58de31b8f13053"
+    }
+   ],
+   "delegateCount": 11,
+   "underTest": false
+  },
+  {
+   "name": "node3",
+   "ip": "198.51.100.13",
+   "implementation": "reference",
+   "role": "forger",
+   "delegates": [
+    {
+     "username": "genesis_23",
+     "publicKey": "03e36008c851d814c52ac713c14745cb5de7a65f5c684552ab96e4c82dfa37c962"
+    },
+    {
+     "username": "genesis_24",
+     "publicKey": "03221f9afde58217608d507de13143caf908eeb4f54e01eaecf04a23426651392f"
+    },
+    {
+     "username": "genesis_25",
+     "publicKey": "024be7d86230e2287b7642ce532070a7ef893d504647e6bf36eef7c9176bdda471"
+    },
+    {
+     "username": "genesis_26",
+     "publicKey": "038ec8d16a26388df48c4bdd84584cefe71a8bc47da74e6038481501d43e3a3335"
+    },
+    {
+     "username": "genesis_27",
+     "publicKey": "02ac03ec47f360f17b579ddbcd352f83435296e583180f8e8af53d507fc6f421d7"
+    },
+    {
+     "username": "genesis_28",
+     "publicKey": "02cc4e8f4a42d5595a0afbb4074f01d818434ba71a2af288ce901522178b072488"
+    },
+    {
+     "username": "genesis_29",
+     "publicKey": "02e259e83e67c679234663a5fe03b1730543355cbc6255c271ace5642a138ce331"
+    },
+    {
+     "username": "genesis_30",
+     "publicKey": "03743b90bf0b8e953032afc7b7c051f32972b973da912322fa2ce83ff3c8dd673a"
+    },
+    {
+     "username": "genesis_31",
+     "publicKey": "02bc81cdfc9d4e2651b5eaca65b48a37f038633736246d1d51dc576090c0f99fb1"
+    },
+    {
+     "username": "genesis_32",
+     "publicKey": "03be47d22a9e053716dea55ea449c4f2a38fff4a3b1c0645fdf2197adc5b031b8b"
+    },
+    {
+     "username": "genesis_33",
+     "publicKey": "03a2f5788ce6c92da89e9679798d6e88993b19f9a5016236347a6fe31fe78a60d7"
+    }
+   ],
+   "delegateCount": 11,
+   "underTest": false
+  },
+  {
+   "name": "node4",
+   "ip": "198.51.100.14",
+   "implementation": "heartwood",
+   "role": "forger",
+   "delegates": [
+    {
+     "username": "genesis_34",
+     "publicKey": "03d396b593162197c57429c70c11414a24d0f83cef208bab71c279f991057cb03f"
+    },
+    {
+     "username": "genesis_35",
+     "publicKey": "03949e12957d888f7880c3f45a1ed5477835670f6fc8b57bfbbd647ae7660496e0"
+    },
+    {
+     "username": "genesis_36",
+     "publicKey": "03e6f12bc99de4a83123400258c481a598e60074e98a375495975401b309993c3e"
+    },
+    {
+     "username": "genesis_37",
+     "publicKey": "0277516b0c46f0392510ad53077cb3a3d3f1e8c80610289b6b0663b63d76efa69f"
+    },
+    {
+     "username": "genesis_38",
+     "publicKey": "02d188a9eb12d74bf20f7f35aa62b7302fdc72809f1cc5a7a5f9987466196a764d"
+    },
+    {
+     "username": "genesis_39",
+     "publicKey": "038404532898582fbabd7e11d3e6c536c463df0bedbd518eeceffc1633b930bec9"
+    },
+    {
+     "username": "genesis_40",
+     "publicKey": "03e3c7f58e15c3af6f120a4d5280ec5e399f59d78a199953ef3b12ea7b5b311859"
+    },
+    {
+     "username": "genesis_41",
+     "publicKey": "0227aa2c70aa99340dc37b87277b21e191f61199c7f162864dac37f85d753b5ec6"
+    },
+    {
+     "username": "genesis_42",
+     "publicKey": "02c0b0324308a2eb93d53700063cc02159a3b39c389a6abcdfde530df579105980"
+    },
+    {
+     "username": "genesis_43",
+     "publicKey": "02352a977193cc4e2a38185d5fefcba556154048386257ed19696c31ad53c8e11e"
+    }
+   ],
+   "delegateCount": 10,
+   "underTest": true
+  },
+  {
+   "name": "node5",
+   "ip": "198.51.100.15",
+   "implementation": "heartwood",
+   "role": "forger",
+   "delegates": [
+    {
+     "username": "genesis_44",
+     "publicKey": "03d8efc9abaa36fd0d2415e8e842f74d65e91f7d0720a477397526820a71dabc99"
+    },
+    {
+     "username": "genesis_45",
+     "publicKey": "02b016c974d6f82dcd8259777912edfef40785d678c638d04f9bb01ae895b49404"
+    },
+    {
+     "username": "genesis_46",
+     "publicKey": "03279562cd5e4b4d72ffc9d4cd1bc8c9821fc18cf0033691d31af68b3c181963e6"
+    },
+    {
+     "username": "genesis_47",
+     "publicKey": "0250d4b147c1076d60143034f7da966f2f8337a61086ed0c037c5c442de400e76d"
+    },
+    {
+     "username": "genesis_48",
+     "publicKey": "02b6e24ba40e9acf1dfed1d9c624698377c5b8b37c0fe040c09cd0cbe40a858e53"
+    },
+    {
+     "username": "genesis_49",
+     "publicKey": "02f6c0d4ebf4f35525527ebc70f9ad135a640a605b87037546c5eae409928d49fc"
+    },
+    {
+     "username": "genesis_50",
+     "publicKey": "023796828d1fce9226002e55287995722fb868231a593da0d3d6ddea566ca108ca"
+    },
+    {
+     "username": "genesis_51",
+     "publicKey": "034b9ecd4665a84672b9b30ab89f481801ed59fc296c9b2ed63df6cd3e67ed96f2"
+    },
+    {
+     "username": "genesis_52",
+     "publicKey": "032707afeaca2c3463be510de61df9c09f8b2f3c36f9d5109d2e3d49818db9a5ee"
+    },
+    {
+     "username": "genesis_53",
+     "publicKey": "025aa60d91d87e0c0eb3f4ce14e77558eeb90447abc65dda5f45ddb53a350a1943"
+    }
+   ],
+   "delegateCount": 10,
+   "underTest": true
+  }
+ ],
+ "corpora": {
+  "live-mixed-short": "archives/node1"
+ },
+ "faultWindowSeconds": 30,
+ "minimumDelegateReach": 27,
+ "backend": "netns",
+ "started": "2026-09-30T16:16:00.020Z",
+ "status": "complete",
+ "api": {
+  "left": "node5",
+  "right": "node3"
+ },
+ "finished": "2026-09-30T16:34:40.488Z",
+ "relayBinarySha256": "02cec34c888ea0756cc46c201933d3182c70348415a64f9cfb12804794d57659",
+ "worktreeCommit": "2d051352e1ef6b4ecda7581e7cebe61c25ff9471",
+ "worktreeClean": true
+}

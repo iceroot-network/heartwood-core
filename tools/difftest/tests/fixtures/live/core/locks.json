@@ -1,0 +1,73 @@
+{
+ "nodes": {
+  "node1": {
+   "corePid": 1512312,
+   "holders": {
+    "core.lock": [
+     1512312
+    ],
+    "relay.lock": [
+     1512312
+    ],
+    "forger.lock": [
+     1512312
+    ]
+   },
+   "children": 0,
+   "runFiles": [
+    "core.lock",
+    "core.pid",
+    "core.state.json",
+    "core.supervisor.lock",
+    "forger.lock",
+    "relay.lock"
+   ]
+  },
+  "node2": {
+   "corePid": 1512354,
+   "holders": {
+    "core.lock": [
+     1512354
+    ],
+    "relay.lock": [
+     1512354
+    ],
+    "forger.lock": [
+     1512354
+    ]
+   },
+   "children": 0,
+   "runFiles": [
+    "core.lock",
+    "core.pid",
+    "core.state.json",
+    "core.supervisor.lock",
+    "forger.lock",
+    "relay.lock"
+   ]
+  },
+  "node3": {
+   "corePid": 1512396,
+   "holders": {
+    "core.lock": [
+     1512396
+    ],
+    "relay.lock": [
+     1512396
+    ],
+    "forger.lock": [
+     1512396
+    ]
+   },
+   "children": 0,
+   "runFiles": [
+    "core.lock",
+    "core.pid",
+    "core.state.json",
+    "core.supervisor.lock",
+    "forger.lock",
+    "relay.lock"
+   ]
+  }
+ }
+}

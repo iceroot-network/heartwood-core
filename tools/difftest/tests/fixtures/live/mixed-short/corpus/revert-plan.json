@@ -1,0 +1,96 @@
+{
+  "format": "heartwood-revert-plan/1",
+  "seed": "17321554264239663671",
+  "roundLength": 53,
+  "tip": 106,
+  "steps": [
+    {
+      "after": 4,
+      "blocks": 1
+    },
+    {
+      "after": 12,
+      "blocks": 10
+    },
+    {
+      "after": 32,
+      "blocks": 30
+    },
+    {
+      "after": 48,
+      "blocks": 45
+    },
+    {
+      "after": 50,
+      "blocks": 36
+    },
+    {
+      "after": 53,
+      "blocks": 1
+    },
+    {
+      "after": 57,
+      "blocks": 23
+    },
+    {
+      "after": 64,
+      "blocks": 25
+    },
+    {
+      "after": 66,
+      "blocks": 44
+    },
+    {
+      "after": 71,
+      "blocks": 56
+    },
+    {
+      "after": 74,
+      "blocks": 47
+    },
+    {
+      "after": 76,
+      "blocks": 2
+    },
+    {
+      "after": 80,
+      "blocks": 11
+    },
+    {
+      "after": 82,
+      "blocks": 52
+    },
+    {
+      "after": 87,
+      "blocks": 20
+    },
+    {
+      "after": 88,
+      "blocks": 11
+    },
+    {
+      "after": 94,
+      "blocks": 1
+    },
+    {
+      "after": 95,
+      "blocks": 8
+    },
+    {
+      "after": 95,
+      "blocks": 31
+    },
+    {
+      "after": 96,
+      "blocks": 9
+    },
+    {
+      "after": 99,
+      "blocks": 12
+    },
+    {
+      "after": 106,
+      "blocks": 1
+    }
+  ]
+}

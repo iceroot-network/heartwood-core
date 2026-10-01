@@ -106,6 +106,14 @@ impl StatusServer {
             Signing::Signed(attestations) => (attestations, true, true),
             Signing::Unsigned => (Vec::new(), false, false),
         };
+        if attested {
+            let signed = AttestationStep::Signed {
+                attestations: attestations.len(),
+            };
+            self.attestation_step(signed, &current);
+        } else if !keep {
+            self.attestation_step(AttestationStep::ServedUnsigned, &current);
+        }
         let bytes = status::response(&current.state, &current.config, &attestations).encode();
         if keep {
             let (key, bytes) = (current.key, bytes.clone());
@@ -135,16 +143,13 @@ impl StatusServer {
         if *offered != Some(current.key) {
             *offered = Some(current.key);
             self.attestation.offer(current.text.clone());
+            self.attestation_step(AttestationStep::Offered, &current);
         }
         current
     }
 
     /// The attestation record's hook at `step` of the status `current`: the node's record in a
     /// harness build (`difftest`), nothing in any other build.
-    #[allow(
-        dead_code,
-        reason = "called at the attestation record's three points: an offer, the signatures' attachment and a status served unsigned"
-    )]
     fn attestation_step(&self, step: AttestationStep, current: &Current) {
         #[cfg(feature = "difftest")]
         self.node

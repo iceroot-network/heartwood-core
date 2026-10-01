@@ -626,6 +626,148 @@ async fn the_timer_offers_each_new_tip_slot_and_half_slot_flip_without_a_get_sta
     timer.await.unwrap();
 }
 
+// ---- the attestation record (a harness build) ---------------------------------------------------
+
+/// The attestation record's steps and their status hashes, in order.
+#[cfg(feature = "difftest")]
+fn steps_of(server: &Server) -> Vec<(String, i64)> {
+    use heartwood_p2p::node_services::AttestationStep;
+    let records = server.node.attestations.lock().unwrap();
+    let name = |step: AttestationStep| match step {
+        AttestationStep::Offered => "offered".to_owned(),
+        AttestationStep::Signed { attestations } => format!("signed {attestations}"),
+        AttestationStep::ServedUnsigned => "unsigned".to_owned(),
+    };
+    records.iter().map(|r| (name(r.step), r.at_ms)).collect()
+}
+
+#[cfg(feature = "difftest")]
+#[tokio::test(start_paused = true)]
+async fn the_record_has_an_offer_and_the_attachment_of_the_signatures() {
+    let server = Arc::new(tokio_server());
+    let forger_task = honest_forger(&server, 1);
+    sleep(Duration::from_millis(10)).await;
+    server.status.get_status().await.unwrap();
+    let steps = steps_of(&server);
+    let names: Vec<&str> = steps.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["offered", "signed 3"]);
+    // The record names the status the forger signed, and the slot the status is of.
+    let records = server.node.attestations.lock().unwrap().clone();
+    assert_eq!(records[0].status, records[1].status);
+    assert_eq!(records[0].status.len(), 64);
+    assert_eq!(records[1].slot, 125);
+    assert!(records[1].at_ms >= records[0].at_ms);
+    // A cached status is not recorded again.
+    server.status.get_status().await.unwrap();
+    assert_eq!(steps_of(&server).len(), 2);
+    forger_task.abort();
+}
+
+#[cfg(feature = "difftest")]
+#[tokio::test(start_paused = true)]
+async fn a_status_served_unsigned_after_the_wait_is_recorded_500_ms_after_its_offer() {
+    let server = Arc::new(tokio_server());
+    let quiet = {
+        let server = Arc::clone(&server);
+        tokio::spawn(async move {
+            server
+                .session
+                .status_to_sign(session(1), forger(), declared())
+                .await
+        })
+    };
+    sleep(Duration::from_millis(10)).await;
+    server.status.get_status().await.unwrap();
+    let steps = steps_of(&server);
+    let names: Vec<&str> = steps.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["offered", "unsigned"]);
+    assert_eq!(steps[1].1 - steps[0].1, 500);
+    // The second getStatus for the same status serves it unsigned without a wait: the offer is
+    // not repeated, and the unsigned status is recorded again (at once).
+    server.status.get_status().await.unwrap();
+    let names: Vec<String> = steps_of(&server)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(names, ["offered", "unsigned", "unsigned"]);
+    quiet.abort();
+}
+
+#[cfg(feature = "difftest")]
+#[tokio::test(start_paused = true)]
+async fn without_a_forger_only_the_offer_is_recorded() {
+    let server = tokio_server();
+    server.status.get_status().await.unwrap();
+    let names: Vec<String> = steps_of(&server)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(names, ["offered"]);
+}
+
+/// A build without the harness (a release build) records nothing at any of the three points: an
+/// offer with its signatures, and an offer served unsigned after the wait.
+#[cfg(not(feature = "difftest"))]
+#[tokio::test(start_paused = true)]
+async fn a_build_without_the_harness_records_no_attestation_step() {
+    let signed = Arc::new(tokio_server());
+    let forger_task = honest_forger(&signed, 1);
+    sleep(Duration::from_millis(10)).await;
+    let answer = served(&signed.status.get_status().await.unwrap());
+    assert_eq!(answer.public_keys.len(), 3);
+    forger_task.abort();
+    let unsigned = Arc::new(tokio_server());
+    let quiet = {
+        let server = Arc::clone(&unsigned);
+        tokio::spawn(async move {
+            server
+                .session
+                .status_to_sign(session(1), forger(), declared())
+                .await
+        })
+    };
+    sleep(Duration::from_millis(10)).await;
+    let answer = served(&unsigned.status.get_status().await.unwrap());
+    assert!(answer.public_keys.is_empty());
+    quiet.abort();
+    for server in [&signed, &unsigned] {
+        assert!(server.node.attestations.lock().unwrap().is_empty());
+    }
+}
+
+#[cfg(feature = "difftest")]
+#[tokio::test(start_paused = true)]
+async fn the_record_file_has_one_json_line_per_step() {
+    use heartwood_p2p::testing::attestation::AttestationRecordFile;
+    let dir = std::env::temp_dir().join(format!("heartwood-p2p-attest-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("attest-0000.jsonl");
+    let _ = std::fs::remove_file(&path);
+    let file = AttestationRecordFile::open(&path).unwrap();
+    let server = Arc::new(tokio_server());
+    let forger_task = honest_forger(&server, 1);
+    sleep(Duration::from_millis(10)).await;
+    server.status.get_status().await.unwrap();
+    for record in server.node.attestations.lock().unwrap().iter() {
+        file.write(record);
+    }
+    forger_task.abort();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let lines: Vec<Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["step"], "offered");
+    assert_eq!(lines[0]["attestations"], 0);
+    assert_eq!(lines[1]["step"], "signed");
+    assert_eq!(lines[1]["attestations"], 3);
+    assert_eq!(lines[1]["slot"], 125);
+    assert!(lines[1]["t"].as_str().unwrap().ends_with('Z'));
+    assert_eq!(lines[0]["status"], lines[1]["status"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 // ---- class V31: the served status -------------------------------------------------------------
 
 const CLASS: &str = "V31-server";

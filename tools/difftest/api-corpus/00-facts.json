@@ -30,7 +30,8 @@
    "recipient": "data.0.asset.transfers.0.recipientId",
    "transferHeight": "data.0.blockHeight",
    "transferBlock": "data.0.blockId"
-  }
+  },
+  "documented": "tieOrder"
  },
  {
   "name": "facts/vote",
@@ -39,7 +40,8 @@
   "bind": {
    "voter": "data.0.sender",
    "voteTx": "data.0.id"
-  }
+  },
+  "documented": "tieOrder"
  },
  {
   "name": "facts/burn",
@@ -48,7 +50,8 @@
   "bind": {
    "burnAmount": "data.0.amount",
    "burner": "data.0.sender"
-  }
+  },
+  "documented": "tieOrder"
  },
  {
   "name": "facts/registration",

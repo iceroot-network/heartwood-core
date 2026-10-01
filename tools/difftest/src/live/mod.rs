@@ -110,6 +110,9 @@ pub const MIXED_RUNS: [&str; 4] = ["w0", "w", "p", "s"];
 /// The forging runs: the mixed forging network's (`mixed-short`, `mixed`, `mixed-split`), the
 /// churn run and the core run.
 pub const FORGING_RUNS: [&str; 5] = ["mixed-short", "mixed", "mixed-split", "churn", "core"];
+/// The mixed forging network's runs: reference and Heartwood nodes forging one chain. Their
+/// partitions and heals are judged like those of the mixed runs, against the run's control node.
+pub const MIXED_FORGING_RUNS: [&str; 3] = ["mixed-short", "mixed", "mixed-split"];
 
 /// What a live check reads besides the run directory.
 pub struct LiveOptions<'a> {
@@ -312,7 +315,9 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
         results: Vec::new(),
     };
     let mut windows = run::windows(run_dir, manifest.window_seconds)?;
-    if MIXED_RUNS.contains(&manifest.run.as_str()) {
+    if MIXED_RUNS.contains(&manifest.run.as_str())
+        || MIXED_FORGING_RUNS.contains(&manifest.run.as_str())
+    {
         windows.extend(run::minority_window(&manifest, &run::steps(run_dir)?));
     }
     // The route corpus first: whether its judge is built in this tree decides how a failed
@@ -712,6 +717,16 @@ fn reconnect_heal(step: &run::Step, heal: Option<i64>) -> Option<i64> {
         .or(heal)
 }
 
+/// The control node's height and tip a reconnect `step` records: `controlHeight` and `controlTip`
+/// (the mixed forging runs, whose control node is not always node 1), else node 1's.
+fn control_tips(step: &run::Step) -> (Option<u64>, Option<String>) {
+    (
+        step.number("controlHeight")
+            .or_else(|| step.number("node1Height")),
+        step.text("controlTip").or_else(|| step.text("node1Tip")),
+    )
+}
+
 /// Why the recipe's reconnect `step` (`reconnect-<node>`) is outside its rule, or `None` when it is
 /// inside: 60 s or more after the heal ([`reconnect_heal`]), while the node was 10 or more blocks
 /// behind node 1 on another tip. The step records both tips (`height`, `tip`, `node1Height`,
@@ -726,11 +741,12 @@ fn reconnect_outside_the_rule(step: &run::Step, heal: Option<i64>) -> Option<Str
             start - heal
         ));
     }
+    let (control, control_tip) = control_tips(step);
     let tips = (
         step.number("height"),
         step.text("tip"),
-        step.number("node1Height"),
-        step.text("node1Tip"),
+        control,
+        control_tip,
     );
     match tips {
         (Some(height), Some(tip), Some(control), Some(control_tip))
@@ -758,7 +774,9 @@ fn check_reconnect(manifest: &Manifest, steps: &[run::Step], cases: &mut Cases) 
         return;
     }
     let restarted = steps.iter().any(|s| s.name == "reconnect-minority");
-    if MIXED_RUNS.contains(&manifest.run.as_str()) {
+    if MIXED_RUNS.contains(&manifest.run.as_str())
+        || MIXED_FORGING_RUNS.contains(&manifest.run.as_str())
+    {
         let heal = (steps.iter())
             .find(|s| s.name == "heal")
             .and_then(|s| s.start);
@@ -789,7 +807,7 @@ fn check_reconnect(manifest: &Manifest, steps: &[run::Step], cases: &mut Cases) 
             }
             let after =
                 (s.start.unwrap_or_default() - reconnect_heal(s, heal).unwrap_or_default()) / 1_000;
-            let behind = match (s.number("node1Height"), s.number("height")) {
+            let behind = match (control_tips(s).0, s.number("height")) {
                 (Some(control), Some(height)) => format!(
                     ", {} blocks behind node 1 on its own tip",
                     control.saturating_sub(height)
@@ -1591,6 +1609,53 @@ mod tests {
             start: Some((1_000 + seconds) * 1_000),
             record,
         }
+    }
+
+    #[test]
+    fn a_mixed_forging_reconnect_is_judged_against_the_control_node() {
+        let judged = |steps: &[Step]| {
+            let mut m = manifest(Implementation::Heartwood, false);
+            m.run = "mixed-split".into();
+            m.nodes.push(Node {
+                name: "node5".into(),
+                ip: String::new(),
+                implementation: Implementation::Reference,
+                forger: false,
+                under_test: false,
+            });
+            let mut cases = Cases {
+                run: "mixed-split".into(),
+                results: Vec::new(),
+            };
+            check_reconnect(&m, steps, &mut cases);
+            cases.results
+        };
+        let heal = step_after_the_heal("heal", "all", 0, json!({"step": "heal"}));
+        let record = |control: u64| {
+            json!({"step": "reconnect-node5", "height": 99, "tip": "b",
+                   "controlHeight": control, "controlTip": "a"})
+        };
+        let inside = judged(&[
+            heal.clone(),
+            step_after_the_heal("reconnect-node5", "node5", 65, record(140)),
+            step("converged"),
+        ]);
+        assert!(
+            inside.iter().all(|r| !r.outcome.is_failure())
+                && inside.iter().any(|r| r.label.contains("41 blocks behind")),
+            "{inside:?}"
+        );
+        // A node 5 nine blocks behind the control node was not behind enough to be reconnected.
+        let near = judged(&[
+            heal,
+            step_after_the_heal("reconnect-node5", "node5", 65, record(108)),
+            step("converged"),
+        ]);
+        assert!(
+            near.iter()
+                .any(|r| r.outcome.is_failure() && r.label.contains("node5")),
+            "{near:?}"
+        );
     }
 
     #[test]

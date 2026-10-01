@@ -1,0 +1,18 @@
+{
+    "name": "devnet",
+    "messagePrefix": "Solar devnet message:\n",
+    "addressCharacter": "d",
+    "bip32": {
+        "public": 70617039,
+        "private": 70615956
+    },
+    "pubKeyHash": 90,
+    "nethash": "706e8544c290a0eea0c1dc1e32c07484842c28a6805cce603cfe5d3492a829ef",
+    "wif": 252,
+    "slip44": 1,
+    "client": {
+        "token": "dROOT",
+        "symbol": "dRT",
+        "explorer": ""
+    }
+}

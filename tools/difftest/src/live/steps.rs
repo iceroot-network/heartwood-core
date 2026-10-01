@@ -91,6 +91,9 @@ pub fn required(run: &str) -> Vec<String> {
             "converged",
             "conflict-outcome",
         ],
+        "mixed-short" | "mixed" | "mixed-split" => &["api-pool", "api-rate-limit"],
+        "core" => &["locks", "relay-start-refused", "stop"],
+        "churn" => &["final-status", "api-pool", "api-corpus-node6"],
         _ => &[],
     };
     // The steps of a mixed run, with their planned rounds, are the schedule's.
@@ -124,7 +127,21 @@ pub fn problems(run: &str, steps: &[Step]) -> Vec<String> {
     let mut out = Vec::new();
     if !matches!(
         run,
-        "r" | "h" | "m1" | "m2" | "t" | "m" | "f" | "w0" | "w" | "p" | "s"
+        "r" | "h"
+            | "m1"
+            | "m2"
+            | "t"
+            | "m"
+            | "f"
+            | "w0"
+            | "w"
+            | "p"
+            | "s"
+            | "mixed-short"
+            | "mixed"
+            | "mixed-split"
+            | "churn"
+            | "core"
     ) {
         out.push(format!("unknown live run {run}"));
     }
@@ -667,6 +684,21 @@ mod tests {
         assert!(!required("s").contains(&"archive".to_owned()));
         assert!(required("s").contains(&"archive-node4".to_owned()));
         assert!(required("w").contains(&"archive".to_owned()));
+        // The mixed forging runs: the control node's archive is `archive`, and each has its own
+        // steps beside the common ones.
+        for run in ["mixed-short", "mixed", "mixed-split"] {
+            let all: Vec<Step> = required(run).iter().map(|n| step(n, true)).collect();
+            assert!(
+                problems(run, &all).is_empty(),
+                "{run}: {:?}",
+                problems(run, &all)
+            );
+            assert!(required(run).contains(&"archive".to_owned()));
+            assert!(required(run).contains(&"batch-heartwood".to_owned()));
+        }
+        assert!(required("mixed").contains(&"kill-forger-node5".to_owned()));
+        assert!(required("mixed-split").contains(&"archive-minority".to_owned()));
+        assert!(!required("mixed-short").contains(&"partition".to_owned()));
     }
 
     #[test]
