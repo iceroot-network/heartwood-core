@@ -265,4 +265,10 @@ pub enum DevnetError {
     /// A devnet command or flag that is not built yet.
     #[error("{0} is not built yet")]
     NotBuilt(&'static str),
+    /// `devnet run` found no scenario runner: the harness is not installed.
+    #[error(
+        "{0} is neither next to this binary nor on PATH; the scenario runner belongs to the test \
+         harness, which is not installed"
+    )]
+    RunnerMissing(&'static str),
 }

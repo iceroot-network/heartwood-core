@@ -1,0 +1,23 @@
+{
+  "id": "reorg-reverts-votes",
+  "title": "A fork across a round end takes back votes and the branch forges them again",
+  "levels": ["L2"],
+  "network": "devnet",
+  "genesisSeed": "scenario-fixture-seed",
+  "actors": {"alice": {"seed": 1}, "bob": {"seed": 2}},
+  "steps": [
+    {"name": "fund", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [{"ref": "fund", "type": "transfer", "from": "genesis",
+              "to": [["alice", "1000000000000"], ["bob", "1000000000000"]]}],
+     "check": {"accept": ["fund"]}},
+    {"name": "early vote", "at": {"height": 10}, "do": "submit", "node": 1, "via": "api",
+     "txs": [{"ref": "early", "type": "vote", "from": "bob", "asset": {"votes": [["genesis_3", 100]]}}],
+     "check": {"accept": ["early"]}},
+    {"name": "vote before the round end", "at": {"height": 50}, "do": "submit", "node": 1, "via": "api",
+     "txs": [{"ref": "late", "type": "vote", "from": "alice", "asset": {"votes": [["genesis_5", 100]]}}],
+     "check": {"accept": ["late"]}},
+    {"name": "past the round end", "at": {"height": 56}, "do": "fork", "blocks": 6, "branch": "next-forging-order",
+     "check": {"invariant": ["revertSymmetry"]}},
+    {"name": "after the branch", "at": {"afterBlocks": 3}, "check": {"forged": ["early", "late"], "digest": true}}
+  ]
+}
