@@ -379,10 +379,13 @@ fn total(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
             *passes.entry(x.at).or_default() += x.rss;
         }
     }
-    let label = "the five nodes' resident memory together (highest pass outside a full pool)";
+    let label = format!(
+        "{} resident memory together (highest pass outside a full pool)",
+        the_nodes(i)
+    );
     match passes.iter().max_by_key(|(_, sum)| **sum) {
         Some((at, sum)) => vec![finding(
-            label.into(),
+            label,
             *sum <= FIVE_NODES,
             format!(
                 "{} at {} ({}), budget {}",
@@ -392,7 +395,24 @@ fn total(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
                 mb(FIVE_NODES)
             ),
         )],
-        None => vec![missing(label.into(), "no sample".into())],
+        None => vec![missing(label, "no sample".into())],
+    }
+}
+
+/// The nodes the five-node budgets sum, named by their count for a finding's label: "the five
+/// nodes'" in a run of five validators' nodes, "the three nodes'" in a run of three.
+fn the_nodes(i: &Inputs<'_>) -> String {
+    const WORDS: [&str; 10] = [
+        "no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    ];
+    let n = i.five.len();
+    let count = WORDS
+        .get(n)
+        .map_or_else(|| n.to_string(), |w| (*w).to_owned());
+    if n == 1 {
+        format!("the {count} node's")
+    } else {
+        format!("the {count} nodes'")
     }
 }
 
@@ -417,10 +437,10 @@ fn cpu(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
         }
         quiet_ms = quiet_ms.max(span);
     }
-    let label = "the five nodes' CPU time in quiet windows (of one core)";
+    let label = format!("{} CPU time in quiet windows (of one core)", the_nodes(i));
     if quiet_ms < MIN_QUIET_MS {
         return vec![missing(
-            label.into(),
+            label,
             format!(
                 "only {} s of quiet samples, at least 60 s are needed",
                 quiet_ms / 1_000
@@ -430,7 +450,7 @@ fn cpu(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
     // Tenths of a percent: cpu_ms / quiet_ms * 100.
     let tenths = u128::from(cpu_ms) * 1_000 / u128::try_from(quiet_ms).unwrap_or(1);
     vec![finding(
-        label.into(),
+        label,
         tenths <= u128::from(QUIET_CPU_PERCENT) * 10,
         format!(
             "{}.{} % over {} s of quiet windows, budget {QUIET_CPU_PERCENT} %",
@@ -487,7 +507,10 @@ fn per_day(bytes: u64, span_ms: i64) -> u64 {
 /// chain runs on its own; and each node's writes over the whole run, the restarts and the full pool
 /// included, recorded beside it.
 fn disk(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
-    let label = "the five nodes' disk writes in a day (extrapolated from the quiet windows)";
+    let label = format!(
+        "{} disk writes in a day (extrapolated from the quiet windows)",
+        the_nodes(i)
+    );
     let mut out = Vec::new();
     let (mut day, mut short, mut top) = (0_u64, Vec::new(), None::<(u64, String)>);
     let (mut relays, mut forgers) = (0_u64, 0_u64);
@@ -509,7 +532,7 @@ fn disk(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
     }
     if !short.is_empty() || top.is_none() {
         out.push(missing(
-            label.into(),
+            label,
             format!(
                 "too few quiet samples, at least 60 s a series are needed: {}",
                 if short.is_empty() {
@@ -527,7 +550,7 @@ fn disk(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
             .map(|(_, b)| *b)
             .sum();
         out.push(finding(
-            label.into(),
+            label,
             day <= DISK_PER_DAY,
             format!(
                 "{} a day (the relays' processes {}, the forgers' {}; the most {} at {}), budget {}; the log files hold {} in all",
@@ -850,9 +873,9 @@ mod tests {
             ]
         };
         let ok = run_findings(&two(240 * MB), None, &[]);
-        assert!(find(&ok, "the five nodes' resident memory").ok());
+        assert!(find(&ok, "the two nodes' resident memory").ok());
         let over = run_findings(&two(260 * MB), None, &[]);
-        let f = find(&over, "the five nodes' resident memory");
+        let f = find(&over, "the two nodes' resident memory");
         assert!(!f.ok());
         assert!(f.detail.contains("520.0 MB"), "{}", f.detail);
     }
@@ -900,7 +923,7 @@ mod tests {
             series("node2", Role::Relay, steady(2)),
         ];
         let found = run_findings(&all, None, &[]);
-        let f = find(&found, "the five nodes' disk writes in a day");
+        let f = find(&found, "the two nodes' disk writes in a day");
         assert!(!f.ok(), "{f:?}");
         assert!(f.detail.contains("119.9 MB a day"), "{}", f.detail);
     }
@@ -921,7 +944,7 @@ mod tests {
         let pool = Some((T0 + 10 * 10_000, T0 + 20 * 10_000));
         let all = [series("node1", Role::Relay, samples)];
         let found = run_findings(&all, pool, &[]);
-        let f = find(&found, "the five nodes' disk writes in a day");
+        let f = find(&found, "the two nodes' disk writes in a day");
         assert!(f.ok(), "{f:?}");
         assert!(f.detail.contains("8.6 MB a day"), "{}", f.detail);
         // The whole run's figure, full pool included, is recorded, not judged.
@@ -950,7 +973,7 @@ mod tests {
         let s = series("node1", Role::Relay, samples);
         assert_eq!(written(&s), 500_000 + 500_000 + 100_000 - 100_000);
         let found = run_findings(&[s], None, &[]);
-        let f = find(&found, "the five nodes' disk writes");
+        let f = find(&found, "the two nodes' disk writes");
         assert!(!f.ok());
         assert!(f.detail.contains("864.0 MB a day"), "{}", f.detail);
         // A quiet node: 100 kB in a long enough run is under 100 MB a day.
@@ -958,7 +981,7 @@ mod tests {
             .map(|n| sample(n, 1, MB, 0, 50 * n as u64))
             .collect();
         let found = run_findings(&[series("node1", Role::Relay, quiet)], None, &[]);
-        let f = find(&found, "the five nodes' disk writes");
+        let f = find(&found, "the two nodes' disk writes");
         assert!(f.ok(), "{f:?}");
     }
 

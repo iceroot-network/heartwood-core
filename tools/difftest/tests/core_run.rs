@@ -186,7 +186,7 @@ fn a_recorded_run_passes_every_section_and_records_its_resources() {
         "every step in its planned round and order",
         "a resource series for core node1",
         "recorded: core node1 resident memory outside a full pool (95th percentile)",
-        "recorded: the five nodes' CPU time in quiet windows",
+        "recorded: the three nodes' CPU time in quiet windows",
         "recorded: node3 disk writes over the whole run",
     ] {
         assert!(has(&all, needle), "{needle}\n{all:#?}");
@@ -196,7 +196,7 @@ fn a_recorded_run_passes_every_section_and_records_its_resources() {
     assert!(
         has(
             &all,
-            "recorded: the five nodes' disk writes in a day (extrapolated from the quiet windows)"
+            "recorded: the three nodes' disk writes in a day (extrapolated from the quiet windows)"
         ) && has(&all, "(over the budget)"),
         "{all:#?}"
     );
