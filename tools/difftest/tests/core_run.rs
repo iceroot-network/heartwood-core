@@ -188,6 +188,8 @@ fn a_recorded_run_passes_every_section_and_records_its_resources() {
         "recorded: core node1 resident memory outside a full pool (95th percentile)",
         "recorded: the three nodes' CPU time in quiet windows",
         "recorded: node3 disk writes over the whole run",
+        // The proxy reads the core log's block lines, which are at the info level.
+        "recorded: node1: the network-state proxy, the first answer counting all 53 delegates after the node took a tip: ",
     ] {
         assert!(has(&all, needle), "{needle}\n{all:#?}");
     }

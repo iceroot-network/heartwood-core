@@ -2,9 +2,9 @@
 //! (an offer, its signatures' attachment, each status served unsigned after the wait; written by a
 //! harness build), the wait from an offer to its signatures and the unsigned statuses served, per
 //! relay and round (a round with none says so), beside the network-state proxy: for each tip the
-//! relay received (its log's receipt of the block at that height), the first answer of its
-//! network-state record at that height that counted every delegate of the round, timed from the
-//! receipt. A line that is not a record, or a record of a step that is not one of the three,
+//! node took (the first line of its relay's or core's file log that names a new block at that
+//! height, received or forged), the first answer of its network-state record at that height that
+//! counted every delegate of the round, timed from that line. A line that is not a record, or a record of a step that is not one of the three,
 //! fails: the record is evidence, and a gap in it is a fault of the run's recording.
 
 use std::collections::BTreeMap;
@@ -12,7 +12,8 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use super::forging::{self, Answer, Receipt};
+use super::forging::{self, Answer};
+use super::nodes;
 use super::run::{self, Implementation};
 use super::{Cases, ForgingRun};
 use crate::errors::{Error, Result};
@@ -114,22 +115,61 @@ fn unsigned_by_round(lines: &[Line], round_slots: i64) -> BTreeMap<i64, usize> {
     out
 }
 
-/// The network-state proxy of one relay: for each height it received a block at (its first
-/// receipt), the first answer at that height counting all `delegates` (with or without quorum)
-/// after the receipt, as milliseconds after it (minimum, median and maximum), over the tips that
-/// had one. A forger asks only when its delegates' slots come, so most tips have none.
-fn proxy(receipts: &[&Receipt], answers: &[&Answer], delegates: u64) -> String {
-    let mut tips: BTreeMap<u64, i64> = BTreeMap::new();
-    for r in receipts {
-        let at = tips.entry(r.height).or_insert(r.at);
-        *at = (*at).min(r.at);
+/// The height of a log line that names a new block the node took: `Received new block forged by
+/// delegate NAME (#R) at height H` (a block from a peer, or from its own forger through the relay)
+/// or `Delegate NAME forged a new block at height H` (a core node's own forger), at the line's
+/// time (`[YYYY-MM-DD HH:MM:SS.fff]`, UTC).
+fn tip_line(line: &str) -> Option<(u64, i64)> {
+    if !(line.contains("Received new block forged by delegate ")
+        || line.contains(" forged a new block at height "))
+    {
+        return None;
     }
+    let height = line
+        .split(" at height ")
+        .nth(1)?
+        .split(' ')
+        .next()?
+        .replace(',', "")
+        .parse()
+        .ok()?;
+    let stamp = line.strip_prefix('[')?.split(']').next()?;
+    Some((height, run::parse_time(&format!("{stamp}Z"))?))
+}
+
+/// When the node took each height: the earliest line of its relay's or core's file logs (rotated
+/// files included) that names a new block at it.
+fn tips(node_dir: &Path) -> BTreeMap<u64, i64> {
+    let mut out: BTreeMap<u64, i64> = BTreeMap::new();
+    let Ok(entries) = std::fs::read_dir(node_dir.join("log")) else {
+        return out;
+    };
+    for path in entries.filter_map(|e| e.ok().map(|e| e.path())) {
+        let wanted = path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+            (n.contains("-relay-") || n.contains("-core-")) && nodes::is_file_log(n)
+        });
+        let Some(text) = wanted.then(|| nodes::log_text(&path).ok()).flatten() else {
+            continue;
+        };
+        for (height, at) in text.lines().filter_map(tip_line) {
+            let first = out.entry(height).or_insert(at);
+            *first = (*first).min(at);
+        }
+    }
+    out
+}
+
+/// The network-state proxy of one node: for each height it took (`tips`), the first answer at that
+/// height counting all `delegates` (with or without quorum) after it, as milliseconds after it
+/// (minimum, median and maximum), over the tips that had one. A forger asks only when its
+/// delegates' slots come, so most tips have none.
+fn proxy(tips: &BTreeMap<u64, i64>, answers: &[&Answer], delegates: u64) -> String {
     if tips.is_empty() {
-        return "no receipt of a block in the relay's log".to_owned();
+        return "no line of a new block in the node's file logs".to_owned();
     }
     let mut delays: Vec<i64> = Vec::new();
     let mut without = 0_usize;
-    for (height, received) in &tips {
+    for (height, received) in tips {
         let first = answers
             .iter()
             .filter(|a| {
@@ -147,12 +187,12 @@ fn proxy(receipts: &[&Receipt], answers: &[&Answer], delegates: u64) -> String {
     delays.sort_unstable();
     let delay = match (delays.first(), delays.get(delays.len() / 2), delays.last()) {
         (Some(min), Some(median), Some(max)) => {
-            format!("{min} / {median} / {max} ms after the receipt (min / median / max)")
+            format!("{min} / {median} / {max} ms after it (min / median / max)")
         }
         _ => "no answer counting them all".to_owned(),
     };
     format!(
-        "the network-state proxy, the first answer counting all {delegates} delegates after the relay received a tip: {delay}, at {} of the {} tips it received (the others had no such answer at their height)",
+        "the network-state proxy, the first answer counting all {delegates} delegates after the node took a tip: {delay}, at {} of the {} tips it took (the others had no such answer at their height)",
         tips.len() - without,
         tips.len()
     )
@@ -176,9 +216,8 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
         );
         return Ok(());
     }
-    // The proxy is recorded beside the record: a relay without answers or receipts says so.
+    // The proxy is recorded beside the record: a node without answers or tips says so.
     let (answers, _) = forging::answers(run.run_dir, m)?;
-    let (receipts, _) = forging::receipts(run.run_dir, m);
     for n in relays {
         let dir = run.run_dir.join("nodes").join(&n.name).join("difftest");
         let (lines, problems) = match read(&dir) {
@@ -221,15 +260,14 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
                 summary(&lines)
             ),
         );
-        let mine = |relay: &str| relay == n.name;
-        let receipts: Vec<&Receipt> = receipts.iter().filter(|r| mine(&r.relay)).collect();
-        let answers: Vec<&Answer> = answers.iter().filter(|a| mine(&a.relay)).collect();
+        let answers: Vec<&Answer> = answers.iter().filter(|a| a.relay == n.name).collect();
+        let tips = tips(&run.run_dir.join("nodes").join(&n.name));
         cases.record(
             SECTION,
             format!(
                 "{}: {}",
                 n.name,
-                proxy(&receipts, &answers, u64::from(m.round_length))
+                proxy(&tips, &answers, u64::from(m.round_length))
             ),
         );
     }
@@ -265,17 +303,6 @@ mod tests {
         );
     }
 
-    fn receipt(at: i64, height: u64) -> Receipt {
-        Receipt {
-            relay: "node1".to_owned(),
-            at,
-            username: "genesis_1".to_owned(),
-            height,
-            id: String::new(),
-            from: "127.0.0.1".to_owned(),
-        }
-    }
-
     fn answer(at: i64, height: u64, has: u64, no: u64) -> Answer {
         Answer {
             relay: "node1".to_owned(),
@@ -290,10 +317,34 @@ mod tests {
     }
 
     #[test]
+    fn a_tip_is_read_from_a_received_or_a_forged_block_line_at_either_level() {
+        assert_eq!(
+            tip_line(
+                "[1970-01-01 00:00:01.250] INFO: Received new block forged by delegate genesis_48 (#16) at height 2 with 1.9 dRT reward"
+            ),
+            Some((2, 1_250))
+        );
+        assert_eq!(
+            tip_line(
+                "[1970-01-01 00:00:02.000] INFO: Delegate genesis_15 forged a new block at height 1,006 with 0 transactions"
+            ),
+            Some((1_006, 2_000))
+        );
+        assert_eq!(
+            tip_line("[1970-01-01 00:00:02.000] DEBUG: The id of the new block is ab"),
+            None
+        );
+        assert_eq!(
+            tip_line("Received new block forged by delegate x (#1) at height 3"),
+            None
+        );
+    }
+
+    #[test]
     fn the_proxy_times_the_first_full_count_after_each_tip() {
-        let receipts = [receipt(1_000, 2), receipt(9_000, 3), receipt(9_500, 3)];
+        let tips: BTreeMap<u64, i64> = [(2, 1_000), (3, 9_000)].into_iter().collect();
         let answers = [
-            // Before the receipt, a partial count, another height: none of them is the answer.
+            // Before the tip, a partial count, another height: none of them is the answer.
             answer(900, 2, 53, 0),
             answer(1_100, 2, 40, 0),
             answer(1_200, 3, 53, 0),
@@ -301,25 +352,23 @@ mod tests {
             answer(1_800, 2, 53, 0),
             answer(9_700, 3, 53, 0),
         ];
-        let r: Vec<&Receipt> = receipts.iter().collect();
         let a: Vec<&Answer> = answers.iter().collect();
         assert!(
-            proxy(&r, &a, 53).ends_with(
-                "after the relay received a tip: 300 / 700 / 700 ms after the receipt (min / median / max), at 2 of the 2 tips it received (the others had no such answer at their height)"
+            proxy(&tips, &a, 53).ends_with(
+                "after the node took a tip: 300 / 700 / 700 ms after it (min / median / max), at 2 of the 2 tips it took (the others had no such answer at their height)"
             ),
             "{}",
-            proxy(&r, &a, 53)
+            proxy(&tips, &a, 53)
         );
-        let late = [receipt(1_000, 2), receipt(9_000, 4)];
-        let r: Vec<&Receipt> = late.iter().collect();
+        let late: BTreeMap<u64, i64> = [(2, 1_000), (4, 9_000)].into_iter().collect();
         assert!(
-            proxy(&r, &a, 53).contains("at 1 of the 2 tips it received"),
+            proxy(&late, &a, 53).contains("at 1 of the 2 tips it took"),
             "{}",
-            proxy(&r, &a, 53)
+            proxy(&late, &a, 53)
         );
         assert_eq!(
-            proxy(&[], &a, 53),
-            "no receipt of a block in the relay's log"
+            proxy(&BTreeMap::new(), &a, 53),
+            "no line of a new block in the node's file logs"
         );
     }
 
