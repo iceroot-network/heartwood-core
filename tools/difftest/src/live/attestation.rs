@@ -116,8 +116,8 @@ fn unsigned_by_round(lines: &[Line], round_slots: i64) -> BTreeMap<i64, usize> {
 
 /// The network-state proxy of one relay: for each height it received a block at (its first
 /// receipt), the first answer at that height counting all `delegates` (with or without quorum)
-/// after the receipt, as milliseconds after it (minimum, median and maximum), and the tips with no
-/// such answer.
+/// after the receipt, as milliseconds after it (minimum, median and maximum), over the tips that
+/// had one. A forger asks only when its delegates' slots come, so most tips have none.
 fn proxy(receipts: &[&Receipt], answers: &[&Answer], delegates: u64) -> String {
     let mut tips: BTreeMap<u64, i64> = BTreeMap::new();
     for r in receipts {
@@ -152,7 +152,8 @@ fn proxy(receipts: &[&Receipt], answers: &[&Answer], delegates: u64) -> String {
         _ => "no answer counting them all".to_owned(),
     };
     format!(
-        "the network-state proxy, the first answer counting all {delegates} delegates after each tip the relay received: {delay} over {} tips, {without} without one",
+        "the network-state proxy, the first answer counting all {delegates} delegates after the relay received a tip: {delay}, at {} of the {} tips it received (the others had no such answer at their height)",
+        tips.len() - without,
         tips.len()
     )
 }
@@ -304,14 +305,18 @@ mod tests {
         let a: Vec<&Answer> = answers.iter().collect();
         assert!(
             proxy(&r, &a, 53).ends_with(
-                "after each tip the relay received: 300 / 700 / 700 ms after the receipt (min / median / max) over 2 tips, 0 without one"
+                "after the relay received a tip: 300 / 700 / 700 ms after the receipt (min / median / max), at 2 of the 2 tips it received (the others had no such answer at their height)"
             ),
             "{}",
             proxy(&r, &a, 53)
         );
         let late = [receipt(1_000, 2), receipt(9_000, 4)];
         let r: Vec<&Receipt> = late.iter().collect();
-        assert!(proxy(&r, &a, 53).ends_with("over 2 tips, 1 without one"));
+        assert!(
+            proxy(&r, &a, 53).contains("at 1 of the 2 tips it received"),
+            "{}",
+            proxy(&r, &a, 53)
+        );
         assert_eq!(
             proxy(&[], &a, 53),
             "no receipt of a block in the relay's log"
