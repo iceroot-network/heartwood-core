@@ -1,8 +1,10 @@
 //! The git questions the path rule asks, through the `git` command in a chosen tree.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use super::build;
 use crate::errors::{Error, Result};
 
 /// A working tree, addressed by its root.
@@ -107,6 +109,26 @@ impl Repo {
         Ok(files)
     }
 
+    /// The file `path` at commit `rev`, if it has one.
+    pub fn show(&self, rev: &str, path: &str) -> Result<Option<String>> {
+        let spec = format!("{rev}:{path}");
+        let output = self.run(&["show", &spec])?;
+        Ok(output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).into_owned()))
+    }
+
+    /// The names of the directories under `dir` at commit `rev`.
+    pub fn dirs(&self, rev: &str, dir: &str) -> Result<Vec<String>> {
+        let tree = format!("{rev}:{dir}");
+        let output = self.run(&["ls-tree", "-d", "--name-only", &tree])?;
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect())
+    }
+
     fn diff(&self, from: &str, to: &str, specs: &[String]) -> Result<Vec<String>> {
         let mut args = vec!["diff", "--name-only", "-z", from, to, "--"];
         args.extend(specs.iter().map(String::as_str));
@@ -130,7 +152,8 @@ pub enum Validity {
     Unknown,
     /// Its head is not an ancestor of the final head.
     NotAncestor,
-    /// One of its paths changed since; the changed files (the first few).
+    /// One of its paths or build inputs changed since; the changed files (the first few), or
+    /// what changed in a build input.
     Stale(Vec<String>),
 }
 
@@ -214,10 +237,66 @@ impl PathRule {
             return Ok(Validity::NotAncestor);
         }
         let changed = self.repo.changed(entry_head, &self.head, paths)?;
-        Ok(if changed.is_empty() {
+        if !changed.is_empty() {
+            return Ok(Validity::Stale(changed));
+        }
+        let built = self.build_changes(entry_head, paths)?;
+        Ok(if built.is_empty() {
             Validity::Valid
         } else {
-            Validity::Stale(changed)
+            Validity::Stale(built)
         })
+    }
+
+    /// What changed between `from` and the final head in the build inputs of `paths` (none to
+    /// look at when the paths are the whole tree, which holds them): the tested crates' manifests,
+    /// the fuzz targets' lockfile, and what of the workspace's manifest and lockfile reaches them
+    /// ([`build`]).
+    fn build_changes(&self, from: &str, paths: &[String]) -> Result<Vec<String>> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let packages = self.repo.dirs(&self.head, "packages")?;
+        let dirs = build::crate_dirs(paths, &packages);
+        let mut out = Vec::new();
+        let mut roots = BTreeSet::new();
+        for dir in &dirs {
+            let manifest = format!("{dir}/Cargo.toml");
+            let (before, after) = (
+                self.repo.show(from, &manifest)?,
+                self.repo.show(&self.head, &manifest)?,
+            );
+            if build::manifest_changed(before.as_deref(), after.as_deref()) {
+                out.push(format!("{manifest} (its build)"));
+            }
+            if dir != "fuzz" {
+                roots.extend(after.as_deref().and_then(build::package_name));
+            }
+        }
+        if dirs.iter().any(|d| d == "fuzz") {
+            let lock = [build::FUZZ_LOCK.to_owned()];
+            out.extend(self.repo.changed(from, &self.head, &lock)?);
+        }
+        if !roots.is_empty() {
+            let workspace = build::WORKSPACE.map(str::to_owned);
+            if !self.repo.changed(from, &self.head, &workspace)?.is_empty() {
+                let read = |rev: &str, file: &str| -> Result<String> {
+                    Ok(self.repo.show(rev, file)?.unwrap_or_default())
+                };
+                let before = (read(from, "Cargo.toml")?, read(from, "Cargo.lock")?);
+                let after = (
+                    read(&self.head, "Cargo.toml")?,
+                    read(&self.head, "Cargo.lock")?,
+                );
+                out.extend(build::workspace_changes(
+                    &build::Workspace {
+                        before: (&before.0, &before.1),
+                        after: (&after.0, &after.1),
+                    },
+                    &roots,
+                ));
+            }
+        }
+        Ok(out)
     }
 }

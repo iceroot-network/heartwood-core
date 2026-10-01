@@ -5,6 +5,7 @@
 //! ledger and the criteria file), `gate coverage` (the coverage rows' records) and `gate register`
 //! (every register entry's trigger, test and hits).
 
+mod build;
 pub mod coverage;
 pub mod criteria;
 pub mod flags;
