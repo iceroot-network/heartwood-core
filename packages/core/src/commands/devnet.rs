@@ -227,11 +227,9 @@ fn prefix(text: &str) -> Result<[u8; 3], String> {
     prefix.ok_or_else(|| format!("{text:?} is not an address prefix such as 127.0.0"))
 }
 
-/// `devnet run`: the runner's exit status, or 1 with the error printed.
+/// `devnet run`: the runner replaces this process; 1 with the error printed when it cannot.
 fn run_scenario(dir: &Path, run: &Run) -> Result<ExitCode, DevnetError> {
-    let status = devnet::run(dir, &run.file, &run.args)?;
-    let code = status.code().and_then(|code| u8::try_from(code).ok());
-    Ok(ExitCode::from(code.unwrap_or(1)))
+    match devnet::run(dir, &run.file, &run.args)? {}
 }
 
 /// `status --json --resources`' figures: each running process tree by its `node<k>/<role>`

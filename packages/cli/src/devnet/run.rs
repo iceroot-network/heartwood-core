@@ -4,9 +4,11 @@
 //! `<runner> scenario run --backend heartwood --devnet-root <root> FILE ARGS` by an explicit argv
 //! (never through a shell); without the harness installed it says so.
 
+use std::convert::Infallible;
 use std::ffi::{OsStr, OsString};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::Command;
 
 use crate::errors::DevnetError;
 
@@ -42,15 +44,16 @@ pub fn command(runner: &Path, root: &Path, scenario: &Path, args: &[OsString]) -
     command
 }
 
-/// Run the scenario `scenario` on the devnet in `root`, with the runner's own `args`; the
-/// runner's exit status.
-pub fn run(root: &Path, scenario: &Path, args: &[OsString]) -> Result<ExitStatus, DevnetError> {
+/// Run the scenario `scenario` on the devnet in `root`, with the runner's own `args`: the runner
+/// replaces this process, so its exit status is the command's and a signal to the command reaches
+/// it. It returns only the error when the runner cannot be found or started.
+pub fn run(root: &Path, scenario: &Path, args: &[OsString]) -> Result<Infallible, DevnetError> {
     let exe = std::env::current_exe().ok();
     let list = std::env::var_os("PATH").unwrap_or_default();
     let runner = locate(exe.as_deref().and_then(Path::parent), &list)?;
-    let io = |error: std::io::Error| DevnetError::Io {
-        path: runner.clone(),
+    let error = command(&runner, root, scenario, args).exec();
+    Err(DevnetError::Io {
+        path: runner,
         message: error.to_string(),
-    };
-    command(&runner, root, scenario, args).status().map_err(io)
+    })
 }
