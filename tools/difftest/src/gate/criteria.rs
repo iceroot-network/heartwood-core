@@ -44,6 +44,19 @@ pub struct Criteria {
     /// The scope audit's document, when the criteria check one.
     #[serde(default)]
     pub scope: Option<ScopeSpec>,
+    /// The file of explained failures, relative to the criteria file (made absolute when the file
+    /// loads): each failed record a person explained with a cause outside the tree's code and its
+    /// evidence, which one repeat of the run may then supersede. Without it, no failure is
+    /// superseded.
+    #[serde(default)]
+    pub explanations: Option<String>,
+    /// The explained failures the file lists, by the failed record's file name (read when the
+    /// criteria load).
+    #[serde(skip)]
+    pub explained: BTreeMap<String, Explained>,
+    /// The devnet tooling the records of live runs may have been made with.
+    #[serde(default)]
+    pub tooling: ToolingSpec,
     /// The names the repository and the records use, by kind (runs, suites, implementations,
     /// make targets, code names), each mapped onto the name the plans and the register give it.
     /// For people reading the table; the gate itself reads the names in the needs.
@@ -95,12 +108,25 @@ pub enum Need {
         /// Text every counted record's variables or command must contain.
         #[serde(default)]
         contains: Vec<String>,
+        /// Variables a counted record's command line must not set (`SUITE`, for a comparison of
+        /// every suite of a seed).
+        #[serde(default)]
+        without: Vec<String>,
         /// How many records are needed (1 when left out).
         #[serde(default = "one")]
         min: u32,
-        /// Count records with the same variables once (independent runs).
+        /// Count independent runs, not records: records that name the same values of the
+        /// variables of `distinct_by` are one run.
         #[serde(default)]
         distinct: bool,
+        /// The variables that name a run (`SEED`, `NAME`, ...), which a distinct need counts by
+        /// and a failed run is matched by; a record that does not set one of them counts toward
+        /// no distinct need.
+        #[serde(default, rename = "distinctBy")]
+        distinct_by: Vec<String>,
+        /// The scenario (its file's id) a counted record must have run or compared, with a pass.
+        #[serde(default)]
+        scenario: Option<String>,
     },
     /// Ledger sums of L1 properties (every property when `ids` is left out).
     Properties {
@@ -171,13 +197,13 @@ pub struct Row {
     pub needs: Vec<Need>,
 }
 
-/// One of the 24 rows of the coverage plan.
+/// One coverage row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CoverageRow {
     /// The row's number.
     pub row: u32,
-    /// The brief item.
+    /// What the row covers.
     pub item: String,
     /// The needs of each level the row lists, by level name (`L0`, `L1`, `L2`, `L3`, `L4`,
     /// `fuzz`).
@@ -188,7 +214,7 @@ pub struct CoverageRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Scenario {
-    /// Its id (`S-01`).
+    /// Its id, as the criteria file names the scenario.
     pub id: String,
     /// Its title.
     pub title: String,
@@ -297,6 +323,54 @@ pub enum RunClass {
     Shows,
 }
 
+/// One explained failure of the explanations file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Explained {
+    /// The failed record's file name.
+    pub record: String,
+    /// The cause, outside the tree's code (a host stall, a tooling fault).
+    pub cause: String,
+    /// Where the cause shows.
+    pub evidence: String,
+}
+
+/// The explanations file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExplanationsFile {
+    format: String,
+    failures: Vec<Explained>,
+}
+
+/// The format of the explanations file.
+pub const EXPLANATIONS_FORMAT: &str = "heartwood-s1-explanations/1";
+
+/// The devnet tooling a record of a live run may name.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ToolingSpec {
+    /// The accepted SHA-256 of each tooling file, by its path under the tooling's root: a record
+    /// made with another version of a listed file does not count.
+    #[serde(default)]
+    pub accepted: BTreeMap<String, Vec<String>>,
+    /// The records that must name their tooling: a record of one of these that names none does
+    /// not count.
+    #[serde(default)]
+    pub required: Vec<RecordSelector>,
+}
+
+/// A kind of record: its make target and text its variables or command contain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecordSelector {
+    /// The make target.
+    pub target: String,
+    /// Text the record's variables or command must contain (all of it).
+    #[serde(default)]
+    pub contains: Vec<String>,
+}
+
 /// The scope audit's document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -320,9 +394,38 @@ impl Criteria {
             message,
         })?;
         let mut criteria = criteria;
+        let base = path.parent().unwrap_or_else(|| Path::new("."));
         if let Some(scope) = criteria.scope.as_mut() {
-            let base = path.parent().unwrap_or_else(|| Path::new("."));
             scope.file = base.join(&scope.file).to_string_lossy().into_owned();
+        }
+        if let Some(file) = criteria.explanations.as_mut() {
+            let at = base.join(&*file);
+            *file = at.to_string_lossy().into_owned();
+            let text = std::fs::read_to_string(&at).map_err(|e| Error::io(&at, e))?;
+            let read: ExplanationsFile =
+                serde_json::from_str(&text).map_err(|e| Error::Corpus {
+                    path: at.clone(),
+                    message: e.to_string(),
+                })?;
+            let bad = |message: String| Error::Corpus {
+                path: at.clone(),
+                message,
+            };
+            if read.format != EXPLANATIONS_FORMAT {
+                let found = read.format;
+                return Err(bad(format!(
+                    "the format {found:?} is not {EXPLANATIONS_FORMAT}"
+                )));
+            }
+            for failure in read.failures {
+                if failure.cause.trim().is_empty() || failure.evidence.trim().is_empty() {
+                    let record = &failure.record;
+                    return Err(bad(format!(
+                        "{record}: a cause and its evidence are needed"
+                    )));
+                }
+                criteria.explained.insert(failure.record.clone(), failure);
+            }
         }
         Ok(criteria)
     }
@@ -377,6 +480,17 @@ impl Criteria {
                     if let Some(id) = ids.iter().find(|id| !self.targets.contains_key(*id)) {
                         return Err(format!("a need names the unknown target {id:?}"));
                     }
+                }
+                Need::Record {
+                    target,
+                    distinct: true,
+                    distinct_by,
+                    ..
+                } if distinct_by.is_empty() => {
+                    return Err(format!(
+                        "a distinct need of {target} names no variable a run is known by \
+                         (distinctBy)"
+                    ));
                 }
                 _ => {}
             }

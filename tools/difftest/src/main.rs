@@ -361,11 +361,13 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
         Command::ScenarioRun(args) => {
             let report = heartwood_difftest::scenario::run_command(&args)?;
             print!("{report}");
+            print!("{}", heartwood_difftest::scenario::verdict_lines(&report));
             Ok(verdict(&report, strict))
         }
         Command::ScenarioCompare { dir, suite } => {
             let report = heartwood_difftest::scenario::compare(&dir, suite.as_deref())?;
             print!("{report}");
+            print!("{}", heartwood_difftest::scenario::verdict_lines(&report));
             Ok(verdict(&report, strict))
         }
         Command::Gate(args) => heartwood_difftest::gate::run(&args, strict),

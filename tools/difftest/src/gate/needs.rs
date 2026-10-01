@@ -2,7 +2,7 @@
 //! the ledger, and the verdict on each.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::criteria::{Criteria, Need, Scenario};
 use super::git::Validity;
@@ -26,6 +26,99 @@ pub(super) fn mentions(record: &GateRecord, term: &str) -> bool {
 
 /// The place of a number in a term's pattern.
 const NUMBER: &str = "{n}";
+
+/// The variables a record's command line set, by name: its `KEY=value` words. A value with spaces
+/// is cut at its first space, as make keeps it, which no run's identity needs.
+pub(super) fn assignments(variables: &str) -> BTreeMap<&str, &str> {
+    let name = |key: &str| {
+        !key.is_empty()
+            && key
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+    };
+    variables
+        .split_whitespace()
+        .filter_map(|word| word.split_once('='))
+        .filter(|(key, _)| name(key))
+        .collect()
+}
+
+/// The variables that say how this machine ran a command, not which run it was: the recorder's,
+/// the loopback block's, the oracle's and the toolchain's, the tree's places and strictness (a
+/// need asks for `--strict` in the command itself).
+const INCIDENTAL: [&str; 17] = [
+    "DEVNET_PREFIX",
+    "HEARTWOOD_DEVNET_PREFIX",
+    "HEARTWOOD_TEST_LOOPBACK",
+    "IMAGE",
+    "ORACLE_ARGS",
+    "STRICT",
+    "TOOLCHAIN_ENV",
+    "SOLAR_REPO",
+    "LOCAL_SOLAR",
+    "LEDGER_DIR",
+    "S1_CRITERIA",
+    "FORGING_RESULTS",
+    "DIFFTEST",
+    "DIFFTEST_DOCKER",
+    "GATED",
+    "REPLACE",
+    "CARGO_BUILD_JOBS",
+];
+
+/// The run a record is of. With `keys`, the values its command line gave them, in their order
+/// (none when one of them is not set: such a record names no run); without, every variable of
+/// its command line that is not incidental, in name order, so that the order of the words and
+/// the machine's own settings do not make two runs of one.
+pub(super) fn identity(record: &GateRecord, keys: &[String]) -> Option<String> {
+    let set = assignments(&record.variables);
+    if keys.is_empty() {
+        let kept: Vec<String> = set
+            .iter()
+            .filter(|(key, value)| {
+                !value.is_empty() && !key.starts_with("GATE_") && !INCIDENTAL.contains(key)
+            })
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect();
+        return Some(kept.join(" "));
+    }
+    let mut named = Vec::new();
+    for key in keys {
+        let value = set.get(key.as_str()).filter(|value| !value.is_empty())?;
+        named.push(format!("{key}={value}"));
+    }
+    Some(named.join(" "))
+}
+
+/// Whether a record's command line set `variable` to a value.
+fn sets(record: &GateRecord, variable: &str) -> bool {
+    assignments(&record.variables)
+        .get(variable)
+        .is_some_and(|value| !value.is_empty())
+}
+
+/// The verdict a record gives scenario `id` (a scenario file's id; a comparison names it after
+/// its suite, `suite/id`), when the record ran or compared it.
+fn scenario_verdict<'r>(record: &'r GateRecord, id: &str) -> Option<&'r str> {
+    let suffix = format!("/{id}");
+    record
+        .scenarios
+        .iter()
+        .find(|(name, _)| *name == id || name.ends_with(&suffix))
+        .map(|(_, verdict)| verdict.as_str())
+}
+
+/// What a record need asks of the records.
+#[derive(Debug, Clone, Copy)]
+struct Asked<'n> {
+    target: &'n str,
+    contains: &'n [String],
+    without: &'n [String],
+    min: u32,
+    distinct: bool,
+    distinct_by: &'n [String],
+    scenario: Option<&'n str>,
+}
 
 /// Whether `word` is `pattern` with each `{n}` replaced by one or more digits.
 fn matches_pattern(word: &str, pattern: &str) -> bool {
@@ -98,7 +191,14 @@ pub struct Judge<'a> {
     evidence: &'a Evidence,
     totals: Totals,
     rows: RefCell<BTreeMap<String, Option<RowVerdict>>>,
+    /// The rows that are pending on nothing but what a person shows.
+    persons: RefCell<BTreeSet<String>>,
+    /// The final gate: what a row waits on is due, so missing evidence fails it.
+    last: bool,
 }
+
+/// The start of a manual need's detail.
+const BY_A_PERSON: &str = "to be shown by a person: ";
 
 impl<'a> Judge<'a> {
     /// A judge over `evidence`.
@@ -108,7 +208,15 @@ impl<'a> Judge<'a> {
             evidence,
             totals: totals::totals(criteria, evidence),
             rows: RefCell::default(),
+            persons: RefCell::default(),
+            last: false,
         }
+    }
+
+    /// The same judge for the final gate, when `last`: a row's missing evidence fails it,
+    /// whatever the row waits on.
+    pub fn at_the_end(self, last: bool) -> Judge<'a> {
+        Judge { last, ..self }
     }
 
     /// The ledger's sums this judge reads.
@@ -142,14 +250,35 @@ impl<'a> Judge<'a> {
         let status = match worst {
             Status::Pass => RowStatus::Pass,
             Status::Pending => RowStatus::Pending,
-            Status::Missing if row.waits.is_some() => RowStatus::Pending,
+            Status::Missing if row.waits.is_some() && !self.last => RowStatus::Pending,
             Status::Missing | Status::Fail => RowStatus::Fail,
         };
+        if status == RowStatus::Pending && self.only_a_person_left(&needs) {
+            self.persons.borrow_mut().insert(id.to_owned());
+        }
         let verdict = RowVerdict { status, needs };
         self.rows
             .borrow_mut()
             .insert(id.to_owned(), Some(verdict.clone()));
         verdict
+    }
+
+    /// Whether every need of `needs` that is not met is one a person shows, or a row that waits
+    /// only on a person.
+    fn only_a_person_left(&self, needs: &[Verdict]) -> bool {
+        let persons = self.persons.borrow();
+        needs.iter().filter(|v| v.status != Status::Pass).all(|v| {
+            v.detail.starts_with(BY_A_PERSON)
+                || (v.status == Status::Pending
+                    && v.detail
+                        .strip_prefix("row ")
+                        .is_some_and(|id| persons.contains(id)))
+        })
+    }
+
+    /// Whether row `id`, judged already, is pending on nothing but what a person shows.
+    pub fn waits_only_on_a_person(&self, id: &str) -> bool {
+        self.persons.borrow().contains(id)
     }
 
     /// The verdicts of a list of needs, expanded.
@@ -163,9 +292,20 @@ impl<'a> Judge<'a> {
             Need::Record {
                 target,
                 contains,
+                without,
                 min,
                 distinct,
-            } => vec![self.record(target, contains, *min, *distinct)],
+                distinct_by,
+                scenario,
+            } => vec![self.record(&Asked {
+                target,
+                contains,
+                without,
+                min: *min,
+                distinct: *distinct,
+                distinct_by,
+                scenario: scenario.as_deref(),
+            })],
             Need::Properties { ids, cases, runs } => vec![self.properties(ids, *cases, *runs)],
             Need::Fuzz { ids, hours } => vec![self.fuzz(ids, *hours)],
             Need::Rows { ids } => ids
@@ -198,7 +338,7 @@ impl<'a> Judge<'a> {
             Need::Scope => vec![self.scope()],
             Need::Manual { what } => vec![Verdict {
                 status: Status::Pending,
-                detail: format!("to be shown by a person: {what}"),
+                detail: format!("{BY_A_PERSON}{what}"),
             }],
         }
     }
@@ -278,58 +418,127 @@ impl<'a> Judge<'a> {
         }
     }
 
-    fn record(&self, target: &str, contains: &[String], min: u32, distinct: bool) -> Verdict {
-        let label = if contains.is_empty() {
-            target.to_owned()
+    fn record(&self, asked: &Asked<'_>) -> Verdict {
+        let mut label = if asked.contains.is_empty() {
+            asked.target.to_owned()
         } else {
-            format!("{target} [{}]", contains.join(" "))
+            format!("{} [{}]", asked.target, asked.contains.join(" "))
+        };
+        if !asked.without.is_empty() {
+            label.push_str(&format!(" without {}", asked.without.join(", ")));
+        }
+        if let Some(id) = asked.scenario {
+            label.push_str(&format!(" scenario {id}"));
+        }
+        // A scenario's need reads the records that ran or compared that scenario, and its verdict
+        // there; any other need, the record's own result.
+        let verdict_of = |i: &Item<GateRecord>| -> Option<GateResult> {
+            match asked.scenario {
+                None => Some(i.value.result),
+                Some(id) => match scenario_verdict(&i.value, id)? {
+                    "pass" => Some(GateResult::Pass),
+                    "fail" => Some(GateResult::Fail),
+                    _ => None,
+                },
+            }
         };
         let matching: Vec<&Item<GateRecord>> = self
             .evidence
             .records
             .iter()
-            .filter(|i| i.value.target == target)
-            .filter(|i| contains.iter().all(|c| mentions(&i.value, c)))
-            .collect();
-        let mut counted: Vec<&Item<GateRecord>> = matching
-            .iter()
-            .copied()
-            .filter(|i| i.validity.counts() && i.value.result == GateResult::Pass)
-            .collect();
-        if distinct {
-            let mut seen = std::collections::BTreeSet::new();
-            counted.retain(|i| seen.insert(i.value.variables.clone()));
-        }
-        // A failed record blocks, however many others passed, unless a later record with the
-        // same variables passed: a failed run never counts and is not outweighed.
-        let blocking: Vec<&&Item<GateRecord>> = matching
-            .iter()
-            .filter(|i| i.validity.counts() && i.value.result == GateResult::Fail)
-            .filter(|failed| {
-                !matching.iter().any(|ok| {
-                    ok.validity.counts()
-                        && ok.value.result == GateResult::Pass
-                        && ok.value.variables == failed.value.variables
-                        && ok.value.started > failed.value.started
-                })
+            .filter(|i| i.value.target == asked.target)
+            .filter(|i| asked.contains.iter().all(|c| mentions(&i.value, c)))
+            .filter(|i| !asked.without.iter().any(|v| sets(&i.value, v)))
+            .filter(|i| {
+                asked
+                    .scenario
+                    .is_none_or(|id| scenario_verdict(&i.value, id).is_some())
             })
             .collect();
-        if let Some(first) = blocking.first() {
+        let valid = |result: GateResult| {
+            matching
+                .iter()
+                .copied()
+                .filter(move |i| i.validity.counts() && verdict_of(i) == Some(result))
+        };
+        // Failed runs, grouped by the run they are of. A failed run never counts. One that a
+        // person explained with a cause outside the tree's code may be repeated once: a later
+        // passing record of the same run supersedes it. An unexplained failure, a run that failed
+        // twice, and an explained one not yet repeated block the need.
+        let run_of = |i: &Item<GateRecord>| {
+            identity(&i.value, asked.distinct_by)
+                .or_else(|| identity(&i.value, &[]))
+                .unwrap_or_default()
+        };
+        let mut failures: BTreeMap<String, Vec<&Item<GateRecord>>> = BTreeMap::new();
+        for failed in valid(GateResult::Fail) {
+            failures.entry(run_of(failed)).or_default().push(failed);
+        }
+        let (mut blocking, mut superseded) = (Vec::new(), Vec::new());
+        for (run, failed) in &failures {
+            let [only] = failed.as_slice() else {
+                blocking.extend(failed.iter().map(|f| (*f, "the run failed more than once")));
+                continue;
+            };
+            let name = only
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned());
+            let explained = name.and_then(|n| self.criteria.explained.get(&n));
+            let repeated = valid(GateResult::Pass)
+                .any(|ok| run_of(ok) == *run && ok.value.started > only.value.started);
+            match (explained, repeated) {
+                (None, _) => blocking.push((*only, "no explanation")),
+                (Some(_), false) => blocking.push((*only, "explained, not repeated yet")),
+                (Some(why), true) => superseded.push((*only, why)),
+            }
+        }
+        if let Some((first, why)) = blocking.first() {
             return Verdict {
                 status: Status::Fail,
                 detail: format!(
-                    "{label}: {} failed record{}, such as {}",
+                    "{label}: {} failed record{}, such as {} ({why})",
                     blocking.len(),
                     plural(blocking.len()),
                     first.path.display()
                 ),
             };
         }
+        let mut counted: Vec<&Item<GateRecord>> = valid(GateResult::Pass).collect();
+        let mut unnamed = 0usize;
+        if asked.distinct {
+            let mut seen = BTreeSet::new();
+            counted.retain(|i| match identity(&i.value, asked.distinct_by) {
+                Some(run) => seen.insert(run),
+                None => {
+                    unnamed += 1;
+                    false
+                }
+            });
+        }
+        let mut notes = String::new();
+        if unnamed > 0 {
+            notes.push_str(&format!(
+                "; {unnamed} record{} without {} not counted",
+                plural(unnamed),
+                asked.distinct_by.join(" and ")
+            ));
+        }
+        if let Some((first, why)) = superseded.first() {
+            notes.push_str(&format!(
+                "; {} explained failure{} repeated, such as {} ({})",
+                superseded.len(),
+                plural(superseded.len()),
+                first.path.display(),
+                why.cause
+            ));
+        }
         let have = counted.len();
-        if have >= min as usize {
+        let what = if asked.distinct { "run" } else { "record" };
+        if have >= asked.min as usize {
             return Verdict {
                 status: Status::Pass,
-                detail: format!("{label}: {have} passing record{}", plural(have)),
+                detail: format!("{label}: {have} passing {what}{}{notes}", plural(have)),
             };
         }
         let stale: Vec<&&Item<GateRecord>> =
@@ -338,9 +547,7 @@ impl<'a> Judge<'a> {
             // A record that went stale is no longer evidence, but it is no failure: the need is
             // missing again. One from a dirty tree or from outside this history is a fault, and
             // the detail names it first.
-            let fault = stale
-                .iter()
-                .find(|i| !matches!(i.validity, Validity::Stale(_)));
+            let fault = stale.iter().find(|i| !i.validity.is_superseded());
             let only_stale = fault.is_none();
             let first = fault.unwrap_or(first);
             return Verdict {
@@ -350,7 +557,8 @@ impl<'a> Judge<'a> {
                     Status::Fail
                 },
                 detail: format!(
-                    "{label}: {have} of {min} counted; {} record{} no longer count, such as {} ({})",
+                    "{label}: {have} of {} counted; {} record{} no longer count, such as {} ({}){notes}",
+                    asked.min,
                     stale.len(),
                     plural(stale.len()),
                     first.path.display(),
@@ -360,7 +568,7 @@ impl<'a> Judge<'a> {
         }
         Verdict {
             status: Status::Missing,
-            detail: format!("{label}: {have} of {min} passing records"),
+            detail: format!("{label}: {have} of {} passing {what}s{notes}", asked.min),
         }
     }
 
@@ -533,6 +741,23 @@ mod tests {
         assert!(!mentions(&short, "RUN=mixed"));
         assert!(!mentions(&short, "SEED=30"));
         assert!(mentions(&short, "--run mixed-short"));
+    }
+
+    #[test]
+    fn a_run_is_named_by_its_variables_in_any_order_without_the_machine_s_settings() {
+        let one = record("SEED=1 RUN=mixed-short", "x");
+        let other = record(
+            "IMAGE=img DEVNET_PREFIX=127.3.0 GATE_X=y RUN=mixed-short SEED=1",
+            "x",
+        );
+        assert_eq!(identity(&one, &[]), identity(&other, &[]));
+        assert_eq!(identity(&one, &[]).unwrap(), "RUN=mixed-short SEED=1");
+        let by_seed = ["SEED".to_owned()];
+        assert_eq!(identity(&other, &by_seed).unwrap(), "SEED=1");
+        assert_eq!(identity(&record("RUN=mixed-short", "x"), &by_seed), None);
+        assert_eq!(identity(&record("SEED= RUN=x", "x"), &by_seed), None);
+        assert!(sets(&record("SUITE=network SEED=1", "x"), "SUITE"));
+        assert!(!sets(&record("SUITE= SEED=1", "x"), "SUITE"));
     }
 
     #[test]

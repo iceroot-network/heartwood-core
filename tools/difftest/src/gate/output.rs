@@ -5,7 +5,8 @@
 //! ...` with one `    n  <reason>` line per difference, `S skipped ...` and `M records have no
 //! Rust implementation yet`. Each reason under a documented-differences line is mapped back to
 //! its code name ([`super::names`]); a reason without one is counted as
-//! [`super::names::UNNAMED`] and the reason, so that no documented difference goes uncounted.
+//! [`super::names::UNNAMED`] and the reason, so that no documented difference goes uncounted. A
+//! scenario run or comparison also prints `scenario <id>: <verdict>` for each scenario.
 
 use std::collections::BTreeMap;
 
@@ -19,6 +20,8 @@ pub struct Parsed {
     pub counts: Option<Counts>,
     /// The documented differences met, by code name.
     pub hits: BTreeMap<String, u64>,
+    /// Each scenario's verdict, by id, when the command named them.
+    pub scenarios: BTreeMap<String, String>,
 }
 
 /// Read the output of a gate command.
@@ -26,8 +29,13 @@ pub fn parse(text: &str) -> Parsed {
     let mut counts = Counts::default();
     let mut seen = false;
     let mut hits: BTreeMap<String, u64> = BTreeMap::new();
+    let mut scenarios = BTreeMap::new();
     let mut documented = false;
     for line in text.lines() {
+        if let Some((id, verdict)) = scenario_line(line) {
+            scenarios.insert(id.to_owned(), verdict.to_owned());
+            continue;
+        }
         if documented {
             if let Some((n, reason)) = reason_line(line) {
                 let name = names::name_of_reason(reason)
@@ -62,7 +70,17 @@ pub fn parse(text: &str) -> Parsed {
     Parsed {
         counts: seen.then_some(counts),
         hits,
+        scenarios,
     }
+}
+
+/// `scenario <id>: <verdict>`, a scenario's verdict as the scenario commands print it.
+fn scenario_line(line: &str) -> Option<(&str, &str)> {
+    let (id, verdict) = line
+        .strip_prefix(crate::scenario::VERDICT_PREFIX)?
+        .split_once(": ")?;
+    let id_ok = !id.is_empty() && !id.contains(char::is_whitespace);
+    (id_ok && ["pass", "fail", "skipped"].contains(&verdict)).then_some((id, verdict))
 }
 
 /// The number that starts `line` (after spaces) when what follows it starts with `rest`.
@@ -168,6 +186,18 @@ mod tests {
         assert_eq!(parsed.hits.len(), 1, "{:?}", parsed.hits);
         assert_eq!(parsed.hits["unnamed: a reason no variant has"], 3);
         assert_eq!(parsed.counts.map(|c| c.skipped), Some(2));
+    }
+
+    #[test]
+    fn a_scenario_s_verdict_line_is_kept_by_its_id() {
+        let text = "scenarios at L2: 4 records in 2 files\n  4 compared: 4 passed, 0 failed\n\
+                    scenario burns: pass\nscenario transactions/double-spend: fail\n\
+                    scenario odd verdict: maybe\n";
+        let parsed = parse(text);
+        assert_eq!(parsed.scenarios.len(), 2, "{:?}", parsed.scenarios);
+        assert_eq!(parsed.scenarios["burns"], "pass");
+        assert_eq!(parsed.scenarios["transactions/double-spend"], "fail");
+        assert_eq!(parsed.counts.map(|c| c.compared), Some(4));
     }
 
     #[test]

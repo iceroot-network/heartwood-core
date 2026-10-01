@@ -155,12 +155,21 @@ pub enum Validity {
     /// One of its paths or build inputs changed since; the changed files (the first few), or
     /// what changed in a build input.
     Stale(Vec<String>),
+    /// It was made with a version of the devnet tooling the criteria do not accept, or names
+    /// none where the criteria require it; why.
+    Tooling(String),
 }
 
 impl Validity {
     /// Whether the entry counts.
     pub fn counts(&self) -> bool {
         matches!(self, Validity::Valid)
+    }
+
+    /// Whether the entry no longer counts for a reason that is no fault of its run (its tree or
+    /// its tooling moved on since): stale, or made with tooling the criteria no longer accept.
+    pub fn is_superseded(&self) -> bool {
+        matches!(self, Validity::Stale(_) | Validity::Tooling(_))
     }
 
     /// One phrase for a table.
@@ -179,6 +188,7 @@ impl Validity {
                     format!("stale: {} and {more} more changed", shown.join(", "))
                 }
             }
+            Validity::Tooling(why) => format!("tooling: {why}"),
         }
     }
 }

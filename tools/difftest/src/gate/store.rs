@@ -8,6 +8,7 @@ use serde::de::DeserializeOwned;
 use super::criteria::Criteria;
 use super::git::{PathRule, Repo, Validity};
 use super::ledger::{LEDGER_FORMAT, LedgerEntry, LedgerKind};
+use super::needs::mentions;
 use super::record::{GateRecord, RECORD_FORMAT};
 use crate::errors::{Error, Result};
 
@@ -58,7 +59,12 @@ impl Evidence {
         )?;
         let mut records = Vec::new();
         for (path, value) in load_all::<GateRecord>(&sources.records, RECORD_FORMAT)? {
-            let validity = rule.check(&value.head, value.dirty, &value.tested_paths)?;
+            let mut validity = rule.check(&value.head, value.dirty, &value.tested_paths)?;
+            if validity.counts()
+                && let Some(why) = tooling_problem(criteria, &value)
+            {
+                validity = Validity::Tooling(why);
+            }
             records.push(Item {
                 path,
                 value,
@@ -81,6 +87,28 @@ impl Evidence {
             entries,
         })
     }
+}
+
+/// Why a record does not count for the devnet tooling it was made with, when it does not: a
+/// version of a tooling file the criteria do not accept, or no tooling named where the criteria
+/// require it.
+fn tooling_problem(criteria: &Criteria, record: &GateRecord) -> Option<String> {
+    for (path, sums) in &record.tooling {
+        let Some(accepted) = criteria.tooling.accepted.get(path) else {
+            continue;
+        };
+        if let Some(sum) = sums.iter().find(|sum| !accepted.contains(sum)) {
+            let short: String = sum.chars().take(12).collect();
+            return Some(format!(
+                "made with {path} {short}, which the criteria do not accept"
+            ));
+        }
+    }
+    let required = criteria.tooling.required.iter().any(|selector| {
+        selector.target == record.target && selector.contains.iter().all(|c| mentions(record, c))
+    });
+    (required && record.tooling.is_empty())
+        .then(|| "names none of the devnet tooling its runs were made with".to_owned())
 }
 
 /// The paths an entry's run tested: its property's or target's in the criteria (the whole tree

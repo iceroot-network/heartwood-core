@@ -19,6 +19,7 @@ pub mod record;
 pub mod run_chain;
 pub mod runner;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::errors::{Error, Result};
@@ -27,6 +28,44 @@ use crate::report::{CaseResult, Outcome, Report};
 
 pub use backend::{Backend, BackendError, Submitted, Tip};
 pub use format::{Compiled, CompiledTx, Level, Scenario};
+
+/// The start of the line the scenario commands print for each scenario's verdict, after their
+/// report: `scenario <id>: pass|fail|skipped`, which a gate record keeps.
+pub const VERDICT_PREFIX: &str = "scenario ";
+
+/// Each scenario's verdict in `report`, by the scenario its cases name (a case's `file`: the
+/// scenario's id in a run, `suite/id` in a comparison): `fail` when one of its cases failed,
+/// `skipped` when one was not compared, else `pass`.
+pub fn verdicts(report: &Report) -> BTreeMap<String, &'static str> {
+    let rank = |verdict: &str| match verdict {
+        "fail" => 2,
+        "skipped" => 1,
+        _ => 0,
+    };
+    let mut out: BTreeMap<String, &'static str> = BTreeMap::new();
+    for case in &report.results {
+        let verdict = if case.outcome.is_failure() {
+            "fail"
+        } else if matches!(case.outcome, Outcome::Skipped(_) | Outcome::NoSubject) {
+            "skipped"
+        } else {
+            "pass"
+        };
+        let held = out.entry(case.file.clone()).or_insert("pass");
+        if rank(verdict) > rank(held) {
+            *held = verdict;
+        }
+    }
+    out
+}
+
+/// The lines of [`verdicts`], as the scenario commands print them after their report.
+pub fn verdict_lines(report: &Report) -> String {
+    verdicts(report)
+        .into_iter()
+        .map(|(id, verdict)| format!("{VERDICT_PREFIX}{id}: {verdict}\n"))
+        .collect()
+}
 
 /// The backends the runner offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,8 +1,9 @@
 //! The cumulative ledger: one entry per long run, an L1 property's cases or a fuzz target's time,
-//! on any machine, since the first milestone (the earlier milestones' runs back-filled from their
-//! results documents). The baseline record sums them per property (cases and independently seeded runs)
-//! and per target (CPU hours, seconds times forks), each entry counting at the final head by the
-//! gate records' path rule.
+//! on any machine, the earlier runs' counts entered by hand from the documents that recorded
+//! them. The baseline record sums them per property (cases and independently seeded runs) and per
+//! target (CPU hours, seconds times forks), each entry counting at the final head by the gate
+//! records' path rule. A failed run never counts and fails its property or target; a run that a
+//! signal stopped before it judged its cases counts for none of them and fails nothing.
 //!
 //! ```json
 //! {"format": "heartwood-ledger-entry/1", "kind": "property", "id": "P21", "cases": 1000000,
@@ -68,8 +69,11 @@ pub struct LedgerEntry {
     /// How often it reached each result its reach check counts (P13's and P19's).
     #[serde(default)]
     pub reach: BTreeMap<String, u64>,
-    /// Where the entry comes from: a gate record, or the results document it was back-filled
-    /// from.
+    /// Whether a signal ended the run before it judged its cases (no case failed): it counts for
+    /// none of its cases or time, and it is no failed run.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stopped: bool,
+    /// Where the entry comes from: a gate record, or the document its counts were entered from.
     pub source: String,
 }
 

@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use super::criteria::Criteria;
 use super::flags::Flags;
 use super::ledger::{LEDGER_FORMAT, LedgerEntry, LedgerKind};
-use super::record::GateResult;
+use super::make_record::stopped;
+use super::record::{GateRecord, GateResult};
 use super::store::{self, Evidence, Item, Sources};
 use crate::errors::{Error, Result};
 
@@ -30,6 +31,11 @@ pub struct PropertyTotal {
     pub failed: Vec<String>,
     /// Valid, passing runs left out for a reach below the criteria's.
     pub unreached: Vec<String>,
+    /// Runs a signal ended before they judged their cases: counted for none of them.
+    pub stopped: Vec<String>,
+    /// Passing runs whose record shows they were not strict or skipped cases: counted for none
+    /// of their cases.
+    pub lenient: Vec<String>,
     /// Runs that no longer count, with the reason.
     pub stale: Vec<String>,
 }
@@ -45,6 +51,8 @@ pub struct TargetTotal {
     pub counted: usize,
     /// Valid runs that failed (a crash, timeout or out-of-memory stop).
     pub failed: Vec<String>,
+    /// Runs a signal ended before their time was up: counted for none of it.
+    pub stopped: Vec<String>,
     /// Runs that no longer count, with the reason.
     pub stale: Vec<String>,
 }
@@ -83,6 +91,55 @@ fn describe(entry: &LedgerEntry) -> String {
     format!("{} {what} at {head} on {}", entry.id, entry.machine)
 }
 
+/// How an entry counts, beside its validity: from the entry, and from its gate record when the
+/// evidence holds it (an entry written before the ledger kept these marks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Standing {
+    /// It counts, if its reach does.
+    Counted,
+    /// It failed: it fails its property or target.
+    Failed,
+    /// A signal ended it before it judged its cases.
+    Stopped,
+    /// It passed, but its cases were not all compared.
+    Lenient,
+}
+
+/// The gate record an entry names as its source, when the evidence holds it.
+fn record_of<'e>(evidence: &'e Evidence, entry: &LedgerEntry) -> Option<&'e GateRecord> {
+    let name = entry.source.strip_prefix("gate record ")?;
+    evidence
+        .records
+        .iter()
+        .find(|i| {
+            i.value.started == entry.started
+                && i.path
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy() == name)
+        })
+        .map(|i| &i.value)
+}
+
+fn standing(evidence: &Evidence, entry: &LedgerEntry) -> Standing {
+    let record = record_of(evidence, entry);
+    if entry.stopped || record.is_some_and(stopped) {
+        return Standing::Stopped;
+    }
+    if entry.result != GateResult::Pass {
+        return Standing::Failed;
+    }
+    let lenient = record.is_some_and(|r| {
+        entry.kind == LedgerKind::Property
+            && (!r.command.split_whitespace().any(|w| w == "--strict")
+                || r.counts.is_some_and(|c| c.skipped > 0))
+    });
+    if lenient {
+        Standing::Lenient
+    } else {
+        Standing::Counted
+    }
+}
+
 /// Sum the entries of `evidence` for the properties and targets of `criteria`.
 pub fn totals(criteria: &Criteria, evidence: &Evidence) -> Totals {
     let mut properties: Vec<PropertyTotal> = Vec::new();
@@ -98,6 +155,8 @@ pub fn totals(criteria: &Criteria, evidence: &Evidence) -> Totals {
             counted: 0,
             failed: Vec::new(),
             unreached: Vec::new(),
+            stopped: Vec::new(),
+            lenient: Vec::new(),
             stale: Vec::new(),
         };
         // One seed draws the same cases in the same order, so its runs overlap: the longest
@@ -110,12 +169,17 @@ pub fn totals(criteria: &Criteria, evidence: &Evidence) -> Totals {
             .filter(|i| i.value.kind == LedgerKind::Property && &i.value.id == id)
         {
             let entry = &item.value;
+            let standing = standing(evidence, entry);
             if !item.validity.counts() {
                 total
                     .stale
                     .push(format!("{}: {}", describe(entry), item.validity.describe()));
-            } else if entry.result != GateResult::Pass {
+            } else if standing == Standing::Stopped {
+                total.stopped.push(describe(entry));
+            } else if standing == Standing::Failed {
                 total.failed.push(describe(entry));
+            } else if standing == Standing::Lenient {
+                total.lenient.push(describe(entry));
             } else if spec
                 .reach
                 .iter()
@@ -151,6 +215,7 @@ pub fn totals(criteria: &Criteria, evidence: &Evidence) -> Totals {
             hours: 0.0,
             counted: 0,
             failed: Vec::new(),
+            stopped: Vec::new(),
             stale: Vec::new(),
         };
         for item in evidence
@@ -159,11 +224,14 @@ pub fn totals(criteria: &Criteria, evidence: &Evidence) -> Totals {
             .filter(|i| i.value.kind == LedgerKind::Target && &i.value.id == id)
         {
             let entry = &item.value;
+            let standing = standing(evidence, entry);
             if !item.validity.counts() {
                 total
                     .stale
                     .push(format!("{}: {}", describe(entry), item.validity.describe()));
-            } else if entry.result != GateResult::Pass {
+            } else if standing == Standing::Stopped {
+                total.stopped.push(describe(entry));
+            } else if standing == Standing::Failed {
                 total.failed.push(describe(entry));
             } else {
                 total.counted += 1;
@@ -237,12 +305,14 @@ pub fn render_show(criteria: &Criteria, totals: &Totals) -> String {
         };
         let _ = writeln!(
             out,
-            "  {:<4} {:<16} {:>12} cases {:>3} runs  {} failed  {} stale  {} reach-short  {verdict}",
+            "  {:<4} {:<16} {:>12} cases {:>3} runs  {} failed  {} stopped  {} lenient  {} stale  {} reach-short  {verdict}",
             p.id,
             name,
             group(p.cases),
             p.runs,
             p.failed.len(),
+            p.stopped.len(),
+            p.lenient.len(),
             p.stale.len(),
             p.unreached.len()
         );
@@ -260,10 +330,11 @@ pub fn render_show(criteria: &Criteria, totals: &Totals) -> String {
         };
         let _ = writeln!(
             out,
-            "  {:<20} {:>8.2} hours  {} failed  {} stale  {verdict}",
+            "  {:<20} {:>8.2} hours  {} failed  {} stopped  {} stale  {verdict}",
             t.id,
             t.hours,
             t.failed.len(),
+            t.stopped.len(),
             t.stale.len()
         );
     }
@@ -278,6 +349,16 @@ pub fn render_show(criteria: &Criteria, totals: &Totals) -> String {
                     .iter()
                     .map(|l| ("reach below the criteria's", l)),
             )
+            .chain(
+                p.stopped
+                    .iter()
+                    .map(|l| ("stopped by a signal, no case counted", l)),
+            )
+            .chain(
+                p.lenient
+                    .iter()
+                    .map(|l| ("not strict or with skipped cases, no case counted", l)),
+            )
             .chain(p.stale.iter().map(|l| ("not counted", l)))
         {
             let _ = writeln!(problems, "  {}: {}: {}", p.id, line.0, line.1);
@@ -288,6 +369,11 @@ pub fn render_show(criteria: &Criteria, totals: &Totals) -> String {
             .failed
             .iter()
             .map(|l| ("failed", l))
+            .chain(
+                t.stopped
+                    .iter()
+                    .map(|l| ("stopped by a signal, no time counted", l)),
+            )
             .chain(t.stale.iter().map(|l| ("not counted", l)))
         {
             let _ = writeln!(problems, "  {}: {}: {}", t.id, line.0, line.1);
@@ -403,7 +489,11 @@ fn common(flags: &mut Flags) -> Result<Common> {
         ledger.push(dir);
     }
     let sources = Sources {
-        records: Vec::new(),
+        records: flags
+            .many("records")
+            .into_iter()
+            .map(PathBuf::from)
+            .collect(),
         ledger: ledger.into_iter().map(PathBuf::from).collect(),
         repo: PathBuf::from(flags.one("repo")?.unwrap_or_else(|| ".".to_owned())),
         head: flags.one("head")?.unwrap_or_else(|| "HEAD".to_owned()),

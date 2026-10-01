@@ -408,7 +408,7 @@ fn a_record_of_a_dirty_tree_does_not_count_unless_dirty_records_are_allowed() {
 }
 
 #[test]
-fn a_failed_record_blocks_its_row_until_a_later_pass_with_the_same_variables() {
+fn an_unexplained_failed_record_blocks_its_row_even_after_a_passing_repeat() {
     let rig = Rig::new();
     rig.criteria(&base_criteria());
     assert!(rig.record("l0", "difftest run l0", 1, "", T1).ok);
@@ -416,7 +416,9 @@ fn a_failed_record_blocks_its_row_until_a_later_pass_with_the_same_variables() {
     assert!(ran.text.contains("R1       FAIL"), "{}", ran.text);
     assert!(ran.text.contains("failed record"), "{}", ran.text);
     assert!(rig.record("l0", "difftest run l0", 0, "", T2).ok);
-    assert!(s1(&rig, &[]).text.contains("R1       pass"));
+    let ran = s1(&rig, &[]);
+    assert!(ran.text.contains("R1       FAIL"), "{}", ran.text);
+    assert!(ran.text.contains("no explanation"), "{}", ran.text);
 }
 
 #[test]
@@ -472,14 +474,34 @@ fn a_stale_record_is_missing_evidence_so_a_waiting_row_stays_pending() {
 // ----- the ledger
 
 fn ledger_run(rig: &Rig, dir: &str, machine: &str, spec: &str, started: &str) -> Ran {
+    ledger_run_as(
+        rig,
+        dir,
+        machine,
+        spec,
+        started,
+        ("difftest run l1 --property P1 --strict", 0),
+    )
+}
+
+/// A long run's record and ledger entry, its command and exit status as given.
+fn ledger_run_as(
+    rig: &Rig,
+    dir: &str,
+    machine: &str,
+    spec: &str,
+    started: &str,
+    (command, exit): (&str, i32),
+) -> Ran {
+    let exit = exit.to_string();
     rig.gate(&[
         "record",
         "--target",
         "l1-long",
         "--command",
-        "difftest run l1 --property P1",
+        command,
         "--exit",
-        "0",
+        &exit,
         "--started",
         started,
         "--finished",
@@ -770,7 +792,7 @@ fn a_ledger_entry_that_misses_its_reach_is_not_counted() {
         "--target",
         "l1-long",
         "--command",
-        "difftest run l1 --property P13 --min-reach 5 --cases 1000",
+        "difftest run l1 --property P13 --min-reach 5 --cases 1000 --strict",
         "--exit",
         "0",
         "--started",
@@ -811,7 +833,7 @@ fn a_ledger_entry_that_misses_its_reach_is_not_counted() {
         "--target",
         "l1-long",
         "--command",
-        "difftest run l1 --property P13 --min-reach 20 --cases 1000",
+        "difftest run l1 --property P13 --min-reach 20 --cases 1000 --strict",
         "--exit",
         "0",
         "--started",
@@ -1292,7 +1314,446 @@ fn a_failed_record_blocks_its_row_even_beside_enough_passes() {
     assert!(ran.text.contains("R1       FAIL"), "{}", ran.text);
     assert!(ran.text.contains("failed record"), "{}", ran.text);
     assert!(rig.record("l0", "difftest run l0", 0, "", T3).ok);
-    assert!(s1(&rig, &[]).text.contains("R1       pass"));
+    assert!(s1(&rig, &[]).text.contains("R1       FAIL"));
+}
+
+/// A record of `target` whose make command line set `variables`.
+fn record_of(
+    rig: &Rig,
+    target: &str,
+    variables: &str,
+    exit: i32,
+    printed: &str,
+    started: &str,
+) -> Ran {
+    let output = rig.arg("printed.txt");
+    std::fs::write(&output, printed).expect("printed");
+    let exit = exit.to_string();
+    rig.gate(&[
+        "record",
+        "--target",
+        target,
+        "--command",
+        &format!("make {target} {variables}"),
+        "--variables",
+        variables,
+        "--exit",
+        &exit,
+        "--started",
+        started,
+        "--finished",
+        started,
+        "--out",
+        &rig.arg("records"),
+        "--criteria",
+        &rig.arg("criteria.json"),
+        "--tested",
+        "src",
+        "--output",
+        &output,
+        "--machine",
+        "box-1",
+    ])
+}
+
+/// The base criteria with one more row, `T`, of `needs`.
+fn with_row(needs: Value) -> Value {
+    let mut criteria = base_criteria();
+    criteria["rows"].as_array_mut().expect("rows").push(
+        json!({"id": "T", "criterion": "t", "requires": "t", "shownBy": "t", "needs": needs}),
+    );
+    criteria
+}
+
+/// The line of row `T` and the lines of its needs in `text`.
+fn row_t(text: &str) -> String {
+    let start = text.find("\nT ").map_or(0, |i| i + 1);
+    text[start..].lines().take(3).collect::<Vec<_>>().join("\n")
+}
+
+#[test]
+fn one_run_counts_once_whatever_the_order_or_the_machine_settings_of_its_command_line() {
+    let rig = Rig::new();
+    rig.criteria(&with_row(json!([{"kind": "record", "target": "live-check",
+        "contains": ["RUN=mixed-short"], "min": 2, "distinct": true, "distinctBy": ["SEED"]}])));
+    for (variables, started) in [
+        ("SEED=1 RUN=mixed-short", T1),
+        ("RUN=mixed-short SEED=1", T2),
+        ("IMAGE=img DEVNET_PREFIX=127.1.0 SEED=1 RUN=mixed-short", T3),
+        ("RUN=mixed-short", "2026-10-01T13:00:00Z"),
+    ] {
+        assert!(record_of(&rig, "live-check", variables, 0, "", started).ok);
+    }
+    let ran = s1(&rig, &["--verbose"]);
+    let t = row_t(&ran.text);
+    assert!(t.contains("1 of 2 passing runs"), "{t}");
+    assert!(t.contains("1 record without SEED not counted"), "{t}");
+    assert!(
+        record_of(
+            &rig,
+            "live-check",
+            "SEED=2 RUN=mixed-short",
+            0,
+            "",
+            "2026-10-01T14:00:00Z"
+        )
+        .ok
+    );
+    let t = row_t(&s1(&rig, &["--verbose"]).text);
+    assert!(t.contains("T        pass"), "{t}");
+    assert!(t.contains("2 passing runs"), "{t}");
+}
+
+#[test]
+fn a_failure_is_superseded_only_when_explained_and_repeated_once() {
+    let rig = Rig::new();
+    let mut criteria = with_row(json!([{"kind": "record", "target": "live-check",
+        "contains": ["RUN=mixed"], "min": 1, "distinct": true, "distinctBy": ["SEED"]}]));
+    criteria["explanations"] = json!("explained.json");
+    rig.criteria(&criteria);
+    let explain = |records: &[&str]| {
+        let failures: Vec<Value> = records
+            .iter()
+            .map(|r| json!({"record": r, "cause": "the host stalled", "evidence": "load.jsonl"}))
+            .collect();
+        let file = json!({"format": "heartwood-s1-explanations/1", "failures": failures});
+        std::fs::write(rig.path("explained.json"), file.to_string()).expect("explanations");
+    };
+    explain(&[]);
+    // Another agent's loopback block and another word order name the same run.
+    assert!(
+        record_of(
+            &rig,
+            "live-check",
+            "DEVNET_PREFIX=127.33.0 SEED=1 RUN=mixed",
+            1,
+            "",
+            T1
+        )
+        .ok
+    );
+    assert!(record_of(&rig, "live-check", "RUN=mixed SEED=1", 0, "", T2).ok);
+    let t = row_t(&s1(&rig, &["--verbose"]).text);
+    assert!(
+        t.contains("T        FAIL") && t.contains("no explanation"),
+        "{t}"
+    );
+    let failed = format!("{}-live-check.json", T1.replace(':', "-"));
+    explain(&[&failed]);
+    let t = row_t(&s1(&rig, &["--verbose"]).text);
+    assert!(t.contains("T        pass"), "{t}");
+    assert!(
+        t.contains("1 explained failure repeated") && t.contains("the host stalled"),
+        "{t}"
+    );
+    // The repeat failed too: the run is not repeated again.
+    assert!(record_of(&rig, "live-check", "SEED=1 RUN=mixed", 1, "", T3).ok);
+    let t = row_t(&s1(&rig, &["--verbose"]).text);
+    assert!(
+        t.contains("T        FAIL") && t.contains("failed more than once"),
+        "{t}"
+    );
+}
+
+#[test]
+fn an_explanations_file_without_a_cause_is_refused() {
+    let rig = Rig::new();
+    let mut criteria = base_criteria();
+    criteria["explanations"] = json!("explained.json");
+    rig.criteria(&criteria);
+    let file = json!({"format": "heartwood-s1-explanations/1",
+        "failures": [{"record": "x.json", "cause": " ", "evidence": "e"}]});
+    std::fs::write(rig.path("explained.json"), file.to_string()).expect("explanations");
+    let ran = s1(&rig, &[]);
+    assert!(!ran.ok);
+    assert!(
+        ran.text.contains("a cause and its evidence are needed"),
+        "{}",
+        ran.text
+    );
+}
+
+#[test]
+fn a_scenario_need_reads_the_scenario_s_own_verdict_in_its_record() {
+    let rig = Rig::new();
+    rig.criteria(&with_row(json!([
+        {"kind": "record", "target": "live-check", "contains": ["RUN=suites"],
+         "without": ["SUITE"], "scenario": "chained-transfers"},
+        {"kind": "record", "target": "live-check", "contains": ["RUN=suites"],
+         "scenario": "double-spend"},
+        {"kind": "record", "target": "live-check", "contains": ["RUN=suites"],
+         "scenario": "propagation"}
+    ])));
+    let printed = "scenario compare: 9 records in 2 files\n  9 compared: 8 passed, 1 failed\n\
+                   scenario transactions/chained-transfers: pass\n\
+                   scenario transactions/double-spend: fail\n";
+    assert!(record_of(&rig, "live-check", "SEED=1 RUN=suites", 1, printed, T1).ok);
+    // A comparison of one suite alone names a SUITE: it counts for no need without one.
+    let one = "scenario network/propagation: pass\n";
+    assert!(
+        record_of(
+            &rig,
+            "live-check",
+            "SUITE=network SEED=1 RUN=suites",
+            0,
+            one,
+            T2
+        )
+        .ok
+    );
+    let text = s1(&rig, &["--verbose"]).text;
+    let t = row_t(&text);
+    assert!(text.contains("ok      live-check [RUN=suites] without SUITE scenario chained-transfers: 1 passing record"), "{text}");
+    assert!(
+        text.contains("FAIL    live-check [RUN=suites] scenario double-spend: 1 failed record"),
+        "{text}"
+    );
+    assert!(
+        text.contains("ok      live-check [RUN=suites] scenario propagation: 1 passing record"),
+        "{text}"
+    );
+    assert!(t.contains("T        FAIL"), "{t}");
+}
+
+#[test]
+fn a_record_made_with_tooling_the_criteria_do_not_accept_does_not_count() {
+    let rig = Rig::new();
+    let sum = |c: char| c.to_string().repeat(64);
+    let mut criteria = with_row(json!([{"kind": "record", "target": "suites"}]));
+    criteria["tooling"] = json!({"accepted": {"scripts/suites.sh": [sum('b')]},
+                                 "required": [{"target": "suites"}]});
+    rig.criteria(&criteria);
+    let run = rig.path("run");
+    std::fs::create_dir_all(&run).expect("run");
+    std::fs::write(
+        run.join("tooling.sha256"),
+        format!("{}  scripts/suites.sh\n", sum('a')),
+    )
+    .expect("tooling");
+    let record = |with_tooling: bool, started: &str| {
+        let mut args = vec![
+            "record",
+            "--target",
+            "suites",
+            "--command",
+            "suites.sh",
+            "--exit",
+            "0",
+            "--started",
+            started,
+            "--finished",
+            started,
+            "--out",
+            "",
+            "--machine",
+            "box-1",
+        ];
+        let out = rig.arg("records");
+        let run = rig.arg("run");
+        args[12] = &out;
+        if with_tooling {
+            args.extend(["--tooling", &run]);
+        }
+        assert!(rig.gate(&args).ok);
+    };
+    record(true, T1);
+    let t = row_t(&s1(&rig, &["--verbose"]).text);
+    assert!(
+        t.contains("tooling: made with scripts/suites.sh aaaaaaaaaaaa"),
+        "{t}"
+    );
+    std::fs::remove_dir_all(rig.path("records")).expect("records");
+    record(false, T2);
+    let t = row_t(&s1(&rig, &["--verbose"]).text);
+    assert!(t.contains("names none of the devnet tooling"), "{t}");
+    std::fs::write(
+        run.join("tooling.sha256"),
+        format!("{}  scripts/suites.sh\n", sum('b')),
+    )
+    .expect("tooling");
+    record(true, T3);
+    let t = row_t(&s1(&rig, &["--verbose"]).text);
+    assert!(t.contains("T        pass"), "{t}");
+}
+
+#[test]
+fn a_change_to_the_build_of_a_tested_crate_makes_its_record_stale_and_another_crate_s_does_not() {
+    let rig = Rig::new();
+    let lock = |b_version: &str, c_version: &str| {
+        format!(
+            "version = 4\n\n[[package]]\nname = \"crate-a\"\nversion = \"0.1.0\"\ndependencies = [\n \"dep-b\",\n]\n\n\
+             [[package]]\nname = \"dep-b\"\nversion = \"{b_version}\"\n\n\
+             [[package]]\nname = \"crate-c\"\nversion = \"0.1.0\"\ndependencies = [\n \"dep-d\",\n]\n\n\
+             [[package]]\nname = \"dep-d\"\nversion = \"{c_version}\"\n"
+        )
+    };
+    rig.write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"packages/*\"]\n\n[profile.release]\npanic = \"abort\"\n",
+    );
+    rig.write("Cargo.lock", &lock("1.0.0", "1.0.0"));
+    rig.write(
+        "packages/a/Cargo.toml",
+        "[package]\nname = \"crate-a\"\n\n[dependencies]\ndep-b = \"1\"\n",
+    );
+    rig.write("packages/a/src/lib.rs", "pub fn a() {}\n");
+    rig.write(
+        "packages/c/Cargo.toml",
+        "[package]\nname = \"crate-c\"\n\n[dependencies]\ndep-d = \"1\"\n",
+    );
+    rig.write("packages/c/src/lib.rs", "pub fn c() {}\n");
+    rig.commit("crates");
+    rig.criteria(&with_row(json!([{"kind": "record", "target": "lines"}])));
+    let started = T1;
+    assert!(
+        rig.gate(&[
+            "record",
+            "--target",
+            "lines",
+            "--command",
+            "make lines",
+            "--exit",
+            "0",
+            "--started",
+            started,
+            "--finished",
+            started,
+            "--out",
+            &rig.arg("records"),
+            "--tested",
+            "packages/a/src",
+            "--machine",
+            "box-1",
+        ])
+        .ok
+    );
+    let t = |rig: &Rig| row_t(&s1(rig, &["--verbose"]).text);
+    assert!(t(&rig).contains("T        pass"), "{}", t(&rig));
+    // Another crate's dependency, a test target and a comment change nothing of crate-a's build.
+    rig.write("Cargo.lock", &lock("1.0.0", "1.1.0"));
+    rig.write("packages/a/Cargo.toml", "[package]\nname = \"crate-a\" # the crate\n\n[dependencies]\ndep-b = \"1\"\n\n[[test]]\nname = \"t\"\n");
+    rig.commit("elsewhere");
+    assert!(t(&rig).contains("T        pass"), "{}", t(&rig));
+    // A version of crate-a's dependency does.
+    rig.write("Cargo.lock", &lock("1.2.0", "1.1.0"));
+    rig.commit("dependency");
+    let now = t(&rig);
+    assert!(now.contains("Cargo.lock: dep-b 1.0.0 -> 1.2.0"), "{now}");
+    // So does the release profile.
+    assert!(
+        rig.gate(&[
+            "record",
+            "--target",
+            "lines",
+            "--command",
+            "make lines",
+            "--exit",
+            "0",
+            "--started",
+            T2,
+            "--finished",
+            T2,
+            "--out",
+            &rig.arg("records"),
+            "--tested",
+            "packages/a/src",
+            "--machine",
+            "box-1",
+        ])
+        .ok
+    );
+    rig.write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"packages/*\"]\n\n[profile.release]\npanic = \"unwind\"\n",
+    );
+    rig.commit("profile");
+    let now = t(&rig);
+    assert!(now.contains("[profile.release] changed"), "{now}");
+}
+
+#[test]
+fn a_run_a_signal_stopped_counts_for_nothing_and_fails_nothing_and_a_lenient_run_has_no_entry() {
+    let rig = Rig::new();
+    rig.criteria(&base_criteria());
+    let killed = ledger_run_as(
+        &rig,
+        "ledger",
+        "box-1",
+        "kind=property id=P1 cases=600 seed=1",
+        T1,
+        ("difftest run l1 --property P1 --strict", 137),
+    );
+    assert!(killed.ok, "{}", killed.text);
+    let lenient = ledger_run_as(
+        &rig,
+        "ledger",
+        "box-1",
+        "kind=property id=P1 cases=600 seed=2",
+        T2,
+        ("difftest run l1 --property P1", 0),
+    );
+    assert!(
+        lenient.ok
+            && lenient
+                .text
+                .contains("no ledger entry: the run was not strict"),
+        "{}",
+        lenient.text
+    );
+    let show = rig.gate(&[
+        "ledger",
+        "show",
+        "--criteria",
+        &rig.arg("criteria.json"),
+        "--ledger",
+        &rig.arg("ledger"),
+    ]);
+    let p1 = show
+        .text
+        .lines()
+        .find(|l| l.trim_start().starts_with("P1 "))
+        .expect("P1 line");
+    assert!(
+        p1.contains("0 cases") && p1.contains("0 failed  1 stopped"),
+        "{p1}"
+    );
+    assert!(
+        show.text.contains("stopped by a signal, no case counted"),
+        "{}",
+        show.text
+    );
+}
+
+#[test]
+fn a_strict_gate_passes_rows_that_wait_only_on_a_person_and_the_final_gate_fails_missing_evidence()
+{
+    let rig = Rig::new();
+    let mut criteria = base_criteria();
+    criteria["rows"] = json!([
+        {"id": "R1", "criterion": "vectors", "requires": "pass", "shownBy": "l0",
+         "needs": [{"kind": "record", "target": "l0"}]},
+        {"id": "R2", "criterion": "sign-off", "requires": "a tick", "shownBy": "a person",
+         "needs": [{"kind": "rows", "ids": ["R1"]}, {"kind": "manual", "what": "the tick"}]}
+    ]);
+    rig.criteria(&criteria);
+    assert!(rig.record("l0", "difftest run l0", 0, "", T1).ok);
+    let strict = s1(&rig, &["--strict"]);
+    assert!(strict.ok, "{}", strict.text);
+    assert!(
+        strict
+            .text
+            .contains("1 pending (1 waiting only on a person)"),
+        "{}",
+        strict.text
+    );
+    criteria["rows"].as_array_mut().expect("rows").push(json!(
+        {"id": "R3", "criterion": "later", "requires": "live", "shownBy": "live",
+         "waits": "a live run", "needs": [{"kind": "record", "target": "live"}]}));
+    rig.criteria(&criteria);
+    assert!(!s1(&rig, &["--strict"]).ok);
+    let last = s1(&rig, &["--final"]);
+    assert!(!last.ok);
+    assert!(last.text.contains("R3       FAIL"), "{}", last.text);
 }
 
 #[test]

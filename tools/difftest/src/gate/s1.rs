@@ -3,13 +3,15 @@
 //!
 //! ```text
 //! difftest gate s1 --criteria FILE --records DIR... [--ledger DIR...] [--part TAG] [--strict]
-//!     [--repo DIR] [--head REV] [--allow-dirty] [--verbose]
+//!     [--final] [--repo DIR] [--head REV] [--allow-dirty] [--verbose]
 //! ```
 //!
 //! A row passes when every need is met; it fails when a need is missing, failed or stale; it is
 //! pending when nothing failed and what is missing is something the row waits on, or only a
-//! person can show. Without `--strict` the command exits 0 unless a row fails; with it, only when
-//! every row passes.
+//! person can show. With `--final` (the last gate, when nothing is left to wait on) missing
+//! evidence fails its row whatever the row waits on. Without `--strict` the command exits 0 unless
+//! a row fails; with it, only when every row passes or waits only on a person (a sign-off or a
+//! reading the table cannot give), which the table counts apart.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -29,6 +31,8 @@ pub struct Table {
     pub pass: usize,
     /// Rows that are pending.
     pub pending: usize,
+    /// Of the pending rows, those that wait only on a person.
+    pub for_a_person: usize,
     /// Rows that fail.
     pub fail: usize,
 }
@@ -67,11 +71,18 @@ pub fn push_verdicts(out: &mut String, verdicts: &[Verdict], verbose: bool) {
     }
 }
 
-/// Judge the rows of `criteria` selected by `part` (all when none) against `evidence`.
-pub fn table(criteria: &Criteria, evidence: &Evidence, part: Option<&str>, verbose: bool) -> Table {
-    let judge = Judge::new(criteria, evidence);
+/// Judge the rows of `criteria` selected by `part` (all when none) against `evidence`; at the
+/// final gate when `last`.
+pub fn table(
+    criteria: &Criteria,
+    evidence: &Evidence,
+    part: Option<&str>,
+    verbose: bool,
+    last: bool,
+) -> Table {
+    let judge = Judge::new(criteria, evidence).at_the_end(last);
     let mut text = String::new();
-    let (mut pass, mut pending, mut fail) = (0, 0, 0);
+    let (mut pass, mut pending, mut for_a_person, mut fail) = (0, 0, 0, 0);
     for row in &criteria.rows {
         if part.is_some_and(|p| !row.parts.iter().any(|t| t == p)) {
             continue;
@@ -84,6 +95,9 @@ pub fn table(criteria: &Criteria, evidence: &Evidence, part: Option<&str>, verbo
             }
             RowStatus::Pending => {
                 pending += 1;
+                if judge.waits_only_on_a_person(&row.id) {
+                    for_a_person += 1;
+                }
                 "pending"
             }
             RowStatus::Fail => {
@@ -107,6 +121,7 @@ pub fn table(criteria: &Criteria, evidence: &Evidence, part: Option<&str>, verbo
         text,
         pass,
         pending,
+        for_a_person,
         fail,
     }
 }
@@ -149,9 +164,10 @@ pub fn setup(flags: &mut Flags) -> Result<Setup> {
 
 /// Run `gate s1`.
 pub fn run(args: &[String]) -> Result<bool> {
-    let mut flags = Flags::parse(args, &["strict", "allow-dirty", "verbose"])?;
+    let mut flags = Flags::parse(args, &["strict", "allow-dirty", "verbose", "final"])?;
     let strict = flags.switch("strict");
     let verbose = flags.switch("verbose");
+    let last = flags.switch("final");
     let part = flags.one("part")?;
     let setup = setup(&mut flags)?;
     flags.finish()?;
@@ -161,7 +177,7 @@ pub fn run(args: &[String]) -> Result<bool> {
     {
         return Err(Error::Usage(format!("no row is tagged {part:?}")));
     }
-    let table = table(&setup.criteria, &evidence, part.as_deref(), verbose);
+    let table = table(&setup.criteria, &evidence, part.as_deref(), verbose, last);
     println!(
         "S1 gate at {} ({} records, {} ledger entries)",
         evidence.rule.head(),
@@ -170,8 +186,8 @@ pub fn run(args: &[String]) -> Result<bool> {
     );
     print!("{}", table.text);
     println!(
-        "{} pass, {} pending, {} fail",
-        table.pass, table.pending, table.fail
+        "{} pass, {} pending ({} waiting only on a person), {} fail",
+        table.pass, table.pending, table.for_a_person, table.fail
     );
-    Ok(table.fail == 0 && (!strict || table.pending == 0))
+    Ok(table.fail == 0 && (!strict || table.pending == table.for_a_person))
 }

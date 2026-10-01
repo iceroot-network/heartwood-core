@@ -16,6 +16,8 @@
 //!
 //! `hits` counts the documented differences the run met by their code names
 //! (`Documented::*`, `ApiDifference::*`), never by register ids: the criteria file maps them.
+//! A record of a scenario run or comparison also keeps each scenario's verdict (`scenarios`), and
+//! a record of a live run's check the devnet tooling the run was made with (`tooling`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -87,6 +89,14 @@ pub struct GateRecord {
     /// The documented differences it met, by code name.
     #[serde(default)]
     pub hits: BTreeMap<String, u64>,
+    /// The scenarios it ran or compared, by id (`suite/id` in a comparison), with each one's
+    /// verdict as its report gives it (`pass`, `fail` or `skipped`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub scenarios: BTreeMap<String, String>,
+    /// The devnet tooling the runs it judged were made with: each file's path under the tooling's
+    /// root, and the SHA-256 of each version of it those runs used.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tooling: BTreeMap<String, Vec<String>>,
     /// When it started, in UTC (`2026-10-01T10:00:00Z`).
     pub started: String,
     /// When it finished, in UTC.
@@ -159,6 +169,8 @@ mod tests {
             exit_status: 0,
             result: GateResult::Pass,
             hits: BTreeMap::from([("Documented::ReplayIndexOrder".to_owned(), 25)]),
+            scenarios: BTreeMap::from([("transactions/burns".to_owned(), "pass".to_owned())]),
+            tooling: BTreeMap::from([("scripts/run.sh".to_owned(), vec!["ab".repeat(32)])]),
             started: "2026-10-01T10:00:00Z".to_owned(),
             finished: "2026-10-01T10:04:10Z".to_owned(),
         };

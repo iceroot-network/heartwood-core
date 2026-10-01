@@ -3,14 +3,23 @@
 //! ```text
 //! difftest gate record --target T --command C --exit N --started S --finished F --out DIR
 //!     [--variables V] [--image I] [--criteria FILE] [--tested PATH]... [--output FILE]
+//!     [--tooling DIR]... [--head REV --dirty-before 0|1]
 //!     [--ledger "kind=property id=P13 cases=1000000 seed=7" --ledger-dir DIR]
 //!     [--repo DIR] [--machine NAME] [--allow-dirty]
 //! ```
 //!
-//! The head and whether the tree is dirty come from the tree in `--repo`. The tested paths are
+//! The head and whether the tree is dirty come from the tree in `--repo`; `--head` and
+//! `--dirty-before` give them as they were when the command started, and a tree that changed
+//! while it ran (another head, or changes beside it) makes the record dirty. The tested paths are
 //! the criteria file's narrowing of the command when it has one, else the `--tested` paths.
-//! `--output` names a file holding what the command printed, which gives the record its counts
-//! and hits.
+//! `--output` names a file holding what the command printed, which gives the record its counts,
+//! hits and scenario verdicts. `--tooling` names a run directory (or a directory of run
+//! directories) whose `tooling.sha256` lists the devnet tooling the run was made with.
+//!
+//! A long run's ledger entry is written only for a run whose cases all count: a property run that
+//! was not strict, or that skipped cases, gets none. A run that a signal ended before it judged
+//! its cases (no failed case in its counts) is entered as stopped: it counts for none of its
+//! cases or time, and it is not a failed run.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -35,6 +44,9 @@ const REACH: [(&str, &str, &str); 3] = [
 /// Run `gate record`; whether it wrote what it was asked to.
 pub fn run(args: &[String]) -> Result<bool> {
     let mut flags = Flags::parse(args, &["allow-dirty"])?;
+    let head_before = flags.one("head")?;
+    let dirty_before = flags.one("dirty-before")?;
+    let tooling_dirs = flags.many("tooling");
     let target = flags.required("target")?;
     let command = flags.required("command")?;
     let exit: i32 = flags
@@ -63,8 +75,22 @@ pub fn run(args: &[String]) -> Result<bool> {
         }
     }
     let repo = Repo::open(Path::new(&repo_dir));
-    let head = repo.resolve("HEAD")?;
-    let dirty = repo.dirty()?;
+    let head_now = repo.resolve("HEAD")?;
+    let head = match &head_before {
+        Some(rev) => repo.resolve(rev)?,
+        None => head_now.clone(),
+    };
+    let changed_meanwhile = match dirty_before.as_deref() {
+        None | Some("0") => false,
+        Some("1") => true,
+        Some(other) => {
+            return Err(Error::Usage(format!(
+                "--dirty-before is 0 or 1, not {other:?}"
+            )));
+        }
+    };
+    // A tree that changed while the command ran is no tree the command ran on alone.
+    let dirty = changed_meanwhile || head != head_now || repo.dirty()?;
 
     let narrowed = match &criteria {
         Some(path) => Criteria::read(Path::new(path))?.narrowed_paths(&target, &command),
@@ -79,6 +105,7 @@ pub fn run(args: &[String]) -> Result<bool> {
         }
         None => output::Parsed::default(),
     };
+    let tooling = tooling_of(&tooling_dirs)?;
 
     let record = GateRecord {
         format: RECORD_FORMAT.to_owned(),
@@ -98,6 +125,8 @@ pub fn run(args: &[String]) -> Result<bool> {
             GateResult::Fail
         },
         hits: parsed.hits,
+        scenarios: parsed.scenarios,
+        tooling,
         started,
         finished,
     };
@@ -119,6 +148,10 @@ pub fn run(args: &[String]) -> Result<bool> {
                 .map_or_else(|| record.file_name(), |n| n.to_string_lossy().into_owned());
             let source = format!("gate record {written_name}");
             let entry = entry_from(&spec, &record, &source)?;
+            if let Some(why) = not_counted(&entry, &record) {
+                println!("gate record: no ledger entry: {why}");
+                return Ok(true);
+            }
             let written = store::write_entry(&entry, Path::new(&dir))?;
             println!("gate record: ledger entry {}", written.display());
             Ok(true)
@@ -176,6 +209,8 @@ pub fn write_own(
             GateResult::Fail
         },
         hits: own.hits,
+        scenarios: BTreeMap::new(),
+        tooling: BTreeMap::new(),
         started: own.started,
         finished: time::now_utc(),
     };
@@ -217,6 +252,75 @@ fn tested_paths(paths: Vec<String>) -> Result<Vec<String>> {
     clean.sort();
     clean.dedup();
     Ok(clean)
+}
+
+/// The file each run directory keeps of the devnet tooling it was made with.
+const TOOLING_FILE: &str = "tooling.sha256";
+
+/// The devnet tooling the runs in `dirs` were made with: each `tooling.sha256` of a directory, or
+/// of the directories right under it, read as `<sha256>  <path>` lines, the paths relative to the
+/// tooling's root (an absolute path names a build of the tree or the toolchain, not the tooling).
+fn tooling_of(dirs: &[String]) -> Result<BTreeMap<String, Vec<String>>> {
+    let mut files = Vec::new();
+    for dir in dirs.iter().map(Path::new) {
+        let own = dir.join(TOOLING_FILE);
+        if own.is_file() {
+            files.push(own);
+            continue;
+        }
+        let listing = std::fs::read_dir(dir).map_err(|e| Error::io(dir, e))?;
+        let mut found: Vec<PathBuf> = listing
+            .filter_map(|e| e.ok().map(|e| e.path().join(TOOLING_FILE)))
+            .filter(|p| p.is_file())
+            .collect();
+        found.sort();
+        files.extend(found);
+    }
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for file in files {
+        let text = std::fs::read_to_string(&file).map_err(|e| Error::io(&file, e))?;
+        for line in text.lines() {
+            let Some((sum, path)) = line.split_once("  ") else {
+                continue;
+            };
+            let sum_ok = sum.len() == 64 && sum.bytes().all(|b| b.is_ascii_hexdigit());
+            if !sum_ok || path.starts_with('/') {
+                continue;
+            }
+            let sums = out.entry(path.to_owned()).or_default();
+            if !sums.iter().any(|s| s == sum) {
+                sums.push(sum.to_owned());
+                sums.sort();
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Why a long run's entry would count for nothing, when it would not: a passing property run that
+/// was not strict, or that skipped cases (its cases were not all compared).
+fn not_counted(entry: &LedgerEntry, record: &GateRecord) -> Option<String> {
+    // A failed run is entered whatever its strictness: it fails its property.
+    if entry.kind != LedgerKind::Property || entry.stopped || entry.result != GateResult::Pass {
+        return None;
+    }
+    let strict = record.command.split_whitespace().any(|w| w == "--strict");
+    let skipped = record.counts.map_or(0, |c| c.skipped);
+    if !strict {
+        Some("the run was not strict, so its cases do not count".to_owned())
+    } else if skipped > 0 {
+        Some(format!(
+            "the run skipped {skipped} cases, so its cases do not count"
+        ))
+    } else {
+        None
+    }
+}
+
+/// Whether a run's record says a signal ended it before it judged its cases: an exit status of a
+/// signal (above 128) and no failed case in its counts.
+pub(super) fn stopped(record: &GateRecord) -> bool {
+    record.exit_status > 128 && record.counts.is_none_or(|c| c.failed == 0)
 }
 
 /// The ledger entry of a long run, from the `k=v` words of `--ledger` and its record.
@@ -269,6 +373,7 @@ fn entry_from(spec: &str, record: &GateRecord, source: &str) -> Result<LedgerEnt
         finished: record.finished.clone(),
         result: record.result,
         reach: BTreeMap::new(),
+        stopped: stopped(record),
         source: source.to_owned(),
     };
     match kind {
@@ -331,6 +436,8 @@ mod tests {
             exit_status: 0,
             result: GateResult::Pass,
             hits: BTreeMap::new(),
+            scenarios: BTreeMap::new(),
+            tooling: BTreeMap::new(),
             started: "2026-10-01T10:00:00Z".to_owned(),
             finished: "2026-10-01T10:05:00Z".to_owned(),
         }
@@ -357,6 +464,73 @@ mod tests {
         assert!(entry_from("kind=property id=P1 cases=1", &r, "x").is_err());
         assert!(entry_from("kind=thing id=P1", &r, "x").is_err());
         assert!(entry_from("kind=target id=t seconds=1 forks=1 extra=1", &r, "x").is_err());
+    }
+
+    #[test]
+    fn a_run_a_signal_ended_is_stopped_and_a_lenient_or_skipping_run_counts_for_nothing() {
+        let mut killed = record("difftest run l1 --property P13 --cases 5 --strict");
+        killed.exit_status = 137;
+        killed.result = GateResult::Fail;
+        let entry = entry_from("kind=property id=P13 cases=5 seed=9", &killed, "x").unwrap();
+        assert!(entry.stopped);
+        assert_eq!(not_counted(&entry, &killed), None);
+        // A failed case is a failed run, whatever ended it.
+        killed.counts = Some(Counts {
+            compared: 3,
+            failed: 1,
+            ..Counts::default()
+        });
+        assert!(
+            !entry_from("kind=property id=P13 cases=5 seed=9", &killed, "x")
+                .unwrap()
+                .stopped
+        );
+        let lenient = record("difftest run l1 --property P13 --cases 5");
+        let entry = entry_from("kind=property id=P13 cases=5 seed=9", &lenient, "x").unwrap();
+        assert!(not_counted(&entry, &lenient).is_some());
+        let mut skipping = record("difftest run l1 --property P13 --cases 5 --strict");
+        skipping.counts = Some(Counts {
+            compared: 5,
+            passed: 5,
+            skipped: 2,
+            ..Counts::default()
+        });
+        let entry = entry_from("kind=property id=P13 cases=5 seed=9", &skipping, "x").unwrap();
+        assert!(
+            not_counted(&entry, &skipping)
+                .unwrap()
+                .contains("skipped 2")
+        );
+        let strict = record("difftest run l1 --property P13 --cases 5 --strict");
+        let entry = entry_from("kind=property id=P13 cases=5 seed=9", &strict, "x").unwrap();
+        assert_eq!(not_counted(&entry, &strict), None);
+    }
+
+    #[test]
+    fn tooling_is_read_from_a_run_or_the_runs_under_a_directory() {
+        let dir = std::env::temp_dir().join(format!("difftest-tooling-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (a, b) = (dir.join("suite-a"), dir.join("suite-b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let line = |c: char, path: &str| format!("{}  {path}\n", c.to_string().repeat(64));
+        std::fs::write(
+            a.join(TOOLING_FILE),
+            line('a', "scripts/run.sh") + &line('c', "/abs/target/release/heartwood"),
+        )
+        .unwrap();
+        std::fs::write(b.join(TOOLING_FILE), line('b', "scripts/run.sh")).unwrap();
+        let both = tooling_of(&[dir.to_string_lossy().into_owned()]).unwrap();
+        assert_eq!(
+            both,
+            BTreeMap::from([(
+                "scripts/run.sh".to_owned(),
+                vec!["a".repeat(64), "b".repeat(64)]
+            )])
+        );
+        let one = tooling_of(&[a.to_string_lossy().into_owned()]).unwrap();
+        assert_eq!(one["scripts/run.sh"], vec!["a".repeat(64)]);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
