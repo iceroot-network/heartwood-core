@@ -6,13 +6,23 @@
 use std::path::Path;
 
 use crate::errors::ProcessError;
+use crate::instance_index;
+use crate::process;
 use crate::seams::StatusRow;
+use crate::supervisor::signals::is_locked;
 
 /// The reference's answer when no instance of the token runs.
 pub const NONE_RUNNING: &str = "No processes are running";
 
-/// The status rows of `token`'s running instances under `data_root`, in name order.
+/// The status rows of `token`'s running instances under `data_root`, in name order. An instance
+/// whose supervisor's lock is not held is left out, whatever its entry or its state file says.
 pub fn top(token: &str, data_root: &Path) -> Result<Vec<StatusRow>, ProcessError> {
-    let _ = (token, data_root);
-    Err(ProcessError::NotBuilt("top"))
+    let mut rows = Vec::new();
+    for instance in instance_index::list(data_root, token)? {
+        if is_locked(&instance.supervisor_lock_path())? {
+            rows.push(process::status(&instance)?);
+        }
+    }
+    rows.retain(|row| row.status.is_running());
+    Ok(rows)
 }
