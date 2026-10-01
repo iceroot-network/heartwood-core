@@ -1,0 +1,30 @@
+{
+  "id": "reorg-reverts-votes",
+  "title": "A fork across a round end takes back votes and the branch forges them again",
+  "levels": ["L2"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "actors": {"alice": {"seed": 1}, "bob": {"seed": 2}, "carol": {"seed": 3}},
+  "steps": [
+    {"name": "fund", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["fund"]},
+     "txs": [
+       {"ref": "fund", "type": "transfer", "from": "genesis", "to": [["alice", "1000000000000"], ["bob", "1000000000000"], ["carol", "1000000000000"]]}
+     ]},
+    {"name": "early vote", "at": {"height": 10}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["early"]},
+     "txs": [
+       {"ref": "early", "type": "vote", "from": "bob", "asset": {"votes": [["genesis_3", 100]]}}
+     ]},
+    {"name": "vote before the round end", "at": {"height": 50}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["late"]},
+     "txs": [
+       {"ref": "late", "type": "vote", "from": "alice", "asset": {"votes": [["genesis_5", 100]]}}
+     ]},
+    {"name": "past the round end", "at": {"height": 56}, "do": "fork", "blocks": 6, "branch": "next-forging-order", "check": {"invariant": ["revertSymmetry"]}},
+    {"name": "after the branch", "at": {"afterBlocks": 3}, "check": {"forged": ["early", "late"], "digest": true}},
+    {"name": "vote before the second round end", "at": {"height": 100}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["second-late"]},
+     "txs": [
+       {"ref": "second-late", "type": "vote", "from": "carol", "asset": {"votes": [["genesis_8", 100]]}}
+     ]},
+    {"name": "past the second round end", "at": {"height": 108}, "do": "fork", "blocks": 6, "branch": "next-forging-order", "check": {"invariant": ["revertSymmetry"]}},
+    {"name": "after the second branch", "at": {"afterBlocks": 3}, "check": {"forged": ["early", "late", "second-late"], "digest": true}}
+  ]
+}

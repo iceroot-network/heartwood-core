@@ -1,0 +1,30 @@
+{
+  "id": "propagation",
+  "title": "A batch posted just after a block is in every relay's pool before the next block, and every block reaches every relay in time",
+  "levels": ["L3", "L4"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "settleBlocks": 0,
+  "actors": {"prop-a": {"seed": 1}, "prop-b": {"seed": 2}, "prop-c": {"seed": 3}, "prop-d": {"seed": 4}, "payee": {"seed": 5}, "split-user": {"seed": 6}, "late-user": {"seed": 7}},
+  "steps": [
+    {"name": "fund the wallets", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [
+       {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["prop-a", "10000000000"], ["prop-b", "10000000000"], ["prop-c", "10000000000"], ["prop-d", "10000000000"], ["payee", "100000000"], ["split-user", "10000000000"], ["late-user", "10000000000"]]}
+     ]},
+    {"name": "a batch just after a block", "at": {"height": 46}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["batch-a1", "batch-a2", "batch-b1", "batch-b2", "batch-c1", "batch-c2", "batch-d1", "batch-d2"]},
+     "txs": [
+       {"ref": "batch-a1", "type": "transfer", "from": "prop-a", "nonce": 1, "to": [["payee", "100000000"]]},
+       {"ref": "batch-a2", "type": "transfer", "from": "prop-a", "nonce": 2, "fee": "20000000", "to": [["payee", "100000000"]]},
+       {"ref": "batch-b1", "type": "transfer", "from": "prop-b", "nonce": 1, "to": [["payee", "100000000"]]},
+       {"ref": "batch-b2", "type": "transfer", "from": "prop-b", "nonce": 2, "fee": "20000000", "to": [["payee", "100000000"]]},
+       {"ref": "batch-c1", "type": "transfer", "from": "prop-c", "nonce": 1, "to": [["payee", "100000000"]]},
+       {"ref": "batch-c2", "type": "transfer", "from": "prop-c", "nonce": 2, "fee": "20000000", "to": [["payee", "100000000"]]},
+       {"ref": "batch-d1", "type": "transfer", "from": "prop-d", "nonce": 1, "to": [["payee", "100000000"]]},
+       {"ref": "batch-d2", "type": "transfer", "from": "prop-d", "nonce": 2, "fee": "20000000", "to": [["payee", "100000000"]]}
+     ]},
+    {"name": "every pool holds it", "at": {"afterBlocks": 0}, "check": {"api": {"projection": "pool"}, "withinBlocks": 1}},
+    {"name": "and then the chain", "at": {"afterBlocks": 2}, "check": {"forged": ["batch-a1", "batch-a2", "batch-b1", "batch-b2", "batch-c1", "batch-c2", "batch-d1", "batch-d2"], "invariant": ["singleTip"], "withinBlocks": 4}},
+    {"name": "a stretch of blocks for the propagation record", "at": {"afterBlocks": 0}, "do": "wait", "blocks": 10},
+    {"name": "one tip", "at": {"afterBlocks": 0}, "check": {"invariant": ["singleTip"]}}
+  ]
+}

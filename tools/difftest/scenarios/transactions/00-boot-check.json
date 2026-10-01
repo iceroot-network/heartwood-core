@@ -1,0 +1,12 @@
+{
+  "id": "boot-check",
+  "title": "The reference boots from a genesis made by the generator and every node rebuilds its id",
+  "levels": ["L2", "L3"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "settleBlocks": 0,
+  "actors": {},
+  "steps": [
+    {"name": "booted", "at": {"height": 2}, "check": {"digest": true, "invariant": ["singleTip"]}}
+  ]
+}

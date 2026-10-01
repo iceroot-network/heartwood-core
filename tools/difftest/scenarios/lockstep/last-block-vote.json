@@ -1,0 +1,20 @@
+{
+  "id": "last-block-vote",
+  "title": "A vote in the last block of a round changes the next round's delegates",
+  "levels": ["L2"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "settleBlocks": 0,
+  "actors": {"voter-early": {"seed": 1}, "voter-restart": {"seed": 2}, "voter-round": {"seed": 3}, "extra-a": {"seed": 4}, "extra-b": {"seed": 5}, "extra-c": {"seed": 6}, "pool-a": {"seed": 7}, "pool-b": {"seed": 8}, "payee": {"seed": 9}, "miss-user": {"seed": 10}, "restart-user": {"seed": 11}, "split-user": {"seed": 12}},
+  "steps": [
+    {"name": "fund the wallets", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [
+       {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["voter-early", "10000000000"], ["voter-restart", "10000000000"], ["voter-round", "10000000000"], ["extra-a", "20000000000"], ["extra-b", "20000000000"], ["extra-c", "20000000000"], ["pool-a", "10000000000"], ["pool-b", "10000000000"], ["payee", "100000000"], ["miss-user", "10000000000"], ["restart-user", "10000000000"], ["split-user", "10000000000"]]}
+     ]},
+    {"name": "vote in the last block of round 2", "at": {"height": 105}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["last-block-vote"]},
+     "txs": [
+       {"ref": "last-block-vote", "type": "vote", "from": "voter-round", "nonce": 1, "asset": {"votes": [["genesis_30", 100]]}}
+     ]},
+    {"name": "the next round", "at": {"afterBlocks": 4}, "check": {"forged": ["last-block-vote"], "digest": true}}
+  ]
+}
