@@ -281,6 +281,39 @@ fn a_ban_for_another_reason_fails_inside_a_window_too() {
     );
 }
 
+#[test]
+fn every_heartwood_node_but_the_control_is_held_to_one_block_time() {
+    let f = fixture();
+    // Node 5 receives block 20 nine seconds after the control, outside every fault window.
+    let path = f.run.join("propagation.jsonl");
+    let mut lines = read_lines(&path);
+    let control = lines
+        .iter()
+        .find(|v| v["node"] == "node1" && v["h"] == 20)
+        .expect("the control received block 20")["t"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let late = live::run::format_time(live::run::parse_time(&control).unwrap() + 9_000);
+    for v in lines
+        .iter_mut()
+        .filter(|v| v["node"] == "node5" && v["h"] == 20)
+    {
+        v["t"] = json!(late);
+    }
+    let text: String = lines.iter().map(|v| format!("{v}\n")).collect();
+    std::fs::write(&path, text).unwrap();
+    let failed = failures(&check(&f));
+    assert!(
+        has(
+            &failed,
+            "node5: every block within 8 s: 1 late blocks: 20 (9.0 s)"
+        ),
+        "{failed:#?}"
+    );
+    assert_eq!(failed.len(), 1, "{failed:#?}");
+}
+
 /// The recorded run as a split run: the recording's chain stands in for the majority's, and node 5
 /// is the minority, whose archive from before the heal is the same chain (its manifest ends where
 /// the majority's does).

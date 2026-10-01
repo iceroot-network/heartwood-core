@@ -21,11 +21,12 @@
 //! 4. `api`: the route corpus's answers, judged by `api compare` ([`crate::api`]), and the rate
 //!    limit's answers from an address that no node whitelists;
 //! 5. `bans`: every ban of a node under test's address ([`bans`]);
-//! 6. `invariants`: one tip at the pause, at or below the run's stop height; node 1's chain checked
-//!    by the devnet tooling (every generator the scheduled one, the supply; not in runs `m` and `f`,
-//!    whose relays do not serve the route the tooling reads); every block reached
-//!    the nodes under test within one block time (node 4 of runs `r`, `h` and `m1`), outside their fault
-//!    windows;
+//! 6. `invariants`: one tip at the pause, at or below the run's stop height; the control's chain
+//!    checked by the devnet tooling (every generator the scheduled one, the supply; not in runs `m`
+//!    and `f`, whose relays do not serve the route the tooling reads); every block reached the
+//!    nodes under test within one block time (node 4 of runs `r`, `h` and `m1`; every node under
+//!    test but the control in runs `t`, `m` and `f` and in the mixed forging runs), outside their
+//!    fault windows;
 //! 7. recorded, not gated (outcome `Pass`, label `recorded: ...`): block lags, the joining node's
 //!    sync time, the transaction propagation, socket-close bans inside fault windows, each node's
 //!    refused and undone blocks.
@@ -1369,7 +1370,7 @@ fn check_invariants(
         match run::read_json(&run_dir.join("check-chain.json")) {
             Err(e) => cases.fail(
                 "invariants",
-                "node 1's chain: the schedule and the supply",
+                format!("{}'s chain: the schedule and the supply", manifest.control),
                 e.to_string(),
             ),
             Ok(c) => {
@@ -1389,13 +1390,14 @@ fn check_invariants(
                     cases.pass(
                     "invariants",
                     format!(
-                        "node 1's chain: {scheduled} blocks forged by their scheduled delegate, the supply check holds"
+                        "{}'s chain: {scheduled} blocks forged by their scheduled delegate, the supply check holds",
+                        manifest.control
                     ),
                 );
                 } else {
                     cases.fail(
                     "invariants",
-                    "node 1's chain: the schedule and the supply",
+                    format!("{}'s chain: the schedule and the supply", manifest.control),
                     format!(
                         "{problems} problems in check-chain.json, {scheduled} blocks checked against the schedule"
                     ),
@@ -1418,9 +1420,13 @@ fn check_invariants(
             .and_then(|s| s.start)
             .map_or(from, |t| t.max(from));
         let lags = steps::lags(&arrivals, &node.name, &manifest.control, windows, from);
-        // Node 4 of runs `r`, `h` and `m1` is gated: every block within one block time.
+        // Node 4 of runs `r`, `h` and `m1` is gated: every block within one block time; so is
+        // every node under test but the control in runs `t`, `m` and `f` and in the mixed forging
+        // runs, whichever nodes their seed makes Heartwood's.
         let gated = (node.name == "node4" && manifest.run != "m2")
-            || (matches!(manifest.run.as_str(), "t" | "m" | "f") && node.name != manifest.control);
+            || ((matches!(manifest.run.as_str(), "t" | "m" | "f")
+                || MIXED_FORGING_RUNS.contains(&manifest.run.as_str()))
+                && node.name != manifest.control);
         if lags.is_empty() {
             if gated {
                 cases.fail(
