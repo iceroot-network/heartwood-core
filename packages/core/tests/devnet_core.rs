@@ -3,10 +3,8 @@
 //! a round of 54 blocks, the chain is consistent across the three relays, and every process stops.
 //! Run with `make binary-tests` or `cargo test -- --ignored devnet_core`, with the address prefix
 //! of the worktree's loopback block in `HEARTWOOD_DEVNET_PREFIX` (127.15.0 without it).
-//!
-//! `devnet init --core` is a stub until the devnet commands' `--core` form is integrated: until
-//! then this test stops at its `init` with "not built yet", which is the state it reports, not a
-//! failure of the core role (`core_role.rs` covers the role itself on a one-node devnet).
+//! `status --resources` adds each core process tree's figures to the status, in its table and,
+//! with `--json`, in its JSON (`core_role.rs` covers the role itself on a one-node devnet).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -91,6 +89,25 @@ fn three_core_nodes_forge_a_round_and_stop() {
     assert!(
         matches!(counts, Some((a, b)) if a == b && a == "3"),
         "{text}"
+    );
+    // `--resources` adds each process tree's figures to the table, and to the JSON with `--json`.
+    let with = devnet(&root, &["status", "--resources"]);
+    let text = String::from_utf8_lossy(&with.stdout);
+    assert!(text.contains("chain consistent at height"), "{text}");
+    let trees = text
+        .lines()
+        .filter(|line| line.contains("/core: rss "))
+        .count();
+    assert_eq!(trees, 3, "{text}");
+    let json = devnet(&root, &["status", "--json", "--resources"]);
+    let json: serde_json::Value = serde_json::from_slice(&json.stdout).expect("the JSON status");
+    assert_eq!(json["nodes"].as_array().map(Vec::len), Some(3), "{json}");
+    let trees = json["resources"].as_object().expect("the resources");
+    let names: Vec<&str> = trees.keys().map(String::as_str).collect();
+    assert_eq!(names, ["node1/core", "node2/core", "node3/core"], "{json}");
+    assert!(
+        trees.values().all(|tree| tree["rss"].as_u64() > Some(0)),
+        "{json}"
     );
     // Each node ran one core process, with no relay or forger process of its own.
     assert_eq!(files_ending(&root, "-core-current.log").len(), 3);

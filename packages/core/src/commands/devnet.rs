@@ -234,6 +234,17 @@ fn run_scenario(dir: &Path, run: &Run) -> Result<ExitCode, DevnetError> {
     Ok(ExitCode::from(code.unwrap_or(1)))
 }
 
+/// `status --json --resources`' figures: each running process tree by its `node<k>/<role>`
+/// name, in bytes and milliseconds (`null` where a figure could not be read).
+fn trees_json(dir: &Path, tools: &Tools) -> Result<serde_json::Value, DevnetError> {
+    let tree = |used: &devnet::Resources| {
+        serde_json::json!({ "rss": used.rss, "pss": used.pss, "cpuMs": used.cpu_ms,
+                            "written": used.written })
+    };
+    let trees = devnet::resources(dir, tools)?.into_iter();
+    Ok(trees.map(|(name, used)| (name, tree(&used))).collect())
+}
+
 /// Run `command`.
 pub fn run(devnet: Devnet) -> ExitCode {
     if let DevnetCommand::Run(run) = &devnet.command {
@@ -285,17 +296,17 @@ fn devnet_command(dir: &Path, command: DevnetCommand, tools: &Tools) -> Result<(
         DevnetCommand::Stop(s) => {
             devnet::stop(dir, &s.nodes.selection(), s.kill, tools)?;
         }
-        DevnetCommand::Status(Status { json: true, .. }) => {
-            println!("{:#}", devnet::status_json(dir, tools)?);
-        }
         DevnetCommand::Status(Status {
-            resources: true, ..
+            json: true,
+            resources,
         }) => {
-            for (name, used) in devnet::resources(dir, tools)? {
-                println!("{name}: {used}");
+            let mut status = devnet::status_json(dir, tools)?;
+            if let (true, Some(fields)) = (resources, status.as_object_mut()) {
+                fields.insert("resources".to_owned(), trees_json(dir, tools)?);
             }
+            println!("{status:#}");
         }
-        DevnetCommand::Status(_) => {
+        DevnetCommand::Status(Status { resources, .. }) => {
             let status = devnet::status(dir, tools)?;
             let rows =
                 (status.nodes.iter()).flat_map(|n| std::iter::once(&n.relay).chain(&n.forger));
@@ -308,6 +319,11 @@ fn devnet_command(dir: &Path, command: DevnetCommand, tools: &Tools) -> Result<(
                 println!("node{}: height {height:?}", node.node);
             }
             println!("{status}");
+            if resources {
+                for (name, used) in devnet::resources(dir, tools)? {
+                    println!("{name}: {used}");
+                }
+            }
         }
         DevnetCommand::Logs(l) => {
             let stream = if l.error {
