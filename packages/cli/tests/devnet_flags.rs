@@ -402,15 +402,28 @@ fn start_runs_one_core_process_per_validator_and_stop_ends_them() {
             .collect::<Vec<_>>(),
         stops
     );
-    // A role a core node lacks selects nothing on it.
+    // A role that a named core node lacks is refused before any process starts.
     let forgers = NodeSelection {
         nodes: vec![1, 2],
         role: Some(Role::Forger),
     };
     bench
         .with(|tools| devnet::start(&bench.root, &forgers, tools))
-        .unwrap();
+        .unwrap_err();
     assert!(bench.ops.calls().is_empty());
+    // With no node named, a role selects itself on the nodes that have it.
+    let relays = NodeSelection {
+        nodes: Vec::new(),
+        role: Some(Role::Relay),
+    };
+    bench
+        .with(|tools| devnet::start(&bench.root, &relays, tools))
+        .unwrap();
+    assert_eq!(bench.ops.calls(), ["start node3-devnet-relay"]);
+    bench
+        .with(|tools| devnet::stop(&bench.root, &relays, false, tools))
+        .unwrap();
+    assert_eq!(bench.ops.calls(), ["stop node3-devnet-relay"]);
     let status = bench
         .with(|tools| devnet::status(&bench.root, tools))
         .unwrap();
@@ -812,5 +825,44 @@ fn no_wait_starts_the_forgers_without_waiting_for_the_relays_apis() {
     assert_eq!(
         bench.ops.calls(),
         ["start node1-devnet-relay", "start node2-devnet-relay"]
+    );
+}
+
+#[test]
+fn node_commands_refuse_roles_the_node_does_not_have() {
+    let bench = Bench::new("missing-role");
+    bench.init(&core(2, 1)).unwrap();
+    for (node, role, roles) in [
+        (1, Role::Forger, "core"),
+        (2, Role::Relay, "core"),
+        (3, Role::Core, "relay"),
+    ] {
+        for verb in ["start", "stop", "restart"] {
+            let result = bench.with(|tools| match verb {
+                "start" => devnet::start_node(&bench.root, node, Some(role), tools),
+                "stop" => devnet::stop_node(&bench.root, node, Some(role), false, tools),
+                _ => devnet::restart_node(&bench.root, node, Some(role), tools),
+            });
+            let error = result.unwrap_err().to_string();
+            assert_eq!(
+                error,
+                format!("node {node} has no {role} role; its roles are {roles}")
+            );
+            assert!(bench.ops.calls().is_empty());
+        }
+    }
+    drop(bench);
+    let split = Bench::new("missing-core-role");
+    split
+        .init(&InitOptions {
+            validators: 1,
+            relays: 0,
+            ..InitOptions::default()
+        })
+        .unwrap();
+    let error = split.with(|tools| devnet::start_node(&split.root, 1, Some(Role::Core), tools));
+    assert_eq!(
+        error.unwrap_err().to_string(),
+        "node 1 has no core role; its roles are relay and forger"
     );
 }

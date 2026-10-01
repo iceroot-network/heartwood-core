@@ -37,11 +37,12 @@ const START: [Role; 3] = Role::SUPERVISED;
 const STOP: [Role; 3] = [Role::Forger, Role::Core, Role::Relay];
 
 /// Start the selected nodes: the relays (a core node's one process among them), then, once their
-/// APIs answer (30 s at most), the forgers. Refused when a crypto file differs from the manifest, a node's P2P or API listener
-/// would bind outside loopback, a selected role runs, or a relay's address is taken. Before any
-/// process starts, the epoch is re-stamped `epoch_delay` seconds after the clock's time when it
-/// is less than 10 s away or past, no process of the devnet runs and no node has a chain store;
-/// the re-stamp also removes every forger's signing record.
+/// APIs answer (30 s at most), the forgers. Refused when a named node does not have the selected
+/// role, a crypto file differs from the manifest, a node's P2P or API listener would bind outside
+/// loopback, a selected role runs, or a relay's address is taken. Before any process starts, the
+/// epoch is re-stamped `epoch_delay` seconds after the clock's time when it is less than 10 s away
+/// or past, no process of the devnet runs and no node has a chain store; the re-stamp also
+/// removes every forger's signing record.
 pub fn start(root: &Path, selection: &NodeSelection, tools: &Tools<'_>) -> Result<()> {
     start_with(root, selection, &StartOptions::default(), tools)
 }
@@ -65,6 +66,7 @@ pub fn start_with(
 ) -> Result<()> {
     let (root, mut manifest) = open(root)?;
     let (picked, role) = (manifest.select(selection)?, selection.role);
+    refuse_missing_role(&manifest, &selection.nodes, role)?;
     preflight(&root, &manifest, &picked, tools)?;
     for (k, role) in targets(&manifest, &picked, role, START)? {
         let instance = manifest.node(k)?.instance(role);
@@ -86,11 +88,12 @@ pub fn start_node(root: &Path, node: u32, role: Option<Role>, tools: &Tools<'_>)
 }
 
 /// Stop the selected nodes, forgers before relays; with `kill`, by SIGKILL, waiting for the exit,
-/// then recording the stop. A role that does not run is skipped. Every targeted role is tried;
-/// the first failure is the error.
+/// then recording the stop. A role that does not run is skipped; a named node that does not have
+/// the selected role is refused. Every targeted role is tried; the first failure is the error.
 pub fn stop(root: &Path, selection: &NodeSelection, kill: bool, tools: &Tools<'_>) -> Result<()> {
     let (_, manifest) = open(root)?;
     let picked = manifest.select(selection)?;
+    refuse_missing_role(&manifest, &selection.nodes, selection.role)?;
     stop_nodes(&manifest, &picked, selection.role, kill, tools.ops)
 }
 
@@ -102,10 +105,12 @@ pub fn stop_node(root: &Path, k: u32, role: Option<Role>, kill: bool, tools: &To
 
 /// Restart node `node` gracefully (`restart-node`): the forger stops before the relay, the relay
 /// starts before the forger, each with its environment read again. Refused, before anything
-/// stops, when a selected role does not run or [`start`]'s checks fail. The epoch never moves.
+/// stops, when the node does not have the selected role, a selected role does not run or
+/// [`start`]'s checks fail. The epoch never moves.
 pub fn restart_node(root: &Path, node: u32, role: Option<Role>, tools: &Tools<'_>) -> Result<()> {
     let (root, manifest) = open(root)?;
     let picked = [manifest.node(node)?.index];
+    refuse_missing_role(&manifest, &picked, role)?;
     preflight(&root, &manifest, &picked, tools)?;
     for (k, role) in targets(&manifest, &picked, role, START)? {
         let instance = manifest.node(k)?.instance(role);
@@ -181,6 +186,23 @@ fn open(root: &Path) -> Result<(PathBuf, Manifest)> {
     let root = std::path::absolute(root).map_err(io(root))?;
     let manifest = Manifest::read(&root)?;
     Ok((root, manifest))
+}
+
+/// Refuse a `role` that a node the command names does not have, naming the node's roles. With no
+/// node named, a role selects itself on the nodes that have it.
+fn refuse_missing_role(m: &Manifest, named: &[u32], role: Option<Role>) -> Result<()> {
+    let Some(role) = role else {
+        return Ok(());
+    };
+    for &node in named {
+        let roles = m.node(node)?.roles(None);
+        if !roles.contains(&role) {
+            let names: Vec<&str> = roles.iter().map(|role| role.name()).collect();
+            let roles = names.join(" and ");
+            return Err(DevnetError::MissingRole { node, role, roles });
+        }
+    }
+    Ok(())
 }
 
 /// The roles to act on, role by role in `order`, node by node within a role.

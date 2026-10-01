@@ -205,6 +205,16 @@ pub enum HttpError {
 /// A devnet command failed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DevnetError {
+    /// The selected node has no process of the requested role.
+    #[error("node {node} has no {role} role; its roles are {roles}")]
+    MissingRole {
+        /// The node's index.
+        node: u32,
+        /// The requested role.
+        role: crate::seams::Role,
+        /// The available roles.
+        roles: String,
+    },
     /// The node counts are out of range.
     #[error("{0}")]
     Counts(String),
