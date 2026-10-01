@@ -1,7 +1,8 @@
 //! `top`: the running instances of a token across its networks, from the instance index
 //! ([`crate::instance_index`]), with `status`'s columns. Each entry's supervisor pid and liveness
 //! are read from its held lock, as `status` reads them; an entry whose supervisor is gone is left
-//! out. With none running, the reference's "No processes are running".
+//! out. With none running, the command uses the reference's words "No processes are running",
+//! with Heartwood's exit 1; the reference logs `[ERROR] <message>` and exits 0.
 
 use std::path::Path;
 
@@ -11,7 +12,7 @@ use crate::process;
 use crate::seams::StatusRow;
 use crate::supervisor::signals::is_locked;
 
-/// The reference's answer when no instance of the token runs.
+/// The reference's message text when no instance of the token runs.
 pub const NONE_RUNNING: &str = "No processes are running";
 
 /// The status rows of `token`'s running instances under `data_root`, in name order. An instance

@@ -1,6 +1,8 @@
 //! `top` and the `env` commands through the `heartwood` binary, in a scratch home: the answer of
 //! `top` with nothing running, and `env set` then `env get`, `env list` and `env paths` over an
-//! instance's `.env`, in their spaced and colon spellings.
+//! instance's `.env`, in their spaced and colon spellings. Refusals use the reference's words
+//! with Heartwood's exit status 1; the reference logs `[ERROR] <message>` and exits 0 for
+//! refusals of `top`, `env get` and `env list`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -64,7 +66,7 @@ fn env_set_then_get_list_and_paths() {
         let line: Vec<&str> = words.iter().chain(&flags).copied().collect();
         heartwood(&home, Some(&config), &line)
     };
-    // No file yet: the reference's words, and nothing is written.
+    // No file yet: the reference's words with Heartwood's exit 1, and nothing is written.
     let absent = run(&["env", "list"]);
     assert_eq!(absent.status.code(), Some(1));
     let wanted = format!("No environment file found at {}\n", file.display());
