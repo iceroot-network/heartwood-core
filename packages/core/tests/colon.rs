@@ -43,8 +43,9 @@ fn tree() -> Vec<Vec<String>> {
 #[test]
 fn every_command_of_the_tree_has_its_colon_spelling() {
     let found = tree();
-    // The table of `heartwood_cli::argv` names 46 commands, each of which the tree has.
-    assert_eq!(found.len(), 46, "{found:?}");
+    // Twelve devnet commands exist only when that feature is enabled.
+    let expected = if cfg!(feature = "devnet") { 46 } else { 34 };
+    assert_eq!(found.len(), expected, "{found:?}");
     for path in found {
         let (spaced, colon) = (path.join(" "), path.join(":"));
         assert_eq!(
