@@ -65,6 +65,7 @@ fn roll_back(flags: &RollbackFlags) -> Result<bool, String> {
     let env = |name: &str| std::env::var(name).ok();
     let role = heartwood_cli::Role::Relay;
     let instance = resolve(role, &flags.instance, &env, &home, &cwd).map_err(text)?;
+    super::core::refuse_running(&instance, &[heartwood_cli::Role::Core]).map_err(text)?;
     let settings = Settings::in_data_dir(&instance.paths.data);
     if !settings.path.is_file() {
         return Err(format!("there is no store in {}", settings.path.display()));

@@ -390,7 +390,7 @@ fn core_start_detaches_by_default_and_core_stop_ends_it() {
     let rollback = node.run(&["snapshot", "rollback", "--number", "1"]);
     assert!(!rollback.status.success(), "{}", text(&rollback));
     assert!(
-        text(&rollback).contains("already running"),
+        text(&rollback).contains(&format!("{TOKEN}-{NETWORK}-core is already running")),
         "{}",
         text(&rollback)
     );
@@ -563,36 +563,6 @@ fn the_verbose_version_names_a_test_seam_only_in_a_build_that_has_it() {
     assert_eq!(text(&plain).trim(), heartwood_core::VERSION);
 }
 
-#[test]
-fn remote_access_must_admit_the_exact_forger_source() {
-    for (last, local) in [(52, true), (53, false)] {
-        let node = Node::new(&format!("source-{last}"), host(last));
-        if local {
-            node.profile(json!(["127.0.0.2"]));
-        } else {
-            let path = node.config().join("app.json");
-            let mut app: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-            let plugins = app["core"]["plugins"].as_array_mut().unwrap();
-            plugins.last_mut().unwrap()["options"]
-                .as_object_mut()
-                .unwrap()
-                .remove("localAddress");
-            fs::write(path, app.to_string()).unwrap();
-        }
-        let mut child = node.start("core", &["core", "run", "--networkStart"]);
-        let status = exit_within(&mut child, Duration::from_secs(5));
-        assert_eq!(status.code(), Some(1));
-        let source = if local {
-            node.host.as_str()
-        } else {
-            "127.0.0.1"
-        };
-        assert!(node.output("core").contains("remoteAccess"));
-        assert!(node.output("core").contains(source));
-        assert!(!node.locked("core") && !node.locked("relay") && !node.locked("forger"));
-    }
-}
-
 /// Starts must reject unusable keys before acquiring a supervisor lock.
 fn rejects_keys(role: &str) {
     let node = Node::new(&format!("{role}-keys"), host(50));
@@ -666,5 +636,35 @@ fn split_management_refuses_while_only_the_core_supervisor_lock_is_held() {
                 text(&output)
             );
         }
+    }
+}
+
+#[test]
+fn remote_access_must_admit_the_exact_forger_source() {
+    for (last, local) in [(52, true), (53, false)] {
+        let node = Node::new(&format!("source-{last}"), host(last));
+        if local {
+            node.profile(json!(["127.0.0.2"]));
+        } else {
+            let path = node.config().join("app.json");
+            let mut app: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            let plugins = app["core"]["plugins"].as_array_mut().unwrap();
+            plugins.last_mut().unwrap()["options"]
+                .as_object_mut()
+                .unwrap()
+                .remove("localAddress");
+            fs::write(path, app.to_string()).unwrap();
+        }
+        let mut child = node.start("core", &["core", "run", "--networkStart"]);
+        let status = exit_within(&mut child, Duration::from_secs(5));
+        assert_eq!(status.code(), Some(1));
+        let source = if local {
+            node.host.as_str()
+        } else {
+            "127.0.0.1"
+        };
+        assert!(node.output("core").contains("remoteAccess"));
+        assert!(node.output("core").contains(source));
+        assert!(!node.locked("core") && !node.locked("relay") && !node.locked("forger"));
     }
 }
