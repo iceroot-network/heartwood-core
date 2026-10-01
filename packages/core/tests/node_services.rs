@@ -236,7 +236,12 @@ async fn the_servers_reads_and_work_go_to_the_node_and_its_store() {
                 .unwrap(),
         ),
         #[cfg(feature = "difftest")]
-        attestation_record: None,
+        attestation_record: Some(
+            heartwood_core::harness::AttestationRecordFile::open(
+                &setup.root.join("attest-0000.jsonl"),
+            )
+            .unwrap(),
+        ),
     };
 
     // A public request's AwaitBlock step reaches the harness's record through the service.
@@ -260,6 +265,27 @@ async fn the_servers_reads_and_work_go_to_the_node_and_its_store() {
                 "t": "2023-11-14T22:13:20.123Z", "route": "getStatus",
                 "caller": "127.0.0.9", "waitMs": 8004, "end": "bound",
                 "tipBefore": 58, "tipAfter": 58,
+            })
+        );
+    }
+
+    // A step of a status's attestation reaches the harness's attestation record the same way.
+    #[cfg(feature = "difftest")]
+    {
+        use heartwood_p2p::node_services::{AttestationRecord, AttestationStep};
+        services.attestation_step(&AttestationRecord {
+            at_ms: 1_700_000_000_456,
+            step: AttestationStep::Signed { attestations: 2 },
+            status: "ab".repeat(32),
+            slot: 125,
+        });
+        let text = std::fs::read_to_string(setup.root.join("attest-0000.jsonl")).unwrap();
+        let line: serde_json::Value = serde_json::from_str(text.trim_end()).unwrap();
+        assert_eq!(
+            line,
+            serde_json::json!({
+                "t": "2023-11-14T22:13:20.456Z", "step": "signed", "attestations": 2,
+                "status": "ab".repeat(32), "slot": 125,
             })
         );
     }
