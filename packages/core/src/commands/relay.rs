@@ -133,6 +133,7 @@ pub fn run(command: RelayCommand) -> ExitCode {
     match command {
         RelayCommand::Run(run) => crate::exit(crate::app::run_relay(&run)),
         RelayCommand::Start(start) => on_instance(Role::Relay, &start.run.instance(), |i| {
+            super::core::refuse_running(i, &[Role::Core])?;
             super::start(i, start.run.args(), start.daemon)
         }),
         RelayCommand::Manage(command) => super::manage(Role::Relay, command),
