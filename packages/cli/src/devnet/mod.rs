@@ -22,10 +22,12 @@
 //! - **[`reset`]** deletes a node's data, logs, temp and cache (the forger's signing record
 //!   stays); **[`wait`]** polls the relays' heights every 2 s; **[`logs`]** merges the nodes'
 //!   logs in time order with prefixes; **[`env()`]** gives a node's environment.
-//! - **The flags' shapes** (bodies to come): [`InitOptions::core`] (each validator one `core`
-//!   process instead of a relay and a forger), [`start_with`] ([`StartOptions`]: `--keep-epoch`,
-//!   `--no-wait`), [`status_json`] and [`resources`] (`status --json` and `--resources`), and
-//!   [`follow`] (`logs --follow`); [`run()`] (`devnet run`) execs the scenario runner.
+//! - **The flags.** [`InitOptions::core`] makes each validator one `core` process (its relay
+//!   and forger together, one `core start` under one supervisor) instead of a relay and a forger;
+//!   [`start_with`] takes [`StartOptions`] (`--keep-epoch` never re-stamps the epoch, `--no-wait`
+//!   does not wait for the relays' APIs); [`status_json`] and [`resources`] are `status --json`
+//!   and `status --resources`; [`follow`] is `logs --follow`; [`run()`] (`devnet run`) execs the
+//!   scenario runner.
 //! - **Guards.** A prefix outside 127.0.0.0/8, a listener address another process holds, a
 //!   network whose name is not `devnet` (or `devnet-...`) and a node `.env` that binds a
 //!   listener to an address that is not loopback are refused.
@@ -52,14 +54,16 @@ use crate::seams::{Instance, NodeApi, ProcessOps, Profile, Role, StatusRow};
 
 mod control;
 mod manifest;
+mod procfs;
 mod report;
 pub mod run;
 
 pub use crate::devnet::control::{
     StartOptions, reset, restart_node, start, start_node, start_with, stop, stop_node, wait,
 };
+pub use crate::devnet::procfs::tree_resources;
 pub use crate::devnet::report::{
-    LogStream, Resources, env, follow, logs, resources, status, status_json,
+    LogStream, Resources, env, follow, logs, resources, resources_in, status, status_json,
 };
 pub use crate::devnet::run::run;
 
@@ -222,6 +226,8 @@ pub struct ManifestNode {
     pub delegates: Vec<String>,
     /// The node's directory, `<root>/node<k>`.
     pub dir: PathBuf,
+    /// Whether the node runs as one `core` process, its relay and forger together.
+    pub core: bool,
 }
 
 impl ManifestNode {
@@ -261,11 +267,17 @@ impl ManifestNode {
         }
     }
 
-    /// The node's roles, relay first, or only `role` when the node has it.
+    /// The node's roles, relay first, or only `role` when the node has it: a core node has the
+    /// `core` role alone.
     pub fn roles(&self, role: Option<Role>) -> Vec<Role> {
-        let has = |r: &Role| *r == Role::Relay || self.forger_address.is_some();
+        let has = |r: &Role| match (self.core, r) {
+            (true, r) => *r == Role::Core,
+            (false, r) => {
+                *r == Role::Relay || (*r == Role::Forger && self.forger_address.is_some())
+            }
+        };
         let wanted = |r: &Role| role.is_none_or(|only| only == *r);
-        Role::ALL
+        Role::SUPERVISED
             .into_iter()
             .filter(|r| has(r) && wanted(r))
             .collect()
@@ -289,6 +301,8 @@ pub struct Manifest {
     pub failover: Vec<Failover>,
     /// The seconds to the epoch that a re-stamp gives.
     pub epoch_delay: u32,
+    /// Whether each validator runs as one `core` process.
+    pub core: bool,
     /// The chain's nethash.
     pub nethash: String,
     /// The genesis block's id.
@@ -369,12 +383,16 @@ pub struct RelayView {
 pub struct NodeStatus {
     /// The node's number.
     pub node: u32,
-    /// The relay's supervised status.
+    /// The relay's supervised status; for a core node, the core process's.
     pub relay: StatusRow,
-    /// The forger's supervised status; `None` for a relay-only node.
+    /// The forger's supervised status; `None` for a relay-only node and for a core node.
     pub forger: Option<StatusRow>,
+    /// Whether the node runs as one `core` process.
+    pub core: bool,
     /// The relay's API, when every read answered.
     pub api: Option<RelayView>,
+    /// The address at which the other relays list the node (`ip:port`), when one does.
+    pub reported: Option<SocketAddr>,
     /// The delegates the node's forger holds.
     pub delegates: u32,
 }
@@ -405,8 +423,8 @@ pub fn init(
     tools: &Tools<'_>,
 ) -> Result<Manifest> {
     let root = std::path::absolute(root).map_err(io(root))?;
-    if options.core {
-        return Err(DevnetError::NotBuilt("devnet init --core"));
+    if options.core && !options.failover.is_empty() {
+        return Err(guard("a core devnet has no failover forger".to_owned()));
     }
     let [a, b, c] = options.address_prefix;
     if a != 127 {
@@ -417,7 +435,14 @@ pub fn init(
     }
     let (count, relays) = (options.validators, options.relays);
     let prefix = options.address_prefix;
-    let mut nodes = plan(&root, prefix, count, relays, &options.failover)?;
+    let mut nodes = plan(
+        &root,
+        prefix,
+        count,
+        relays,
+        &options.failover,
+        options.core,
+    )?;
     manifest::clear(&root, options.force, tools.ops)?;
     let forger = |n: &ManifestNode| n.forger_address.filter(|a| *a != n.address);
     let spare = |n: &ManifestNode| forger(n).map(|a| SocketAddr::new(a, 0));
@@ -496,6 +521,7 @@ fn build(
         relays: options.relays,
         failover: options.failover.clone(),
         epoch_delay: options.epoch_delay,
+        core: options.core,
         nethash,
         genesis_id: generated.genesis_id,
         epoch,
@@ -514,6 +540,7 @@ fn plan(
     validators: u32,
     relays: u32,
     failover: &[Failover],
+    core: bool,
 ) -> Result<Vec<ManifestNode>> {
     let total = validators.saturating_add(relays);
     if !(1..=53).contains(&validators) || total > MAX_NODES {
@@ -548,6 +575,7 @@ fn plan(
             forger_hosts: hosts,
             delegates: Vec::new(),
             dir: root.join(format!("node{k}")),
+            core: core && k <= validators,
         })
     };
     (1..=total).map(node).collect()
@@ -604,9 +632,15 @@ fn write_node(
     let hosts: Vec<Value> = node.forger_hosts.iter().map(host).collect();
     let local = node.forger_address.unwrap_or(address).to_string();
     let forger = json!({ "hosts": hosts, "localAddress": local, "aux": hex::encode(aux) });
-    // The reference's schema requires the three profiles, the `core` one too.
-    let app = json!({ "core": { "plugins": [] }, "relay": { "plugins": relay }, "forger": {
-        "plugins": [plugin("logger"), plugin("transactions"), with("forger", forger)] } });
+    // The reference's schema requires the three profiles, the `core` one too: the relay's plugins
+    // and the forger's, for the one process of a core node.
+    let forger = with("forger", forger);
+    let core = match node.core {
+        true => [relay.clone(), vec![forger.clone()]].concat(),
+        false => Vec::new(),
+    };
+    let app = json!({ "core": { "plugins": core }, "relay": { "plugins": relay }, "forger": {
+        "plugins": [plugin("logger"), plugin("transactions"), forger] } });
     let save = |name: &str, value: Value| write(&config.join(name), pretty(&value).as_bytes());
     let token = format!("node{}", node.index);
     let peer = |n: &ManifestNode| json!({ "ip": n.address.to_string(), "port": P2P_PORT });

@@ -5,18 +5,20 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use heartwood_crypto::utils::js;
 use heartwood_kernel::config::dot_env::{self, EnvValue};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::devnet::manifest::io;
+use crate::devnet::procfs::tree_resources;
 use crate::devnet::{Consistency, DevnetStatus, Manifest, ManifestNode, NodeSelection};
 use crate::devnet::{NodeStatus, QUORUM, RelayView, Result, Tools};
 use crate::errors::DevnetError;
-use crate::seams::{ApiBlock, Env, Role, SupervisedStatus};
+use crate::seams::{ApiBlock, ApiPeer, Env, Instance, Role, StatusRow, SupervisedStatus};
 
 /// The most bytes read from a log's end to find its last lines.
 const WINDOW: u64 = 1024 * 1024;
@@ -29,35 +31,46 @@ const STAMP: usize = 25;
 pub fn status(root: &Path, tools: &Tools<'_>) -> Result<DevnetStatus> {
     let manifest = Manifest::read(root)?;
     let mut nodes = Vec::with_capacity(manifest.nodes.len());
+    let mut lists = Vec::with_capacity(manifest.nodes.len());
     for node in &manifest.nodes {
         let status = |role: Role| tools.ops.status(&node.instance(role));
-        let forger = node
-            .forger_address
-            .map(|_| status(Role::Forger))
-            .transpose()?;
+        let forger = node.forger_address.filter(|_| !node.core);
+        let forger = forger.map(|_| status(Role::Forger)).transpose()?;
         let (api, address) = (tools.api, node.api());
         let view = || {
             let status = api.node_status(address).ok()?;
             let last_block = api.last_block(address).ok()?;
-            let peers = api.peers(address).ok()?.len();
-            Some(RelayView {
-                status,
-                last_block,
-                peers,
-            })
+            let list = api.peers(address).ok()?;
+            let peers = list.len();
+            Some((
+                RelayView {
+                    status,
+                    last_block,
+                    peers,
+                },
+                list,
+            ))
         };
-        let (index, relay, api) = (node.index, status(Role::Relay)?, view());
+        let role = if node.core { Role::Core } else { Role::Relay };
+        let (index, relay, (api, list)) = (node.index, status(role)?, view().unzip());
+        lists.push((index, list.unwrap_or_default()));
         let delegates = u32::try_from(node.delegates.len()).unwrap_or(u32::MAX);
         nodes.push(NodeStatus {
             node: index,
             relay,
             forger,
+            core: node.core,
             api,
+            reported: None,
             delegates,
         });
     }
+    for (status, node) in nodes.iter_mut().zip(&manifest.nodes) {
+        status.reported = reported(node, &lists);
+    }
     let online = |node: &&NodeStatus| {
-        let status = node.forger.as_ref().map(|row| row.status);
+        let row = node.forger.as_ref().or(node.core.then_some(&node.relay));
+        let status = row.map(|row| row.status);
         matches!(
             status,
             Some(SupervisedStatus::Online | SupervisedStatus::OnlineUnsupervised)
@@ -73,6 +86,16 @@ pub fn status(root: &Path, tools: &Tools<'_>) -> Result<DevnetStatus> {
         relays,
         online_delegates,
     })
+}
+
+/// The address at which the other relays list `node`, as `ip:port`: the first entry of their
+/// peer lists (`lists`, by node) with the node's address, at the port it lists; `None` when none
+/// lists it.
+fn reported(node: &ManifestNode, lists: &[(u32, Vec<ApiPeer>)]) -> Option<SocketAddr> {
+    let others = lists.iter().filter(|(index, _)| *index != node.index);
+    let mut peers = others.flat_map(|(_, list)| list);
+    let peer = peers.find(|peer| peer.ip.parse() == Ok(node.address));
+    peer.map(|peer| SocketAddr::new(node.address, peer.port))
 }
 
 /// The relays' agreement: their block ids at the lowest height among their last blocks, and how
@@ -126,11 +149,45 @@ impl fmt::Display for DevnetStatus {
     }
 }
 
-/// The machine-readable form of [`status`] (`status --json`): every node's processes and API
-/// reads, the consistency, the counts compared and the delegates online.
+/// The machine-readable form of [`status`] (`status --json`): every node's processes (role,
+/// status, pid, uptime in seconds, restarts), its API's URL and reads, and the address its peers
+/// report for it; the consistency, the counts compared and the delegates online.
 pub fn status_json(root: &Path, tools: &Tools<'_>) -> Result<Value> {
-    let _ = (root, tools);
-    Err(DevnetError::NotBuilt("devnet status --json"))
+    let (status, manifest) = (status(root, tools)?, Manifest::read(root)?);
+    let row = |role: Role, row: &StatusRow| {
+        let (state, pid) = (row.status.name(), row.pid);
+        let uptime = row.uptime.map(|time| time.as_secs_f64());
+        json!({ "role": role.name(), "status": state, "pid": pid, "uptime": uptime,
+                "restarts": row.restarts })
+    };
+    let node = |(node, at): (&NodeStatus, &ManifestNode)| {
+        let first = if node.core { Role::Core } else { Role::Relay };
+        let rows = [(first, Some(&node.relay))].into_iter();
+        let rows = rows.chain([(Role::Forger, node.forger.as_ref())]);
+        let processes: Vec<Value> = rows.filter_map(|(r, s)| Some(row(r, s?))).collect();
+        let api = node.api.as_ref().map(|api| {
+            json!({ "height": api.last_block.height, "lastBlockId": api.last_block.id,
+                    "synced": api.status.synced, "peers": api.peers })
+        });
+        let reported = node.reported.map(|address| address.to_string());
+        json!({ "node": node.node, "address": at.address.to_string(), "core": node.core,
+                "apiUrl": format!("http://{}", at.api()), "processes": processes, "api": api,
+                "reportedAddress": reported,
+                "delegates": node.delegates })
+    };
+    let nodes: Vec<Value> = status.nodes.iter().zip(&manifest.nodes).map(node).collect();
+    let (kind, height) = match status.consistency {
+        Consistency::Consistent(height) => ("consistent", Some(height)),
+        Consistency::Diverged(height) => ("diverged", Some(height)),
+        Consistency::Unknown => ("unknown", None),
+    };
+    Ok(json!({
+        "chain": { "consistency": kind, "height": height, "compared": status.compared,
+                   "relays": status.relays },
+        "delegates": { "total": status.delegates(), "online": status.online_delegates,
+                       "quorum": QUORUM, "hasQuorum": status.has_quorum() },
+        "nodes": nodes,
+    }))
 }
 
 /// The resources of one process tree (a supervisor's node and its children), Linux only.
@@ -146,15 +203,59 @@ pub struct Resources {
     pub written: Option<u64>,
 }
 
-/// The resources of every running process of the devnet (`status --resources`), labelled
-/// `node<k>/<role>`, in node and role order.
-pub fn resources(root: &Path, tools: &Tools<'_>) -> Result<Vec<(String, Resources)>> {
-    let _ = (root, tools);
-    Err(DevnetError::NotBuilt("devnet status --resources"))
+impl fmt::Display for Resources {
+    /// `rss 512 MiB, pss 400 MiB, cpu 1234 ms, written 8 MiB`; a figure that could not be read
+    /// shows as `n/a`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mib =
+            |bytes: Option<u64>| bytes.map_or("n/a".to_owned(), |b| format!("{} MiB", b >> 20));
+        let (rss, pss, written) = (mib(Some(self.rss)), mib(self.pss), mib(self.written));
+        write!(
+            f,
+            "rss {rss}, pss {pss}, cpu {} ms, written {written}",
+            self.cpu_ms
+        )
+    }
 }
 
+/// The resources of every running process of the devnet (`status --resources`), labelled
+/// `node<k>/<role>`, in node and role order. The resources are those of the process tree under
+/// the node's pid, read from `/proc`; a process that does not run is left out. Refused where
+/// there is no `/proc`.
+pub fn resources(root: &Path, tools: &Tools<'_>) -> Result<Vec<(String, Resources)>> {
+    resources_in(root, tools, Path::new("/proc"))
+}
+
+/// [`resources`] over the `/proc` tree at `proc`.
+pub fn resources_in(
+    root: &Path,
+    tools: &Tools<'_>,
+    proc: &Path,
+) -> Result<Vec<(String, Resources)>> {
+    if !proc.join("self").exists() {
+        return Err(DevnetError::Guard(
+            "status --resources needs Linux's /proc".to_owned(),
+        ));
+    }
+    let manifest = Manifest::read(root)?;
+    let mut rows = Vec::new();
+    for node in &manifest.nodes {
+        for role in node.roles(None) {
+            let row = tools.ops.status(&node.instance(role))?;
+            let used = row.pid.and_then(|pid| tree_resources(proc, pid));
+            rows.extend(used.map(|used| (format!("node{}/{role}", node.index), used)));
+        }
+    }
+    Ok(rows)
+}
+
+/// How long [`follow`] sleeps between two looks at the logs.
+const FOLLOW_POLL: Duration = Duration::from_millis(200);
+
 /// [`logs`], then follow the files as they grow (`logs --follow`), with the node and role
-/// prefixes, until `stop` answers true.
+/// prefixes, until `stop` answers true. A file that does not exist yet is picked up when it
+/// appears; one that shrinks (a rotation) is read again from its start. Only whole lines are
+/// written: a line still being written waits for its end.
 pub fn follow(
     root: &Path,
     selection: &NodeSelection,
@@ -163,8 +264,71 @@ pub fn follow(
     out: &mut dyn Write,
     stop: &dyn Fn() -> bool,
 ) -> Result<()> {
-    let _ = (root, selection, stream, lines, out, stop);
-    Err(DevnetError::NotBuilt("devnet logs --follow"))
+    // Each log is followed from where the last lines were read, so no line is lost or repeated.
+    let read = last_lines(root, selection, stream, lines, out)?;
+    let prefixed = read.len() > 1;
+    let follow = |(label, path, seen)| Followed {
+        label,
+        path,
+        seen,
+        partial: Vec::new(),
+    };
+    let mut sources: Vec<Followed> = read.into_iter().map(follow).collect();
+    while !stop() {
+        for source in &mut sources {
+            source.read(prefixed, out)?;
+        }
+        out.flush().map_err(io(Path::new("the output")))?;
+        std::thread::sleep(FOLLOW_POLL);
+    }
+    Ok(())
+}
+
+/// A log [`follow`] tails: how far it has been read, and the start of a line not yet ended.
+struct Followed {
+    label: String,
+    path: PathBuf,
+    seen: u64,
+    partial: Vec<u8>,
+}
+
+impl Followed {
+    /// Write the new whole lines of the file to `out`.
+    fn read(&mut self, prefixed: bool, out: &mut dyn Write) -> Result<()> {
+        let Ok(mut file) = File::open(&self.path) else {
+            return Ok(());
+        };
+        let length = file.metadata().map_err(io(&self.path))?.len();
+        if length < self.seen {
+            (self.seen, self.partial) = (0, Vec::new());
+        }
+        file.seek(SeekFrom::Start(self.seen))
+            .map_err(io(&self.path))?;
+        let mut data = Vec::new();
+        file.take(length.saturating_sub(self.seen))
+            .read_to_end(&mut data)
+            .map_err(io(&self.path))?;
+        self.seen = self
+            .seen
+            .saturating_add(u64::try_from(data.len()).unwrap_or(0));
+        self.partial.extend(data);
+        let label = if prefixed { self.label.as_str() } else { "" };
+        while let Some(end) = self.partial.iter().position(|b| *b == b'\n') {
+            let line: Vec<u8> = self.partial.drain(..=end).collect();
+            let line = String::from_utf8_lossy(&line);
+            write!(out, "{label}{line}").map_err(io(Path::new("the output")))?;
+        }
+        Ok(())
+    }
+}
+
+/// The path of `stream`'s log of `instance`.
+fn log_path(instance: &Instance, stream: LogStream) -> PathBuf {
+    match stream {
+        LogStream::Out => instance.out_log_path(),
+        LogStream::Error => instance.error_log_path(),
+        LogStream::File => instance.log_path(),
+    }
 }
 
 /// Which log of each process [`logs`] reads.
@@ -189,38 +353,47 @@ pub fn logs(
     lines: usize,
     out: &mut dyn Write,
 ) -> Result<()> {
+    last_lines(root, selection, stream, lines, out).map(drop)
+}
+
+/// [`logs`], giving each log's label, path and the length read of it (0 for one that does not
+/// exist yet).
+fn last_lines(
+    root: &Path,
+    selection: &NodeSelection,
+    stream: LogStream,
+    lines: usize,
+    out: &mut dyn Write,
+) -> Result<Vec<(String, PathBuf, u64)>> {
     let manifest = Manifest::read(root)?;
     let mut sources = Vec::new();
     for k in manifest.select(selection)? {
         let node = manifest.node(k)?;
         for role in node.roles(selection.role) {
-            let instance = node.instance(role);
-            let path = match stream {
-                LogStream::Out => instance.out_log_path(),
-                LogStream::Error => instance.error_log_path(),
-                LogStream::File => instance.log_path(),
-            };
+            let path = log_path(&node.instance(role), stream);
             sources.push((format!("node{k}/{role}: "), path));
         }
     }
     let (mut merged, prefixed) = (Vec::new(), sources.len() > 1);
-    for (label, path) in &sources {
-        let text = match tail(path) {
-            Err(error) if error.kind() == ErrorKind::NotFound => continue,
-            text => text.map_err(io(path))?,
+    let mut read = Vec::with_capacity(sources.len());
+    for (label, path) in sources {
+        let (text, end) = match tail(&path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => (String::new(), 0),
+            text => text.map_err(io(&path))?,
         };
         let all: Vec<&str> = text.lines().collect();
-        let (mut time, label) = ("", if prefixed { label.as_str() } else { "" });
+        let (mut time, shown) = ("", if prefixed { label.as_str() } else { "" });
         for line in all.iter().skip(all.len().saturating_sub(lines)) {
             time = stamp(line).unwrap_or(time);
-            merged.push((time.to_owned(), format!("{label}{line}")));
+            merged.push((time.to_owned(), format!("{shown}{line}")));
         }
+        read.push((label, path, end));
     }
     merged.sort_by(|a, b| a.0.cmp(&b.0));
     for (_, line) in merged {
         writeln!(out, "{line}").map_err(io(Path::new("the output")))?;
     }
-    Ok(())
+    Ok(read)
 }
 
 /// The time at the start of a log line, `[YYYY-MM-DD HH:MM:SS.mmm]`.
@@ -230,13 +403,14 @@ fn stamp(line: &str) -> Option<&str> {
 }
 
 /// The text of the last [`WINDOW`] bytes of the file `path`, from its first whole line when the
-/// window starts inside the file.
-fn tail(path: &Path) -> std::io::Result<String> {
+/// window starts inside the file, and the length read up to.
+fn tail(path: &Path) -> std::io::Result<(String, u64)> {
     let mut file = File::open(path)?;
     let start = file.metadata()?.len().saturating_sub(WINDOW);
     file.seek(SeekFrom::Start(start))?;
     let mut data = Vec::new();
     file.read_to_end(&mut data)?;
+    let end = start.saturating_add(u64::try_from(data.len()).unwrap_or(u64::MAX));
     let whole = if start > 0 {
         data.iter().position(|b| *b == b'\n')
     } else {
@@ -245,7 +419,7 @@ fn tail(path: &Path) -> std::io::Result<String> {
     let data = data
         .get(whole.map_or(0, |at| at.saturating_add(1))..)
         .unwrap_or_default();
-    Ok(String::from_utf8_lossy(data).into_owned())
+    Ok((String::from_utf8_lossy(data).into_owned(), end))
 }
 
 /// Node `node`'s environment: the values of its `.env`, then its five `CORE_PATH_*` variables.
