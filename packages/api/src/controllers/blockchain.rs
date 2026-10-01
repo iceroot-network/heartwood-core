@@ -231,12 +231,12 @@ mod tests {
     #[test]
     fn a_transaction_hit_keeps_a_positive_amount_only() {
         let data = json!({
-            "amount": "0", "id": "ab", "senderId": "D1", "type": 6, "typeGroup": 1,
+            "amount": "0", "id": "ab", "senderId": "DSender", "type": 6, "typeGroup": 1,
             "nonce": "1",
         });
         assert_eq!(
             transaction_hit(&data),
-            json!({ "id": "ab", "sender": "D1", "type": 6, "typeGroup": 1 })
+            json!({ "id": "ab", "sender": "DSender", "type": 6, "typeGroup": 1 })
         );
         let burn = json!({ "amount": "5", "id": "ab", "type": 6, "typeGroup": 1 });
         assert_eq!(transaction_hit(&burn)["amount"], "5");
