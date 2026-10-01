@@ -199,7 +199,8 @@ impl Manifest {
             "format": FORMAT, "version": env!("CARGO_PKG_VERSION"), "network": NETWORK,
             "seed": self.seed, "addressPrefix": format!("{a}.{b}.{c}"),
             "validators": self.validators, "relays": self.relays, "failover": failover,
-            "epochDelay": self.epoch_delay, "core": self.core, "epoch": self.epoch, "genesisId": self.genesis_id,
+            "epochDelay": self.epoch_delay, "core": self.core, "epoch": self.epoch,
+            "genesisId": self.genesis_id,
             "nethash": self.nethash, "crypto": crypto,
             "nodes": self.nodes.iter().map(node).collect::<Vec<_>>(),
         });

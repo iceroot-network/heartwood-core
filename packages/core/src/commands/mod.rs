@@ -4,11 +4,11 @@
 //! `restart-node`, `reset`, `wait`, `env`), [`snapshot`] (`rollback`), [`clear`] (`pool clear` and
 //! `state clear`), [`doctor`] (read-only diagnostics, `checks`, `explain`, `mcp`), [`top`] (the
 //! token's running instances), [`mod@env`] (`get`, `list`, `set`, `paths`), [`config`] (`publish`,
-//! `forger`), [`service`] (`install`, `uninstall`), [`mod@core`] (the combined role's `run`, `start`,
-//! `stop`, `restart`, `status`, `log`) and [`supervise`] (the hidden supervisor), with `version`
-//! (`--verbose`) and clap's `help`. A command that is not built yet says so and exits with 1. The reference's colon spellings
-//! (`relay:start`) are rewritten first ([`heartwood_cli::argv::rewrite`]); flags keep the
-//! reference's camelCase with kebab-case
+//! `forger`), [`service`] (`install`, `uninstall`), [`mod@core`] (the combined role's `run`,
+//! `start`, `stop`, `restart`, `status`, `log`) and [`supervise`] (the hidden supervisor), with
+//! `version` (`--verbose`) and clap's `help`. A command that is not built yet says so and exits
+//! with 1. The reference's colon spellings (`relay:start`) are rewritten first
+//! ([`heartwood_cli::argv::rewrite`]); flags keep the reference's camelCase with kebab-case
 //! aliases.
 
 pub mod clear;

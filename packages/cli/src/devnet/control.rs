@@ -250,10 +250,10 @@ fn preflight(root: &Path, manifest: &Manifest, picked: &[u32], tools: &Tools<'_>
 }
 
 /// The hosts a node's listeners would take, each with where it comes from: the P2P server's and
-/// the API's, as the relay (a core node's `core` process) reads them. The API's is the `server.http.host` option of its entry in
-/// `app.json` when that gives one, else `CORE_API_HOST`; the environment is the process's, the
-/// node's own `.env`, and `~/.<token>/.env` over both, as the node loads it. A host that is
-/// missing reads as the empty text, which is not loopback.
+/// the API's, as the relay (a core node's `core` process) reads them. The API's is the
+/// `server.http.host` option of its entry in `app.json` when that gives one, else `CORE_API_HOST`;
+/// the environment is the process's, the node's own `.env`, and `~/.<token>/.env` over both, as
+/// the node loads it. A host that is missing reads as the empty text, which is not loopback.
 fn listener_hosts(node: &ManifestNode, tools: &Tools<'_>) -> Result<Vec<(String, String)>> {
     let mut vars: BTreeMap<String, String> = tools.process.iter().cloned().collect();
     for (key, value) in node_env(node)? {

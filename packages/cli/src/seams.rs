@@ -84,8 +84,9 @@ impl FromStr for Role {
 ///
 /// The files of an instance: under `<data>/run` (mode 0700) the role's lock `<role>.lock`, pid
 /// `<role>.pid`, supervisor lock `<role>.supervisor.lock`, supervisor state `<role>.state.json`
-/// and service-manager record `<role>.manager.json`; under `<log>` the node's log `<name>-current.log` and the supervisor's
-/// captures `<name>-out.log` and `<name>-error.log`, where `<name>` is [`Instance::name`].
+/// and service-manager record `<role>.manager.json`; under `<log>` the node's log
+/// `<name>-current.log` and the supervisor's captures `<name>-out.log` and `<name>-error.log`,
+/// where `<name>` is [`Instance::name`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instance {
     /// The token, such as `solar` or `node1`.
