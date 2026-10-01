@@ -350,7 +350,7 @@ fn core_start_detaches_by_default_and_core_stop_ends_it() {
     let node = Node::new("detached", host(43));
     let _stop = Stopped(&node);
     let started = Instant::now();
-    let output = node.run(&["core", "start", "--networkStart"]);
+    let output = node.run(&["core", "start", "--networkStart", "--skipPrompts=false"]);
     assert!(output.status.success(), "{}", text(&output));
     assert!(
         started.elapsed() < Duration::from_secs(30),
@@ -364,6 +364,8 @@ fn core_start_detaches_by_default_and_core_stop_ends_it() {
         node.locked("core.supervisor"),
         "no supervisor of the core role"
     );
+    let state = fs::read_to_string(node.run_dir().join("core.state.json")).unwrap();
+    assert!(!state.contains("skipPrompts") && !state.contains("skip-prompts"));
     let status = node.run(&["core", "status"]);
     assert!(status.status.success());
     assert!(

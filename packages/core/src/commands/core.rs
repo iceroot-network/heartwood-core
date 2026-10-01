@@ -28,6 +28,12 @@ pub struct CoreRun {
     /// The relay's flags.
     #[command(flatten)]
     pub relay: RelayRun,
+    /// Accepted for compatibility with the removed prompt.
+    #[arg(
+        long = "skipPrompts", alias = "skip-prompts", default_value_t = false,
+        action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true"
+    )]
+    pub skip_prompts: bool,
 }
 
 /// The flags of `core start`: those of `core run`, and whether to leave the terminal.

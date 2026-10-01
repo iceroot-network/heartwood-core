@@ -130,6 +130,7 @@ fn the_forgers_facts_are_those_its_start_computes_without_its_aux_or_key_file() 
         token: Some("solar".into()),
         network: Some("testnet".into()),
         env: None,
+        skip_prompts: false,
     };
     let config = ForgerConfig::load(&run, &node.process(), &node.home(), &node.root).unwrap();
     let env = |name: &str| config.base.env.get(name).map(str::to_owned);

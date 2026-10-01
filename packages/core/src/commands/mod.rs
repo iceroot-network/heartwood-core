@@ -30,7 +30,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand};
 use heartwood_cli::instance::InstanceFlags;
 use heartwood_cli::{Instance, ProcessError, Role, process, process_table};
 
@@ -105,7 +105,21 @@ pub(crate) enum RoleError {
     Keys(#[from] heartwood_forger::KeysError),
 }
 
-/// The flags of `stop`, `restart` and `status`: the instance.
+/// The flags of `stop`: the instance and an accepted compatibility flag.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
+pub struct StopFlags {
+    /// The instance.
+    #[command(flatten)]
+    pub process: ProcessFlags,
+    /// Accepted for compatibility; stopping always ends the supervisor.
+    #[arg(
+        long, default_value_t = false, action = ArgAction::Set,
+        num_args = 0..=1, default_missing_value = "true"
+    )]
+    pub daemon: bool,
+}
+
+/// The flags of `restart` and `status`: the instance.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
 pub struct ProcessFlags {
     /// The instance.
@@ -186,7 +200,7 @@ pub(crate) fn status(instance: &Instance) -> Result<(), ProcessError> {
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum Manage {
     /// Stop the role.
-    Stop(ProcessFlags),
+    Stop(StopFlags),
     /// Restart the role.
     Restart(ProcessFlags),
     /// The role's process status.
@@ -198,7 +212,7 @@ pub enum Manage {
 /// Stop, restart, show or tail `role`'s instance as `command` asks.
 pub(crate) fn manage(role: Role, command: Manage) -> ExitCode {
     match command {
-        Manage::Stop(flags) => on_instance(role, &flags.instance, process::stop),
+        Manage::Stop(flags) => on_instance(role, &flags.process.instance, process::stop),
         Manage::Restart(flags) => {
             on_instance(role, &flags.instance, |i| process::restart(i, &Vec::new()))
         }
@@ -301,6 +315,36 @@ mod tests {
             let off = ["--daemon=false", "--no-daemon", "--daemon false"];
             for flags in off.into_iter().chain(["--daemon false --token solar"]) {
                 assert!(!daemon(role, flags), "{role} {flags}");
+            }
+        }
+    }
+
+    #[test]
+    fn compatibility_boolean_flags_accept_all_value_forms_only_on_their_commands() {
+        for role in ["core", "forger"] {
+            for verb in ["run", "start"] {
+                for flag in ["--skipPrompts", "--skip-prompts"] {
+                    for value in ["", "=true", "=false", " true", " false"] {
+                        let command = format!("heartwood {role}:{verb} {flag}{value}");
+                        assert!(line(&command).is_ok(), "{command}");
+                    }
+                }
+            }
+        }
+        for role in ["relay", "forger", "core"] {
+            for flag in [
+                "--daemon",
+                "--daemon=true",
+                "--daemon=false",
+                "--daemon true",
+                "--daemon false",
+                "--no-daemon",
+            ] {
+                let command = format!("heartwood {role}:stop {flag}");
+                assert!(line(&command).is_ok(), "{command}");
+                for verb in ["restart", "status"] {
+                    assert!(line(&format!("heartwood {role} {verb} {flag}")).is_err());
+                }
             }
         }
     }
