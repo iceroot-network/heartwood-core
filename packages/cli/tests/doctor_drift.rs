@@ -843,6 +843,11 @@ const CALLS: &[(&str, &str, Class)] = &[
         "{text}",
         Class::Own("RemoteAccessNoMatch"),
     ),
+    (
+        "p2p/src/testing/attestation.rs",
+        "the attestation record could not be written: {error}",
+        Class::Untyped,
+    ),
 ];
 
 /// The names an outside text goes by in a log call.
