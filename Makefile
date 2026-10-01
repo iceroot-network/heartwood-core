@@ -145,7 +145,7 @@ GATE_ORACLE_TARGETS := l0 l1 corpus-judge l2-synthetic rollback-replay lockstep 
                        oracle-image vectors-diff vectors-install
 gate-reads-oracle = $(or $(filter $(1),$(GATE_ORACLE_TARGETS)),$(and $(filter forge-replay,$(1)),$(filter oracle,$(DIRECTION))))
 gate-image-of = $(if $(filter live-check,$(1)),$(if $(or $(is-mixed),$(is-forging)),$(IMAGE)),$(if $(and $(call gate-reads-oracle,$(1)),$(filter --image%,$(ORACLE_ARGS))),$(IMAGE)))
-gate-for = GATE_RECORDS='$(GATE_RECORDS)' GATE_TARGET=$(1) GATE_VARIABLES='$(filter-out GATE_% GATED=% $(GATED),$(MAKEOVERRIDES))' \
+gate-for = GATE_RECORDS='$(GATE_RECORDS)' GATE_TARGET=$(1) GATE_VARIABLES='$(filter-out GATE_% GATED=% $(GATED) $(addsuffix \,$(GATED)),$(MAKEOVERRIDES))' \
        GATE_IMAGE='$(call gate-image-of,$(2))' GATE_TESTED='$(GATE_TESTED)' GATE_CRITERIA='$(S1_CRITERIA)' \
        GATE_LEDGER="$${GATE_LEDGER:-$(GATE_LEDGER)}" LEDGER_DIR='$(LEDGER_DIR)' GATE_DIFFTEST='$(DIFFTEST)' tools/gate-record.sh
 gate = $(call gate-for,'$@',$@)
@@ -1029,8 +1029,9 @@ ledger-merge: build ## another machine's gate records (FROM) into the ledger, as
 	$(DIFFTEST) gate ledger merge --from '$(FROM)' --machine '$(MACHINE)' --ledger '$(LEDGER_DIR)'
 
 # The targets whose recipe is not one command (a composite target such as check, or several
-# commands) run whole through the recorder, one gate record per target named by it. The inner make
-# is named through GATED_MAKE, so that `make -n gated` prints the commands and records nothing.
+# commands) run whole through the recorder, one gate record per target named by it, GATED left out
+# of its variables (make keeps a value with spaces as escaped words). The inner make is named
+# through GATED_MAKE, so that `make -n gated` prints the commands and records nothing.
 GATED ?=
 GATED_MAKE = $(MAKE)
 gated: build ## each target of GATED run through the recorder, a gate record named by it per target (GATED)
