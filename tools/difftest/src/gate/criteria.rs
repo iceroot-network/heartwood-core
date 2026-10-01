@@ -262,6 +262,10 @@ pub enum TestRef {
         /// Text the record's variables or command must contain.
         #[serde(default)]
         contains: Vec<String>,
+        /// What the record waits on, when a later run makes it: with no such record yet (none at
+        /// all, or only stale ones), the entry is pending, not failed.
+        #[serde(default)]
+        waits: Option<String>,
     },
 }
 

@@ -12,14 +12,19 @@
 //! - an entry that is not retired has a non-empty trigger and at least one test;
 //! - a cargo test exists in the file it is named in (a `fn` of that name), and with `--run` it
 //!   passes (the tests run grouped by package, test file and features, and a test marked ignored
-//!   runs too); a record test is a valid passing
-//!   record of its make target;
+//!   runs too); a record test is a valid passing record of its make target, and a record test
+//!   that names what it waits on leaves its entry pending, not failed, while no such record exists
+//!   yet (none at all, or only stale ones);
 //! - each code name an entry claims is a real name;
 //! - an honest run (the product run as meant to run) hit no entry beyond those its rule allows;
 //!   the intended hits of a configuration or attack suite and of the vectors and properties are
-//!   counted, not failed; a record with hits and no rule fails.
+//!   counted, not failed; a record with hits and no rule fails. The records of the commands that
+//!   judge other records (`register`, `coverage`) carry no hits of their own and are not read.
 //!
-//! With `--out` the command writes its own record (target `register`).
+//! Without `--strict` the command exits 0 when no entry fails and no hit is a problem; with it,
+//! only when every entry is also met (none pending) and the tests ran (`--run`). With `--out` the
+//! command writes its own record (target `register`), a pass only when every entry is met and the
+//! tests ran.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -38,11 +43,15 @@ use super::store::{Evidence, Item, Sources};
 use super::time;
 use crate::errors::{Error, Result};
 
-/// One entry's findings.
+/// One entry's findings: what fails it, and what it waits on.
 #[derive(Debug, Default)]
 struct Finding {
     problems: Vec<String>,
+    waits: Vec<String>,
 }
+
+/// The targets of the commands that judge other records: their records are not runs.
+const JUDGING: [&str; 2] = ["register", "coverage"];
 
 /// Whether `text` defines a function called `name`.
 fn defines(text: &str, name: &str) -> bool {
@@ -177,21 +186,35 @@ fn judge_entry(
                     }
                 }
             },
-            TestRef::Record { target, contains } => {
-                let shown = evidence.records.iter().any(|item| {
-                    item.validity == Validity::Valid
-                        && item.value.result == GateResult::Pass
-                        && matches(&item.value, target, contains)
-                });
-                if !shown {
-                    finding.problems.push(format!(
-                        "no valid passing record of {target}{}",
-                        if contains.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" with {}", contains.join(" "))
-                        }
-                    ));
+            TestRef::Record {
+                target,
+                contains,
+                waits,
+            } => {
+                let valid: Vec<&GateRecord> = evidence
+                    .records
+                    .iter()
+                    .filter(|item| item.validity == Validity::Valid)
+                    .map(|item| &item.value)
+                    .filter(|record| matches(record, target, contains))
+                    .collect();
+                if valid.iter().any(|r| r.result == GateResult::Pass) {
+                    continue;
+                }
+                let what = format!(
+                    "no valid passing record of {target}{}",
+                    if contains.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" with {}", contains.join(" "))
+                    }
+                );
+                match waits {
+                    // Nothing valid ran yet: the record is still to come.
+                    Some(waits) if valid.is_empty() => {
+                        finding.waits.push(format!("waits on {waits}: {what}"));
+                    }
+                    _ => finding.problems.push(what),
                 }
             }
         }
@@ -212,7 +235,10 @@ fn judge_hits(
         .iter()
         .flat_map(|e| e.code_names.iter().map(String::as_str))
         .collect();
-    for item in records.iter().filter(|i| i.validity.counts()) {
+    for item in records
+        .iter()
+        .filter(|i| i.validity.counts() && !JUDGING.contains(&i.value.target.as_str()))
+    {
         let record = &item.value;
         if record.hits.is_empty() {
             continue;
@@ -262,7 +288,7 @@ pub fn run(args: &[String]) -> Result<bool> {
     };
 
     let mut text = String::new();
-    let (mut ok, mut bad) = (0u64, 0u64);
+    let (mut ok, mut pending, mut bad) = (0u64, 0u64, 0u64);
     let mut seen = BTreeSet::new();
     let id_width = criteria
         .register
@@ -298,15 +324,21 @@ pub fn run(args: &[String]) -> Result<bool> {
         } else {
             String::new()
         };
-        if finding.problems.is_empty() {
-            ok += 1;
-            let _ = writeln!(text, "{:<id_width$}{word:<9}ok{met}", entry.id);
-        } else {
+        if !finding.problems.is_empty() {
             bad += 1;
             let _ = writeln!(text, "{:<id_width$}{word:<9}FAIL{met}", entry.id);
             for problem in &finding.problems {
                 let _ = writeln!(text, "      {problem}");
             }
+        } else if !finding.waits.is_empty() {
+            pending += 1;
+            let _ = writeln!(text, "{:<id_width$}{word:<9}pending{met}", entry.id);
+            for waits in &finding.waits {
+                let _ = writeln!(text, "      {waits}");
+            }
+        } else {
+            ok += 1;
+            let _ = writeln!(text, "{:<id_width$}{word:<9}ok{met}", entry.id);
         }
     }
     if !problems.is_empty() {
@@ -324,7 +356,7 @@ pub fn run(args: &[String]) -> Result<bool> {
     print!("{text}");
     let failed = bad + problems.len() as u64;
     println!(
-        "{} entries ({} retired): {ok} ok, {bad} fail; {} hit problem(s){}",
+        "{} entries ({} retired): {ok} ok, {pending} pending, {bad} fail; {} hit problem(s){}",
         criteria.register.entries.len(),
         criteria.register.retired.len(),
         problems.len(),
@@ -334,7 +366,8 @@ pub fn run(args: &[String]) -> Result<bool> {
             "; tests were not run (--run)"
         }
     );
-    let all = failed == 0 && (run_tests || !strict);
+    let met = failed == 0 && pending == 0 && run_tests;
+    let all = failed == 0 && (!strict || met);
     if let Some(out) = out {
         let path = write_own(
             Path::new(&out),
@@ -343,14 +376,14 @@ pub fn run(args: &[String]) -> Result<bool> {
             OwnRecord {
                 target: "register",
                 command: format!("difftest gate register {}", args.join(" ")),
-                pass: all && run_tests,
+                pass: met,
                 started,
                 counts: Counts {
                     compared: criteria.register.entries.len() as u64,
                     passed: ok,
                     failed,
                     documented: hits.values().sum(),
-                    skipped: 0,
+                    skipped: pending,
                 },
                 hits,
             },

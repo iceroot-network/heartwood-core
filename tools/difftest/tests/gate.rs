@@ -946,7 +946,7 @@ fn an_entry_needs_a_trigger_and_a_test_that_exists() {
         ran.text
     );
     assert!(ran.text.contains("names no test"), "{}", ran.text);
-    assert!(ran.text.contains("1 ok, 4 fail"), "{}", ran.text);
+    assert!(ran.text.contains("1 ok, 0 pending, 4 fail"), "{}", ran.text);
 }
 
 #[test]
@@ -1134,6 +1134,84 @@ fn a_record_test_needs_a_valid_passing_record_and_the_register_writes_its_own_re
     assert_eq!(written["target"], "register");
     assert_eq!(written["result"], "fail");
     assert_eq!(written["counts"]["compared"], 1);
+}
+
+#[test]
+fn a_record_test_that_waits_leaves_its_entry_pending_until_its_record_runs() {
+    let rig = Rig::new();
+    let waiting = json!([{"kind": "record", "target": "l2", "waits": "the chains of a later run"}]);
+    rig.criteria(&register_criteria(
+        json!([entry("E-1", "when a", waiting, &[])]),
+        json!([{"target": "l2", "class": "honest"}]),
+    ));
+    let out = rig.arg("own");
+    let ran = register(&rig, &["--out", &out]);
+    assert!(ran.ok, "pending is not a failure: {}", ran.text);
+    assert!(ran.text.contains("E-1  active   pending"), "{}", ran.text);
+    assert!(
+        ran.text
+            .contains("waits on the chains of a later run: no valid passing record of l2"),
+        "{}",
+        ran.text
+    );
+    assert!(ran.text.contains("0 ok, 1 pending, 0 fail"), "{}", ran.text);
+    let strict = register(&rig, &["--strict"]);
+    assert!(!strict.ok, "{}", strict.text);
+    let own: Vec<Value> = std::fs::read_dir(rig.path("own"))
+        .expect("own")
+        .map(|e| read(&e.expect("e").path()))
+        .collect();
+    assert_eq!(own.len(), 1);
+    assert_eq!(own[0]["result"], "fail", "a pending entry is not met");
+    assert_eq!(own[0]["counts"]["skipped"], 1);
+
+    // A valid record that failed is a failure, not a wait.
+    assert!(rig.record("l2", "difftest run l2 corpus", 1, "", T1).ok);
+    let ran = register(&rig, &[]);
+    assert!(!ran.ok, "{}", ran.text);
+    assert!(ran.text.contains("E-1  active   FAIL"), "{}", ran.text);
+    assert!(rig.record("l2", "difftest run l2 corpus", 0, "", T2).ok);
+    let ran = register(&rig, &[]);
+    assert!(ran.text.contains("E-1  active   ok"), "{}", ran.text);
+}
+
+#[test]
+fn the_register_reads_no_hits_from_the_records_of_the_commands_that_judge_records() {
+    let rig = Rig::new();
+    rig.write("src/shows.rs", "#[test]\nfn shown() {}\n");
+    rig.commit("a test");
+    let tests = json!([{"kind": "cargo", "package": "p", "file": "src/shows.rs", "name": "shown"}]);
+    rig.criteria(&register_criteria(
+        json!([entry(
+            "E-1",
+            "when the index is replayed",
+            tests,
+            &["Documented::ReplayIndexOrder"]
+        )]),
+        json!([{"target": "l1", "class": "shows"}]),
+    ));
+    let replay = reason_of("Documented::ReplayIndexOrder");
+    assert!(
+        rig.record("l1", "difftest run l1", 0, &report(10, &[(3, &replay)]), T1)
+            .ok
+    );
+    // The register's own record (and a coverage record) in the records' directory.
+    let records = rig.arg("records");
+    let first = register(&rig, &["--out", &records]);
+    assert!(first.ok, "{}", first.text);
+    assert!(rig.records().iter().any(|r| r["target"] == "register"));
+    let second = register(&rig, &[]);
+    assert!(
+        second.ok,
+        "a second reading is not a hit problem: {}",
+        second.text
+    );
+    assert!(
+        second.text.contains("E-1  active   ok  3 hits"),
+        "each hit counted once: {}",
+        second.text
+    );
+    assert!(!second.text.contains("no rule for it"), "{}", second.text);
 }
 
 // ----- the shape of the files
