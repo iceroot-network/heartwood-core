@@ -1,11 +1,13 @@
-//! The resource report of a forging run: each node's whole process tree sampled every 10 s (resident
-//! and proportional memory, CPU time, written bytes) into the run's series, against the budgets (a
-//! relay at 60 MB typical and 120 MB with a full pool, a forger at 15 MB, five nodes at 0.5 GB,
-//! five nodes at 5 % of one core with empty blocks, five nodes at 100 MB a day of disk); a budget
-//! missed is reported with its cause, never re-baselined. The budgets are the mixed forging runs'
-//! and the churn run's; any other run's figures (the core run's) are recorded, not judged. CPU time
-//! and disk writes are taken over the quiet intervals, which no fault window and no full pool
-//! touch; each node's writes over the whole run are recorded beside them.
+//! The resource report of a forging run: each node's whole process tree sampled every 10 s
+//! (resident and proportional memory, CPU time, written bytes) into the run's series, against the
+//! budgets (a relay at 60 MB typical and 120 MB with a full pool, a forger at 15 MB, five nodes at
+//! 0.5 GB, five nodes at 5 % of one core with empty blocks, five nodes at 100 MB a day of disk). A
+//! budget missed fails the report unless a baseline file a person accepted names the figure, by
+//! its key, and the run is at most 25 % above it. The budgets are the mixed forging runs' and the
+//! churn run's resource reports; the churn run's live check records its figures without judging
+//! them, as it does the core run's. CPU time and disk writes are taken over the quiet intervals,
+//! which no fault window and no full pool touch; each node's writes over the whole run are
+//! recorded beside them.
 //!
 //! The series are `resources/<node>-<role>.jsonl` (role `relay`, `forger`, or `core` for the
 //! combined role's one process), one line per sample: `{t, pid, rss, pss, cpuMs, written}`. A
@@ -16,6 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::run::{self, Implementation, Manifest, Step, Window};
@@ -186,7 +189,7 @@ fn mb(bytes: u64) -> String {
 }
 
 /// One budget's verdict for one subject, or a figure recorded beside them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Finding {
     /// What was measured (the subject and the budget).
     pub label: String,
@@ -194,6 +197,8 @@ pub struct Finding {
     pub detail: String,
     /// The verdict.
     pub verdict: Verdict,
+    /// The stable key and value in MB (memory and disk) or percent (CPU), when measured.
+    pub figure: Option<(String, f64)>,
 }
 
 /// A finding's verdict.
@@ -246,6 +251,73 @@ fn finding(label: String, ok: bool, detail: String) -> Finding {
         label,
         detail,
         verdict,
+        figure: None,
+    }
+}
+
+fn measured(key: &str, label: String, value: f64, limit: f64, detail: String) -> Finding {
+    let mut found = finding(
+        label,
+        value <= limit,
+        format!("{detail}; baseline value {value}"),
+    );
+    found.figure = Some((key.to_owned(), value));
+    found
+}
+
+/// Figures accepted by a person, in MB for memory and disk per day, and percent for CPU.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Baseline {
+    format: String,
+    decision: String,
+    figures: BTreeMap<String, f64>,
+}
+
+impl Baseline {
+    fn load(path: &Path) -> Result<Self> {
+        let invalid = |message| Error::Usage(format!("invalid resource baseline: {message}"));
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| invalid(format!("{}: {e}", path.display())))?;
+        let baseline: Self = serde_json::from_str(&text).map_err(|e| invalid(e.to_string()))?;
+        if baseline.format != "heartwood-resource-baseline/1"
+            || baseline.decision.trim().is_empty()
+            || baseline
+                .figures
+                .iter()
+                .any(|(key, value)| key.trim().is_empty() || !value.is_finite() || *value < 0.0)
+        {
+            return Err(invalid(
+                "expected format heartwood-resource-baseline/1, a nonempty decision and finite \
+                 nonnegative figures"
+                    .into(),
+            ));
+        }
+        Ok(baseline)
+    }
+
+    fn apply(&self, found: &mut [Finding]) {
+        for f in found.iter_mut().filter(|f| f.verdict == Verdict::Over) {
+            let Some((key, value)) = &f.figure else {
+                continue;
+            };
+            let Some(accepted) = self.figures.get(key) else {
+                continue;
+            };
+            // Dividing avoids overflow when a valid baseline is near the largest finite number.
+            if value / 1.25 <= *accepted {
+                f.verdict = Verdict::Held;
+                f.detail.push_str(&format!(
+                    "; within 25 % of accepted baseline {accepted} (decision: {})",
+                    self.decision
+                ));
+            } else {
+                f.detail.push_str(&format!(
+                    "; more than 25 % above accepted baseline {accepted} (decision: {})",
+                    self.decision
+                ));
+            }
+        }
     }
 }
 
@@ -254,6 +326,7 @@ fn missing(label: String, detail: String) -> Finding {
         label,
         detail,
         verdict: Verdict::NoEvidence,
+        figure: None,
     }
 }
 
@@ -262,6 +335,7 @@ fn recorded(label: String, detail: String) -> Finding {
         label,
         detail,
         verdict: Verdict::Recorded,
+        figure: None,
     }
 }
 
@@ -306,7 +380,8 @@ fn in_pool(i: &Inputs<'_>, at: i64) -> bool {
 
 fn memory(i: &Inputs<'_>, s: &Series) -> Vec<Finding> {
     let mut out = Vec::new();
-    let label = |what: &str| format!("{} resident memory {what}", s.label());
+    let key = format!("{}.rss.p95.{}", s.role.name(), s.node);
+    let label = |what: &str| format!("[{key}] {} resident memory {what}", s.label());
     let outside: Vec<&Sample> = s.samples.iter().filter(|x| !in_pool(i, x.at)).collect();
     let mut rss: Vec<u64> = outside.iter().map(|x| x.rss).collect();
     rss.sort_unstable();
@@ -323,9 +398,11 @@ fn memory(i: &Inputs<'_>, s: &Series) -> Vec<Finding> {
     match (outside.iter().max_by_key(|x| x.rss), rss.is_empty()) {
         (Some(peak), false) => {
             let p95 = percentile(&rss, 95);
-            out.push(finding(
+            out.push(measured(
+                &key,
                 label(what),
-                p95 <= limit,
+                p95 as f64 / MB as f64,
+                limit as f64 / MB as f64,
                 format!(
                     "{} of {} samples, peak {} at {} ({}), budget {}",
                     mb(p95),
@@ -344,11 +421,17 @@ fn memory(i: &Inputs<'_>, s: &Series) -> Vec<Finding> {
     }
     if s.role == Role::Relay && i.pool.is_some() {
         let full = s.samples.iter().filter(|x| in_pool(i, x.at));
-        let l = label("with a full pool (highest)");
+        let key = format!("relay.rss.max.full-pool.{}", s.node);
+        let l = format!(
+            "[{key}] {} resident memory with a full pool (highest)",
+            s.label()
+        );
         match full.max_by_key(|x| x.rss) {
-            Some(peak) => out.push(finding(
+            Some(peak) => out.push(measured(
+                &key,
                 l,
-                peak.rss <= RELAY_FULL_POOL,
+                peak.rss as f64 / MB as f64,
+                RELAY_FULL_POOL as f64 / MB as f64,
                 format!(
                     "{} at {} ({}), budget {}",
                     mb(peak.rss),
@@ -380,13 +463,15 @@ fn total(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
         }
     }
     let label = format!(
-        "{} resident memory together (highest pass outside a full pool)",
+        "[nodes.rss.total] {} resident memory together (highest pass outside a full pool)",
         the_nodes(i)
     );
     match passes.iter().max_by_key(|(_, sum)| **sum) {
-        Some((at, sum)) => vec![finding(
+        Some((at, sum)) => vec![measured(
+            "nodes.rss.total",
             label,
-            *sum <= FIVE_NODES,
+            *sum as f64 / MB as f64,
+            FIVE_NODES as f64 / MB as f64,
             format!(
                 "{} at {} ({}), budget {}",
                 mb(*sum),
@@ -437,7 +522,10 @@ fn cpu(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
         }
         quiet_ms = quiet_ms.max(span);
     }
-    let label = format!("{} CPU time in quiet windows (of one core)", the_nodes(i));
+    let label = format!(
+        "[cpu.quiet-windows] {} CPU time in quiet windows (of one core)",
+        the_nodes(i)
+    );
     if quiet_ms < MIN_QUIET_MS {
         return vec![missing(
             label,
@@ -449,9 +537,11 @@ fn cpu(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
     }
     // Tenths of a percent: cpu_ms / quiet_ms * 100.
     let tenths = u128::from(cpu_ms) * 1_000 / u128::try_from(quiet_ms).unwrap_or(1);
-    vec![finding(
+    vec![measured(
+        "cpu.quiet-windows",
         label,
-        tenths <= u128::from(QUIET_CPU_PERCENT) * 10,
+        tenths as f64 / 10.0,
+        QUIET_CPU_PERCENT as f64,
         format!(
             "{}.{} % over {} s of quiet windows, budget {QUIET_CPU_PERCENT} %",
             tenths / 10,
@@ -508,7 +598,7 @@ fn per_day(bytes: u64, span_ms: i64) -> u64 {
 /// included, recorded beside it.
 fn disk(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
     let label = format!(
-        "{} disk writes in a day (extrapolated from the quiet windows)",
+        "[disk.per-day] {} disk writes in a day (extrapolated from the quiet windows)",
         the_nodes(i)
     );
     let mut out = Vec::new();
@@ -549,9 +639,9 @@ fn disk(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
             .filter(|(n, _)| i.five.contains(n.as_str()))
             .map(|(_, b)| *b)
             .sum();
-        out.push(finding(
-            label,
-            day <= DISK_PER_DAY,
+        out.push(measured(
+            "disk.per-day", label,
+            day as f64 / MB as f64, DISK_PER_DAY as f64 / MB as f64,
             format!(
                 "{} a day (the relays' processes {}, the forgers' {}; the most {} at {}), budget {}; the log files hold {} in all",
                 mb(day),
@@ -708,7 +798,7 @@ fn push(cases: &mut Cases, found: Vec<Finding>) {
                 SECTION,
                 format!("{}: over its budget", f.label),
                 format!(
-                    "{}; reported with the series as its evidence, not re-baselined: its cause and the work that removes it are to be named",
+                    "{}; reported with the series as its evidence: its cause and the work that removes it are to be named",
                     f.detail
                 ),
             ),
@@ -716,10 +806,20 @@ fn push(cases: &mut Cases, found: Vec<Finding>) {
     }
 }
 
-/// The resource rules within a run's check: every budget against the run's series.
+/// The resource rules within a run's check; churn records measured budgets, including misses.
 pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
     match findings(run.run_dir, run.manifest, run.windows) {
-        Ok(found) => push(cases, found),
+        Ok(mut found) => {
+            if run.manifest.run == "churn" {
+                // Missing series remain failures; only measured budgets are recorded here.
+                for f in &mut found {
+                    if f.figure.is_some() {
+                        record_only(std::slice::from_mut(f));
+                    }
+                }
+            }
+            push(cases, found);
+        }
         Err(e) => cases.fail(SECTION, "the resource series", e.to_string()),
     }
     Ok(())
@@ -727,13 +827,23 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
 
 /// `difftest live resources RUN_DIR`: the run's resource report.
 pub fn report(run_dir: &Path) -> Result<Report> {
+    report_with_baseline(run_dir, None)
+}
+
+/// The resource report, optionally compared with figures accepted in a baseline file.
+pub fn report_with_baseline(run_dir: &Path, baseline: Option<&Path>) -> Result<Report> {
+    let baseline = baseline.map(Baseline::load).transpose()?;
     let manifest = Manifest::load(run_dir)?;
     let windows = run::windows(run_dir, manifest.window_seconds)?;
     let mut cases = Cases {
         run: manifest.run.clone(),
         results: Vec::new(),
     };
-    push(&mut cases, findings(run_dir, &manifest, &windows)?);
+    let mut found = findings(run_dir, &manifest, &windows)?;
+    if let Some(baseline) = baseline {
+        baseline.apply(&mut found);
+    }
+    push(&mut cases, found);
     Ok(Report {
         title: format!(
             "Resource report of run {} ({})",
@@ -748,6 +858,51 @@ pub fn report(run_dir: &Path) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepted_figures_include_the_boundary_but_cannot_replace_missing_evidence() {
+        let baseline = Baseline {
+            format: "heartwood-resource-baseline/1".into(),
+            decision: "accepted figures".into(),
+            figures: BTreeMap::from([("relay.rss.p95.node1".into(), 80.0)]),
+        };
+        let figure = |value| {
+            measured(
+                "relay.rss.p95.node1",
+                "memory".into(),
+                value,
+                60.0,
+                String::new(),
+            )
+        };
+        let mut found = vec![
+            figure(100.0),
+            figure(100.000001),
+            figure(60.0),
+            missing("memory".into(), "no samples".into()),
+        ];
+        baseline.apply(&mut found);
+        assert_eq!(
+            found.iter().map(|f| f.verdict).collect::<Vec<_>>(),
+            vec![
+                Verdict::Held,
+                Verdict::Over,
+                Verdict::Held,
+                Verdict::NoEvidence
+            ]
+        );
+        let mut zero = Baseline {
+            figures: BTreeMap::from([("relay.rss.p95.node1".into(), 0.0)]),
+            ..baseline
+        };
+        let mut found = vec![figure(61.0), figure(60.0)];
+        zero.apply(&mut found);
+        assert_eq!(found[0].verdict, Verdict::Over);
+        assert_eq!(found[1].verdict, Verdict::Held);
+        zero.figures.clear();
+        zero.apply(&mut found);
+        assert_eq!(found[0].verdict, Verdict::Over);
+    }
 
     const T0: i64 = 1_790_000_000_000;
 

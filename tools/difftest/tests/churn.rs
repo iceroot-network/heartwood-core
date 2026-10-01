@@ -17,7 +17,7 @@
 //! through Heartwood's store.
 //!
 //! The recorded series used more memory and wrote more to disk than the node budgets allow, so the
-//! recording fails exactly those cases; the tests that need a clean run rewrite the series.
+//! live check records those misses; the resource command still judges the budgets.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -269,18 +269,12 @@ fn edit_json(path: &Path, change: impl FnOnce(&mut Value)) {
 }
 
 #[test]
-fn a_recorded_run_passes_every_section_but_its_resources() {
+fn a_recorded_run_passes_every_section_and_records_its_resources() {
     let f = fixture();
     let report = check(&f);
     let failed = failures(&report);
-    assert!(!failed.is_empty());
-    assert!(
-        failed.iter().all(|m| m.contains("live-churn/resources")
-            || m.starts_with("relay ")
-            || m.contains("resident memory")
-            || m.contains("disk writes in a day")),
-        "{failed:#?}"
-    );
+    assert!(report.is_success(), "{failed:#?}");
+    assert!(has(&labels(&report), "(over the budget)"));
     let all = labels(&report);
     for needle in [
         "nodes 1 to 5 each stopped gracefully within 30 seconds",
@@ -307,7 +301,7 @@ fn a_recorded_run_passes_every_section_but_its_resources() {
 #[test]
 fn over_budget_series_are_reported_with_their_numbers() {
     let f = fixture();
-    let failed = failures(&check(&f));
+    let failed = labels(&check(&f));
     for needle in [
         "relay node1 resident memory outside a full pool (95th percentile)",
         "relay node1 resident memory with a full pool (highest)",
@@ -317,7 +311,7 @@ fn over_budget_series_are_reported_with_their_numbers() {
     ] {
         assert!(has(&failed, needle), "{needle}\n{failed:#?}");
     }
-    assert!(has(&failed, "not re-baselined"), "{failed:#?}");
+    assert!(has(&failed, "(over the budget)"), "{failed:#?}");
     // Each node's writes over the whole run, the full pool included, are recorded beside it.
     let all = labels(&check(&f));
     assert!(

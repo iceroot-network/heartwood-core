@@ -338,8 +338,8 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             print!("{report}");
             Ok(verdict(&report, strict))
         }
-        Command::LiveResources { dir } => {
-            let report = live::resources::report(&dir)?;
+        Command::LiveResources { dir, baseline } => {
+            let report = live::resources::report_with_baseline(&dir, baseline.as_deref())?;
             print!("{report}");
             Ok(verdict(&report, strict))
         }

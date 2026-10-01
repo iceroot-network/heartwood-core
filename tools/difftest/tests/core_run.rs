@@ -185,8 +185,8 @@ fn a_recorded_run_passes_every_section_and_records_its_resources() {
         "every node's log ends with the clean stop, logged during `devnet stop`",
         "every step in its planned round and order",
         "a resource series for core node1",
-        "recorded: core node1 resident memory outside a full pool (95th percentile)",
-        "recorded: the three nodes' CPU time in quiet windows",
+        "recorded: [core.rss.p95.node1] core node1 resident memory outside a full pool (95th percentile)",
+        "recorded: [cpu.quiet-windows] the three nodes' CPU time in quiet windows",
         "recorded: node3 disk writes over the whole run",
         // The proxy reads the core log's block lines, which are at the info level.
         "recorded: node1: the network-state proxy, the first answer counting all 53 delegates after the node took a tip: ",
@@ -198,7 +198,7 @@ fn a_recorded_run_passes_every_section_and_records_its_resources() {
     assert!(
         has(
             &all,
-            "recorded: the three nodes' disk writes in a day (extrapolated from the quiet windows)"
+            "recorded: [disk.per-day] the three nodes' disk writes in a day (extrapolated from the quiet windows)"
         ) && has(&all, "(over the budget)"),
         "{all:#?}"
     );

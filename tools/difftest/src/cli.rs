@@ -118,7 +118,9 @@ Usage:
                                   reference nodes only: the log counts are compared with the
                                   most any of those runs gave
   difftest live await RUN_DIR     the AwaitBlock report of a live run's Heartwood relays
-  difftest live resources RUN_DIR the resource report of a forging run's process trees
+  difftest live resources RUN_DIR [--baseline FILE]
+                                  the resource report; accepted figures allow up to 25 % growth
+                                  (MB for memory and disk per day, percent for CPU)
   difftest scenario compile FILE [--out FILE] [ORACLE]
                                   build every transaction of the scenario FILE once through
                                   the oracle, at its planned height
@@ -388,6 +390,8 @@ pub enum Command {
     LiveResources {
         /// The run directory.
         dir: PathBuf,
+        /// A resource baseline with figures accepted by a person.
+        baseline: Option<PathBuf>,
     },
     /// `difftest scenario compile`: a scenario's transactions, built once.
     ScenarioCompile(ScenarioCompileArgs),
@@ -681,7 +685,21 @@ pub fn parse(args: &[String]) -> Result<Command> {
             vectors: dir.into(),
         }),
         ["lockstep", "make", rest @ ..] => parse_lockstep(rest),
-        ["live", "resources", dir] => Ok(Command::LiveResources { dir: dir.into() }),
+        ["live", "resources", dir, rest @ ..] => {
+            let baseline = match rest {
+                [] => None,
+                ["--baseline", file] => Some((*file).into()),
+                _ => {
+                    return Err(usage(
+                        "usage: difftest live resources RUN_DIR [--baseline FILE]",
+                    ));
+                }
+            };
+            Ok(Command::LiveResources {
+                dir: dir.into(),
+                baseline,
+            })
+        }
         ["scenario", "compile", rest @ ..] => parse_scenario_compile(rest),
         ["scenario", "run", rest @ ..] => parse_scenario_run(rest),
         ["scenario", "compare", dir, rest @ ..] => {
