@@ -8,9 +8,10 @@
 //! - `delegates.json` (mode 0600): `{"keys": [...]}`, every delegate's private key in genesis
 //!   order, the forger's key file.
 //! - Unless `--chain-only`, a single-node instance: `.env` with loopback hosts and the testnet
-//!   ports (P2P 6002, API 6003), `app.json` (the relay's and the forger's components, the relay
-//!   admitting the loopback forger, the forger with the seed's aux), `peers.json` naming the node
-//!   itself, and `config.json` (token `solar` and the network).
+//!   ports (P2P 6002, API 6003), `app.json` (the relay's and the forger's components, and the
+//!   combined core role's, the relay's followed by the forger; the relay admitting the loopback
+//!   forger, the forger with the seed's aux), `peers.json` naming the node itself, and
+//!   `config.json` (token `solar` and the network).
 //! - The same seed and flags give the same bytes; the epoch is the clock's current second when
 //!   none is given. A directory that is not empty is refused without `--force`, which overwrites
 //!   the files written and leaves others.
@@ -270,13 +271,25 @@ fn files(
             "aux": hex::encode(forger_aux),
         },
     });
-    // The reference's schema requires the three profiles, the `core` one too.
+    let relay = vec![
+        plugin("logger"),
+        plugin("state"),
+        plugin("database"),
+        plugin("transactions"),
+        plugin("pool"),
+        p2p_plugin,
+        plugin("blockchain"),
+        plugin("api"),
+    ];
+    let core: Vec<_> = relay
+        .iter()
+        .cloned()
+        .chain([forger_plugin.clone()])
+        .collect();
+    // Each profile is usable; the command chooses which role runs.
     let app = json!({
-        "core": { "plugins": [] },
-        "relay": { "plugins": [
-            plugin("logger"), plugin("state"), plugin("database"), plugin("transactions"),
-            plugin("pool"), p2p_plugin, plugin("blockchain"), plugin("api"),
-        ] },
+        "core": { "plugins": core },
+        "relay": { "plugins": relay },
         "forger": { "plugins": [plugin("logger"), plugin("transactions"), forger_plugin] },
     });
     let peers = json!({ "list": [{ "ip": "127.0.0.1", "port": p2p }] });

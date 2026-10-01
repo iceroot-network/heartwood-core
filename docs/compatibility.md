@@ -1265,9 +1265,10 @@ and nix are used by this crate only (`make layers`).
 - **the recovery commands**: the marker files of `pool clear` and `state clear`, their questions
   and the trust rule for the temp directory and its markers, which the relay's start reads
   through the same function (see heartwood-core).
-- **network generate**: a network's chain definition, keys and single-node instance for a seed.
-  The built-in devnet profile writes crypto files byte-identical to the genesis vectors (V10) for
-  their three seeds.
+- **network generate**: a network's chain definition, keys and single-node instance for a seed,
+  whose `app.json` holds the relay's, the forger's and the core role's profiles. The built-in
+  devnet profile writes crypto files byte-identical to the genesis vectors (V10) for their three
+  seeds.
 - **the devnet library** (feature `devnet`, on by default): `init`, `start`, `stop`, `status`,
   `logs`, `stop-node`, `start-node`, `restart-node`, `reset`, `wait` and `env` for a local devnet
   with one loopback address per node (node k on `127.0.0.(10 + k)`, P2P on port 6002 and the API
