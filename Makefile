@@ -757,12 +757,15 @@ await-report: build ## the AwaitBlock report of a mixed run's Heartwood relays (
 	$(need-results)
 	$(gate) $(DIFFTEST) live await $(results-of-run)/$(RUN) $(STRICT)
 
-live-resources: build ## the resource report of a forging run's series (RUN=mixed-short|mixed|mixed-split|churn|core, SEED, FORGING_RESULTS)
+# RESOURCE_BASELINE names the resource figures a person accepted after a missed budget (a file
+# outside the tree, with the decision's reference): a figure within 25 % of it passes.
+RESOURCE_BASELINE ?=
+live-resources: build ## the resource report of a forging run's series (RUN=mixed-short|mixed|mixed-split|churn|core, SEED, FORGING_RESULTS; RESOURCE_BASELINE)
 	$(need-run)
 	$(need-seed)
 	$(if $(is-forging),,$(error set RUN to a forging run: $(FORGING_RUNS)))
 	$(need-results)
-	$(gate) $(DIFFTEST) live resources $(run-dir) $(STRICT)
+	$(gate) $(DIFFTEST) live resources $(run-dir) $(if $(RESOURCE_BASELINE),--baseline $(RESOURCE_BASELINE)) $(STRICT)
 # ---- end of the relay ----
 
 # ---- heartwood-forger and heartwood-cli: the forger, the commands and the devnet ----
