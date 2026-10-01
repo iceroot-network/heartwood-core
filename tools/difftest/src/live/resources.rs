@@ -558,7 +558,7 @@ fn disk(i: &Inputs<'_>, mine: &[&Series]) -> Vec<Finding> {
         out.push(recorded(
             format!("{node} disk writes over the whole run"),
             format!(
-                "{} written and {} of logs over {} s ({} a day), the restarts and the full pool included",
+                "{} written and {} of logs over {} s ({} a day), counting every restart and full pool of the run",
                 mb(bytes),
                 mb(logs),
                 (to - from) / 1_000,
