@@ -103,6 +103,16 @@ pub(crate) enum RoleError {
     /// The signing keys could not be loaded.
     #[error(transparent)]
     Keys(#[from] heartwood_forger::KeysError),
+    /// A split role belongs to the running core process.
+    #[error("{name} runs inside {core}: use core {verb}")]
+    InsideCore {
+        /// The split process name.
+        name: String,
+        /// The enclosing process name.
+        core: String,
+        /// The requested operation.
+        verb: &'static str,
+    },
 }
 
 /// The flags of `stop`: the instance and an accepted compatibility flag.
@@ -211,16 +221,36 @@ pub enum Manage {
 
 /// Stop, restart, show or tail `role`'s instance as `command` asks.
 pub(crate) fn manage(role: Role, command: Manage) -> ExitCode {
-    match command {
-        Manage::Stop(flags) => on_instance(role, &flags.process.instance, process::stop),
-        Manage::Restart(flags) => {
-            on_instance(role, &flags.instance, |i| process::restart(i, &Vec::new()))
+    let (flags, verb) = match command {
+        Manage::Stop(flags) => (flags.process, "stop"),
+        Manage::Restart(flags) => (flags, "restart"),
+        Manage::Status(flags) => (flags, "status"),
+        Manage::Log(log) => {
+            return on_instance(role, &log.instance, |i| {
+                process::log(i, log.lines, log.error, true)
+            });
         }
-        Manage::Status(flags) => on_instance(role, &flags.instance, status),
-        Manage::Log(log) => on_instance(role, &log.instance, |i| {
-            process::log(i, log.lines, log.error, true)
-        }),
-    }
+    };
+    on_instance(role, &flags.instance, |i| -> Result<(), RoleError> {
+        if role != Role::Core {
+            match core::refuse_running(i, &[Role::Core]) {
+                Err(ProcessError::AlreadyRunning { name }) => {
+                    return Err(RoleError::InsideCore {
+                        name: i.name(),
+                        core: name,
+                        verb,
+                    });
+                }
+                other => other?,
+            }
+        }
+        match verb {
+            "stop" => process::stop(i),
+            "restart" => process::restart(i, &Vec::new()),
+            _ => status(i),
+        }
+        .map_err(RoleError::from)
+    })
 }
 
 /// The answer of a command that is not built yet: the message, and the exit status 1.

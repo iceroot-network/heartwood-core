@@ -297,6 +297,7 @@ fn a_core_process_holds_all_three_locks_and_refuses_a_relay_and_a_forger() {
             );
         }
     }
+    refuses_split_management(&node);
     // A second core node is refused as well.
     let second = node.run(&["core", "run"]);
     assert!(text(&second).contains("another core of this instance holds"));
@@ -385,6 +386,7 @@ fn core_start_detaches_by_default_and_core_stop_ends_it() {
             text(&again)
         );
     }
+    refuses_split_management(&node);
     let rollback = node.run(&["snapshot", "rollback", "--number", "1"]);
     assert!(!rollback.status.success(), "{}", text(&rollback));
     assert!(
@@ -627,4 +629,42 @@ fn core_start_checks_keys_before_spawning_a_supervisor() {
 #[test]
 fn forger_start_checks_keys_before_spawning_a_supervisor() {
     rejects_keys("forger");
+}
+
+/// A split role's commands name the core process that contains it.
+fn refuses_split_management(node: &Node) {
+    for role in ["relay", "forger"] {
+        for verb in ["status", "stop", "restart"] {
+            let output = node.run(&[role, verb]);
+            assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+            assert_eq!(
+                String::from_utf8_lossy(&output.stderr).trim(),
+                format!(
+                    "{TOKEN}-{NETWORK}-{role} runs inside {TOKEN}-{NETWORK}-core: use core {verb}"
+                )
+            );
+            assert!(node.locked("core"));
+        }
+    }
+}
+
+#[test]
+fn split_management_refuses_while_only_the_core_supervisor_lock_is_held() {
+    let node = Node::new("supervisor-lock", host(51));
+    fs::create_dir_all(node.run_dir()).unwrap();
+    let _lock =
+        heartwood_cli::supervisor::signals::take_lock(&node.run_dir().join("core.supervisor.lock"))
+            .unwrap()
+            .unwrap();
+    for role in ["relay", "forger"] {
+        for verb in ["status", "stop", "restart"] {
+            let output = node.run(&[role, verb]);
+            assert_eq!(output.status.code(), Some(1));
+            assert!(
+                text(&output).contains(&format!("use core {verb}")),
+                "{}",
+                text(&output)
+            );
+        }
+    }
 }
