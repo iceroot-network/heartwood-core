@@ -184,6 +184,10 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 #   join it. None of these lines takes part in consensus.
 # - heartwood-p2p keeps 8,500: it measures 8,251 with the attestation record's types and hook, and
 #   the record's three call sites (up to 10 lines) fit.
+# heartwood-forger goes from 2,200 to 2,300: it measures 2,172, and the work planned in it next
+# (the forger's hooks, about 12 lines, the sort of the block header's fields, about 30, and the
+# network hash's comparison, about 10) takes it to about 2,224; the rest leaves room for the
+# signing record's rewrite.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"
@@ -213,7 +217,7 @@ CHECKS=(
     "heartwood-api store listings:packages/api/src/controllers/delegate_history.rs packages/api/src/controllers/rounds.rs packages/api/src/controllers/votes.rs packages/api/src/controllers/blockchain.rs packages/api/src/resources/missed_block.rs packages/api/src/resources/round.rs packages/api/src/resources/fee_statistics.rs:"
     "heartwood-core:packages/core/src !packages/core/src/harness.rs:4400"
     "heartwood-core test support (difftest only):packages/core/src/harness.rs:"
-    "heartwood-forger:packages/forger/src !packages/forger/src/bin:2200"
+    "heartwood-forger:packages/forger/src !packages/forger/src/bin:2300"
     "heartwood-forger loop and relay client:packages/forger/src/forger_service.rs packages/forger/src/client.rs packages/forger/src/deadlines.rs:"
     "heartwood-forger forging, keys, record and attester:packages/forger/src/delegate.rs packages/forger/src/keys.rs packages/forger/src/signing_record.rs packages/forger/src/signer.rs packages/forger/src/attestation.rs:"
     "heartwood-forger test support (difftest only):packages/forger/src/bin:"
