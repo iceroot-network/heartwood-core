@@ -1385,6 +1385,7 @@ fn the_heartwood_backend_calls_the_devnet_commands_and_needs_a_manifest() {
         forger_hosts: Vec::new(),
         delegates: Vec::new(),
         dir: scratch.path().join("node2"),
+        core: false,
     };
     let marker = heartwood::request_replay(&node).expect("the marker");
     assert_eq!(
