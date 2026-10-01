@@ -37,6 +37,9 @@ const MAX_SAFE: f64 = 9_007_199_254_740_991.0;
 /// The environment file could not be read or written.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum EnvError {
+    /// A required command argument was not supplied.
+    #[error("\"{0}\" is required")]
+    Required(&'static str),
     /// There is no environment file, as the reference says it.
     #[error("No environment file found at {}", path.display())]
     NoFile {

@@ -45,11 +45,11 @@ pub struct EnvSet {
     #[command(flatten)]
     pub instance: InstanceFlags,
     /// The variable's name.
-    #[arg(long)]
-    pub key: String,
+    #[arg(long, allow_negative_numbers = true)]
+    pub key: Option<String>,
     /// Its new value.
-    #[arg(long)]
-    pub value: String,
+    #[arg(long, allow_negative_numbers = true)]
+    pub value: Option<String>,
 }
 
 /// Run `command`.
@@ -59,10 +59,15 @@ pub fn run(command: EnvCommand) -> ExitCode {
         EnvCommand::Get(k) => (k.instance, Box::new(move |i| e::get_text(i, &k.key))),
         EnvCommand::List(f) => (f.instance, Box::new(e::list_text)),
         EnvCommand::Paths(f) => (f.instance, Box::new(e::paths_text)),
-        EnvCommand::Set(s) => (
-            s.instance,
-            Box::new(move |i| e::set_text(i, &s.key, &s.value)),
-        ),
+        EnvCommand::Set(s) => {
+            let Some(key) = s.key else {
+                return crate::exit(Err(e::EnvError::Required("key")));
+            };
+            let Some(value) = s.value else {
+                return crate::exit(Err(e::EnvError::Required("value")));
+            };
+            (s.instance, Box::new(move |i| e::set_text(i, &key, &value)))
+        }
     };
     let env = |name: &str| std::env::var(name).ok();
     let (home, cwd) = (

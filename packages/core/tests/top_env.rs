@@ -115,3 +115,35 @@ fn env_set_then_get_list_and_paths() {
         "{config_row}"
     );
 }
+
+#[test]
+fn env_set_accepts_negative_words_and_reports_missing_arguments() {
+    let home = scratch("negative-and-missing");
+    fs::write(home.join(".env"), "A=1\n").unwrap();
+    let run = |args: &[&str]| {
+        let args: Vec<_> = args
+            .iter()
+            .copied()
+            .chain(["--network", "devnet"])
+            .collect();
+        heartwood(&home, Some(&home), &args)
+    };
+    for (args, missing) in [
+        (vec!["env", "set", "--key", "B"], "value"),
+        (vec!["env", "set", "--value", "-5"], "key"),
+        (vec!["env", "set"], "key"),
+    ] {
+        let out = run(&args);
+        assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+        assert_eq!(text(&out.stderr), format!("\"{missing}\" is required\n"));
+        assert_eq!(fs::read_to_string(home.join(".env")).unwrap(), "A=1\n");
+    }
+    for key in ["B", "-5"] {
+        let out = run(&["env", "set", "--key", key, "--value", "-5"]);
+        assert!(out.status.success(), "{}", text(&out.stderr));
+    }
+    assert_eq!(
+        fs::read_to_string(home.join(".env")).unwrap(),
+        "A=1\nB=-5\n-5=-5"
+    );
+}
