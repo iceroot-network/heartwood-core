@@ -7,8 +7,8 @@
      "role": "relay",
      "status": "online",
      "restarts": 0,
-     "pid": 2098365,
-     "supervisor": 2098363,
+     "pid": 2539787,
+     "supervisor": 2539785,
      "unstable": false,
      "lastExit": null
     },
@@ -16,8 +16,8 @@
      "role": "forger",
      "status": "online",
      "restarts": 0,
-     "pid": 2227197,
-     "supervisor": 2227185,
+     "pid": 2590775,
+     "supervisor": 2590763,
      "unstable": false,
      "lastExit": null
     }
@@ -30,8 +30,8 @@
      "role": "relay",
      "status": "online",
      "restarts": 0,
-     "pid": 2099084,
-     "supervisor": 2099082,
+     "pid": 2540213,
+     "supervisor": 2540211,
      "unstable": false,
      "lastExit": null
     },
@@ -39,8 +39,8 @@
      "role": "forger",
      "status": "online",
      "restarts": 0,
-     "pid": 2227205,
-     "supervisor": 2227194,
+     "pid": 2590781,
+     "supervisor": 2590764,
      "unstable": false,
      "lastExit": null
     }
@@ -53,8 +53,8 @@
      "role": "relay",
      "status": "online",
      "restarts": 0,
-     "pid": 2322468,
-     "supervisor": 2322466,
+     "pid": 2615600,
+     "supervisor": 2615598,
      "unstable": false,
      "lastExit": null
     },
@@ -62,8 +62,8 @@
      "role": "forger",
      "status": "online",
      "restarts": 0,
-     "pid": 2323887,
-     "supervisor": 2323885,
+     "pid": 2615964,
+     "supervisor": 2615962,
      "unstable": false,
      "lastExit": null
     }
@@ -76,8 +76,8 @@
      "role": "relay",
      "status": "online",
      "restarts": 0,
-     "pid": 2325770,
-     "supervisor": 2325768,
+     "pid": 2616232,
+     "supervisor": 2616230,
      "unstable": false,
      "lastExit": null
     },
@@ -85,8 +85,8 @@
      "role": "forger",
      "status": "online",
      "restarts": 0,
-     "pid": 2326325,
-     "supervisor": 2326323,
+     "pid": 2616496,
+     "supervisor": 2616494,
      "unstable": false,
      "lastExit": null
     }
@@ -99,8 +99,8 @@
      "role": "relay",
      "status": "online",
      "restarts": 0,
-     "pid": 2326497,
-     "supervisor": 2326495,
+     "pid": 2616632,
+     "supervisor": 2616630,
      "unstable": false,
      "lastExit": null
     },
@@ -108,8 +108,8 @@
      "role": "forger",
      "status": "online",
      "restarts": 0,
-     "pid": 2335421,
-     "supervisor": 2335419,
+     "pid": 2616828,
+     "supervisor": 2616826,
      "unstable": false,
      "lastExit": null
     }
@@ -122,8 +122,8 @@
      "role": "relay",
      "status": "online",
      "restarts": 0,
-     "pid": 1973367,
-     "supervisor": 1973321,
+     "pid": 2519103,
+     "supervisor": 2519083,
      "unstable": false,
      "lastExit": null
     }

@@ -1,201 +1,198 @@
-[2026-09-30 21:53:03.734] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
-[2026-09-30 21:53:04.009] INFO: Loaded 10 active delegates: genesis_34, genesis_35, genesis_36, genesis_37, genesis_38, genesis_39, genesis_40, genesis_41, genesis_42, genesis_43
-[2026-09-30 21:53:04.009] INFO: Forger Manager started 🔨
-[2026-09-30 21:56:07.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 21:56:30.005] INFO: Delegate genesis_35 is due to forge in 8 seconds from now ✨
-[2026-09-30 21:56:30.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 21:56:38.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 21:56:38.033] INFO: Delegate genesis_35 forged a new block at height 5 with 0 transactions 🔱
-[2026-09-30 21:57:10.006] INFO: Delegate genesis_39 is due to forge in 8 seconds from now ✨
-[2026-09-30 21:57:10.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 21:57:18.010] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 21:57:18.034] INFO: Delegate genesis_39 forged a new block at height 10 with 0 transactions 🔱
-[2026-09-30 21:57:34.005] INFO: Delegate genesis_42 is due to forge in 8 seconds from now ✨
-[2026-09-30 21:57:34.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 21:57:42.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 21:57:42.032] INFO: Delegate genesis_42 forged a new block at height 13 with 0 transactions 🔱
-[2026-09-30 21:58:22.006] INFO: Delegate genesis_41 is due to forge in 8 seconds from now ✨
-[2026-09-30 21:58:22.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 21:58:30.010] DEBUG: Received 2 transactions from the pool containing 2 transactions total 💸
-[2026-09-30 21:58:30.032] INFO: Delegate genesis_41 forged a new block at height 19 with 2 transactions 🔱
-[2026-09-30 21:58:38.006] INFO: Delegate genesis_40 is due to forge in 8 seconds from now ✨
-[2026-09-30 21:58:38.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 21:58:46.012] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 21:58:46.043] INFO: Delegate genesis_40 forged a new block at height 21 with 0 transactions 🔱
-[2026-09-30 21:59:58.006] INFO: Delegate genesis_34 is due to forge in 8 seconds from now ✨
-[2026-09-30 21:59:58.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:00:06.010] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:00:06.044] INFO: Delegate genesis_34 forged a new block at height 31 with 0 transactions 🔱
-[2026-09-30 22:00:46.006] INFO: Delegate genesis_38 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:00:46.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:00:54.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:00:54.034] INFO: Delegate genesis_38 forged a new block at height 37 with 0 transactions 🔱
-[2026-09-30 22:01:02.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:01:02.033] INFO: Delegate genesis_36 forged a new block at height 38 with 0 transactions 🔱
-[2026-09-30 22:01:58.007] INFO: Delegate genesis_43 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:01:58.007] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:02:06.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:02:06.034] INFO: Delegate genesis_43 forged a new block at height 46 with 0 transactions 🔱
-[2026-09-30 22:03:02.006] INFO: Delegate genesis_37 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:03:02.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:03:10.006] INFO: Delegate genesis_34 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:03:10.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:03:17.313] INFO: Received signal 2, stopping the forger
-[2026-09-30 22:03:18.990] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
-[2026-09-30 22:03:19.246] INFO: Loaded 10 active delegates: genesis_34, genesis_35, genesis_36, genesis_37, genesis_38, genesis_39, genesis_40, genesis_41, genesis_42, genesis_43
-[2026-09-30 22:03:19.246] INFO: Forger Manager started 🔨
-[2026-09-30 22:03:19.254] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:03:19.271] INFO: Delegate genesis_34 forged a new block at height 55 with 0 transactions 🔱
-[2026-09-30 22:03:42.005] INFO: Delegate genesis_41 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:03:42.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:03:50.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:03:50.032] INFO: Delegate genesis_41 forged a new block at height 59 with 0 transactions 🔱
-[2026-09-30 22:04:14.004] INFO: Delegate genesis_40 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:04:14.004] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:04:22.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:04:22.033] INFO: Delegate genesis_40 forged a new block at height 63 with 0 transactions 🔱
-[2026-09-30 22:04:30.005] INFO: Delegate genesis_38 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:04:30.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:04:38.010] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:04:38.035] INFO: Delegate genesis_38 forged a new block at height 65 with 0 transactions 🔱
-[2026-09-30 22:05:42.006] INFO: Delegate genesis_37 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:05:42.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:05:50.010] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:05:50.034] INFO: Delegate genesis_37 forged a new block at height 74 with 0 transactions 🔱
-[2026-09-30 22:06:46.004] INFO: Delegate genesis_43 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:06:46.004] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:06:54.012] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:06:54.037] INFO: Delegate genesis_43 forged a new block at height 82 with 0 transactions 🔱
-[2026-09-30 22:07:34.006] INFO: Delegate genesis_42 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:07:34.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:07:42.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:07:42.033] INFO: Delegate genesis_42 forged a new block at height 88 with 0 transactions 🔱
-[2026-09-30 22:08:38.005] INFO: Delegate genesis_39 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:08:38.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:08:46.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:08:46.034] INFO: Delegate genesis_39 forged a new block at height 96 with 0 transactions 🔱
-[2026-09-30 22:08:54.005] INFO: Delegate genesis_36 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:08:54.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:09:02.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:09:02.032] INFO: Delegate genesis_36 forged a new block at height 98 with 0 transactions 🔱
-[2026-09-30 22:09:10.005] INFO: Delegate genesis_35 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:09:10.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:09:18.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:09:18.024] INFO: Delegate genesis_35 forged a new block at height 100 with 0 transactions 🔱
-[2026-09-30 22:10:15.683] INFO: Received signal 2, stopping the forger
-[2026-09-30 22:10:38.561] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
-[2026-09-30 22:10:38.817] INFO: Loaded 10 active delegates: genesis_34, genesis_35, genesis_36, genesis_37, genesis_38, genesis_39, genesis_40, genesis_41, genesis_42, genesis_43
-[2026-09-30 22:10:38.817] INFO: Forger Manager started 🔨
-[2026-09-30 22:10:38.821] INFO: Delegate genesis_40 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:10:38.821] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:10:46.018] DEBUG: Received 150 transactions from the pool containing 14,850 transactions total 💸
-[2026-09-30 22:10:46.054] INFO: Delegate genesis_40 forged a new block at height 109 with 150 transactions 🔱
-[2026-09-30 22:11:02.007] INFO: Delegate genesis_39 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:11:02.007] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:11:10.057] DEBUG: Received 150 transactions from the pool containing 14,400 transactions total 💸
-[2026-09-30 22:11:10.093] INFO: Delegate genesis_39 forged a new block at height 112 with 150 transactions 🔱
-[2026-09-30 22:11:34.005] INFO: Delegate genesis_41 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:11:34.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:11:42.045] DEBUG: Received 150 transactions from the pool containing 13,800 transactions total 💸
-[2026-09-30 22:11:42.081] INFO: Delegate genesis_41 forged a new block at height 116 with 150 transactions 🔱
-[2026-09-30 22:11:58.006] INFO: Delegate genesis_36 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:11:58.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:12:06.021] DEBUG: Received 150 transactions from the pool containing 13,350 transactions total 💸
-[2026-09-30 22:12:06.058] INFO: Delegate genesis_36 forged a new block at height 119 with 150 transactions 🔱
-[2026-09-30 22:12:30.006] INFO: Delegate genesis_42 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:12:30.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:12:38.022] DEBUG: Received 150 transactions from the pool containing 12,750 transactions total 💸
-[2026-09-30 22:12:38.058] INFO: Delegate genesis_42 forged a new block at height 123 with 150 transactions 🔱
-[2026-09-30 22:12:46.019] DEBUG: Received 150 transactions from the pool containing 12,600 transactions total 💸
-[2026-09-30 22:12:46.047] INFO: Delegate genesis_43 forged a new block at height 124 with 150 transactions 🔱
-[2026-09-30 22:12:54.048] DEBUG: Received 150 transactions from the pool containing 12,450 transactions total 💸
-[2026-09-30 22:12:54.085] INFO: Delegate genesis_34 forged a new block at height 125 with 150 transactions 🔱
-[2026-09-30 22:13:34.005] INFO: Delegate genesis_38 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:13:34.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:13:42.018] DEBUG: Received 150 transactions from the pool containing 11,550 transactions total 💸
-[2026-09-30 22:13:42.054] INFO: Delegate genesis_38 forged a new block at height 131 with 150 transactions 🔱
-[2026-09-30 22:15:34.005] INFO: Delegate genesis_35 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:15:34.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:15:42.018] DEBUG: Received 150 transactions from the pool containing 9,300 transactions total 💸
-[2026-09-30 22:15:42.048] INFO: Delegate genesis_35 forged a new block at height 146 with 150 transactions 🔱
-[2026-09-30 22:16:22.005] INFO: Delegate genesis_37 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:16:22.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:16:30.017] DEBUG: Received 150 transactions from the pool containing 8,400 transactions total 💸
-[2026-09-30 22:16:30.057] INFO: Delegate genesis_37 forged a new block at height 152 with 150 transactions 🔱
-[2026-09-30 22:17:34.028] DEBUG: Received 150 transactions from the pool containing 7,200 transactions total 💸
-[2026-09-30 22:17:34.057] INFO: Delegate genesis_42 forged a new block at height 160 with 150 transactions 🔱
-[2026-09-30 22:17:34.717] INFO: Received signal 2, stopping the forger
-[2026-09-30 22:20:03.351] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
-[2026-09-30 22:20:03.610] INFO: Loaded 10 active delegates: genesis_34, genesis_35, genesis_36, genesis_37, genesis_38, genesis_39, genesis_40, genesis_41, genesis_42, genesis_43
-[2026-09-30 22:20:03.610] INFO: Forger Manager started 🔨
-[2026-09-30 22:21:18.005] INFO: Delegate genesis_34 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:21:18.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:21:26.017] DEBUG: Received 150 transactions from the pool containing 5,100 transactions total 💸
-[2026-09-30 22:21:26.055] INFO: Delegate genesis_34 forged a new block at height 174 with 150 transactions 🔱
-[2026-09-30 22:21:50.004] INFO: Delegate genesis_35 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:21:50.004] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:21:58.016] DEBUG: Received 150 transactions from the pool containing 4,500 transactions total 💸
-[2026-09-30 22:21:58.054] INFO: Delegate genesis_35 forged a new block at height 178 with 150 transactions 🔱
-[2026-09-30 22:22:46.004] INFO: Delegate genesis_39 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:22:46.004] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:22:54.016] DEBUG: Received 150 transactions from the pool containing 3,450 transactions total 💸
-[2026-09-30 22:22:54.054] INFO: Delegate genesis_39 forged a new block at height 185 with 150 transactions 🔱
-[2026-09-30 22:23:34.005] INFO: Delegate genesis_38 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:23:34.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:23:42.015] DEBUG: Received 150 transactions from the pool containing 2,550 transactions total 💸
-[2026-09-30 22:23:42.052] INFO: Delegate genesis_38 forged a new block at height 191 with 150 transactions 🔱
-[2026-09-30 22:23:50.006] INFO: Delegate genesis_37 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:23:50.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:23:58.017] DEBUG: Received 150 transactions from the pool containing 2,250 transactions total 💸
-[2026-09-30 22:23:58.054] INFO: Delegate genesis_37 forged a new block at height 193 with 150 transactions 🔱
-[2026-09-30 22:24:30.005] INFO: Delegate genesis_42 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:24:30.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:24:38.016] DEBUG: Received 150 transactions from the pool containing 1,500 transactions total 💸
-[2026-09-30 22:24:38.045] INFO: Delegate genesis_42 forged a new block at height 198 with 150 transactions 🔱
-[2026-09-30 22:24:46.006] INFO: Delegate genesis_41 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:24:46.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:24:54.017] DEBUG: Received 150 transactions from the pool containing 1,200 transactions total 💸
-[2026-09-30 22:24:54.054] INFO: Delegate genesis_41 forged a new block at height 200 with 150 transactions 🔱
-[2026-09-30 22:25:02.016] DEBUG: Received 150 transactions from the pool containing 1,050 transactions total 💸
-[2026-09-30 22:25:02.044] INFO: Delegate genesis_40 forged a new block at height 201 with 150 transactions 🔱
-[2026-09-30 22:25:58.006] INFO: Delegate genesis_36 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:25:58.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:26:06.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:26:06.034] INFO: Delegate genesis_36 forged a new block at height 209 with 0 transactions 🔱
-[2026-09-30 22:28:38.004] INFO: Delegate genesis_40 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:28:38.004] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:28:46.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:28:46.035] INFO: Delegate genesis_40 forged a new block at height 229 with 0 transactions 🔱
-[2026-09-30 22:29:02.005] INFO: Delegate genesis_41 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:29:02.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:29:10.007] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:29:10.032] INFO: Delegate genesis_41 forged a new block at height 232 with 0 transactions 🔱
-[2026-09-30 22:29:42.006] INFO: Delegate genesis_43 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:29:42.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:29:50.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:29:50.034] INFO: Delegate genesis_43 forged a new block at height 237 with 0 transactions 🔱
-[2026-09-30 22:31:02.005] INFO: Delegate genesis_35 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:31:02.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:31:10.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:31:10.034] INFO: Delegate genesis_35 forged a new block at height 247 with 0 transactions 🔱
-[2026-09-30 22:31:42.007] INFO: Delegate genesis_37 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:31:42.007] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:31:50.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:31:50.026] INFO: Delegate genesis_37 forged a new block at height 252 with 0 transactions 🔱
-[2026-09-30 22:32:14.006] INFO: Delegate genesis_42 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:32:14.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:32:22.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:32:22.033] INFO: Delegate genesis_42 forged a new block at height 256 with 0 transactions 🔱
-[2026-09-30 22:32:30.007] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:32:30.032] INFO: Delegate genesis_39 forged a new block at height 257 with 0 transactions 🔱
-[2026-09-30 22:32:38.011] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:32:38.036] INFO: Delegate genesis_36 forged a new block at height 258 with 0 transactions 🔱
-[2026-09-30 22:32:54.005] INFO: Delegate genesis_38 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:32:54.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:33:02.010] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:33:02.034] INFO: Delegate genesis_38 forged a new block at height 261 with 0 transactions 🔱
-[2026-09-30 22:33:26.004] INFO: Delegate genesis_34 is due to forge in 8 seconds from now ✨
-[2026-09-30 22:33:26.004] DEBUG: Sending wake-up check to relay node 127.0.0.1
-[2026-09-30 22:33:34.012] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
-[2026-09-30 22:33:34.037] INFO: Delegate genesis_34 forged a new block at height 265 with 0 transactions 🔱
-[2026-09-30 22:33:34.332] INFO: Received signal 2, stopping the forger
+[2026-10-01 00:42:08.798] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
+[2026-10-01 00:42:09.080] INFO: Loaded 10 active delegates: genesis_34, genesis_35, genesis_36, genesis_37, genesis_38, genesis_39, genesis_40, genesis_41, genesis_42, genesis_43
+[2026-10-01 00:42:09.080] INFO: Forger Manager started 🔨
+[2026-10-01 00:45:19.005] INFO: Delegate genesis_35 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:45:19.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:45:27.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:45:27.032] INFO: Delegate genesis_35 forged a new block at height 3 with 0 transactions 🔱
+[2026-10-01 00:45:43.007] INFO: Delegate genesis_34 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:45:43.007] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:45:51.010] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:45:51.034] INFO: Delegate genesis_34 forged a new block at height 6 with 0 transactions 🔱
+[2026-10-01 00:46:39.005] INFO: Delegate genesis_42 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:46:39.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:46:47.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:46:47.032] INFO: Delegate genesis_42 forged a new block at height 13 with 0 transactions 🔱
+[2026-10-01 00:48:15.005] INFO: Delegate genesis_41 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:48:15.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:48:23.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:48:23.032] INFO: Delegate genesis_41 forged a new block at height 25 with 0 transactions 🔱
+[2026-10-01 00:48:31.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:48:31.032] INFO: Delegate genesis_38 forged a new block at height 26 with 0 transactions 🔱
+[2026-10-01 00:48:47.006] INFO: Delegate genesis_39 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:48:47.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:48:55.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:48:55.034] INFO: Delegate genesis_39 forged a new block at height 29 with 0 transactions 🔱
+[2026-10-01 00:49:27.006] INFO: Delegate genesis_43 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:49:27.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:49:35.010] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:49:35.035] INFO: Delegate genesis_43 forged a new block at height 34 with 0 transactions 🔱
+[2026-10-01 00:49:59.004] INFO: Delegate genesis_40 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:49:59.004] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:50:07.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:50:07.030] INFO: Delegate genesis_40 forged a new block at height 38 with 0 transactions 🔱
+[2026-10-01 00:50:39.008] INFO: Delegate genesis_37 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:50:39.008] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:50:47.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:50:47.033] INFO: Delegate genesis_37 forged a new block at height 43 with 0 transactions 🔱
+[2026-10-01 00:51:51.005] INFO: Delegate genesis_36 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:51:51.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:51:59.010] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:51:59.034] INFO: Delegate genesis_36 forged a new block at height 52 with 0 transactions 🔱
+[2026-10-01 00:52:22.501] INFO: Received signal 2, stopping the forger
+[2026-10-01 00:52:26.314] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
+[2026-10-01 00:52:26.571] INFO: Loaded 10 active delegates: genesis_34, genesis_35, genesis_36, genesis_37, genesis_38, genesis_39, genesis_40, genesis_41, genesis_42, genesis_43
+[2026-10-01 00:52:26.571] INFO: Forger Manager started 🔨
+[2026-10-01 00:52:55.005] INFO: Delegate genesis_39 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:52:55.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:53:03.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:53:03.033] INFO: Delegate genesis_39 forged a new block at height 60 with 0 transactions 🔱
+[2026-10-01 00:53:51.005] INFO: Delegate genesis_41 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:53:51.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:53:59.010] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:53:59.034] INFO: Delegate genesis_41 forged a new block at height 67 with 0 transactions 🔱
+[2026-10-01 00:54:07.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:54:07.033] INFO: Delegate genesis_43 forged a new block at height 68 with 0 transactions 🔱
+[2026-10-01 00:55:35.005] INFO: Delegate genesis_37 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:55:35.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:55:43.010] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:55:43.034] INFO: Delegate genesis_37 forged a new block at height 80 with 0 transactions 🔱
+[2026-10-01 00:55:51.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:55:51.026] INFO: Delegate genesis_36 forged a new block at height 81 with 0 transactions 🔱
+[2026-10-01 00:56:07.007] INFO: Delegate genesis_34 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:56:07.007] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:56:15.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:56:15.032] INFO: Delegate genesis_34 forged a new block at height 84 with 0 transactions 🔱
+[2026-10-01 00:56:39.005] INFO: Delegate genesis_42 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:56:39.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:56:47.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:56:47.033] INFO: Delegate genesis_42 forged a new block at height 88 with 0 transactions 🔱
+[2026-10-01 00:57:27.006] INFO: Delegate genesis_38 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:57:27.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:57:35.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:57:35.033] INFO: Delegate genesis_38 forged a new block at height 94 with 0 transactions 🔱
+[2026-10-01 00:57:59.005] INFO: Delegate genesis_40 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:57:59.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:58:07.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:58:07.033] INFO: Delegate genesis_40 forged a new block at height 98 with 0 transactions 🔱
+[2026-10-01 00:59:03.004] INFO: Delegate genesis_35 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:59:03.004] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 00:59:11.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 00:59:11.032] INFO: Delegate genesis_35 forged a new block at height 106 with 0 transactions 🔱
+[2026-10-01 00:59:21.204] INFO: Received signal 2, stopping the forger
+[2026-10-01 00:59:43.531] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
+[2026-10-01 00:59:43.787] INFO: Loaded 10 active delegates: genesis_34, genesis_35, genesis_36, genesis_37, genesis_38, genesis_39, genesis_40, genesis_41, genesis_42, genesis_43
+[2026-10-01 00:59:43.787] INFO: Forger Manager started 🔨
+[2026-10-01 00:59:59.006] INFO: Delegate genesis_38 is due to forge in 8 seconds from now ✨
+[2026-10-01 00:59:59.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:00:07.061] DEBUG: Received 150 transactions from the pool containing 14,550 transactions total 💸
+[2026-10-01 01:00:07.098] INFO: Delegate genesis_38 forged a new block at height 111 with 150 transactions 🔱
+[2026-10-01 01:00:23.006] INFO: Delegate genesis_41 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:00:23.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:00:31.019] DEBUG: Received 150 transactions from the pool containing 14,100 transactions total 💸
+[2026-10-01 01:00:31.055] INFO: Delegate genesis_41 forged a new block at height 114 with 150 transactions 🔱
+[2026-10-01 01:01:03.010] INFO: Delegate genesis_40 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:01:03.010] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:01:11.091] DEBUG: Received 150 transactions from the pool containing 13,350 transactions total 💸
+[2026-10-01 01:01:11.127] INFO: Delegate genesis_40 forged a new block at height 119 with 150 transactions 🔱
+[2026-10-01 01:01:35.009] INFO: Delegate genesis_42 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:01:35.009] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:01:43.018] DEBUG: Received 150 transactions from the pool containing 12,750 transactions total 💸
+[2026-10-01 01:01:43.054] INFO: Delegate genesis_42 forged a new block at height 123 with 150 transactions 🔱
+[2026-10-01 01:02:15.005] INFO: Delegate genesis_36 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:02:15.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:02:23.018] DEBUG: Received 150 transactions from the pool containing 12,000 transactions total 💸
+[2026-10-01 01:02:23.054] INFO: Delegate genesis_36 forged a new block at height 128 with 150 transactions 🔱
+[2026-10-01 01:02:55.007] INFO: Delegate genesis_39 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:02:55.007] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:03:03.018] DEBUG: Received 150 transactions from the pool containing 11,250 transactions total 💸
+[2026-10-01 01:03:03.054] INFO: Delegate genesis_39 forged a new block at height 133 with 150 transactions 🔱
+[2026-10-01 01:03:59.006] INFO: Delegate genesis_34 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:03:59.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:04:07.037] DEBUG: Received 150 transactions from the pool containing 10,050 transactions total 💸
+[2026-10-01 01:04:07.074] INFO: Delegate genesis_34 forged a new block at height 141 with 150 transactions 🔱
+[2026-10-01 01:04:15.037] DEBUG: Received 150 transactions from the pool containing 9,900 transactions total 💸
+[2026-10-01 01:04:15.074] INFO: Delegate genesis_37 forged a new block at height 142 with 150 transactions 🔱
+[2026-10-01 01:04:23.018] DEBUG: Received 150 transactions from the pool containing 9,750 transactions total 💸
+[2026-10-01 01:04:23.055] INFO: Delegate genesis_43 forged a new block at height 143 with 150 transactions 🔱
+[2026-10-01 01:05:51.006] INFO: Delegate genesis_35 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:05:51.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:05:59.025] DEBUG: Received 150 transactions from the pool containing 7,950 transactions total 💸
+[2026-10-01 01:05:59.062] INFO: Delegate genesis_35 forged a new block at height 155 with 150 transactions 🔱
+[2026-10-01 01:06:39.030] DEBUG: Received 150 transactions from the pool containing 7,200 transactions total 💸
+[2026-10-01 01:06:39.067] INFO: Delegate genesis_42 forged a new block at height 160 with 150 transactions 🔱
+[2026-10-01 01:06:39.929] INFO: Received signal 2, stopping the forger
+[2026-10-01 01:09:04.463] INFO: Heartwood Core 4.3.1-heartwood.0.1.0: a forger of solar on testnet
+[2026-10-01 01:09:04.721] INFO: Loaded 10 active delegates: genesis_34, genesis_35, genesis_36, genesis_37, genesis_38, genesis_39, genesis_40, genesis_41, genesis_42, genesis_43
+[2026-10-01 01:09:04.721] INFO: Forger Manager started 🔨
+[2026-10-01 01:11:03.006] INFO: Delegate genesis_43 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:11:03.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:11:11.014] DEBUG: Received 150 transactions from the pool containing 4,050 transactions total 💸
+[2026-10-01 01:11:11.052] INFO: Delegate genesis_43 forged a new block at height 181 with 150 transactions 🔱
+[2026-10-01 01:11:19.016] DEBUG: Received 150 transactions from the pool containing 3,900 transactions total 💸
+[2026-10-01 01:11:19.053] INFO: Delegate genesis_35 forged a new block at height 182 with 150 transactions 🔱
+[2026-10-01 01:11:27.020] DEBUG: Received 150 transactions from the pool containing 3,750 transactions total 💸
+[2026-10-01 01:11:27.057] INFO: Delegate genesis_37 forged a new block at height 183 with 150 transactions 🔱
+[2026-10-01 01:11:35.005] INFO: Delegate genesis_34 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:11:35.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:11:43.017] DEBUG: Received 150 transactions from the pool containing 3,450 transactions total 💸
+[2026-10-01 01:11:43.053] INFO: Delegate genesis_34 forged a new block at height 185 with 150 transactions 🔱
+[2026-10-01 01:11:59.005] INFO: Delegate genesis_41 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:11:59.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:12:07.020] DEBUG: Received 150 transactions from the pool containing 3,000 transactions total 💸
+[2026-10-01 01:12:07.057] INFO: Delegate genesis_41 forged a new block at height 188 with 150 transactions 🔱
+[2026-10-01 01:13:35.005] INFO: Delegate genesis_42 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:13:35.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:13:43.015] DEBUG: Received 150 transactions from the pool containing 1,200 transactions total 💸
+[2026-10-01 01:13:43.053] INFO: Delegate genesis_42 forged a new block at height 200 with 150 transactions 🔱
+[2026-10-01 01:13:51.015] DEBUG: Received 150 transactions from the pool containing 1,050 transactions total 💸
+[2026-10-01 01:13:51.053] INFO: Delegate genesis_36 forged a new block at height 201 with 150 transactions 🔱
+[2026-10-01 01:14:31.006] INFO: Delegate genesis_38 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:14:31.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:14:39.016] DEBUG: Received 150 transactions from the pool containing 150 transactions total 💸
+[2026-10-01 01:14:39.053] INFO: Delegate genesis_38 forged a new block at height 207 with 150 transactions 🔱
+[2026-10-01 01:15:03.005] INFO: Delegate genesis_40 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:15:03.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:15:11.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 01:15:11.034] INFO: Delegate genesis_40 forged a new block at height 211 with 0 transactions 🔱
+[2026-10-01 01:15:19.005] INFO: Delegate genesis_39 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:15:19.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:15:27.005] INFO: Delegate genesis_34 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:15:27.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:15:35.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 01:15:35.035] INFO: Delegate genesis_34 forged a new block at height 214 with 0 transactions 🔱
+[2026-10-01 01:15:51.005] INFO: Delegate genesis_35 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:15:51.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:15:59.007] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 01:15:59.033] INFO: Delegate genesis_35 forged a new block at height 217 with 0 transactions 🔱
+[2026-10-01 01:16:31.007] INFO: Delegate genesis_39 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:16:31.007] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:16:39.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 01:16:39.035] INFO: Delegate genesis_39 forged a new block at height 222 with 0 transactions 🔱
+[2026-10-01 01:17:03.005] INFO: Delegate genesis_41 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:17:03.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:17:11.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 01:17:11.033] INFO: Delegate genesis_41 forged a new block at height 226 with 0 transactions 🔱
+[2026-10-01 01:17:35.005] INFO: Delegate genesis_43 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:17:35.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:17:43.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 01:17:43.033] INFO: Delegate genesis_43 forged a new block at height 230 with 0 transactions 🔱
+[2026-10-01 01:17:59.007] INFO: Delegate genesis_38 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:17:59.007] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:18:07.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 01:18:07.032] INFO: Delegate genesis_38 forged a new block at height 233 with 0 transactions 🔱
+[2026-10-01 01:18:15.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 01:18:15.032] INFO: Delegate genesis_36 forged a new block at height 234 with 0 transactions 🔱
+[2026-10-01 01:19:43.005] INFO: Delegate genesis_37 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:19:43.005] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:19:51.009] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 01:19:51.025] INFO: Delegate genesis_37 forged a new block at height 246 with 0 transactions 🔱
+[2026-10-01 01:21:19.006] INFO: Delegate genesis_42 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:21:19.006] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:21:27.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 01:21:27.032] INFO: Delegate genesis_42 forged a new block at height 258 with 0 transactions 🔱
+[2026-10-01 01:21:35.004] INFO: Delegate genesis_40 is due to forge in 8 seconds from now ✨
+[2026-10-01 01:21:35.004] DEBUG: Sending wake-up check to relay node 127.0.0.1
+[2026-10-01 01:21:43.008] DEBUG: Received 0 transactions from the pool containing 0 transactions total 💸
+[2026-10-01 01:21:43.032] INFO: Delegate genesis_40 forged a new block at height 260 with 0 transactions 🔱
+[2026-10-01 01:22:23.273] INFO: Received signal 2, stopping the forger

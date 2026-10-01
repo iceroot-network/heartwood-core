@@ -14,10 +14,10 @@
  },
  "blocks": 264,
  "tip": 265,
- "lines": 1967,
- "reverts": 851,
- "reapplies": 851,
- "finalChainDigest": "00ca5b753768f3d377992318734597c8fbcf8368cd6a64d817c4f7a93c0e4ec9",
+ "lines": 2189,
+ "reverts": 962,
+ "reapplies": 962,
+ "finalChainDigest": "f2e8fef2f743b12dc2d752ced97ced8e4edc0f386aeb02360755a26e664f8de1",
  "failures": [],
  "anchors": {
   "A1": {
@@ -28,8 +28,8 @@
   },
   "A2": {
    "ok": true,
-   "rows": 17,
-   "headlessRows": 17,
+   "rows": 15,
+   "headlessRows": 15,
    "excluded": [],
    "refusedWithoutHeight": 0,
    "onlyNode": [],
@@ -66,8 +66,8 @@
  "processor": {
   "ok": true,
   "blocks": 264,
-  "lines": 1967,
-  "jobs": 1115,
+  "lines": 2189,
+  "jobs": 1226,
   "notAccepted": [],
   "differences": []
  }

@@ -8,7 +8,8 @@
 //!
 //! The run's records (`tests/fixtures/live/churn/`: its steps, fault windows, status snapshot,
 //! tips, block arrivals, the six nodes' digest, block, await, attestation and network-state files
-//! and logs, and the resource series) are a recording of the recipe's run, with the devnet's
+//! and logs, the resource series, and the relay-only node's route corpus with each answer reduced
+//! to its route and the two statuses) are a recording of the recipe's run, with the devnet's
 //! addresses replaced by documentation addresses. Files over a few tens of kilobytes are stored
 //! compressed (`.gz`), and a node's block files are stored as the heights they hold (`.range`): the
 //! blocks themselves are the judged corpus's, the same lines in every node's file. Its chain is
@@ -289,6 +290,7 @@ fn a_recorded_run_passes_every_section_but_its_resources() {
         "the pool held 15000 transactions with the forgers paused, then drained",
         "node 5's forger runs at an address of its own",
         "the empty reference relay synced from node 2's relay alone",
+        "the relay-only node 6 answered every route with the reference relay's status",
         "every Heartwood node's roles end online and stable",
         "every scripted event has its fault window",
         "every delegate's node forged in every round outside its fault windows",
@@ -602,6 +604,28 @@ fn a_relay_that_never_counted_the_delegates_fails() {
         has(
             &failed,
             "node2: no answer after height 10 counts the 43 delegates"
+        ),
+        "{failed:#?}"
+    );
+}
+
+#[test]
+fn a_relay_only_node_that_answered_a_route_otherwise_fails() {
+    let f = fixture();
+    quiet_series(&f.run);
+    let path = f.run.join("api-node6/answers.jsonl");
+    let mut rows = read_lines(&path);
+    let row = rows
+        .iter_mut()
+        .find(|r| r["name"] == "facts/blocks-last")
+        .expect("the corpus asks for the last block");
+    row["left"]["status"] = json!(500);
+    write_lines(&path, &rows);
+    let failed = failures(&check(&f));
+    assert!(
+        has(
+            &failed,
+            "facts/blocks-last: node6 answered 500, the reference relay 200"
         ),
         "{failed:#?}"
     );

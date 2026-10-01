@@ -8,7 +8,7 @@
         "commit": "ddbd58100d0b39a234cbbce6b9213c9f99dbc0f9",
         "tag": null
     },
-    "nethash": "b6f71a8eaef93da19abfdf5946417e216ba25fbe3a58db03bb56d6de82190f2b",
+    "nethash": "706e8544c290a0eea0c1dc1e32c07484842c28a6805cce603cfe5d3492a829ef",
     "range": {
         "from": 2,
         "to": 265,
@@ -28,11 +28,11 @@
         },
         "burnBasisPoints": 9000,
         "donations": {
-            "dUPEabqq36eEE4pYupnjw15yvBf2x4SAEd": {
+            "dSbpVU8wkhMCo98yDs1T5nzDZiC8nW4ETb": {
                 "basisPoints": 500,
                 "purpose": "placeholder-1"
             },
-            "dV11n17qbif7ZSctJ42dGymifypNAX1f5E": {
+            "dS3FuZ93D5s4qXshtb8ahwF6NPMzwYiLnV": {
                 "basisPoints": 500,
                 "purpose": "placeholder-2"
             }
@@ -64,17 +64,17 @@
         "totalBurnTxAmount": "0",
         "totalDonations": "5271000000",
         "donationsByAddress": {
-            "dUPEabqq36eEE4pYupnjw15yvBf2x4SAEd": "2635500000",
-            "dV11n17qbif7ZSctJ42dGymifypNAX1f5E": "2635500000"
+            "dS3FuZ93D5s4qXshtb8ahwF6NPMzwYiLnV": "2635500000",
+            "dSbpVU8wkhMCo98yDs1T5nzDZiC8nW4ETb": "2635500000"
         },
-        "missedSlots": 17,
+        "missedSlots": 15,
         "scheduleChecked": 264,
         "rewardValues": {
-            "180000000": 53,
-            "190000000": 54,
+            "180000000": 54,
+            "190000000": 53,
             "200000000": 54,
-            "210000000": 55,
-            "220000000": 48
+            "210000000": 54,
+            "220000000": 49
         },
         "fees": {
             "checked": 15002,

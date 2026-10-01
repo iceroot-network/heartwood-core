@@ -1,10 +1,10 @@
 {
   "format": "heartwood-corpus/1",
-  "seed": "1",
+  "seed": "2",
   "chain": {
-    "nethash": "b6f71a8eaef93da19abfdf5946417e216ba25fbe3a58db03bb56d6de82190f2b",
-    "genesisId": "8ad9d39cbc958c74d44049a843969ef48ddc8d3f3dc9bf8d6bb7edee2749f53a",
-    "epoch": "2026-09-30T21:56:06.000Z",
+    "nethash": "706e8544c290a0eea0c1dc1e32c07484842c28a6805cce603cfe5d3492a829ef",
+    "genesisId": "8a6cad3dde05159d53910ccce8973d2ecadd153dc9c40357247f5e4abb7bef24",
+    "epoch": "2026-10-01T00:45:11.000Z",
     "activeDelegates": 53,
     "blockTime": 8
   },
@@ -18,7 +18,7 @@
   "transactions": 15002,
   "rounds": 6,
   "roundRows": 318,
-  "missedRows": 17,
+  "missedRows": 15,
   "rejections": 0,
   "liveRestarts": 0,
   "checkpoints": [
@@ -34,7 +34,24 @@
     }
   ],
   "revertSteps": 25,
-  "revertSeed": "3290182824497206751",
+  "revertSeed": "4148150980517391274",
+  "revertPlanAdjusted": [
+    {
+      "after": 128,
+      "blocks": 75,
+      "now": 76
+    },
+    {
+      "after": 159,
+      "blocks": 53,
+      "now": 54
+    },
+    {
+      "after": 240,
+      "blocks": 81,
+      "now": 82
+    }
+  ],
   "judge": {
     "ok": true,
     "reference": {
@@ -48,7 +65,7 @@
       "image": null,
       "node": "v18.20.8"
     },
-    "lines": 1967,
-    "finalChainDigest": "00ca5b753768f3d377992318734597c8fbcf8368cd6a64d817c4f7a93c0e4ec9"
+    "lines": 2189,
+    "finalChainDigest": "f2e8fef2f743b12dc2d752ced97ced8e4edc0f386aeb02360755a26e664f8de1"
   }
 }

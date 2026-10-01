@@ -32,7 +32,7 @@
             },
             "minFee": 6173
         },
-        "epoch": "2026-09-30T21:56:06.000Z",
+        "epoch": "2026-10-01T00:45:11.000Z",
         "fees": {
             "staticFees": {
                 "burn": 0,
@@ -128,11 +128,11 @@
     {
         "height": 2,
         "donations": {
-            "dUPEabqq36eEE4pYupnjw15yvBf2x4SAEd": {
+            "dSbpVU8wkhMCo98yDs1T5nzDZiC8nW4ETb": {
                 "basisPoints": 500,
                 "purpose": "placeholder-1"
             },
-            "dV11n17qbif7ZSctJ42dGymifypNAX1f5E": {
+            "dS3FuZ93D5s4qXshtb8ahwF6NPMzwYiLnV": {
                 "basisPoints": 500,
                 "purpose": "placeholder-2"
             }
