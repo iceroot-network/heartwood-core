@@ -1,5 +1,6 @@
 //! What a run kept of each step (`scenario-<id>.json` in the network's directory), and the
-//! comparison of a suite's two runs, the reference's and Heartwood's, from those records.
+//! comparison of a suite's two runs, the reference's and Heartwood's, from those records and from
+//! each run's chain (the digests on their common prefix, [`super::run_chain`]).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::backend::{Submitted, Tip};
+use super::run_chain::{self, RunChain};
 use crate::compare::diff;
 use crate::errors::{Error, Result};
 use crate::report::{CaseResult, Outcome, Report};
@@ -172,7 +174,8 @@ const SHARED_PROJECTION: &str = ": api wallets";
 
 /// The two runs of one scenario, step by step: what the pools answered, how each check came out,
 /// and the scenario's wallets where a step read them. Two runs are two networks that forged their
-/// own blocks, so their chains are not compared here: each is judged on its own (`live check`).
+/// own blocks, so their chains are not compared step by step: [`chains`] holds each run to one
+/// chain and both to their common prefix.
 fn compare_runs(suite: &str, reference: &Record, heartwood: &Record) -> Vec<CaseResult> {
     let id = &reference.scenario;
     let mut cases = Vec::new();
@@ -240,8 +243,62 @@ fn compare_runs(suite: &str, reference: &Record, heartwood: &Record) -> Vec<Case
     cases
 }
 
+/// The digests on the common prefix of a suite's two runs: each run's nodes hold one chain, and the
+/// two runs one genesis, the prefix two independent networks of one seed share.
+fn chains(suite: &str, reference: &Path, heartwood: &Path) -> Vec<CaseResult> {
+    let sides: [(&str, std::result::Result<RunChain, String>); 2] = [
+        (
+            "reference",
+            run_chain::reference(reference).map_err(|e| e.to_string()),
+        ),
+        (
+            "heartwood",
+            run_chain::heartwood(heartwood).map_err(|e| e.to_string()),
+        ),
+    ];
+    let mut out = Vec::new();
+    for (side, chain) in &sides {
+        let (label, outcome) = match chain {
+            Ok(chain) => (
+                format!(
+                    "the {side} run: one chain, {} nodes equal at {} shared heights",
+                    chain.nodes, chain.shared
+                ),
+                chain.verdict().map_or(Outcome::Pass, Outcome::HarnessError),
+            ),
+            Err(e) => (
+                format!("the {side} run: one chain"),
+                Outcome::HarnessError(format!("the {side} run's chain: {e}")),
+            ),
+        };
+        out.push(case(suite, "chain", 0, label, 0, outcome));
+    }
+    let genesis = |i: usize| {
+        sides[i]
+            .1
+            .as_ref()
+            .map(|c| c.genesis.clone())
+            .unwrap_or_default()
+    };
+    let (r, h) = (genesis(0), genesis(1));
+    let outcome = if r.len() == 1 && r == h {
+        Outcome::Pass
+    } else {
+        differs("genesis", &r, &h)
+    };
+    out.push(case(
+        suite,
+        "chain",
+        0,
+        "the genesis of both runs, their common prefix".into(),
+        1,
+        outcome,
+    ));
+    out
+}
+
 /// Compare the suites under `dir` (`<suite>-reference` and `<suite>-heartwood`), every one or
-/// `only` alone.
+/// `only` alone: the scenarios' records side by side, and each run's chain.
 pub fn compare(dir: &Path, only: Option<&str>) -> Result<Report> {
     let mut suites: BTreeMap<String, [Option<PathBuf>; 2]> = BTreeMap::new();
     for entry in std::fs::read_dir(dir).map_err(|e| Error::io(dir, e))? {
@@ -308,6 +365,7 @@ pub fn compare(dir: &Path, only: Option<&str>) -> Result<Report> {
                 Outcome::HarnessError("the reference's run has no record of it".into()),
             ));
         }
+        results.extend(chains(suite, reference, heartwood));
     }
     Ok(Report {
         title: "scenario compare".into(),

@@ -16,6 +16,7 @@ pub mod compile;
 pub mod format;
 pub mod projection;
 pub mod record;
+pub mod run_chain;
 pub mod runner;
 
 use std::path::{Path, PathBuf};

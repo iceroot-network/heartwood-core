@@ -1207,6 +1207,43 @@ fn record(id: &str, backend: &str, tip: (u32, &str), answer: bool, digest: Outco
 
 fn suite(dir: &Path, name: &str, record: &Record) {
     record.write(&dir.join(name)).expect("write");
+    chain(dir, name, "g", "b2");
+}
+
+/// A run's chain as the devnet tooling leaves it: two nodes' archives (a reference run) or digest
+/// files (a Heartwood run), each holding the genesis `genesis` and a block 2 (`second` on node 2).
+fn chain(dir: &Path, name: &str, genesis: &str, second: &str) {
+    let run = dir.join(name);
+    for (node, id) in [("node1", "b2"), ("node2", second)] {
+        if name.ends_with("-reference") {
+            let blocks = run
+                .join("archives")
+                .join(node)
+                .join("20261001T000000Z/blocks");
+            std::fs::create_dir_all(&blocks).expect("archive");
+            std::fs::write(
+                blocks.join("000000001-000000002.jsonl"),
+                format!(
+                    "{{\"height\":1,\"id\":\"{genesis}\"}}\n{{\"height\":2,\"id\":\"{id}\"}}\n"
+                ),
+            )
+            .expect("blocks");
+        } else {
+            let digests = run.join("nodes").join(node).join("difftest");
+            std::fs::create_dir_all(&digests).expect("digests");
+            let line = |h: u32, step: &str, id: &str| {
+                json!({"h": h, "step": step, "id": id, "rw": "x", "b": id, "s": "s", "r": "r",
+                       "m": "m", "w": "w", "sd": "sd", "cd": node})
+                .to_string()
+                    + "\n"
+            };
+            std::fs::write(
+                digests.join("digest-0001.jsonl"),
+                line(1, "genesis", genesis) + &line(2, "apply", id),
+            )
+            .expect("digest");
+        }
+    }
 }
 
 #[test]
@@ -1282,7 +1319,11 @@ fn a_suite_compares_the_pool_answers_the_checks_and_the_scenario_wallets() {
         "{:?}",
         of("a")
     );
-    assert_eq!(of("a").len(), 3, "answers, the check, the wallets");
+    assert_eq!(
+        of("a").len(),
+        6,
+        "answers, the check, the wallets, each run's chain and their genesis"
+    );
     for (name, failures) in [("b", 1), ("c", 1), ("d", 1), ("e", 1)] {
         assert_eq!(
             of(name).iter().filter(|o| o.is_failure()).count(),
@@ -1296,6 +1337,56 @@ fn a_suite_compares_the_pool_answers_the_checks_and_the_scenario_wallets() {
     let only = compare(dir, Some("a")).expect("compare");
     assert_eq!(only.files, 1);
     assert!(only.results.iter().all(|c| c.outcome == Outcome::Pass));
+}
+
+#[test]
+fn a_suite_run_whose_nodes_hold_two_chains_fails_and_so_does_another_genesis() {
+    let scratch = ScratchDir::new("scenario-compare-chains").expect("scratch");
+    let dir = scratch.path();
+    let run = |backend| record("s", backend, (5, "x"), true, Outcome::Pass);
+    // Each run's own chain: two networks, so block 2 differs between the runs, not within one.
+    suite(dir, "a-reference", &run("reference"));
+    suite(dir, "a-heartwood", &run("heartwood"));
+    chain(dir, "a-heartwood", "g", "b2");
+    suite(dir, "b-reference", &run("reference"));
+    suite(dir, "b-heartwood", &run("heartwood"));
+    chain(dir, "b-heartwood", "g", "fork");
+    suite(dir, "c-reference", &run("reference"));
+    suite(dir, "c-heartwood", &run("heartwood"));
+    chain(dir, "c-reference", "g", "fork");
+    suite(dir, "d-reference", &run("reference"));
+    suite(dir, "d-heartwood", &run("heartwood"));
+    chain(dir, "d-heartwood", "another", "b2");
+    let report = compare(dir, None).expect("compare");
+    let failed = |suite: &str| -> Vec<String> {
+        report
+            .results
+            .iter()
+            .filter(|c| c.file.starts_with(&format!("{suite}/")) && c.outcome.is_failure())
+            .map(|c| format!("{}: {:?}", c.label, c.outcome))
+            .collect()
+    };
+    assert!(failed("a").is_empty(), "{:?}", failed("a"));
+    for (suite, needle) in [
+        ("b", "the heartwood run: one chain"),
+        ("c", "the reference run: one chain"),
+        ("d", "the genesis of both runs"),
+    ] {
+        let found = failed(suite);
+        assert_eq!(found.len(), 1, "{suite}: {found:?}");
+        assert!(found[0].contains(needle), "{suite}: {found:?}");
+    }
+    assert!(failed("b")[0].contains("height 2: node2 differs from node1"));
+    // A run without a chain to read fails its case.
+    std::fs::remove_dir_all(dir.join("a-heartwood/nodes")).expect("remove");
+    let bare = compare(dir, Some("a")).expect("compare");
+    assert!(
+        bare.results
+            .iter()
+            .any(|c| c.label.starts_with("the heartwood run") && c.outcome.is_failure()),
+        "{:#?}",
+        bare.results
+    );
 }
 
 #[test]
