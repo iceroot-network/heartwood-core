@@ -1,11 +1,13 @@
 //! The attestation's timing (recorded, not gated): from each Heartwood relay's attestation record
-//! (an offer, its signatures' attachment, each status served unsigned after the wait; written by a
-//! harness build), the wait from an offer to its signatures and the unsigned statuses served, per
-//! relay and round (a round with none says so), beside the network-state proxy: for each tip the
-//! node took (the first line of its relay's or core's file log that names a new block at that
-//! height, received or forged), the first answer of its network-state record at that height that
-//! counted every delegate of the round, timed from that line. A line that is not a record, or a record of a step that is not one of the three,
-//! fails: the record is evidence, and a gap in it is a fault of the run's recording.
+//! (an offer, the attachment of its signatures when they come, each status a getStatus served
+//! with them, each status served unsigned after the wait; written by a harness build), the wait
+//! from an offer to the attachment of its signatures and the unsigned statuses served, per relay
+//! and round (a round with none says so), beside the network-state proxy: for each tip the node
+//! took (the first line of its relay's or core's file log that names a new block at that height,
+//! received or forged), the first answer of its network-state record at that height that counted
+//! every delegate of the round, timed from that line. A line that is not a record, or a record of
+//! a step that is not one of the four, fails: the record is evidence, and a gap in it is a fault
+//! of the run's recording.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -27,6 +29,8 @@ struct Line {
     step: String,
     status: String,
     slot: i64,
+    /// The signatures attached or served.
+    attestations: u64,
 }
 
 /// The lines of the record files `attest-NNNN.jsonl` in `dir` (a torn last line dropped) and the
@@ -53,13 +57,14 @@ fn read(dir: &Path) -> Result<(Vec<Line>, Vec<String>)> {
             let at = v["t"].as_str().and_then(run::parse_time);
             let step = v["step"]
                 .as_str()
-                .filter(|s| matches!(*s, "offered" | "signed" | "unsigned"));
+                .filter(|s| matches!(*s, "offered" | "signed" | "served" | "unsigned"));
             match (at, step, v["status"].as_str(), v["slot"].as_i64()) {
                 (Some(at), Some(step), Some(status), Some(slot)) => lines.push(Line {
                     at,
                     step: step.to_owned(),
                     status: status.to_owned(),
                     slot,
+                    attestations: v["attestations"].as_u64().unwrap_or(0),
                 }),
                 _ => problems.push(format!(
                     "{} line {}: not an attestation record",
@@ -72,20 +77,34 @@ fn read(dir: &Path) -> Result<(Vec<Line>, Vec<String>)> {
     Ok((lines, problems))
 }
 
-/// The record's summary of one relay: offers, signatures attached, statuses served unsigned, and
-/// the wait from an offer to its signatures (minimum, median and maximum, in milliseconds).
+/// The record's summary of one relay: offers; signatures attached, each offer counted once (an
+/// offer with no key to sign it, whose empty signatures attach with it, and a second attachment
+/// to one offer, counted apart); statuses served signed and served unsigned; and the wait from an
+/// offer to the attachment of its signatures (minimum, median and maximum, in milliseconds).
 fn summary(lines: &[Line]) -> String {
     let count = |step: &str| lines.iter().filter(|l| l.step == step).count();
-    // A status can be offered again after its signatures went on: a signature belongs to the offer
-    // before it.
-    let mut offered: BTreeMap<&str, i64> = BTreeMap::new();
+    // A status can be offered again after its signatures went on: an attachment belongs to the
+    // offer before it, and whether that offer has had one yet.
+    let mut offered: BTreeMap<&str, (i64, bool)> = BTreeMap::new();
     let mut waits: Vec<i64> = Vec::new();
+    let (mut unsigned_offers, mut again, mut no_key) = (0_usize, 0_usize, 0_usize);
     for l in lines {
         match l.step.as_str() {
             "offered" => {
-                offered.insert(l.status.as_str(), l.at);
+                offered.insert(l.status.as_str(), (l.at, false));
             }
-            "signed" => waits.extend(offered.get(l.status.as_str()).map(|at| l.at - at)),
+            "signed" => match offered.get_mut(l.status.as_str()) {
+                Some((_, true)) => again += 1,
+                Some((at, paired)) => {
+                    *paired = true;
+                    if l.attestations == 0 {
+                        no_key += 1;
+                    } else {
+                        waits.push(l.at - *at);
+                    }
+                }
+                None => unsigned_offers += 1,
+            },
             _ => {}
         }
     }
@@ -96,10 +115,26 @@ fn summary(lines: &[Line]) -> String {
         }
         _ => "no offer with signatures".to_owned(),
     };
+    let mut apart = Vec::new();
+    for (n, what) in [
+        (no_key, "with no key to sign them"),
+        (again, "attached again to one offer"),
+        (unsigned_offers, "without an offer in the record"),
+    ] {
+        if n > 0 {
+            apart.push(format!("{n} {what}"));
+        }
+    }
+    let apart = if apart.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", apart.join(", "))
+    };
     format!(
-        "{} offered, {} signed, {} served unsigned; the wait from an offer to its signatures {wait}",
+        "{} offered, {} signed{apart}, {} served signed, {} served unsigned; the wait from an offer to the attachment of its signatures {wait}",
         count("offered"),
-        count("signed"),
+        waits.len(),
+        count("served"),
         count("unsigned")
     )
 }
@@ -284,6 +319,7 @@ mod tests {
             step: step.to_owned(),
             status: status.to_owned(),
             slot: 1,
+            attestations: 3,
         }
     }
 
@@ -293,13 +329,34 @@ mod tests {
         let lines = [
             line(1_000, "offered", "a"),
             line(1_400, "signed", "a"),
+            line(2_400, "served", "a"),
             line(9_000, "offered", "a"),
             line(9_250, "signed", "a"),
             line(9_300, "unsigned", "b"),
         ];
         assert_eq!(
             summary(&lines),
-            "2 offered, 2 signed, 1 served unsigned; the wait from an offer to its signatures 250 / 400 / 400 ms (min / median / max)"
+            "2 offered, 2 signed, 1 served signed, 1 served unsigned; the wait from an offer to the attachment of its signatures 250 / 400 / 400 ms (min / median / max)"
+        );
+    }
+
+    #[test]
+    fn an_offer_is_counted_once_and_one_with_no_key_apart() {
+        let none = Line {
+            attestations: 0,
+            ..line(5_000, "signed", "b")
+        };
+        let lines = [
+            line(1_000, "offered", "a"),
+            line(1_020, "signed", "a"),
+            // A second attachment to the same offer is no second wait.
+            line(1_900, "signed", "a"),
+            line(5_000, "offered", "b"),
+            none,
+        ];
+        assert_eq!(
+            summary(&lines),
+            "2 offered, 1 signed (1 with no key to sign them, 1 attached again to one offer), 0 served signed, 0 served unsigned; the wait from an offer to the attachment of its signatures 20 / 20 / 20 ms (min / median / max)"
         );
     }
 

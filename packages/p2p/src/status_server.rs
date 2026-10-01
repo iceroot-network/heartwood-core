@@ -107,10 +107,10 @@ impl StatusServer {
             Signing::Unsigned => (Vec::new(), false, false),
         };
         if attested {
-            let signed = AttestationStep::Signed {
+            let served = AttestationStep::Served {
                 attestations: attestations.len(),
             };
-            self.attestation_step(signed, &current);
+            self.attestation_step(served, &current);
         } else if !keep {
             self.attestation_step(AttestationStep::ServedUnsigned, &current);
         }
@@ -135,21 +135,21 @@ impl StatusServer {
     }
 
     /// The tip's status now, offered to the forger's session when its key is not the one offered
-    /// last. The status is read and offered under one lock, so an older status never replaces a
-    /// newer one.
+    /// last (the session records the offer). The status is read and offered under one lock, so
+    /// an older status never replaces a newer one.
     fn offer_current(&self) -> Current {
         let mut offered = lock(&self.offered);
         let current = self.current();
         if *offered != Some(current.key) {
             *offered = Some(current.key);
-            self.attestation.offer(current.text.clone());
-            self.attestation_step(AttestationStep::Offered, &current);
+            self.attestation
+                .offer(current.text.clone(), current.key.slot);
         }
         current
     }
 
-    /// The attestation record's hook at `step` of the status `current`: the node's record in a
-    /// harness build (`difftest`), nothing in any other build.
+    /// The attestation record's hook at `step` of the status `current` as a getStatus served it:
+    /// the node's record in a harness build (`difftest`), nothing in any other build.
     fn attestation_step(&self, step: AttestationStep, current: &Current) {
         #[cfg(feature = "difftest")]
         self.node

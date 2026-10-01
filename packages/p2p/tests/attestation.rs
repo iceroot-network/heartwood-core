@@ -118,7 +118,7 @@ async fn only_a_loopback_source_gets_a_session() {
     assert_eq!(refused.unwrap_err().status, 499);
     assert!(!server.session.is_attached());
     // IPv6's loopback is a loopback source too.
-    server.session.offer("{}".into());
+    server.session.offer("{}".into(), 1);
     let answer = server
         .session
         .status_to_sign(session(1), "::1".parse().unwrap(), declared());
@@ -131,7 +131,7 @@ async fn only_a_loopback_source_gets_a_session() {
 #[tokio::test(start_paused = true)]
 async fn a_declaration_of_more_than_256_keys_is_refused() {
     let server = tokio_server();
-    server.session.offer("first".into());
+    server.session.offer("first".into(), 1);
     let declare = |count: usize| StatusToSignRequest {
         public_keys: vec![key(1).to_hex(); count],
     };
@@ -160,7 +160,7 @@ async fn the_long_poll_answers_a_new_status_at_once_or_unchanged_after_ten_secon
     assert_eq!(started.elapsed(), Duration::from_secs(10));
     // An offer waiting for the poll: answered at once, with the declared keys that are registered
     // delegates, in declared order, duplicates kept, and the session's challenge.
-    server.session.offer("first".into());
+    server.session.offer("first".into(), 1);
     let (status, keys, challenge) = offered(
         server
             .session
@@ -177,14 +177,14 @@ async fn the_long_poll_answers_a_new_status_at_once_or_unchanged_after_ten_secon
         .status_to_sign(session(1), forger(), declared());
     let offering = async {
         sleep(Duration::from_secs(3)).await;
-        server.session.offer("second".into());
+        server.session.offer("second".into(), 1);
     };
     let started = Instant::now();
     let (answer, ()) = tokio::join!(poll, offering);
     assert_eq!(offered(answer.unwrap()).0, "second");
     assert_eq!(started.elapsed(), Duration::from_secs(3));
     // The same status again is no new offer.
-    server.session.offer("second".into());
+    server.session.offer("second".into(), 1);
     let answer = server
         .session
         .status_to_sign(session(1), forger(), declared())
@@ -195,7 +195,7 @@ async fn the_long_poll_answers_a_new_status_at_once_or_unchanged_after_ten_secon
 #[tokio::test(start_paused = true)]
 async fn signatures_are_verified_against_the_offer_they_name_and_stale_ones_dropped() {
     let server = tokio_server();
-    server.session.offer("first".into());
+    server.session.offer("first".into(), 1);
     let (status, keys, challenge) = offered(
         server
             .session
@@ -237,7 +237,7 @@ async fn signatures_are_verified_against_the_offer_they_name_and_stale_ones_drop
         .unwrap();
     assert_eq!(server.session.attested(), [key(1), key(2), key(1)]);
     // Once the status has changed, the old offer's signatures are dropped.
-    server.session.offer("second".into());
+    server.session.offer("second".into(), 1);
     let mut stale = sign(&status, &keys, &challenge);
     stale.signatures.truncate(1);
     server.session.post_signatures(session(1), stale).unwrap();
@@ -254,7 +254,7 @@ async fn signatures_are_verified_against_the_offer_they_name_and_stale_ones_drop
 #[tokio::test(start_paused = true)]
 async fn a_newer_session_replaces_the_older_one() {
     let server = Arc::new(tokio_server());
-    server.session.offer("first".into());
+    server.session.offer("first".into(), 1);
     let (status, keys, challenge) = offered(
         server
             .session
@@ -309,7 +309,7 @@ async fn a_newer_session_replaces_the_older_one() {
 #[tokio::test(start_paused = true)]
 async fn a_session_ends_with_its_socket_or_after_fifteen_seconds_without_a_poll() {
     let server = tokio_server();
-    server.session.offer("first".into());
+    server.session.offer("first".into(), 1);
     let (status, keys, challenge) = offered(
         server
             .session
@@ -328,7 +328,7 @@ async fn a_session_ends_with_its_socket_or_after_fifteen_seconds_without_a_poll(
     assert!(!server.session.is_attached());
     assert!(server.session.attested().is_empty());
     // A new session, then no poll: it lasts 15 s.
-    server.session.offer("second".into());
+    server.session.offer("second".into(), 1);
     let (status, keys, challenge) = offered(
         server
             .session
@@ -346,7 +346,7 @@ async fn a_session_ends_with_its_socket_or_after_fifteen_seconds_without_a_poll(
     assert!(server.session.attested().is_empty());
     assert!(!server.session.is_attached());
     // A pending poll keeps a session: 10 s of poll, then 15 s from its end.
-    server.session.offer("third".into());
+    server.session.offer("third".into(), 1);
     let (status, keys, challenge) = offered(
         server
             .session
@@ -374,7 +374,7 @@ async fn the_delegates_on_this_node_are_the_attested_keys_of_the_round() {
     let server = tokio_server();
     let on_node = DelegatesOnThisNode(Arc::clone(&server.session));
     assert!(on_node.attested().is_empty());
-    server.session.offer("first".into());
+    server.session.offer("first".into(), 1);
     let (status, keys, challenge) = offered(
         server
             .session
@@ -636,6 +636,7 @@ fn steps_of(server: &Server) -> Vec<(String, i64)> {
     let name = |step: AttestationStep| match step {
         AttestationStep::Offered => "offered".to_owned(),
         AttestationStep::Signed { attestations } => format!("signed {attestations}"),
+        AttestationStep::Served { attestations } => format!("served {attestations}"),
         AttestationStep::ServedUnsigned => "unsigned".to_owned(),
     };
     records.iter().map(|r| (name(r.step), r.at_ms)).collect()
@@ -650,17 +651,97 @@ async fn the_record_has_an_offer_and_the_attachment_of_the_signatures() {
     server.status.get_status().await.unwrap();
     let steps = steps_of(&server);
     let names: Vec<&str> = steps.iter().map(|(name, _)| name.as_str()).collect();
-    assert_eq!(names, ["offered", "signed 3"]);
+    assert_eq!(names, ["offered", "signed 3", "served 3"]);
     // The record names the status the forger signed, and the slot the status is of.
     let records = server.node.attestations.lock().unwrap().clone();
-    assert_eq!(records[0].status, records[1].status);
+    assert!(records.iter().all(|r| r.status == records[0].status));
     assert_eq!(records[0].status.len(), 64);
-    assert_eq!(records[1].slot, 125);
-    assert!(records[1].at_ms >= records[0].at_ms);
+    assert!(records.iter().all(|r| r.slot == 125));
+    assert!(records[0].at_ms <= records[1].at_ms && records[1].at_ms <= records[2].at_ms);
     // A cached status is not recorded again.
     server.status.get_status().await.unwrap();
-    assert_eq!(steps_of(&server).len(), 2);
+    assert_eq!(steps_of(&server).len(), 3);
     forger_task.abort();
+}
+
+#[cfg(feature = "difftest")]
+#[tokio::test(start_paused = true)]
+async fn the_signatures_are_recorded_when_they_attach_without_a_get_status() {
+    let server = Arc::new(tokio_server());
+    let forger_task = honest_forger(&server, 1);
+    sleep(Duration::from_millis(10)).await;
+    // The timer's path: an offer that no getStatus asked for, signed at once.
+    server.status.refresh();
+    sleep(Duration::from_millis(10)).await;
+    assert_eq!(server.session.attested().len(), 3);
+    let steps = steps_of(&server);
+    let names: Vec<&str> = steps.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["offered", "signed 3"]);
+    assert!(steps[1].1 - steps[0].1 <= 10, "{steps:?}");
+    // A getStatus a second later serves the signatures it finds attached: a step of its own, at
+    // its own time, while the attachment keeps its time.
+    sleep(Duration::from_millis(1_000)).await;
+    server.status.get_status().await.unwrap();
+    let steps = steps_of(&server);
+    let names: Vec<&str> = steps.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["offered", "signed 3", "served 3"]);
+    assert!(steps[2].1 - steps[0].1 >= 1_000, "{steps:?}");
+    forger_task.abort();
+}
+
+#[cfg(feature = "difftest")]
+#[tokio::test(start_paused = true)]
+async fn an_offer_with_no_key_to_sign_is_recorded_with_no_signatures_at_once() {
+    let server = Arc::new(tokio_server());
+    let strangers = StatusToSignRequest {
+        public_keys: vec![
+            KeyPair::from_passphrase("not a delegate")
+                .unwrap()
+                .public_key()
+                .to_compressed()
+                .to_hex(),
+        ],
+    };
+    let quiet = {
+        let server = Arc::clone(&server);
+        tokio::spawn(async move {
+            server
+                .session
+                .status_to_sign(session(1), forger(), strangers)
+                .await
+        })
+    };
+    sleep(Duration::from_millis(10)).await;
+    server.status.get_status().await.unwrap();
+    let steps = steps_of(&server);
+    let names: Vec<&str> = steps.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["offered", "signed 0", "served 0"]);
+    assert_eq!(steps[0].1, steps[1].1);
+    quiet.abort();
+}
+
+#[cfg(feature = "difftest")]
+#[tokio::test(start_paused = true)]
+async fn a_new_session_is_offered_the_last_status_again_and_the_offer_is_recorded() {
+    let server = Arc::new(tokio_server());
+    let first = honest_forger(&server, 1);
+    sleep(Duration::from_millis(10)).await;
+    server.status.get_status().await.unwrap();
+    first.abort();
+    // The socket of the first session closes; a second session gets the same status again, as a
+    // new offer of its own.
+    server.session.closed(session(1), forger());
+    let second = honest_forger(&server, 2);
+    sleep(Duration::from_millis(10)).await;
+    let names: Vec<String> = steps_of(&server)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(
+        names,
+        ["offered", "signed 3", "served 3", "offered", "signed 3"]
+    );
+    second.abort();
 }
 
 #[cfg(feature = "difftest")]
@@ -695,18 +776,14 @@ async fn a_status_served_unsigned_after_the_wait_is_recorded_500_ms_after_its_of
 
 #[cfg(feature = "difftest")]
 #[tokio::test(start_paused = true)]
-async fn without_a_forger_only_the_offer_is_recorded() {
+async fn without_a_forger_nothing_is_offered_or_recorded() {
     let server = tokio_server();
     server.status.get_status().await.unwrap();
-    let names: Vec<String> = steps_of(&server)
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect();
-    assert_eq!(names, ["offered"]);
+    assert!(steps_of(&server).is_empty());
 }
 
-/// A build without the harness (a release build) records nothing at any of the three points: an
-/// offer with its signatures, and an offer served unsigned after the wait.
+/// A build without the harness (a release build) records nothing at any step: an offer, the
+/// attachment of its signatures and their serving, and an offer served unsigned after the wait.
 #[cfg(not(feature = "difftest"))]
 #[tokio::test(start_paused = true)]
 async fn a_build_without_the_harness_records_no_attestation_step() {
@@ -757,14 +834,17 @@ async fn the_record_file_has_one_json_line_per_step() {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    assert_eq!(lines.len(), 2);
+    assert_eq!(lines.len(), 3);
     assert_eq!(lines[0]["step"], "offered");
     assert_eq!(lines[0]["attestations"], 0);
     assert_eq!(lines[1]["step"], "signed");
     assert_eq!(lines[1]["attestations"], 3);
     assert_eq!(lines[1]["slot"], 125);
     assert!(lines[1]["t"].as_str().unwrap().ends_with('Z'));
+    assert_eq!(lines[2]["step"], "served");
+    assert_eq!(lines[2]["attestations"], 3);
     assert_eq!(lines[0]["status"], lines[1]["status"]);
+    assert_eq!(lines[1]["status"], lines[2]["status"]);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

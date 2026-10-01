@@ -74,15 +74,23 @@ pub struct AwaitRecord {
     pub tip_after: u32,
 }
 
-/// A step of a status's attestation, as the status server saw it: the record of
-/// [`NodeServices::attestation_step`].
+/// A step of a status's attestation: the record of [`NodeServices::attestation_step`]. The
+/// forger's session records an offer and the attachment of its signatures when they happen; the
+/// status server records what a getStatus served.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AttestationStep {
-    /// A changed status was offered to the forger's session.
+    /// A changed status was offered to the forger's session (again to a new session).
     Offered,
-    /// The forger's verified signatures attached to it.
+    /// The forger's verified signatures attached to the offer, whether or not a getStatus was
+    /// waiting for them; none when no declared key is a delegate, attached with the offer.
     Signed {
         /// The attestations attached.
+        attestations: usize,
+    },
+    /// A getStatus served the status with the signatures attached to it (once per status the
+    /// server keeps).
+    Served {
+        /// The attestations served.
         attestations: usize,
     },
     /// A getStatus served it unsigned after the wait.
@@ -244,8 +252,8 @@ pub trait NodeServices: Send + Sync {
     }
 
     /// A step of a status's attestation, as `record` says (an offer, its signatures' attachment,
-    /// a getStatus served unsigned after the wait): nothing, except in a harness build, which
-    /// appends the record to its start's file as one JSON line.
+    /// a getStatus served signed, or served unsigned after the wait): nothing, except in a harness
+    /// build, which appends the record to its start's file as one JSON line.
     fn attestation_step(&self, record: &AttestationRecord) {
         let _ = record;
     }
