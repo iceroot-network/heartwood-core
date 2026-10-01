@@ -2,10 +2,11 @@
 //! its instance besides its own ([`heartwood_cli::Role::also_locks`]), the relay's components
 //! started as [`crate::app::relay`] starts them, then the forger as [`crate::app::forger`] does, on
 //! its own thread and runtime, reaching its relay's peer-to-peer listener on loopback (`hosts`
-//! defaults to `127.0.0.1:<CORE_P2P_PORT>`; a `remoteAccess` without a loopback address stops the
-//! start, naming the option). Shutdown in the core order: the relay's first two steps, the
-//! forger's three, then the relay's last two. Logs go to `<token>-<network>-core-current.log`.
+//! defaults to `127.0.0.1:<CORE_P2P_PORT>`; a `remoteAccess` missing the forger's source address
+//! stops the start, naming the option). Shutdown in the core order: the relay's first two steps,
+//! the forger's three, then the relay's last two. Logs go to `<token>-<network>-core-current.log`.
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 
@@ -79,20 +80,40 @@ pub fn run_core(run: &CoreRun) -> Result<(), CoreError> {
 }
 
 /// What stops the start before anything runs: the forger's key file and options, and a
-/// `remoteAccess` that admits no loopback address, since the forger reaches the relay there.
+/// `remoteAccess` that must admit its source address when it reaches a loopback relay.
 fn check(relay: &RelayConfig, forger: &ForgerConfig) -> Result<(), CoreError> {
     let config = |error: String| CoreError::Config(error);
     load_keys(&relay.paths.config).map_err(|error| config(error.to_string()))?;
     let env = |name: &str| relay.env.get(name).map(str::to_owned);
-    Options::from_json(&forger.forger, &env).map_err(|error| config(error.to_string()))?;
+    let options =
+        Options::from_json(&forger.forger, &env).map_err(|error| config(error.to_string()))?;
     let p2p = crate::options::p2p(&relay.entry(Package::P2p), &relay.env);
     let admitted = ServerOptions::from_p2p(&p2p.map_err(|error| config(error.to_string()))?);
-    if admitted.remote_access.iter().any(|ip| ip.is_loopback()) {
-        return Ok(());
+    check_access(&options, &admitted.remote_access)
+}
+
+/// Require the source address of each loopback connection in the relay's admission list.
+fn check_access(options: &Options, admitted: &[IpAddr]) -> Result<(), CoreError> {
+    for host in &options.hosts {
+        let host = host.address.to_canonical();
+        if !host.is_loopback() {
+            continue;
+        }
+        let source = options
+            .local_address
+            .unwrap_or(match host {
+                IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::LOCALHOST),
+                IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::LOCALHOST),
+            })
+            .to_canonical();
+        if !admitted.contains(&source) {
+            return Err(CoreError::Config(format!(
+                "remoteAccess must admit {source}: \
+                 the forger of a core role connects from this address"
+            )));
+        }
     }
-    Err(config(
-        "remoteAccess lists no loopback address: the forger of a core role reaches its relay on 127.0.0.1, so the option must admit it".into(),
-    ))
+    Ok(())
 }
 
 /// The forger's thread: its own current-thread runtime, run until `stopping` ends. Its end
@@ -112,4 +133,30 @@ fn forge(forger: ForgerConfig, stopping: oneshot::Receiver<()>, fail: oneshot::S
         Err(error) => format!("the forger stopped: {error}"),
     };
     let _ = fail.send(failure);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn access_uses_canonical_sources_and_only_checks_loopback_hosts() {
+        for (host, local, admitted, allowed) in [
+            ("127.0.0.2", None, "127.0.0.1", true),
+            ("127.0.0.2", None, "127.0.0.2", false),
+            ("::1", None, "::1", true),
+            ("::1", None, "127.0.0.1", false),
+            ("::ffff:127.0.0.1", None, "127.0.0.1", true),
+            ("127.0.0.2", Some("::ffff:127.0.0.2"), "127.0.0.2", true),
+            ("192.0.2.1", Some("127.0.0.2"), "127.0.0.1", true),
+        ] {
+            let value = json!({
+                "hosts": [{"hostname": host, "port": 6002}], "localAddress": local,
+            });
+            let options = Options::from_json(&value, &|_| None).unwrap();
+            let result = check_access(&options, &[admitted.parse().unwrap()]);
+            assert_eq!(result.is_ok(), allowed, "{value}: {result:?}");
+        }
+    }
 }
