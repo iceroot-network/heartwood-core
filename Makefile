@@ -987,7 +987,7 @@ scenario: build ## the scenarios at LEVEL through the runner's BACKEND (SCENARIO
 	$(TOOLCHAIN) && DIFFTEST_SCENARIO_BACKEND='$(DIFFTEST_SCENARIO_BACKEND)' $(gate) $(DIFFTEST) scenario run \
 	    --backend $(BACKEND) --level $(LEVEL) $(or $(SCENARIO),$(SCENARIOS)) $(STRICT) $(ORACLE_ARGS)
 
-suites: relay-binary ## one scenario suite on one implementation (SUITE, IMPL=reference|heartwood, SEED; SUITES_RECIPE)
+suites: build relay-binary ## one scenario suite on one implementation (SUITE, IMPL=reference|heartwood, SEED; SUITES_RECIPE)
 	$(if $(filter $(SUITES),$(SUITE)),,$(error set SUITE to one of $(SUITES)))
 	$(if $(filter $(IMPLS),$(IMPL)),,$(error set IMPL to one of $(IMPLS)))
 	$(if $(SEED),,$(error set SEED, the suite run's network seed))
@@ -995,7 +995,7 @@ suites: relay-binary ## one scenario suite on one implementation (SUITE, IMPL=re
 	$(if $(FORGING_RESULTS),,$(error set FORGING_RESULTS, the forging runs' directory, in local.mk))
 	$(call live-guard,$(planned-$(SUITE)),suite $(SUITE))
 	STOP_HEIGHT=$(or $(STOP_HEIGHT),$(planned-$(SUITE))) DIFFTEST_SCENARIO_BACKEND='$(DIFFTEST_SCENARIO_BACKEND)' \
-	    $(SUITES_RECIPE) $(SUITE) $(IMPL) '$(SEED)' $(suite-dir) $(CURDIR)
+	    $(gate) $(SUITES_RECIPE) $(SUITE) $(IMPL) '$(SEED)' $(suite-dir) $(CURDIR)
 
 l1-long: build ## one L1 property over many seeds, each a gate record and a ledger entry (L1_PROPERTY, L1_CASES, L1_SEEDS)
 	$(need-image)
