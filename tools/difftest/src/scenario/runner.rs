@@ -3,7 +3,8 @@
 //! its checks are evaluated, each one a case of the report ([`super::checks`]). What a step did is
 //! kept as the run's [`Record`], which `scenario compare` reads.
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
 use super::backend::{Backend, BackendError, Submitted, Tip};
@@ -97,6 +98,12 @@ pub struct Runner<'a> {
     results: Vec<CaseResult>,
     records: Vec<StepRecord>,
     needs_slot: bool,
+    answered_nodes: RefCell<BTreeSet<u32>>,
+    expected_nodes: BTreeSet<u32>,
+    stopped_relays: BTreeSet<u32>,
+    /// The compared, exempt and missing nodes at the latest single-tip probe.
+    pub(super) single_tip_label: String,
+    settle_height: u32,
 }
 
 impl<'a> Runner<'a> {
@@ -107,6 +114,11 @@ impl<'a> Runner<'a> {
             .steps
             .iter()
             .any(|s| s.at.slot.is_some() || s.at.slots_after.is_some());
+        if needs_slot && backend.name() == "lockstep" {
+            return Err(crate::Error::Usage(
+                "the lockstep backend has no slot clock; slot triggers are not supported".into(),
+            ));
+        }
         let chain = Chain::new(scenario)?;
         let last = last_height(scenario, chain.round_length)?;
         let most = MAX_ROUNDS.saturating_mul(chain.round_length);
@@ -128,6 +140,11 @@ impl<'a> Runner<'a> {
             results: Vec::new(),
             records: Vec::new(),
             needs_slot,
+            answered_nodes: RefCell::default(),
+            expected_nodes: BTreeSet::new(),
+            stopped_relays: BTreeSet::new(),
+            single_tip_label: String::new(),
+            settle_height: 1_u32.saturating_add(scenario.settle_blocks),
         })
     }
 
@@ -136,11 +153,12 @@ impl<'a> Runner<'a> {
         let mut best: Option<(u32, Tip)> = None;
         let mut failure = None;
         for node in 1..=self.backend.nodes() {
-            match self.backend.tip(node) {
-                Ok(tip) if best.as_ref().is_none_or(|(_, b)| tip.height > b.height) => {
-                    best = Some((node, tip));
+            match self.read_tip(node) {
+                Ok(tip) => {
+                    if best.as_ref().is_none_or(|(_, b)| tip.height > b.height) {
+                        best = Some((node, tip));
+                    }
                 }
-                Ok(_) => {}
                 Err(e) => failure = Some(e),
             }
         }
@@ -152,22 +170,47 @@ impl<'a> Runner<'a> {
         })
     }
 
-    fn seen(&self, node: u32, tip: &Tip) -> Seen {
+    /// Read a tip and remember that the node has answered during this run.
+    pub(super) fn read_tip(&self, node: u32) -> std::result::Result<Tip, BackendError> {
+        let tip = self.backend.tip(node)?;
+        self.answered_nodes.borrow_mut().insert(node);
+        Ok(tip)
+    }
+
+    /// Why a relay is exempt from answering the single-tip check, if it is.
+    pub(super) fn tip_exemption(&self, node: u32) -> Option<&'static str> {
+        if self.stopped_relays.contains(&node) {
+            Some("deliberately stopped")
+        } else if !self.expected_nodes.contains(&node)
+            && !self.answered_nodes.borrow().contains(&node)
+        {
+            // The backend interface exposes no held-back list.
+            Some("never answered; held-back list unavailable")
+        } else {
+            None
+        }
+    }
+
+    fn seen(&self, node: u32, tip: &Tip) -> std::result::Result<Seen, BackendError> {
         let slot = if self.needs_slot {
-            self.backend
-                .get(node, &format!("/api/blocks/{}", tip.height))
-                .ok()
-                .and_then(|a| a.body["data"]["timestamp"]["epoch"].as_u64())
-                .map_or(u64::from(tip.height), |epoch| {
-                    epoch / self.chain.block_time.max(1)
-                })
+            let answer = self
+                .backend
+                .get(node, &format!("/api/blocks/{}", tip.height))?;
+            answer.body["data"]["timestamp"]["epoch"]
+                .as_u64()
+                .filter(|_| answer.status == 200)
+                .ok_or_else(|| BackendError::Failed {
+                    action: "read the tip's slot",
+                    message: format!("node {node} answered without a block timestamp"),
+                })?
+                / self.chain.block_time.max(1)
         } else {
             u64::from(tip.height)
         };
-        Seen {
+        Ok(Seen {
             height: tip.height,
             slot,
-        }
+        })
     }
 
     /// Wait until `trigger` is satisfied; the network then.
@@ -179,8 +222,10 @@ impl<'a> Runner<'a> {
         let started = Instant::now();
         loop {
             let (node, tip) = self.observe()?;
-            let now = self.seen(node, &tip);
-            if due(trigger, self.chain.round_length, previous, now) {
+            let now = self.seen(node, &tip)?;
+            if now.height >= self.settle_height
+                && due(trigger, self.chain.round_length, previous, now)
+            {
                 return Ok((node, tip, now));
             }
             if started.elapsed() > STEP_LIMIT {
@@ -242,11 +287,27 @@ impl<'a> Runner<'a> {
                 }
                 return Ok(answered);
             }
-            Action::Stop => self.backend.stop(node()?, part, false),
-            Action::Start => self.backend.start(node()?, part),
-            Action::Restart => self
-                .backend
-                .restart(node()?, part, step.mode.unwrap_or_default()),
+            Action::Stop => {
+                let node = node()?;
+                self.backend.stop(node, part, false).map(|()| {
+                    if part != Part::Forger {
+                        self.stopped_relays.insert(node);
+                    }
+                })
+            }
+            Action::Start | Action::Restart => {
+                let node = node()?;
+                if part != Part::Forger {
+                    self.stopped_relays.remove(&node);
+                    self.expected_nodes.insert(node);
+                }
+                if action == Action::Start {
+                    self.backend.start(node, part)
+                } else {
+                    self.backend
+                        .restart(node, part, step.mode.unwrap_or_default())
+                }
+            }
             Action::Partition => self.backend.partition(&step.groups),
             Action::Heal => self.backend.heal(),
             Action::Revert => {
@@ -295,9 +356,14 @@ impl<'a> Runner<'a> {
     pub fn run(mut self) -> (Vec<CaseResult>, Record) {
         let compiled = self.compiled;
         let scenario = &compiled.scenario;
+        if scenario.settle_blocks > 0
+            && let Ok((_, tip)) = self.observe()
+        {
+            self.settle_height = tip.height.saturating_add(scenario.settle_blocks);
+        }
         let mut previous = Seen {
-            height: 1 + scenario.settle_blocks,
-            slot: u64::from(1 + scenario.settle_blocks),
+            height: self.settle_height,
+            slot: u64::from(self.settle_height),
         };
         for (index, step) in scenario.steps.iter().enumerate() {
             let name = step

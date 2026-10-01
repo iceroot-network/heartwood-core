@@ -16,7 +16,7 @@
 //! | `voters(name)` | `/delegates/{name}/voters`, all pages | as `wallet`, in each row |
 //! | `round(r)` | `/rounds/{r}/delegates` | nothing; sorted by votes (descending), then public key |
 //! | `missed(from, to)` | `/blocks/missed` over those heights, all pages | nothing |
-//! | `pool` | `/transactions/unconfirmed`, all pages | all but the ids, as a sorted set |
+//! | `pool` or `pool(ref, ...)` | `/transactions/unconfirmed`, all pages | all but the ids, as a sorted set |
 //! | `config` | `/node/configuration` | `core.version` |
 //! | `crypto` | `/node/configuration/crypto` | nothing |
 //! | `fees` | `/transactions/types` and `/transactions/fees` | nothing |
@@ -28,7 +28,8 @@
 //! removed at every height (the design removes them unless the
 //! height is quiescent, which a running network's never is for sure). A name is a wallet of the
 //! scenario (an actor, `genesis`, a delegate's username or a key's role) or an address; a `ref` is
-//! a transaction of the scenario or an id.
+//! a transaction of the scenario or an id. A pool check also requires its named transactions, or
+//! the latest submitted batch when no references are named, to be present on every checked node.
 
 use std::cmp::Ordering;
 
@@ -166,6 +167,44 @@ impl Names<'_> {
     }
 }
 
+/// The transactions required by a pool check: explicit references, or the batch at `batch`.
+pub(super) fn pool_transactions<'a>(
+    names: &Names<'a>,
+    text: &str,
+    batch: Option<usize>,
+    step: usize,
+) -> Result<Option<Vec<&'a CompiledTx>>, BackendError> {
+    let (name, refs) = parse(text)?;
+    if name != "pool" {
+        return Ok(None);
+    }
+    let transactions = if refs.is_empty() {
+        names
+            .transactions
+            .iter()
+            .filter(|tx| Some(tx.step) == batch)
+            .collect()
+    } else {
+        refs.iter()
+            .map(|reference| {
+                names
+                    .transactions
+                    .iter()
+                    .find(|tx| tx.reference == *reference && tx.step <= step)
+                    .ok_or_else(|| {
+                        failed(format!(
+                            "{reference} is not a transaction submitted before this pool check"
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    if transactions.is_empty() {
+        return Err(failed("the pool check names no submitted batch".into()));
+    }
+    Ok(Some(transactions))
+}
+
 /// A decimal amount's order: shorter is smaller, then by its digits.
 fn amount_order(a: &Value, b: &Value) -> Ordering {
     let text = |v: &Value| {
@@ -191,7 +230,15 @@ pub fn read(
     };
     if !matches!(
         name,
-        "wallet" | "wallet_history" | "tx" | "block" | "block_txs" | "voters" | "round" | "missed"
+        "wallet"
+            | "wallet_history"
+            | "tx"
+            | "block"
+            | "block_txs"
+            | "voters"
+            | "round"
+            | "missed"
+            | "pool"
     ) && !args.is_empty()
     {
         return Err(failed(format!("the projection {name} takes no argument")));

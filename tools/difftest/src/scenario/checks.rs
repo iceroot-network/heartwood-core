@@ -11,7 +11,7 @@ use std::collections::hash_map::Entry;
 use serde_json::Value;
 
 use super::backend::{Backend, BackendError};
-use super::format::{ApiCheck, Check, Invariant};
+use super::format::{Action, ApiCheck, Check, Invariant};
 use super::projection::{self, Names};
 use super::runner::Runner;
 use crate::compare;
@@ -163,17 +163,45 @@ impl Ctx<'_, '_> {
                 .collect(),
             transactions: &self.runner.compiled.transactions,
         };
+        let batch = self
+            .runner
+            .compiled
+            .scenario
+            .steps
+            .iter()
+            .enumerate()
+            .take(self.step.saturating_add(1))
+            .rfind(|(_, step)| step.action == Some(Action::Submit))
+            .map(|(index, _)| index);
+        let required = projection::pool_transactions(&names, &api.projection, batch, self.step)?;
         let mut height = None;
         let mut first: Option<Value> = None;
         let mut outcome = Outcome::Pass;
         for &node in nodes {
-            let before = self.backend().tip(node)?;
+            let before = self.runner.read_tip(node)?;
             let value = projection::read(self.backend(), &names, node, &api.projection)?;
-            let after = self.backend().tip(node)?;
+            let after = self.runner.read_tip(node)?;
             if after != before || height.is_some_and(|h| h != before.height) {
                 return Ok(None);
             }
             height = Some(before.height);
+            if let Some(required) = &required {
+                let missing: Vec<_> = required
+                    .iter()
+                    .filter(|tx| {
+                        !value.as_array().is_some_and(|ids| {
+                            ids.iter().any(|id| id.as_str() == Some(tx.id.as_str()))
+                        })
+                    })
+                    .map(|tx| tx.reference.as_str())
+                    .collect();
+                if !missing.is_empty() && outcome == Outcome::Pass {
+                    outcome = expected(
+                        "the submitted batch in every pool",
+                        format!("node {node} is missing {}", missing.join(", ")),
+                    );
+                }
+            }
             match &first {
                 None => first = Some(value),
                 Some(expected) => {
@@ -216,7 +244,46 @@ impl Ctx<'_, '_> {
         })
     }
 
+    /// Compare every expected relay, recording both the answering and exempt nodes.
+    fn single_tip(&mut self) -> Probe {
+        let mut tips = Vec::new();
+        let mut missing = Vec::new();
+        let mut exempt = Vec::new();
+        for node in 1..=self.backend().nodes() {
+            let tip = self.runner.read_tip(node);
+            if let Some(reason) = self.runner.tip_exemption(node) {
+                exempt.push(format!("node {node} ({reason})"));
+                continue;
+            }
+            match tip {
+                Ok(tip) => tips.push((node, tip)),
+                Err(error) => missing.push(format!("node {node}: {error}")),
+            }
+        }
+        let compared: Vec<_> = tips
+            .iter()
+            .map(|(node, _)| format!("node {node}"))
+            .collect();
+        self.runner.single_tip_label = format!(
+            "compared [{}]; exempt [{}]; missing [{}]",
+            compared.join(", "),
+            exempt.join(", "),
+            missing.join(", ")
+        );
+        Ok(match tips.split_first() {
+            Some(((_, first), rest))
+                if missing.is_empty() && rest.iter().all(|(_, tip)| tip == first) =>
+            {
+                Outcome::Pass
+            }
+            _ => expected("one tip", format!("{tips:?}; missing {missing:?}")),
+        })
+    }
+
     fn invariant(&mut self, which: Invariant) -> Probe {
+        if which == Invariant::SingleTip {
+            return self.single_tip();
+        }
         let name = match which {
             Invariant::SingleTip => "singleTip",
             Invariant::RevertSymmetry => "revertSymmetry",
@@ -228,15 +295,7 @@ impl Ctx<'_, '_> {
             return Ok(said.map_or_else(|why| expected("it holds", why), |()| Outcome::Pass));
         }
         match which {
-            Invariant::SingleTip => {
-                let tips: Vec<_> = (1..=self.backend().nodes())
-                    .filter_map(|n| self.backend().tip(n).ok())
-                    .collect();
-                Ok(match tips.split_first() {
-                    Some((first, rest)) if rest.iter().all(|t| t == first) => Outcome::Pass,
-                    _ => expected("one tip", format!("{tips:?}")),
-                })
-            }
+            Invariant::SingleTip => self.single_tip(),
             Invariant::Supply => self.supply(),
             Invariant::Schedule => self.schedule(),
             Invariant::RevertSymmetry | Invariant::RestartEqual => Ok(Outcome::Skipped(
@@ -450,7 +509,11 @@ pub fn evaluate(ctx: &mut Ctx<'_, '_>, check: &Check) -> Vec<CaseResult> {
     }
     for which in &check.invariant {
         let (h, outcome) = ctx.within(within, |c| c.invariant(*which));
-        cases.push(ctx.case(format!("invariant {which:?}").to_lowercase(), h, outcome));
+        let mut label = format!("invariant {which:?}").to_lowercase();
+        if *which == Invariant::SingleTip {
+            label.push_str(&format!("; {}", ctx.runner.single_tip_label));
+        }
+        cases.push(ctx.case(label, h, outcome));
     }
     cases
 }

@@ -300,6 +300,8 @@ fn a_scenario_that_cannot_be_planned_is_refused() {
 /// is asked and answers the API from pages the test sets.
 struct Fake {
     nodes: u32,
+    backend_name: &'static str,
+    unavailable: HashMap<u32, (u32, u32)>,
     height: Cell<u32>,
     /// The height the network stops growing at: a wait beyond it fails.
     limit: u32,
@@ -323,6 +325,8 @@ impl Fake {
     fn new(nodes: u32) -> Fake {
         Fake {
             nodes,
+            backend_name: "fake",
+            unavailable: HashMap::new(),
             height: Cell::new(1),
             limit: 200,
             log: RefCell::default(),
@@ -365,7 +369,7 @@ impl Fake {
 
 impl Backend for Fake {
     fn name(&self) -> &'static str {
-        "fake"
+        self.backend_name
     }
 
     fn nodes(&self) -> u32 {
@@ -430,6 +434,16 @@ impl Backend for Fake {
     }
 
     fn tip(&self, node: u32) -> Result<Tip, BackendError> {
+        if self
+            .unavailable
+            .get(&node)
+            .is_some_and(|(from, to)| (*from..=*to).contains(&self.height.get()))
+        {
+            return Err(BackendError::Failed {
+                action: "read the tip",
+                message: format!("node {node} does not answer"),
+            });
+        }
         let height = self.height.get() - self.lag.get(&node).copied().unwrap_or(0);
         Ok(Tip {
             height,
@@ -533,7 +547,7 @@ fn mismatch(want: &str, got: &str) -> Outcome {
 fn every_action_reaches_the_backend_in_step_order() {
     let compiled = compiled(
         json!([
-            {"at": {"height": 2}, "do": "submit", "node": 1, "via": "p2p"},
+            {"at": {"height": 2}, "do": "submit", "node": 1, "via": "api"},
             {"at": {"afterBlocks": 1}, "do": "wait", "blocks": 2},
             {"at": {"afterBlocks": 1}, "do": "stop", "node": 2, "role": "forger"},
             {"at": {"afterBlocks": 1}, "do": "start", "node": 2, "role": "forger"},
@@ -553,7 +567,7 @@ fn every_action_reaches_the_backend_in_step_order() {
     assert_eq!(
         *fake.log.borrow(),
         [
-            "submit 1 P2p t1,t2",
+            "submit 1 Api t1,t2",
             "stop 2 Forger false",
             "start 2 Forger",
             "restart 1 Relay RestartModes { reference: Rebuild, heartwood: Replay }",
@@ -1999,4 +2013,289 @@ fn the_lockstep_backend_fails_what_the_chain_does_not_do_and_refuses_what_it_can
     let (ok, out) = lockstep(&write("round-end.json", round_end), &oracle);
     assert!(!ok, "{out}");
     assert!(out.contains("last block of a round"), "{out}");
+}
+
+#[test]
+fn a_previously_answering_node_must_answer_the_single_tip_check() {
+    let compiled = compiled(
+        json!([{
+            "at": {"height": 2}, "check": {"invariant": ["singleTip"], "withinBlocks": 2}
+        }]),
+        &[],
+    );
+    let mut fake = Fake::new(2);
+    fake.unavailable.insert(2, (2, 20));
+    let (report, _) = run_on(&mut fake, &compiled);
+    assert!(outcome(&report, "singletip").is_failure(), "{report:#?}");
+    assert_eq!(fake.height.get(), 4);
+}
+
+#[test]
+fn every_trigger_waits_for_the_settling_floor() {
+    for at in [
+        json!({"height": 1}),
+        json!({"afterBlocks": 0}),
+        json!({"slot": 0}),
+        json!({"slotsAfter": 0}),
+        json!({"round": 1, "position": "start"}),
+    ] {
+        let mut compiled = compiled(json!([{ "at": at }]), &[]);
+        compiled.scenario.settle_blocks = 3;
+        let mut fake = Fake::new(1);
+        for height in 1..=4 {
+            fake.page(
+                1,
+                &format!("/api/blocks/{height}"),
+                json!({"data": {"timestamp": {"epoch": 800}}}),
+            );
+        }
+        let (_, record) = run_on(&mut fake, &compiled);
+        assert!(record.steps[0].tip.0 >= 4, "{at}: {record:#?}");
+    }
+}
+
+#[test]
+fn lockstep_refuses_slot_triggers_before_running() {
+    for at in [json!({"slot": 2}), json!({"slotsAfter": 2})] {
+        let compiled = compiled(json!([{ "at": at }]), &[]);
+        let mut fake = Fake::new(1);
+        fake.backend_name = "lockstep";
+        let error = run(&compiled, &mut fake, Level::L2)
+            .expect_err("no slot clock")
+            .to_string();
+        assert!(
+            error.contains("lockstep") && error.contains("slot"),
+            "{error}"
+        );
+        assert_eq!(fake.height.get(), 1);
+    }
+}
+
+#[test]
+fn peer_to_peer_submission_is_refused_during_compilation() {
+    let compiled = compiled(
+        json!([{
+            "at": {"height": 2}, "do": "submit", "node": 1, "via": "p2p"
+        }]),
+        &[],
+    );
+    let chain = Chain::new(&compiled.scenario).unwrap();
+    let error = specs(&compiled.scenario, &chain)
+        .expect_err("not built")
+        .to_string();
+    assert!(
+        error.contains("peer-to-peer submit is not built"),
+        "{error}"
+    );
+}
+
+#[test]
+fn equal_empty_pools_do_not_hold_the_previous_batch() {
+    let compiled = compiled(
+        json!([
+            {"at": {"height": 2}, "do": "submit", "node": 1},
+            {"at": {"afterBlocks": 0}, "check": {"api": {"projection": "pool"}}}
+        ]),
+        &[("batch", 0)],
+    );
+    let mut fake = Fake::new(2);
+    fake.page_everywhere(
+        "/api/transactions/unconfirmed?page=1&limit=100",
+        one_page(json!([])),
+    );
+    let (report, _) = run_on(&mut fake, &compiled);
+    assert!(outcome(&report, "api pool").is_failure(), "{report:#?}");
+}
+
+#[test]
+fn a_missing_tip_is_retried_until_the_node_recovers() {
+    let compiled = compiled(
+        json!([{
+            "at": {"height": 2}, "check": {"invariant": ["singleTip"], "withinBlocks": 2}
+        }]),
+        &[],
+    );
+    let mut fake = Fake::new(2);
+    fake.unavailable.insert(2, (2, 3));
+    let (report, _) = run_on(&mut fake, &compiled);
+    assert_eq!(*outcome(&report, "singletip"), Outcome::Pass);
+    assert_eq!(fake.height.get(), 4);
+    assert!(
+        report.results[0]
+            .label
+            .contains("compared [node 1, node 2]")
+    );
+}
+
+#[test]
+fn a_stopped_relay_is_exempt_until_its_relay_starts_again() {
+    for role in ["node", "relay", "forger"] {
+        for resume in [None, Some("start"), Some("restart")] {
+            let mut steps =
+                vec![json!({"at": {"height": 1}, "do": "stop", "node": 2, "role": role})];
+            if let Some(action) = resume {
+                steps.push(json!({"at": {"height": 2}, "do": action, "node": 2, "role": role}));
+            }
+            steps.push(json!({"at": {"height": 2}, "check": {"invariant": ["singleTip"]}}));
+            let compiled = compiled(json!(steps), &[]);
+            let mut fake = Fake::new(2);
+            fake.unavailable.insert(2, (2, 20));
+            let (report, _) = run_on(&mut fake, &compiled);
+            let exempt = role != "forger" && resume.is_none();
+            assert_eq!(
+                outcome(&report, "singletip").is_failure(),
+                !exempt,
+                "{role} {resume:?}: {report:#?}"
+            );
+            if exempt {
+                assert!(
+                    report
+                        .results
+                        .last()
+                        .unwrap()
+                        .label
+                        .contains("node 2 (deliberately stopped)")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_never_answering_node_is_labelled_exempt_unless_started() {
+    for start in [false, true] {
+        let mut steps = Vec::new();
+        if start {
+            steps.push(json!({"at": {"height": 1}, "do": "start", "node": 2}));
+        }
+        steps.push(json!({"at": {"height": 2}, "check": {"invariant": ["singleTip"]}}));
+        let compiled = compiled(json!(steps), &[]);
+        let mut fake = Fake::new(2);
+        fake.unavailable.insert(2, (1, 20));
+        let (report, _) = run_on(&mut fake, &compiled);
+        assert_eq!(outcome(&report, "singletip").is_failure(), start);
+        if !start {
+            assert!(
+                report.results[0]
+                    .label
+                    .contains("node 2 (never answered; held-back list unavailable)")
+            );
+        }
+    }
+}
+
+#[test]
+fn a_batch_in_every_pool_passes_on_the_submit_or_a_later_step() {
+    for same_step in [false, true] {
+        let mut steps = vec![json!({"at": {"height": 2}, "do": "submit", "node": 1})];
+        if !same_step {
+            steps.push(json!({"at": {"afterBlocks": 0}}));
+        }
+        steps.last_mut().unwrap()["check"] = json!({"api": {"projection": "pool"}});
+        let compiled = compiled(json!(steps), &[("batch", 0)]);
+        let mut fake = Fake::new(2);
+        fake.page_everywhere(
+            "/api/transactions/unconfirmed?page=1&limit=100",
+            one_page(json!([{"id": "id-batch"}])),
+        );
+        let (report, _) = run_on(&mut fake, &compiled);
+        assert_eq!(*outcome(&report, "api pool"), Outcome::Pass, "{report:#?}");
+        fake.page(
+            2,
+            "/api/transactions/unconfirmed?page=1&limit=100",
+            one_page(json!([])),
+        );
+        let (report, _) = run_on(&mut fake, &compiled);
+        assert!(outcome(&report, "api pool").is_failure());
+    }
+}
+
+#[test]
+fn a_pool_check_can_name_an_earlier_transaction_batch() {
+    let compiled = compiled(
+        json!([
+            {"at": {"height": 2}, "do": "submit", "node": 1},
+            {"at": {"height": 2}, "do": "submit", "node": 1},
+            {"at": {"afterBlocks": 0}, "check": {"api": {"projection": "pool(earlier)"}}}
+        ]),
+        &[("earlier", 0), ("later", 1)],
+    );
+    let mut fake = Fake::new(2);
+    fake.page_everywhere(
+        "/api/transactions/unconfirmed?page=1&limit=100",
+        one_page(json!([{"id": "id-earlier"}])),
+    );
+    let (report, _) = run_on(&mut fake, &compiled);
+    assert_eq!(*outcome(&report, "api pool"), Outcome::Pass);
+}
+
+#[test]
+fn settling_counts_blocks_from_the_runs_starting_tip() {
+    let mut compiled = compiled(json!([{ "at": {"height": 2} }]), &[]);
+    compiled.scenario.settle_blocks = 3;
+    let mut fake = Fake::new(1);
+    fake.height.set(10);
+    let (_, record) = run_on(&mut fake, &compiled);
+    assert_eq!(record.steps[0].tip.0, 13);
+}
+
+#[test]
+fn a_slot_trigger_requires_a_timestamp_from_the_backend() {
+    let compiled = compiled(json!([{ "at": {"slot": 2} }]), &[]);
+    let (report, record) = run_on(&mut Fake::new(1), &compiled);
+    assert!(
+        matches!(report.results[0].outcome, Outcome::HarnessError(ref message)
+        if message.contains("without a block timestamp"))
+    );
+    assert!(record.steps.is_empty());
+}
+
+#[test]
+fn committed_scenarios_keep_their_trigger_plans() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios");
+    let mut dirs = vec![root];
+    let mut count = 0;
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "json") {
+                let scenario = scenario::load(&path).unwrap();
+                assert_eq!(scenario.settle_blocks, 0);
+                assert!(
+                    scenario
+                        .steps
+                        .iter()
+                        .all(|step| step.at.slot.is_none() && step.at.slots_after.is_none())
+                );
+                let chain = Chain::new(&scenario).unwrap();
+                let heights = fire_heights(&scenario, chain.round_length).unwrap();
+                let compiled = Compiled {
+                    scenario,
+                    transactions: Vec::new(),
+                };
+                let mut fake = Fake::new(7);
+                fake.limit = 5 * chain.round_length;
+                // Isolate trigger timing from the actions and checks of each scenario.
+                let mut compiled = compiled;
+                for step in &mut compiled.scenario.steps {
+                    step.action = None;
+                    step.check = None;
+                }
+                let (report, record) = run_on(&mut fake, &compiled);
+                assert_eq!(report.failed(), 0, "{report:#?}");
+                assert_eq!(
+                    record
+                        .steps
+                        .iter()
+                        .map(|step| step.tip.0)
+                        .collect::<Vec<_>>(),
+                    heights
+                );
+                count += 1;
+            }
+        }
+    }
+    assert!(count > 0);
 }

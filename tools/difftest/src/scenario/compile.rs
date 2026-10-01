@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{Value, json};
 
 use super::chain::Chain;
-use super::format::{Action, Compiled, CompiledTx, Nonce, RoundPosition, Scenario, TxSpec};
+use super::format::{Action, Compiled, CompiledTx, Nonce, RoundPosition, Scenario, TxSpec, Via};
 use crate::errors::{Error, Result};
 use crate::levels::l2::call;
 use crate::oracle::{Oracle, OracleServer};
@@ -22,9 +22,15 @@ use crate::oracle::{Oracle, OracleServer};
 /// The tip each step fires at, in step order; the first step counts from the start (height 1, and
 /// `settleBlocks` on).
 pub fn fire_heights(scenario: &Scenario, round_length: u32) -> Result<Vec<u32>> {
-    let mut previous = 1 + scenario.settle_blocks;
+    let mut previous = 1_u32.saturating_add(scenario.settle_blocks);
     let mut out = Vec::new();
     for (index, step) in scenario.steps.iter().enumerate() {
+        if step.via == Some(Via::P2p) {
+            return Err(Error::Usage(format!(
+                "step {}: peer-to-peer submit is not built; use via: api",
+                index + 1
+            )));
+        }
         let at = &step.at;
         let bad = |why: &str| Error::Usage(format!("step {}: the trigger {why}", index + 1));
         let round = |round: u64| {
