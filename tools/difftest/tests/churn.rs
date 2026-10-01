@@ -639,3 +639,37 @@ fn a_dry_run_of_the_recipe_is_no_evidence() {
     let report = check(&f);
     assert!(!report.is_success(), "{report}");
 }
+
+#[test]
+fn missing_cycles_fail_the_stop_log_case() {
+    let f = fixture();
+    quiet_series(&f.run);
+    let path = f.run.join("steps.jsonl");
+    let rows: Vec<Value> = read_lines(&path)
+        .into_iter()
+        .filter(|r| !r["step"].as_str().unwrap().starts_with("cycle-"))
+        .collect();
+    write_lines(&path, &rows);
+    let report = check(&f);
+    assert!(
+        report
+            .results
+            .iter()
+            .any(|c| c.label.contains("each restarted relay logged") && c.outcome.is_failure()),
+        "{report}"
+    );
+}
+
+#[test]
+fn a_vote_for_a_restarted_relays_delegate_in_the_same_round_fails() {
+    let f = fixture();
+    quiet_series(&f.run);
+    edit_step(&f.run, "vote-node5", |row| {
+        row["startHeight"] = json!(106);
+    });
+    let failed = failures(&check(&f));
+    assert!(
+        has(&failed, "after node5's relay restarted in the same round"),
+        "{failed:#?}"
+    );
+}

@@ -21,7 +21,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use super::forging::{self, Recorded};
+use super::forging::{self, Recorded, Validator};
 use super::mixed;
 use super::mixed_forging::{self, Data};
 use super::run::{self, Manifest, Step, Window};
@@ -142,10 +142,13 @@ pub(super) fn log_time(line: &str) -> Option<i64> {
 fn stop_log_problems(run_dir: &Path, steps: &[Step]) -> Vec<String> {
     let mut problems = Vec::new();
     for node in CYCLED {
-        let Some(s) = steps.iter().find(|s| s.name == format!("cycle-{node}")) else {
+        let Some(s) = required(steps, &format!("cycle-{node}"), &mut problems) else {
             continue;
         };
-        let Some(start) = s.start else { continue };
+        let Some(start) = s.start else {
+            problems.push(format!("{}: no start time for its stop log window", s.name));
+            continue;
+        };
         let end = s.time("end").unwrap_or(i64::MAX);
         let log = run_dir.join("nodes").join(node).join(RELAY_LOG);
         let Ok(text) = std::fs::read_to_string(&log) else {
@@ -159,6 +162,74 @@ fn stop_log_problems(run_dir: &Path, steps: &[Step]) -> Vec<String> {
             problems.push(format!(
                 "{node}: its relay's log has no `{STOPPED_LINE}` line within its restart"
             ));
+        }
+    }
+    problems
+}
+
+/// Whether a churn step restarted the relay of `node`: its cycle, its supervised crash, its
+/// return after an outage, or the resume of the nodes the step names.
+fn restarted_relay(step: &Step, node: &str) -> bool {
+    let named = step
+        .name
+        .strip_prefix("cycle-")
+        .or_else(|| step.name.strip_prefix("crash-relay-"))
+        .or_else(|| step.name.strip_prefix("restart-"))
+        .or_else(|| step.name.strip_prefix("return-"));
+    match named {
+        Some(name) => name == node,
+        None => {
+            step.name == "resume"
+                && step
+                    .text("nodes")
+                    .is_some_and(|n| n.split(',').any(|n| n == node))
+        }
+    }
+}
+
+/// No vote for a relay's own delegates is placed after its restart until the next round starts.
+fn vote_problems(round_length: u32, validators: &[Validator], steps: &[Step]) -> Vec<String> {
+    let mut problems = Vec::new();
+    let length = u64::from(round_length.max(1));
+    for vote in steps.iter().filter(|s| s.name.starts_with("vote-")) {
+        let Some(delegate) = vote.text("delegate") else {
+            problems.push(format!("{}: no delegate for its vote", vote.name));
+            continue;
+        };
+        let Some(validator) = validators.iter().find(|v| {
+            v.keys.values().any(|name| *name == delegate) || v.keys.contains_key(&delegate)
+        }) else {
+            problems.push(format!(
+                "{}: no validator for delegate {delegate}",
+                vote.name
+            ));
+            continue;
+        };
+        let (Some(at), Some(height)) = (vote.start, vote.start_height()) else {
+            problems.push(format!("{}: no time or height for its vote", vote.name));
+            continue;
+        };
+        for restart in steps.iter().filter(|s| restarted_relay(s, &validator.name)) {
+            let (Some(time), Some(restarted_height)) = (
+                restart.start,
+                restart
+                    .number("heightRecovered")
+                    .or_else(|| restart.start_height()),
+            ) else {
+                problems.push(format!(
+                    "{}: no time or height for its restart",
+                    restart.name
+                ));
+                continue;
+            };
+            if time <= at
+                && height.saturating_sub(1) / length <= restarted_height.saturating_sub(1) / length
+            {
+                problems.push(format!(
+                    "{}: a vote for {delegate}, a delegate of {}, at height {height}, after {}'s relay restarted in the same round",
+                    vote.name, validator.name, validator.name
+                ));
+            }
         }
     }
     problems
@@ -567,6 +638,14 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
         "each restarted relay logged that its stop completed",
         stop_log_problems(run.run_dir, &steps),
     );
+    match forging::validators(run.run_dir) {
+        Ok(validators) => verdict(
+            cases,
+            "no vote was placed for a restarted relay's own delegates before the next round",
+            vote_problems(m.round_length, &validators, &steps),
+        ),
+        Err(error) => cases.fail(SECTION, "the restarted relays' votes", error.to_string()),
+    }
     verdict(
         cases,
         "the killed relay and forger restarted under their own supervisors, their counters raised",
@@ -848,8 +927,9 @@ mod tests {
         let log = dir.join("nodes/node1").join(RELAY_LOG);
         std::fs::create_dir_all(log.parent().unwrap()).unwrap();
         let mut steps = cycles();
-        steps.retain(|s| s.name == "cycle-node1");
-        steps[0].start = Some(1_790_000_000_000);
+        for step in &mut steps {
+            step.start = Some(1_790_000_000_000);
+        }
         let start = 1_790_000_000_000;
         let line = |t: i64| {
             let stamp = run::format_time(t);
@@ -859,11 +939,41 @@ mod tests {
                 &stamp[11..23]
             )
         };
-        std::fs::write(&log, line(start + 100)).unwrap();
+        for node in CYCLED {
+            let log = dir.join("nodes").join(node).join(RELAY_LOG);
+            std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+            std::fs::write(log, line(start + 100)).unwrap();
+        }
         let ok = stop_log_problems(&dir, &steps);
         assert!(ok.is_empty(), "{ok:?}");
         std::fs::write(&log, line(start - 60_000)).unwrap();
         assert_eq!(stop_log_problems(&dir, &steps).len(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+    #[test]
+    fn votes_wait_until_the_round_after_relay_recovery() {
+        let validators = vec![Validator {
+            name: "node5".into(),
+            forger: String::new(),
+            keys: BTreeMap::from([("key".into(), "delegate".into())]),
+        }];
+        for restart in ["cycle-node5", "crash-relay-node5", "return-node5"] {
+            let mut steps = vec![
+                step(restart, json!({"startHeight": 106, "heightRecovered": 107})),
+                step(
+                    "vote-node5",
+                    json!({"startHeight": 159, "delegate": "delegate"}),
+                ),
+            ];
+            steps[1].start = Some(2_000);
+            assert_eq!(vote_problems(53, &validators, &steps).len(), 1);
+            steps[1].record["startHeight"] = json!(160);
+            assert!(vote_problems(53, &validators, &steps).is_empty());
+            steps[1].record["delegate"] = json!("key");
+            steps[1].record["startHeight"] = json!(107);
+            assert_eq!(vote_problems(53, &validators, &steps).len(), 1);
+            steps[1].start = Some(500);
+            assert!(vote_problems(53, &validators, &steps).is_empty());
+        }
     }
 }
