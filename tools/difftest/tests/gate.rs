@@ -873,6 +873,11 @@ fn a_coverage_row_passes_when_its_records_at_every_level_pass() {
         "{}",
         ran.text
     );
+    // Levels without evidence are not a failure: a dry run writes no record that would block.
+    let dry = coverage(&rig, &["--out", &rig.arg("cov-dry")]);
+    assert!(dry.ok, "{}", dry.text);
+    assert!(dry.text.contains("no record written"), "{}", dry.text);
+    assert!(!rig.path("cov-dry").exists());
     assert!(rig.record("l0", "difftest run l0", 0, "", T1).ok);
     assert!(
         ledger_run(
@@ -1157,13 +1162,9 @@ fn a_record_test_that_waits_leaves_its_entry_pending_until_its_record_runs() {
     assert!(ran.text.contains("0 ok, 1 pending, 0 fail"), "{}", ran.text);
     let strict = register(&rig, &["--strict"]);
     assert!(!strict.ok, "{}", strict.text);
-    let own: Vec<Value> = std::fs::read_dir(rig.path("own"))
-        .expect("own")
-        .map(|e| read(&e.expect("e").path()))
-        .collect();
-    assert_eq!(own.len(), 1);
-    assert_eq!(own[0]["result"], "fail", "a pending entry is not met");
-    assert_eq!(own[0]["counts"]["skipped"], 1);
+    // A pending entry is neither a pass nor a failure: no record of the register is written.
+    assert!(ran.text.contains("no record written"), "{}", ran.text);
+    assert!(!rig.path("own").exists(), "no record while entries wait");
 
     // A valid record that failed is a failure, not a wait.
     assert!(rig.record("l2", "difftest run l2 corpus", 1, "", T1).ok);

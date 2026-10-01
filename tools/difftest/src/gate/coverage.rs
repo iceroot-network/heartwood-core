@@ -6,7 +6,8 @@
 //!     [--repo DIR] [--head REV] [--allow-dirty]
 //! ```
 //!
-//! With `--out` the command writes its own record (target `coverage`).
+//! With `--out` the command writes its own record (target `coverage`): a pass when every level
+//! passes, a failure when one fails, and none while levels only lack their evidence.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -67,7 +68,11 @@ pub fn run(args: &[String]) -> Result<bool> {
         setup.criteria.coverage.len()
     );
     let all = passed == levels && levels > 0;
-    if let Some(out) = out {
+    // A record is a pass or a failure: while levels only lack their evidence and none fails, no
+    // record is written, since a failed one would block every row that reads the coverage.
+    if out.is_some() && failed == 0 && missing > 0 {
+        println!("gate coverage: no record written: {missing} levels have no evidence yet");
+    } else if let Some(out) = out {
         let path = write_own(
             Path::new(&out),
             &setup.sources.repo,

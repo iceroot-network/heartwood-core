@@ -24,7 +24,7 @@
 //! Without `--strict` the command exits 0 when no entry fails and no hit is a problem; with it,
 //! only when every entry is also met (none pending) and the tests ran (`--run`). With `--out` the
 //! command writes its own record (target `register`), a pass only when every entry is met and the
-//! tests ran.
+//! tests ran; while entries wait on later runs and none fails, it writes none.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -368,7 +368,11 @@ pub fn run(args: &[String]) -> Result<bool> {
     );
     let met = failed == 0 && pending == 0 && run_tests;
     let all = failed == 0 && (!strict || met);
-    if let Some(out) = out {
+    // A record is a pass or a failure. Entries that only wait on later runs are neither: no record
+    // is written for them, since a failed one would block every row that reads the register.
+    if out.is_some() && failed == 0 && pending > 0 {
+        println!("gate register: no record written: {pending} entries wait on later runs");
+    } else if let Some(out) = out {
         let path = write_own(
             Path::new(&out),
             &setup.sources.repo,
