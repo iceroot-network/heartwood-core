@@ -173,14 +173,13 @@ fn data_from_json(
             .map_err(|_| SchemaError::invalid("type", "must be a 16-bit integer from 0"))?,
     )?;
 
-    if mode.is_strict() {
-        match object.get("id") {
-            None => return Err(SchemaError::missing("id").into()),
-            Some(Value::Null) => {}
-            Some(Value::String(id)) if id.len() == 64 && is_hex(id) => {}
-            Some(_) => {
-                return Err(SchemaError::invalid("id", "must be 64 hex digits or null").into());
-            }
+    // The schema of both readings checks an `id` that is there; the strict one also requires it.
+    match object.get("id") {
+        None if mode.is_strict() => return Err(SchemaError::missing("id").into()),
+        None | Some(Value::Null) => {}
+        Some(Value::String(id)) if id.len() == 64 && is_hex(id) => {}
+        Some(_) => {
+            return Err(SchemaError::invalid("id", "must be 64 hex digits or null").into());
         }
     }
     match object.get("headerType") {
@@ -749,5 +748,54 @@ mod tests {
             Transaction::from_json(&other_network, &params),
             Err(BuildError::Schema(_))
         ));
+    }
+
+    #[test]
+    fn a_present_id_has_the_form_of_one_in_either_reading() {
+        let params = devnet();
+        let (data, _) = signed(
+            Asset::Burn { amount: 2_000_000 },
+            3,
+            1,
+            None,
+            false,
+            &params,
+        );
+        let tx = Transaction::from_data(data, &params).unwrap();
+        let json = tx.to_json(&params);
+        let read = |json: &Value, mode| Transaction::from_json_with(json, &params, mode);
+        // The schema of both readings checks an id that is there: 64 hex digits in either case,
+        // or null. Only the strict reading also requires the key.
+        for mode in [Mode::Strict, Mode::NonStrict] {
+            for id in [
+                serde_json::json!("zz"),
+                serde_json::json!(""),
+                serde_json::json!("0".repeat(63)),
+                serde_json::json!("0".repeat(65)),
+                serde_json::json!("g".repeat(64)),
+                serde_json::json!(7),
+                serde_json::json!([]),
+            ] {
+                let mut malformed = json.clone();
+                malformed["id"] = id.clone();
+                assert!(
+                    matches!(read(&malformed, mode), Err(BuildError::Schema(_))),
+                    "{mode:?} {id}"
+                );
+            }
+            let mut upper = json.clone();
+            upper["id"] = serde_json::json!(tx.id().to_hex().to_uppercase());
+            assert_eq!(read(&upper, mode).unwrap(), tx, "{mode:?}");
+            let mut null_id = json.clone();
+            null_id["id"] = Value::Null;
+            assert_eq!(read(&null_id, mode).unwrap(), tx, "{mode:?}");
+        }
+        let mut no_id = json;
+        no_id.as_object_mut().unwrap().remove("id");
+        assert!(matches!(
+            read(&no_id, Mode::Strict),
+            Err(BuildError::Schema(_))
+        ));
+        assert_eq!(read(&no_id, Mode::NonStrict).unwrap(), tx);
     }
 }
