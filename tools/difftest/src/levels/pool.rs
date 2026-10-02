@@ -20,8 +20,10 @@
 //!   ([`READD_ATTEMPTS`]): they must agree up to and including the reference's first refusal after
 //!   an eviction, which Heartwood refused without evicting. With no result per transaction, the
 //!   pool's contents show the rest: Heartwood's pool holds a transaction the reference refused only
-//!   where the reference's pool holds it too, and every transaction only Heartwood's pool holds is
-//!   one the reference evicted or a later one of its sender. The later steps are not compared;
+//!   where the reference's pool holds it too, every transaction only Heartwood's pool holds is one
+//!   the reference evicted or a later one of its sender, and what the evictions do not touch (the
+//!   pool's size, the order of the transactions both pools hold, the other senders' transactions,
+//!   wallets and stored rows) is equal. The later steps are not compared;
 //! - entries of a removed type and JSON votes given as an array or a string
 //!   ([`Documented::RemovedType`], [`Documented::VotesWithIndices`]), checked on the entries
 //!   themselves: the step's lists and errors, with their messages under the rules here, must be
@@ -37,7 +39,7 @@
 //!   decode reasons are allowed. The later steps are not compared, since the two pools may differ
 //!   from there.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use heartwood_crypto::Transaction;
 use heartwood_crypto::crypto::hash::sha256;
@@ -570,8 +572,10 @@ fn readd_eviction_holds(notes: &Value, ours: &Value, expected: &Value, actual: &
 /// - no transaction tried before the first refusal is held by the reference's pool only: up to it
 ///   both pools went through the same states, and from it on Heartwood's pool holds the evicted
 ///   transaction where the reference has a free place, until a later admission evicts it;
-/// - a transaction the reference evicted is missing from Heartwood's pool only where Heartwood
-///   holds one tried after the first refusal: Heartwood evicts it only to admit a later one.
+/// - a transaction the reference evicted is missing from Heartwood's pool only where it was tried
+///   after the first refusal (Heartwood, still full, may have refused it) or Heartwood holds one
+///   tried after it (Heartwood evicts it only to admit a later one);
+/// - the rest of the contents, which the evictions leave alone, agree ([`untouched_agree`]).
 fn readd_contents_hold(
     notes: &Value,
     expected: &Value,
@@ -601,15 +605,8 @@ fn readd_contents_hold(
     if refused.is_empty() || evicted.is_empty() {
         return false;
     }
-    let held = |contents: &Value| -> BTreeSet<String> {
-        contents["all"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect()
-    };
+    let held =
+        |contents: &Value| -> BTreeSet<String> { listed(&contents["all"]).into_iter().collect() };
     let (theirs, ours) = (held(expected), held(actual));
     if refused
         .iter()
@@ -618,31 +615,113 @@ fn readd_contents_hold(
         return false;
     }
     // Each sender's transactions in Heartwood's pool, oldest first: from an evicted one on.
-    let mut kept: BTreeSet<&str> = BTreeSet::new();
+    let mut kept: BTreeSet<String> = BTreeSet::new();
     for sender in actual["bySender"].as_array().into_iter().flatten() {
-        let ids: Vec<&str> = sender[1]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .collect();
-        if let Some(at) = ids.iter().position(|id| evicted.contains(id)) {
-            kept.extend(&ids[at..]);
+        let ids = listed(&sender[1]);
+        if let Some(at) = ids.iter().position(|id| evicted.contains(id.as_str())) {
+            kept.extend(ids[at..].iter().cloned());
         }
     }
-    if !ours
-        .difference(&theirs)
-        .all(|id| kept.contains(id.as_str()))
+    if !ours.difference(&theirs).all(|id| kept.contains(id)) {
+        return false;
+    }
+    let tried_after = |id: &str| after.iter().any(|a| a == id);
+    let admitted_after = after.iter().any(|id| ours.contains(id));
+    if evicted
+        .iter()
+        .any(|id| !ours.contains(*id) && !tried_after(id) && !admitted_after)
     {
         return false;
     }
-    let lost = evicted.iter().any(|id| !ours.contains(*id));
-    if lost && !after.iter().any(|id| ours.contains(id)) {
-        return false;
-    }
-    !before
+    if before
         .iter()
         .any(|id| theirs.contains(id) && !ours.contains(id))
+    {
+        return false;
+    }
+    let exempt: BTreeSet<String> = (evicted.iter().chain(&refused))
+        .map(|id| (*id).to_owned())
+        .chain(after.iter().cloned())
+        .chain(kept)
+        .collect();
+    untouched_agree(expected, actual, &exempt)
+}
+
+/// The ids of `list`, a JSON array of ids.
+fn listed(list: &Value) -> Vec<String> {
+    list.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Whether the parts of two pools' contents after a re-add that its evictions leave alone agree,
+/// `exempt` being the transactions the evictions concern (the evicted ones and their senders'
+/// later ones, the refused ones, and those tried after the first refusal):
+///
+/// - each pool's size is the number of its transactions;
+/// - the transactions both pools hold come in the same order down the priority order (`highest`):
+///   an eviction and an admission each change only a sender's last transaction, which moves no
+///   other transaction in that order;
+/// - the senders with none of `exempt` among their transactions have the same transactions, the
+///   same wallet and, apart from `exempt`, the same stored rows on both sides.
+fn untouched_agree(expected: &Value, actual: &Value, exempt: &BTreeSet<String>) -> bool {
+    let sized = |contents: &Value| {
+        let all = listed(&contents["all"]).len();
+        contents["size"]
+            .as_u64()
+            .is_some_and(|size| usize::try_from(size).is_ok_and(|size| size == all))
+    };
+    if !sized(expected) || !sized(actual) {
+        return false;
+    }
+    let ours: BTreeSet<String> = listed(&actual["all"]).into_iter().collect();
+    let both: BTreeSet<String> = listed(&expected["all"])
+        .into_iter()
+        .filter(|id| ours.contains(id))
+        .collect();
+    let shared = |contents: &Value| -> Vec<String> {
+        listed(&contents["highest"])
+            .into_iter()
+            .filter(|id| both.contains(id))
+            .collect()
+    };
+    if shared(expected) != shared(actual) {
+        return false;
+    }
+    let senders = |contents: &Value| -> BTreeMap<String, Vec<String>> {
+        (contents["bySender"].as_array().into_iter().flatten())
+            .filter_map(|sender| Some((sender[0].as_str()?.to_owned(), listed(&sender[1]))))
+            .collect()
+    };
+    let (theirs, ours) = (senders(expected), senders(actual));
+    let involved: BTreeSet<String> = (theirs.iter().chain(&ours))
+        .filter(|(_, ids)| ids.iter().any(|id| exempt.contains(id)))
+        .map(|(address, _)| address.clone())
+        .collect();
+    let apart = |map: BTreeMap<String, Vec<String>>| -> BTreeMap<String, Vec<String>> {
+        map.into_iter()
+            .filter(|(address, _)| !involved.contains(address))
+            .collect()
+    };
+    if apart(theirs) != apart(ours) {
+        return false;
+    }
+    let wallets = |contents: &Value| -> BTreeMap<String, Value> {
+        (contents["wallets"].as_array().into_iter().flatten())
+            .filter_map(|wallet| Some((wallet[0].as_str()?.to_owned(), wallet.clone())))
+            .filter(|(address, _)| !involved.contains(address))
+            .collect()
+    };
+    let stored = |contents: &Value| -> Vec<Value> {
+        (contents["stored"].as_array().into_iter().flatten())
+            .filter(|row| row[0].as_str().is_some_and(|id| !exempt.contains(id)))
+            .cloned()
+            .collect()
+    };
+    wallets(expected) == wallets(actual) && stored(expected) == stored(actual)
 }
 
 /// Whether neither result admitted an entry of a documented form: none of `theirs` is in the
@@ -740,9 +819,11 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
         let b_result = &b_result;
         let same_shape = compare::diff(&without_messages(&a_result), &without_messages(b_result));
         // The two results whose messages are compared: the whole results, or, when entries of a
-        // documented form make them differ, the results without those entries.
-        let (a_left, b_left, forms) = if same_shape.is_empty() {
-            (a_result.clone(), b_result.clone(), Vec::new())
+        // documented form make them differ, the results without those entries; and the ids each
+        // side's documented entries were left out under (none when the shapes agree).
+        let (a_left, b_left, forms, left_out) = if same_shape.is_empty() {
+            let none = (BTreeSet::new(), BTreeSet::new());
+            (a_result.clone(), b_result.clone(), Vec::new(), none)
         } else {
             let entries = documented_entries(step);
             let ids: BTreeSet<String> =
@@ -771,7 +852,7 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
                 };
             }
             let forms: Vec<Form> = entries.into_iter().map(|(form, _, _)| form).collect();
-            (a_left, b_left, forms)
+            (a_left, b_left, forms, (theirs, ids))
         };
         if !contents.is_empty() {
             return Outcome::Mismatch(prefixed(i, contents));
@@ -791,7 +872,10 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
             Messages::Different if locale => {
                 documented.get_or_insert(Documented::Locale);
             }
-            Messages::Different if online_view(i, &a_left, &b_left) => {
+            Messages::Different
+                if online_view(i, &a_left, &b_left)
+                    && documented_refused(&a_result, &left_out.0, b_result, &left_out.1) =>
+            {
                 return Outcome::Documented(Documented::OnlineView.reason().to_owned());
             }
             Messages::Different => {
@@ -1286,6 +1370,39 @@ mod tests {
             )
             .is_failure()
         );
+        // The shapes agree once a removed type is left out, and the rest differs only by an
+        // offline refusal: still a mismatch where Heartwood admitted the removed type, and the
+        // online view where both sides refused it.
+        let json_batch = json!({"op": "process", "now": 0, "entries": [
+            {"json": {"id": "m", "typeGroup": 1, "type": 3}}, {"json": {"id": "w"}}]});
+        let json_session = json!({"steps": [set_online, json_batch]});
+        let removed_m = json!({"type": "ERR_OTHER", "message": "m: Core/3 is deactivated"});
+        let other_w =
+            json!({"type": "ERR_APPLY", "message": "w cannot be applied: another reason"});
+        let offline_w = json!({"type": "ERR_APPLY",
+                               "message": "w cannot be applied: d0 is not operating a node on the network"});
+        let both_refused = json!({"accept": [], "broadcast": [], "invalid": ["m", "w"], "excess": [],
+                                  "errors": {"m": removed_m, "w": other_w}});
+        let m_admitted = json!({"accept": ["m"], "broadcast": ["m"], "invalid": ["w"], "excess": [],
+                                "errors": {"w": offline_w}});
+        assert!(
+            judge(
+                &json_session,
+                &answer(both_refused.clone(), &[]),
+                &answer(m_admitted, &[])
+            )
+            .is_failure()
+        );
+        let m_refused = json!({"accept": [], "broadcast": [], "invalid": ["m", "w"], "excess": [],
+                               "errors": {"m": removed_m, "w": offline_w}});
+        assert_eq!(
+            judge(
+                &json_session,
+                &answer(both_refused, &[]),
+                &answer(m_refused, &[])
+            ),
+            online_view
+        );
         let mut admitted_sha = refused_v(offline_v);
         admitted_sha["accept"] = json!([sha.clone()]);
         admitted_sha["broadcast"] = json!([sha.clone()]);
@@ -1432,6 +1549,55 @@ mod tests {
                                                      ["l2", false]]}});
         let admitted = run(vec![readd_step(ours_n, &["s", "l", "n"], &[])]);
         assert!(judge(&session, &refused, &admitted).is_failure());
+    }
+
+    #[test]
+    fn a_re_add_eviction_is_documented_only_where_the_rest_of_the_pool_agrees() {
+        // A re-add tries h, e, f, r, g and q in a pool of three: the reference evicts e for r and
+        // refuses r, admits g into the free place, then evicts g for q and refuses q; Heartwood
+        // refuses r, g (its pool is still full, and g's fee is below e's) and q, and keeps e.
+        let theirs_notes = json!({"notes": {"fullPoolEviction": true,
+            "evictions": [{"id": "r", "evicted": ["e"]}, {"id": "q", "evicted": ["g"]}],
+            "attempts": [["h", true], ["e", true], ["f", true], ["r", false, true], ["g", true],
+                         ["q", false, true]]}});
+        let ours_notes = json!({"notes": {READD_ATTEMPTS: [["h", true], ["e", true], ["f", true],
+                                                            ["r", false], ["g", false], ["q", false]]}});
+        let theirs = run(vec![json!({"result": theirs_notes, "contents": {
+            "all": ["h", "f"], "highest": ["h", "f"], "size": 2,
+            "bySender": [["F", ["f"]], ["H", ["h"]]],
+            "wallets": [["F", "100", "6"], ["H", "200", "3"]],
+            "stored": [["f", 9], ["h", 9]]}})]);
+        let ours = |contents: Value| run(vec![json!({"result": ours_notes, "contents": contents})]);
+        let kept = json!({
+            "all": ["h", "f", "e"], "highest": ["h", "f", "e"], "size": 3,
+            "bySender": [["E", ["e"]], ["F", ["f"]], ["H", ["h"]]],
+            "wallets": [["E", "50", "2"], ["F", "100", "6"], ["H", "200", "3"]],
+            "stored": [["e", 9], ["f", 9], ["h", 9]]});
+        let session = json!({"steps": [{"op": "readd", "forged": []}]});
+        let documented = Outcome::Documented(Documented::FullPoolEviction.reason().into());
+        // g, evicted by the reference, never entered Heartwood's pool: documented.
+        assert_eq!(judge(&session, &theirs, &ours(kept.clone())), documented);
+        // What the evictions do not touch must agree: the pool's size, the order of the
+        // transactions both pools hold, another sender's transactions, wallet or stored rows.
+        let changed = |pointer: &str, value: Value| {
+            let mut contents = kept.clone();
+            if let Some(slot) = contents.pointer_mut(pointer) {
+                *slot = value;
+            }
+            ours(contents)
+        };
+        for differing in [
+            changed("/size", json!(9)),
+            changed("/highest", json!(["f", "h", "e"])),
+            changed("/wallets/1", json!(["F", "100", "7"])),
+            changed("/stored", json!([["e", 9], ["h", 9]])),
+            changed("/bySender/1", json!(["F", ["f", "x"]])),
+        ] {
+            assert!(judge(&session, &theirs, &differing).is_failure());
+        }
+        // The evicted sender's own wallet and row differ on purpose.
+        let own = changed("/wallets/0", json!(["E", "40", "3"]));
+        assert_eq!(judge(&session, &theirs, &own), documented);
     }
 
     #[test]
