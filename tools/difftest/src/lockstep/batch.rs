@@ -6,8 +6,8 @@
 //! restart points, a milestone that activates inside the chain and the online steps; a long
 //! chain's recipe also stops attesting one delegate after round 1, so that its online entry has
 //! expired at round 7's start and a vote for it in round 7 is refused `ERR_OFFLINE` by both pools.
-//! Each chain is made by [`super::make`] on run 1's [`Recipe`], so it is an ordinary corpus that
-//! `corpus judge`, `l2`, `l2-processor`, `l2-restart` and `forge-replay` read as they are.
+//! Each chain is made by [`super::make`] on the lockstep [`Recipe`], so it is an ordinary corpus
+//! that `corpus judge`, `l2`, `l2-processor`, `l2-restart` and `forge-replay` read as they are.
 //!
 //! The batch file `<out>/batch-<seed>.json` lists the chains (`batch-<seed>-<index>`, so that
 //! every chain's name is its own in the whole corpus directory), their seeds, rounds and recipes,
@@ -465,9 +465,9 @@ impl Plan {
         );
     }
 
-    /// The delegates the recipe registers: the first always, which a vote makes active in the
-    /// drawn chains that have rounds to forge in; the second, which resigns for a time and
-    /// revokes it, where the chain is long enough for the revoke.
+    /// The delegates the recipe registers: the first always, which wins a vote in the drawn chains
+    /// that have rounds for it; the second, which resigns for a time and revokes it, where the
+    /// chain is long enough for the revoke.
     ///
     /// A registered delegate takes a place among the active ones from the next round, with votes
     /// or without (every delegate has the same weight and the keys decide), so each is silent for
