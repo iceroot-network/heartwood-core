@@ -1438,7 +1438,8 @@ pub const HEAL_CONVERGENCE_SECONDS: i64 = 192;
 /// from the heal's start to [`SUITE_WINDOW_SECONDS`] after the network converged, the first
 /// moment from the heal's end on when every node holds one tip (`propagation.jsonl`). A partition
 /// without a heal, a heal without a partition, and a network that does not converge within
-/// [`HEAL_CONVERGENCE_SECONDS`] of the heal are problems themselves.
+/// [`HEAL_CONVERGENCE_SECONDS`] of the heal are problems themselves, and so is a run without a
+/// block arrival to judge.
 pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
     let report = run::read_json(&run_dir.join("propagation-lag.json"))?;
     if report.get("judged").and_then(Value::as_bool) != Some(true) {
@@ -1451,7 +1452,15 @@ pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
     let window = SUITE_WINDOW_SECONDS * 1_000;
     let mut rows: Vec<(i64, String, u64, String)> = Vec::new();
     for r in run::read_lines(&run_dir.join("propagation.jsonl"))? {
-        let t = r.get("t").and_then(Value::as_str).and_then(run::parse_time);
+        // A time as the recipe reads it: a text, or milliseconds since the Unix epoch.
+        let t = r.get("t").and_then(|t| match t {
+            Value::String(text) => run::parse_time(text),
+            #[allow(clippy::cast_possible_truncation)]
+            Value::Number(ms) => ms
+                .as_i64()
+                .or_else(|| ms.as_f64().map(|f| f.round() as i64)),
+            _ => None,
+        });
         let node = r.get("node").and_then(Value::as_str);
         let (Some(t), Some(node), Some(h)) = (t, node, r.get("h").and_then(Value::as_u64)) else {
             continue;
@@ -1461,6 +1470,9 @@ pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
     }
     rows.sort();
     let mut problems = Vec::new();
+    if rows.is_empty() {
+        problems.push("propagation.jsonl holds no block arrival to judge".to_owned());
+    }
     let mut windows = Vec::new();
     let mut partition: Option<(i64, Vec<Vec<String>>)> = None;
     let time = |a: &Value, key: &str| a.get(key).and_then(Value::as_str).and_then(run::parse_time);
@@ -1471,7 +1483,11 @@ pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
             .and_then(Value::as_array)
             .into_iter()
             .flatten())
-        .filter_map(|v| v.as_str().map(str::to_owned))
+        .filter_map(|v| match v {
+            Value::String(text) => Some(text.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
         .collect();
         let (Some(start), Some(end)) = (time(&a, "start"), time(&a, "end")) else {
             problems.push(format!("actions.jsonl: a {verb} without its start and end"));
@@ -1587,17 +1603,14 @@ pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
     Ok(Some(problems))
 }
 
-/// The first moment from `from` on when every node of `rows` holds one tip, if any.
+/// The first moment from `from` on when every node of `rows` holds one tip, if any; a block
+/// without its id shows no tip.
 fn converged(rows: &[(i64, String, u64, String)], from: i64) -> Option<i64> {
     let nodes: std::collections::BTreeSet<&str> = rows.iter().map(|r| r.1.as_str()).collect();
     let mut last: BTreeMap<&str, &str> = BTreeMap::new();
     let one = |last: &BTreeMap<&str, &str>| {
-        last.len() == nodes.len()
-            && last
-                .values()
-                .collect::<std::collections::BTreeSet<_>>()
-                .len()
-                == 1
+        let tips: std::collections::BTreeSet<_> = last.values().collect();
+        last.len() == nodes.len() && tips.len() == 1 && !tips.contains(&"")
     };
     let mut rows = rows.iter().peekable();
     while let Some((_, node, _, id)) = rows.next_if(|r| r.0 <= from) {

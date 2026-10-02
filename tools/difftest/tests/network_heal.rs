@@ -180,6 +180,48 @@ fn a_valid_recovery_passes_and_each_late_or_unbounded_heal_fails() {
     );
 }
 
+#[test]
+fn a_judged_run_without_its_block_evidence_fails() {
+    let scratch = ScratchDir::new("network-heal-evidence").expect("scratch");
+    // No block arrival at all: nothing was judged, so nothing passes.
+    let empty = scratch.path().join("empty");
+    write_run(&empty, &[], &[], true);
+    let problems = judged(&empty);
+    assert!(
+        problems.iter().any(|p| p.contains("no block arrival")),
+        "{problems:?}"
+    );
+    // Arrivals without the blocks' ids cannot show one tip: no convergence after the heal.
+    let anonymous = scratch.path().join("anonymous");
+    let rows: Vec<_> = split(35_000)
+        .into_iter()
+        .map(|(t, node, h, _)| (t, node, h, String::new()))
+        .collect();
+    write_run(&anonymous, &rows, &heal_actions(), true);
+    let problems = judged(&anonymous);
+    assert!(
+        problems.iter().any(|p| p.contains("did not converge")),
+        "{problems:?}"
+    );
+    // The recipe's other form of a time (milliseconds since the epoch) is read as the recipe
+    // reads it: a late block in that form still fails.
+    let numeric = scratch.path().join("numeric");
+    write_run(&numeric, &split(35_000), &heal_actions(), true);
+    let path = numeric.join("propagation.jsonl");
+    let mut text = std::fs::read_to_string(&path).expect("rows");
+    let base = live::run::parse_time("2026-10-02T00:00:00.000Z").expect("a time");
+    let late = base + 29 * 8_000 + 9_000;
+    text.push_str(&format!(
+        "{{\"t\":{late},\"node\":\"node2\",\"h\":29,\"id\":\"main-29\"}}\n"
+    ));
+    std::fs::write(&path, text).expect("rows");
+    let problems = judged(&numeric);
+    assert!(
+        problems.iter().any(|p| p.contains("node2 got block 29")),
+        "{problems:?}"
+    );
+}
+
 /// A suite directory with the network suite's two runs, the reference's from `reference`.
 fn suite_dir(root: &Path, reference: &Path) -> PathBuf {
     let dir = root.join("suites");
