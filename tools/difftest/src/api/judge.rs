@@ -169,9 +169,10 @@ pub fn outcome(line: &Recorded) -> Outcome {
 /// judged as [`outcome`] judges them after the control's page is put in the order of the node's
 /// under test, which is allowed only when both pages hold the same wallets, the other wallets in
 /// one order, and every pair of wallets the reordering swaps ties on the listing's order (the
-/// `orderBy` properties, then the route's own: the balance for the wallet listings). Any other
-/// difference is judged as without it: a wrong tie order of any other wallet, a free wallet
-/// moved across another value of the order, or a difference of a value still fails.
+/// `orderBy` properties, then the route's own: the balance for the wallet listings, the rank and
+/// the username for the delegates). Any other difference is judged as without it: a wrong tie
+/// order of any other wallet, a free wallet moved across another value of the order, or a
+/// difference of a value still fails.
 pub fn outcome_with_free_places(
     line: &Recorded,
     free: &BTreeSet<String>,
@@ -186,7 +187,8 @@ pub fn outcome_with_free_places(
         Some(RouteId::WalletsIndex | RouteId::WalletsTop | RouteId::DelegatesVoters) => {
             &["balance"]
         }
-        Some(RouteId::DelegatesIndex) => &[],
+        // The reference sorts the delegates by rank, then username, after any `orderBy`.
+        Some(RouteId::DelegatesIndex) => &["rank", "username"],
         _ => return (plain, Vec::new()),
     };
     let (
@@ -961,6 +963,36 @@ mod tests {
         if let Some(request) = &mut line.request {
             request.path = "/api/wallets".into();
         }
+        assert!(
+            outcome_with_free_places(&line, &free(&["G"]))
+                .0
+                .is_failure()
+        );
+        // The delegates' listing is ordered by rank, then username: a free delegate placed
+        // against its rank is no tie.
+        let delegate = |name: &str, rank: u64| json!({"username": name, "address": name, "rank": rank, "votes": "0"});
+        let delegates = |items: Vec<Value>| {
+            let mut line = list(
+                "",
+                "",
+                answer(
+                    200,
+                    json!({"meta": {"count": 3, "totalCount": 3}, "data": [
+                        delegate("B", 1), delegate("C", 2), delegate("G", 3)]}),
+                ),
+                answer(
+                    200,
+                    json!({"meta": {"count": 3, "totalCount": 3}, "data": items}),
+                ),
+            );
+            line.documented = None;
+            if let Some(request) = &mut line.request {
+                request.path = "/api/delegates".into();
+            }
+            line
+        };
+        let line = delegates(vec![delegate("G", 3), delegate("B", 1), delegate("C", 2)]);
+        assert!(outcome(&line).is_failure());
         assert!(
             outcome_with_free_places(&line, &free(&["G"]))
                 .0
