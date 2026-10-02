@@ -1756,6 +1756,86 @@ fn a_heartwood_suite_run_s_chain_is_judged_against_the_reference_s_lines() {
 }
 
 #[test]
+fn a_chain_judged_by_another_oracle_is_judged_again() {
+    use heartwood_difftest::oracle::{Mode, Oracle};
+    use heartwood_difftest::scenario::judge::{Side, judge};
+    let recorded = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/live/core");
+    let scratch = ScratchDir::new("scenario-judge-oracle").expect("scratch");
+    let run = scratch.path().join("transactions-heartwood");
+    let root = scratch.path().join("corpus");
+    copy_tree(&recorded, &run);
+    copy_tree(&run.join("nodes/node1"), &run.join("node1"));
+    copy_tree(&recorded.join("corpus/crypto"), &run.join("network/crypto"));
+    let corpus = root.join("suite-transactions-heartwood-1");
+    copy_tree(&recorded.join("corpus"), &corpus);
+    // The chain was judged in the image with id `sha256:judged`.
+    let meta_path = corpus.join("corpus.json");
+    let mut meta: Value =
+        serde_json::from_str(&std::fs::read_to_string(&meta_path).expect("meta")).expect("json");
+    meta["judge"]["oracle"] =
+        json!({"mode": "container", "image": "sha256:judged", "node": "v18.20.8"});
+    std::fs::write(&meta_path, format!("{meta:#}\n")).expect("meta");
+    heartwood_difftest::corpus::write_manifest(&corpus).expect("manifest");
+    // A docker command that knows one image, by its id, and runs nothing.
+    let docker = scratch.path().join("docker");
+    std::fs::write(
+        &docker,
+        "#!/bin/sh\nif [ \"$1\" = image ]; then echo \"$IMAGE_ID\"; exit 0; fi\n\
+         echo 'no container runs here' >&2; exit 1\n",
+    )
+    .expect("docker");
+    std::fs::set_permissions(&docker, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+        .expect("mode");
+    let oracle = |id: &'static str| {
+        let docker = docker.clone();
+        move || -> heartwood_difftest::Result<Oracle> {
+            let mut oracle = Oracle::new(Mode::Container {
+                image: "heartwood-oracle:test".into(),
+            });
+            oracle.docker = vec![
+                "env".into(),
+                format!("IMAGE_ID={id}"),
+                docker.to_string_lossy().into_owned(),
+            ];
+            Ok(oracle)
+        }
+    };
+    // The same image: its judgement is used as it is.
+    let same = judge(
+        &run,
+        Side::Heartwood,
+        "transactions",
+        &root,
+        &oracle("sha256:judged"),
+    );
+    assert!(same.holds, "{:#?}", same.cases);
+    // Another image: the chain is judged again, which this docker cannot do.
+    let other = judge(
+        &run,
+        Side::Heartwood,
+        "transactions",
+        &root,
+        &oracle("sha256:other"),
+    );
+    assert!(!other.holds);
+    assert!(
+        other
+            .cases
+            .iter()
+            .any(|(label, outcome)| label.contains("judged") && outcome.is_failure()),
+        "{:#?}",
+        other.cases
+    );
+    // A local oracle, whose scripts no judgement records, judges again too.
+    let local = || -> heartwood_difftest::Result<Oracle> {
+        Ok(Oracle::new(Mode::Local {
+            solar_dir: scratch.path().join("no-reference-here"),
+        }))
+    };
+    assert!(!judge(&run, Side::Heartwood, "transactions", &root, &local).holds);
+}
+
+#[test]
 fn a_heartwood_suite_run_counts_only_for_the_relay_built_from_this_tree_s_product_code() {
     use heartwood_difftest::scenario::judge::built_from;
     let scratch = ScratchDir::new("scenario-built-from").expect("scratch");

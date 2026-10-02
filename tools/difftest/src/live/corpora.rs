@@ -2,9 +2,11 @@
 //! archive from before the heal) imported under the corpus root and judged by the oracle with its
 //! processor results, as `make corpus-import corpus-judge PROCESSOR=1` does, so that
 //! `make l2-processor` compares each block's result through the reference's job too. A corpus
-//! already imported from the same archives and judged so is used as it is; one judged without the
-//! processor results is judged again; one of an earlier run of the same name is moved aside to
-//! `<name>.replaced` and imported again. Its manifest and `corpus.json` are copied into the run's
+//! already imported from the same archives and judged so, in the image of the oracle asked for
+//! (by the image's id), is used as it is; one judged without the processor results, or by another
+//! oracle, is judged again (a local oracle always judges again, since a judgement does not record
+//! its scripts); one of an earlier run of the same name is moved aside to `<name>.replaced` and
+//! imported again. Its manifest and `corpus.json` are copied into the run's
 //! `corpus/<name>/`. A chain a Heartwood node recorded (`nodes/<node>`, the node's directory, as
 //! the chain's archives) is imported from the node's block files through
 //! [`crate::corpus_from_blocks`] instead.
@@ -85,6 +87,20 @@ fn same_chain(dir: &Path, end: &(u64, String, String)) -> bool {
             .block_id(loaded.tip())
             .is_some_and(|id| id.to_hex() == end.1)
         && meta.pointer("/chain/epoch").and_then(Value::as_str) == Some(end.2.as_str())
+}
+
+/// Whether the corpus in `dir` was judged by `oracle`: in the same image, by its id (the judge
+/// records the image it ran in). A local oracle's judgement records no identity of the scripts it
+/// ran, so it is never taken for this one's.
+fn judged_by(dir: &Path, oracle: &Oracle) -> Result<bool> {
+    let Some(id) = oracle.image_id()? else {
+        return Ok(false);
+    };
+    let meta = read_json(&dir.join("corpus.json"))?;
+    Ok(
+        meta.pointer("/judge/oracle/mode").and_then(Value::as_str) == Some("container")
+            && meta.pointer("/judge/oracle/image").and_then(Value::as_str) == Some(id.as_str()),
+    )
 }
 
 /// Move each revert of the plan of the corpus in `dir` that returns to a round's last block one
@@ -214,8 +230,17 @@ pub fn prepare(
         imported = true;
     }
     let mut judged = false;
-    if !dir.join(TS_DIGESTS).exists() || !dir.join(TS_PROCESSOR).exists() {
-        let oracle = oracle()?;
+    let judge_with = if !dir.join(TS_DIGESTS).exists() || !dir.join(TS_PROCESSOR).exists() {
+        Some(oracle()?)
+    } else {
+        // A judgement is used again only by the oracle that made it; without an oracle to ask,
+        // the recorded one is what there is.
+        match oracle() {
+            Ok(asked) if !judged_by(&dir, &asked)? => Some(asked),
+            _ => None,
+        }
+    };
+    if let Some(oracle) = judge_with {
         let work = ScratchDir::new("live-judge")?;
         oracle.judge(&dir, work.path(), &["--processor".to_owned()])?;
         corpus::record_judge(&dir, work.path())?;
