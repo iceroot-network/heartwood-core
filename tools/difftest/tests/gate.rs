@@ -1485,11 +1485,14 @@ fn a_scenario_need_reads_the_scenario_s_own_verdict_in_its_record() {
          "scenario": "propagation"}
     ])));
     let printed = "scenario compare: 9 records in 2 files\n  9 compared: 8 passed, 1 failed\n\
+                   scenario transactions/chain: pass\n\
                    scenario transactions/chained-transfers: pass\n\
-                   scenario transactions/double-spend: fail\n";
+                   scenario transactions/double-spend: fail\n\
+                   scenario transactions/steps: pass\n";
     assert!(record_of(&rig, "live-check", "SEED=1 RUN=suites", 1, printed, T1).ok);
     // A comparison of one suite alone names a SUITE: it counts for no need without one.
-    let one = "scenario network/propagation: pass\n";
+    let one = "scenario network/chain: pass\nscenario network/propagation: pass\n\
+               scenario network/steps: pass\n";
     assert!(
         record_of(
             &rig,
@@ -1513,6 +1516,39 @@ fn a_scenario_need_reads_the_scenario_s_own_verdict_in_its_record() {
         "{text}"
     );
     assert!(t.contains("T        FAIL"), "{t}");
+}
+
+#[test]
+fn a_scenario_of_a_comparison_shows_nothing_unless_its_suite_s_chains_and_steps_held() {
+    let rig = Rig::new();
+    rig.criteria(&with_row(json!([
+        {"kind": "record", "target": "live-check", "contains": ["RUN=suites"],
+         "scenario": "peer-discovery"},
+        {"kind": "record", "target": "live-check", "contains": ["RUN=suites"],
+         "scenario": "burns"},
+        {"kind": "record", "target": "live-check", "contains": ["RUN=suites"],
+         "scenario": "restarts"}
+    ])));
+    // The network suite's chains failed: its scenarios fail with them. The transactions suite's
+    // steps were not judged (no line): its scenario shows nothing. The lifecycle suite held.
+    let printed = "scenario network/chain: fail\nscenario network/peer-discovery: pass\n\
+                   scenario network/steps: pass\nscenario transactions/burns: pass\n\
+                   scenario transactions/chain: pass\nscenario lifecycle/chain: pass\n\
+                   scenario lifecycle/restarts: pass\nscenario lifecycle/steps: pass\n";
+    assert!(record_of(&rig, "live-check", "SEED=1 RUN=suites", 1, printed, T1).ok);
+    let text = s1(&rig, &["--verbose"]).text;
+    assert!(
+        text.contains("FAIL    live-check [RUN=suites] scenario peer-discovery: 1 failed record"),
+        "{text}"
+    );
+    assert!(
+        text.contains("missing live-check [RUN=suites] scenario burns: 0 of 1 passing records"),
+        "{text}"
+    );
+    assert!(
+        text.contains("ok      live-check [RUN=suites] scenario restarts: 1 passing record"),
+        "{text}"
+    );
 }
 
 #[test]

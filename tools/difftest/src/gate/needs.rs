@@ -97,15 +97,41 @@ fn sets(record: &GateRecord, variable: &str) -> bool {
         .is_some_and(|value| !value.is_empty())
 }
 
+/// What a comparison of a suite's two runs judges for every scenario of the suite at once, by
+/// the verdict names it gives them (`suite/chain`, `suite/steps`): each run's chain held to the
+/// reference's, and each run's scripted steps. A scenario of a comparison shows nothing unless
+/// both passed.
+const SHARED_VERDICTS: [&str; 2] = ["chain", "steps"];
+
 /// The verdict a record gives scenario `id` (a scenario file's id; a comparison names it after
-/// its suite, `suite/id`), when the record ran or compared it.
+/// its suite, `suite/id`), when the record ran or compared it. A comparison's verdict of a
+/// scenario is the worst of the scenario's own and of its suite's shared verdicts
+/// ([`SHARED_VERDICTS`]), one that is not there counting as `skipped`.
 fn scenario_verdict<'r>(record: &'r GateRecord, id: &str) -> Option<&'r str> {
     let suffix = format!("/{id}");
-    record
+    let (name, own) = record
         .scenarios
         .iter()
-        .find(|(name, _)| *name == id || name.ends_with(&suffix))
-        .map(|(_, verdict)| verdict.as_str())
+        .find(|(name, _)| *name == id || name.ends_with(&suffix))?;
+    let Some(suite) = name.strip_suffix(&suffix) else {
+        return Some(own.as_str());
+    };
+    let rank = |verdict: &str| match verdict {
+        "pass" => 0,
+        "skipped" => 1,
+        _ => 2,
+    };
+    let mut worst = own.as_str();
+    for shared in SHARED_VERDICTS {
+        let verdict = record
+            .scenarios
+            .get(&format!("{suite}/{shared}"))
+            .map_or("skipped", String::as_str);
+        if rank(verdict) > rank(worst) {
+            worst = verdict;
+        }
+    }
+    Some(worst)
 }
 
 /// What a record need asks of the records.
