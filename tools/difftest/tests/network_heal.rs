@@ -220,6 +220,16 @@ fn a_judged_run_without_its_block_evidence_fails() {
         problems.iter().any(|p| p.contains("node2 got block 29")),
         "{problems:?}"
     );
+    // A time outside any calendar is not a time: it is left out, as the recipe leaves out a row
+    // it cannot read, and judges nothing.
+    let mut text = std::fs::read_to_string(&path).expect("rows");
+    text.push_str(&format!(
+        "{{\"t\":{},\"node\":\"node2\",\"h\":30,\"id\":\"main-30\"}}\n",
+        i64::MIN
+    ));
+    std::fs::write(&path, text).expect("rows");
+    let problems = judged(&numeric);
+    assert_eq!(problems.len(), 1, "{problems:?}");
 }
 
 /// A suite directory with the network suite's two runs, the reference's from `reference`.

@@ -1420,6 +1420,9 @@ fn check_bans(
 /// The seconds a suite run's fault window lasts after its recovery, as the suites' recipe gives it.
 pub const SUITE_WINDOW_SECONDS: i64 = 30;
 
+/// The last millisecond of the year 9999, the latest time a recorded text can name.
+const LAST_MILLISECOND: f64 = 253_402_300_799_999.0;
+
 /// The longest a suite's network may take to converge on one tip after a heal: the window the
 /// partition and heal scenario gives its check that every node is on one chain (24 blocks of
 /// 8 s).
@@ -1452,13 +1455,14 @@ pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
     let window = SUITE_WINDOW_SECONDS * 1_000;
     let mut rows: Vec<(i64, String, u64, String)> = Vec::new();
     for r in run::read_lines(&run_dir.join("propagation.jsonl"))? {
-        // A time as the recipe reads it: a text, or milliseconds since the Unix epoch.
+        // A time as the recipe reads it: a text, or milliseconds since the Unix epoch (within the
+        // years a text can name).
         let t = r.get("t").and_then(|t| match t {
             Value::String(text) => run::parse_time(text),
             #[allow(clippy::cast_possible_truncation)]
-            Value::Number(ms) => ms
-                .as_i64()
-                .or_else(|| ms.as_f64().map(|f| f.round() as i64)),
+            Value::Number(ms) => (ms.as_f64())
+                .filter(|f| (0.0..=LAST_MILLISECOND).contains(f))
+                .map(|f| f.round() as i64),
             _ => None,
         });
         let node = r.get("node").and_then(Value::as_str);
