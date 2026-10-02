@@ -10,6 +10,7 @@ use serde_json::Value;
 use crate::compare::{self, Difference};
 use crate::report::{CaseResult, Outcome, Report, describe_meta};
 use crate::subject::{Case, NOTES, Registry, SubjectError, Verdict};
+use crate::subjects::{COLLATE_AND_FORGE, collation_difference};
 use crate::vectors::{Expected, Meta, Record, VectorSet};
 
 /// Compare every record with Heartwood's subjects.
@@ -64,6 +65,18 @@ pub fn judge_case(case: &Case<'_>, expected: &Expected, registry: &Registry) -> 
         && let (Ok(Verdict::Output(actual)), Expected::Output(expected)) = (&result, expected)
     {
         return super::pool::judge(case.input, expected, actual);
+    }
+    // A forger's collation after a pool session: answers that differ are judged with the two
+    // sessions their notes carry.
+    if case.op == COLLATE_AND_FORGE
+        && let (Ok(Verdict::Output(actual)), Expected::Output(theirs)) = (&result, expected)
+    {
+        return match judge_result(Ok(Verdict::Output(actual.clone())), expected) {
+            Outcome::Mismatch(differences) => {
+                collation_difference(case, theirs, actual, registry, differences)
+            }
+            other => other,
+        };
     }
     judge_result(result, expected)
 }

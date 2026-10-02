@@ -8,12 +8,16 @@
 //!   timestamp, reward}` -> `{collated, removed, hex, id}`: the pool session's steps, a forger's
 //!   collation (`validate` on, nothing excluded), the ids the collation removed from the pool
 //!   (sorted), and `Delegate.forge` on the collated transactions after the pool's tip (see
-//!   `tools/oracle/lib/ops/forger-forge.js`).
+//!   `tools/oracle/lib/ops/forger-forge.js`). Both answers carry the session in their notes, as
+//!   `pool.run` answers it with the collation as its last step (`session`); Heartwood's also
+//!   carries the pool's tip (`tip`) and the bytes of each transaction the steps name, by id
+//!   (`transactions`).
 //!
 //! The pool session runs through this crate's `pool.run` subject, with the forger's collation as
-//! its last step; the collated transactions are found among the steps' entries by their ids. A
-//! session in which the reference's full pool evicted a transaction before refusing the new one
-//! is the pool's documented difference, and its collation is not compared.
+//! its last step; the collated transactions are found among the steps' entries by their ids.
+//! Answers that differ are judged by [`collation_difference`]: where the two sessions show one of
+//! the pool's documented differences that leave the pools holding different transactions, the case
+//! is that difference, provided the forging answers differ only where the pools do.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -24,7 +28,9 @@ use heartwood_forger::{Delegate, ForgeInputs};
 use serde_json::{Map, Value, json};
 
 use super::{Env, Outcome, Run, amount, bytes32, decode_refused, failed, integer, text};
-use crate::subject::{Case, Documented, Verdict};
+use crate::compare::{self, Difference};
+use crate::report::Outcome as Judged;
+use crate::subject::{Case, Documented, NOTES, Registry, Verdict};
 
 /// The operations of block assembly.
 pub(super) const OPS: &[(&str, Run)] = &[
@@ -34,6 +40,35 @@ pub(super) const OPS: &[(&str, Run)] = &[
 
 /// The keys of `forger.collateAndForge`'s input that are the forger's, not the pool session's.
 const FORGER_KEYS: [&str; 5] = ["privateKey", "aux", "previousBlock", "timestamp", "reward"];
+
+/// The operation whose answers [`collation_difference`] judges.
+pub const COLLATE_AND_FORGE: &str = "forger.collateAndForge";
+
+/// The note that holds a side's pool session, with the collation as its last step.
+const SESSION: &str = "session";
+
+/// The note of Heartwood's answer that holds the bytes of each transaction the steps name, by id.
+const TRANSACTIONS: &str = "transactions";
+
+/// The note of Heartwood's answer that holds the pool's tip, the height the block follows.
+const TIP: &str = "tip";
+
+/// The note of Heartwood's answer that holds the block's limits at the tip, which the collation
+/// keeps: `maxTransactions` and `maxPayload` (null where the milestone sets none).
+const LIMITS: &str = "limits";
+
+/// The bytes of a block header before its transactions, which the collation's byte budget leaves
+/// out.
+const BLOCK_HEADER_SIZE: i64 = 141;
+
+/// The pool's documented differences after which the two pools hold different transactions, so
+/// that the forger collates different ones on purpose.
+const POOL_DIFFERENCES: [Documented; 2] = [Documented::FullPoolEviction, Documented::OnlineView];
+
+/// The step a forger's collation adds to a pool session: `validate` on, nothing excluded.
+fn collation_step() -> Value {
+    json!({"op": "collate", "validate": true, "exclude": []})
+}
 
 fn forge(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let milestones = env.milestones(case)?;
@@ -69,7 +104,7 @@ fn collate_and_forge(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         .collect();
     let mut steps = input["steps"].as_array().cloned().unwrap_or_default();
     let user_steps = steps.len();
-    steps.push(json!({"op": "collate", "validate": true, "exclude": []}));
+    steps.push(collation_step());
     pool_input.insert("steps".into(), Value::Array(steps.clone()));
     let pool_input = Value::Object(pool_input);
     let pool_case = Case {
@@ -125,18 +160,510 @@ fn collate_and_forge(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let mut forger = input.clone();
     forger["previousBlock"] = previous;
     let block = forged(env, &forger, &transactions, tip, &milestones)?;
-    let verdict = match block {
+    let named: Map<String, Value> = (entries.iter())
+        .map(|(id, bytes)| (id.clone(), Value::from(hex::encode(bytes))))
+        .collect();
+    let rules = milestones.at(tip);
+    let limits = json!({
+        "maxTransactions": rules.max_transactions(), "maxPayload": rules.max_payload(),
+    });
+    Ok(match block {
         Verdict::Output(block) => Verdict::Output(json!({
             "collated": collated, "removed": removed, "hex": block["hex"], "id": block["id"],
+            NOTES: {SESSION: session, TIP: tip, TRANSACTIONS: named, LIMITS: limits},
         })),
         refused => refused,
-    };
-    // A session in which the reference's full pool evicted a transaction it then refused holds
-    // other transactions in Heartwood's pool, so its collation is not compared.
-    Ok(Verdict::DiffersWhereShown {
-        difference: Documented::FullPoolEviction,
-        verdict: Box::new(verdict),
     })
+}
+
+/// The outcome of a `forger.collateAndForge` case whose answers, the oracle's `expected` and
+/// Heartwood's `actual`, differ by `differences`.
+///
+/// The case is one of the pool's documented differences only where the sessions in the two
+/// answers' notes show one after which the pools hold different transactions (a full pool's
+/// eviction, in a batch or a re-add, or the online record in a sender's view: `POOL_DIFFERENCES`),
+/// judged by the pool's own judge ([`crate::levels::pool::judge`]), and where the forging answers
+/// differ only as the pools do (`unexplained_collation`):
+///
+/// - each side's collation follows from its own pool as the collator chooses: in priority order,
+///   each transaction collated or removed, until the block is full;
+/// - the collations list the transactions that both pools held in the same order, and remove the
+///   same ones among them (when a limit stopped a collation, the one that went less far lists a
+///   beginning of the other's);
+/// - Heartwood's block holds its collation and agrees with the reference's block in every field
+///   that does not depend on the transactions, and in its verification (`block_unexplained`);
+/// - Heartwood's forger makes the reference's block, byte for byte, from the reference's collated
+///   transactions, so the blocks differ only by the transactions in them.
+///
+/// Otherwise the case fails: with the session's own differences when the pool's judge fails it,
+/// and with the forging answers' differences (and the check that failed) when the sessions agree
+/// or a check fails.
+pub fn collation_difference(
+    case: &Case<'_>,
+    expected: &Value,
+    actual: &Value,
+    registry: &Registry,
+    differences: Vec<Difference>,
+) -> Judged {
+    let (Some(theirs), Some(ours)) = (expected[NOTES].get(SESSION), actual[NOTES].get(SESSION))
+    else {
+        return Judged::Mismatch(differences);
+    };
+    let mut steps = case.input["steps"].as_array().cloned().unwrap_or_default();
+    let user_steps = steps.len();
+    steps.push(collation_step());
+    let difference = match crate::levels::pool::judge(&json!({ "steps": steps }), theirs, ours) {
+        Judged::Documented(reason) => {
+            match POOL_DIFFERENCES.into_iter().find(|d| d.reason() == reason) {
+                Some(difference) => difference,
+                // A difference that changes no pool's contents: the pools agree.
+                None => return Judged::Mismatch(differences),
+            }
+        }
+        Judged::Pass => return Judged::Mismatch(differences),
+        failed => return failed,
+    };
+    let unexplained = |mut found: Vec<Difference>| {
+        let mut all = differences.clone();
+        all.append(&mut found);
+        Judged::Mismatch(all)
+    };
+    // The pools before the collation: the contents after the last step of the session's own.
+    let pool = |session: &Value| {
+        (user_steps.checked_sub(1))
+            .and_then(|last| session["results"].get(last))
+            .map_or(Value::Null, |step| step["contents"].clone())
+    };
+    if let Some(found) = unexplained_collation(&pool(theirs), expected, &pool(ours), actual) {
+        return unexplained(vec![found]);
+    }
+    if let Some(found) = block_unexplained(case, expected, actual, registry) {
+        return unexplained(vec![found]);
+    }
+    let theirs_block = json!({"hex": expected["hex"], "id": expected["id"]});
+    match reference_block(case, expected, actual, registry) {
+        Ok(block) => {
+            let found = compare::diff(
+                &theirs_block,
+                &json!({"hex": block["hex"], "id": block["id"]}),
+            );
+            if !found.is_empty() {
+                return unexplained(
+                    (found.into_iter())
+                        .map(|d| rebuilt_path(d, "the reference's collation forged by Heartwood"))
+                        .collect(),
+                );
+            }
+        }
+        Err(problem) => {
+            return unexplained(vec![Difference::Value {
+                path: "the reference's collation forged by Heartwood".into(),
+                expected: theirs_block,
+                actual: Value::from(problem),
+            }]);
+        }
+    }
+    Judged::Documented(difference.reason().to_owned())
+}
+
+/// The ids of `list`, a JSON array of ids.
+fn ids(list: &Value) -> Vec<String> {
+    (list.as_array().into_iter().flatten())
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Where the two collations, the reference's (`theirs`, of its pool before the collation
+/// `their_pool`) and Heartwood's (`ours`, of `our_pool`), differ otherwise than the two pools do;
+/// `None` when they differ only as the pools do. A pool is the contents after the session's last
+/// step (`all`, `highest`), an answer gives `collated` and `removed`, and Heartwood's notes give
+/// the bytes of each transaction and the block's limits.
+fn unexplained_collation(
+    their_pool: &Value,
+    theirs: &Value,
+    our_pool: &Value,
+    ours: &Value,
+) -> Option<Difference> {
+    let problem = |path: &str, what: String| Difference::Value {
+        path: path.to_owned(),
+        expected: Value::from("a collation that follows from the pool"),
+        actual: Value::from(what),
+    };
+    let notes = &ours[NOTES];
+    let stopped_theirs = match follows(their_pool, theirs, notes) {
+        Ok(stopped) => stopped,
+        Err(why) => return Some(problem("$.collated, the reference's", why)),
+    };
+    let stopped_ours = match follows(our_pool, ours, notes) {
+        Ok(stopped) => stopped,
+        Err(why) => return Some(problem("$.collated, Heartwood's", why)),
+    };
+    let (in_theirs, in_ours): (BTreeSet<String>, BTreeSet<String>) = (
+        ids(&their_pool["all"]).into_iter().collect(),
+        ids(&our_pool["all"]).into_iter().collect(),
+    );
+    let shared = |list: &Value, other: &BTreeSet<String>| -> Vec<String> {
+        ids(list)
+            .into_iter()
+            .filter(|id| other.contains(id))
+            .collect()
+    };
+    let limited = stopped_theirs || stopped_ours;
+    for key in ["collated", "removed"] {
+        let (a, b) = (
+            shared(&theirs[key], &in_ours),
+            shared(&ours[key], &in_theirs),
+        );
+        let agree = match (key, limited) {
+            (_, false) => a == b,
+            // A limit stopped a collation: how far each went depends on the other transactions.
+            ("collated", true) => a.starts_with(&b) || b.starts_with(&a),
+            (_, true) => true,
+        };
+        if !agree {
+            return Some(Difference::Value {
+                path: format!("$.{key}, of the transactions both pools held"),
+                expected: json!(a),
+                actual: json!(b),
+            });
+        }
+    }
+    None
+}
+
+/// Whether `answer`'s collation follows from `pool` as the collator chooses it. Down the pool's
+/// priority order (`highest`, which must keep each sender's transactions in the order `bySender`
+/// lists them, oldest first):
+///
+/// - a transaction whose sender's earlier one was removed is removed too (the removal takes the
+///   sender's later transactions with it), wherever it stands;
+/// - any other transaction is collated, in that order, while the block has room for it; or it is
+///   removed (it failed when the collator tried it, which it did only with room in the block); or
+///   it is neither, where the block is full, by `maxTransactions` or by the byte budget of
+///   `notes` (`maxPayload` less the header, then 4 bytes and the transaction's own each), and no
+///   later one is collated or fails.
+///
+/// `Ok(true)` when a limit stopped it, `Ok(false)` when it went through the whole pool; why not,
+/// when it does not follow.
+fn follows(pool: &Value, answer: &Value, notes: &Value) -> Result<bool, String> {
+    let collated = ids(&answer["collated"]);
+    let removed: BTreeSet<String> = ids(&answer["removed"]).into_iter().collect();
+    // The pool's views hold the same transactions, each once.
+    let held: BTreeSet<String> = ids(&pool["all"]).into_iter().collect();
+    let highest = ids(&pool["highest"]);
+    let senders: Vec<String> = (pool["bySender"].as_array().into_iter().flatten())
+        .flat_map(|sender| ids(&sender[1]))
+        .collect();
+    let same = |list: &[String]| {
+        list.len() == held.len() && list.iter().collect::<BTreeSet<_>>() == held.iter().collect()
+    };
+    if !same(&highest) || !same(&senders) {
+        return Err(
+            "the pool's priority order and its senders' lists do not hold the same \
+                    transactions as the pool"
+                .into(),
+        );
+    }
+    if let Some(id) = removed.iter().find(|id| !held.contains(*id)) {
+        return Err(format!("{id} is removed but was not in the pool"));
+    }
+    // Each transaction's sender's earlier ones (`bySender` lists them oldest first), which the
+    // priority order keeps before it: the collator takes a sender's transactions in nonce order.
+    let place: BTreeMap<&str, usize> = (highest.iter().enumerate())
+        .map(|(at, id)| (id.as_str(), at))
+        .collect();
+    let mut earlier: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for sender in pool["bySender"].as_array().into_iter().flatten() {
+        let list = ids(&sender[1]);
+        let places: Vec<Option<&usize>> = list.iter().map(|id| place.get(id.as_str())).collect();
+        if let Some(pair) = list
+            .windows(2)
+            .zip(places.windows(2))
+            .find(|(_, at)| at[0] >= at[1])
+        {
+            return Err(format!(
+                "{} comes before {}, its sender's earlier transaction, in the priority order",
+                pair.0[1], pair.0[0]
+            ));
+        }
+        for (at, id) in list.iter().enumerate() {
+            earlier.insert(id.clone(), list[..at].to_vec());
+        }
+    }
+    let size = |id: &str| -> Result<i64, String> {
+        (notes[TRANSACTIONS][id].as_str())
+            .map(|text| i64::try_from(text.len() / 2).unwrap_or(i64::MAX))
+            .ok_or_else(|| format!("{id} is named by no step"))
+    };
+    let max = notes[LIMITS]["maxTransactions"].as_u64();
+    let mut left = (notes[LIMITS]["maxPayload"].as_i64())
+        .map(|payload| payload.saturating_sub(BLOCK_HEADER_SIZE));
+    // Whether the block has no room for `id` after `count` transactions, with `left` bytes.
+    let full = |count: usize, left: Option<i64>, id: &str| -> Result<bool, String> {
+        let by_count = max.is_some_and(|max| u64::try_from(count).is_ok_and(|n| n >= max));
+        let by_bytes = match left {
+            Some(left) => left.saturating_sub(4).saturating_sub(size(id)?) < 0,
+            None => false,
+        };
+        Ok(by_count || by_bytes)
+    };
+    let mut next = 0;
+    let mut stop: Option<String> = None;
+    for id in highest {
+        let after_removal =
+            (earlier.get(&id)).is_some_and(|before| before.iter().any(|e| removed.contains(e)));
+        if after_removal {
+            if !removed.contains(&id) {
+                return Err(format!(
+                    "{id} is kept after its sender's earlier transaction was removed"
+                ));
+            }
+            continue;
+        }
+        if removed.contains(&id) {
+            if stop.is_some() || full(next, left, &id)? {
+                return Err(format!(
+                    "{id} is removed where the block had no room left to try it"
+                ));
+            }
+            continue;
+        }
+        if let Some(stop) = &stop {
+            if collated.contains(&id) {
+                return Err(format!(
+                    "{id} is collated after {stop}, where the block was full"
+                ));
+            }
+            continue;
+        }
+        let no_room = full(next, left, &id)?;
+        if collated.get(next) == Some(&id) {
+            if no_room {
+                return Err(format!("{id} is collated beyond the block's limits"));
+            }
+            if let Some(bytes) = &mut left {
+                *bytes = bytes.saturating_sub(4).saturating_sub(size(&id)?);
+            }
+            next += 1;
+            continue;
+        }
+        if !no_room {
+            return Err(format!(
+                "{id} is neither collated nor removed, and the block has room for it"
+            ));
+        }
+        stop = Some(id);
+    }
+    if next != collated.len() {
+        return Err(format!(
+            "{} is collated out of the pool's priority order, or is not in the pool",
+            collated.get(next).map_or("a transaction", String::as_str)
+        ));
+    }
+    Ok(stop.is_some())
+}
+
+/// The fields of a block that do not depend on its transactions, which two blocks forged with
+/// the same inputs share whatever they hold.
+const SHARED_FIELDS: [&str; 7] = [
+    "version",
+    "timestamp",
+    "height",
+    "previousBlock",
+    "reward",
+    "generatorPublicKey",
+    "donations",
+];
+
+/// Where Heartwood's block (`actual`) is not its collation in a block forged as the reference's
+/// (`expected`) was; `None` when it is. Both blocks are read with the `block.fromBytes` subject:
+/// Heartwood's id must be that of its bytes, its bytes the block they decode to written again (no
+/// trailing bytes), its transactions its collation in order, its fields that do not depend on the
+/// transactions the reference block's, and its verification the reference block's (signature,
+/// payload hash and totals included), by the rules that fail, whatever their numbers.
+fn block_unexplained(
+    case: &Case<'_>,
+    expected: &Value,
+    actual: &Value,
+    registry: &Registry,
+) -> Option<Difference> {
+    let read = |hex: &Value| -> Result<Value, String> {
+        let mut input = json!({ "hex": hex });
+        if let Some(milestones) = case.input.get("milestones") {
+            input["milestones"] = milestones.clone();
+        }
+        let request = Case {
+            op: "block.fromBytes",
+            input: &input,
+            ..*case
+        };
+        let subject =
+            (registry.get(request.op)).ok_or("no block.fromBytes subject is registered")?;
+        match subject.run(&request) {
+            Ok(Verdict::Output(block)) => Ok(block),
+            Ok(other) => Err(format!("the block is refused when read: {other:?}")),
+            Err(error) => Err(error.to_string()),
+        }
+    };
+    let problem = |what: String| Difference::Value {
+        path: "$.hex, Heartwood's block".into(),
+        expected: Value::from("Heartwood's collation, forged as the reference's block was"),
+        actual: Value::from(what),
+    };
+    let (theirs, ours) = match (read(&expected["hex"]), read(&actual["hex"])) {
+        (Ok(theirs), Ok(ours)) => (theirs, ours),
+        (Err(why), _) => return Some(problem(format!("the reference's block: {why}"))),
+        (_, Err(why)) => return Some(problem(why)),
+    };
+    if ours["id"] != actual["id"] {
+        return Some(problem(format!(
+            "its id {} is not {}, the id of its bytes",
+            actual["id"], ours["id"]
+        )));
+    }
+    if ours["hex"] != actual["hex"] {
+        return Some(problem(
+            "its bytes are not the block they decode to, written again".into(),
+        ));
+    }
+    let transactions: Vec<Value> = (ours["json"]["transactions"]
+        .as_array()
+        .into_iter()
+        .flatten())
+    .map(|transaction| transaction["id"].clone())
+    .collect();
+    if Value::Array(transactions) != actual["collated"] {
+        return Some(problem(
+            "its transactions are not Heartwood's collation".into(),
+        ));
+    }
+    if let Some(field) = SHARED_FIELDS
+        .into_iter()
+        .find(|field| ours["json"][*field] != theirs["json"][*field])
+    {
+        return Some(problem(format!("its {field} is not the reference block's")));
+    }
+    if verdict(&ours["verification"]) != verdict(&theirs["verification"]) {
+        return Some(problem(format!(
+            "its verification {} is not the reference block's {}",
+            ours["verification"], theirs["verification"]
+        )));
+    }
+    None
+}
+
+/// A block's verification as two blocks of different transactions share it: whether it is
+/// verified, and each failed rule's text with its numbers left out (two blocks can both be over
+/// the payload limit by different sizes), without the transactions a failure lists.
+fn verdict(verification: &Value) -> (Value, Vec<String>) {
+    let rules = (verification["errors"].as_array().into_iter().flatten())
+        .filter_map(Value::as_str)
+        .filter(|text| !text.starts_with("=> "))
+        .map(|text| {
+            let mut out = String::new();
+            for c in text.chars() {
+                if !c.is_ascii_digit() {
+                    out.push(c);
+                } else if !out.ends_with('#') {
+                    out.push('#');
+                }
+            }
+            out
+        })
+        .collect();
+    (verification["verified"].clone(), rules)
+}
+
+/// Heartwood's block for the reference's collated transactions (`forger.forge` with the case's
+/// key, aux, previous block, timestamp, reward and milestones, after the tip of Heartwood's
+/// session), or why there is none.
+fn reference_block(
+    case: &Case<'_>,
+    expected: &Value,
+    actual: &Value,
+    registry: &Registry,
+) -> Result<Value, String> {
+    let named = &actual[NOTES][TRANSACTIONS];
+    let transactions = (expected["collated"].as_array().into_iter().flatten())
+        .map(|id| {
+            (id.as_str().and_then(|id| named.get(id)).cloned())
+                .ok_or_else(|| format!("the reference collated {id}, which no step names"))
+        })
+        .collect::<Result<Vec<Value>, String>>()?;
+    let input = case.input;
+    let mut forge = json!({
+        "privateKey": input["privateKey"],
+        "aux": input["aux"],
+        "previousBlock": {"id": input["previousBlock"]["id"], "height": actual[NOTES][TIP]},
+        "timestamp": input["timestamp"],
+        "reward": input["reward"],
+        "transactions": transactions,
+    });
+    if let Some(milestones) = input.get("milestones") {
+        forge["milestones"] = milestones.clone();
+    }
+    let request = Case {
+        op: "forger.forge",
+        input: &forge,
+        ..*case
+    };
+    let subject = registry
+        .get(request.op)
+        .ok_or("no forger.forge subject is registered")?;
+    match subject.run(&request) {
+        Ok(Verdict::Output(block)) => Ok(block),
+        Ok(other) => Err(format!("Heartwood's forger refused it: {other:?}")),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// `difference` with `what` before its path.
+fn rebuilt_path(difference: Difference, what: &str) -> Difference {
+    let path = |path: String| format!("{what}: {path}");
+    match difference {
+        Difference::Value {
+            path: at,
+            expected,
+            actual,
+        } => Difference::Value {
+            path: path(at),
+            expected,
+            actual,
+        },
+        Difference::Bytes {
+            path: at,
+            offset,
+            expected_len,
+            actual_len,
+            expected_window,
+            actual_window,
+        } => Difference::Bytes {
+            path: path(at),
+            offset,
+            expected_len,
+            actual_len,
+            expected_window,
+            actual_window,
+        },
+        Difference::Missing { path: at, expected } => Difference::Missing {
+            path: path(at),
+            expected,
+        },
+        Difference::Extra { path: at, actual } => Difference::Extra {
+            path: path(at),
+            actual,
+        },
+        Difference::Order {
+            path: at,
+            expected,
+            actual,
+        } => Difference::Order {
+            path: path(at),
+            expected,
+            actual,
+        },
+    }
 }
 
 /// The bytes of every transaction the steps name (the processed entries, the re-added and removed
@@ -199,4 +726,192 @@ fn forged(
             detail: error.to_string(),
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A pool before the collation, with its transactions from the highest priority down, each
+    /// sender's (`senders`, oldest first) or each of a sender of its own.
+    fn pool_of(highest: &[&str], senders: &[&[&str]]) -> Value {
+        let mut by_sender: Vec<Value> = senders
+            .iter()
+            .enumerate()
+            .map(|(at, list)| json!([format!("sender {at}"), list]))
+            .collect();
+        for id in highest {
+            if !senders.iter().any(|list| list.contains(id)) {
+                by_sender.push(json!([format!("sender of {id}"), [id]]));
+            }
+        }
+        json!({"all": highest, "highest": highest, "bySender": by_sender})
+    }
+
+    fn pool(highest: &[&str]) -> Value {
+        pool_of(highest, &[])
+    }
+
+    /// An answer: its collation and removals, with notes of 100-byte transactions named a to z,
+    /// one of 1,000 bytes named `big`, and the block's limits.
+    fn answer(collated: &[&str], removed: &[&str], max: u64, payload: u64) -> Value {
+        let mut named: Map<String, Value> = (b'a'..=b'z')
+            .map(|c| (char::from(c).to_string(), Value::from("00".repeat(100))))
+            .collect();
+        named.insert("big".into(), Value::from("00".repeat(1_000)));
+        json!({"collated": collated, "removed": removed, NOTES: {TRANSACTIONS: named,
+               LIMITS: {"maxTransactions": max, "maxPayload": payload}}})
+    }
+
+    /// Whether `answer` follows from `pool`, with its own notes.
+    fn checked(pool: &Value, answer: &Value) -> Result<bool, String> {
+        follows(pool, answer, &answer[NOTES])
+    }
+
+    #[test]
+    fn a_collation_follows_its_pool_in_priority_order_until_the_block_is_full() {
+        let free = |collated: &[&str], removed: &[&str]| answer(collated, removed, 150, 2_097_152);
+        // Every transaction collated or removed, in priority order.
+        assert_eq!(
+            checked(&pool(&["s", "x", "t"]), &free(&["s", "t"], &["x"])),
+            Ok(false)
+        );
+        // A sender's next transaction before its earlier one: out of the pool's order.
+        assert!(checked(&pool(&["s", "l", "m"]), &free(&["s", "m", "l"], &[])).is_err());
+        // A transaction left out with room in the block.
+        assert!(checked(&pool(&["s", "x"]), &free(&["s"], &[])).is_err());
+        // Left out at the count limit, or at the byte budget (141 + 2 x 104 bytes holds two).
+        assert_eq!(
+            checked(&pool(&["s", "x"]), &answer(&["s"], &[], 1, 2_097_152)),
+            Ok(true)
+        );
+        let two = 141 + 2 * 104 + 103;
+        assert_eq!(
+            checked(&pool(&["s", "t", "x"]), &answer(&["s", "t"], &[], 150, two)),
+            Ok(true)
+        );
+        // Collated beyond the count or the byte budget.
+        assert!(checked(&pool(&["s", "x"]), &answer(&["s", "x"], &[], 1, 2_097_152)).is_err());
+        let one = 141 + 104 + 103;
+        assert!(checked(&pool(&["s", "x"]), &answer(&["s", "x"], &[], 150, one)).is_err());
+        // Nothing is collated after the block was full.
+        assert!(checked(&pool(&["s", "x", "y"]), &answer(&["s", "y"], &[], 2, one)).is_err());
+    }
+
+    #[test]
+    fn a_removal_is_a_failure_with_room_in_the_block_or_follows_the_senders_earlier_one() {
+        let free = |collated: &[&str], removed: &[&str]| answer(collated, removed, 150, 2_097_152);
+        // a failed, and b, its sender's next, went with it, wherever it stands.
+        let chained = pool_of(&["a", "s", "b"], &[&["a", "b"]]);
+        assert_eq!(checked(&chained, &free(&["s"], &["a", "b"])), Ok(false));
+        // b kept after a was removed.
+        assert!(checked(&chained, &free(&["s", "b"], &["a"])).is_err());
+        // A transaction the byte budget cannot hold stops the collation; it is not tried, so it
+        // cannot fail, and nothing after it is collated.
+        assert!(
+            checked(
+                &pool(&["big", "s"]),
+                &answer(&["s"], &["big"], 150, 141 + 600)
+            )
+            .is_err()
+        );
+        assert_eq!(
+            checked(&pool(&["big", "s"]), &answer(&[], &[], 150, 141 + 600)),
+            Ok(true)
+        );
+        // Removed after the block was full by its count: never tried.
+        assert!(checked(&pool(&["s", "y"]), &answer(&["s"], &["y"], 1, 2_097_152)).is_err());
+    }
+
+    #[test]
+    fn a_senders_transactions_keep_their_nonce_order_in_the_priority_order() {
+        let free = |collated: &[&str]| answer(collated, &[], 150, 2_097_152);
+        // l then m, one sender's: collated in that order.
+        let ordered = pool_of(&["s", "l", "m"], &[&["l", "m"]]);
+        assert_eq!(checked(&ordered, &free(&["s", "l", "m"])), Ok(false));
+        // The priority order puts m, the sender's later transaction, before l: whatever the
+        // collation, the pool's order is not the collator's.
+        let inverted = pool_of(&["s", "m", "l"], &[&["l", "m"]]);
+        assert!(checked(&inverted, &free(&["s", "m", "l"])).is_err());
+        assert!(checked(&inverted, &free(&["s", "l", "m"])).is_err());
+    }
+
+    #[test]
+    fn the_pools_views_must_hold_the_same_transactions() {
+        let free = |collated: &[&str], removed: &[&str]| answer(collated, removed, 150, 2_097_152);
+        // The priority order leaves out b, which the pool holds.
+        let mut short = pool(&["a", "b"]);
+        short["highest"] = json!(["a"]);
+        assert!(checked(&short, &free(&["a"], &[])).is_err());
+        // A removal of a transaction the pool did not hold.
+        assert!(checked(&pool(&["a"]), &free(&["a"], &["z"])).is_err());
+    }
+
+    #[test]
+    fn two_blocks_share_a_verification_by_the_rules_that_fail() {
+        let failing = |errors: &[&str]| json!({"verified": false, "errors": errors});
+        assert_eq!(
+            verdict(&failing(&["Payload is too large: 519 > 500"])),
+            verdict(&failing(&["Payload is too large: 529 > 500"]))
+        );
+        assert_ne!(
+            verdict(&failing(&["Payload is too large: 519 > 500"])),
+            verdict(&failing(&[
+                "Payload is too large: 529 > 500",
+                "Failed to verify block signature"
+            ]))
+        );
+        assert_ne!(
+            verdict(&json!({"verified": true, "errors": []})),
+            verdict(&failing(&["Invalid payload hash"]))
+        );
+    }
+
+    #[test]
+    fn the_collations_differ_only_where_the_pools_do() {
+        let free = |collated: &[&str]| answer(collated, &[], 150, 2_097_152);
+        // Heartwood's pool also holds l, which it collates after s.
+        assert_eq!(
+            unexplained_collation(
+                &pool(&["s"]),
+                &free(&["s"]),
+                &pool(&["s", "l"]),
+                &free(&["s", "l"])
+            ),
+            None
+        );
+        // Heartwood leaves out its own l with room in the block.
+        assert!(
+            unexplained_collation(
+                &pool(&["s"]),
+                &free(&["s"]),
+                &pool(&["s", "l"]),
+                &free(&["s"])
+            )
+            .is_some()
+        );
+        // The two collate the transactions both pools hold in another order.
+        let both = pool(&["s", "t"]);
+        assert!(
+            unexplained_collation(
+                &both,
+                &free(&["s", "t"]),
+                &pool(&["t", "s"]),
+                &free(&["t", "s"])
+            )
+            .is_some()
+        );
+        // One transaction a block: the reference's x, which only its pool holds, takes the place
+        // of s, which Heartwood collates.
+        let one = |collated: &[&str]| answer(collated, &[], 1, 2_097_152);
+        assert_eq!(
+            unexplained_collation(
+                &pool(&["x", "s"]),
+                &one(&["x"]),
+                &pool(&["s"]),
+                &one(&["s"])
+            ),
+            None
+        );
+    }
 }

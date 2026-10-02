@@ -77,6 +77,8 @@ mod config_app;
 mod digest;
 mod forger_decide;
 mod forging;
+
+pub use forging::{COLLATE_AND_FORGE, collation_difference};
 mod genesis;
 mod handlers;
 mod job;
