@@ -94,7 +94,9 @@ tools/p2p-fuzz-seeds.js   seeds the p2p fuzz corpora from a vector run's V24 and
 tools/forger-fuzz-seeds.js  seeds the forger's internal_body corpus from a vector run's V29 records
 tools/server-fuzz-seeds.js  seeds the server's nes_server_session corpus from V31's requests
 tools/api-fuzz-seeds.js  seeds the API's api_query corpus from the vectors' queries
-tools/codec-fuzz-seeds.js  seeds the address_decode and transaction_json corpora from V02 and V03
+tools/codec-fuzz-seeds.js  seeds the address_decode, transaction_json and api_head corpora from
+                      the addresses of V01 to V03, the transactions of V02 and V03 and the
+                      queries of V28 and V34
 tools/ops-doc-check.sh  runs the operator guide's command blocks on two private machines
 docs/operating.md     the operator guide: the relay, the forger and the core role, five nodes on
                       one machine, `config`, `top`, `service install`, logs and upgrades
@@ -151,7 +153,7 @@ make lockstep NAME=my-chain SEED=my-seed PROFILE=devnet RECIPE=tools/difftest/re
 make lockstep-batch COUNT=10 SEED=7 ROUNDS=5   # ten chains with drawn recipes; make l2-batch judges and replays them
 make scenario LEVEL=l2   # the scenario files through the lockstep producer, no network
 make fuzz-api replay-api   # the API's query fuzz target, and its corpus through the oracle
-make fuzz-codec replay-codec   # the address, transaction JSON and request head fuzz targets, and their replays
+make fuzz-codec replay-codec   # the address, transaction JSON and request head fuzz targets, and the first two's replays
 make ops-doc-check   # the operator guide's command blocks, run on two private machines
 ```
 
@@ -212,7 +214,7 @@ oracle answers, in the image and locally), `make oracle-save` (`docker save` of 
 | `RUN` | empty | the live run: `r`, `h`, `m1` or `m2` (see L3 and L4) with `LIVE_RECIPE`, or `t`, `m` or `f`, the runs of a forging devnet, with `DEVNET_RECIPE` |
 | `LEFT`, `RIGHT`, `API_COMPARE_OUT` | empty, empty, `target/api-compare` | two nodes' API URLs for a direct `api-compare`, and where it writes their answers |
 | `SEED`, `PROFILE`, `RECIPE`, `ROUNDS`, `LONG` | empty, empty, empty, `5`, empty | the chain `make lockstep` forges: its seed, its genesis profile, its recipe, its rounds, and `LONG=1`, which allows more than 5 (50 at most) |
-| `COUNT`, `BATCH_JOBS`, `BATCH` | empty | `make lockstep-batch`'s number of chains and how many it makes at once (the machine's parallelism when empty), and the batch seeds `make l2-batch` judges (every batch of `CORPUS` when empty) |
+| `COUNT`, `BATCH_JOBS`, `BATCH` | empty | `make lockstep-batch`'s number of chains and how many it makes at once (the machine's parallelism, at most 8, when empty), and the batch seeds `make l2-batch` judges (every batch of `CORPUS` when empty) |
 | `SCENARIO`, `LEVEL`, `BACKEND`, `DEVNET_ROOT` | every scenario, `l2`, `lockstep` at `l2` and `heartwood` above it, empty | the scenario files, level and backend `make scenario` runs, and the running devnet that a devnet backend drives |
 | `SUITE`, `IMPL` | empty | the scenario suite and implementation (`reference` or `heartwood`) `make suites` runs, with `SEED` as its network's seed |
 | `API_SEEDS`, `API_LOGS` | `packages/api/tests/vectors`, `target/api-fuzz` | the vectors that seed the `api_query` corpus, and the logs of `make fuzz-api` and `make replay-api` |
@@ -2110,17 +2112,23 @@ file of the corpus through the oracle's `api.fuzzQuery` and Heartwood and fails 
 have: a release build has no public item there): no input may panic, the work stays bounded, and
 a head reads the same at once and a few bytes at a time.
 
-**The codec fuzz targets.** `address_decode` reads text as an address of the devnet's network: no
-input may panic, and an accepted address re-encodes to the same text. `transaction_json` reads
-JSON text as a transaction with the reference's strictness and its `vendorField` and
-`asset.payments` aliases: no input may panic, and the bytes of an accepted transaction decode back
-to the same JSON. `make fuzz-codec` builds the three targets and runs them one after the other,
-each for `FUZZ_SECONDS`, seeded by `tools/codec-fuzz-seeds.js` from the vector run `CODEC_SEEDS`
-(the addresses and transactions of V02 and V03), each one gate record; `make
-replay-codec` sends the corpus of `address_decode` and `transaction_json` (`CODEC_REPLAY`) through
-the oracle's `Address.validate` and `TransactionFactory.fromData` and Heartwood, with `difftest
-oracle replay-codec TARGET CORPUS --vectors DIR`, and fails on a difference or an input it did not
-compare.
+**The codec fuzz targets.** `address_decode` reads an input's text (its lossy UTF-8 reading) as an
+address of the devnet's network or of the reference's mainnet: no input may panic, and an accepted
+address re-encodes to the same text and validates for its own network byte and for no other.
+`transaction_json` reads an input's text, as the API reads a request's body, as a transaction's
+JSON, strictly and not, with the reference's `vendorField` and `asset.payments` aliases: no input
+may panic, and the bytes of an accepted transaction decode back to the same bytes, id and JSON.
+`make fuzz-codec` builds the three targets and runs them one after the other, each for
+`FUZZ_SECONDS`, seeded by `tools/codec-fuzz-seeds.js` from the vector run `CODEC_SEEDS` (the
+addresses of V01 to V03, the transactions of V02 and V03, and the queries of V28 and V34 as
+request heads), each one gate record; `make replay-codec` sends the corpus of `address_decode` and
+`transaction_json` (`CODEC_REPLAY`) through the oracle (the reference's `Address.validate` and
+payload decoder, and `TransactionFactory.fromData` read strictly and not) and Heartwood, with
+`difftest oracle replay-codec TARGET CORPUS --vectors DIR`, and fails on a difference that is not
+documented or on an input it did not compare. Where both refuse, the verdicts are compared, not
+the reference's error class, which differs by the stage that refused. `api_head` has no replay:
+the oracle has no operation that reads a head as Node's parser does, so that target is
+crash-only.
 
 ## L2: chains, corpora and the state digest
 
@@ -2304,14 +2312,30 @@ as on a live chain. It has no API checkpoints or archives, so the judge's checks
 node's own records are reported as not applying. A chain is at most 5 rounds unless it is asked
 for with `--long`, and at most 50.
 
-`difftest lockstep batch --count N --rounds R --seed S [--long] [--profile P] [--jobs J]` makes N
-chains at once, `batch-S-1` to `batch-S-N`, each with a recipe drawn from the seed (transaction
-mixes, missed-slot patterns, reverts across round ends, restart points, a milestone that activates
-inside the chain, the online steps), and lists them in `batch-S.json`; `difftest run l2-batch DIR
-[--batch S]...` judges and replays every chain of the batches (`make lockstep-batch` and `make
-l2-batch`, one gate record each). A long chain's recipe attests one delegate in its first round
-only, so that its online entry expires at the start of round 7 and a vote for it there is refused
-`ERR_OFFLINE` by both pools; that is the one behaviour a chain of 5 rounds cannot show.
+`difftest lockstep batch --count N --rounds R --seed S [--long] [--profile P] [--out DIR] [--jobs
+J]` makes N chains, `batch-S-1` to `batch-S-N` (by default up to 8 at once), and lists them in
+`batch-S.json`. Each chain's recipe is drawn from the seed and the chain's place, so a batch can be
+made again chain by chain. Every chain funds its wallets and holds the six kept transaction types,
+the removed type's refused transaction, a vote for a delegate that is not attested (refused
+`ERR_OFFLINE`), an online step for every round, a missed-slot pattern, a restart point at a round
+start and at a round end, and from two rounds on a revert across a round end; whether it also
+forks, whether the delegate it registers wins votes and forges, whether a milestone activates
+inside it, whether that delegate resigns for good or for a time and, from six rounds on, whether a
+second delegate resigns for a time and revokes it are drawn. `difftest run l2-batch DIR [--batch
+S]...` judges every chain of the batches with the processor's results and replays it as any corpus
+is replayed (`l2` with the restarts of both start paths, `l2-processor` in both job cuts, the
+revert symmetry), and checks that the recipe's restart points and reverts are in the chain's plans
+(`make lockstep-batch` and `make l2-batch`, one gate record each). A long chain (`--long`, 7 rounds
+or more) attests one delegate in its first round only, so that its online entry has expired at the
+start of round 7: a vote for it in round 6 is admitted, and one in round 7's first block is refused
+`ERR_OFFLINE` by both pools, the one behaviour a chain of 5 rounds cannot show.
+
+The judge runs the reference's processor one block per job, so it does not show what the
+reference's cut of a download into jobs of 100 blocks does with a block whose generator registered
+earlier in the same job. The draw keeps a delegate that a chain registers from forging for the 115
+blocks after its registration, so that the two never share such a job, and `l2-batch` names, as a
+documented line, each such delegate that forges within one download of 400 blocks after its
+registration.
 
 ```sh
 make lockstep NAME=my-chain SEED=my-seed PROFILE=devnet RECIPE=tools/difftest/recipes/lockstep-5.json
@@ -2504,9 +2528,9 @@ each implementation, partition the nodes into groups, heal, wait, and at the loc
 revert and fork), checks (the pools accepted or refused the transactions with a named code, the
 transactions are or are not in the chain within some blocks, the implementations' state digests
 agree, a named projection of the API's answers is equal on the nodes given, missed slots were
-recorded, and invariants: the supply, one tip, the schedule, a revert's symmetry, a restart's
-equality, both sides of a partition forging, and the fork's recovery) or both. Every object
-refuses a key it does not know.
+recorded, and invariants: the supply, one tip, the schedule, the secondary reward on a delegate's
+second block of a round, a revert's symmetry, a restart's equality, both sides of a partition
+forging, and the fork's recovery) or both. Every object refuses a key it does not know.
 
 `difftest scenario compile FILE` builds every transaction once with the reference's builders (the
 fixed aux, a strict decode at the height the step plans), so that both implementations receive
@@ -2521,20 +2545,24 @@ reference and on Heartwood, of one seed, side by side. Each scenario ends with a
 `scenario <id>: pass|fail|skipped`.
 
 The suites are `transactions` (every kept type with its expected refusals: chained transfers, a
-double spend by nonce, large transfers, burns and the supply, a second signature, insufficient
-balances, repeated operations), `lifecycle` (the pool across a restart, the attestation of a
-delegate, missed slots, a vote in the last block of a round, a relay and a forger split, restarts,
-a delegate's resignation and its revoke), `network` (a sync from the genesis block, peer
-discovery, propagation, a partition and its heal) and `network-split` (a partition in which both
-sides forge); `scenarios/lockstep` holds the cases that only the lockstep producer can show (an
+double spend by nonce, large transfers, burns and the supply, a second signature, each kept type
+refused for a balance that cannot pay it, repeated operations), `lifecycle` (the pool across a
+restart, the attestation of a delegate, missed slots, a vote in the last block of a round, a relay
+and a forger split, restarts, a delegate's resignation and its revoke), `network` (a sync from the
+genesis block, peer discovery, propagation, a partition and its heal) and `network-split` (a
+partition in which both sides forge); `scenarios/lockstep` holds the cases that only the lockstep producer can show (an
 IPFS transaction refused, a vote in a round's last block, a milestone that activates inside the
 chain, reorgs that revert registrations and votes, ties among delegates with no votes, burns).
 `make scenario LEVEL=l2` runs the files through the lockstep producer with no network;
 `make suites SUITE=transactions IMPL=reference|heartwood SEED=NAME` runs a suite on one
 implementation (a devnet of this tree in mode B, or the reference's Docker devnet through the
-maintainers' tooling), and `make live-check RUN=suites SEED=NAME` compares the two. A suite stops
-at the end of its second round, except `lifecycle`, which needs three (a temporary resignation's
-revoke is valid no earlier than 107 blocks after it).
+maintainers' tooling), and `make live-check RUN=suites SEED=NAME` compares the two. In the
+`network` suite every block must reach every node within one block time (8 s) of its first arrival
+at any node, outside the fault windows; after a heal the partition's minority keeps a window until
+30 s after the network converged on one tip, which must happen within 192 s of the heal, and a
+partition without a heal fails. A suite stops at the end of its second round, except
+`lifecycle`, which needs three (a temporary resignation's revoke is valid no earlier than 107
+blocks after it).
 
 ### The mixed forging network
 
@@ -2551,10 +2579,11 @@ started inside their namespaces by the product's own `relay start` and `forger s
 supervisor, with the node's `CORE_PATH_*` variables, so the supervisor, the locks and the per-role
 logs are the ones an operator gets; reference nodes run their relay and their forger as two
 processes. A forger reaches its own relay on `127.0.0.1`, so its relay attests its keys. A partition
-moves a group's veth ends to a second bridge and back, and a fault is a line in the run's
-`faults.jsonl` with its nodes and its start; its window ends 30 seconds after the node answers its
-API again, or after the heal. The recipes are the maintainers' tooling (not published); the
-runs, named by content, are:
+puts, in each node's namespace, an unreachable route to every address of the other groups, and the
+heal removes those routes: the addresses stay, so the peers find each other again after the heal,
+and a send to the other side fails at once. A fault is a line in the run's `faults.jsonl` with its
+nodes and its start; its window ends 30 seconds after the node answers its API again, or after the
+heal. The recipes are the maintainers' tooling (not published); the runs, named by content, are:
 
 | Run | Network | What it shows |
 |---|---|---|
@@ -2573,7 +2602,16 @@ delegates before the next round's start; after the first round every reference r
 version for each Heartwood-hosted delegate, and every Heartwood relay's network state counts all
 53 delegates before a partition; both sides of a partition forged and converged after the heal;
 no reference node banned a Heartwood node; each block was made by the delegate its slot names; and
-every Heartwood relay's digest lines equal the judge's. A reference node writes no block file, so
+every Heartwood relay's digest lines equal the judge's. A block that a relay of the minority applied
+in the first slots of a partition, before it found it had lost its peers, is on no judged chain: the
+branch the relay held when it applied the block is built from its block files and judged by the
+reference with its processor's results, and the relay's lines of the block must equal the
+branch's. In a run whose recipe sends a transaction to one node of an API pair only, that node's
+handler may refuse it and so move its parties inside their ties in the wallet indexes, where the
+other node never sees it: the check then lets such a wallet, and only such a wallet, stand at
+another place inside its tie on the listings of that pair, with its evidence read from the run's
+own records (sent to that node alone and refused there by its handler before the route corpus was
+recorded), and names the wallet. A reference node writes no block file, so
 the chain's blocks are the Heartwood relays': each holds every block it applied, those of an
 abandoned branch included. The resource series of the longer runs (each node's whole process
 tree, every 10 seconds, with the bytes written and the log growth) are recorded and read against
@@ -2708,7 +2746,7 @@ difftest forger crash [--kills N] [--seed S] [--child FILE]
 difftest network generate DIR
 difftest levels
 difftest oracle replay OP CORPUS --vectors DIR [--height N] [--milestones FILE] [ORACLE]
-difftest oracle replay-codec address_decode|transaction_json|api_head CORPUS --vectors DIR [ORACLE]
+difftest oracle replay-codec address_decode|transaction_json CORPUS --vectors DIR [ORACLE]
 difftest lockstep make --seed S --profile P --rounds R --recipe FILE --out DIR [--long] [ORACLE]
 difftest lockstep batch --count N --rounds R --seed S [--long] [--profile P] [--out DIR] [--jobs J] [ORACLE]
 difftest run l2-batch DIR [--batch SEED]... [ORACLE]
