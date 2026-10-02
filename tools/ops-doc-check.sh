@@ -16,8 +16,8 @@
 #
 # What counts as a command block. A fenced block whose language is `sh` is a command block and
 # runs; `text`, `json` and `ini` blocks are shown, never run; any other fence language, a fence
-# without one and an indented fence are errors, so that no command can hide from the check. After
-# `sh` a fence may carry words, which the check reads and a Markdown viewer ignores:
+# without one, an indented fence and a tilde fence are errors, so that no command can hide from the
+# check. After `sh` a fence may carry words, which the check reads and a Markdown viewer ignores:
 #
 #   second          run on the second machine (the forger's host) instead of the first
 #   follows         the command follows a log until it is interrupted: stop it after 8 s, success
@@ -96,6 +96,7 @@ touch "$run/.ops-doc-check"
 if ! awk -v dir="$run/blocks" '
     function bad(message) { print FILENAME ":" NR ": " message > "/dev/stderr"; errors++ }
     /^[ \t]+```/ { bad("an indented fence: write every fence at the start of its line"); next }
+    !inside && /^[ \t]*~~~/ { bad("a tilde fence: write every fence with backticks"); next }
     /^```/ {
         if (!inside) {
             info = substr($0, 4); sub(/^[ \t]+/, "", info)
