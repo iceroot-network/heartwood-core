@@ -29,7 +29,11 @@ fuzz_target!(|data: &[u8]| {
     let Ok(address) = Address::from_base58(text) else {
         return;
     };
-    assert_eq!(address.to_base58(), text, "an accepted address is written as it was read");
+    assert_eq!(
+        address.to_base58(),
+        text,
+        "an accepted address is written as it was read"
+    );
     assert_eq!(Address::from_base58(&address.to_base58()), Ok(address));
     let own = address.network();
     assert!(Address::validate(text, own));

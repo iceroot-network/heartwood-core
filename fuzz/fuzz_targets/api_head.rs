@@ -29,7 +29,10 @@ fn check(data: &[u8]) {
     };
     let whole = head_verdict(bytes, usize::MAX);
     let split = head_verdict(bytes, usize::from(step));
-    assert_eq!(whole, split, "a head reads the same at once and {step} bytes at a time");
+    assert_eq!(
+        whole, split,
+        "a head reads the same at once and {step} bytes at a time"
+    );
     if let Some(HeadVerdict::Ended(Some(served))) = &whole {
         assert!(
             served.len() <= GROWTH * bytes.len() + SLACK,
