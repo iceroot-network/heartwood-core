@@ -32,7 +32,8 @@
 # joined by a veth pair: 10.90.0.1 (first) and 10.90.0.2 (second). Nothing is published on the
 # host and no host address, route or sysctl is touched. Each machine has its own scratch home
 # directory under OPS_DOC_ROOT, so a block reads and writes nothing of this machine's own
-# instances, and its own temporary directory. Blocks run with a clean environment, the
+# instances, its own temporary directory, and its own runtime directory (XDG_RUNTIME_DIR, mode
+# 700), as a login session has one. Blocks run with a clean environment, the
 # heartwood binary first on PATH. A block's processes live in these namespaces, and the check
 # stops every one of them, found by its namespace, before it ends.
 #
@@ -89,6 +90,7 @@ if [ -e "$run" ]; then
     rm -rf -- "$run"
 fi
 mkdir -p -- "$run/blocks" "$run/logs" "$run/bin" "$run/m1/home" "$run/m1/tmp" "$run/m2/home" "$run/m2/tmp" || refuse "cannot make $run"
+mkdir -m 700 -- "$run/m1/rt" "$run/m2/rt" || refuse "cannot make the machines' runtime directories"
 touch "$run/.ops-doc-check"
 
 if ! awk -v dir="$run/blocks" '
@@ -241,7 +243,7 @@ ln -s "$binary" "$run/bin/heartwood"
 # ---- the blocks ----
 
 block_env() { # block_env MACHINE: the clean environment of a machine's commands
-    echo "HOME=$run/m$1/home" "USER=operator" "LANG=C" "TERM=dumb" "TMPDIR=$run/m$1/tmp" \
+    echo "HOME=$run/m$1/home" "USER=operator" "LANG=C" "TERM=dumb" "TMPDIR=$run/m$1/tmp" "XDG_RUNTIME_DIR=$run/m$1/rt" \
         "PATH=$run/bin:/usr/local/bin:/usr/bin:/bin" "OPS_HOME_1=$run/m1/home" "OPS_HOME_2=$run/m2/home"
 }
 
@@ -294,8 +296,6 @@ for number in $(seq -f '%03g' 1 "$count"); do
     timeout --signal=TERM --kill-after=15 "$limit" nsenter -t "$holder" -U -n --preserve-credentials -- \
         env -i $(block_env "$machine") "${cmd[@]}" >"$log" 2>&1 </dev/null
     status=$?
-    expected=0
-    [ "$fails" = 0 ] || expected=1
     ok=1
     if [ "$follows" = 1 ]; then
         [ "$status" = 124 ] || ok=0
