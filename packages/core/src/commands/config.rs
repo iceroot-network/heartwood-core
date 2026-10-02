@@ -4,6 +4,7 @@
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
+use heartwood_cli::Role;
 use heartwood_cli::instance::InstanceFlags;
 
 /// A `config` command.
@@ -69,9 +70,27 @@ pub struct PrivateKey {
 
 /// Run `command`.
 pub fn run(command: ConfigCommand) -> ExitCode {
-    let what = match command {
-        ConfigCommand::Publish(_) => "config publish",
-        ConfigCommand::Forger(_) => "config forger",
-    };
-    super::not_built(what)
+    use heartwood_cli::config as c;
+    match command {
+        ConfigCommand::Publish(p) => super::on_instance(Role::Relay, &p.instance, |i| {
+            c::publish(i, p.force).map(|done| print!("{done}"))
+        }),
+        ConfigCommand::Forger(f) => {
+            let (flags, method, key) = match f.with {
+                Some(ForgerMethod::PrivateKey(k)) => {
+                    let flags = c::merged(k.instance, f.instance);
+                    (flags, None, k.private_key.or(f.private_key))
+                }
+                None => (
+                    f.instance,
+                    f.method.or(f.bip39.map(|_| "bip39".into())),
+                    f.private_key,
+                ),
+            };
+            super::on_instance(Role::Relay, &flags, |i| {
+                let wrote = c::forger(i, method.as_deref(), key.as_deref());
+                wrote.map(|file| println!("Wrote the private key to {}", file.display()))
+            })
+        }
+    }
 }
