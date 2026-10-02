@@ -574,7 +574,9 @@ impl Ctx<'_, '_> {
     /// block's height enables dynamic rewards, a block whose generator forged an earlier block of
     /// the same round is rewarded with `secondaryReward`. Its first block's reward follows its
     /// rank, which the reference's processing judges. A chain with no second block of a delegate
-    /// in a round compares nothing, and says so.
+    /// in a round compares nothing, and says so. The listing must hold every block from the
+    /// genesis block to the tip once, in order: a block it leaves out could hide a delegate's
+    /// first block of a round, and so its second.
     fn secondary_reward(&mut self) -> Probe {
         let (node, tip) = self.runner.observe()?;
         let length = self.runner.chain.round_length.max(1);
@@ -582,7 +584,23 @@ impl Ctx<'_, '_> {
         let mut forged: std::collections::HashMap<u32, Vec<String>> =
             std::collections::HashMap::new();
         let (mut compared, mut wrong) = (0_usize, Vec::new());
-        for block in self.blocks(node, tip.height)? {
+        let blocks = self.blocks(node, tip.height)?;
+        let heights: Vec<Option<u64>> = blocks.iter().map(|b| b["height"].as_u64()).collect();
+        let listed = |i: usize| heights.get(i).copied().flatten();
+        let nth = |i: usize| u64::try_from(i).ok().map(|i| i + 1);
+        let tip_index = usize::try_from(tip.height).unwrap_or(usize::MAX);
+        if let Some(index) = (0..heights.len().max(tip_index)).find(|i| listed(*i) != nth(*i)) {
+            return Ok(Outcome::HarnessError(format!(
+                "/api/blocks of node {node} does not list every block from 1 to the tip {} once \
+                 and in order: at position {} it gives {}",
+                tip.height,
+                index + 1,
+                blocks
+                    .get(index)
+                    .map_or_else(|| "nothing".to_owned(), |b| b["height"].to_string())
+            )));
+        }
+        for block in blocks {
             let height = block["height"]
                 .as_u64()
                 .and_then(|h| u32::try_from(h).ok())
@@ -642,16 +660,21 @@ fn amount(value: &Value) -> Option<u128> {
 }
 
 /// The `secondaryReward` of the milestone at `height` when it enables dynamic rewards: the
-/// milestones up to that height merged in order, as the reference's configuration manager merges
-/// them, each later key over an earlier one.
+/// milestones up to that height, sorted by height, merged in order, as the reference's
+/// configuration manager merges them: each key a later milestone names over the earlier one's,
+/// objects key by key, a `null` replacing what was there; a key it does not name is kept.
 fn secondary_reward_at(milestones: &Value, height: u32) -> Option<u128> {
+    let mut sorted: Vec<&Value> = milestones
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| m["height"].as_u64().is_some_and(|h| h <= u64::from(height)))
+        .collect();
+    sorted.sort_by_key(|m| m["height"].as_u64());
     let mut merged = Value::Null;
-    for milestone in milestones.as_array().into_iter().flatten() {
-        if milestone["height"]
-            .as_u64()
-            .is_some_and(|h| h <= u64::from(height))
-        {
-            merge(&mut merged, &milestone["dynamicReward"]);
+    for milestone in sorted {
+        if let Some(over) = milestone.get("dynamicReward") {
+            merge(&mut merged, over);
         }
     }
     (merged["enabled"] == Value::Bool(true))
@@ -659,13 +682,18 @@ fn secondary_reward_at(milestones: &Value, height: u32) -> Option<u128> {
         .flatten()
 }
 
-/// `over` merged into `into`: objects key by key, anything else replacing what was there.
+/// `over` merged into `into`: objects key by key, anything else (`null` too) replacing what was
+/// there.
 fn merge(into: &mut Value, over: &Value) {
     match (into, over) {
-        (_, Value::Null) => {}
         (Value::Object(into), Value::Object(over)) => {
             for (key, value) in over {
-                merge(into.entry(key.clone()).or_insert(Value::Null), value);
+                match into.get_mut(key) {
+                    Some(earlier) => merge(earlier, value),
+                    None => {
+                        into.insert(key.clone(), value.clone());
+                    }
+                }
             }
         }
         (into, over) => *into = over.clone(),
@@ -761,4 +789,32 @@ pub fn evaluate(ctx: &mut Ctx<'_, '_>, check: &Check) -> Vec<CaseResult> {
         cases.push(ctx.case(label, h, outcome));
     }
     cases
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn the_secondary_reward_follows_the_merged_milestones() {
+        let first = json!({"height": 1, "dynamicReward": {"enabled": true, "secondaryReward": "180000000", "ranks": {"1": 200}}});
+        // Merged in height order, whatever the file's order: a later milestone's key wins.
+        let raised = json!({"height": 10, "dynamicReward": {"secondaryReward": 90}});
+        let milestones = json!([raised.clone(), first.clone()]);
+        assert_eq!(secondary_reward_at(&milestones, 9), Some(180_000_000));
+        assert_eq!(secondary_reward_at(&milestones, 10), Some(90));
+        // A milestone that does not name dynamic rewards keeps them.
+        let silent = json!([first.clone(), {"height": 5, "reward": "0"}]);
+        assert_eq!(secondary_reward_at(&silent, 6), Some(180_000_000));
+        // A milestone that sets them to null, or disables them, ends them.
+        for off in [json!(null), json!({"enabled": false})] {
+            let ended = json!([first.clone(), {"height": 5, "dynamicReward": off}]);
+            assert_eq!(secondary_reward_at(&ended, 4), Some(180_000_000));
+            assert_eq!(secondary_reward_at(&ended, 5), None, "{ended}");
+        }
+        // A null inside replaces the earlier value.
+        let cleared = json!([first, {"height": 5, "dynamicReward": {"secondaryReward": null}}]);
+        assert_eq!(secondary_reward_at(&cleared, 5), None);
+    }
 }

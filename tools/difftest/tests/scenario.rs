@@ -1258,17 +1258,25 @@ fn a_delegate_s_second_block_of_a_round_carries_the_secondary_reward() {
         run_on(&mut fake, &compiled).0.results.remove(0).outcome
     };
     let block = |height: u32, generator: &str, reward: &str| json!({"height": height, "generator": {"publicKey": generator}, "forged": {"reward": reward}});
-    let genesis = json!({"height": 1, "generator": {"publicKey": "g"}, "forged": {"reward": "0"}});
+    // Every block from the genesis block to the tip (60): those of `named` as given, the others
+    // each by a delegate of its own.
+    let listing = |named: &[Value]| {
+        let mut blocks =
+            vec![json!({"height": 1, "generator": {"publicKey": "g"}, "forged": {"reward": "0"}})];
+        for height in 2..=60_u32 {
+            blocks.push(
+                named
+                    .iter()
+                    .find(|b| b["height"] == height)
+                    .cloned()
+                    .unwrap_or_else(|| block(height, &format!("d{height}"), "200000000")),
+            );
+        }
+        Value::Array(blocks)
+    };
     // Delegate aa forges height 2 at its rank's reward, then height 4, a slot of its round that
     // came to it again, at the secondary reward.
-    let chain = |second: &str| {
-        json!([
-            genesis.clone(),
-            block(2, "aa", "220000000"),
-            block(3, "bb", "200000000"),
-            block(4, "aa", second),
-        ])
-    };
+    let chain = |second: &str| listing(&[block(2, "aa", "220000000"), block(4, "aa", second)]);
     assert_eq!(run_with(chain(secondary)), Outcome::Pass);
     // Its rank's reward again on the second block is the wrong answer; so is a number of another
     // value.
@@ -1286,19 +1294,37 @@ fn a_delegate_s_second_block_of_a_round_carries_the_secondary_reward() {
     numeric[3]["forged"]["reward"] = json!(180_000_000);
     assert_eq!(run_with(numeric), Outcome::Pass);
     // A delegate's blocks in two rounds are each its first: nothing is compared, and it says so.
-    let apart = json!([
-        genesis.clone(),
-        block(2, "aa", "220000000"),
-        block(54, "aa", "1")
-    ]);
+    let apart = listing(&[block(2, "aa", "220000000"), block(54, "aa", "1")]);
     assert!(
         matches!(run_with(apart), Outcome::Skipped(why) if why.contains("no delegate forged a second block")),
     );
     // A block that names no generator cannot be placed.
-    let nameless = json!([genesis, {"height": 2, "forged": {"reward": "1"}}]);
+    let mut nameless = listing(&[]);
+    nameless[1] = json!({"height": 2, "forged": {"reward": "1"}});
     assert!(
         matches!(run_with(nameless), Outcome::HarnessError(m) if m.contains("names no generator"))
     );
+    // A listing that leaves out a block (here the delegate's first of the round, which would make
+    // its wrong second reward pass unseen), lists one twice, or stops short of the tip is not
+    // judged.
+    let mut gap = chain("220000000");
+    gap.as_array_mut().expect("a listing").remove(1);
+    let mut twice = chain(secondary);
+    let again = twice[2].clone();
+    twice.as_array_mut().expect("a listing").insert(2, again);
+    let mut short = chain(secondary);
+    short.as_array_mut().expect("a listing").pop();
+    for (what, listing, at) in [
+        ("gap", gap, "at position 2 it gives 3"),
+        ("twice", twice, "at position 4 it gives 3"),
+        ("short", short, "at position 60 it gives nothing"),
+    ] {
+        let outcome = run_with(listing);
+        assert!(
+            matches!(&outcome, Outcome::HarnessError(m) if m.contains("does not list every block") && m.contains(at)),
+            "{what}: {outcome:?}"
+        );
+    }
 }
 
 // The records and their comparison.
