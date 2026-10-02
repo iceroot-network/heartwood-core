@@ -162,6 +162,8 @@ pub enum SupervisedStatus {
     Online,
     /// The node runs without a supervisor (`<role> run` in a terminal).
     OnlineUnsupervised,
+    /// The node runs under a service manager (a systemd unit), without a supervisor.
+    OnlineSystemd,
     /// A stop was asked for and the node has not exited yet.
     Stopping,
     /// Nothing runs.
@@ -177,6 +179,7 @@ impl SupervisedStatus {
             SupervisedStatus::Launching => "launching",
             SupervisedStatus::Online => "online",
             SupervisedStatus::OnlineUnsupervised => "online (unsupervised)",
+            SupervisedStatus::OnlineSystemd => "online (systemd)",
             SupervisedStatus::Stopping => "stopping",
             SupervisedStatus::Stopped => "stopped",
             SupervisedStatus::Errored => "errored",
@@ -190,6 +193,7 @@ impl SupervisedStatus {
             SupervisedStatus::Launching
                 | SupervisedStatus::Online
                 | SupervisedStatus::OnlineUnsupervised
+                | SupervisedStatus::OnlineSystemd
                 | SupervisedStatus::Stopping
         )
     }

@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use heartwood_cli::supervisor::RunDir;
-use heartwood_cli::supervisor::signals::take_lock_in;
+use heartwood_cli::supervisor::signals::{record_manager, take_lock_in};
 use heartwood_cli::{Instance, Role};
 use heartwood_kernel::paths::Paths;
 use thiserror::Error;
@@ -51,6 +51,8 @@ impl ProcessLock {
         let (path, role) = (instance.lock_path(), instance.role.name());
         let file = take_lock_in(&dir, &path).map_err(|e| io(&e))?;
         let file = file.ok_or(LockError::Held { role, path })?;
+        // A node a service manager starts records it, beside the lock, for `status` and `stop`.
+        record_manager(&dir, instance, &|name| std::env::var(name).ok()).map_err(|e| io(&e))?;
         // The lock is held, so a pid file that is there names no running process of the role.
         let pid = instance.pid_path();
         let _ = dir.remove(&pid);

@@ -12,7 +12,9 @@
 //!   supervisor recorded with the caller's environment, as pm2's `--update-env` does.
 //! - `status` gives the process table row: ID, Name, Version, Status, Uptime, Restarts, CPU, RAM.
 //!   The state file is trusted only while the supervisor's lock is held; a node whose lock is held
-//!   without one is `online (unsupervised)`.
+//!   without one is `online (unsupervised)`, or `online (systemd)` when its start recorded a
+//!   service manager ([`crate::supervisor::manager`]); `stop` and `restart` refuse such a node
+//!   and name the manager's command.
 //! - `log` prints the last lines of the output capture (15 by default), or of the error capture,
 //!   and follows it when asked.
 //!
@@ -34,6 +36,7 @@ use nix::sys::signal::Signal;
 use crate::errors::ProcessError;
 use crate::process_table;
 use crate::seams::{Env, Instance, ProcessOps, StatusRow, SupervisedStatus};
+use crate::supervisor::manager::ManagerRecord;
 use crate::supervisor::signals::{
     KILL_AFTER, held_pid, is_locked, leads_group, leads_session, send, send_group, signal_if_locked,
 };
@@ -124,6 +127,7 @@ pub fn start(
 /// Stop `instance` and wait until its node has exited.
 pub fn stop(instance: &Instance) -> Result<(), ProcessError> {
     let name = instance.name();
+    refuse_managed(instance, "stop")?;
     let row = status(instance)?;
     let (lock, pid, signal) = match row.status {
         SupervisedStatus::OnlineUnsupervised => (instance.lock_path(), row.pid, Signal::SIGINT),
@@ -226,6 +230,7 @@ fn kill_node_group(state: Option<&SupervisorState>, supervisor: u32) -> Result<(
 
 /// Stop `instance`, then start it again with the argv its supervisor ran and `env`.
 pub fn restart(instance: &Instance, env: &Env) -> Result<(), ProcessError> {
+    refuse_managed(instance, "restart")?;
     if !status(instance)?.status.is_running() {
         let name = instance.name();
         return Err(ProcessError::NotRunning { name });
@@ -240,7 +245,12 @@ pub fn restart(instance: &Instance, env: &Env) -> Result<(), ProcessError> {
 pub fn status(instance: &Instance) -> Result<StatusRow, ProcessError> {
     let state = SupervisorState::read(&instance.state_path())?;
     let supervised = is_locked(&instance.supervisor_lock_path())?;
+    let managed = managed_by(instance)?;
     let (status, pid) = match &state {
+        _ if managed.is_some() => (
+            SupervisedStatus::OnlineSystemd,
+            read_pid(&instance.pid_path()),
+        ),
         _ if !supervised && is_locked(&instance.lock_path())? => (
             SupervisedStatus::OnlineUnsupervised,
             read_pid(&instance.pid_path()),
@@ -268,6 +278,34 @@ pub fn status(instance: &Instance) -> Result<StatusRow, ProcessError> {
         restarts: state.as_ref().map_or(0, |s| s.restarts),
         cpu_percent: sample.map(|s| s.cpu_percent),
         rss_bytes: sample.map(|s| s.rss_bytes),
+    })
+}
+
+/// The record of the service manager that runs `instance`: only while its node holds its lock
+/// without a supervisor, the record being the node's own ([`ManagerRecord`]), and a stale one
+/// naming nothing.
+fn managed_by(instance: &Instance) -> Result<Option<ManagerRecord>, ProcessError> {
+    let node = !is_locked(&instance.supervisor_lock_path())? && is_locked(&instance.lock_path())?;
+    match node {
+        true => ManagerRecord::read(&instance.manager_path()),
+        false => Ok(None),
+    }
+}
+
+/// Refuse `verb` (`stop` or `restart`) of a node that a service manager runs, naming the
+/// manager's command: the manager would start a stopped node again.
+fn refuse_managed(instance: &Instance, verb: &str) -> Result<(), ProcessError> {
+    let Some(record) = managed_by(instance)? else {
+        return Ok(());
+    };
+    let unit = record.unit;
+    let command =
+        format!("`systemctl --user {verb} {unit}` (`systemctl {verb} {unit}` for a system unit)");
+    let (name, manager) = (instance.name(), record.manager.name());
+    Err(ProcessError::Managed {
+        name,
+        manager,
+        command,
     })
 }
 

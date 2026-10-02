@@ -54,6 +54,16 @@ pub enum ProcessError {
         /// The instance's name.
         name: String,
     },
+    /// `stop` or `restart` of a role that a service manager runs.
+    #[error("{name} runs under {manager}: use {command}")]
+    Managed {
+        /// The instance's name.
+        name: String,
+        /// The service manager.
+        manager: &'static str,
+        /// The manager's command that does it, as the message quotes it.
+        command: String,
+    },
     /// A lock file could not be taken or read.
     #[error("the lock {} cannot be taken: {message}", path.display())]
     Lock {
