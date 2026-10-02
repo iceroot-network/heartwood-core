@@ -8,7 +8,9 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 
-use heartwood_api::controllers::delegates::{delegates_page, find_delegate, listing};
+use heartwood_api::controllers::delegates::{
+    delegates_page, find_delegate, listing, named_delegate,
+};
 use heartwood_api::controllers::wallets_list::wallets_page;
 use heartwood_api::pagination::Pagination;
 use heartwood_api::resources::delegate::{delegate, supply};
@@ -278,22 +280,23 @@ fn delegates_route(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         ));
     }
     let id = request.param("id").unwrap_or_default();
-    let wallet = match find_delegate(&state.wallets, id) {
-        Ok(wallet) => wallet,
-        Err(error) => return Ok(refusal(&error)),
-    };
     if request.route == RouteId::DelegatesShow {
+        let wallet = match find_delegate(&state.wallets, id) {
+            Ok(wallet) => wallet,
+            Err(error) => return Ok(refusal(&error)),
+        };
         let resource = delegate(&wallet, supply, &state.pool, &state.table);
         return Ok(answer(
             resource.map(|resource| json!({ "data": plain(resource) })),
         ));
     }
-    let name = wallet.delegate().map(|record| record.username().to_owned());
+    // The voters: the delegate's resource is built first, as the route builds it.
+    let name = match named_delegate(&state.wallets, id) {
+        Ok(name) => name,
+        Err(error) => return Ok(refusal(&error)),
+    };
     let mut voting = Map::new();
-    voting.insert(
-        "votingFor".to_owned(),
-        json!([{ name.unwrap_or_default(): "*" }]),
-    );
+    voting.insert("votingFor".to_owned(), json!([{ name: "*" }]));
     let criteria = [of_query(query), Criteria(voting)];
     let tail = [("balance", Direction::Desc)];
     let parts = (pagination, sorting_of(query, &tail), &criteria[..]);
