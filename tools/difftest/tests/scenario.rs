@@ -6,7 +6,7 @@
 //! `DIFFTEST_TEST_IMAGE`, and fail without one unless `DIFFTEST_TEST_NO_ORACLE` says to skip).
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -323,6 +323,8 @@ struct Fake {
     held: BTreeSet<u32>,
     /// A node on a branch of its own: its tips' ids end with the suffix below the height.
     branch: HashMap<u32, (String, u32)>,
+    /// The delegates of each node's forger, as a network's description names them.
+    by_node: BTreeMap<u32, Vec<String>>,
 }
 
 impl Fake {
@@ -345,6 +347,7 @@ impl Fake {
             catch_up: None,
             held: BTreeSet::new(),
             branch: HashMap::new(),
+            by_node: BTreeMap::new(),
         }
     }
 
@@ -516,6 +519,10 @@ impl Backend for Fake {
 
     fn forger_delegates(&self, _: u32) -> Result<Vec<String>, BackendError> {
         Ok(self.delegates.clone())
+    }
+
+    fn delegates_by_node(&self) -> BTreeMap<u32, Vec<String>> {
+        self.by_node.clone()
     }
 }
 
@@ -2577,28 +2584,49 @@ fn a_never_answering_node_is_exempt_only_while_the_network_holds_it_back() {
     }
 }
 
+/// The partition scenario of the both-sides checks: a split at height 2 into `groups`, two blocks
+/// of it, the heal, and the fork recovery within two blocks.
+fn split_scenario(groups: Value) -> Compiled {
+    compiled(
+        json!([
+            {"at": {"height": 2}, "do": "partition", "groups": groups},
+            {"at": {"afterBlocks": 0}, "do": "wait", "blocks": 2,
+             "check": {"invariant": ["bothSidesForge"]}},
+            {"at": {"afterBlocks": 0}, "do": "heal"},
+            {"at": {"afterBlocks": 0}, "check": {"invariant": ["forkRecovered"], "withinBlocks": 2}}
+        ]),
+        &[],
+    )
+}
+
+/// Node `node`'s block answers for heights 1 to 9: `block-<h>`, with `suffix` below `until` (its
+/// own branch), each forged by `generator`.
+fn block_pages(fake: &mut Fake, node: u32, branch: Option<(&str, u32)>, generator: &str) {
+    for h in 1..10_u32 {
+        let suffix = branch
+            .filter(|(_, until)| h < *until)
+            .map_or("", |(s, _)| s);
+        fake.page(
+            node,
+            &format!("/api/blocks/{h}"),
+            json!({"data": {"id": format!("block-{h}{suffix}"), "height": h,
+                            "generator": {"username": generator}}}),
+        );
+    }
+}
+
 #[test]
 fn both_sides_must_forge_a_branch_of_their_own_and_one_branch_is_given_up_after_the_heal() {
-    let steps = json!([
-        {"at": {"height": 2}, "do": "partition", "groups": [[1], [2]]},
-        {"at": {"afterBlocks": 0}, "do": "wait", "blocks": 2,
-         "check": {"invariant": ["bothSidesForge"]}},
-        {"at": {"afterBlocks": 0}, "do": "heal"},
-        {"at": {"afterBlocks": 0}, "check": {"invariant": ["forkRecovered"], "withinBlocks": 2}}
-    ]);
     for split in [true, false] {
-        let compiled = compiled(steps.clone(), &[]);
+        let compiled = split_scenario(json!([[1], [2]]));
         let mut fake = Fake::new(2);
-        if split {
-            fake.branch.insert(2, ("-b".into(), 5));
+        fake.by_node = BTreeMap::from([(1, vec!["d1".into()]), (2, vec!["d2".into()])]);
+        let branch = split.then_some(("-b", 5));
+        if let Some((suffix, until)) = branch {
+            fake.branch.insert(2, (suffix.into(), until));
         }
-        for h in 1..10 {
-            fake.page(
-                1,
-                &format!("/api/blocks/{h}"),
-                json!({"data": {"id": format!("block-{h}")}}),
-            );
-        }
+        block_pages(&mut fake, 1, None, "d1");
+        block_pages(&mut fake, 2, branch, if split { "d2" } else { "d1" });
         let (report, _) = run_on(&mut fake, &compiled);
         assert_eq!(
             outcome(&report, "bothsidesforge").is_failure(),
@@ -2616,6 +2644,92 @@ fn both_sides_must_forge_a_branch_of_their_own_and_one_branch_is_given_up_after_
 }
 
 #[test]
+fn both_sides_compare_their_blocks_at_one_height_above_the_partition_forged_on_their_side() {
+    // One chain, node 2 a block behind: different tips at different heights, but at height 3 the
+    // same block on both sides.
+    let compiled = split_scenario(json!([[1], [2]]));
+    let mut fake = Fake::new(2);
+    fake.by_node = BTreeMap::from([
+        (1, vec!["d1".into(), "d2".into()]),
+        (2, vec!["d1".into(), "d2".into()]),
+    ]);
+    fake.lag.insert(2, 1);
+    block_pages(&mut fake, 1, None, "d1");
+    block_pages(&mut fake, 2, None, "d1");
+    let (report, _) = run_on(&mut fake, &compiled);
+    assert!(
+        matches!(outcome(&report, "bothsidesforge"), Outcome::VerdictMismatch { oracle, .. }
+            if oracle == "each group on a branch of its own at height 3"),
+        "{report:#?}"
+    );
+    // Two branches, but group [2]'s block forged by a delegate of the other side.
+    let mut fake = Fake::new(2);
+    fake.by_node = BTreeMap::from([(1, vec!["d1".into()]), (2, vec!["d2".into()])]);
+    fake.branch.insert(2, ("-b".into(), 5));
+    block_pages(&mut fake, 1, None, "d1");
+    block_pages(&mut fake, 2, Some(("-b", 5)), "d1");
+    let (report, _) = run_on(&mut fake, &compiled);
+    assert!(
+        matches!(outcome(&report, "bothsidesforge"), Outcome::VerdictMismatch { oracle, .. }
+            if oracle.contains("forged by a delegate of [2]")),
+        "{report:#?}"
+    );
+    // A backend that names no node's delegates cannot place a generator: not judged.
+    let mut fake = Fake::new(2);
+    fake.branch.insert(2, ("-b".into(), 5));
+    block_pages(&mut fake, 1, None, "d1");
+    block_pages(&mut fake, 2, Some(("-b", 5)), "d2");
+    let (report, _) = run_on(&mut fake, &compiled);
+    assert!(
+        matches!(outcome(&report, "bothsidesforge"), Outcome::Skipped(_)),
+        "{report:#?}"
+    );
+}
+
+#[test]
+fn a_fork_is_recovered_only_where_the_joined_chain_answers_its_block_at_the_branches_height() {
+    // Groups [1, 3] and [2]; node 1 is a block behind until height 5, so the both-sides check
+    // reads node 3, and after the heal the recovery check reads node 1.
+    for (pages, recovered) in [(Some(true), true), (Some(false), false), (None, false)] {
+        let compiled = split_scenario(json!([[1, 3], [2]]));
+        let mut fake = Fake::new(3);
+        fake.by_node = BTreeMap::from([
+            (1, vec!["d1".into()]),
+            (2, vec!["d2".into()]),
+            (3, vec!["d3".into()]),
+        ]);
+        fake.branch.insert(2, ("-b".into(), 5));
+        fake.lag.insert(1, 1);
+        fake.catch_up = Some(5);
+        block_pages(&mut fake, 3, None, "d3");
+        block_pages(&mut fake, 2, Some(("-b", 5)), "d2");
+        match pages {
+            // Node 1 answers its blocks.
+            Some(true) => block_pages(&mut fake, 1, None, "d1"),
+            // Node 1 answers a 200 without a block object.
+            Some(false) => {
+                for h in 1..10 {
+                    fake.page(1, &format!("/api/blocks/{h}"), json!({"data": {}}));
+                }
+            }
+            // Node 1 answers 404.
+            None => {}
+        }
+        let (report, _) = run_on(&mut fake, &compiled);
+        assert_eq!(
+            *outcome(&report, "bothsidesforge"),
+            Outcome::Pass,
+            "{report:#?}"
+        );
+        assert_eq!(
+            *outcome(&report, "forkrecovered") == Outcome::Pass,
+            recovered,
+            "{pages:?}: {report:#?}"
+        );
+    }
+}
+
+#[test]
 fn the_held_back_nodes_are_read_from_the_run_s_description() {
     use heartwood_difftest::scenario::backend::held_back_of;
     let scratch = ScratchDir::new("scenario-held-back").expect("scratch");
@@ -2627,6 +2741,40 @@ fn the_held_back_nodes_are_read_from_the_run_s_description() {
     ]});
     std::fs::write(scratch.path().join("run.json"), run.to_string()).expect("run.json");
     assert_eq!(held_back_of(scratch.path()), BTreeSet::from([5]));
+}
+
+#[test]
+fn the_delegates_of_each_node_are_read_from_the_network_s_description() {
+    use heartwood_difftest::scenario::backend::delegates_of;
+    let scratch = ScratchDir::new("scenario-delegates").expect("scratch");
+    assert!(delegates_of(scratch.path()).is_empty());
+    // A reference network's summary: nodes by name, delegates as usernames or objects.
+    let summary = json!({"nodes": [
+        {"name": "node1", "delegates": ["genesis_1", "genesis_2"]},
+        {"name": "node2", "delegates": [{"username": "genesis_3"}]},
+        {"name": "node3", "delegates": []},
+        {"name": "relay", "delegates": ["genesis_4"]}
+    ]});
+    std::fs::create_dir_all(scratch.path().join("network")).expect("network");
+    std::fs::write(
+        scratch.path().join("network").join("network-summary.json"),
+        summary.to_string(),
+    )
+    .expect("summary");
+    assert_eq!(
+        delegates_of(scratch.path()),
+        BTreeMap::from([
+            (1, vec!["genesis_1".to_owned(), "genesis_2".to_owned()]),
+            (2, vec!["genesis_3".to_owned()])
+        ])
+    );
+    // A Heartwood devnet's description, which numbers its nodes, is read first.
+    let devnet = json!({"nodes": [{"node": 4, "delegates": ["genesis_5"]}]});
+    std::fs::write(scratch.path().join("devnet.json"), devnet.to_string()).expect("devnet.json");
+    assert_eq!(
+        delegates_of(scratch.path()),
+        BTreeMap::from([(4, vec!["genesis_5".to_owned()])])
+    );
 }
 
 #[test]

@@ -4,7 +4,7 @@
 //! devnets and for the rootless networks); the `lockstep` backend runs the scenario through the
 //! lockstep producer, where `revert` and `fork` exist too. Nodes are numbered from 1.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::Duration;
 
@@ -178,11 +178,58 @@ pub trait Backend {
         Ok(Vec::new())
     }
 
+    /// The usernames of the delegates each node's forger forges for, by node, as the backend
+    /// knows them: what tells which side of a partition forged a block. Empty when it cannot
+    /// say; a node it leaves out forges for no delegate it knows of.
+    fn delegates_by_node(&self) -> BTreeMap<u32, Vec<String>> {
+        (1..=self.nodes())
+            .filter_map(|node| Some((node, self.forger_delegates(node).ok()?)))
+            .filter(|(_, delegates)| !delegates.is_empty())
+            .collect()
+    }
+
     /// The nodes the network holds back at its start, which run only once a step starts them:
     /// until then they need not answer. Every other node must.
     fn held_back(&self) -> BTreeSet<u32> {
         BTreeSet::new()
     }
+}
+
+/// The delegates of each node of a live network's run in `root`, by node, as the devnet tooling
+/// described the network: a Heartwood devnet's `devnet.json` (each node's number and its
+/// delegates' usernames) or a reference network's `network/network-summary.json` (each node's
+/// name, `nodeK`, and its delegates, as usernames or as objects with one); none when it has
+/// neither file.
+pub fn delegates_of(root: &Path) -> BTreeMap<u32, Vec<String>> {
+    let read = |path: &Path| -> Option<Value> {
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+    };
+    let (nodes, numbered) = match read(&root.join("devnet.json")) {
+        Some(devnet) => (devnet["nodes"].clone(), true),
+        None => match read(&root.join("network").join("network-summary.json")) {
+            Some(summary) => (summary["nodes"].clone(), false),
+            None => return BTreeMap::new(),
+        },
+    };
+    let number = |node: &Value| -> Option<u32> {
+        if numbered {
+            u32::try_from(node["node"].as_u64()?).ok()
+        } else {
+            node["name"].as_str()?.strip_prefix("node")?.parse().ok()
+        }
+    };
+    nodes
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|node| {
+            let delegates: Vec<String> = (node["delegates"].as_array().into_iter().flatten())
+                .filter_map(|d| d.as_str().or_else(|| d["username"].as_str()))
+                .map(str::to_owned)
+                .collect();
+            Some((number(node)?, delegates)).filter(|(_, d)| !d.is_empty())
+        })
+        .collect()
 }
 
 /// The nodes a live network's run holds back, from its `run.json` in `root` (each node's

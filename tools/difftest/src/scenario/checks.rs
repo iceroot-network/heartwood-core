@@ -10,7 +10,7 @@ use std::collections::hash_map::Entry;
 
 use serde_json::Value;
 
-use super::backend::{Backend, BackendError};
+use super::backend::{Backend, BackendError, Tip};
 use super::format::{Action, ApiCheck, Check, Invariant};
 use super::projection::{self, Names};
 use super::runner::Runner;
@@ -280,41 +280,102 @@ impl Ctx<'_, '_> {
         })
     }
 
-    /// Each group of the partition forged a branch of its own: its highest tip is above the
-    /// partition's height, and the groups' tips are different blocks.
+    /// Node `node`'s block at `height`: its id, read from a block object the API answered with a
+    /// 200 at that height, and its generator's username; why not, when the answer is not one.
+    fn block_at(
+        &self,
+        node: u32,
+        height: u32,
+    ) -> Result<Result<(String, Value), String>, BackendError> {
+        let answer = self.backend().get(node, &format!("/api/blocks/{height}"))?;
+        let block = &answer.body["data"];
+        Ok(
+            match block["id"].as_str().filter(|_| {
+                answer.status == 200 && block["height"].as_u64() == Some(u64::from(height))
+            }) {
+                Some(id) => Ok((id.to_owned(), block["generator"]["username"].clone())),
+                None => Err(format!(
+                    "node {node} answered {} without its block at height {height}",
+                    answer.status
+                )),
+            },
+        )
+    }
+
+    /// Each group of the partition forged a branch of its own: at one height above the
+    /// partition's, the height of the lowest group's highest tip, every group's highest node holds
+    /// a block of its own (no two groups the same block), forged by a delegate of a node of its
+    /// group. Those blocks are kept for the fork-recovery check.
     fn both_sides_forge(&mut self) -> Probe {
         let Some((groups, height)) = self.runner.partition.clone() else {
             return Ok(Outcome::HarnessError(
                 "no partition was made before this check".into(),
             ));
         };
-        let mut tips = Vec::new();
+        let mut best = Vec::new();
         for group in &groups {
-            let best = group
+            let found = group
                 .iter()
-                .filter_map(|node| self.runner.read_tip(*node).ok())
-                .max_by_key(|tip| tip.height);
-            let Some(best) = best else {
+                .filter_map(|node| self.runner.read_tip(*node).ok().map(|tip| (*node, tip)))
+                .max_by_key(|(_, tip)| tip.height);
+            let Some(found) = found else {
                 return Ok(expected(
                     "a tip of every group",
                     format!("no node of {group:?} answers"),
                 ));
             };
-            tips.push(best);
+            best.push(found);
         }
-        let ids: std::collections::BTreeSet<&str> = tips.iter().map(|t| t.id.as_str()).collect();
-        if tips.iter().all(|t| t.height > height) && ids.len() == tips.len() {
-            self.runner.branches = tips;
+        let shared = best.iter().map(|(_, tip)| tip.height).min().unwrap_or(0);
+        if shared <= height {
+            return Ok(expected(
+                &format!("every group's highest tip above the partition's height {height}"),
+                format!("{best:?}"),
+            ));
+        }
+        let delegates = self.backend().delegates_by_node();
+        if delegates.is_empty() {
+            return Ok(Outcome::Skipped(
+                "the backend does not name its nodes' delegates, so no branch's generator can be \
+                 placed in its group"
+                    .into(),
+            ));
+        }
+        let mut blocks: Vec<Tip> = Vec::new();
+        for ((node, _), group) in best.iter().zip(&groups) {
+            let (id, generator) = match self.block_at(*node, shared)? {
+                Ok(block) => block,
+                Err(why) => return Ok(expected(&format!("a block at height {shared}"), why)),
+            };
+            let own = group
+                .iter()
+                .flat_map(|n| delegates.get(n).into_iter().flatten())
+                .any(|d| generator.as_str() == Some(d.as_str()));
+            if !own {
+                return Ok(expected(
+                    &format!(
+                        "node {node}'s block at height {shared} forged by a delegate of {group:?}"
+                    ),
+                    format!("{id} forged by {generator}"),
+                ));
+            }
+            blocks.push(Tip { height: shared, id });
+        }
+        let ids: std::collections::BTreeSet<&str> = blocks.iter().map(|b| b.id.as_str()).collect();
+        if ids.len() == blocks.len() {
+            self.runner.branches = blocks;
             Ok(Outcome::Pass)
         } else {
             Ok(expected(
-                &format!("each group on a branch of its own above height {height}"),
-                format!("{tips:?}"),
+                &format!("each group on a branch of its own at height {shared}"),
+                format!("{blocks:?}"),
             ))
         }
     }
 
-    /// After the heal, every node is on one tip and a block of a branch is no longer in the chain.
+    /// After the heal, every node is on one tip, at or above the branches' height, and the joined
+    /// chain's block there (a 200 with a block object of that height) is not every branch's: a
+    /// branch was given up.
     fn fork_recovered(&mut self) -> Probe {
         if self.runner.branches.is_empty() {
             return Ok(Outcome::HarnessError(
@@ -325,14 +386,29 @@ impl Ctx<'_, '_> {
         if one != Outcome::Pass {
             return Ok(one);
         }
-        let (node, _) = self.runner.observe()?;
+        let (node, tip) = self.runner.observe()?;
         let mut replaced = Vec::new();
-        for tip in self.runner.branches.clone() {
-            let answer = self
-                .backend()
-                .get(node, &format!("/api/blocks/{}", tip.height))?;
-            if answer.body["data"]["id"].as_str() != Some(tip.id.as_str()) {
-                replaced.push(tip.height);
+        for branch in self.runner.branches.clone() {
+            if tip.height < branch.height {
+                return Ok(expected(
+                    &format!(
+                        "the joined chain at or above the branches' height {}",
+                        branch.height
+                    ),
+                    format!("its tip at {}", tip.height),
+                ));
+            }
+            let id = match self.block_at(node, branch.height)? {
+                Ok((id, _)) => id,
+                Err(why) => {
+                    return Ok(expected(
+                        &format!("the joined chain's block at height {}", branch.height),
+                        why,
+                    ));
+                }
+            };
+            if id != branch.id {
+                replaced.push(branch.id);
             }
         }
         Ok(if replaced.is_empty() {

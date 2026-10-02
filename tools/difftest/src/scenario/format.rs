@@ -390,12 +390,14 @@ pub enum Invariant {
     RevertSymmetry,
     /// A restart gives the state of the continuous run.
     RestartEqual,
-    /// While a partition holds, each of its groups forges a branch of its own: each group's
-    /// highest tip is above the height the partition was made at, and no two groups' tips are
-    /// one block.
+    /// While a partition holds, each of its groups forges a branch of its own: at one height
+    /// above the one the partition was made at (the lowest of the groups' highest tips), each
+    /// group's highest node holds a block of its own, no two groups the same, forged by a
+    /// delegate of a node of that group (as the backend names each node's delegates).
     BothSidesForge,
     /// After a heal, the branches are joined into one chain: every node that is meant to be up is
-    /// on one tip, and a branch's block that [`Invariant::BothSidesForge`] saw is no longer in it.
+    /// on one tip, at or above the branches' height, and the chain's block at that height (a
+    /// block the API answers with) is not every block [`Invariant::BothSidesForge`] saw there.
     ForkRecovered,
 }
 

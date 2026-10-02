@@ -5,7 +5,7 @@
 //! the peer-to-peer way in.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -128,6 +128,10 @@ impl Backend for External {
 
     fn held_back(&self) -> BTreeSet<u32> {
         self.held.clone()
+    }
+
+    fn delegates_by_node(&self) -> BTreeMap<u32, Vec<String>> {
+        backend::delegates_of(&self.root)
     }
 
     fn start(&mut self, node: u32, part: Part) -> Result<(), BackendError> {
