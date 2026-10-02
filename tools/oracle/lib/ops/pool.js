@@ -23,13 +23,17 @@
 //       notes.fullPoolEviction and notes.evictions when a full pool evicted a transaction and then
 //       refused the new one
 //   pool.setOnline {session, delegates: [{publicKey, round}], expireAt?} -> {online}
-//   pool.readd {session, forged?: [hex], recheck?}      readdTransactions -> {contents}
+//   pool.readd {session, forged?: [hex], recheck?}      readdTransactions -> {notes?, contents}
 //   pool.cleanUp {session}                              cleanUp -> {contents}
 //   pool.remove {session, hex}, pool.removeForged {session, hex} -> {contents}
 //   pool.flush {session}                                flush -> {contents}
 //   pool.collate {session, validate, exclude?: [id]}    -> {ids, contents}
 //   pool.restart {session}      a new Storage and Service over the same file, then the start's
-//                               re-add -> {contents}
+//                               re-add -> {notes?, contents}
+//       A re-add (pool.readd, pool.restart) has notes.fullPoolEviction and notes.evictions, as
+//       pool.process has, when its full pool evicted a transaction and then refused the re-added
+//       one, and then notes.attempts: each transaction the re-add tried to add back, in order, as
+//       [id, entered], and [id, false, true] for a refusal that came after an eviction
 //   pool.tip {session, height}  a fixture session's last block moved to `height` -> {contents}
 //   pool.blockApplied {session, hex}   a chain session: the block applied (as chain.apply), then
 //       as a synced node does: removeForgedTransaction for each of its transactions, cleanUp,
@@ -96,6 +100,32 @@ module.exports = function poolOps(context) {
         store.setLastBlock({ data: { height, id: "00".repeat(32), timestamp: 0 }, transactions: [] });
     };
 
+    /**
+     * Record in `attempts` each transaction that `service`, the service of `pool`, tries to add back
+     * to its mempool: [id, entered], or [id, false, true] for a refusal after the full pool evicted a
+     * transaction (the pool's watch notes the eviction). Returns the function that stops recording.
+     */
+    const recordAttempts = (pool, service, attempts) => {
+        const add = service.addTransactionToMempool;
+        service.addTransactionToMempool = async (transaction) => {
+            const noted = pool.evictions.length;
+            try {
+                await add(transaction);
+            } catch (error) {
+                attempts.push(pool.evictions.length > noted ? [transaction.id, false, true] : [transaction.id, false]);
+                throw error;
+            }
+            attempts.push([transaction.id, true]);
+        };
+        return () => {
+            service.addTransactionToMempool = add;
+        };
+    };
+
+    /** The notes of a re-add whose full pool evicted a transaction and then refused the re-added one. */
+    const readdNotes = (pool, attempts) =>
+        pool.evictions.length ? { notes: { fullPoolEviction: true, evictions: pool.evictions, attempts } } : {};
+
     /** One step of pool.run, or the body of the operation of the same name. */
     const step = async (pool, session, { op, ...args }) => {
         switch (op) {
@@ -103,9 +133,17 @@ module.exports = function poolOps(context) {
                 return pool.process(args.entries, args.now, args.channel);
             case "setOnline":
                 return { online: pool.setOnline(args.delegates, args.expireAt) };
-            case "readd":
-                await pool.readd(args.forged, args.recheck);
-                return {};
+            case "readd": {
+                const attempts = [];
+                pool.evictions = [];
+                const stop = recordAttempts(pool, pool.service, attempts);
+                try {
+                    await pool.readd(args.forged, args.recheck);
+                } finally {
+                    stop();
+                }
+                return readdNotes(pool, attempts);
+            }
             case "cleanUp":
                 await pool.cleanUp();
                 return {};
@@ -120,9 +158,23 @@ module.exports = function poolOps(context) {
                 return {};
             case "collate":
                 return { ids: await pool.collate(args.validate, args.exclude) };
-            case "restart":
-                await pool.restart();
-                return {};
+            case "restart": {
+                // The restart boots a new service, whose watch starts the evictions afresh; its re-add's
+                // attempts are recorded from then on.
+                const attempts = [];
+                let stop = () => {};
+                pool.watch = function watch() {
+                    HeadlessPool.prototype.watch.call(this);
+                    stop = recordAttempts(this, this.service, attempts);
+                };
+                try {
+                    await pool.restart();
+                } finally {
+                    delete pool.watch;
+                    stop();
+                }
+                return readdNotes(pool, attempts);
+            }
             case "tip":
                 moveTip(session, args.height);
                 return {};
