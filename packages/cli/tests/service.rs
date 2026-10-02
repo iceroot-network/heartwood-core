@@ -232,24 +232,21 @@ fn install_writes_the_unit_into_the_directory_and_uninstall_removes_it() {
     uninstall(&relay, Role::Relay, Manager::SystemdUser, Some(&out)).unwrap();
     assert!(!done.path.exists() && forger.path.exists());
     assert!(uninstall(&relay, Role::Relay, Manager::SystemdUser, Some(&out)).is_err());
-    // A link in the unit's place is replaced, never written through.
+    // A link in the unit's place is refused, and neither it nor its target is written.
     let target = root.join("elsewhere");
     fs::write(&target, "kept").unwrap();
     std::os::unix::fs::symlink(&target, &done.path).unwrap();
-    install(
+    let refused = install(
         &relay,
         Role::Relay,
         Manager::SystemdUser,
         binary,
         Some(&out),
     )
-    .unwrap();
+    .unwrap_err();
+    assert!(refused.to_string().contains("symbolic link"), "{refused}");
     assert_eq!(fs::read_to_string(&target).unwrap(), "kept");
-    assert!(
-        fs::read_to_string(&done.path)
-            .unwrap()
-            .contains("[Service]")
-    );
+    assert!(fs::symlink_metadata(&done.path).unwrap().is_symlink());
 }
 
 #[test]

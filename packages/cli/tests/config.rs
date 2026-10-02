@@ -183,6 +183,23 @@ fn the_template_is_one_for_any_network_and_the_node_loads_it() {
 }
 
 #[test]
+fn publish_refuses_a_symbolic_link_in_place_of_a_file_and_leaves_its_target() {
+    let root = scratch("publish-link");
+    let instance = instance(&root);
+    let config = &instance.paths.config;
+    fs::create_dir_all(config).unwrap();
+    let target = root.join("elsewhere.env");
+    fs::write(&target, "KEPT=1\n").unwrap();
+    symlink(&target, config.join(".env")).unwrap();
+    // Even with `--force`: a link is refused, as the other writers of the instance refuse one.
+    let refused = publish(&instance, true).unwrap_err();
+    assert!(matches!(refused, ConfigError::Io { .. }), "{refused:?}");
+    assert!(refused.to_string().contains("symbolic link"), "{refused}");
+    assert_eq!(fs::read_to_string(&target).unwrap(), "KEPT=1\n");
+    assert!(fs::symlink_metadata(config.join(".env")).unwrap().is_symlink());
+}
+
+#[test]
 fn private_key_refuses_an_absent_delegates_file_naming_its_path() {
     let instance = instance(&scratch("absent"));
     fs::create_dir_all(&instance.paths.config).unwrap();

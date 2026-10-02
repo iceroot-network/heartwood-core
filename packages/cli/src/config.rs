@@ -186,8 +186,11 @@ fn read_file(path: &Path) -> std::io::Result<Zeroizing<String>> {
 }
 
 /// Write `bytes` to `path` with `mode`, never wider, through a new file beside it that is synced
-/// and renamed into place: a link at `path` is replaced, never written through.
+/// and renamed into place; a link at `path` is refused.
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), ConfigError> {
+    if fs::symlink_metadata(path).is_ok_and(|meta| meta.is_symlink()) {
+        return Err(io(path, "is a symbolic link"));
+    }
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let temp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
     let write = || -> std::io::Result<()> {
