@@ -1,0 +1,3 @@
+{"step":"partition","node":"all","start":"2026-09-30T18:03:26.381Z","startHeight":155,"round":3,"end":"2026-09-30T18:03:26.816Z","ok":true,"groups":[["node1","node2","node3"],["node4","node5"]],"height":155}
+{"step":"heal","node":"all","start":"2026-09-30T18:05:02.831Z","startHeight":164,"round":4,"end":"2026-09-30T18:05:03.103Z","ok":true,"height":164}
+{"step":"converged","node":"all","start":"2026-09-30T18:05:03.119Z","startHeight":164,"round":4,"end":"2026-09-30T18:06:34.498Z","ok":true,"height":172,"reconnect":false,"reopened":"node4 node5"}

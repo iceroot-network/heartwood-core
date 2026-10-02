@@ -10,16 +10,27 @@
 //! A reference node writes no block file, so the blocks of the chain are the Heartwood relays':
 //! each holds every block it applied, the blocks of an abandoned branch included. A delegate's
 //! blocks are found by its public key, and a validator's delegates come from `run.json`.
+//!
+//! In the mixed run, a Heartwood relay of a partition's minority may apply a block its side forged
+//! in the slots before the relay dropped the peers it lost: no judged chain holds it. Such a block
+//! is recorded by the node's digest check, and judged here: the minority's branch (the final
+//! chain's blocks up to the fork and the minority's blocks) is built from a node's block files,
+//! imported and judged by the oracle with its processor results, and the node's lines of those
+//! blocks are compared with the branch's as any other line is with its chain
+//! ([`minority_branches`]). A run without such a block judges no branch.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::Value;
 
+use super::digest::{self, JudgedChain, NodeDigest, RecordedBlocks};
 use super::forging::{self, Answer, QUORUM, Recorded, Slots, Validator};
 use super::run::{self, Implementation, Manifest, Step, Window};
-use super::{Cases, ForgingRun, mixed, schedule};
+use super::{Cases, ForgingRun, corpora, mixed, schedule};
+use crate::corpus::TS_PROCESSOR;
 use crate::errors::{Error, Result};
+use crate::store::ScratchDir;
 
 const SECTION: &str = "mixed-forging";
 
@@ -158,6 +169,7 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
             "the partition's sides forged as their delegates' reach allows",
             sides,
         );
+        minority_branches(run, &steps, cases);
     } else {
         cases.record(SECTION, "no partition in this run");
     }
@@ -560,7 +572,7 @@ fn records_in_windows(
                 })
                 .map(|b| {
                     let reason = format!(
-                        "minority delegate forged during peer loss detection; {node} window ends at {}",
+                        "minority delegate forged during peer loss detection; {node} window ends at {}; judged on the minority's branch in the mixed-forging section",
                         window.bound
                     );
                     ((b.height, b.id.clone()), reason)
@@ -569,6 +581,326 @@ fn records_in_windows(
             (node.clone(), blocks)
         })
         .collect()
+}
+
+/// The label of the minority branch judge's cases.
+const BRANCH: &str = "the minority's blocks judged on their branch";
+
+/// Judge every minority block a Heartwood relay of the mixed run applied that no judged chain
+/// holds ([`minority_records`]): for each node with a line of such a block, the branches that end
+/// at its blocks are built from its own block files ([`branch_ends`]), imported with
+/// [`corpora::prepare`] and judged by the oracle with its processor results; each branch's anchors
+/// must hold and the reference's processor must accept every block of it; and each node's lines
+/// of those blocks must equal the branch's lines ([`digest::judge_branches`]). A run in which no
+/// node wrote a line of such a block adds no case and asks no oracle.
+fn minority_branches(run: &ForgingRun<'_>, steps: &[Step], cases: &mut Cases) {
+    let records = match minority_records(run.run_dir, run.manifest, run.windows, steps) {
+        Ok(records) => records,
+        Err(e) => {
+            cases.fail(SECTION, BRANCH, e.to_string());
+            return;
+        }
+    };
+    // The nodes' lines of their recorded blocks.
+    let mut wrote: BTreeMap<String, (NodeDigest, RecordedBlocks)> = BTreeMap::new();
+    for (node, blocks) in records.iter().filter(|(_, b)| !b.is_empty()) {
+        let dir = run.run_dir.join("nodes").join(node).join("difftest");
+        let read = match digest::read(&dir) {
+            Ok(read) => read,
+            Err(e) => {
+                cases.fail(SECTION, format!("{node}: {BRANCH}"), e.to_string());
+                continue;
+            }
+        };
+        let mine: RecordedBlocks = blocks
+            .iter()
+            .filter(|((h, id), _)| read.lines.iter().any(|l| l.height() == *h && l.id() == id))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        if !mine.is_empty() {
+            wrote.insert(node.clone(), (read, mine));
+        }
+    }
+    let mut branches: Vec<JudgedChain> = Vec::new();
+    for (node, (_, mine)) in &wrote {
+        let open: RecordedBlocks = mine
+            .iter()
+            .filter(|((h, id), _)| !branches.iter().any(|b| b.holds(*h, id)))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        if open.is_empty() {
+            continue;
+        }
+        match judge_branches_of(run, node, &open) {
+            Ok(judged) => {
+                for (branch, problems) in judged {
+                    let label = format!("{}: {BRANCH}", branch.chain.name);
+                    if problems.is_empty() {
+                        cases.pass(
+                            SECTION,
+                            format!(
+                                "{label}: {node}'s block files to height {} imported and judged ({}), the anchors hold and the reference's processor accepted every block",
+                                branch.tip,
+                                match (branch.imported, branch.judged) {
+                                    (true, true) => "imported and judged now",
+                                    (false, true) => "judged now",
+                                    (_, false) => "judged before",
+                                }
+                            ),
+                        );
+                    }
+                    for p in problems {
+                        cases.fail(SECTION, label.clone(), p);
+                    }
+                    branches.push(branch.chain);
+                }
+            }
+            Err(e) => cases.fail(SECTION, format!("{node}: {BRANCH}"), e.to_string()),
+        }
+    }
+    for (node, (read, mine)) in &wrote {
+        let judged = digest::judge_branches(read, &branches, mine);
+        let label = format!("{node}: its lines of the minority's blocks equal their branch's");
+        if judged.problems.is_empty() {
+            let counts: Vec<String> = judged
+                .compared
+                .iter()
+                .map(|((chain, step), n)| format!("{n} {step} lines of {chain}"))
+                .collect();
+            cases.pass(SECTION, format!("{label} ({})", counts.join(", ")));
+        }
+        verdict_list(cases, &label, &judged.problems);
+    }
+}
+
+/// `problems` as failed cases of `label`, at most twelve, then a count of the rest.
+fn verdict_list(cases: &mut Cases, label: &str, problems: &[String]) {
+    for p in problems.iter().take(12) {
+        cases.fail(SECTION, label, p.clone());
+    }
+    if problems.len() > 12 {
+        cases.fail(
+            SECTION,
+            label,
+            format!("... and {} more", problems.len() - 12),
+        );
+    }
+}
+
+/// One whole line of a node's block files: its height and id, and its bytes with the newline.
+type BlockLine = (u32, String, Vec<u8>);
+
+/// The whole lines of the block files of the node directory `dir`, in the order of its starts
+/// (a torn last line dropped, as [`crate::corpus_from_blocks`] drops it).
+fn block_lines(dir: &Path) -> Result<Vec<BlockLine>> {
+    let records = dir.join("difftest");
+    let mut files: Vec<(u32, std::path::PathBuf)> = std::fs::read_dir(&records)
+        .map_err(|e| Error::io(&records, e))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter_map(|p| {
+            let n = p
+                .file_name()?
+                .to_str()?
+                .strip_prefix("blocks-")?
+                .strip_suffix(".bin")?
+                .parse()
+                .ok()?;
+            Some((n, p))
+        })
+        .collect();
+    files.sort();
+    let mut out = Vec::new();
+    for (_, path) in files {
+        let bytes = std::fs::read(&path).map_err(|e| Error::io(&path, e))?;
+        for (index, part) in bytes.split_inclusive(|b| *b == b'\n').enumerate() {
+            if !part.ends_with(b"\n") {
+                continue;
+            }
+            let v: Value = serde_json::from_slice(part).map_err(|e| Error::Parse {
+                path: path.clone(),
+                line: index + 1,
+                message: e.to_string(),
+            })?;
+            let (Some(h), Some(id)) = (
+                v["h"].as_u64().and_then(|h| u32::try_from(h).ok()),
+                v["id"].as_str(),
+            ) else {
+                return Err(Error::Parse {
+                    path: path.clone(),
+                    line: index + 1,
+                    message: "a block line without its height or id".into(),
+                });
+            };
+            out.push((h, id.to_owned(), part.to_vec()));
+        }
+    }
+    Ok(out)
+}
+
+/// The lines (by index into `lines`, a node's block lines in order) that end the branches holding
+/// every block of `blocks` the lines name: a block line at or below a height applied before
+/// abandons the blocks above it, as the relay's switch to another branch does, so the lines up to
+/// a block's line give the chain the relay held when it applied that block. The fewest such ends,
+/// latest first, each covering a block no later one holds; in the order of the lines.
+pub(super) fn branch_ends(lines: &[(u32, String)], blocks: &RecordedBlocks) -> Vec<usize> {
+    let mut chain: BTreeMap<u32, &str> = BTreeMap::new();
+    let mut candidates: Vec<(usize, Vec<(u32, String)>)> = Vec::new();
+    for (index, (h, id)) in lines.iter().enumerate() {
+        let _ = chain.split_off(h);
+        chain.insert(*h, id);
+        if blocks.contains_key(&(*h, id.clone())) {
+            let held = chain
+                .iter()
+                .filter(|(ch, cid)| blocks.contains_key(&(**ch, (**cid).to_owned())))
+                .map(|(ch, cid)| (*ch, (*cid).to_owned()))
+                .collect();
+            candidates.push((index, held));
+        }
+    }
+    let mut covered: BTreeSet<(u32, String)> = BTreeSet::new();
+    let mut ends = Vec::new();
+    for (index, held) in candidates.into_iter().rev() {
+        if held.iter().any(|b| !covered.contains(b)) {
+            covered.extend(held);
+            ends.push(index);
+        }
+    }
+    ends.sort_unstable();
+    ends
+}
+
+/// The name of the corpus of a minority branch: the run's final corpus's (or `live-<run>`), the
+/// branch's tip height and the first eight characters of its id.
+fn branch_name(manifest: &Manifest, height: u32, id: &str) -> String {
+    let base = manifest
+        .corpora
+        .keys()
+        .next()
+        .cloned()
+        .unwrap_or_else(|| format!("live-{}", manifest.run));
+    format!("{base}-minority-{height}-{}", id.get(..8).unwrap_or(id))
+}
+
+/// Build, import and judge the branches of `node`'s block files that hold `blocks`, each with the
+/// problems of its judgement (its anchors, its tip, the reference's processor results).
+fn judge_branches_of(
+    run: &ForgingRun<'_>,
+    node: &str,
+    blocks: &RecordedBlocks,
+) -> Result<Vec<(corpora::Judged, Vec<String>)>> {
+    let node_dir = run.run_dir.join("nodes").join(node);
+    let lines = block_lines(&node_dir)?;
+    let keys: Vec<(u32, String)> = lines.iter().map(|(h, id, _)| (*h, id.clone())).collect();
+    let ends = branch_ends(&keys, blocks);
+    let missing: Vec<String> = blocks
+        .keys()
+        .filter(|(h, id)| !keys.iter().any(|(kh, kid)| kh == h && kid == id))
+        .map(|(h, id)| format!("{id} at height {h}"))
+        .collect();
+    if !missing.is_empty() {
+        return Err(Error::Usage(format!(
+            "{node}'s block files do not hold the minority blocks its digest lines name: {}",
+            missing.join(", ")
+        )));
+    }
+    let crypto = run::crypto_dir(run.run_dir, &node_dir);
+    let mut out = Vec::new();
+    for end in ends {
+        let (height, id, _) = &lines[end];
+        let name = branch_name(run.manifest, *height, id);
+        let scratch = ScratchDir::new("minority-branch")?;
+        let staged = scratch.path().join(node);
+        for dir in ["difftest", "crypto"] {
+            let dir = staged.join(dir);
+            std::fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
+        }
+        let bytes: Vec<u8> = lines[..=end]
+            .iter()
+            .flat_map(|(_, _, b)| b.iter().copied())
+            .collect();
+        let file = staged.join("difftest/blocks-0001.bin");
+        std::fs::write(&file, bytes).map_err(|e| Error::io(&file, e))?;
+        for entry in std::fs::read_dir(&crypto).map_err(|e| Error::io(&crypto, e))? {
+            let path = entry.map_err(|e| Error::io(&crypto, e))?.path();
+            if path.extension().is_some_and(|e| e == "json")
+                && let Some(file) = path.file_name()
+            {
+                let target = staged.join("crypto").join(file);
+                std::fs::copy(&path, &target).map_err(|e| Error::io(&target, e))?;
+            }
+        }
+        let source = staged
+            .to_str()
+            .ok_or_else(|| Error::Usage(format!("{}: not a UTF-8 path", staged.display())))?;
+        let judged = corpora::prepare(
+            run.run_dir,
+            &name,
+            source,
+            &run.manifest.seed,
+            run.corpus_root,
+            run.oracle,
+        )?;
+        let problems = branch_problems(&judged, *height, id);
+        out.push((judged, problems));
+    }
+    Ok(out)
+}
+
+/// What a judged branch must show: its tip is the minority block it was built to, the judge's
+/// anchors hold, and the reference's processor accepted every block of it.
+fn branch_problems(judged: &corpora::Judged, height: u32, id: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    if judged.tip != height || !judged.chain.holds(height, id) {
+        problems.push(format!(
+            "the branch ends at height {}, not with the block {id} at height {height}",
+            judged.tip
+        ));
+    }
+    if !judged.anchors_ok {
+        let failed: Vec<String> = judged
+            .anchors
+            .get("anchors")
+            .and_then(Value::as_object)
+            .map(|a| {
+                a.iter()
+                    .filter(|(_, v)| v.get("ok") != Some(&Value::Bool(true)))
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        problems.push(format!(
+            "the judge's anchors do not hold ({}); see {}/anchors.json",
+            failed.join(", "),
+            judged.dir.display()
+        ));
+    }
+    match run::read_lines(&judged.dir.join(TS_PROCESSOR)) {
+        Ok(rows) => {
+            let accepted: BTreeSet<u64> = rows
+                .iter()
+                .filter(|r| r["step"] == "apply" && r["result"] == "Accepted")
+                .filter_map(|r| r["h"].as_u64())
+                .collect();
+            let refused: Vec<String> = rows
+                .iter()
+                .filter(|r| r.get("result").is_some_and(|x| x != "Accepted"))
+                .map(|r| format!("{} at height {}", r["result"], r["h"]))
+                .collect();
+            let missing: Vec<u64> = (2..=u64::from(judged.tip))
+                .filter(|h| !accepted.contains(h))
+                .collect();
+            if !refused.is_empty() || !missing.is_empty() {
+                problems.push(format!(
+                    "the reference's processor did not accept every block: {} refused ({}), {} without a result",
+                    refused.len(),
+                    refused.join(", "),
+                    missing.len()
+                ));
+            }
+        }
+        Err(e) => problems.push(format!("the processor results: {e}")),
+    }
+    problems
 }
 
 /// During a partition a side with `reach` delegates or more forges, and a side with fewer forges
@@ -659,6 +991,334 @@ pub(super) fn one_tip(run: &ForgingRun<'_>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::corpus::Corpus;
+    use crate::oracle::{Mode, Oracle};
+    use crate::report::{CaseResult, Outcome};
+
+    /// A recording of the mixed run whose minority forged a block before its relays dropped the
+    /// peers they lost (`tests/fixtures/live/mixed-minority`): the run's manifest with the
+    /// devnet's addresses replaced by documentation addresses, its partition, heal and
+    /// convergence steps and the partition's fault window, the network's crypto files, and both
+    /// Heartwood relays' block files and digest lines to the fork's height and ten blocks after
+    /// it, with their network-state answers from two minutes before the partition to two after
+    /// the heal. Node 4 applied the minority's block 156, restarted on it and gave it up at the
+    /// heal (one apply and one restart line of it); node 5 applied it once (one line). The
+    /// branch's corpus as the reference judged it, with its processor results, is beside it.
+    fn minority_recording() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/live/mixed-minority")
+    }
+
+    /// The minority's block, and the name of its branch's corpus.
+    const MINORITY_BLOCK: (u32, &str) = (
+        156,
+        "35b7213d09ff29109db9d5dfde9ffe37c6dd988ef107014ea61eb51fd59db56d",
+    );
+    const BRANCH_CORPUS: &str = "live-mixed-minority-156-35b7213d";
+
+    /// The recording copied into a scratch directory, with a corpus root that holds the judged
+    /// branch when `judged`.
+    struct MinorityRun {
+        _scratch: ScratchDir,
+        run: std::path::PathBuf,
+        root: std::path::PathBuf,
+    }
+
+    fn copy_tree(from: &Path, to: &Path) {
+        crate::corpus_from_blocks::copy_dir(from, to).expect("the recording copies");
+    }
+
+    fn recorded(judged: bool) -> MinorityRun {
+        let scratch = ScratchDir::new("minority-branch-test").expect("a scratch directory");
+        let run = scratch.path().join("run");
+        let root = scratch.path().join("corpus");
+        copy_tree(&minority_recording(), &run);
+        let _ = std::fs::remove_dir_all(run.join("corpus"));
+        std::fs::create_dir_all(&root).expect("a corpus root");
+        if judged {
+            copy_tree(
+                &minority_recording().join("corpus").join(BRANCH_CORPUS),
+                &root.join(BRANCH_CORPUS),
+            );
+        }
+        MinorityRun {
+            _scratch: scratch,
+            run,
+            root,
+        }
+    }
+
+    /// The minority branch judge's cases of the run in `f`, with `oracle`.
+    fn branch_cases(f: &MinorityRun, oracle: &dyn Fn() -> Result<Oracle>) -> Vec<CaseResult> {
+        let manifest = Manifest::load(&f.run).expect("the manifest loads");
+        let steps = run::steps(&f.run).expect("the steps read");
+        let mut windows = run::windows(&f.run, manifest.window_seconds).expect("the windows");
+        windows.extend(run::minority_window(&manifest, &steps));
+        windows.extend(heal_window(&manifest, &steps));
+        let forging = ForgingRun {
+            run_dir: &f.run,
+            manifest: &manifest,
+            windows: &windows,
+            corpus_root: &f.root,
+            oracle,
+        };
+        let mut cases = Cases {
+            run: manifest.run.clone(),
+            results: Vec::new(),
+        };
+        minority_branches(&forging, &steps, &mut cases);
+        cases.results
+    }
+
+    fn no_oracle() -> Result<Oracle> {
+        Err(Error::Usage(
+            "the fixture's branch is judged: no oracle".into(),
+        ))
+    }
+
+    fn failures(cases: &[CaseResult]) -> Vec<String> {
+        cases
+            .iter()
+            .filter(|c| c.outcome.is_failure())
+            .map(|c| match &c.outcome {
+                Outcome::HarnessError(m) => format!("{}: {m}", c.label),
+                other => format!("{}: {other:?}", c.label),
+            })
+            .collect()
+    }
+
+    /// Rewrite `key` of `node`'s digest line of the minority's block with step `step`.
+    fn corrupt(f: &MinorityRun, node: &str, step: &str, key: &str) {
+        let dir = f.run.join("nodes").join(node).join("difftest");
+        let mut done = false;
+        for entry in std::fs::read_dir(&dir).expect("the digest directory") {
+            let path = entry.expect("an entry").path();
+            if !path.to_string_lossy().contains("digest-") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("a digest file");
+            let mut out = String::new();
+            for line in text.lines() {
+                let mut v: Value = serde_json::from_str(line).expect("a digest line");
+                if v["h"] == MINORITY_BLOCK.0 && v["id"] == MINORITY_BLOCK.1 && v["step"] == step {
+                    v[key] = Value::String("0".repeat(64));
+                    done = true;
+                }
+                out.push_str(&format!("{v}\n"));
+            }
+            std::fs::write(&path, out).expect("the digest file writes");
+        }
+        assert!(done, "{node} has no {step} line of the minority's block");
+    }
+
+    #[test]
+    fn the_minority_s_block_is_judged_on_its_branch() {
+        let f = recorded(true);
+        let cases = branch_cases(&f, &no_oracle);
+        assert!(failures(&cases).is_empty(), "{:#?}", failures(&cases));
+        let labels: Vec<&str> = cases.iter().map(|c| c.label.as_str()).collect();
+        // Node 4's block files make the branch; node 5's line of the same block is judged on it.
+        assert!(
+            labels.iter().any(|l| l.starts_with(&format!(
+                "{BRANCH_CORPUS}: {BRANCH}: node4's block files to height 156 imported and judged (judged before)"
+            ))),
+            "{labels:#?}"
+        );
+        assert!(labels.contains(&format!(
+            "node4: its lines of the minority's blocks equal their branch's (1 apply lines of {BRANCH_CORPUS}, 1 restart lines of {BRANCH_CORPUS})"
+        ).as_str()), "{labels:#?}");
+        assert!(labels.contains(&format!(
+            "node5: its lines of the minority's blocks equal their branch's (1 apply lines of {BRANCH_CORPUS})"
+        ).as_str()), "{labels:#?}");
+        assert_eq!(cases.len(), 3, "{labels:#?}");
+    }
+
+    #[test]
+    fn a_wrong_state_of_a_minority_block_fails_even_with_one_line() {
+        // Node 5 wrote one line of the block: the node's own lines cannot hold it to anything,
+        // its branch does.
+        for key in ["w", "b", "rw"] {
+            let f = recorded(true);
+            corrupt(&f, "node5", "apply", key);
+            let failed = failures(&branch_cases(&f, &no_oracle));
+            assert!(
+                failed.iter().any(|p| p.starts_with("node5: its lines")
+                    && p.ends_with(&format!(
+                        "the apply line of height 156 differs from {BRANCH_CORPUS}'s in {key}"
+                    ))),
+                "{key}: {failed:#?}"
+            );
+            assert_eq!(failed.len(), 1, "{key}: {failed:#?}");
+        }
+        // Node 4's restart line in a state key, and its apply line in a key its restart line does
+        // not carry (which the node's own lines cannot catch).
+        for (step, key) in [("restart", "s"), ("apply", "m")] {
+            let f = recorded(true);
+            corrupt(&f, "node4", step, key);
+            let failed = failures(&branch_cases(&f, &no_oracle));
+            assert!(
+                failed.iter().any(|p| p.starts_with("node4: its lines")
+                    && p.ends_with(&format!(
+                        "the {step} line of height 156 differs from {BRANCH_CORPUS}'s in {key}"
+                    ))),
+                "{step} {key}: {failed:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn without_a_minority_block_no_branch_is_judged_and_no_oracle_is_asked() {
+        let asked = std::cell::Cell::new(0);
+        let oracle = || -> Result<Oracle> {
+            asked.set(asked.get() + 1);
+            no_oracle()
+        };
+        // No digest line of the block: nothing to judge (the block files still hold it).
+        let f = recorded(false);
+        for node in ["node4", "node5"] {
+            let dir = f.run.join("nodes").join(node).join("difftest");
+            for entry in std::fs::read_dir(&dir).expect("the directory") {
+                let path = entry.expect("an entry").path();
+                if path.to_string_lossy().contains("digest-") {
+                    let text = std::fs::read_to_string(&path).expect("a digest file");
+                    let kept: String = text
+                        .lines()
+                        .filter(|l| !l.contains(MINORITY_BLOCK.1))
+                        .map(|l| format!("{l}\n"))
+                        .collect();
+                    std::fs::write(&path, kept).expect("the digest file writes");
+                }
+            }
+        }
+        assert!(branch_cases(&f, &oracle).is_empty());
+        // A declared minority's run and the other runs record no minority block.
+        for (run, minority) in [
+            ("mixed-split", true),
+            ("mixed-short", false),
+            ("mixed", true),
+        ] {
+            let f = recorded(false);
+            let path = f.run.join("run.json");
+            let mut manifest = run::read_json(&path).expect("run.json");
+            manifest["run"] = Value::String(run.into());
+            if minority {
+                manifest["minority"] = serde_json::json!({"nodes": ["node4", "node5"], "corpus": "live-mixed-minority"});
+            }
+            std::fs::write(&path, manifest.to_string()).expect("run.json writes");
+            assert!(branch_cases(&f, &oracle).is_empty(), "{run}");
+        }
+        assert_eq!(asked.get(), 0);
+    }
+
+    #[test]
+    fn a_branch_that_cannot_be_judged_fails() {
+        let f = recorded(false);
+        let failed = failures(&branch_cases(&f, &no_oracle));
+        assert!(
+            failed
+                .iter()
+                .any(|p| p.starts_with(&format!("node4: {BRANCH}")) && p.contains("no oracle")),
+            "{failed:#?}"
+        );
+        // Without the branch, neither node's line of the block is held by a judged branch.
+        for node in ["node4", "node5"] {
+            assert!(
+                failed
+                    .iter()
+                    .any(|p| p.starts_with(&format!("{node}: its lines"))
+                        && p.contains("which no judged branch holds")),
+                "{node}: {failed:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_branch_ends_at_the_latest_line_that_holds_each_recorded_block() {
+        let key = |h: u32, id: &str| (h, id.to_owned());
+        let blocks = |list: &[(u32, &str)]| -> RecordedBlocks {
+            list.iter()
+                .map(|(h, id)| (key(*h, id), String::new()))
+                .collect()
+        };
+        let lines: Vec<(u32, String)> = [
+            (2, "a2"),
+            (3, "a3"),
+            (4, "m4"),
+            (5, "m5"),
+            (4, "a4"),
+            (5, "a5"),
+            (6, "a6"),
+        ]
+        .iter()
+        .map(|(h, id)| key(*h, id))
+        .collect();
+        // Two minority blocks on one branch: one branch, ending at the later.
+        assert_eq!(branch_ends(&lines, &blocks(&[(4, "m4"), (5, "m5")])), [3]);
+        assert_eq!(branch_ends(&lines, &blocks(&[(4, "m4")])), [2]);
+        assert!(branch_ends(&lines, &blocks(&[])).is_empty());
+        assert!(branch_ends(&lines, &blocks(&[(4, "x4")])).is_empty());
+        // Two branches the node gave up one after the other: one end each.
+        let mut two = lines.clone();
+        two.extend([key(6, "n6"), key(6, "b6"), key(7, "a7")]);
+        assert_eq!(branch_ends(&two, &blocks(&[(4, "m4"), (6, "n6")])), [2, 7]);
+    }
+
+    /// The oracle `DIFFTEST_TEST_SOLAR_DIR` or `DIFFTEST_TEST_IMAGE` names, if either.
+    fn test_oracle() -> Option<Oracle> {
+        if let Ok(dir) = std::env::var("DIFFTEST_TEST_SOLAR_DIR") {
+            return Some(Oracle::new(Mode::Local {
+                solar_dir: dir.into(),
+            }));
+        }
+        std::env::var("DIFFTEST_TEST_IMAGE")
+            .ok()
+            .map(|image| Oracle::new(Mode::Container { image }))
+    }
+
+    #[test]
+    #[ignore = "integration"]
+    fn the_reference_judges_the_minority_s_branch_with_its_processor_results() {
+        let Some(oracle) = test_oracle() else {
+            assert!(
+                std::env::var_os("DIFFTEST_TEST_NO_ORACLE").is_some(),
+                "no test oracle configured: set DIFFTEST_TEST_IMAGE or DIFFTEST_TEST_SOLAR_DIR, or \
+                 DIFFTEST_TEST_NO_ORACLE to skip the test"
+            );
+            return;
+        };
+        let f = recorded(false);
+        let asked = || Ok(oracle.clone());
+        let cases = branch_cases(&f, &asked);
+        assert!(failures(&cases).is_empty(), "{:#?}", failures(&cases));
+        assert!(
+            cases.iter().any(|c| c.label.starts_with(&format!(
+                "{BRANCH_CORPUS}: {BRANCH}: node4's block files to height 156 imported and judged (imported and judged now)"
+            ))),
+            "{cases:#?}"
+        );
+        // The committed branch is what the reference judges: the same blocks and lines.
+        let judged = Corpus::load(&f.root.join(BRANCH_CORPUS)).expect("the judged branch");
+        let committed = Corpus::load(&minority_recording().join("corpus").join(BRANCH_CORPUS))
+            .expect("the committed branch");
+        assert_eq!(
+            crate::store::forward_lines(&judged).expect("lines"),
+            crate::store::forward_lines(&committed).expect("lines")
+        );
+        for file in ["blocks.jsonl", TS_PROCESSOR] {
+            assert_eq!(
+                std::fs::read_to_string(judged.dir.join(file)).expect("a file"),
+                std::fs::read_to_string(committed.dir.join(file)).expect("a file"),
+                "{file}"
+            );
+        }
+        // A wrong state of node 5's one line fails against the branch the reference judged.
+        corrupt(&f, "node5", "apply", "w");
+        let failed = failures(&branch_cases(&f, &asked));
+        assert!(
+            failed.iter().any(|p| p.starts_with("node5: its lines")
+                && p.ends_with(&format!("differs from {BRANCH_CORPUS}'s in w"))),
+            "{failed:#?}"
+        );
+    }
 
     #[test]
     fn an_undeclared_minority_s_convergence_after_the_heal_is_its_window() {
