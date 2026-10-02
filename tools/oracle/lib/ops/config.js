@@ -8,6 +8,11 @@
 //                        validateConfiguration does, and merged with the validated value. The
 //                        output is {options}, the part of the options a relay reads (PROJECTIONS),
 //                        or the error InvalidPluginConfiguration, naming the first refused key
+//   config.pluginStart   {package, options, env} -> {next}: what the process does next with those
+//                        options, as RegisterServiceProviders decides: "runs" when the schema
+//                        accepts them; when it refuses them, "start refused" for a package whose
+//                        service provider is required() (ServiceProviderCannotBeRegistered), else
+//                        "left out" (the provider is marked failed and the node runs without it)
 //   config.loadApp       {app, role} -> {plugins: [{package, options}]}: LocalConfigLoader
 //                        loadApplication on the app.json text `app` for the process type `role`,
 //                        then each plugin's package as LoadServiceProviders finds it
@@ -118,34 +123,54 @@ module.exports = function configOps({ solar }) {
         return require(resolved);
     }
 
-    return {
-        "config.pluginOptions": ({ package: name, options, env }) => {
-            const project = PROJECTIONS[name];
-            if (!project) throw new TypeError(`package must be one of ${Object.keys(PROJECTIONS).join(", ")}`);
-            if (options !== undefined && (options === null || typeof options !== "object" || Array.isArray(options))) {
-                throw new TypeError("options must be an object");
+    /** config.pluginOptions: the validated options' projection, or InvalidPluginConfiguration. */
+    function pluginOptions({ package: name, options, env }) {
+        const project = PROJECTIONS[name];
+        if (!project) throw new TypeError(`package must be one of ${Object.keys(PROJECTIONS).join(", ")}`);
+        if (options !== undefined && (options === null || typeof options !== "object" || Array.isArray(options))) {
+            throw new TypeError("options must be an object");
+        }
+        return withEnv(env, () => {
+            const { defaults } = fresh(name, "defaults.js");
+            const { ServiceProvider } = fresh(name, "service-provider.js");
+            const { PluginConfiguration } = kernel("providers/plugin-configuration.js");
+            const { JoiValidator } = kernel("services/validation/drivers/joi.js");
+            const { InvalidPluginConfiguration } = kernel("exceptions/plugins.js");
+            // LoadServiceProviders: from(name, defaults) (no global plugin options), then merge.
+            const config = Object.create(PluginConfiguration.prototype);
+            config.items = defaults;
+            config.merge(options);
+            // RegisterServiceProviders.validateConfiguration.
+            const schema = Object.create(ServiceProvider.prototype).configSchema();
+            const validator = new JoiValidator();
+            validator.validate(config.all(), schema);
+            if (validator.fails()) {
+                const first = validator.resultError[0];
+                throw new InvalidPluginConfiguration(name, `${first.path.join(".")}: ${first.message}`);
             }
-            return withEnv(env, () => {
-                const { defaults } = fresh(name, "defaults.js");
-                const { ServiceProvider } = fresh(name, "service-provider.js");
-                const { PluginConfiguration } = kernel("providers/plugin-configuration.js");
-                const { JoiValidator } = kernel("services/validation/drivers/joi.js");
-                const { InvalidPluginConfiguration } = kernel("exceptions/plugins.js");
-                // LoadServiceProviders: from(name, defaults) (no global plugin options), then merge.
-                const config = Object.create(PluginConfiguration.prototype);
-                config.items = defaults;
-                config.merge(options);
-                // RegisterServiceProviders.validateConfiguration.
-                const schema = Object.create(ServiceProvider.prototype).configSchema();
-                const validator = new JoiValidator();
-                validator.validate(config.all(), schema);
-                if (validator.fails()) {
-                    const first = validator.resultError[0];
-                    throw new InvalidPluginConfiguration(name, `${first.path.join(".")}: ${first.message}`);
-                }
-                config.merge(validator.valid() || {});
-                return { options: JSON.parse(JSON.stringify(project(config.all(), process.env))) };
-            });
+            config.merge(validator.valid() || {});
+            return { options: JSON.parse(JSON.stringify(project(config.all(), process.env))) };
+        });
+    }
+
+    return {
+        "config.pluginOptions": pluginOptions,
+
+        "config.pluginStart": async (args) => {
+            const { InvalidPluginConfiguration } = kernel("exceptions/plugins.js");
+            try {
+                pluginOptions(args);
+                return { next: "runs" };
+            } catch (error) {
+                if (!(error instanceof InvalidPluginConfiguration)) throw error;
+            }
+            // RegisterServiceProviders: the provider's required(), with the package's manifest
+            // set as LoadServiceProviders sets it (the default required() reads it).
+            const { ServiceProvider } = fresh(args.package, "service-provider.js");
+            const { PluginManifest } = kernel("providers/plugin-manifest.js");
+            const provider = Object.create(ServiceProvider.prototype);
+            provider.setManifest(new PluginManifest().discover(path.join(packages, args.package.replace("@solar-network/", ""))));
+            return { next: (await provider.required()) ? "start refused" : "left out" };
         },
 
         "config.loadApp": ({ app, role }) => {

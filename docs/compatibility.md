@@ -389,8 +389,10 @@ cargo test -p heartwood-kernel --locked --all-features   # unit tests, the loade
 ```
 
 The class V28, installed beside the kernel and the API, holds the reference's reading of
-`app.json` (`config.loadApp`) and of the components' options (`config.pluginOptions`); difftest's
-`config_app_vectors` test compares them.
+`app.json` (`config.loadApp`), of the components' options (`config.pluginOptions`) and of what the
+node does next with them (`config.pluginStart`: it runs, it leaves the component out, or it refuses
+the start); difftest's `config_app_vectors` test compares them. The case that asks for HTTPS has no
+`config.pluginStart` record: the reference serves HTTPS, Heartwood refuses the start.
 
 ## heartwood-logger
 
@@ -2675,7 +2677,7 @@ run without `DEVNET_GENERATOR`, and then installs nothing.
 | `V25-peer-rules.jsonl` (p2p) | the address rules of candidate peers, the version gate over the devnet's, the default and 400 seeded ranges, the same-subnet test and the outgoing rate limiter's waits |
 | `V26-network.jsonl` (p2p) | the status attestations of a ping, the n-ary search for the common block and the peer verification over forks of a devnet chain, the monitor's network height, fork decisions and download plans, and blocks rebuilt from getBlocks replies |
 | `V27-processor.jsonl` (blockchain) | the reference's processor on one block and a chain state (`chain.process`: every result and unchained status, the invalid generator, the reward, nonces, conflicting and stored transactions, a block refused in its apply after missed slots, a removed type) and its job on a download of one or more jobs (`chain.job`: the job's results and end, its commit, a delegate's registration and its first block in one download, as one job and as two) |
-| `V28-node.jsonl` (kernel and api) | the reference's reading of `app.json` (`config.loadApp`) and of the components' options (`config.pluginOptions`), and the API's query grammar (`api.parseQuery`, with its throws) and pagination (`api.paginate`) |
+| `V28-node.jsonl` (kernel and api) | the reference's reading of `app.json` (`config.loadApp`) and of the components' options (`config.pluginOptions`), what the node does next with those options (`config.pluginStart`), and the API's query grammar (`api.parseQuery`, with its throws) and pagination (`api.paginate`) |
 | `V29-forging.jsonl` (forger and p2p-wire) | block assembly (`forger.forge`: an empty block, each kept type alone and together, burns, 256 recipients, 150 and 151 transactions, a block over `maxPayload`, totals and rewards at the 64-bit edges, three aux values, milestones that change at the next height), collation and assembly after pool sessions (`forger.collateAndForge`), one attempt of the forger's slot (`forger.decide`, with its log lines), and the internal routes' round and network-state bodies as a relay writes them and the forger reads them |
 | `V30-relay-forger.jsonl` (p2p) | the relay's forging quorum over the network state of a round (`quorum.analyze`: the peers' heights, ids and delegates, the missed and the unknown) and the round the relay answers the forger with (`forger.round`) |
 | `V31-server.jsonl` (p2p) | the server's request chain over each route (`p2p.serveRequest`: the plugins' checks, the codec, the version and network gates, the forger's exemption from the limits), the inbound limiter's sequences (`ratelimit.run`) and the status the server signs and serves (`status.serve`) |

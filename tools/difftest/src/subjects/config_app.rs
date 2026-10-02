@@ -13,14 +13,25 @@
 //! `config.loadApp` reads the profile with the kernel and maps each package to the relay's known
 //! components ([`heartwood_core::config::Package`]); an unknown one refuses the file, as the
 //! reference's plugin discovery does.
+//!
+//! `config.pluginStart` (the same input) answers what the relay does next with the options:
+//! `{"next": "runs"}`, `"left out"` (the component is not started and the relay runs without it)
+//! or `"start refused"`. The relay's start reads the pool's, the store's, the peer-to-peer
+//! network's and the blockchain's options first and refuses the start when one is refused; the
+//! API's options go through [`heartwood_core::app::api_options`], over a configuration that lists
+//! the API with the case's options and environment.
 
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use heartwood_api::ApiConfig;
 use heartwood_api::server::SemaphoreLevel;
-use heartwood_core::config::Package;
+use heartwood_core::app::api_options;
+use heartwood_core::config::{Package, RelayConfig};
 use heartwood_core::options;
-use heartwood_kernel::config::{Env as NodeEnv, Options, OptionsError, Role, app};
+use heartwood_kernel::config::crypto::CryptoFiles;
+use heartwood_kernel::config::{Env as NodeEnv, Options, OptionsError, PeersFile, Role, app};
+use heartwood_kernel::paths::Paths;
 use serde_json::{Map, Value, json};
 
 use super::{Env, Outcome, Run, failed, text, unclassified};
@@ -30,13 +41,14 @@ use crate::subject::{Case, Verdict};
 pub(super) const OPS: &[(&str, Run)] = &[
     ("config.pluginOptions", plugin_options),
     ("config.loadApp", load_app),
+    ("config.pluginStart", plugin_start),
 ];
 
 /// The processors a case's pool is read for; the worker count they set is not compared.
 const CPUS: usize = 2;
 
-fn plugin_options(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
-    let input = case.input;
+/// A case's plugin entry options (`{}` when it has none) and its process environment.
+fn entry_and_env(input: &Value) -> Outcome<(Value, Vec<(String, String)>)> {
     let entry = input.get("options").cloned().unwrap_or_else(|| json!({}));
     let vars = input["env"]
         .as_object()
@@ -47,6 +59,80 @@ fn plugin_options(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     let vars: Vec<(String, String)> = vars
         .collect::<Option<_>>()
         .ok_or_else(|| failed("input.env holds a value that is not text"))?;
+    Ok((entry, vars))
+}
+
+fn plugin_start(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
+    let input = case.input;
+    let (entry, vars) = entry_and_env(input)?;
+    let node_env = NodeEnv::from_vars(vars);
+    let name = text(input, "package")?;
+    let read = match name {
+        "@solar-network/p2p" => options::p2p(&entry, &node_env).map(drop),
+        "@solar-network/blockchain" => options::blockchain(&entry).map(drop),
+        "@solar-network/database" => options::database(&entry).map(drop),
+        "@solar-network/pool" => {
+            let data = node_env
+                .get("CORE_PATH_DATA")
+                .ok_or_else(|| failed("input.env has no CORE_PATH_DATA"))?;
+            options::pool(&entry, &node_env, Path::new(data), CPUS).map(drop)
+        }
+        "@solar-network/api" => {
+            let devnet = env.devnet()?;
+            let data = PathBuf::from(
+                node_env
+                    .get("CORE_PATH_DATA")
+                    .ok_or_else(|| failed("input.env has no CORE_PATH_DATA"))?,
+            );
+            let relay = RelayConfig {
+                token: "solar".into(),
+                network: "testnet".into(),
+                paths: Paths {
+                    config: data.join("config"),
+                    cache: data.join("cache"),
+                    log: data.join("log"),
+                    temp: data.join("temp"),
+                    data,
+                },
+                env: node_env,
+                components: vec![Package::Api],
+                entries: BTreeMap::from([(Package::Api, entry)]),
+                peers: PeersFile {
+                    list: Vec::new(),
+                    sources: Vec::new(),
+                },
+                crypto: CryptoFiles {
+                    network: devnet.network.clone(),
+                    milestones: devnet.milestones.clone(),
+                    milestones_text: String::new(),
+                    genesis: Value::Null,
+                },
+                warnings: Vec::new(),
+            };
+            let next = match api_options(&relay) {
+                Ok(Some(_)) => "runs",
+                Ok(None) => "left out",
+                Err(_) => "start refused",
+            };
+            return Ok(Verdict::Output(json!({ "next": next })));
+        }
+        other => {
+            return Err(failed(format!(
+                "input.package {other} is not a package the relay reads"
+            )));
+        }
+    };
+    let next = if read.is_ok() {
+        "runs"
+    } else {
+        "start refused"
+    };
+    Ok(Verdict::Output(json!({ "next": next })))
+}
+
+fn plugin_options(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
+    let input = case.input;
+    let (entry, vars) = entry_and_env(input)?;
     let env = NodeEnv::from_vars(vars);
     let projected: Result<Value, OptionsError> = match text(input, "package")? {
         "@solar-network/p2p" => options::p2p(&entry, &env).map(|o| {
