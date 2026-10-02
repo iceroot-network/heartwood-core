@@ -823,6 +823,7 @@ fn sent(run_dir: &Path, manifest: &Manifest, steps: &[Step]) -> Result<Vec<Sent>
                 .as_array()
                 .into_iter()
                 .flatten();
+            parties.extend(r["tx"]["recipientId"].as_str().map(str::to_owned));
             parties.extend(transfers.filter_map(|t| t["recipientId"].as_str().map(str::to_owned)));
             out.push(Sent {
                 id: id.to_owned(),
@@ -860,8 +861,9 @@ fn sent(run_dir: &Path, manifest: &Manifest, steps: &[Step]) -> Result<Vec<Sent>
 /// The wallets whose places one node of the pair `left` and `right` alone moved in its state's
 /// indexes, each with its evidence: the sender and the recipients of every transaction the run's
 /// records show sent to one of the two and refused there by its handler ([`HANDLER_REFUSAL`]),
-/// and never sent to the other, before `before` (the route corpus's recording) when it is known.
-/// A refused transaction is not broadcast, so the other node never re-indexed its parties for it.
+/// and never sent to the other, at a recorded time before `before` (the route corpus's
+/// recording; none when it is not known). A refused transaction is not broadcast, so the other
+/// node never re-indexed its parties for it.
 pub fn refused_alone(
     run_dir: &Path,
     manifest: &Manifest,
@@ -881,10 +883,7 @@ pub fn refused_alone(
             .filter(|n| **n == left || **n == right)
             .collect();
         let ours = s.node == left || s.node == right;
-        let early = match (s.at, before) {
-            (Some(at), Some(before)) => at < before,
-            _ => true,
-        };
+        let early = matches!((s.at, before), (Some(at), Some(before)) if at < before);
         if pair.len() != 1 || !ours || !early || s.refused.as_deref() != Some(HANDLER_REFUSAL) {
             continue;
         }

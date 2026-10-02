@@ -1237,7 +1237,7 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
 /// the parties of the transactions the run's records show sent to one of the two nodes and refused
 /// there by their handler ([`nodes::refused_alone`]). A case that passes so is recorded with the
 /// wallets and their evidence; every other case stays as it was judged, and evidence that cannot
-/// be read is a failure.
+/// be read, or a corpus whose recording has no time, is a failure.
 fn free_places(
     run_dir: &Path,
     manifest: &Manifest,
@@ -1275,6 +1275,11 @@ fn free_places(
         let recorded = (steps.iter())
             .find(|s| s.text("dir").is_some_and(|d| run_dir.join(d) == dir))
             .and_then(|s| s.start);
+        if recorded.is_none() {
+            let message = format!("no step records when {} was recorded", dir.display());
+            cases.fail("api", label, message);
+            continue;
+        }
         let evidence = match nodes::refused_alone(run_dir, manifest, steps, (left, right), recorded)
         {
             Ok(evidence) if evidence.is_empty() => continue,
@@ -2111,7 +2116,8 @@ mod tests {
         std::fs::write(root.join("run.json"), run.to_string()).unwrap();
         let steps = [
             json!({"step": "txgen-once", "node": "node3", "ok": true, "submit": "node3"}),
-            json!({"step": "vote-a", "node": "node1", "ok": true, "detail": {"id": "tx-v",
+            json!({"step": "vote-a", "node": "node1", "ok": true,
+                "start": "2026-10-02T00:59:30.000Z", "detail": {"id": "tx-v",
                 "outcome": "rejected", "code": "ERR_APPLY", "wallet": "V"}}),
             json!({"step": "api-corpus", "node": "node1", "ok": true,
                 "start": "2026-10-02T01:00:00.000Z", "dir": api::RUN_ANSWERS_DIR}),
@@ -2263,5 +2269,90 @@ mod tests {
                 && r.label
                     .contains("the wallets node1 or node3 alone re-indexed")
         }));
+    }
+
+    #[test]
+    fn a_refusal_whose_time_or_whose_corpus_s_is_unknown_frees_nothing() {
+        let wallets = |order: &str| -> Vec<(&'static str, u64)> {
+            (order.split(' '))
+                .map(|a| match a {
+                    "A" => ("A", 100),
+                    "D" => ("D", 1),
+                    "G" => ("G", 50),
+                    "T" => ("T", 50),
+                    "B" => ("B", 50),
+                    _ => ("L", 50),
+                })
+                .collect()
+        };
+        let ours = wallets("A G B L T D");
+        let dir = listing_run(&[
+            ("moved-g", &ours, &wallets("A B L G T D")),
+            ("moved-l", &ours, &wallets("A L G B T D")),
+            ("moved-t", &ours, &wallets("A T G B L D")),
+        ]);
+        let run_dir = dir.path();
+        let manifest = Manifest::load(run_dir).unwrap();
+        let judge = |cases: &mut Cases| {
+            let report = api::compare(&ApiCompareArgs::Recorded {
+                run: run_dir.to_path_buf(),
+            })
+            .unwrap();
+            free_places(run_dir, &manifest, report, cases)
+        };
+        let fresh = || Cases {
+            run: "mixed-split".into(),
+            results: Vec::new(),
+        };
+        // The recipient a transaction names outside its transfers is a party too: T's place is
+        // free with G's.
+        let txgen = run_dir.join("txgen/once/txgen.jsonl");
+        let text = std::fs::read_to_string(&txgen).unwrap();
+        std::fs::write(
+            &txgen,
+            text.replace(
+                r#""asset":{"transfers":["#,
+                r#""recipientId":"T","asset":{"transfers":["#,
+            ),
+        )
+        .unwrap();
+        let mut cases = fresh();
+        let report = judge(&mut cases);
+        let outcome = |report: &Report, name: &str| {
+            let r = report.results.iter().find(|r| r.label == name).unwrap();
+            r.outcome.clone()
+        };
+        assert_eq!(outcome(&report, "moved-g"), Outcome::Pass);
+        assert_eq!(outcome(&report, "moved-t"), Outcome::Pass);
+        assert!(outcome(&report, "moved-l").is_failure());
+        // A submission without its time is no evidence that it came before the corpus.
+        let text = std::fs::read_to_string(&txgen).unwrap();
+        std::fs::write(
+            &txgen,
+            text.replace(r#""ts":"2026-10-02T00:59:00.000Z","#, ""),
+        )
+        .unwrap();
+        let mut cases = fresh();
+        let report = judge(&mut cases);
+        assert!(outcome(&report, "moved-g").is_failure());
+        // A corpus whose recording has no time: no refusal can be placed before it, and the
+        // evidence fails rather than freeing the refusal after it.
+        let steps = run_dir.join("steps.jsonl");
+        let text = std::fs::read_to_string(&steps).unwrap();
+        std::fs::write(
+            &steps,
+            text.replace(r#""start":"2026-10-02T01:00:00.000Z","#, ""),
+        )
+        .unwrap();
+        let mut cases = fresh();
+        let report = judge(&mut cases);
+        assert!(outcome(&report, "moved-l").is_failure());
+        assert!(
+            cases.results.iter().any(|r| r.outcome.is_failure()
+                && r.label
+                    .contains("the wallets node1 or node3 alone re-indexed")),
+            "{:?}",
+            cases.results
+        );
     }
 }
