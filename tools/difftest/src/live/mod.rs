@@ -1412,6 +1412,209 @@ fn check_bans(
     Ok(())
 }
 
+/// The seconds a suite run's fault window lasts after its recovery, as the suites' recipe gives it.
+pub const SUITE_WINDOW_SECONDS: i64 = 30;
+
+/// The longest a suite's network may take to converge on one tip after a heal: the window the
+/// partition and heal scenario gives its check that every node is on one chain (24 blocks of
+/// 8 s).
+pub const HEAL_CONVERGENCE_SECONDS: i64 = 192;
+
+/// The block-lag rule of a suite run's `propagation-lag` step, judged from the run's records:
+/// `Ok(None)` when the recipe records the step without judging it (`propagation-lag.json`'s
+/// `judged`; only the network suite judges it), else the problems, none when the rule holds.
+///
+/// As the recipe's rule: a node is timed from when it first holds a tip within one block of the
+/// highest, and every block must reach it within the file's `limitSeconds` of its first arrival
+/// at any node, outside the fault windows of `actions.jsonl` (a stop, start or restart: that node
+/// from its start to [`SUITE_WINDOW_SECONDS`] after its end; a partition: every node from its
+/// start to that long after its heal's end). And after each heal, the minority (the nodes of
+/// every side of the partition but its largest) has the window the mixed run's check gives it:
+/// from the heal's start to [`SUITE_WINDOW_SECONDS`] after the network converged, the first
+/// moment from the heal's end on when every node holds one tip (`propagation.jsonl`). A partition
+/// without a heal, a heal without a partition, and a network that does not converge within
+/// [`HEAL_CONVERGENCE_SECONDS`] of the heal are problems themselves.
+pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
+    let report = run::read_json(&run_dir.join("propagation-lag.json"))?;
+    if report.get("judged").and_then(Value::as_bool) != Some(true) {
+        return Ok(None);
+    }
+    let limit = report
+        .get("limitSeconds")
+        .and_then(Value::as_f64)
+        .unwrap_or(LAG_LIMIT_SECONDS);
+    let window = SUITE_WINDOW_SECONDS * 1_000;
+    let mut rows: Vec<(i64, String, u64, String)> = Vec::new();
+    for r in run::read_lines(&run_dir.join("propagation.jsonl"))? {
+        let t = r.get("t").and_then(Value::as_str).and_then(run::parse_time);
+        let node = r.get("node").and_then(Value::as_str);
+        let (Some(t), Some(node), Some(h)) = (t, node, r.get("h").and_then(Value::as_u64)) else {
+            continue;
+        };
+        let id = r.get("id").and_then(Value::as_str).unwrap_or_default();
+        rows.push((t, node.to_owned(), h, id.to_owned()));
+    }
+    rows.sort();
+    let mut problems = Vec::new();
+    let mut windows = Vec::new();
+    let mut partition: Option<(i64, Vec<Vec<String>>)> = None;
+    let time = |a: &Value, key: &str| a.get(key).and_then(Value::as_str).and_then(run::parse_time);
+    for a in run::read_lines(&run_dir.join("actions.jsonl"))? {
+        let verb = a.get("verb").and_then(Value::as_str).unwrap_or_default();
+        let args: Vec<String> = (a
+            .get("args")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten())
+        .filter_map(|v| v.as_str().map(str::to_owned))
+        .collect();
+        let (Some(start), Some(end)) = (time(&a, "start"), time(&a, "end")) else {
+            problems.push(format!("actions.jsonl: a {verb} without its start and end"));
+            continue;
+        };
+        match verb {
+            "partition" => {
+                if partition.is_some() {
+                    problems.push(format!(
+                        "a partition at {} while another stands",
+                        run::format_time(start)
+                    ));
+                }
+                let sides = args
+                    .iter()
+                    .map(|side| side.split(',').map(|n| format!("node{n}")).collect())
+                    .collect();
+                partition = Some((start, sides));
+            }
+            "heal" => {
+                let Some((from, sides)) = partition.take() else {
+                    problems.push(format!(
+                        "a heal at {} without a partition",
+                        run::format_time(start)
+                    ));
+                    continue;
+                };
+                windows.push(run::Window {
+                    fault: "partition".to_owned(),
+                    nodes: Vec::new(),
+                    start: from,
+                    end: end + window,
+                });
+                match converged(&rows, end) {
+                    None => problems.push(format!(
+                        "the network did not converge on one tip after the heal at {}",
+                        run::format_time(end)
+                    )),
+                    Some(at) if at - end > HEAL_CONVERGENCE_SECONDS * 1_000 => {
+                        problems.push(format!(
+                            "the network converged {:.1} s after the heal at {}, beyond \
+                             {HEAL_CONVERGENCE_SECONDS} s",
+                            seconds(at - end),
+                            run::format_time(end)
+                        ));
+                    }
+                    Some(at) => {
+                        let largest = sides.iter().map(Vec::len).max().unwrap_or(0);
+                        let first = sides.iter().position(|s: &Vec<String>| s.len() == largest);
+                        let minority = (sides.iter().enumerate())
+                            .filter(|(i, _)| Some(*i) != first)
+                            .flat_map(|(_, side)| side.iter().cloned())
+                            .collect();
+                        windows.push(run::Window {
+                            fault: "minority".to_owned(),
+                            nodes: minority,
+                            start,
+                            end: at + window,
+                        });
+                    }
+                }
+            }
+            "stop" | "start" | "restart" => {
+                if let Some(node) = args.first() {
+                    windows.push(run::Window {
+                        fault: verb.to_owned(),
+                        nodes: vec![format!("node{node}")],
+                        start,
+                        end: end + window,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some((from, _)) = partition {
+        problems.push(format!(
+            "the partition at {} has no heal in actions.jsonl",
+            run::format_time(from)
+        ));
+    }
+    let mut first: BTreeMap<u64, i64> = BTreeMap::new();
+    for (t, _, h, _) in &rows {
+        first.entry(*h).or_insert(*t);
+    }
+    let (mut tip, mut joined) = (0, std::collections::BTreeSet::new());
+    let mut late = Vec::new();
+    for (t, node, h, _) in &rows {
+        tip = tip.max(*h);
+        if !joined.contains(node.as_str()) {
+            if *h + 1 < tip {
+                continue;
+            }
+            joined.insert(node.as_str());
+        }
+        if windows.iter().any(|w| w.concerns(node) && w.contains(*t)) {
+            continue;
+        }
+        let lag = seconds(t - first[h]);
+        if lag > limit {
+            late.push(format!(
+                "{node} got block {h} {lag:.1} s after its first arrival"
+            ));
+        }
+    }
+    if !late.is_empty() {
+        problems.push(format!(
+            "{} blocks later than {limit} s outside the fault windows: {}",
+            late.len(),
+            late.iter().take(10).cloned().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    Ok(Some(problems))
+}
+
+/// The first moment from `from` on when every node of `rows` holds one tip, if any.
+fn converged(rows: &[(i64, String, u64, String)], from: i64) -> Option<i64> {
+    let nodes: std::collections::BTreeSet<&str> = rows.iter().map(|r| r.1.as_str()).collect();
+    let mut last: BTreeMap<&str, &str> = BTreeMap::new();
+    let one = |last: &BTreeMap<&str, &str>| {
+        last.len() == nodes.len()
+            && last
+                .values()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                == 1
+    };
+    let mut rows = rows.iter().peekable();
+    while let Some((_, node, _, id)) = rows.next_if(|r| r.0 <= from) {
+        last.insert(node, id);
+    }
+    if one(&last) {
+        return Some(from);
+    }
+    for (t, node, _, id) in rows {
+        last.insert(node, id);
+        if one(&last) {
+            return Some(*t);
+        }
+    }
+    None
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn seconds(ms: i64) -> f64 {
+    ms as f64 / 1_000.0
+}
+
 fn check_invariants(
     run_dir: &Path,
     manifest: &Manifest,
