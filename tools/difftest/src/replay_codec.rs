@@ -237,16 +237,16 @@ fn refined(op: &str, input: &Value, expected: &Expected, outcome: Outcome) -> Ou
 }
 
 /// What the reference answers to `op` and what Heartwood's subject makes of it: the judged
-/// outcome, and whether the reference accepted.
+/// outcome, and the reference's output when it gave one rather than an error.
 fn judged(
     server: &mut OracleServer,
     registry: &Registry,
     op: &str,
     input: &Value,
-) -> Result<(Outcome, bool)> {
-    let (expected, accepted) = match server.call(op, "devnet", HEIGHT, input)? {
-        Ok(output) => (Expected::Output(output), true),
-        Err(error) => (Expected::Error(error), false),
+) -> Result<(Outcome, Option<Value>)> {
+    let (expected, answer) = match server.call(op, "devnet", HEIGHT, input)? {
+        Ok(output) => (Expected::Output(output.clone()), Some(output)),
+        Err(error) => (Expected::Error(error), None),
     };
     let case = Case {
         op,
@@ -260,7 +260,7 @@ fn judged(
         &expected,
         l0::judge_case(&case, &expected, registry),
     );
-    Ok((outcome, accepted))
+    Ok((outcome, answer))
 }
 
 /// An accepted address re-encodes to the text it was read from.
@@ -339,7 +339,9 @@ pub fn run(
                 let text = String::from_utf8_lossy(&bytes);
                 for byte in NETWORK_BYTES {
                     let input = json!({ "address": text, "networkByte": byte });
-                    let (outcome, valid) = judged(server, registry, "address.validate", &input)?;
+                    let (outcome, answer) = judged(server, registry, "address.validate", &input)?;
+                    // `address.validate` answers every text; it accepts the ones that are valid.
+                    let valid = answer.is_some_and(|a| a["valid"] == json!(true));
                     if byte == NETWORK_BYTES[0] && valid {
                         accepted += 1;
                     }
@@ -368,8 +370,8 @@ pub fn run(
                 let text = String::from_utf8_lossy(&bytes);
                 for strict in [true, false] {
                     let input = json!({ "text": text, "strict": strict });
-                    let (outcome, taken) = judged(server, registry, "tx.fromData", &input)?;
-                    if strict && taken {
+                    let (outcome, answer) = judged(server, registry, "tx.fromData", &input)?;
+                    if strict && answer.is_some() {
                         accepted += 1;
                     }
                     result("tx.fromData", format!("strict {strict}"), outcome);
@@ -705,6 +707,10 @@ mod tests {
                 replayed.accepted >= 1,
                 "{target}: the reference accepted nothing"
             );
+            if target == "address_decode" {
+                // Of the six inputs, only the devnet's address validates for its network byte.
+                assert_eq!(replayed.accepted, 1, "{target}: the valid addresses");
+            }
             let odd: Vec<_> = replayed
                 .report
                 .results
