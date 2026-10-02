@@ -753,7 +753,9 @@ sandboxing directives the host's systemd supports (in a user unit, only those th
 namespace). It sets `CORE_SERVICE_MANAGER=systemd`, which the node records at its start: under a
 unit, `heartwood <role> status` reports `online (systemd)`, and `stop` and `restart` refuse and name
 the `systemctl` command to use, so a stop never fights the manager. The binary's path in `ExecStart`
-is the file you ran `service install` with: install the unit from the binary at its permanent place.
+is the real file of the binary you ran `service install` with, every symbolic link resolved: run it
+from the binary at its permanent place, and after an upgrade that puts the binary somewhere else,
+install the unit again. A link you repoint later does not change a unit that is already written.
 
 Check the unit before you install it, where `systemd-analyze` exists:
 
@@ -762,6 +764,7 @@ systemd-analyze --user verify ~/units/solar-solo-relay.service
 ```
 
 ```text
+mkdir -p ~/.config/systemd/user
 cp ~/units/solar-solo-relay.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now solar-solo-relay.service
@@ -893,7 +896,8 @@ not use them on a node that joins an existing network. The forger refuses them.
 - A hangup signal is ignored, so closing your terminal does not stop a started node.
 
 The node and its supervisor keep small files in `<data>/run`: `<role>.lock`, `<role>.pid`,
-`<role>.supervisor.lock` and `<role>.state.json`. The directory has mode 700; the tools refuse it
+`<role>.supervisor.lock`, `<role>.state.json`, and `<role>.manager.json` for a node started under a
+systemd unit (section 13). The directory has mode 700; the tools refuse it
 if another user owns it or it is a symbolic link.
 
 ## 17. Logs
@@ -922,8 +926,8 @@ heartwood relay log --network <network> --lines 100
 
 The default is the last 15 lines, followed live; `--error` reads the error capture. Read the
 node's own log with ordinary tools, for example `tail -f`. The console level is `CORE_LOG_LEVEL`
-(default `info`) and the file's is `CORE_LOG_LEVEL_FILE` (default `debug`). A log rotates by date
-only, never by size: watch the disk. `heartwood devnet logs` merges a devnet's logs in time order.
+(default `info`) and the file's is `CORE_LOG_LEVEL_FILE` (default `debug`). The node's own log
+rotates by date only, never by size: watch the disk. `heartwood devnet logs` merges a devnet's logs in time order.
 
 ## 18. Upgrades and the version floor
 
