@@ -2003,6 +2003,7 @@ fn a_record_narrowed_to_a_module_goes_stale_on_what_its_code_reaches_only() {
         json!([
             "data",
             "tool/src/cli.rs",
+            "tool/src/lib.rs",
             "tool/src/run/mod.rs",
             "tool/src/run/step.rs",
             "tool/src/used.rs",
@@ -2019,6 +2020,60 @@ fn a_record_narrowed_to_a_module_goes_stale_on_what_its_code_reaches_only() {
     rig.commit("a used module");
     let now = t(&rig);
     assert!(now.contains("stale: tool/src/used.rs changed"), "{now}");
+}
+
+#[test]
+fn a_record_narrowed_to_a_module_goes_stale_on_the_declaration_that_chooses_its_file() {
+    let rig = Rig::new();
+    rig.write("tool/Cargo.toml", "[package]\nname = \"tool\"\n");
+    rig.write("tool/src/lib.rs", "pub mod a;\npub mod b;\n");
+    rig.write("tool/src/a.rs", "pub fn f() { crate::b::c::answer(); }\n");
+    rig.write("tool/src/b/mod.rs", "pub mod c;\n");
+    rig.write("tool/src/b/c.rs", "pub fn answer() {}\n");
+    rig.commit("a tool");
+    let mut criteria = with_row(json!([{"kind": "record", "target": "suites"}]));
+    criteria["narrowing"]["suites"] = json!(["rust:tool/src/a.rs"]);
+    rig.criteria(&criteria);
+    assert!(
+        rig.gate(&[
+            "record",
+            "--target",
+            "suites",
+            "--command",
+            "suites.sh",
+            "--exit",
+            "0",
+            "--started",
+            T1,
+            "--finished",
+            T1,
+            "--out",
+            &rig.arg("records"),
+            "--criteria",
+            &rig.arg("criteria.json"),
+            "--machine",
+            "box-1",
+        ])
+        .ok
+    );
+    assert_eq!(
+        rig.records()[0]["testedPaths"],
+        json!([
+            "tool/src/a.rs",
+            "tool/src/b/c.rs",
+            "tool/src/b/mod.rs",
+            "tool/src/lib.rs",
+            "tools/gate-record.sh"
+        ])
+    );
+    let t = |rig: &Rig| row_t(&s1(rig, &["--verbose"]).text);
+    assert!(t(&rig).contains("T        pass"), "{}", t(&rig));
+    // Only the parent's declaration changes: the path now compiles another file.
+    rig.write("tool/src/b/other.rs", "pub fn answer() { let _ = 1; }\n");
+    rig.write("tool/src/b/mod.rs", "#[path = \"other.rs\"]\npub mod c;\n");
+    rig.commit("another file for c");
+    let now = t(&rig);
+    assert!(now.contains("stale: tool/src/b/mod.rs changed"), "{now}");
 }
 
 #[test]

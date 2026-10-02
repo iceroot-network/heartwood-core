@@ -5,12 +5,13 @@
 //! a file) and `rust-leaf:<path>` (a file). `gate record` replaces them with files, read from the
 //! tree it records: the module's file, and the file of every module of the crate its code names
 //! by path (`crate::a::b`, `<the library's name>::a`, `super::c`, `self::d`, or a child module it
-//! declares and names), transitively, each module by its deepest file; the files of
-//! `include_str!` and `include_bytes!`; and each leaf, whose own paths are not followed. A leaf is
-//! a file that names every command's types (the argument parser), and the crate's root files
-//! (`lib.rs`, `main.rs`) are leaves always: following them would reach every module, though a
-//! module that uses one of their items runs only that item. Code in a `#[cfg(test)]` module, in
-//! comments and in strings names nothing.
+//! declares and names), transitively, each module by its deepest file; the files that declare
+//! each module reached (the crate's root file and each module above it, whose `mod` items choose
+//! the files compiled), not followed; the files of `include_str!` and `include_bytes!`; and each
+//! leaf, whose own paths are not followed. A leaf is a file that names every command's types (the
+//! argument parser), and the crate's root files (`lib.rs`, `main.rs`) are leaves always: following
+//! them would reach every module, though a module that uses one of their items runs only that
+//! item. Code in a `#[cfg(test)]` module, in comments and in strings names nothing.
 //!
 //! The record keeps the files, so a change to any of them (a new path among them, too) makes it
 //! stale. What the paths do not show is not seen: an `impl` in a file that no path reaches, and a
@@ -120,6 +121,20 @@ impl Crate {
         segs
     }
 
+    /// The files that declare the module of `file`, from the crate's root down: the root file
+    /// that holds the crate's modules (`lib.rs`, else `main.rs`) and each module above it. A
+    /// `mod` declaration, with any attribute on it, chooses the file compiled.
+    fn declarations(&self, file: &Path) -> Vec<PathBuf> {
+        let module = self.module_of(file);
+        let root = [self.src.join("lib.rs"), self.src.join("main.rs")]
+            .into_iter()
+            .find(|f| f.is_file());
+        (1..module.len())
+            .filter_map(|n| self.file(&module[..n]))
+            .chain(root.filter(|_| !module.is_empty()))
+            .collect()
+    }
+
     /// Whether `file` is a root file of the crate.
     fn is_root(&self, file: &Path) -> bool {
         file.parent() == Some(self.src.as_path())
@@ -191,6 +206,10 @@ fn closure(root: &Path, path: &str, leaves: &BTreeSet<PathBuf>) -> Result<BTreeS
             }
         }
     }
+    // The files that declare each module reached are kept, not followed: a change there (a
+    // module moved by a `#[path]`) changes what the module's path compiles.
+    let declared: BTreeSet<PathBuf> = seen.iter().flat_map(|f| krate.declarations(f)).collect();
+    seen.extend(declared);
     seen.extend(data);
     Ok(seen)
 }
@@ -594,6 +613,36 @@ mod tests {
                 "t/src/c.rs",
                 "t/src/cli.rs",
                 "t/src/d.rs",
+                // It declares a, b, c and d.
+                "t/src/lib.rs",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_files_that_declare_a_reached_module_are_kept_and_not_followed() {
+        let dir = tree(&[
+            ("t/Cargo.toml", "[package]\nname = \"the-tool\"\n"),
+            ("t/src/lib.rs", "pub mod a;\npub mod b;\npub mod d;\n"),
+            ("t/src/a.rs", "pub fn f() { crate::b::c::answer(); }\n"),
+            // The parent's declaration chooses the file compiled (a `#[path]` on it would choose
+            // another), so it is kept; its own code is not followed.
+            (
+                "t/src/b/mod.rs",
+                "pub mod c;\npub mod other;\npub fn g() { crate::d::x(); }\n",
+            ),
+            ("t/src/b/c.rs", "pub fn answer() {}\n"),
+            ("t/src/b/other.rs", "pub fn other() {}\n"),
+            ("t/src/d.rs", "pub fn x() {}\n"),
+        ]);
+        let files = expand(dir.path(), &["rust:t/src/a.rs".to_owned()]).expect("expand");
+        assert_eq!(
+            files,
+            [
+                "t/src/a.rs",
+                "t/src/b/c.rs",
+                "t/src/b/mod.rs",
+                "t/src/lib.rs"
             ]
         );
     }
