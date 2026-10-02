@@ -105,7 +105,8 @@ pub struct Runner<'a> {
     held_back: BTreeSet<u32>,
     /// The last partition's groups and the height of the tip it was made at.
     pub(super) partition: Option<(Vec<Vec<u32>>, u32)>,
-    /// Each group's tip on its own branch, as a both-sides check saw it during the partition.
+    /// Each group's block at one height above the partition's, on its own branch, as a
+    /// both-sides check saw it during the partition.
     pub(super) branches: Vec<Tip>,
     /// The compared, exempt and missing nodes at the latest single-tip probe.
     pub(super) single_tip_label: String,
