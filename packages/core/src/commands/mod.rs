@@ -6,8 +6,7 @@
 //! token's running instances), [`mod@env`] (`get`, `list`, `set`, `paths`), [`config`] (`publish`,
 //! `forger`), [`service`] (`install`, `uninstall`), [`mod@core`] (the combined role's `run`,
 //! `start`, `stop`, `restart`, `status`, `log`) and [`supervise`] (the hidden supervisor), with
-//! `version` (`--verbose`) and clap's `help`. A command that is not built yet says so and exits
-//! with 1. The reference's colon spellings (`relay:start`) are rewritten first
+//! `version` (`--verbose`) and clap's `help`. The reference's colon spellings (`relay:start`) are rewritten first
 //! ([`heartwood_cli::argv::rewrite`]); flags keep the reference's camelCase with kebab-case
 //! aliases.
 
@@ -251,11 +250,6 @@ pub(crate) fn manage(role: Role, command: Manage) -> ExitCode {
         }
         .map_err(RoleError::from)
     })
-}
-
-/// The answer of a command that is not built yet: the message, and the exit status 1.
-pub(crate) fn not_built(what: &str) -> ExitCode {
-    crate::exit(Err(format!("{what} is not built yet")))
 }
 
 /// The version, with the platform this build runs on and the features it was built with (a test

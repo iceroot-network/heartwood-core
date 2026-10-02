@@ -36,9 +36,21 @@ pub struct ServiceFlags {
 
 /// Run `command`.
 pub fn run(command: ServiceCommand) -> ExitCode {
-    let what = match command {
-        ServiceCommand::Install(_) => "service install",
-        ServiceCommand::Uninstall(_) => "service uninstall",
+    use heartwood_cli::service::{Manager, install_text, uninstall_text};
+    let (install, f) = match command {
+        ServiceCommand::Install(f) => (true, f),
+        ServiceCommand::Uninstall(f) => (false, f),
     };
-    super::not_built(what)
+    let manager = if f.system {
+        Manager::SystemdSystem
+    } else {
+        Manager::SystemdUser
+    };
+    super::on_instance(f.role, &f.instance, |i| {
+        let text = match install {
+            true => install_text(i, f.role, manager, &super::program()?, f.out.as_deref()),
+            false => uninstall_text(i, f.role, manager, f.out.as_deref()),
+        };
+        text.map(|text| print!("{text}")).map_err(|e| e.to_string())
+    })
 }
