@@ -1593,21 +1593,36 @@ fn a_scenario_of_a_comparison_shows_nothing_unless_its_suite_s_chains_and_steps_
 }
 
 #[test]
-fn a_record_made_with_tooling_the_criteria_do_not_accept_does_not_count() {
+fn a_record_counts_only_with_every_run_s_whole_tooling_in_versions_the_criteria_accept() {
     let rig = Rig::new();
     let sum = |c: char| c.to_string().repeat(64);
     let mut criteria = with_row(json!([{"kind": "record", "target": "suites"}]));
-    criteria["tooling"] = json!({"accepted": {"scripts/suites.sh": [sum('b')]},
-                                 "required": [{"target": "suites"}]});
+    criteria["tooling"] = json!({
+        "accepted": {"scripts/suites.sh": [sum('b')], "scripts/lib.sh": [sum('d')]},
+        "required": [{"target": "suites"}],
+        "recipes": {"scripts/suites.sh": ["scripts/suites.sh", "scripts/lib.sh"]}
+    });
     rig.criteria(&criteria);
-    let run = rig.path("run");
-    std::fs::create_dir_all(&run).expect("run");
-    std::fs::write(
-        run.join("tooling.sha256"),
-        format!("{}  scripts/suites.sh\n", sum('a')),
-    )
-    .expect("tooling");
-    let record = |with_tooling: bool, started: &str| {
+    // Two runs of one seed, as a comparison of both implementations reads them.
+    let seed = rig.path("seed");
+    let (left, right) = (seed.join("x-reference"), seed.join("x-heartwood"));
+    for run in [&left, &right] {
+        std::fs::create_dir_all(run).expect("run");
+        std::fs::write(run.join("run.json"), "{}").expect("run.json");
+    }
+    let list = |run: &Path, lines: &[(char, &str)]| {
+        let text: String = lines
+            .iter()
+            .map(|(c, path)| format!("{}  {path}\n", sum(*c)))
+            .collect();
+        std::fs::write(run.join("tooling.sha256"), text).expect("tooling");
+    };
+    let n = std::cell::Cell::new(0);
+    let record = |with_tooling: bool| -> String {
+        n.set(n.get() + 1);
+        let started = format!("2026-10-01T1{}:00:00Z", n.get());
+        let _ = std::fs::remove_dir_all(rig.path("records"));
+        let (out, dir) = (rig.arg("records"), rig.arg("seed"));
         let mut args = vec![
             "record",
             "--target",
@@ -1617,40 +1632,65 @@ fn a_record_made_with_tooling_the_criteria_do_not_accept_does_not_count() {
             "--exit",
             "0",
             "--started",
-            started,
+            &started,
             "--finished",
-            started,
+            &started,
             "--out",
-            "",
+            &out,
             "--machine",
             "box-1",
         ];
-        let out = rig.arg("records");
-        let run = rig.arg("run");
-        args[12] = &out;
         if with_tooling {
-            args.extend(["--tooling", &run]);
+            args.extend(["--tooling", &dir]);
         }
         assert!(rig.gate(&args).ok);
+        row_t(&s1(&rig, &["--verbose"]).text)
     };
-    record(true, T1);
-    let t = row_t(&s1(&rig, &["--verbose"]).text);
+    let whole = [('b', "scripts/suites.sh"), ('d', "scripts/lib.sh")];
+    list(&left, &whole);
+    list(&right, &whole);
+    assert!(record(true).contains("T        pass"));
+    // One run's list is not there: the other's cannot stand for it.
+    std::fs::remove_file(right.join("tooling.sha256")).expect("remove");
+    let t = record(true);
     assert!(
-        t.contains("tooling: made with scripts/suites.sh aaaaaaaaaaaa"),
+        t.contains("run seed/x-heartwood names none of its devnet tooling"),
         "{t}"
     );
-    std::fs::remove_dir_all(rig.path("records")).expect("records");
-    record(false, T2);
-    let t = row_t(&s1(&rig, &["--verbose"]).text);
-    assert!(t.contains("names none of the devnet tooling"), "{t}");
-    std::fs::write(
-        run.join("tooling.sha256"),
-        format!("{}  scripts/suites.sh\n", sum('b')),
-    )
-    .expect("tooling");
-    record(true, T3);
-    let t = row_t(&s1(&rig, &["--verbose"]).text);
-    assert!(t.contains("T        pass"), "{t}");
+    // A version the criteria do not accept.
+    list(
+        &right,
+        &[('a', "scripts/suites.sh"), ('d', "scripts/lib.sh")],
+    );
+    let t = record(true);
+    assert!(
+        t.contains("run seed/x-heartwood was made with scripts/suites.sh aaaaaaaaaaaa"),
+        "{t}"
+    );
+    // A file the recipe runs left out, and a file the criteria do not list.
+    list(&right, &[('b', "scripts/suites.sh")]);
+    let t = record(true);
+    assert!(
+        t.contains("does not name scripts/lib.sh, which that recipe runs"),
+        "{t}"
+    );
+    list(
+        &right,
+        &[
+            ('b', "scripts/suites.sh"),
+            ('d', "scripts/lib.sh"),
+            ('e', "scripts/new.sh"),
+        ],
+    );
+    let t = record(true);
+    assert!(
+        t.contains("scripts/new.sh, which the criteria do not list"),
+        "{t}"
+    );
+    // No recipe the criteria know, and no tooling at all.
+    list(&right, &[('d', "scripts/lib.sh")]);
+    assert!(record(true).contains("names no recipe the criteria know"));
+    assert!(record(false).contains("names none of the devnet tooling"));
 }
 
 #[test]

@@ -276,13 +276,15 @@ pub fn run_command(args: &crate::cli::ScenarioRunArgs) -> Result<Report> {
 /// Compare a suite's reference and Heartwood runs of one seed under `dir` (`<suite>-reference`
 /// and `<suite>-heartwood`), every suite there or `suite` alone, each run's chain judged against
 /// the reference through the oracle of the environment (`DIFFTEST_IMAGE` or `SOLAR_DIR`), its
-/// corpus under the corpus root.
+/// corpus under the corpus root, and each Heartwood run bound to the relay of the tree in the
+/// current directory.
 pub fn compare(dir: &Path, suite: Option<&str>) -> Result<Report> {
     let oracle =
         || crate::cli::OracleArgs::default().resolve(|name: &str| std::env::var(name).ok());
     let judging = record::Judging {
         root: Path::new(crate::live::CORPUS_ROOT),
         oracle: &oracle,
+        repo: Some(Path::new(".")),
     };
     record::compare(dir, suite, Some(&judging))
 }

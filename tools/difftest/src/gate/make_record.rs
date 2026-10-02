@@ -119,7 +119,7 @@ pub fn run(args: &[String]) -> Result<bool> {
         }
         None => output::Parsed::default(),
     };
-    let tooling = tooling_of(&tooling_dirs)?;
+    let tooling_runs = tooling_of(&tooling_dirs)?;
 
     let record = GateRecord {
         format: RECORD_FORMAT.to_owned(),
@@ -141,7 +141,8 @@ pub fn run(args: &[String]) -> Result<bool> {
         },
         hits: parsed.hits,
         scenarios: parsed.scenarios,
-        tooling,
+        tooling: BTreeMap::new(),
+        tooling_runs,
         started,
         finished,
     };
@@ -227,6 +228,7 @@ pub fn write_own(
         hits: own.hits,
         scenarios: BTreeMap::new(),
         tooling: BTreeMap::new(),
+        tooling_runs: BTreeMap::new(),
         started: own.started,
         finished: time::now_utc(),
     };
@@ -273,42 +275,67 @@ fn tested_paths(paths: Vec<String>) -> Result<Vec<String>> {
 /// The file each run directory keeps of the devnet tooling it was made with.
 const TOOLING_FILE: &str = "tooling.sha256";
 
-/// The devnet tooling the runs in `dirs` were made with: each `tooling.sha256` of a directory, or
-/// of the directories right under it, read as `<sha256>  <path>` lines, the paths relative to the
-/// tooling's root (an absolute path names a build of the tree or the toolchain, not the tooling).
-fn tooling_of(dirs: &[String]) -> Result<BTreeMap<String, Vec<String>>> {
-    let mut files = Vec::new();
+/// The file that makes a directory a run directory.
+const RUN_FILE: &str = "run.json";
+
+/// The devnet tooling each run in `dirs` was made with, by run: a directory with a
+/// `tooling.sha256` (or a `run.json`) is a run, named by its directory's name; another is a
+/// directory of runs, each named by that directory's name and its own. A list is read as
+/// `<sha256>  <path>` lines, the paths relative to the tooling's root (a line with an absolute path
+/// names a build of the tree or the toolchain, not the tooling, and is left out); a run directory
+/// without a list is kept with none, and a line of another form is an error.
+fn tooling_of(dirs: &[String]) -> Result<BTreeMap<String, BTreeMap<String, String>>> {
+    let is_run = |dir: &Path| dir.join(TOOLING_FILE).is_file() || dir.join(RUN_FILE).is_file();
+    let name = |dir: &Path| {
+        dir.file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+    };
+    let mut runs: Vec<(String, PathBuf)> = Vec::new();
     for dir in dirs.iter().map(Path::new) {
-        let own = dir.join(TOOLING_FILE);
-        if own.is_file() {
-            files.push(own);
+        if is_run(dir) {
+            runs.push((name(dir), dir.to_path_buf()));
             continue;
         }
         let listing = std::fs::read_dir(dir).map_err(|e| Error::io(dir, e))?;
         let mut found: Vec<PathBuf> = listing
-            .filter_map(|e| e.ok().map(|e| e.path().join(TOOLING_FILE)))
-            .filter(|p| p.is_file())
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_dir() && is_run(p))
             .collect();
         found.sort();
-        files.extend(found);
+        runs.extend(
+            found
+                .into_iter()
+                .map(|run| (format!("{}/{}", name(dir), name(&run)), run)),
+        );
     }
-    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for file in files {
-        let text = std::fs::read_to_string(&file).map_err(|e| Error::io(&file, e))?;
-        for line in text.lines() {
-            let Some((sum, path)) = line.split_once("  ") else {
-                continue;
-            };
-            let sum_ok = sum.len() == 64 && sum.bytes().all(|b| b.is_ascii_hexdigit());
-            if !sum_ok || path.starts_with('/') {
-                continue;
-            }
-            let sums = out.entry(path.to_owned()).or_default();
-            if !sums.iter().any(|s| s == sum) {
-                sums.push(sum.to_owned());
-                sums.sort();
+    let mut out = BTreeMap::new();
+    for (label, dir) in runs {
+        let file = dir.join(TOOLING_FILE);
+        let mut files = BTreeMap::new();
+        if file.is_file() {
+            let text = std::fs::read_to_string(&file).map_err(|e| Error::io(&file, e))?;
+            for (n, line) in text
+                .lines()
+                .enumerate()
+                .filter(|(_, l)| !l.trim().is_empty())
+            {
+                let parsed = line.split_once("  ").filter(|(sum, path)| {
+                    sum.len() == 64
+                        && sum.bytes().all(|b| b.is_ascii_hexdigit())
+                        && !path.is_empty()
+                });
+                let Some((sum, path)) = parsed else {
+                    return Err(Error::Corpus {
+                        path: file,
+                        message: format!("line {} is not `<sha256>  <path>`", n + 1),
+                    });
+                };
+                if !path.starts_with('/') {
+                    files.insert(path.to_owned(), sum.to_ascii_lowercase());
+                }
             }
         }
+        out.insert(label, files);
     }
     Ok(out)
 }
@@ -470,6 +497,7 @@ mod tests {
             hits: BTreeMap::new(),
             scenarios: BTreeMap::new(),
             tooling: BTreeMap::new(),
+            tooling_runs: BTreeMap::new(),
             started: "2026-10-01T10:00:00Z".to_owned(),
             finished: "2026-10-01T10:05:00Z".to_owned(),
         }
@@ -577,12 +605,18 @@ mod tests {
     }
 
     #[test]
-    fn tooling_is_read_from_a_run_or_the_runs_under_a_directory() {
+    fn tooling_is_read_run_by_run_and_a_run_without_a_list_or_with_a_bad_line_shows() {
         let dir = std::env::temp_dir().join(format!("difftest-tooling-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let (a, b) = (dir.join("suite-a"), dir.join("suite-b"));
-        std::fs::create_dir_all(&a).unwrap();
-        std::fs::create_dir_all(&b).unwrap();
+        let (a, b, c) = (
+            dir.join("suite-a"),
+            dir.join("suite-b"),
+            dir.join("suite-c"),
+        );
+        for run in [&a, &b, &c] {
+            std::fs::create_dir_all(run).unwrap();
+        }
+        std::fs::create_dir_all(dir.join("logs")).unwrap();
         let line = |c: char, path: &str| format!("{}  {path}\n", c.to_string().repeat(64));
         std::fs::write(
             a.join(TOOLING_FILE),
@@ -590,16 +624,31 @@ mod tests {
         )
         .unwrap();
         std::fs::write(b.join(TOOLING_FILE), line('b', "scripts/run.sh")).unwrap();
-        let both = tooling_of(&[dir.to_string_lossy().into_owned()]).unwrap();
+        // A run directory without its list is a run with none; a directory of logs is no run.
+        std::fs::write(c.join(RUN_FILE), "{}").unwrap();
+        let all = tooling_of(&[dir.to_string_lossy().into_owned()]).unwrap();
+        let top = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let run = |name: &str, sum: Option<char>| {
+            (
+                format!("{top}/{name}"),
+                sum.map(|c| {
+                    BTreeMap::from([("scripts/run.sh".to_owned(), c.to_string().repeat(64))])
+                })
+                .unwrap_or_default(),
+            )
+        };
         assert_eq!(
-            both,
-            BTreeMap::from([(
-                "scripts/run.sh".to_owned(),
-                vec!["a".repeat(64), "b".repeat(64)]
-            )])
+            all,
+            BTreeMap::from([
+                run("suite-a", Some('a')),
+                run("suite-b", Some('b')),
+                run("suite-c", None)
+            ])
         );
         let one = tooling_of(&[a.to_string_lossy().into_owned()]).unwrap();
-        assert_eq!(one["scripts/run.sh"], vec!["a".repeat(64)]);
+        assert_eq!(one["suite-a"]["scripts/run.sh"], "a".repeat(64));
+        std::fs::write(b.join(TOOLING_FILE), "not a sum  scripts/run.sh\n").unwrap();
+        assert!(tooling_of(&[b.to_string_lossy().into_owned()]).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

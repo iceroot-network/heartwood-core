@@ -102,6 +102,48 @@ pub fn judge(
     out
 }
 
+/// What a Heartwood run's relay is built from: a change here since the run's commit makes it
+/// another relay than this tree's.
+const PRODUCT: [&str; 4] = [
+    "packages",
+    "Cargo.toml",
+    "Cargo.lock",
+    ":(top,exclude,glob)**/*.md",
+];
+
+/// Whether the Heartwood run in `run_dir` tested this tree's relay: its `run.json` names the
+/// commit its relay was built from (`worktreeCommit`, from a clean tree), and nothing the relay is
+/// built from changed between that commit and the head of the tree in `repo`. A comparison made
+/// at a later head than its runs counts only for the relay they tested.
+pub fn built_from(run_dir: &Path, repo: &Path) -> (String, Outcome) {
+    let label = "the heartwood run's relay is built from this tree's product code".to_owned();
+    let worktree = match Manifest::load(run_dir) {
+        Ok(manifest) => manifest.worktree,
+        Err(e) => return (label, Outcome::HarnessError(e.to_string())),
+    };
+    let problem = match worktree {
+        None => Some("run.json names no worktreeCommit: the relay's tree is unknown".to_owned()),
+        Some((commit, false)) => Some(format!("the relay was built from {commit} with changes")),
+        Some((commit, true)) => {
+            let diff = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(["diff", "--quiet", &commit, "HEAD", "--"])
+                .args(PRODUCT)
+                .output();
+            match diff.map(|o| o.status.code()) {
+                Ok(Some(0)) => None,
+                Ok(Some(1)) => Some(format!(
+                    "the product changed since {commit}, which the relay was built from: \
+                     repeat the run"
+                )),
+                _ => Some(format!("{commit} is not a commit of this tree")),
+            }
+        }
+    };
+    (label, problem.map_or(Outcome::Pass, Outcome::HarnessError))
+}
+
 fn fail(problems: &[String]) -> Outcome {
     let shown: Vec<&str> = problems.iter().take(SHOWN).map(String::as_str).collect();
     let more = problems.len().saturating_sub(SHOWN);

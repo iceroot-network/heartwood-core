@@ -1733,6 +1733,70 @@ fn a_heartwood_suite_run_s_chain_is_judged_against_the_reference_s_lines() {
     );
 }
 
+#[test]
+fn a_heartwood_suite_run_counts_only_for_the_relay_built_from_this_tree_s_product_code() {
+    use heartwood_difftest::scenario::judge::built_from;
+    let scratch = ScratchDir::new("scenario-built-from").expect("scratch");
+    let tree = scratch.path().join("tree");
+    let git = |args: &[&str]| -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&tree)
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+            ])
+            .args(args)
+            .output()
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    let write = |path: &str, text: &str| {
+        let full = tree.join(path);
+        std::fs::create_dir_all(full.parent().expect("parent")).expect("dirs");
+        std::fs::write(full, text).expect("write");
+    };
+    std::fs::create_dir_all(&tree).expect("tree");
+    git(&["init", "-q", "-b", "main"]);
+    write("packages/node/src/lib.rs", "pub fn f() {}\n");
+    write("tools/harness.rs", "fn h() {}\n");
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "first"]);
+    let built = git(&["rev-parse", "HEAD"]);
+    let run = scratch.path().join("transactions-heartwood");
+    std::fs::create_dir_all(&run).expect("run");
+    let manifest = |commit: &str, clean: bool| {
+        let run_json = json!({"format": "heartwood-live-run/1", "run": "suite-transactions",
+            "network": "n", "seed": "1", "nodes": [], "worktreeCommit": commit,
+            "worktreeClean": clean});
+        std::fs::write(run.join("run.json"), run_json.to_string()).expect("run.json");
+    };
+    manifest(&built, true);
+    assert_eq!(built_from(&run, &tree).1, Outcome::Pass);
+    // Only the harness and the documents changed since: the same relay.
+    write("tools/harness.rs", "fn h() { let _ = 1; }\n");
+    write("packages/node/README.md", "notes\n");
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "harness"]);
+    assert_eq!(built_from(&run, &tree).1, Outcome::Pass);
+    // The product changed: the run tested another relay.
+    write("packages/node/src/lib.rs", "pub fn f() { let _ = 2; }\n");
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "product"]);
+    assert!(built_from(&run, &tree).1.is_failure());
+    manifest(&git(&["rev-parse", "HEAD"]), false);
+    assert!(built_from(&run, &tree).1.is_failure());
+    manifest(&"0".repeat(40), true);
+    assert!(built_from(&run, &tree).1.is_failure());
+}
+
 // The backends.
 
 fn difftest(args: &[&str], oracle: &[String]) -> (bool, String) {

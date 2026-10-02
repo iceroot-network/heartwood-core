@@ -447,6 +447,9 @@ pub struct Judging<'a> {
     pub root: &'a Path,
     /// The oracle.
     pub oracle: &'a dyn Fn() -> Result<Oracle>,
+    /// The tree whose relay the Heartwood runs must have tested ([`judge::built_from`]), when
+    /// the comparison binds them to one.
+    pub repo: Option<&'a Path>,
 }
 
 /// Compare the suites under `dir` (`<suite>-reference` and `<suite>-heartwood`), every one or
@@ -500,7 +503,12 @@ pub fn compare(dir: &Path, only: Option<&str>, judging: Option<&Judging<'_>>) ->
                 (Side::Reference, reference, &mut judged.0),
                 (Side::Heartwood, heartwood, &mut judged.1),
             ] {
-                let judgement = judge::judge(run, side, suite, judging.root, judging.oracle);
+                let mut judgement = judge::judge(run, side, suite, judging.root, judging.oracle);
+                if let (Side::Heartwood, Some(repo)) = (side, judging.repo) {
+                    let (label, outcome) = judge::built_from(run, repo);
+                    judgement.holds &= outcome == Outcome::Pass;
+                    judgement.cases.push((label, outcome));
+                }
                 for (label, outcome) in judgement.cases {
                     results.push(case(suite, "chain", 0, label, 0, outcome));
                 }

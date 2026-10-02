@@ -90,25 +90,80 @@ impl Evidence {
 }
 
 /// Why a record does not count for the devnet tooling it was made with, when it does not: a
-/// version of a tooling file the criteria do not accept, or no tooling named where the criteria
-/// require it.
+/// version of a tooling file the criteria do not accept; and, for a record the criteria require
+/// to name its tooling, no run named, a run that names no tooling, a file the criteria do not
+/// list, no recipe the criteria know, or a recipe's file left out. A record made before each
+/// run's tooling was kept apart names only the union of its runs', which shows no run's whole
+/// tooling.
 fn tooling_problem(criteria: &Criteria, record: &GateRecord) -> Option<String> {
+    let short = |sum: &str| sum.chars().take(12).collect::<String>();
+    let required = criteria.tooling.required.iter().any(|selector| {
+        selector.target == record.target && selector.contains.iter().all(|c| mentions(record, c))
+    });
     for (path, sums) in &record.tooling {
         let Some(accepted) = criteria.tooling.accepted.get(path) else {
             continue;
         };
         if let Some(sum) = sums.iter().find(|sum| !accepted.contains(sum)) {
-            let short: String = sum.chars().take(12).collect();
             return Some(format!(
-                "made with {path} {short}, which the criteria do not accept"
+                "made with {path} {}, which the criteria do not accept",
+                short(sum)
             ));
         }
     }
-    let required = criteria.tooling.required.iter().any(|selector| {
-        selector.target == record.target && selector.contains.iter().all(|c| mentions(record, c))
-    });
-    (required && record.tooling.is_empty())
-        .then(|| "names none of the devnet tooling its runs were made with".to_owned())
+    if record.tooling_runs.is_empty() {
+        return required.then(|| {
+            if record.tooling.is_empty() {
+                "names none of the devnet tooling its runs were made with".to_owned()
+            } else {
+                "names its runs' devnet tooling only all together, not run by run".to_owned()
+            }
+        });
+    }
+    for (run, files) in &record.tooling_runs {
+        for (path, sum) in files {
+            match criteria.tooling.accepted.get(path) {
+                Some(accepted) if !accepted.contains(sum) => {
+                    return Some(format!(
+                        "run {run} was made with {path} {}, which the criteria do not accept",
+                        short(sum)
+                    ));
+                }
+                None if required => {
+                    return Some(format!(
+                        "run {run} was made with {path}, which the criteria do not list"
+                    ));
+                }
+                _ => {}
+            }
+        }
+        if !required {
+            continue;
+        }
+        if files.is_empty() {
+            return Some(format!("run {run} names none of its devnet tooling"));
+        }
+        let recipes: Vec<&String> = criteria
+            .tooling
+            .recipes
+            .keys()
+            .filter(|recipe| files.contains_key(*recipe))
+            .collect();
+        if recipes.is_empty() {
+            return Some(format!("run {run} names no recipe the criteria know"));
+        }
+        for recipe in recipes {
+            let left_out = criteria.tooling.recipes[recipe]
+                .iter()
+                .find(|file| !files.contains_key(*file));
+            if let Some(file) = left_out {
+                return Some(format!(
+                    "run {run} of {recipe} does not name {file}, which that recipe runs"
+                ));
+            }
+        }
+    }
+    None
 }
 
 /// The paths an entry's run tested: its property's or target's in the criteria (the whole tree

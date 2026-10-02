@@ -136,8 +136,8 @@ need-name = $(if $(NAME),,$(error set NAME, the corpus under CORPUS=$(CORPUS)))
 # oracle image only for a target that reads the oracle or its vectors (GATE_ORACLE_TARGETS; the
 # forge replay only with DIRECTION=oracle) with ORACLE_ARGS naming the image, and for a mixed or
 # forging run's live check, which reads IMAGE itself. A record of a live run's check (live-check,
-# api-compare, live-resources, suites) also names the devnet tooling the run was made with, from
-# the run directory's tooling.sha256. The default tested paths hold the code, the workspace's
+# api-compare, live-resources, p2p-compare, await-report, suites) also names the devnet tooling
+# each run was made with, from its run directory's tooling.sha256. The default tested paths hold the code, the workspace's
 # manifest and lockfile, this file and the check scripts the gate targets run.
 GATE_RECORDS  ?=
 LEDGER_DIR    ?=
@@ -149,8 +149,9 @@ GATE_ORACLE_TARGETS := l0 l1 corpus-judge l2-synthetic rollback-replay lockstep 
                        oracle-image vectors-diff vectors-install
 gate-reads-oracle = $(or $(filter $(1),$(GATE_ORACLE_TARGETS)),$(and $(filter forge-replay,$(1)),$(filter oracle,$(DIRECTION))))
 gate-image-of = $(if $(filter live-check,$(1)),$(if $(or $(is-mixed),$(is-forging),$(filter suites,$(RUN))),$(IMAGE)),$(if $(and $(call gate-reads-oracle,$(1)),$(filter --image%,$(ORACLE_ARGS))),$(IMAGE)))
-# The run directories whose tooling.sha256 a live run's record names.
-gate-tooling-of = $(if $(filter suites,$(1)),$(suite-dir),$(if $(filter live-check api-compare live-resources,$(1)),$(if $(filter suites,$(RUN)),$(FORGING_RESULTS)/suites/$(SEED)$(if $(SUITE),/$(SUITE)-reference $(FORGING_RESULTS)/suites/$(SEED)/$(SUITE)-heartwood),$(if $(is-forging),$(run-dir)))))
+# The run directories whose tooling.sha256 a live run's record names, each run apart (a run
+# directory without one is named with none).
+gate-tooling-of = $(if $(filter suites,$(1)),$(suite-dir),$(if $(filter live-check api-compare live-resources p2p-compare await-report,$(1)),$(if $(filter suites,$(RUN)),$(FORGING_RESULTS)/suites/$(SEED)$(if $(SUITE),/$(SUITE)-reference $(FORGING_RESULTS)/suites/$(SEED)/$(SUITE)-heartwood),$(if $(and $(RUN),$(results-of-run)),$(run-dir)))))
 gate-for = GATE_RECORDS='$(GATE_RECORDS)' GATE_TARGET=$(1) GATE_VARIABLES='$(filter-out GATE_% GATED=% $(GATED) $(addsuffix \,$(GATED)),$(MAKEOVERRIDES))' \
        GATE_IMAGE='$(call gate-image-of,$(2))' GATE_TESTED='$(GATE_TESTED)' GATE_CRITERIA='$(S1_CRITERIA)' \
        GATE_TOOLING='$(call gate-tooling-of,$(2))' \

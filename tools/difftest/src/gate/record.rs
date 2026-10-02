@@ -17,7 +17,7 @@
 //! `hits` counts the documented differences the run met by their code names
 //! (`Documented::*`, `ApiDifference::*`), never by register ids: the criteria file maps them.
 //! A record of a scenario run or comparison also keeps each scenario's verdict (`scenarios`), and
-//! a record of a live run's check the devnet tooling the run was made with (`tooling`).
+//! a record of a live run's check the devnet tooling each run was made with (`toolingRuns`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -98,10 +98,20 @@ pub struct GateRecord {
     /// verdict as its report gives it (`pass`, `fail` or `skipped`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub scenarios: BTreeMap<String, String>,
-    /// The devnet tooling the runs it judged were made with: each file's path under the tooling's
-    /// root, and the SHA-256 of each version of it those runs used.
+    /// The devnet tooling the runs it judged were made with, all runs together: each file's path
+    /// under the tooling's root, and the SHA-256 of each version of it those runs used. Records
+    /// made before each run's tooling was kept apart hold this; newer ones hold `tooling_runs`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tooling: BTreeMap<String, Vec<String>>,
+    /// The devnet tooling each run it judged was made with, by the run's directory (its name, or
+    /// its parent's and its own): each file's path under the tooling's root and its SHA-256. A run
+    /// directory without a list of its tooling is here with none.
+    #[serde(
+        default,
+        rename = "toolingRuns",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub tooling_runs: BTreeMap<String, BTreeMap<String, String>>,
     /// When it started, in UTC (`2026-10-01T10:00:00Z`).
     pub started: String,
     /// When it finished, in UTC.
@@ -176,7 +186,11 @@ mod tests {
             result: GateResult::Pass,
             hits: BTreeMap::from([("Documented::ReplayIndexOrder".to_owned(), 25)]),
             scenarios: BTreeMap::from([("transactions/burns".to_owned(), "pass".to_owned())]),
-            tooling: BTreeMap::from([("scripts/run.sh".to_owned(), vec!["ab".repeat(32)])]),
+            tooling: BTreeMap::new(),
+            tooling_runs: BTreeMap::from([(
+                "suites/run-a".to_owned(),
+                BTreeMap::from([("scripts/run.sh".to_owned(), "ab".repeat(32))]),
+            )]),
             started: "2026-10-01T10:00:00Z".to_owned(),
             finished: "2026-10-01T10:04:10Z".to_owned(),
         };

@@ -354,10 +354,15 @@ pub struct ToolingSpec {
     /// made with another version of a listed file does not count.
     #[serde(default)]
     pub accepted: BTreeMap<String, Vec<String>>,
-    /// The records that must name their tooling: a record of one of these that names none does
-    /// not count.
+    /// The records that must name their tooling: a record of one of these counts only when it
+    /// names the tooling of each run it judged, every file of it accepted, and of each recipe a
+    /// run names (one of `recipes`) every file that recipe runs.
     #[serde(default)]
     pub required: Vec<RecordSelector>,
+    /// The files each recipe runs, by the recipe's path under the tooling's root: a run that
+    /// names a recipe must name each of them.
+    #[serde(default)]
+    pub recipes: BTreeMap<String, Vec<String>>,
 }
 
 /// A kind of record: its make target and text its variables or command contain.
