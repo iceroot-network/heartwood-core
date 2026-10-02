@@ -38,10 +38,13 @@ failover (section 15). One validator belongs to one operator: its relay, its for
 failover or API relays all work for that validator.
 
 **A relay counts a forger as online only when the forger connects from the same machine, over
-loopback.** A forger on another machine still forges through its relay, but the relay does not
-attest its delegates, other nodes do not see them as online, and their transaction pools refuse
-votes for them. An authenticated link for a forger on another machine comes in a later stage.
-Section 9 shows the split-machine flow and what it costs.
+loopback.** A forger on another machine still works through its relay, but the relay does not
+attest its delegates: other nodes do not see them as online, their transaction pools refuse votes
+for them, and they do not count toward the quorum a forger needs before it forges. Such a forger
+forges its slots only while other validators' attested delegates make the quorum; if too many
+delegates are unattested, no forger on the network forges. An authenticated link for a forger
+on another machine comes in a later stage. Section 9 shows the split-machine flow and what it
+costs.
 
 ## 2. Requirements
 
@@ -187,8 +190,8 @@ heartwood env list --network guide
 `env get --key NAME` prints one variable, `env list` all of them, `env set --key NAME --value
 VALUE` changes one and `env paths` prints the five directories. `env set` writes the file again
 from its parsed form: every variable as `NAME=value` in the same order, comment lines and blank
-lines dropped. It replaces the file through a temporary file at mode 0600, and refuses a symbolic
-link where the file should be.
+lines dropped. It replaces the file through a temporary file and a rename, keeping the file's
+mode, and refuses a symbolic link where the file should be.
 
 ## 6. A relay and a forger on one machine
 
@@ -233,7 +236,7 @@ heartwood forger status --network guide
 
 ```text
 ID     Name               Version                Status  Uptime  Restarts  CPU   RAM
-41233  solar-guide-relay  4.3.1-heartwood.0.3.0  online  2m 4s   0         1.2%  52.3 MB
+41233  solar-guide-relay  4.3.1-heartwood.0.1.0  online  2m 4s   0         1.2%  52.3 MB
 ```
 
 `status` prints a table row with the process id, name (`<token>-<network>-<role>`), version,
@@ -356,8 +359,13 @@ ls ~/.config/follower-core/guide
 `config publish` writes the instance's configuration directory from the built-in template: `.env`
 with the ports 6002 and 6003, an `app.json` with the `relay`, `forger` and `core` profiles, an
 empty `peers.json`, an empty `delegates.json` (`{"keys": []}`, mode 0600) and `config.json`. It
-writes no crypto file: those come with the network's release. It refuses a directory that already
-holds a configuration unless you pass `--force`.
+writes no crypto file: those come with the network's release. It refuses a directory that is not
+empty unless you pass `--force`. With `--force` it writes the template's files over the ones there,
+`delegates.json` included, so a key in that file is lost; other files stay.
+
+The template's `.env` binds both ports to every address (`0.0.0.0`). On a validator's relay, set
+`CORE_API_HOST` to `127.0.0.1` before the first start (section 14), as the follower's settings below
+do.
 
 Before another machine can reach the first machine's relay, the relay has to listen beyond
 loopback. Its `.env` binds it to `127.0.0.1`; bind it to every address instead (the default when
@@ -381,6 +389,7 @@ scp -r ~/.config/solar-core/guide/crypto forger-host:.config/follower-core/guide
 ```
 
 ```sh second
+rm ~/.config/follower-core/guide/delegates.json
 cat > ~/.config/follower-core/guide/peers.json <<'EOF'
 {"list": [{"ip": "10.90.0.1", "port": 6002}]}
 EOF
@@ -390,7 +399,9 @@ heartwood env set --token follower --network guide --key CORE_API_HOST --value 1
 heartwood relay start --token follower --network guide
 ```
 
-The peer is at a private address, which a relay accepts only with
+The template's empty `delegates.json` goes first: it holds no key, but a relay-only machine should
+have no key file at all (`heartwood doctor` warns about one). The peer is at a private address,
+which a relay accepts only with
 `CORE_P2P_ALLOW_PRIVATE_IP_RANGES`; keep that setting for private networks only. The relay syncs
 from its peer. Wait until it holds the blocks the forger has made:
 
@@ -412,8 +423,9 @@ ls ~/.config/follower-core/guide
 The forger can run on another machine and drive a relay over the network. Use this for a forger
 that must not share a host with a public-facing relay. It has a cost, which section 1 states and
 this section shows: **the relay attests only a forger that connects over loopback, so the
-delegates of a forger on another machine are not attested.** They still forge, but other nodes do
-not see them as online and refuse votes for them.
+delegates of a forger on another machine are not attested.** Other nodes do not see them as
+online and refuse votes for them, and they do not count toward the forging quorum. They forge
+only while other validators' attested delegates make the quorum.
 
 The forger moves to the second machine, with the key and the signing record, and the relay learns
 to admit it.
@@ -549,18 +561,17 @@ EOF
 heartwood forger start --network guide
 ```
 
-The chain goes on, now with its blocks made on the second machine. Watch the relay's height rise
-by two blocks:
+The forger connects to the relay and asks it for work at every slot, but on this test network it
+holds all 53 delegates, and none of them is attested now: the relay counts no delegate online, so
+the forger refuses every slot for want of a quorum and the chain stops. Its log says so:
 
-```sh timeout=300
-height() { curl -fsS http://127.0.0.1:6003/api/blocks/last | grep -Eo '"height": ?[0-9]+' | sed -n '1s/[^0-9]//gp'; }
-before=$(height)
-until [ "$(height)" -ge $((before + 2)) ] 2>/dev/null; do sleep 2; done
-echo "the chain went from height $before to $(height)"
+```sh second follows expect="Not peered with enough delegates to get quorum"
+heartwood forger log --network guide --lines 5
 ```
 
-The second machine's `forger log` shows the forger working through the relay; the relay's log
-shows no attested forger, which is the cost of this shape. Stop everything:
+On a public network the other validators' relays attest their own delegates, and while those
+make the quorum this forger forges its slots through the relay; its own delegates still count as
+offline, which is the cost of this shape. Stop everything:
 
 ```sh second
 heartwood forger stop --network guide
@@ -632,8 +643,9 @@ heartwood devnet --dir ~/devnet stop
 SIGKILL), `reset` (a node's chain, logs and caches; its signing record stays), `logs --follow`,
 `env N` (a node's environment), `status --json` and `status --resources` act on the nodes, and
 `init --core` makes each validator one `core` process, `init --failover 1:1,6,7` a forger that
-uses several relays, `--relays N` extra relay-only nodes. A node refuses to start in a network
-whose name is not `devnet` or on an address that is not loopback.
+uses several relays, `--relays N` extra relay-only nodes. The devnet commands refuse a prefix
+outside 127.0.0.0/8, a network whose name is neither `devnet` nor starts with `devnet-`, and a node
+whose `.env` binds a listener to an address that is not loopback.
 
 ## 11. The core role
 
@@ -722,9 +734,11 @@ The other method, a passphrase (`bip39`), is not offered: passphrases are deferr
 `heartwood service install` writes a systemd unit for one role of an instance. It only writes: it
 calls no service manager, and it prints the commands that enable the unit. `service uninstall`
 removes the file. The unit is `<token>-<network>-<role>.service`: a user unit in
-`~/.config/systemd/user` by default, or with `--system` a system unit meant for
-`/etc/systemd/system`. `--out DIR` writes into a directory of your choice instead, so that you can
-read the unit and place it yourself.
+`~/.config/systemd/user` by default. With `--system` the command writes nothing under `/etc`: it
+prints a system unit to save as `/etc/systemd/system/<unit>`. That unit names no user, so add a
+`User=` line with the node's own account before you place it: a node runs as a normal user, never
+as root. `--out DIR` writes the unit into a directory of your choice instead, so that you can read
+it and place it yourself.
 
 ```sh expect="solar-solo-relay.service"
 mkdir -p ~/units
@@ -735,11 +749,11 @@ cat ~/units/solar-solo-relay.service
 The unit starts `<binary> <role> run --token=<token> --network=<network>` in the foreground, with
 `Type=exec`, `Restart=always`, `KillSignal=SIGINT` and `TimeoutStopSec=30` (the node stops on
 SIGINT and gets 30 seconds to finish), `UMask=0077` and `NoNewPrivileges=yes`, and whichever
-sandboxing directives the host's systemd supports. It sets `CORE_SERVICE_MANAGER=systemd`, which
-the node records at its start: under a unit, `heartwood <role> status` reports `online (systemd)`,
-and `stop` refuses and names the `systemctl` command to use, so a stop never fights the manager.
-The binary's path in `ExecStart` is the file you ran `service install` with: install the unit
-from the binary at its permanent place.
+sandboxing directives the host's systemd supports (in a user unit, only those that need no mount
+namespace). It sets `CORE_SERVICE_MANAGER=systemd`, which the node records at its start: under a
+unit, `heartwood <role> status` reports `online (systemd)`, and `stop` and `restart` refuse and name
+the `systemctl` command to use, so a stop never fights the manager. The binary's path in `ExecStart`
+is the file you ran `service install` with: install the unit from the binary at its permanent place.
 
 Check the unit before you install it, where `systemd-analyze` exists:
 
@@ -814,7 +828,8 @@ To add a failover relay: set up the relay on another machine and sync it fully; 
 address to its `remoteAccess`; add its address to the forger's `hosts` after the first; restart
 the forger. Failover changes which relay the forger talks to. It does not add a second forger:
 keep one forger per key. While the forger works through a relay on another machine, that relay
-does not attest the validator (section 9), so the validator shows as offline for votes. Link the
+does not attest the validator (section 9): the validator shows as offline for votes and its
+delegates leave the forging quorum. Link the
 forger to its relays over a private link.
 
 **A relay whose API is off.** A relay can run without serving the API: set a value in `.env`
@@ -1028,6 +1043,10 @@ on another machine is not counted as online (section 9).
   away.
 - "more than one slot away from this forger's slot", or "ms left in the current slot": check the
   clock first, then the link to the relay and the relay's load.
+- "Not peered with enough delegates to get quorum": the relay sees too few delegates online. Check
+  its peers (as for a relay that does not sync, above), and that your forger connects from the
+  relay's own machine: the delegates of a forger on another machine are not attested and do not
+  count (section 9).
 
 If you suspect a security problem, do not post it in public: report it privately through GitHub's
 private vulnerability reporting for this repository.
