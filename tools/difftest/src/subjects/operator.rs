@@ -5,11 +5,11 @@
 //!
 //! [`Documented::CliEnvParser`]: crate::subject::Documented::CliEnvParser
 
-use heartwood_cli::env;
+use heartwood_cli::{config, env};
 use heartwood_crypto::utils::js;
 use serde_json::{Value, json};
 
-use super::{Env, Outcome, Run, failed, text};
+use super::{Env, Outcome, Run, failed, text, unclassified};
 use crate::subject::{Case, Documented, Verdict};
 
 /// The operations of this module.
@@ -69,6 +69,18 @@ fn env_parse_cli(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
     })
 }
 
-fn config_forger_key(_env: &Env<'_>, _case: &Case<'_>) -> Outcome<Verdict> {
-    Err(failed("config.forgerKey has no Rust implementation yet"))
+/// The key file after `config forger private-key`: the flag validated, then `keys` set in the
+/// existing file. Every refusal is a verdict only: the reference's errors (the validator's
+/// message, `require`'s failure, a `TypeError` on a value that is no object) are not compared.
+fn config_forger_key(_env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
+    let Some(key) = case.input["flags"]["privateKey"].as_str() else {
+        return Ok(unclassified("the privateKey flag is not a string"));
+    };
+    let Some(existing) = case.input["delegatesJson"].as_str() else {
+        return Ok(unclassified("there is no delegates.json"));
+    };
+    Ok(match config::with_key(existing, key) {
+        Ok(text) => Verdict::Output(json!({ "delegatesJson": text.as_str() })),
+        Err(error) => unclassified(error),
+    })
 }

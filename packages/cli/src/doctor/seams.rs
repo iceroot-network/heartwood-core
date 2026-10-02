@@ -638,6 +638,7 @@ pub const fn role_state(status: SupervisedStatus) -> RoleState {
         SupervisedStatus::Launching => RoleState::Starting,
         SupervisedStatus::Online => RoleState::Running { supervised: true },
         SupervisedStatus::OnlineUnsupervised => RoleState::Running { supervised: false },
+        SupervisedStatus::OnlineSystemd => RoleState::Running { supervised: true },
         SupervisedStatus::Stopping => RoleState::Stopping,
         SupervisedStatus::Stopped => RoleState::Stopped,
         SupervisedStatus::Errored => RoleState::Errored,
