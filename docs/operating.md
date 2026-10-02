@@ -174,10 +174,10 @@ stat -c '%a %n' ~/.config/solar-core/guide/delegates.json
 
 The command refuses a directory that is not empty unless you pass `--force`. It writes the key
 files, `delegates.json` and `genesis-wallet.json`, at mode 0600; the `chmod` closes the directory
-itself to other users, which every configuration directory with a key in it should be. `genesis-wallet.json` holds every
-key and passphrase of the test network; a real network has no such file. The instance's `.env`
-binds the node to `127.0.0.1` with P2P port 6002 and API port 6003, and its `peers.json` names the
-node itself, so that a one-node network has a seed.
+itself to other users, as every configuration directory with a key in it should be.
+`genesis-wallet.json` holds every key and passphrase of the test network; a real network has no
+such file. The instance's `.env` binds the node to `127.0.0.1` with P2P port 6002 and API port
+6003, and its `peers.json` names the node itself, so that a one-node network has a seed.
 
 ```sh expect="solar-core/guide"
 heartwood env paths --network guide
@@ -535,9 +535,11 @@ Notes for a real split:
 
 `heartwood devnet` builds a practice network on one machine: five validators, each a relay and a
 forger under their own supervisors, each node at its own loopback address (node k at
-`127.<block>.(10 + k)`, P2P on port 6002 and the API on 6003). Pick a block of the 127.0.0.0/8
-range that nothing else uses. This is the only mode: it needs no root on Linux, because the
-loopback interface carries the whole range. Do not run it on a validator.
+`<prefix>.(10 + k)`, P2P on port 6002 and the API on 6003). The prefix is the first three octets
+of an address in 127.0.0.0/8 (`127.0.0` unless `--address-prefix` says otherwise), so devnets with
+different prefixes run side by side. This is the only one-machine mode: it needs no root on Linux,
+because the loopback interface carries the whole range. Do not run it on a validator. The
+examples use the prefix 127.49.0, so the nodes are at 127.49.0.11 to 127.49.0.15.
 
 ```sh timeout=120 expect="Created a devnet of 5 nodes"
 heartwood devnet --dir ~/devnet init --validators 5 --address-prefix 127.49.0
@@ -622,7 +624,8 @@ heartwood top
 
 A core node refuses to start when the relay's `remoteAccess` does not admit the address its forger
 connects from, and when its profile has no forger. If the forger inside it stops with an error, the
-whole node stops with the error. Stop it with `core stop`, which asks the node to shut down in order:
+whole node stops with the error. Stop it with `core stop`, which asks the node to shut down in
+order:
 
 ```sh
 heartwood core stop --network solo
@@ -666,10 +669,11 @@ The other method, a passphrase (`bip39`), is not offered: passphrases are deferr
 ## 13. Running under systemd
 
 `heartwood service install` writes a systemd unit for one role of an instance. It only writes: it
-calls no service manager, and it prints the commands that enable the unit. `service uninstall` removes the file.
-The unit is `<token>-<network>-<role>.service`: a user unit in `~/.config/systemd/user` by
-default, or with `--system` a system unit meant for `/etc/systemd/system`. `--out DIR` writes into
-a directory of your choice instead, so that you can read the unit and place it yourself.
+calls no service manager, and it prints the commands that enable the unit. `service uninstall`
+removes the file. The unit is `<token>-<network>-<role>.service`: a user unit in
+`~/.config/systemd/user` by default, or with `--system` a system unit meant for
+`/etc/systemd/system`. `--out DIR` writes into a directory of your choice instead, so that you can
+read the unit and place it yourself.
 
 ```sh expect="solar-solo-relay.service"
 mkdir -p ~/units
