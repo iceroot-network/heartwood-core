@@ -38,7 +38,7 @@ fn the_pool_vectors_pass_l0() {
     // The counts change only on purpose: a new documented difference, or new vectors.
     assert_eq!(
         (report.compared(), report.documented(), report.skipped()),
-        (42, 8, 0),
+        (42, 14, 0),
         "{report}"
     );
 }
