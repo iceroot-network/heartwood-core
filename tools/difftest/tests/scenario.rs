@@ -1215,6 +1215,35 @@ fn every_block_is_forged_by_a_delegate_of_its_round() {
 }
 
 #[test]
+fn a_lockstep_chain_takes_a_second_signature_registration_but_no_second_signed_transaction() {
+    let with = |tx: Value| {
+        let compiled = compiled(
+            json!([{"at": {"height": 3}, "do": "submit", "node": 1, "via": "api", "txs": [tx]}]),
+            &[("t", 0)],
+        );
+        let chain = Chain::new(&compiled.scenario).expect("chain");
+        heartwood_difftest::scenario::backends::lockstep::recipe(&compiled, &chain)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    };
+    // The registration names the key it registers; its compiled bytes are what the pools get.
+    assert_eq!(
+        with(
+            json!({"ref": "t", "type": "secondSignature", "from": "alice", "secondSignature": "bob"})
+        ),
+        Ok(())
+    );
+    let signed = with(json!({"ref": "t", "type": "transfer", "from": "alice",
+        "to": [["bob", "1"]], "secondSignature": "bob"}));
+    assert!(
+        signed
+            .as_ref()
+            .is_err_and(|e| e.contains("t is second-signed, which a lockstep chain cannot build")),
+        "{signed:?}"
+    );
+}
+
+#[test]
 fn a_delegate_s_second_block_of_a_round_carries_the_secondary_reward() {
     let compiled = compiled(
         json!([{"at": {"height": 60}, "check": {"invariant": ["secondaryReward"]}}]),
