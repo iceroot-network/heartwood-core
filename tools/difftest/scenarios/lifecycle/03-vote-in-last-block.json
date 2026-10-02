@@ -15,6 +15,6 @@
      "txs": [
        {"ref": "last-block-vote", "type": "vote", "from": "voter-round", "nonce": 1, "asset": {"votes": [["genesis_30", 100]]}}
      ]},
-    {"name": "the next round", "at": {"afterBlocks": 4}, "check": {"forged": ["last-block-vote"], "api": {"projection": "round(3)"}, "invariant": ["schedule"], "withinBlocks": 4}}
+    {"name": "the next round", "at": {"afterBlocks": 4}, "check": {"forged": ["last-block-vote"], "api": {"projection": "round(3)"}, "invariant": ["schedule", "secondaryReward"], "withinBlocks": 4}}
   ]
 }

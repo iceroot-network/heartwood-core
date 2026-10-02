@@ -210,7 +210,10 @@ pub fn recipe(compiled: &Compiled, chain: &Chain) -> Result<(Recipe, u32)> {
                             spec.reference
                         )));
                     }
-                    if spec.second_signature.is_some() {
+                    // A second-signature registration names the key it registers, and its
+                    // compiled bytes are what the pools are given; a transaction signed with a
+                    // second key is another matter.
+                    if spec.second_signature.is_some() && spec.kind != "secondSignature" {
                         return Err(usage(format!(
                             "{} is second-signed, which a lockstep chain cannot build",
                             spec.reference

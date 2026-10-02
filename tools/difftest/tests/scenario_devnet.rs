@@ -9,7 +9,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use heartwood_difftest::scenario::compile::fire_heights;
-use heartwood_difftest::scenario::format::{Action, Check, Level, Part, Step};
+use heartwood_difftest::scenario::format::{
+    Action, Check, Invariant, Level, Nonce, Part, Step, TxSpec,
+};
 use heartwood_difftest::scenario::{self, Scenario};
 
 /// Delegates per round on the devnet every scenario runs on.
@@ -507,6 +509,185 @@ fn the_committed_scenarios_carry_no_internal_labels() {
         for label in &banned {
             assert!(!text.contains(label), "{} carries {label}", file.display());
         }
+    }
+}
+
+/// The transactions of `scenario`, with the index of the step that sends each.
+fn sent(scenario: &Scenario) -> Vec<(usize, &TxSpec)> {
+    scenario
+        .steps
+        .iter()
+        .enumerate()
+        .flat_map(|(index, step)| step.txs.iter().map(move |tx| (index, tx)))
+        .collect()
+}
+
+/// The amount, in satoshi, a decimal text names.
+fn satoshi(text: &str) -> u64 {
+    text.parse()
+        .unwrap_or_else(|_| panic!("{text} is not an amount"))
+}
+
+#[test]
+fn a_suite_funds_its_actors_by_one_transfer_and_each_actor_sends_from_one_file() {
+    // A suite's files run one after another on one chain: every file's funding transfer is the
+    // same transaction (the first funds, the others are refused as already forged), and a sender
+    // whose nonces one file plans must not have sent from an earlier file, or its transactions are
+    // refused for their nonce whatever else they test.
+    for (suite, _, _) in SUITES.iter().filter(|(dir, _, _)| *dir != "lockstep") {
+        let files: Vec<(String, Scenario)> = all()
+            .into_iter()
+            .filter(|(dir, _, _)| dir == suite)
+            .map(|(_, stem, scenario)| (stem, scenario))
+            .collect();
+        let mut funding = BTreeSet::new();
+        let mut senders: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for (stem, scenario) in &files {
+            for (_, tx) in sent(scenario) {
+                if tx.from == "genesis" {
+                    funding.insert(serde_json::to_string(tx).expect("a transaction writes"));
+                } else {
+                    senders
+                        .entry(tx.from.clone())
+                        .or_default()
+                        .insert(stem.clone());
+                }
+            }
+        }
+        assert!(
+            funding.len() <= 1,
+            "{suite}: the files fund their actors differently"
+        );
+        for (sender, stems) in senders {
+            assert_eq!(stems.len(), 1, "{suite}: {sender} sends from {stems:?}");
+        }
+    }
+}
+
+#[test]
+fn every_kept_type_is_refused_for_a_balance_that_cannot_pay_it() {
+    let short = scenario_in("transactions", "insufficient-balance");
+    let txs = sent(&short);
+    let tx = |reference: &str| {
+        txs.iter()
+            .find(|(_, tx)| tx.reference == reference)
+            .copied()
+            .unwrap_or_else(|| panic!("insufficient-balance has no {reference}"))
+    };
+    let checks: Vec<&Check> = short
+        .steps
+        .iter()
+        .filter_map(|s| s.check.as_ref())
+        .collect();
+    let refused = |reference: &str| {
+        checks
+            .iter()
+            .any(|c| c.invalid.iter().any(|r| r == reference))
+            && checks
+                .iter()
+                .any(|c| c.codes.get(reference).map(String::as_str) == Some("ERR_APPLY"))
+            && checks
+                .iter()
+                .any(|c| c.absent.iter().any(|r| r == reference))
+    };
+    let kept = |reference: &str| {
+        checks
+            .iter()
+            .any(|c| c.accept.iter().any(|r| r == reference))
+            && checks
+                .iter()
+                .any(|c| c.forged.iter().any(|r| r == reference))
+    };
+    // The six kept types, each refused, absent at the end, with the pool's apply code.
+    let mut types = BTreeSet::new();
+    for (_, tx) in &txs {
+        if tx.reference.starts_with("short-") {
+            assert!(refused(&tx.reference), "{} is not refused", tx.reference);
+            types.insert(tx.kind.as_str());
+        }
+    }
+    let kept_types: BTreeSet<&str> = [
+        "transfer",
+        "vote",
+        "delegateRegistration",
+        "delegateResignation",
+        "secondSignature",
+        "burn",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(types, kept_types);
+    // The wallet that cannot pay holds less than the second-signature registration's fee floor.
+    let (_, fund) = tx("fund");
+    let funded = |actor: &str| {
+        fund.to
+            .iter()
+            .find(|(to, _)| to == actor)
+            .map(|(_, amount)| satoshi(amount))
+            .unwrap_or_else(|| panic!("{actor} is not funded"))
+    };
+    let (_, second) = tx("short-second-signature");
+    assert_eq!(second.second_signature.as_deref(), Some("second-key"));
+    assert!(funded(&second.from) < 1_000_000, "{} can pay", second.from);
+    // A resignation's fee floor is nothing: the delegate is short only of the fee it names, one
+    // satoshi above what it holds after its registration. The same resignation at what it holds
+    // is kept, so the refusal is the balance's, not the delegate's (it is registered and forged
+    // first, and its registration makes 54 delegates, so one may resign).
+    let (registered, registration) = tx("register-to-resign");
+    let (refused_at, resign_short) = tx("short-resignation");
+    let (kept_at, resign_exact) = tx("exact-resignation");
+    assert_eq!(registration.kind, "delegateRegistration");
+    assert!(kept("register-to-resign"));
+    assert!(kept("exact-resignation"));
+    for resign in [resign_short, resign_exact] {
+        assert_eq!(resign.kind, "delegateResignation");
+        assert_eq!(resign.from, registration.from);
+        assert_eq!(resign.nonce, Nonce::At(2));
+    }
+    assert_eq!(registration.nonce, Nonce::At(1));
+    let left = funded(&registration.from)
+        - satoshi(
+            registration
+                .fee
+                .as_deref()
+                .expect("an explicit registration fee"),
+        );
+    let fee = |tx: &TxSpec| satoshi(tx.fee.as_deref().expect("an explicit fee"));
+    assert_eq!(fee(resign_exact), left);
+    assert_eq!(fee(resign_short), left + 1);
+    let forged_before = short.steps[registered + 1..refused_at].iter().any(|s| {
+        s.check
+            .as_ref()
+            .is_some_and(|c| c.forged.contains(&registration.reference))
+    });
+    assert!(
+        forged_before,
+        "the registration is not seen forged before the resignation"
+    );
+    assert!(refused_at < kept_at);
+    // A burn of more than the balance, by a wallet that sent nothing before.
+    let (_, burn) = tx("overdrawn-burn");
+    let amount = burn.asset.as_ref().expect("an asset")["amount"]
+        .as_str()
+        .map(satoshi)
+        .expect("an amount");
+    assert_eq!(amount, funded(&burn.from) + 1);
+}
+
+#[test]
+fn the_missed_slots_and_the_next_round_check_the_secondary_reward() {
+    for id in ["missed-slots", "vote-in-last-block"] {
+        let scenario = scenario_in("lifecycle", id);
+        let last = scenario
+            .steps
+            .last()
+            .and_then(|s| s.check.as_ref())
+            .expect("a last check");
+        assert!(
+            last.invariant.contains(&Invariant::SecondaryReward)
+                && last.invariant.contains(&Invariant::Schedule),
+            "{id}"
+        );
     }
 }
 

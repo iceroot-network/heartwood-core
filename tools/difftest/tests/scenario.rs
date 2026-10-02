@@ -1214,6 +1214,119 @@ fn every_block_is_forged_by_a_delegate_of_its_round() {
     assert_eq!(run_with(["aa", "aa"]), Outcome::Pass);
 }
 
+#[test]
+fn a_lockstep_chain_takes_a_second_signature_registration_but_no_second_signed_transaction() {
+    let with = |tx: Value| {
+        let compiled = compiled(
+            json!([{"at": {"height": 3}, "do": "submit", "node": 1, "via": "api", "txs": [tx]}]),
+            &[("t", 0)],
+        );
+        let chain = Chain::new(&compiled.scenario).expect("chain");
+        heartwood_difftest::scenario::backends::lockstep::recipe(&compiled, &chain)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    };
+    // The registration names the key it registers; its compiled bytes are what the pools get.
+    assert_eq!(
+        with(
+            json!({"ref": "t", "type": "secondSignature", "from": "alice", "secondSignature": "bob"})
+        ),
+        Ok(())
+    );
+    let signed = with(json!({"ref": "t", "type": "transfer", "from": "alice",
+        "to": [["bob", "1"]], "secondSignature": "bob"}));
+    assert!(
+        signed
+            .as_ref()
+            .is_err_and(|e| e.contains("t is second-signed, which a lockstep chain cannot build")),
+        "{signed:?}"
+    );
+}
+
+#[test]
+fn a_delegate_s_second_block_of_a_round_carries_the_secondary_reward() {
+    let compiled = compiled(
+        json!([{"at": {"height": 60}, "check": {"invariant": ["secondaryReward"]}}]),
+        &[],
+    );
+    // The devnet's milestones enable dynamic rewards from height 1, with a secondary reward of
+    // 1.8 and rank rewards of 1.8 to 2.2.
+    let secondary = "180000000";
+    let run_with = |blocks: Value| {
+        let mut fake = Fake::new(1);
+        fake.page(1, BLOCKS, json!({ "data": blocks }));
+        run_on(&mut fake, &compiled).0.results.remove(0).outcome
+    };
+    let block = |height: u32, generator: &str, reward: &str| json!({"height": height, "generator": {"publicKey": generator}, "forged": {"reward": reward}});
+    // Every block from the genesis block to the tip (60): those of `named` as given, the others
+    // each by a delegate of its own.
+    let listing = |named: &[Value]| {
+        let mut blocks =
+            vec![json!({"height": 1, "generator": {"publicKey": "g"}, "forged": {"reward": "0"}})];
+        for height in 2..=60_u32 {
+            blocks.push(
+                named
+                    .iter()
+                    .find(|b| b["height"] == height)
+                    .cloned()
+                    .unwrap_or_else(|| block(height, &format!("d{height}"), "200000000")),
+            );
+        }
+        Value::Array(blocks)
+    };
+    // Delegate aa forges height 2 at its rank's reward, then height 4, a slot of its round that
+    // came to it again, at the secondary reward.
+    let chain = |second: &str| listing(&[block(2, "aa", "220000000"), block(4, "aa", second)]);
+    assert_eq!(run_with(chain(secondary)), Outcome::Pass);
+    // Its rank's reward again on the second block is the wrong answer; so is a number of another
+    // value.
+    for wrong in ["220000000", "180000001"] {
+        let outcome = run_with(chain(wrong));
+        assert!(
+            matches!(&outcome, Outcome::VerdictMismatch { oracle, heartwood }
+                if oracle.contains("secondaryReward")
+                    && heartwood.contains(&format!("at 4: reward \"{wrong}\", not {secondary}"))),
+            "{outcome:?}"
+        );
+    }
+    // A numeric reward is read as the API may give it.
+    let mut numeric = chain(secondary);
+    numeric[3]["forged"]["reward"] = json!(180_000_000);
+    assert_eq!(run_with(numeric), Outcome::Pass);
+    // A delegate's blocks in two rounds are each its first: nothing is compared, and it says so.
+    let apart = listing(&[block(2, "aa", "220000000"), block(54, "aa", "1")]);
+    assert!(
+        matches!(run_with(apart), Outcome::Skipped(why) if why.contains("no delegate forged a second block")),
+    );
+    // A block that names no generator cannot be placed.
+    let mut nameless = listing(&[]);
+    nameless[1] = json!({"height": 2, "forged": {"reward": "1"}});
+    assert!(
+        matches!(run_with(nameless), Outcome::HarnessError(m) if m.contains("names no generator"))
+    );
+    // A listing that leaves out a block (here the delegate's first of the round, which would make
+    // its wrong second reward pass unseen), lists one twice, or stops short of the tip is not
+    // judged.
+    let mut gap = chain("220000000");
+    gap.as_array_mut().expect("a listing").remove(1);
+    let mut twice = chain(secondary);
+    let again = twice[2].clone();
+    twice.as_array_mut().expect("a listing").insert(2, again);
+    let mut short = chain(secondary);
+    short.as_array_mut().expect("a listing").pop();
+    for (what, listing, at) in [
+        ("gap", gap, "at position 2 it gives 3"),
+        ("twice", twice, "at position 4 it gives 3"),
+        ("short", short, "at position 60 it gives nothing"),
+    ] {
+        let outcome = run_with(listing);
+        assert!(
+            matches!(&outcome, Outcome::HarnessError(m) if m.contains("does not list every block") && m.contains(at)),
+            "{what}: {outcome:?}"
+        );
+    }
+}
+
 // The records and their comparison.
 
 fn record(id: &str, backend: &str, tip: (u32, &str), answer: bool, digest: Outcome) -> Record {
@@ -2427,6 +2540,46 @@ fn a_reorg_across_a_round_end_with_reverted_votes_runs_on_the_lockstep_chain() {
     let (ok, text) = lockstep(&fixtures().join("reorg-reverts-votes.json"), &oracle);
     assert!(ok, "{text}");
     assert!(text.contains("0 failed"), "{text}");
+}
+
+#[test]
+#[ignore = "integration"]
+fn the_short_balance_cases_run_on_the_lockstep_chain_and_each_fails_on_a_wrong_answer() {
+    let Some(oracle) = oracle_or_skip("insufficient-balance") else {
+        return;
+    };
+    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("scenarios/transactions/06-insufficient-balance.json");
+    let (ok, text) = lockstep(&file, &oracle);
+    assert!(ok, "{text}");
+    assert!(text.contains("0 failed"), "{text}");
+    // Each case planted wrong on its own: the second-signature registration from a wallet that
+    // can pay it, and the resignation whose fee is exactly the delegate's balance. The file
+    // still expects ERR_APPLY for each, so the reference's pools must tell the difference.
+    let committed = std::fs::read_to_string(&file).expect("the scenario file");
+    let scratch = ScratchDir::new("scenario-short-balance").expect("scratch");
+    for (name, right, wrong) in [
+        (
+            "second-signature-funded",
+            r#""ref": "short-second-signature", "type": "secondSignature", "from": "poor""#,
+            r#""ref": "short-second-signature", "type": "secondSignature", "from": "voter-a""#,
+        ),
+        (
+            "resignation-at-balance",
+            r#""ref": "short-resignation", "type": "delegateResignation", "from": "voter-b", "nonce": 2, "fee": "2400000001""#,
+            r#""ref": "short-resignation", "type": "delegateResignation", "from": "voter-b", "nonce": 2, "fee": "2400000000""#,
+        ),
+    ] {
+        assert_eq!(committed.matches(right).count(), 1, "{name}");
+        let path = scratch.path().join(format!("{name}.json"));
+        std::fs::write(&path, committed.replace(right, wrong)).expect("write");
+        let (ok, out) = lockstep(&path, &oracle);
+        assert!(!ok, "{name}: {out}");
+        assert!(
+            out.contains("the recipe expects ERR_APPLY, both pools answer [\"accept\""),
+            "{name}: {out}"
+        );
+    }
 }
 
 #[test]

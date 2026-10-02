@@ -1,0 +1,33 @@
+{
+  "format": "heartwood-corpus/1",
+  "seed": "1",
+  "tip": 156,
+  "blocks": 155,
+  "anchorSource": "heartwood-replay",
+  "tornRecords": 0,
+  "chain": {
+    "nethash": "b6f71a8eaef93da19abfdf5946417e216ba25fbe3a58db03bb56d6de82190f2b",
+    "genesisId": "8ad9d39cbc958c74d44049a843969ef48ddc8d3f3dc9bf8d6bb7edee2749f53a",
+    "epoch": "2026-09-30T17:42:37.000Z",
+    "activeDelegates": 53,
+    "blockTime": 8
+  },
+  "revertSteps": 22,
+  "revertSeed": "3870598950792669456",
+  "judge": {
+    "ok": true,
+    "reference": {
+      "version": "4.3.1",
+      "commit": "ddbd58100d0b39a234cbbce6b9213c9f99dbc0f9",
+      "tree": "a4df428c8612290af2e7c8139a23d31eb057ce8f",
+      "seriesSha256": "ff7a3841c59986b13c553762840c5c342c9360e9ea2008208ed449b61c90464d"
+    },
+    "oracle": {
+      "mode": "local",
+      "image": null,
+      "node": "v18.20.8"
+    },
+    "lines": 1254,
+    "finalChainDigest": "46055fbf3abf7ce572177774ff176abda1a8583d6b412ce8ac8c4fadb361afe4"
+  }
+}

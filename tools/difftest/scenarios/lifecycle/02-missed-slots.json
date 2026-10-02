@@ -1,6 +1,6 @@
 {
   "id": "missed-slots",
-  "title": "A forger that stops leaves missed slots that every relay records alike",
+  "title": "A forger that stops leaves missed slots that every relay records alike, and a delegate's second block of a round carries the secondary reward",
   "levels": ["L3"],
   "network": "devnet",
   "genesisSeed": "solar-devnet",
@@ -18,6 +18,6 @@
      ]},
     {"name": "start the forger again", "at": {"afterBlocks": 12}, "do": "start", "node": 4, "role": "forger"},
     {"name": "the slots were missed", "at": {"afterBlocks": 1}, "check": {"missed": {"node": 4, "atLeast": 1}, "forged": ["while-down"], "withinBlocks": 10}},
-    {"name": "every relay records the same", "at": {"afterBlocks": 2}, "check": {"api": {"projection": "missed(2, 100)"}, "invariant": ["schedule"], "withinBlocks": 10}}
+    {"name": "every relay records the same", "at": {"afterBlocks": 2}, "check": {"api": {"projection": "missed(2, 100)"}, "invariant": ["schedule", "secondaryReward"], "withinBlocks": 10}}
   ]
 }
