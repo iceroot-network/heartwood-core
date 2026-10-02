@@ -171,10 +171,7 @@ pub fn with_key(existing: &str, key: &str) -> Result<Zeroizing<String>, ConfigEr
 
 /// The text of the file at `path`, opened without following a link.
 fn read_file(path: &Path) -> std::io::Result<Zeroizing<String>> {
-    if fs::symlink_metadata(path)?.is_symlink() {
-        return Err(std::io::Error::other("is a symbolic link"));
-    }
-    // A FIFO in the file's place reads as empty instead of waiting for a writer.
+    // A link in the file's place fails the open (ELOOP); a FIFO reads as empty, never waiting.
     let flags = (OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK).bits();
     let file = OpenOptions::new()
         .read(true)
