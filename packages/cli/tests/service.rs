@@ -175,6 +175,11 @@ fn a_binary_path_is_quoted_for_systemd_and_a_relative_one_refused() {
     );
     assert!(unit("heartwood").is_err());
     assert!(unit("/opt/line\nbreak").is_err());
+    // A path that is not UTF-8 is refused, not written with a replacement character.
+    use std::os::unix::ffi::OsStrExt;
+    let path = Path::new(std::ffi::OsStr::from_bytes(b"/opt/\xff/heartwood"));
+    let refused = render_for(&relay, Role::Relay, Manager::SystemdUser, path, None);
+    assert!(refused.is_err(), "{refused:?}");
     // A name with a line break cannot start another setting.
     let mut odd = relay.clone();
     odd.token = "a\nExecStartPre=/bin/evil".into();

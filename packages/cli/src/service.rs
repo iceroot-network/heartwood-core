@@ -119,15 +119,16 @@ pub fn render_for(
     binary: &Path,
     version: Option<u32>,
 ) -> Result<String, ServiceError> {
-    let text = binary.to_string_lossy();
+    // A path that is not UTF-8 is refused with the others: its stand-in is a control character.
+    let text = binary.to_str().unwrap_or("\0");
     if !binary.is_absolute() || text.chars().any(char::is_control) {
-        return Err(io(binary, "not an absolute path without control characters").into());
+        return Err(io(binary, "not an absolute UTF-8 path without control codes").into());
     }
     let clean = |text: &str| text.chars().filter(|c| !c.is_control()).collect::<String>();
     let (token, network) = (clean(&instance.token), clean(&instance.network));
     let user = manager == Manager::SystemdUser;
     let (t, n) = (format!("--token={token}"), format!("--network={network}"));
-    let exec = [&*text, role.name(), "run", &t, &n].map(word);
+    let exec = [text, role.name(), "run", &t, &n].map(word);
     let mut unit = format!(
         "[Unit]\nDescription=Heartwood {role} of {token} on {network}\n\
          StartLimitIntervalSec=10\nStartLimitBurst=5\n{}\n[Service]\nType=exec\n\
