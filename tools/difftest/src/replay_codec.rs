@@ -202,35 +202,16 @@ fn describe_ping(pong: &Value) -> String {
     )
 }
 
-/// Why a non-strict reading that accepts a malformed `id` is a documented difference.
-const NON_STRICT_ID: &str = "a non-strict reading of JSON whose `id` is present and malformed: \
-    the reference's schema checks the form of an id in either mode and refuses it, while \
-    Heartwood's non-strict reading does not look at the id (the strict reading does)";
-
-/// Whether the reference refused `expected` for its `id` alone.
-fn refuses_id_only(expected: &Expected) -> bool {
-    matches!(expected, Expected::Error(error)
-        if error.class == "TransactionSchemaError"
-            && error.message.split(", ").all(|part| part.starts_with("data.id ")))
-}
-
 /// `outcome` as this replay reports it. Where both sides refuse, the replay compares what the
 /// targets promise, the verdicts, not the reference's error class: the payload decoder's
 /// refusals have more than one class in the reference (a text too short to hold a checksum is a
 /// RangeError, a wrong checksum an Error), and a transaction's text is refused by its JSON
 /// parser, its number conversions, its type lookup or its schema, each with a class of its own,
 /// where the subject answers with one.
-fn refined(op: &str, input: &Value, expected: &Expected, outcome: Outcome) -> Outcome {
+fn refined(op: &str, outcome: Outcome) -> Outcome {
     match outcome {
         Outcome::ClassMismatch { .. } if op == "address.toBuffer" || op == "tx.fromData" => {
             Outcome::Pass
-        }
-        Outcome::VerdictMismatch { .. }
-            if op == "tx.fromData"
-                && input["strict"] == json!(false)
-                && refuses_id_only(expected) =>
-        {
-            Outcome::Documented(NON_STRICT_ID.to_owned())
         }
         other => other,
     }
@@ -254,12 +235,7 @@ fn judged(
         height: HEIGHT,
         input,
     };
-    let outcome = refined(
-        op,
-        input,
-        &expected,
-        l0::judge_case(&case, &expected, registry),
-    );
+    let outcome = refined(op, l0::judge_case(&case, &expected, registry));
     Ok((outcome, answer))
 }
 
@@ -547,56 +523,26 @@ mod tests {
         }
     }
 
-    fn refusal(class: &str, message: &str) -> Expected {
-        Expected::Error(crate::vectors::ErrorRecord {
-            class: class.into(),
-            message: message.into(),
-        })
-    }
-
     #[test]
-    fn two_refusals_agree_whatever_their_classes_and_only_an_id_difference_is_documented() {
+    fn two_refusals_agree_whatever_their_classes_and_no_verdict_difference_is_excused() {
         let classes = Outcome::ClassMismatch {
             oracle: "SyntaxError".into(),
             heartwood: "TransactionSchemaError".into(),
         };
-        let input = json!({ "text": "{}", "strict": false });
-        let none = refusal("SyntaxError", "x");
         for op in ["address.toBuffer", "tx.fromData"] {
-            assert_eq!(refined(op, &input, &none, classes.clone()), Outcome::Pass);
+            assert_eq!(refined(op, classes.clone()), Outcome::Pass);
         }
         // Another operation's class mismatch stays a failure.
-        assert!(refined("address.validate", &input, &none, classes.clone()).is_failure());
-        let accepted = Outcome::VerdictMismatch {
-            oracle: "rejected".into(),
-            heartwood: "accepted".into(),
-        };
-        let id = refusal(
-            "TransactionSchemaError",
-            "data.id should NOT be longer than 64 characters, data.id should be null",
-        );
-        assert!(matches!(
-            refined("tx.fromData", &input, &id, accepted.clone()),
-            Outcome::Documented(_)
-        ));
-        // Strictly, a malformed id is a refusal on both sides; a refusal for another field, or
-        // for the id and another field, is a difference.
-        let strict = json!({ "text": "{}", "strict": true });
-        assert!(refined("tx.fromData", &strict, &id, accepted.clone()).is_failure());
-        let other = refusal("TransactionSchemaError", "data.fee should be integer");
-        assert!(refined("tx.fromData", &input, &other, accepted.clone()).is_failure());
-        let both = refusal(
-            "TransactionSchemaError",
-            "data.id should be null, data.fee should be integer",
-        );
-        assert!(refined("tx.fromData", &input, &both, accepted).is_failure());
-        // Heartwood refusing what the reference accepts is never documented here.
-        let refused = Outcome::VerdictMismatch {
-            oracle: "accepted".into(),
-            heartwood: "rejected".into(),
-        };
-        let output = Expected::Output(json!({}));
-        assert!(refined("tx.fromData", &input, &output, refused).is_failure());
+        assert!(refined("address.validate", classes).is_failure());
+        // Heartwood accepting what the reference refuses, or refusing what it accepts, is a
+        // difference in either reading: a malformed id included, which both readings refuse.
+        for (oracle, heartwood) in [("rejected", "accepted"), ("accepted", "rejected")] {
+            let verdicts = Outcome::VerdictMismatch {
+                oracle: oracle.into(),
+                heartwood: heartwood.into(),
+            };
+            assert!(refined("tx.fromData", verdicts).is_failure());
+        }
     }
 
     #[test]
@@ -666,6 +612,10 @@ mod tests {
             ("transaction_json", "[]".to_owned()),
             ("transaction_json", "{\"type\":6,\"fee\":\"1\"}".to_owned()),
         ];
+        // A malformed id: both readings refuse it on both sides.
+        let mut malformed_id = json.clone();
+        malformed_id["id"] = json!("zz");
+        let malformed_id = malformed_id.to_string();
         let mut bare = json;
         bare.as_object_mut().unwrap().remove("id");
         cases.push(("transaction_json", bare.to_string()));
@@ -690,6 +640,7 @@ mod tests {
             fs::write(dir.join("zz-binary"), [0xff, 0xfe, 0x7b]).unwrap();
             if target == "transaction_json" {
                 fs::write(dir.join("zz-memo"), &odd_memo).unwrap();
+                fs::write(dir.join("id-malformed"), &malformed_id).unwrap();
             }
             let args = CodecReplayArgs {
                 oracle: oracle.clone(),
@@ -718,6 +669,18 @@ mod tests {
                 .filter(|r| r.label.starts_with("zz-"))
                 .collect();
             assert!(!odd.is_empty(), "{target}: the inputs that are not UTF-8");
+            if target == "transaction_json" {
+                let id: Vec<_> = replayed
+                    .report
+                    .results
+                    .iter()
+                    .filter(|r| r.label.starts_with("id-malformed"))
+                    .collect();
+                assert_eq!(id.len(), 2, "the malformed id, strictly and not");
+                for result in id {
+                    assert_eq!(result.outcome, Outcome::Pass, "{}", result.label);
+                }
+            }
             for result in odd {
                 assert_eq!(
                     result.outcome,
