@@ -1060,7 +1060,7 @@ fn write_batch(out: &Path, batch: &Batch) -> Result<()> {
     std::fs::rename(&temp, &path).map_err(|e| Error::io(&path, e))
 }
 
-/// Read the batch file `path`.
+/// Read the batch file `path`. A file of another format, or one without a chain, is refused.
 pub fn read_batch(path: &Path) -> Result<Batch> {
     let text = std::fs::read_to_string(path).map_err(|e| Error::io(path, e))?;
     let batch: Batch = serde_json::from_str(&text).map_err(|e| Error::Corpus {
@@ -1071,6 +1071,12 @@ pub fn read_batch(path: &Path) -> Result<Batch> {
         return Err(Error::Corpus {
             path: path.to_path_buf(),
             message: format!("not a {BATCH_FORMAT} file"),
+        });
+    }
+    if batch.chains.is_empty() {
+        return Err(Error::Corpus {
+            path: path.to_path_buf(),
+            message: "the batch has no chain".into(),
         });
     }
     Ok(batch)
@@ -1642,6 +1648,16 @@ mod tests {
         assert!(batch.chains[2].made(&out).is_none());
         // The batch file is the batch.
         assert_eq!(read_batch(&batch_file(&out, "unit")).unwrap(), batch);
+        // A batch file without a chain is refused, so that nothing passes unjudged.
+        let empty = Batch {
+            chains: Vec::new(),
+            ..batch.clone()
+        };
+        let path = out.join("batch-empty.json");
+        std::fs::write(&path, serde_json::to_string(&empty).unwrap()).unwrap();
+        assert!(
+            matches!(read_batch(&path), Err(Error::Corpus { message, .. }) if message.contains("no chain"))
+        );
         // A chain directory in the way stops the batch before anything is made.
         std::fs::create_dir_all(out.join("batch-other-2")).unwrap();
         let mut other = args(&out, 3, 1);
