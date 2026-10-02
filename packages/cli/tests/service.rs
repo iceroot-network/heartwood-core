@@ -11,6 +11,7 @@ use std::process::{Command, Stdio};
 
 use heartwood_cli::ProcessError;
 use heartwood_cli::argv::rewrite;
+use heartwood_cli::doctor::seams::RoleState;
 use heartwood_cli::process::{self};
 use heartwood_cli::process_table::render;
 use heartwood_cli::seams::{Instance, Role, SupervisedStatus};
@@ -447,6 +448,9 @@ fn under_a_unit_status_names_the_manager_and_stop_and_restart_refuse() {
     assert_eq!(row.status, SupervisedStatus::OnlineSystemd);
     assert_eq!(row.status.name(), "online (systemd)");
     assert!(row.status.is_running() && row.pid == Some(bystander.id()));
+    // The doctor counts the manager as the node's supervisor: no "unsupervised" warning.
+    let state = heartwood_cli::doctor::seams::role_state(row.status);
+    assert_eq!(state, RoleState::Running { supervised: true });
     assert!(render(&[row]).contains("online (systemd)"));
     for verb in ["stop", "restart"] {
         let refused = match verb {
