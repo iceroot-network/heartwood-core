@@ -19,6 +19,6 @@
     "V35-operator": {
         "env.stringify": 20,
         "env.parseCli": 20,
-        "config.forgerKey": 0
+        "config.forgerKey": 20
     }
 }
