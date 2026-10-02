@@ -1275,7 +1275,7 @@ mod tests {
     }
 
     #[test]
-    fn a_ten_chain_batch_covers_forks_milestones_registered_forgers_and_revokes() {
+    fn a_ten_chain_batch_covers_forks_milestones_won_votes_and_the_long_chains_revokes() {
         let chains: Vec<DrawnChain> = (1..=10)
             .map(|i| draw("2026", i, 5, false).unwrap())
             .collect();
@@ -1297,8 +1297,30 @@ mod tests {
             })
         };
         assert!(chains.iter().filter(|c| crosses(c)).count() >= 5);
-        // A registered delegate wins a vote in the chains that have rounds for it.
+        // A registered delegate wins a vote in the chains that have rounds for it, and every
+        // registered delegate is attested from the round after its registration.
+        let transactions = |c: &DrawnChain| -> Vec<BuildSpec> {
+            c.recipe
+                .steps
+                .iter()
+                .filter_map(|s| match s {
+                    Step::Transactions { build, .. } => Some(build.clone()),
+                    _ => None,
+                })
+                .flatten()
+                .collect()
+        };
         let wins = |c: &DrawnChain| {
+            transactions(c).iter().any(|b| {
+                b.kind == "vote"
+                    && b.refused.is_none()
+                    && b.asset["votes"][0][0]
+                        .as_str()
+                        .is_some_and(|name| name.starts_with("bd"))
+            })
+        };
+        assert!(chains.iter().filter(|c| wins(c)).count() >= 4);
+        let attested = |c: &DrawnChain| {
             c.recipe.steps.iter().any(|s| match s {
                 Step::Online {
                     delegates: Attested::Only(names),
@@ -1307,7 +1329,22 @@ mod tests {
                 _ => false,
             })
         };
-        assert!(chains.iter().filter(|c| wins(c)).count() >= 4);
+        assert!(chains.iter().filter(|c| attested(c)).count() >= 4);
+        // A temporary resignation and its revoke (types 0 and 2) need 6 rounds or more: the long
+        // chains draw them.
+        let revokes = |c: &DrawnChain| {
+            let types: BTreeSet<u64> = transactions(c)
+                .iter()
+                .filter(|b| b.kind == "delegateResignation")
+                .filter_map(|b| b.asset["resignationType"].as_u64())
+                .collect();
+            types.contains(&0) && types.contains(&2)
+        };
+        assert!(!chains.iter().any(|c| revokes(c)));
+        let long: Vec<DrawnChain> = (1..=10)
+            .map(|i| draw("2026", i, 7, true).unwrap())
+            .collect();
+        assert!(long.iter().filter(|c| revokes(c)).count() >= 2);
         // Every milestone activates inside its chain, after the genesis profile's own.
         for c in &chains {
             if let Some(height) = c.donations_from() {
