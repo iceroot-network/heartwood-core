@@ -27,6 +27,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use super::closure;
 use super::criteria::Criteria;
 use super::flags::Flags;
 use super::git::Repo;
@@ -101,7 +102,9 @@ pub fn run(args: &[String]) -> Result<bool> {
     let dirty = changed_meanwhile || head != head_now || repo.dirty()?;
 
     let narrowed = match &criteria {
-        Some(path) => Criteria::read(Path::new(path))?.narrowed_paths(&target, &command),
+        Some(path) => {
+            Criteria::read(Path::new(path))?.narrowed_paths(&target, &variables, &command)
+        }
         None => None,
     };
     // A narrowed record keeps the recorder's own inputs too, which the list of a make target or a
@@ -110,7 +113,10 @@ pub fn run(args: &[String]) -> Result<bool> {
         paths.extend(RECORDING_INPUTS.map(str::to_owned));
         paths
     });
-    let tested_paths = tested_paths(narrowed.unwrap_or(tested))?;
+    let tested_paths = tested_paths(closure::expand(
+        Path::new(&repo_dir),
+        &narrowed.unwrap_or(tested),
+    )?)?;
 
     let parsed = match &output_file {
         Some(path) => {
@@ -208,13 +214,14 @@ pub fn write_own(
         variables: String::new(),
         head: repo.resolve("HEAD")?,
         dirty: repo.dirty()?,
-        tested_paths: tested_paths(
-            criteria
+        tested_paths: tested_paths(closure::expand(
+            repo.root(),
+            &criteria
                 .narrowing
                 .get(own.target)
                 .cloned()
                 .unwrap_or_default(),
-        )?,
+        )?)?,
         image: None,
         machine: machine_name(None),
         counts: Some(own.counts),

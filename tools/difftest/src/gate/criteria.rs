@@ -528,10 +528,18 @@ impl Criteria {
         Ok(())
     }
 
-    /// The paths a record of `target`, run as `command`, tests, when the criteria narrow them:
-    /// its property's (`--property P`), its fuzz target's (`fuzz run T`), or the make target's
-    /// own list.
-    pub fn narrowed_paths(&self, target: &str, command: &str) -> Option<Vec<String>> {
+    /// The paths a record of `target`, run as `command` from a make command line that set
+    /// `variables`, tests, when the criteria narrow them: its property's (`--property P`), its
+    /// fuzz target's (`fuzz run T`), the list of the make target with one of its variables
+    /// (`live-check RUN=suites`), or the make target's own list. A list may name Rust modules
+    /// (`rust:`) and leaves (`rust-leaf:`), which `gate record` turns into files
+    /// ([`super::closure`]).
+    pub fn narrowed_paths(
+        &self,
+        target: &str,
+        variables: &str,
+        command: &str,
+    ) -> Option<Vec<String>> {
         let words: Vec<&str> = command.split_whitespace().collect();
         if let Some(at) = words.iter().position(|w| *w == "--property")
             && let Some(name) = words.get(at + 1)
@@ -546,7 +554,11 @@ impl Criteria {
         {
             return Some(spec.paths.clone());
         }
-        self.narrowing.get(target).cloned()
+        let set = super::needs::assignments(variables);
+        set.iter()
+            .find_map(|(key, value)| self.narrowing.get(&format!("{target} {key}={value}")))
+            .or_else(|| self.narrowing.get(target))
+            .cloned()
     }
 }
 
@@ -578,21 +590,38 @@ mod tests {
     fn commands_narrow_their_paths() {
         let criteria = tiny();
         assert_eq!(
-            criteria.narrowed_paths("l1", "target/debug/difftest run l1 --property P1 --cases 5"),
+            criteria.narrowed_paths(
+                "l1",
+                "",
+                "target/debug/difftest run l1 --property P1 --cases 5"
+            ),
             Some(vec!["a/p1".to_owned()])
         );
         assert_eq!(
-            criteria.narrowed_paths("fuzz-long", "cargo +nightly fuzz run t1 -- -fork=8"),
+            criteria.narrowed_paths("fuzz-long", "", "cargo +nightly fuzz run t1 -- -fork=8"),
             Some(vec!["a/t1".to_owned()])
         );
         assert_eq!(
-            criteria.narrowed_paths("l0", "target/debug/difftest run l0"),
+            criteria.narrowed_paths("l0", "", "target/debug/difftest run l0"),
             Some(vec!["a/l0".to_owned()])
         );
-        assert_eq!(criteria.narrowed_paths("l2", "difftest run l2 x"), None);
+        assert_eq!(criteria.narrowed_paths("l2", "", "difftest run l2 x"), None);
         assert_eq!(
-            criteria.narrowed_paths("l1", "difftest run l1 --property P1,P2"),
+            criteria.narrowed_paths("l1", "", "difftest run l1 --property P1,P2"),
             None
+        );
+        // A list of the target with one of its variables comes before the target's own.
+        let mut criteria = criteria;
+        criteria
+            .narrowing
+            .insert("l0 RUN=suites".to_owned(), vec!["a/suites".to_owned()]);
+        assert_eq!(
+            criteria.narrowed_paths("l0", "SEED=1 RUN=suites", "difftest run l0"),
+            Some(vec!["a/suites".to_owned()])
+        );
+        assert_eq!(
+            criteria.narrowed_paths("l0", "RUN=core", "difftest run l0"),
+            Some(vec!["a/l0".to_owned()])
         );
     }
 

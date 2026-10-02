@@ -21,6 +21,11 @@ impl Repo {
         }
     }
 
+    /// The tree's root, as it was given.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     fn run(&self, args: &[&str]) -> Result<Output> {
         Command::new("git")
             .arg("-C")

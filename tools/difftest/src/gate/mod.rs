@@ -6,6 +6,7 @@
 //! (every register entry's trigger, test and hits).
 
 mod build;
+pub mod closure;
 pub mod coverage;
 pub mod criteria;
 pub mod flags;

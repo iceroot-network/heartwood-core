@@ -1856,6 +1856,75 @@ fn a_feature_of_a_crate_of_the_tree_that_a_tested_crate_uses_makes_its_record_st
 }
 
 #[test]
+fn a_record_narrowed_to_a_module_goes_stale_on_what_its_code_reaches_only() {
+    let rig = Rig::new();
+    rig.write("tool/Cargo.toml", "[package]\nname = \"tool\"\n");
+    rig.write(
+        "tool/src/lib.rs",
+        "pub mod cli;\npub mod run;\npub mod used;\npub mod other;\n",
+    );
+    rig.write(
+        "tool/src/cli.rs",
+        "pub struct Args;\nuse crate::other::all;\n",
+    );
+    rig.write(
+        "tool/src/run/mod.rs",
+        "mod step;\npub fn go() { step::one(); crate::used::help(); crate::cli::Args; }\n",
+    );
+    rig.write("tool/src/run/step.rs", "pub fn one() {}\n");
+    rig.write("tool/src/used.rs", "pub fn help() {}\n");
+    rig.write("tool/src/other.rs", "pub fn all() {}\n");
+    rig.commit("a tool");
+    let mut criteria = with_row(json!([{"kind": "record", "target": "suites"}]));
+    criteria["narrowing"]["suites"] =
+        json!(["rust:tool/src/run", "rust-leaf:tool/src/cli.rs", "data"]);
+    rig.criteria(&criteria);
+    assert!(
+        rig.gate(&[
+            "record",
+            "--target",
+            "suites",
+            "--command",
+            "suites.sh",
+            "--exit",
+            "0",
+            "--started",
+            T1,
+            "--finished",
+            T1,
+            "--out",
+            &rig.arg("records"),
+            "--criteria",
+            &rig.arg("criteria.json"),
+            "--machine",
+            "box-1",
+        ])
+        .ok
+    );
+    assert_eq!(
+        rig.records()[0]["testedPaths"],
+        json!([
+            "data",
+            "tool/src/cli.rs",
+            "tool/src/run/mod.rs",
+            "tool/src/run/step.rs",
+            "tool/src/used.rs",
+            "tools/gate-record.sh"
+        ])
+    );
+    let t = |rig: &Rig| row_t(&s1(rig, &["--verbose"]).text);
+    // A module the code does not reach (one the leaf alone names) changes nothing.
+    rig.write("tool/src/other.rs", "pub fn all() { let _ = 1; }\n");
+    rig.commit("another module");
+    assert!(t(&rig).contains("T        pass"), "{}", t(&rig));
+    // A module it reaches does.
+    rig.write("tool/src/used.rs", "pub fn help() { let _ = 2; }\n");
+    rig.commit("a used module");
+    let now = t(&rig);
+    assert!(now.contains("stale: tool/src/used.rs changed"), "{now}");
+}
+
+#[test]
 fn a_run_stopped_on_purpose_counts_for_nothing_a_killed_one_fails_and_a_lenient_one_has_no_entry() {
     let rig = Rig::new();
     rig.criteria(&base_criteria());

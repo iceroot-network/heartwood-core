@@ -28,6 +28,9 @@ use crate::live::run::{self, read_json};
 use crate::oracle::Oracle;
 use crate::store::{self, ScratchDir};
 
+/// Where the run's corpora go, relative to the current directory: the Makefile's `CORPUS`.
+pub const CORPUS_ROOT: &str = "target/corpus";
+
 /// A chain of the run, imported and judged.
 #[derive(Debug, Clone)]
 pub struct Judged {

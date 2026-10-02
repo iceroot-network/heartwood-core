@@ -97,8 +97,7 @@ use crate::store;
 use crate::subject::Documented;
 use run::{Implementation, Manifest};
 
-/// Where the run's corpora go, relative to the current directory: the Makefile's `CORPUS`.
-pub const CORPUS_ROOT: &str = "target/corpus";
+pub use corpora::CORPUS_ROOT;
 /// The time a block may take to reach a node under test: one block time.
 pub const LAG_LIMIT_SECONDS: f64 = 8.0;
 /// The variable naming the run a check of run `t` or `m` compares with (the other of the two), as

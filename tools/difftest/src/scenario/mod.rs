@@ -282,7 +282,7 @@ pub fn compare(dir: &Path, suite: Option<&str>) -> Result<Report> {
     let oracle =
         || crate::cli::OracleArgs::default().resolve(|name: &str| std::env::var(name).ok());
     let judging = record::Judging {
-        root: Path::new(crate::live::CORPUS_ROOT),
+        root: Path::new(crate::live::corpora::CORPUS_ROOT),
         oracle: &oracle,
         repo: Some(Path::new(".")),
     };
