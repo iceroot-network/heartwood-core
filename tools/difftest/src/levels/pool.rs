@@ -998,6 +998,31 @@ mod tests {
     }
 
     #[test]
+    fn a_count_grouped_in_another_locale_is_documented_only_where_the_oracle_notes_it() {
+        let input = process(json!([{"hex": "00"}]));
+        let result = |message: &str| {
+            json!({"accept": [], "broadcast": [], "invalid": ["b"], "excess": [],
+                   "errors": {"b": {"type": "ERR_POOL_FULL", "message": message}}})
+        };
+        let ours = run(vec![step(result("the pool holds 1,000 transactions"), &[])]);
+        let mut theirs = run(vec![step(result("the pool holds 1.000 transactions"), &[])]);
+        // A reference whose default locale groups digits otherwise says so in its notes.
+        theirs[NOTES] = json!({"locale": true});
+        assert_eq!(
+            judge(&input, &theirs, &ours),
+            Outcome::Documented(Documented::Locale.reason().into())
+        );
+        // Without the note the texts differ.
+        let mut unnoted = theirs.clone();
+        unnoted[NOTES] = json!({});
+        assert!(judge(&input, &unnoted, &ours).is_failure());
+        // The note covers the message only: another code is a difference all the same.
+        let mut code = result("the pool holds 1,000 transactions");
+        code["errors"]["b"]["type"] = json!("ERR_LOW_FEE");
+        assert!(judge(&input, &theirs, &run(vec![step(code, &[])])).is_failure());
+    }
+
+    #[test]
     fn a_fixed_eviction_is_documented_when_the_entries_before_it_agree() {
         // Entry 0 is accepted by both; entry 1 (id n) made the reference evict e and was refused;
         // entry 2 then took the reference's free place, while Heartwood's pool is still full.
