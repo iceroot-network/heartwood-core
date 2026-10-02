@@ -497,11 +497,16 @@ impl Plan {
             let at = self.in_round(voting, 3);
             let voter = self.sender();
             self.add(at, vote(&voter, &[(name, 100)]));
-            // It resigns for good after it forged: in a later round, or at the tip.
+            // It resigns after it forged: in a later round, or at the tip.
             let later = self.rng.between(voting + 1, self.rounds);
             resigned = self.in_round(later, at + 1);
         }
-        self.add(resigned.max(height + 1).min(self.tip), resignation("d1", 0));
+        // For good or for a time, as it is drawn: 1 is a permanent resignation, 0 a temporary one.
+        let kind = u32::from(self.rng.chance(1, 2));
+        self.add(
+            resigned.max(height + 1).min(self.tip),
+            resignation("d1", kind),
+        );
         if revokes {
             let name = format!("bd{}x2", self.index);
             let round = self.rng.between(1, 2);
@@ -515,14 +520,14 @@ impl Plan {
             let vote_at = self.in_round(voting, 3);
             let voter = self.sender();
             self.add(vote_at, vote(&voter, &[(name, 100)]));
-            // Its resignation is temporary: the revoke is valid 106 blocks on.
+            // Its resignation is temporary (type 0): the revoke (type 2) is valid 106 blocks on.
             let rests = self.in_round(voting + 1, vote_at + 1);
             let back = rests + 110;
             if back <= self.tip {
-                self.add(rests, resignation("d2", 1));
+                self.add(rests, resignation("d2", 0));
                 self.add(back, resignation("d2", 2));
             } else {
-                self.add(rests, resignation("d2", 0));
+                self.add(rests, resignation("d2", 1));
             }
         }
     }
