@@ -280,12 +280,76 @@ impl Ctx<'_, '_> {
         })
     }
 
-    fn invariant(&mut self, which: Invariant) -> Probe {
-        if which == Invariant::SingleTip {
-            return self.single_tip();
+    /// Each group of the partition forged a branch of its own: its highest tip is above the
+    /// partition's height, and the groups' tips are different blocks.
+    fn both_sides_forge(&mut self) -> Probe {
+        let Some((groups, height)) = self.runner.partition.clone() else {
+            return Ok(Outcome::HarnessError(
+                "no partition was made before this check".into(),
+            ));
+        };
+        let mut tips = Vec::new();
+        for group in &groups {
+            let best = group
+                .iter()
+                .filter_map(|node| self.runner.read_tip(*node).ok())
+                .max_by_key(|tip| tip.height);
+            let Some(best) = best else {
+                return Ok(expected(
+                    "a tip of every group",
+                    format!("no node of {group:?} answers"),
+                ));
+            };
+            tips.push(best);
         }
+        let ids: std::collections::BTreeSet<&str> = tips.iter().map(|t| t.id.as_str()).collect();
+        if tips.iter().all(|t| t.height > height) && ids.len() == tips.len() {
+            self.runner.branches = tips;
+            Ok(Outcome::Pass)
+        } else {
+            Ok(expected(
+                &format!("each group on a branch of its own above height {height}"),
+                format!("{tips:?}"),
+            ))
+        }
+    }
+
+    /// After the heal, every node is on one tip and a block of a branch is no longer in the chain.
+    fn fork_recovered(&mut self) -> Probe {
+        if self.runner.branches.is_empty() {
+            return Ok(Outcome::HarnessError(
+                "no branch was seen: a both-sides check during the partition comes first".into(),
+            ));
+        }
+        let one = self.single_tip()?;
+        if one != Outcome::Pass {
+            return Ok(one);
+        }
+        let (node, _) = self.runner.observe()?;
+        let mut replaced = Vec::new();
+        for tip in self.runner.branches.clone() {
+            let answer = self
+                .backend()
+                .get(node, &format!("/api/blocks/{}", tip.height))?;
+            if answer.body["data"]["id"].as_str() != Some(tip.id.as_str()) {
+                replaced.push(tip.height);
+            }
+        }
+        Ok(if replaced.is_empty() {
+            expected(
+                "a branch's block replaced in the joined chain",
+                "every branch's block is still in it",
+            )
+        } else {
+            Outcome::Pass
+        })
+    }
+
+    fn invariant(&mut self, which: Invariant) -> Probe {
         let name = match which {
-            Invariant::SingleTip => "singleTip",
+            Invariant::SingleTip => return self.single_tip(),
+            Invariant::BothSidesForge => return self.both_sides_forge(),
+            Invariant::ForkRecovered => return self.fork_recovered(),
             Invariant::RevertSymmetry => "revertSymmetry",
             Invariant::RestartEqual => "restartEqual",
             Invariant::Supply => "supply",
@@ -295,10 +359,9 @@ impl Ctx<'_, '_> {
             return Ok(said.map_or_else(|why| expected("it holds", why), |()| Outcome::Pass));
         }
         match which {
-            Invariant::SingleTip => self.single_tip(),
             Invariant::Supply => self.supply(),
             Invariant::Schedule => self.schedule(),
-            Invariant::RevertSymmetry | Invariant::RestartEqual => Ok(Outcome::Skipped(
+            _ => Ok(Outcome::Skipped(
                 "a live network's revert and restart lines are judged by live check".into(),
             )),
         }

@@ -390,6 +390,13 @@ pub enum Invariant {
     RevertSymmetry,
     /// A restart gives the state of the continuous run.
     RestartEqual,
+    /// While a partition holds, each of its groups forges a branch of its own: each group's
+    /// highest tip is above the height the partition was made at, and no two groups' tips are
+    /// one block.
+    BothSidesForge,
+    /// After a heal, the branches are joined into one chain: every node that is meant to be up is
+    /// on one tip, and a branch's block that [`Invariant::BothSidesForge`] saw is no longer in it.
+    ForkRecovered,
 }
 
 /// Every transaction of a scenario, built once through the oracle.

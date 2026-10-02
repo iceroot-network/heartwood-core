@@ -13,9 +13,9 @@
        {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["prop-a", "10000000000"], ["prop-b", "10000000000"], ["prop-c", "10000000000"], ["prop-d", "10000000000"], ["payee", "100000000"], ["split-user", "10000000000"]]}
      ]},
     {"name": "split the network", "at": {"height": 30}, "do": "partition", "groups": [[1, 2, 3], [4, 5]]},
-    {"name": "let both sides run", "at": {"afterBlocks": 0}, "do": "wait", "blocks": 10},
+    {"name": "let both sides run", "at": {"afterBlocks": 0}, "do": "wait", "blocks": 10, "check": {"invariant": ["bothSidesForge"], "withinBlocks": 4}},
     {"name": "heal", "at": {"afterBlocks": 0}, "do": "heal"},
-    {"name": "every node on one chain", "at": {"afterBlocks": 0}, "check": {"invariant": ["singleTip"], "withinBlocks": 24}},
+    {"name": "every node on one chain, a branch given up", "at": {"afterBlocks": 0}, "check": {"invariant": ["singleTip", "forkRecovered"], "withinBlocks": 24}},
     {"name": "a transfer after the heal", "at": {"afterBlocks": 0}, "do": "submit", "node": 5, "via": "api", "check": {"accept": ["after-heal"]},
      "txs": [
        {"ref": "after-heal", "type": "transfer", "from": "split-user", "nonce": 1, "to": [["payee", "100000000"]]}

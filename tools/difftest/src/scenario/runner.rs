@@ -103,6 +103,10 @@ pub struct Runner<'a> {
     stopped_relays: BTreeSet<u32>,
     /// The nodes the network holds back at its start ([`Backend::held_back`]).
     held_back: BTreeSet<u32>,
+    /// The last partition's groups and the height of the tip it was made at.
+    pub(super) partition: Option<(Vec<Vec<u32>>, u32)>,
+    /// Each group's tip on its own branch, as a both-sides check saw it during the partition.
+    pub(super) branches: Vec<Tip>,
     /// The compared, exempt and missing nodes at the latest single-tip probe.
     pub(super) single_tip_label: String,
     settle_height: u32,
@@ -147,6 +151,8 @@ impl<'a> Runner<'a> {
             expected_nodes: BTreeSet::new(),
             stopped_relays: BTreeSet::new(),
             held_back,
+            partition: None,
+            branches: Vec::new(),
             single_tip_label: String::new(),
             settle_height: 1_u32.saturating_add(scenario.settle_blocks),
         })
@@ -314,7 +320,10 @@ impl<'a> Runner<'a> {
                         .restart(node, part, step.mode.unwrap_or_default())
                 }
             }
-            Action::Partition => self.backend.partition(&step.groups),
+            Action::Partition => self.backend.partition(&step.groups).map(|()| {
+                self.partition = Some((step.groups.clone(), tip.height));
+                self.branches.clear();
+            }),
             Action::Heal => self.backend.heal(),
             Action::Revert => {
                 let blocks = step

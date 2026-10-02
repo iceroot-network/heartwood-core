@@ -321,6 +321,8 @@ struct Fake {
     catch_up: Option<u32>,
     /// The nodes the network holds back at its start.
     held: BTreeSet<u32>,
+    /// A node on a branch of its own: its tips' ids end with the suffix below the height.
+    branch: HashMap<u32, (String, u32)>,
 }
 
 impl Fake {
@@ -342,6 +344,7 @@ impl Fake {
             unsupported: HashSet::new(),
             catch_up: None,
             held: BTreeSet::new(),
+            branch: HashMap::new(),
         }
     }
 
@@ -453,9 +456,14 @@ impl Backend for Fake {
             });
         }
         let height = self.height.get() - self.lag.get(&node).copied().unwrap_or(0);
+        let suffix = self
+            .branch
+            .get(&node)
+            .filter(|(_, until)| height < *until)
+            .map_or("", |(suffix, _)| suffix.as_str());
         Ok(Tip {
             height,
-            id: format!("block-{height}"),
+            id: format!("block-{height}{suffix}"),
         })
     }
 
@@ -2565,6 +2573,44 @@ fn a_never_answering_node_is_exempt_only_while_the_network_holds_it_back() {
             );
         } else if !start {
             assert!(label.contains("missing [node 2"), "{label}");
+        }
+    }
+}
+
+#[test]
+fn both_sides_must_forge_a_branch_of_their_own_and_one_branch_is_given_up_after_the_heal() {
+    let steps = json!([
+        {"at": {"height": 2}, "do": "partition", "groups": [[1], [2]]},
+        {"at": {"afterBlocks": 0}, "do": "wait", "blocks": 2,
+         "check": {"invariant": ["bothSidesForge"]}},
+        {"at": {"afterBlocks": 0}, "do": "heal"},
+        {"at": {"afterBlocks": 0}, "check": {"invariant": ["forkRecovered"], "withinBlocks": 2}}
+    ]);
+    for split in [true, false] {
+        let compiled = compiled(steps.clone(), &[]);
+        let mut fake = Fake::new(2);
+        if split {
+            fake.branch.insert(2, ("-b".into(), 5));
+        }
+        for h in 1..10 {
+            fake.page(
+                1,
+                &format!("/api/blocks/{h}"),
+                json!({"data": {"id": format!("block-{h}")}}),
+            );
+        }
+        let (report, _) = run_on(&mut fake, &compiled);
+        assert_eq!(
+            outcome(&report, "bothsidesforge").is_failure(),
+            !split,
+            "{report:#?}"
+        );
+        if split {
+            assert_eq!(
+                *outcome(&report, "forkrecovered"),
+                Outcome::Pass,
+                "{report:#?}"
+            );
         }
     }
 }
