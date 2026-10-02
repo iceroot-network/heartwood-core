@@ -636,10 +636,19 @@ fn minority_branches(run: &ForgingRun<'_>, steps: &[Step], cases: &mut Cases) {
                 for (branch, problems) in judged {
                     let label = format!("{}: {BRANCH}", branch.chain.name);
                     if problems.is_empty() {
+                        // As the final chain's case: the anchors that do not apply are named.
+                        let absent = if branch.absent.is_empty() {
+                            String::new()
+                        } else {
+                            format!(
+                                "; {} do not apply to a corpus of relay block files",
+                                branch.absent.join(" and ")
+                            )
+                        };
                         cases.pass(
                             SECTION,
                             format!(
-                                "{label}: {node}'s block files to height {} imported and judged ({}), the anchors hold and the reference's processor accepted every block",
+                                "{label}: {node}'s block files to height {} imported and judged ({}), the anchors hold and the reference's processor accepted every block{absent}",
                                 branch.tip,
                                 match (branch.imported, branch.judged) {
                                     (true, true) => "imported and judged now",
@@ -1121,6 +1130,15 @@ mod tests {
             labels.iter().any(|l| l.starts_with(&format!(
                 "{BRANCH_CORPUS}: {BRANCH}: node4's block files to height 156 imported and judged (judged before)"
             ))),
+            "{labels:#?}"
+        );
+        // The anchors that do not apply to a corpus of relay block files are named, as the final
+        // chain's case names them: the anchors hold without them.
+        assert!(
+            labels
+                .iter()
+                .any(|l| l.starts_with(&format!("{BRANCH_CORPUS}: {BRANCH}"))
+                    && l.ends_with("; A4 and A5 do not apply to a corpus of relay block files")),
             "{labels:#?}"
         );
         assert!(labels.contains(&format!(
