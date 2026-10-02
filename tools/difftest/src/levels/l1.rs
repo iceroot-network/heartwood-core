@@ -525,6 +525,69 @@ fn seed_for(seed: u64, property: Property) -> [u8; 32] {
     sha256(format!("heartwood/l1/{}/{seed}", property.name()).as_bytes())
 }
 
+/// The cases of one property's run, as the report needs them: the result of each case that did not
+/// fail, in the order the cases ran, and the cases from the first failing one on (the shrinking,
+/// at most the runner's shrink iterations and one), among which the minimal failing case finds its
+/// outcome.
+///
+/// The input of a case that ran before the first failure is not kept: a P13 input carries a whole
+/// corpus chain (about half a megabyte in memory), and a run that kept every input grew by that
+/// much per case, past 30 GB in 70,000 cases.
+struct Recorded {
+    property: Property,
+    /// The property's file in the report.
+    file: String,
+    /// How many cases ran.
+    cases: usize,
+    /// The result of each case that did not fail.
+    results: Vec<CaseResult>,
+    /// The cases from the first failing one on, with their outcomes.
+    shrinking: Vec<(L1Case, Outcome)>,
+}
+
+impl Recorded {
+    fn new(property: Property, file: &str) -> Recorded {
+        Recorded {
+            property,
+            file: file.to_owned(),
+            cases: 0,
+            results: Vec::new(),
+            shrinking: Vec::new(),
+        }
+    }
+
+    /// Record `case`, judged `outcome`.
+    fn push(&mut self, case: L1Case, outcome: Outcome) {
+        self.cases += 1;
+        let failed = outcome.is_failure();
+        if !failed {
+            self.results.push(CaseResult {
+                file: self.file.clone(),
+                line: self.cases,
+                op: case.op.to_owned(),
+                label: format!("{} {}", self.property.number(), case.op),
+                height: case.height,
+                outcome: outcome.clone(),
+            });
+        }
+        if failed || !self.shrinking.is_empty() {
+            self.shrinking.push((case, outcome));
+        }
+    }
+
+    /// The outcome of `minimal`, the minimal failing case: that of the latest case run with its
+    /// input and operation. None when no case run from the first judged failure on has its input
+    /// and operation, as when the minimal case panicked; the run then reports the runner's reason
+    /// as a harness error.
+    fn outcome_of(&self, minimal: &L1Case) -> Option<Outcome> {
+        self.shrinking
+            .iter()
+            .rev()
+            .find(|(c, _)| c.input == minimal.input && c.op == minimal.op)
+            .map(|(_, outcome)| outcome.clone())
+    }
+}
+
 /// Run the properties of `options` against the oracle `server` and the subjects of `registry`,
 /// with the devnet `context` the transaction strategies build in.
 pub fn run(
@@ -537,7 +600,8 @@ pub fn run(
     let mut results = Vec::new();
     let mut classes = BTreeMap::new();
     for property in &options.properties {
-        let recorded: RefCell<Vec<(L1Case, Outcome)>> = RefCell::new(Vec::new());
+        let file = format!("l1/{}", property.name());
+        let recorded = RefCell::new(Recorded::new(*property, &file));
         let harness: RefCell<Option<Error>> = RefCell::new(None);
         let seen: RefCell<BTreeMap<String, usize>> = RefCell::new(BTreeMap::new());
         let config = Config {
@@ -608,7 +672,7 @@ pub fn run(
             let judged = super::judge_documented(&request, &answer, registry);
             let failed = judged.is_failure();
             let message = format!("{judged:?}");
-            recorded.borrow_mut().push((case, judged));
+            recorded.borrow_mut().push(case, judged);
             if failed {
                 Err(TestCaseError::fail(message))
             } else {
@@ -619,7 +683,6 @@ pub fn run(
             return Err(e);
         }
         let seen = seen.into_inner();
-        let file = format!("l1/{}", property.name());
         if *property == Property::Processor {
             results.extend(processor_checks(&file, &seen, options.min_reach));
         }
@@ -637,28 +700,13 @@ pub fn run(
                 *classes.entry(class).or_insert(0) += n;
             }
         }
-        let recorded = recorded.into_inner();
-        for (i, (case, judged)) in recorded.iter().enumerate() {
-            if judged.is_failure() {
-                continue;
-            }
-            results.push(CaseResult {
-                file: file.clone(),
-                line: i + 1,
-                op: case.op.to_owned(),
-                label: format!("{} {}", property.number(), case.op),
-                height: case.height,
-                outcome: judged.clone(),
-            });
-        }
+        let mut recorded = recorded.into_inner();
+        results.append(&mut recorded.results);
         match outcome {
             Ok(()) => {}
             Err(TestError::Fail(reason, minimal)) => {
                 let judged = recorded
-                    .iter()
-                    .rev()
-                    .find(|(c, _)| c.input == minimal.input && c.op == minimal.op)
-                    .map(|(_, j)| j.clone())
+                    .outcome_of(&minimal)
                     .unwrap_or_else(|| Outcome::HarnessError(reason.to_string()));
                 if let Some(dir) = &options.regressions {
                     write_regression(dir, *property, &minimal)?;
@@ -1000,5 +1048,49 @@ mod tests {
             without_bound_key(&funded, &address),
             format!("#W\n{{\"a\":\"{a}\",\"bal\":\"5\",\"n\":\"0\"}}\n")
         );
+    }
+
+    #[test]
+    fn a_run_keeps_inputs_only_from_its_first_failure_on() {
+        let case = |n: u64| L1Case {
+            op: "chain.process",
+            height: n,
+            input: json!({"chain": {"blocks": vec!["00"; 64]}, "n": n}),
+        };
+        let fail = |text: &str| Outcome::HarnessError(text.to_owned());
+        let mut recorded = Recorded::new(Property::Processor, "l1/processor");
+        recorded.push(case(1), Outcome::Pass);
+        recorded.push(
+            case(2),
+            Outcome::Documented("a documented difference".into()),
+        );
+        assert!(recorded.shrinking.is_empty(), "no input before a failure");
+        // A failing case, then the shrinking: a simpler case that passed, a simpler one that failed.
+        recorded.push(case(3), fail("first"));
+        recorded.push(case(4), Outcome::Pass);
+        recorded.push(case(5), fail("simpler"));
+        assert_eq!(recorded.shrinking.len(), 3);
+        let lines: Vec<usize> = recorded.results.iter().map(|r| r.line).collect();
+        assert_eq!(
+            lines,
+            [1, 2, 4],
+            "the result of each case that did not fail, at its line"
+        );
+        assert_eq!(recorded.results[1].label, "P13 chain.process");
+        assert_eq!(recorded.results[1].file, "l1/processor");
+        assert_eq!(recorded.outcome_of(&case(5)), Some(fail("simpler")));
+        assert_eq!(recorded.outcome_of(&case(3)), Some(fail("first")));
+        assert_eq!(recorded.outcome_of(&case(4)), Some(Outcome::Pass));
+        // A case that ran before the first failure, or never ran, has none.
+        assert_eq!(recorded.outcome_of(&case(1)), None);
+        assert_eq!(recorded.outcome_of(&case(9)), None);
+        // The latest run of an equal input gives the outcome, whatever the order of its keys.
+        let reordered = L1Case {
+            op: "chain.process",
+            height: 3,
+            input: json!({"n": 3, "chain": {"blocks": vec!["00"; 64]}}),
+        };
+        recorded.push(reordered, Outcome::Pass);
+        assert_eq!(recorded.outcome_of(&case(3)), Some(Outcome::Pass));
     }
 }
