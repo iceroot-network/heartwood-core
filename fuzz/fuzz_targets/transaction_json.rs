@@ -1,6 +1,7 @@
 //! Fuzz the transaction JSON reader: JSON text read as a transaction's data, strictly and not.
-//! No input may panic, and an accepted transaction's bytes decode back, under the same rule, to
-//! the same bytes, the same id and the same JSON.
+//! The text is the input's lossy UTF-8 reading, as the API reads a request's body. No input may
+//! panic, and an accepted transaction's bytes decode back, under the same rule, to the same
+//! bytes, the same id and the same JSON.
 //!
 //! The reader renames a transfer's `asset.payments` and a truthy `vendorField` as the reference's
 //! factory does; the replay sends each corpus file to the reference's
@@ -41,7 +42,7 @@ static PARAMS: LazyLock<Params> = LazyLock::new(|| {
 });
 
 fuzz_target!(|data: &[u8]| {
-    let Ok(json) = serde_json::from_slice::<Value>(data) else {
+    let Ok(json) = serde_json::from_str::<Value>(&String::from_utf8_lossy(data)) else {
         return;
     };
     let params = &*PARAMS;

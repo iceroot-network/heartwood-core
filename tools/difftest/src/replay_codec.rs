@@ -4,9 +4,10 @@
 //! - `address_decode`: each input, as text, validated as an address of the devnet's network by
 //!   Heartwood and by the reference's address validation: equal verdicts and network errors, and
 //!   an accepted address re-encoded to the same text.
-//! - `transaction_json`: each input, as JSON text, read as a transaction's data, strictly, by
-//!   Heartwood and by the reference's transaction factory (with its `vendorField` and
-//!   `asset.payments` aliases): equal acceptance or refusal, ids and bytes.
+//! - `transaction_json`: each input, as JSON text (its lossy UTF-8 reading, as the API reads a
+//!   request's body), read as a transaction's data, strictly and not, by Heartwood and by the
+//!   reference's transaction factory (with its `vendorField` and `asset.payments` aliases): equal
+//!   acceptance or refusal, ids and bytes.
 //! - `api_head`: a request's head read as Node's parser reads it; a differential replay only where
 //!   the oracle has an operation that parses a head so, else the target is crash-only.
 
@@ -87,11 +88,6 @@ const HEIGHT: u64 = 2;
 /// The address bytes an address is validated for: the devnet's, and the reference's mainnet's, so
 /// that the network error is replayed beside the verdict.
 const NETWORK_BYTES: [u8; 2] = [90, 63];
-
-/// Why an input that is not UTF-8 text is not sent to the reference.
-const NOT_UTF8: &str = "an input that is not UTF-8 text: JSON is text, and the reference's \
-    server reads a request's bytes as UTF-8 with replacement characters before it parses them, \
-    which no codec of Heartwood's does";
 
 /// `tx.fromData`, which the reference answers with `TransactionFactory.fromData(data, strict)`
 /// after the copies `fromJson` makes: JSON text, read strictly or not, as Heartwood reads a
@@ -307,7 +303,8 @@ fn inputs(corpus: &Path) -> Result<Vec<(String, Vec<u8>)>> {
 /// validated as an address of the devnet's network and of the reference's mainnet
 /// (`address.validate`), decoded for its payload and network complaint (`address.toBuffer`), and,
 /// where Heartwood accepts it, written again. `transaction_json` inputs are JSON text, each read
-/// strictly and not (`tx.fromData`); an input that is not UTF-8 is a documented difference.
+/// strictly and not (`tx.fromData`), from the same lossy UTF-8 reading, which is how the API
+/// reads a request's body on both sides.
 /// `api_head` has no replay: the oracle has no operation that reads a request's head as Node's
 /// parser does, so its fuzz target checks Heartwood's reader alone.
 pub fn run(
@@ -368,14 +365,7 @@ pub fn run(
                 }
             }
             CodecTarget::TransactionJson => {
-                let Ok(text) = std::str::from_utf8(&bytes) else {
-                    result(
-                        "tx.fromData",
-                        "not UTF-8".into(),
-                        Outcome::Documented(NOT_UTF8.into()),
-                    );
-                    continue;
-                };
+                let text = String::from_utf8_lossy(&bytes);
                 for strict in [true, false] {
                     let input = json!({ "text": text, "strict": strict });
                     let (outcome, taken) = judged(server, registry, "tx.fromData", &input)?;
@@ -677,6 +667,15 @@ mod tests {
         let mut bare = json;
         bare.as_object_mut().unwrap().remove("id");
         cases.push(("transaction_json", bare.to_string()));
+        // The same transaction with a byte in its memo that is not UTF-8: read as the API reads a
+        // body, with U+FFFD in its place, on both sides.
+        let mut odd = bare;
+        odd["memo"] = json!("0MARK0");
+        let text = odd.to_string();
+        let at = text.find("0MARK0").unwrap();
+        let mut odd_memo = text.as_bytes()[..at].to_vec();
+        odd_memo.extend_from_slice(b"a\xffb");
+        odd_memo.extend_from_slice(&text.as_bytes()[at + 6..]);
         for target in ["address_decode", "transaction_json"] {
             let dir = scratch.path().join(target);
             fs::create_dir_all(&dir).unwrap();
@@ -685,8 +684,11 @@ mod tests {
                     fs::write(dir.join(format!("{i:02}")), text).unwrap();
                 }
             }
-            // An input that is not UTF-8 text is a documented difference.
+            // Inputs that are not UTF-8 text are compared too, read with U+FFFD on both sides.
             fs::write(dir.join("zz-binary"), [0xff, 0xfe, 0x7b]).unwrap();
+            if target == "transaction_json" {
+                fs::write(dir.join("zz-memo"), &odd_memo).unwrap();
+            }
             let args = CodecReplayArgs {
                 oracle: oracle.clone(),
                 target: target.parse().unwrap(),
@@ -703,6 +705,21 @@ mod tests {
                 replayed.accepted >= 1,
                 "{target}: the reference accepted nothing"
             );
+            let odd: Vec<_> = replayed
+                .report
+                .results
+                .iter()
+                .filter(|r| r.label.starts_with("zz-"))
+                .collect();
+            assert!(!odd.is_empty(), "{target}: the inputs that are not UTF-8");
+            for result in odd {
+                assert_eq!(
+                    result.outcome,
+                    Outcome::Pass,
+                    "{target}: {} is compared",
+                    result.label
+                );
+            }
         }
     }
 }
