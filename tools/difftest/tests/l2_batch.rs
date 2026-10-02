@@ -151,8 +151,13 @@ fn a_batch_of_drawn_chains_goes_through_the_judge_and_every_replay() {
                 .results
                 .iter()
                 .filter(mine)
-                .any(|r| r.label.contains("jobs")),
-            "{name}: processor"
+                .any(|r| r.file.contains("(jobs: reference)"))
+                && report
+                    .results
+                    .iter()
+                    .filter(mine)
+                    .any(|r| r.file.contains("(jobs: 1)")),
+            "{name}: processor, in both job cuts"
         );
         assert!(
             cases(&report, "revert").filter(mine).count() >= 2,
