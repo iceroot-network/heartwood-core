@@ -266,7 +266,9 @@ fn free_reorder(
         .map(|(at, item)| Some((address(item)?, (at, item))))
         .collect::<Option<_>>()?;
     // The same wallets on both pages, each once, and the others in one order.
+    let ours_once: BTreeSet<&String> = ours.iter().collect();
     if theirs_at.len() != theirs.len()
+        || ours_once.len() != ours.len()
         || ours.len() != theirs.len()
         || ours.iter().any(|a| !theirs_at.contains_key(a))
     {
@@ -918,6 +920,14 @@ mod tests {
         let line = wallets("", &ours, &other);
         assert!(
             outcome_with_free_places(&line, &free(&["G", "E"]))
+                .0
+                .is_failure()
+        );
+        // A wallet twice on one page and another missing: not the same wallets.
+        let twice = [("A", 100), ("G", 50), ("G", 50), ("C", 50), ("D", 10)];
+        let line = wallets("", &twice, &theirs);
+        assert!(
+            outcome_with_free_places(&line, &free(&["G", "B"]))
                 .0
                 .is_failure()
         );
