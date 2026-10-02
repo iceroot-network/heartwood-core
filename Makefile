@@ -143,7 +143,8 @@ GATE_RECORDS  ?=
 LEDGER_DIR    ?=
 S1_CRITERIA   ?=
 GATE_TESTED   ?= packages tools/difftest tools/oracle fuzz Cargo.toml Cargo.lock Makefile \
-                 tools/check-layers.sh tools/check-lines.sh tools/test-integration.sh tools/gate-record.sh
+                 tools/check-layers.sh tools/check-lines.sh tools/test-integration.sh tools/gate-record.sh \
+                 tools/fuzz-run.sh
 GATE_LEDGER   ?=
 GATE_ORACLE_TARGETS := l0 l1 corpus-judge l2-synthetic rollback-replay lockstep replay-api scenario suites \
                        oracle-image vectors-diff vectors-install
@@ -158,6 +159,11 @@ gate-for = GATE_RECORDS='$(GATE_RECORDS)' GATE_TARGET=$(1) GATE_VARIABLES='$(fil
        GATE_LEDGER="$${GATE_LEDGER:-$(GATE_LEDGER)}" LEDGER_DIR='$(LEDGER_DIR)' GATE_DIFFTEST='$(DIFFTEST)' tools/gate-record.sh
 gate = $(call gate-for,'$@',$@)
 need-records = $(if $(GATE_RECORDS),,$(error set GATE_RECORDS, the gate records' directory, in local.mk))
+# A recorded fuzz run uses libFuzzer's fork mode: there its exit status fails on every crash,
+# timeout or out-of-memory stop, and tools/fuzz-run.sh checks its last status line too.
+need-fork = @jobs='$(FUZZ_FORK)'; case "$$jobs" in ''|*[!0-9]*) jobs=0 ;; esac; [ "$$jobs" -ge 1 ] || { \
+	    echo "$@: FUZZ_FORK=$(FUZZ_FORK) is not a number of jobs from 1 (a recorded run uses libFuzzer's fork mode)" >&2; \
+	    exit 2; }
 need-ledger = $(if $(LEDGER_DIR),,$(error set LEDGER_DIR, the cumulative ledger's directory, in local.mk))
 need-criteria = $(if $(S1_CRITERIA),,$(error set S1_CRITERIA, the S1 gate's criteria file, in local.mk))
 
@@ -929,14 +935,14 @@ fuzz-api: build ## the API's query fuzz target, FUZZ_SECONDS (nightly and cargo-
 	else \
 	    echo "fuzz-api: no seeds: $(API_SEEDS) does not exist"; \
 	fi
+	$(need-fork)
 	$(TOOLCHAIN) && cargo +nightly fuzz build $(API_FUZZ)
 	@$(TOOLCHAIN) && mkdir -p $(API_LOGS) $(FUZZ_CORPUS)/$(API_FUZZ) && \
 	echo "fuzz-api: $(API_FUZZ) running for $(FUZZ_SECONDS) s, $(FUZZ_FORK) jobs; logs in $(API_LOGS)" && \
-	fail=0; $(gate) cargo +nightly fuzz run $(API_FUZZ) -- $(WIRE_LIBFUZZER) > $(API_LOGS)/$(API_FUZZ).log 2>&1 || fail=1; \
-	last=$$(grep -E '^#[0-9]+: cov: ' $(API_LOGS)/$(API_FUZZ).log | tail -n 1); \
+	fail=0; $(gate) tools/fuzz-run.sh $(API_LOGS)/$(API_FUZZ).log \
+	    cargo +nightly fuzz run $(API_FUZZ) -- $(WIRE_LIBFUZZER) || fail=1; \
 	files=$$(find $(FUZZ_CORPUS)/$(API_FUZZ) -type f | wc -l); \
-	echo "fuzz-api: $(API_FUZZ): $${last:-no status line}; corpus $$files files"; \
-	case "$$last" in *'oom/timeout/crash: 0/0/0 '*) ;; *) fail=1 ;; esac; \
+	echo "fuzz-api: $(API_FUZZ): corpus $$files files"; \
 	exit $$fail
 
 # Every input of the corpus must be compared, as in replay-wire.
@@ -1047,13 +1053,13 @@ fuzz-long: build ## every target of FUZZ_TARGETS for FUZZ_SECONDS with FUZZ_FORK
 	$(if $(FUZZ_TARGETS),,$(error set FUZZ_TARGETS, targets of fuzz/fuzz_targets))
 	$(need-records)
 	$(need-ledger)
+	$(need-fork)
 	$(TOOLCHAIN) && for target in $(FUZZ_TARGETS); do cargo +nightly fuzz build $$target || exit 1; done
 	@$(TOOLCHAIN) && mkdir -p target/fuzz-long && fail=0; for target in $(FUZZ_TARGETS); do \
 	    mkdir -p $(FUZZ_CORPUS)/$$target; log=target/fuzz-long/$$target.log; \
 	    export GATE_LEDGER="kind=target id=$$target seconds=$(FUZZ_SECONDS) forks=$(FUZZ_FORK)"; \
-	    $(gate) cargo +nightly fuzz run $$target -- $(WIRE_LIBFUZZER) > $$log 2>&1 || fail=1; \
-	    last=$$(grep -E '^#[0-9]+: cov: ' $$log | tail -n 1); echo "fuzz-long: $$target: $${last:-no status line}"; \
-	    case "$$last" in *'oom/timeout/crash: 0/0/0 '*) ;; *) fail=1 ;; esac; \
+	    echo "fuzz-long: $$target for $(FUZZ_SECONDS) s, $(FUZZ_FORK) jobs; log in $$log"; \
+	    $(gate) tools/fuzz-run.sh $$log cargo +nightly fuzz run $$target -- $(WIRE_LIBFUZZER) || fail=1; \
 	done; exit $$fail
 
 ledger-merge: build ## another machine's gate records (FROM) into the ledger, as MACHINE's

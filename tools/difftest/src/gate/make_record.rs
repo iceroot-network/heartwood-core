@@ -42,6 +42,12 @@ use crate::errors::{Error, Result};
 /// the Makefile's `$(gate)` runs.
 const RECORDING_INPUTS: [&str; 1] = ["tools/gate-record.sh"];
 
+/// The tree's script a command runs first (`tools/fuzz-run.sh ...`), which judges what it runs.
+fn script_of(command: &str) -> Option<String> {
+    let first = command.split_whitespace().next()?;
+    (first.starts_with("tools/") && first.ends_with(".sh")).then(|| first.to_owned())
+}
+
 /// The reach a property's runs check, as the `l1` command's flag and the ledger's key.
 const REACH: [(&str, &str, &str); 3] = [
     ("P13", "--min-reach", "minReach"),
@@ -111,6 +117,7 @@ pub fn run(args: &[String]) -> Result<bool> {
     // property names no more than the Makefile's default does.
     let narrowed = narrowed.map(|mut paths| {
         paths.extend(RECORDING_INPUTS.map(str::to_owned));
+        paths.extend(script_of(&command));
         paths
     });
     let tested_paths = tested_paths(closure::expand(

@@ -262,6 +262,42 @@ fn a_record_keeps_the_narrow_paths_of_its_command_and_the_counts_and_hits_of_its
 }
 
 #[test]
+fn a_recorded_fuzz_run_is_judged_by_its_status_line_and_tests_the_script_that_judges_it() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fuzz-run.sh");
+    let rig = Rig::new();
+    let log = rig.arg("fuzz.log");
+    let line = "#9: cov: 12 ft: 30 corp: 4 exec/s: 100 oom/timeout/crash: 0/0/0 time: 60s job: 3";
+    let run = |printed: &str, exit: i32| -> (Option<i32>, String) {
+        let body = format!("printf '%s\\n' '{printed}'; exit {exit}");
+        let out = Command::new(&script)
+            .args([log.as_str(), "sh", "-c", &body])
+            .output()
+            .expect("fuzz-run.sh runs");
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        )
+    };
+    let (status, said) = run(line, 0);
+    assert_eq!(status, Some(0), "{said}");
+    assert!(said.contains("fuzz-run: #9: cov: 12"), "{said}");
+    // No status line, a status line that counts a stop, and a failed fuzzer each fail.
+    assert_eq!(run("INFO: done", 0).0, Some(1));
+    let crashed = line.replace("0/0/0", "0/0/1");
+    assert_eq!(run(&crashed, 0).0, Some(1));
+    assert_eq!(run(line, 77).0, Some(77));
+    // The record of such a run tests its target's paths, the recorder and the script.
+    rig.criteria(&base_criteria());
+    let command =
+        "tools/fuzz-run.sh target/fuzz-long/parse.log cargo +nightly fuzz run parse -- -fork=2";
+    assert!(rig.record("fuzz-long", command, 0, line, T1).ok);
+    assert_eq!(
+        rig.records()[0]["testedPaths"],
+        json!(["src/a.rs", "tools/fuzz-run.sh", "tools/gate-record.sh"])
+    );
+}
+
+#[test]
 fn a_record_of_a_command_without_narrowing_keeps_the_paths_it_was_given() {
     let rig = Rig::new();
     rig.criteria(&base_criteria());
