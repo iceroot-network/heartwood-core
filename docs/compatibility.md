@@ -1315,12 +1315,15 @@ and nix are used by this crate only (`make layers`).
   liveness comes from the held lock, never from the entry); with nothing running it says "No
   processes are running" and exits with 1. `env get|list|set|paths` read an instance's `.env`
   with the node's own parser; `env set` writes the file again as `NAME=value` lines in the parsed
-  order, comments and blank lines dropped, through a temporary file at mode 0600 renamed over the
-  file, and refuses a symbolic link in its place; `env paths` prints the five directories, each
-  as its `CORE_PATH_*` variable moves it. `config publish` writes one built-in instance template
+  order, comments and blank lines dropped, through a temporary file renamed over the file with the
+  file's mode kept, and refuses a symbolic link in its place; `env paths` prints the five
+  directories, each as its `CORE_PATH_*` variable moves it. `config publish` writes one built-in
+  instance template
   for any network name (`.env`, `app.json` with the relay's, the forger's and the core role's
   profiles, an empty `peers.json`, `delegates.json` as `{"keys": []}` at mode 0600 and
-  `config.json`, no crypto file) and refuses an existing configuration without `--force`.
+  `config.json`, no crypto file; `.env` binds both ports to `0.0.0.0`) and refuses a directory
+  that is not empty without `--force`, which writes the template's files over the ones there
+  (`delegates.json` included) and keeps the others.
   `config forger private-key --privateKey KEY` (or `config forger --method privateKey`) checks 64
   hexadecimal digits, replaces the `keys` of an existing `delegates.json` with that key, keeps the
   file's other top-level keys, and writes it with four-space indentation at mode 0600 through a
@@ -1852,8 +1855,9 @@ API, which the split roles avoid; it is optional, no default configuration or co
 
 `heartwood service install --role ROLE [--token T] [--network N] [--system] [--out DIR]` writes a
 systemd unit named `<token>-<network>-<role>.service` and prints the commands that enable it. It
-calls no service manager. A user unit goes to `~/.config/systemd/user`; `--system` makes a system
-unit, for `/etc/systemd/system`; `--out` writes the unit into a directory of your choice. The unit
+calls no service manager. A user unit goes to `~/.config/systemd/user`; `--system` prints a system
+unit to save under `/etc/systemd/system` and writes nothing there (the unit has no `User=` line,
+which the operator adds); `--out` writes the unit into a directory of your choice. The unit
 runs `<binary> <role> run --token=<t> --network=<n>` in the foreground, with `Type=exec`,
 `Restart=always`, `KillSignal=SIGINT`, `TimeoutStopSec=30`, `UMask=0077`, `NoNewPrivileges=yes`,
 `StartLimitIntervalSec=10`, `StartLimitBurst=5` and `Environment=CORE_SERVICE_MANAGER=systemd`,
