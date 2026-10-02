@@ -4,6 +4,7 @@
 //! devnets and for the rootless networks); the `lockstep` backend runs the scenario through the
 //! lockstep producer, where `revert` and `fork` exist too. Nodes are numbered from 1.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -176,4 +177,28 @@ pub trait Backend {
         let _ = node;
         Ok(Vec::new())
     }
+
+    /// The nodes the network holds back at its start, which run only once a step starts them:
+    /// until then they need not answer. Every other node must.
+    fn held_back(&self) -> BTreeSet<u32> {
+        BTreeSet::new()
+    }
+}
+
+/// The nodes a live network's run holds back, from its `run.json` in `root` (each node's
+/// `heldBack`, the node named `nodeK`), or none when it has no such file.
+pub fn held_back_of(root: &Path) -> BTreeSet<u32> {
+    let Ok(text) = std::fs::read_to_string(root.join("run.json")) else {
+        return BTreeSet::new();
+    };
+    let Ok(run) = serde_json::from_str::<Value>(&text) else {
+        return BTreeSet::new();
+    };
+    run["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|node| node["heldBack"].as_bool() == Some(true))
+        .filter_map(|node| node["name"].as_str()?.strip_prefix("node")?.parse().ok())
+        .collect()
 }

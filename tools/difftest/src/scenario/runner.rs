@@ -101,6 +101,8 @@ pub struct Runner<'a> {
     answered_nodes: RefCell<BTreeSet<u32>>,
     expected_nodes: BTreeSet<u32>,
     stopped_relays: BTreeSet<u32>,
+    /// The nodes the network holds back at its start ([`Backend::held_back`]).
+    held_back: BTreeSet<u32>,
     /// The compared, exempt and missing nodes at the latest single-tip probe.
     pub(super) single_tip_label: String,
     settle_height: u32,
@@ -132,6 +134,7 @@ impl<'a> Runner<'a> {
         backend
             .rules(&chain.crypto)
             .map_err(|e| crate::Error::Fixture(e.to_string()))?;
+        let held_back = backend.held_back();
         Ok(Runner {
             backend,
             compiled,
@@ -143,6 +146,7 @@ impl<'a> Runner<'a> {
             answered_nodes: RefCell::default(),
             expected_nodes: BTreeSet::new(),
             stopped_relays: BTreeSet::new(),
+            held_back,
             single_tip_label: String::new(),
             settle_height: 1_u32.saturating_add(scenario.settle_blocks),
         })
@@ -177,15 +181,17 @@ impl<'a> Runner<'a> {
         Ok(tip)
     }
 
-    /// Why a relay is exempt from answering the single-tip check, if it is.
+    /// Why a relay is exempt from answering the single-tip check, if it is: a step stopped it, or
+    /// the network holds it back and nothing started it yet (it has not answered either). Every
+    /// other node must answer.
     pub(super) fn tip_exemption(&self, node: u32) -> Option<&'static str> {
         if self.stopped_relays.contains(&node) {
             Some("deliberately stopped")
-        } else if !self.expected_nodes.contains(&node)
+        } else if self.held_back.contains(&node)
+            && !self.expected_nodes.contains(&node)
             && !self.answered_nodes.borrow().contains(&node)
         {
-            // The backend interface exposes no held-back list.
-            Some("never answered; held-back list unavailable")
+            Some("held back by the network")
         } else {
             None
         }

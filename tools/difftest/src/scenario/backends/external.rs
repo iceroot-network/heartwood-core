@@ -5,13 +5,13 @@
 //! the peer-to-peer way in.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
 
-use super::super::backend::{Backend, BackendError, Submitted, Tip};
+use super::super::backend::{self, Backend, BackendError, Submitted, Tip};
 use super::super::format::{
     CompiledTx, HeartwoodRestart, Part, ReferenceRestart, RestartModes, Via,
 };
@@ -56,6 +56,7 @@ pub struct External {
     program: PathBuf,
     root: PathBuf,
     nodes: u32,
+    held: BTreeSet<u32>,
     rules: http::Rules,
     /// The API addresses the `api-url` verb printed, by node.
     urls: RefCell<HashMap<u32, String>>,
@@ -68,6 +69,7 @@ impl External {
             program: program.to_path_buf(),
             root: root.to_path_buf(),
             nodes: 0,
+            held: backend::held_back_of(root),
             rules: http::Rules::default(),
             urls: RefCell::default(),
         };
@@ -78,6 +80,13 @@ impl External {
             .as_u64()
             .and_then(|n| u32::try_from(n).ok())
             .unwrap_or(0);
+        // The description may name the held-back nodes itself.
+        if let Some(held) = info["heldBack"].as_array() {
+            external.held = held
+                .iter()
+                .filter_map(|n| u32::try_from(n.as_u64()?).ok())
+                .collect();
+        }
         Ok(external)
     }
 
@@ -115,6 +124,10 @@ impl Backend for External {
 
     fn nodes(&self) -> u32 {
         self.nodes
+    }
+
+    fn held_back(&self) -> BTreeSet<u32> {
+        self.held.clone()
     }
 
     fn start(&mut self, node: u32, part: Part) -> Result<(), BackendError> {

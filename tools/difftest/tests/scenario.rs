@@ -6,7 +6,7 @@
 //! `DIFFTEST_TEST_IMAGE`, and fail without one unless `DIFFTEST_TEST_NO_ORACLE` says to skip).
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -319,6 +319,8 @@ struct Fake {
     unsupported: HashSet<&'static str>,
     /// The height at which the lagging nodes catch up.
     catch_up: Option<u32>,
+    /// The nodes the network holds back at its start.
+    held: BTreeSet<u32>,
 }
 
 impl Fake {
@@ -339,6 +341,7 @@ impl Fake {
             delegates: Vec::new(),
             unsupported: HashSet::new(),
             catch_up: None,
+            held: BTreeSet::new(),
         }
     }
 
@@ -374,6 +377,10 @@ impl Backend for Fake {
 
     fn nodes(&self) -> u32 {
         self.nodes
+    }
+
+    fn held_back(&self) -> BTreeSet<u32> {
+        self.held.clone()
     }
 
     fn start(&mut self, node: u32, part: Part) -> Result<(), BackendError> {
@@ -2527,8 +2534,12 @@ fn a_stopped_relay_is_exempt_until_its_relay_starts_again() {
 }
 
 #[test]
-fn a_never_answering_node_is_labelled_exempt_unless_started() {
-    for start in [false, true] {
+fn a_never_answering_node_is_exempt_only_while_the_network_holds_it_back() {
+    for (held, start, fails) in [
+        (true, false, false),
+        (false, false, true),
+        (true, true, true),
+    ] {
         let mut steps = Vec::new();
         if start {
             steps.push(json!({"at": {"height": 1}, "do": "start", "node": 2}));
@@ -2537,16 +2548,39 @@ fn a_never_answering_node_is_labelled_exempt_unless_started() {
         let compiled = compiled(json!(steps), &[]);
         let mut fake = Fake::new(2);
         fake.unavailable.insert(2, (1, 20));
+        if held {
+            fake.held.insert(2);
+        }
         let (report, _) = run_on(&mut fake, &compiled);
-        assert_eq!(outcome(&report, "singletip").is_failure(), start);
-        if !start {
+        let label = &report.results.last().expect("a case").label;
+        assert_eq!(
+            outcome(&report, "singletip").is_failure(),
+            fails,
+            "held {held}, started {start}: {report:#?}"
+        );
+        if !fails {
             assert!(
-                report.results[0]
-                    .label
-                    .contains("node 2 (never answered; held-back list unavailable)")
+                label.contains("node 2 (held back by the network)"),
+                "{label}"
             );
+        } else if !start {
+            assert!(label.contains("missing [node 2"), "{label}");
         }
     }
+}
+
+#[test]
+fn the_held_back_nodes_are_read_from_the_run_s_description() {
+    use heartwood_difftest::scenario::backend::held_back_of;
+    let scratch = ScratchDir::new("scenario-held-back").expect("scratch");
+    assert!(held_back_of(scratch.path()).is_empty());
+    let run = json!({"nodes": [
+        {"name": "node1", "heldBack": false},
+        {"name": "node5", "heldBack": true},
+        {"name": "node7"}
+    ]});
+    std::fs::write(scratch.path().join("run.json"), run.to_string()).expect("run.json");
+    assert_eq!(held_back_of(scratch.path()), BTreeSet::from([5]));
 }
 
 #[test]

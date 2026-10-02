@@ -2,6 +2,7 @@
 //! `heartwood` binary's own commands and the relays' APIs. The devnet's directory holds its
 //! manifest, from which the relays' addresses and each forger's delegates are read.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -9,7 +10,7 @@ use heartwood_cli::Role;
 use heartwood_cli::devnet::{Manifest, ManifestNode};
 use heartwood_cli::recovery::{self, Marker};
 
-use super::super::backend::{Backend, BackendError, Submitted, Tip};
+use super::super::backend::{self, Backend, BackendError, Submitted, Tip};
 use super::super::format::{CompiledTx, HeartwoodRestart, Part, RestartModes, Via};
 use super::http;
 
@@ -148,6 +149,10 @@ impl Backend for Heartwood {
 
     fn nodes(&self) -> u32 {
         u32::try_from(self.manifest.nodes.len()).unwrap_or(u32::MAX)
+    }
+
+    fn held_back(&self) -> BTreeSet<u32> {
+        backend::held_back_of(&self.root)
     }
 
     fn start(&mut self, node: u32, part: Part) -> Result<(), BackendError> {
