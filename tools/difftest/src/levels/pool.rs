@@ -20,10 +20,11 @@
 //!   ([`READD_ATTEMPTS`]): they must agree up to and including the reference's first refusal after
 //!   an eviction, which Heartwood refused without evicting. With no result per transaction, the
 //!   pool's contents show the rest: Heartwood's pool holds a transaction the reference refused only
-//!   where the reference's pool holds it too, every transaction only Heartwood's pool holds is one
-//!   the reference evicted or a later one of its sender, and what the evictions do not touch (the
-//!   pool's size, the order of the transactions both pools hold, the other senders' transactions,
-//!   wallets and stored rows) is equal. The later steps are not compared;
+//!   where the reference's pool holds it too, every transaction either pool holds was tried in the
+//!   re-add, every transaction only Heartwood's pool holds is one the reference evicted or a later
+//!   one of its sender, and what the evictions do not touch (each pool's size, and the other
+//!   senders' transactions, their priority order, wallets and stored rows) is equal. The later
+//!   steps are not compared;
 //! - entries of a removed type and JSON votes given as an array or a string
 //!   ([`Documented::RemovedType`], [`Documented::VotesWithIndices`]), checked on the entries
 //!   themselves: the step's lists and errors, with their messages under the rules here, must be

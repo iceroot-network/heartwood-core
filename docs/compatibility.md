@@ -1783,9 +1783,10 @@ checked on the entries or shown by the oracle's answer:
   the two must agree up to and including the reference's first refusal after an eviction. With no
   result per transaction there, the pool's contents show the rest: Heartwood's pool holds a
   transaction the reference refused only where the reference's pool holds it too, every
-  transaction only Heartwood's pool holds is one the reference evicted or a later one of its
-  sender, and what the evictions do not touch (the pool's size, the order of the transactions both
-  pools hold, the other senders' transactions, wallets and stored rows) is equal;
+  transaction either pool holds was tried in the re-add, every transaction only Heartwood's pool
+  holds is one the reference evicted or a later one of its sender, and what the evictions do not
+  touch (each pool's size, and the other senders' transactions, their priority order, wallets and
+  stored rows) is equal;
 - after the session changed the online record, an entry refused as offline on one side only (once
   the entries of a removed type and the JSON votes given as an array or a string are left out): the
   reference's view of the sender kept the delegate's wallet as it copied it before the change. The
