@@ -1585,6 +1585,56 @@ fn the_pools_refusals_are_compared_up_to_the_numbers_of_each_network() {
 }
 
 #[test]
+fn a_refusal_without_its_reason_on_either_run_is_not_judged_and_a_name_s_digits_count() {
+    let scratch = ScratchDir::new("scenario-compare-reasons").expect("scratch");
+    let dir = scratch.path();
+    let refused = |backend: &str, message: Option<&str>| {
+        let mut r = record("s", backend, (5, "x"), false, Outcome::Pass);
+        r.steps[0].answered(&[Submitted {
+            reference: "t".into(),
+            accepted: false,
+            code: Some("ERR_APPLY".into()),
+            message: message.map(str::to_owned),
+        }]);
+        r
+    };
+    let offline = "genesis_44 is not operating a node on the network";
+    // One side kept no reason (an answer without a message, or a record from before reasons were
+    // kept): the two refusals cannot be held to each other.
+    suite(
+        dir,
+        "silent-reference",
+        &refused("reference", Some(offline)),
+    );
+    suite(dir, "silent-heartwood", &refused("heartwood", None));
+    // Another delegate's name differs only in its digits, which are part of the name.
+    suite(dir, "named-reference", &refused("reference", Some(offline)));
+    suite(
+        dir,
+        "named-heartwood",
+        &refused(
+            "heartwood",
+            Some("genesis_45 is not operating a node on the network"),
+        ),
+    );
+    let report = compare(dir, None, None).expect("compare");
+    let answers = |suite: &str| -> Outcome {
+        report
+            .results
+            .iter()
+            .find(|c| c.file == format!("{suite}/s") && c.label == "first: pool answers")
+            .map(|c| c.outcome.clone())
+            .expect("the answers' case")
+    };
+    assert!(
+        matches!(answers("silent"), Outcome::Skipped(_)),
+        "{:?}",
+        answers("silent")
+    );
+    assert!(answers("named").is_failure(), "{:?}", answers("named"));
+}
+
+#[test]
 fn a_live_answer_names_the_offline_refusal_by_its_handler_s_code_and_keeps_the_reason() {
     use heartwood_difftest::scenario::backends::http::verdict;
     let body = json!({

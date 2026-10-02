@@ -3,9 +3,10 @@
 //! run's chain (the digests on their common prefix, [`super::run_chain`]) and from each run's
 //! chain judged against the reference ([`super::judge`]). A check passes when it passed on both
 //! runs: one that failed on both fails, one skipped on both stays skipped (so a strict comparison
-//! fails it), except a digest check, which the chains' judgement settles. Every scenario a run's
-//! directory holds at L3 must have a record on both sides, and every scripted step of either run
-//! must have met its expectation.
+//! fails it), except a digest check, which the chains' judgement settles. A refusal is held to its
+//! code and its reason, the numbers that stand alone in the reason masked; one whose reason either
+//! run did not keep is not judged. Every scenario a run's directory holds at L3 must have a record
+//! on both sides, and every scripted step of either run must have met its expectation.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -191,18 +192,31 @@ const SHARED_PROJECTION: &str = ": api wallets";
 /// The start of the reason a live run gives a digest check: its chain's judgement settles it.
 const LIVE_DIGESTS: &str = "skipped: a live network's digests are judged against the reference";
 
-/// A refusal's message as two networks can share it: its digits taken out (a height, a balance or
-/// a count of blocks belongs to each network).
+/// A refusal's message as two networks can share it: each number that stands alone taken out (a
+/// height, a balance or a count of blocks belongs to each network). Digits that are part of a
+/// word, such as a delegate's name (`genesis_44`) or an id, are kept: they name what was refused.
 fn shared_message(message: &str) -> String {
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    let chars: Vec<char> = message.chars().collect();
     let mut out = String::new();
-    for c in message.chars() {
-        if c.is_ascii_digit() {
-            if !out.ends_with('#') {
-                out.push('#');
-            }
-        } else {
-            out.push(c);
+    let mut i = 0;
+    while i < chars.len() {
+        if !chars[i].is_ascii_digit() {
+            out.push(chars[i]);
+            i += 1;
+            continue;
         }
+        let end = chars[i..]
+            .iter()
+            .position(|c| !c.is_ascii_digit())
+            .map_or(chars.len(), |n| i + n);
+        let before = i.checked_sub(1).map(|j| chars[j]);
+        if word(before) || word(chars.get(end).copied()) {
+            out.extend(&chars[i..end]);
+        } else {
+            out.push('#');
+        }
+        i = end;
     }
     out
 }
@@ -259,17 +273,32 @@ fn compare_runs(
     for (r, h) in reference.steps.iter().zip(&heartwood.steps) {
         let height = r.tip.0.min(h.tip.0);
         if !r.submitted.is_empty() || !h.submitted.is_empty() {
-            // Two records that keep their refusals' messages compare them too.
-            let messages = |s: &StepRecord| -> Vec<(String, String)> {
+            // Every refusal is held to its reason as well as its code: the reference reports most
+            // refusals as ERR_APPLY, its handler's reason in the message only. A refusal whose
+            // reason a run did not keep is not judged.
+            let reasons = |s: &StepRecord| -> BTreeMap<String, String> {
                 s.refusals
                     .iter()
                     .map(|(reference, m)| (reference.clone(), shared_message(m)))
                     .collect()
             };
-            let both = !r.refusals.is_empty() && !h.refusals.is_empty();
+            let (said, heard) = (reasons(r), reasons(h));
+            let unexplained: Vec<&str> = r
+                .submitted
+                .iter()
+                .filter(|(reference, accepted, _)| {
+                    !accepted && !(said.contains_key(reference) && heard.contains_key(reference))
+                })
+                .map(|(reference, _, _)| reference.as_str())
+                .collect();
             let outcome = if r.submitted != h.submitted {
                 differs("answers", &r.submitted, &h.submitted)
-            } else if both && messages(r) != messages(h) {
+            } else if !unexplained.is_empty() {
+                Outcome::Skipped(format!(
+                    "a run kept no reason for the refusal of {}",
+                    unexplained.join(", ")
+                ))
+            } else if said != heard {
                 differs("refusals", &r.refusals, &h.refusals)
             } else {
                 Outcome::Pass
