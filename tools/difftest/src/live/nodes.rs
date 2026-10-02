@@ -747,6 +747,158 @@ pub fn reference(
     out
 }
 
+/// The refusal of a transaction's handler: the one refusal after which a node re-indexes the
+/// transaction's sender and recipients in its state, as both implementations do (a refusal before
+/// the handler leaves its indexes alone).
+pub const HANDLER_REFUSAL: &str = "ERR_APPLY";
+
+/// One transaction the run's records show sent to a node: the node, its verdict there (`None`
+/// when it was accepted) and the transaction's parties as far as the record names them.
+struct Sent {
+    id: String,
+    node: String,
+    refused: Option<String>,
+    parties: Vec<String>,
+    /// When it was sent, in milliseconds since the Unix epoch, when the record says.
+    at: Option<i64>,
+}
+
+/// The node a txgen pass in `run_dir/txgen/<pass>` submitted to: its step's `submit`
+/// (`txgen-<pass>`), else the node whose address its start record's API names.
+fn txgen_node(
+    manifest: &Manifest,
+    steps: &[Step],
+    pass: &str,
+    records: &[Value],
+) -> Option<String> {
+    let step = steps.iter().find(|s| s.name == format!("txgen-{pass}"));
+    if let Some(node) = step.and_then(|s| s.text("submit")) {
+        return Some(node);
+    }
+    let api = (records.iter())
+        .find(|r| r["event"] == "start")
+        .and_then(|r| r["api"].as_str())?;
+    let host = api.split("://").nth(1)?.split([':', '/']).next()?;
+    manifest
+        .nodes
+        .iter()
+        .find(|n| n.ip == host)
+        .map(|n| n.name.clone())
+}
+
+/// Every transaction the run's records show sent to a node: txgen's submissions (each pass's
+/// `txgen.jsonl`) and the scripted steps' (a step's `detail` with a transaction `id` and an
+/// `outcome`).
+fn sent(run_dir: &Path, manifest: &Manifest, steps: &[Step]) -> Result<Vec<Sent>> {
+    let mut out = Vec::new();
+    let dir = run_dir.join("txgen");
+    let mut passes: Vec<PathBuf> = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries.filter_map(|e| e.ok().map(|e| e.path())).collect(),
+        Err(_) => Vec::new(),
+    };
+    passes.sort();
+    for pass in passes.iter().filter(|p| p.join("txgen.jsonl").is_file()) {
+        let file = pass.join("txgen.jsonl");
+        let records = read_lines(&file)?;
+        let name = pass
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        let node = txgen_node(manifest, steps, name, &records).ok_or_else(|| Error::Corpus {
+            path: file.clone(),
+            message: "no step or start record names the node it submitted to".into(),
+        })?;
+        for r in records.iter().filter(|r| r["event"] == "submitted") {
+            let Some(id) = r["id"].as_str() else {
+                continue;
+            };
+            let accepted = r["response"]["outcome"] == "accepted";
+            let code = r["response"]["code"].as_str().unwrap_or("refused");
+            let mut parties: Vec<String> = r["sender"]
+                .as_str()
+                .map(str::to_owned)
+                .into_iter()
+                .collect();
+            let transfers = r["tx"]["asset"]["transfers"]
+                .as_array()
+                .into_iter()
+                .flatten();
+            parties.extend(transfers.filter_map(|t| t["recipientId"].as_str().map(str::to_owned)));
+            out.push(Sent {
+                id: id.to_owned(),
+                node: node.clone(),
+                refused: (!accepted).then(|| code.to_owned()),
+                parties,
+                at: r["ts"].as_str().and_then(super::run::parse_time),
+            });
+        }
+    }
+    for step in steps {
+        let detail = &step.record["detail"];
+        let (Some(id), Some(outcome)) = (detail["id"].as_str(), detail["outcome"].as_str()) else {
+            continue;
+        };
+        if manifest.node(&step.node).is_none() {
+            continue;
+        }
+        let parties = ["wallet", "sender"]
+            .iter()
+            .filter_map(|k| detail[*k].as_str().map(str::to_owned))
+            .collect();
+        out.push(Sent {
+            id: id.to_owned(),
+            node: step.node.clone(),
+            refused: (outcome != "accepted")
+                .then(|| detail["code"].as_str().unwrap_or("refused").to_owned()),
+            parties,
+            at: step.start,
+        });
+    }
+    Ok(out)
+}
+
+/// The wallets whose places one node of the pair `left` and `right` alone moved in its state's
+/// indexes, each with its evidence: the sender and the recipients of every transaction the run's
+/// records show sent to one of the two and refused there by its handler ([`HANDLER_REFUSAL`]),
+/// and never sent to the other, before `before` (the route corpus's recording) when it is known.
+/// A refused transaction is not broadcast, so the other node never re-indexed its parties for it.
+pub fn refused_alone(
+    run_dir: &Path,
+    manifest: &Manifest,
+    steps: &[Step],
+    (left, right): (&str, &str),
+    before: Option<i64>,
+) -> Result<BTreeMap<String, Vec<String>>> {
+    let sent = sent(run_dir, manifest, steps)?;
+    let mut nodes_of: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for s in &sent {
+        nodes_of.entry(&s.id).or_default().insert(&s.node);
+    }
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for s in &sent {
+        let pair: Vec<&&str> = nodes_of[s.id.as_str()]
+            .iter()
+            .filter(|n| **n == left || **n == right)
+            .collect();
+        let ours = s.node == left || s.node == right;
+        let early = match (s.at, before) {
+            (Some(at), Some(before)) => at < before,
+            _ => true,
+        };
+        if pair.len() != 1 || !ours || !early || s.refused.as_deref() != Some(HANDLER_REFUSAL) {
+            continue;
+        }
+        let other = if s.node == left { right } else { left };
+        for party in &s.parties {
+            out.entry(party.clone()).or_default().push(format!(
+                "transaction {} refused by {} ({HANDLER_REFUSAL}), never sent to {other}",
+                s.id, s.node
+            ));
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;

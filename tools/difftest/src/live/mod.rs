@@ -18,8 +18,10 @@
 //!    (`nodes`), its starts against the run's scripted restarts of it, and that a kill during its
 //!    initial sync ended its first start below node 1's height at its start; a reference relay's
 //!    archive against node 1's;
-//! 4. `api`: the route corpus's answers, judged by `api compare` ([`crate::api`]), and the rate
-//!    limit's answers from an address that no node whitelists;
+//! 4. `api`: the route corpus's answers, judged by `api compare` ([`crate::api`]), a listing's
+//!    tie judged again with the places of the wallets one node of the pair alone re-indexed by its
+//!    own refusals left free (`free_places`), and the rate limit's answers from an address that no
+//!    node whitelists;
 //! 5. `bans`: every ban of a node under test's address ([`bans`]);
 //! 6. `invariants`: one tip at the pause, at or below the run's stop height; the control's chain
 //!    checked by the devnet tooling (every generator the scheduled one, the supply; not in runs `m`
@@ -1180,6 +1182,7 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
             e.to_string(),
         ),
         Ok(Ok(report)) => {
+            let report = free_places(run_dir, manifest, report, cases);
             // One line per corpus: the first (`api/`), then each of `apiExtra`.
             let main = (left.as_str(), right.as_str(), api::RUN_ANSWERS_DIR);
             let extra = (manifest.api_extra.iter())
@@ -1227,6 +1230,98 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
         }
     }
     built
+}
+
+/// The route corpora's failed cases judged again with the places of the wallets one node of the
+/// corpus's pair alone re-indexed left free inside their ties ([`api::judge::outcome_with_free_places`]):
+/// the parties of the transactions the run's records show sent to one of the two nodes and refused
+/// there by their handler ([`nodes::refused_alone`]). A case that passes so is recorded with the
+/// wallets and their evidence; every other case stays as it was judged, and evidence that cannot
+/// be read is a failure.
+fn free_places(
+    run_dir: &Path,
+    manifest: &Manifest,
+    mut report: Report,
+    cases: &mut Cases,
+) -> Report {
+    let Some((left, right)) = &manifest.api else {
+        return report;
+    };
+    let main = (left.as_str(), right.as_str(), api::RUN_ANSWERS_DIR);
+    let extra =
+        (manifest.api_extra.iter()).map(|e| (e.left.as_str(), e.right.as_str(), e.dir.as_str()));
+    let mut steps = None;
+    for (left, right, dir) in std::iter::once(main).chain(extra) {
+        let dir = run_dir.join(dir);
+        let failing: Vec<usize> = (report.results.iter().enumerate())
+            .filter(|(_, r)| r.outcome.is_failure() && Path::new(&r.file).starts_with(&dir))
+            .map(|(i, _)| i)
+            .collect();
+        if failing.is_empty() {
+            continue;
+        }
+        let label = format!("the wallets {left} or {right} alone re-indexed");
+        let steps = match &steps {
+            Some(steps) => steps,
+            None => match run::steps(run_dir) {
+                Ok(read) => steps.insert(read),
+                Err(e) => {
+                    cases.fail("api", label, e.to_string());
+                    continue;
+                }
+            },
+        };
+        // The submissions before the corpus was recorded: its step names its directory.
+        let recorded = (steps.iter())
+            .find(|s| s.text("dir").is_some_and(|d| run_dir.join(d) == dir))
+            .and_then(|s| s.start);
+        let evidence = match nodes::refused_alone(run_dir, manifest, steps, (left, right), recorded)
+        {
+            Ok(evidence) if evidence.is_empty() => continue,
+            Ok(evidence) => evidence,
+            Err(e) => {
+                cases.fail("api", label, e.to_string());
+                continue;
+            }
+        };
+        let free = evidence.keys().cloned().collect();
+        let mut files: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let (mut judged, mut moved) = (0, std::collections::BTreeSet::new());
+        for i in failing {
+            let file = report.results[i].file.clone();
+            if !files.contains_key(&file) {
+                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                files.insert(file.clone(), text.lines().map(str::to_owned).collect());
+            }
+            let line = (report.results[i].line.checked_sub(1))
+                .and_then(|at| files[&file].get(at))
+                .and_then(|text| serde_json::from_str::<api::Recorded>(text).ok());
+            let Some(line) = line else {
+                continue;
+            };
+            let (outcome, freed) = api::judge::outcome_with_free_places(&line, &free);
+            if outcome == Outcome::Pass {
+                report.results[i].outcome = Outcome::Pass;
+                judged += 1;
+                moved.extend(freed);
+            }
+        }
+        if judged > 0 {
+            let reasons: Vec<String> = (moved.iter())
+                .map(|a| format!("{a}: {}", evidence[a].join("; ")))
+                .collect();
+            cases.record(
+                "api",
+                format!(
+                    "{left} against {right}: {judged} listings equal with the places of {} left \
+                     free inside their ties ({})",
+                    moved.iter().cloned().collect::<Vec<_>>().join(", "),
+                    reasons.join(" | ")
+                ),
+            );
+        }
+    }
+    report
 }
 
 fn check_bans(
@@ -1793,5 +1888,177 @@ mod tests {
                 .any(|r| r.outcome.is_failure() && r.label.contains("node4")),
             "{undated:?}"
         );
+    }
+
+    /// A listing case: its name, node 1's page and node 3's (each wallet an address and a
+    /// balance).
+    type Listing<'a> = (&'a str, &'a [(&'a str, u64)], &'a [(&'a str, u64)]);
+
+    /// A run whose route corpus pairs node 1 (under test) with node 3, with txgen's submissions to
+    /// node 3, a vote node 1 alone refused, and the listings `cases` (name, node 1's page, node
+    /// 3's page; each wallet an address and a balance).
+    fn listing_run(cases: &[Listing<'_>]) -> crate::vectors::testutil::TestDir {
+        let dir = crate::vectors::testutil::TestDir::new("free-places");
+        let root = dir.path();
+        let run = json!({"format": run::FORMAT, "run": "mixed-split", "network": "n", "seed": "4",
+            "nodes": [
+                {"name": "node1", "ip": "10.0.0.11", "implementation": "heartwood"},
+                {"name": "node3", "ip": "10.0.0.13", "implementation": "reference"}],
+            "api": {"left": "node1", "right": "node3"}});
+        std::fs::write(root.join("run.json"), run.to_string()).unwrap();
+        let steps = [
+            json!({"step": "txgen-once", "node": "node3", "ok": true, "submit": "node3"}),
+            json!({"step": "vote-a", "node": "node1", "ok": true, "detail": {"id": "tx-v",
+                "outcome": "rejected", "code": "ERR_APPLY", "wallet": "V"}}),
+            json!({"step": "api-corpus", "node": "node1", "ok": true,
+                "start": "2026-10-02T01:00:00.000Z", "dir": api::RUN_ANSWERS_DIR}),
+            // A refusal after the corpus was recorded moved nothing it holds.
+            json!({"step": "vote-b", "node": "node1", "ok": true,
+                "start": "2026-10-02T01:00:05.000Z", "detail": {"id": "tx-l",
+                "outcome": "rejected", "code": "ERR_APPLY", "wallet": "L"}}),
+        ];
+        let lines = |values: &[Value]| values.iter().map(|v| format!("{v}\n")).collect::<String>();
+        std::fs::write(root.join("steps.jsonl"), lines(&steps)).unwrap();
+        let submitted = |id: &str, sender: &str, response: Value, to: &[&str]| {
+            json!({"event": "submitted", "id": id, "sender": sender, "response": response,
+                "ts": "2026-10-02T00:59:00.000Z",
+                "tx": {"asset": {"transfers": to.iter().map(|t| json!({"recipientId": t})).collect::<Vec<_>>()}}})
+        };
+        let txgen = [
+            json!({"event": "start", "api": "http://10.0.0.13:6003"}),
+            submitted(
+                "tx-g",
+                "G",
+                json!({"outcome": "rejected", "code": "ERR_APPLY"}),
+                &["R"],
+            ),
+            submitted(
+                "tx-b",
+                "B",
+                json!({"outcome": "rejected", "code": "ERR_LOW_FEE"}),
+                &[],
+            ),
+            submitted(
+                "tx-c",
+                "C",
+                json!({"outcome": "accepted", "broadcast": true}),
+                &[],
+            ),
+        ];
+        std::fs::create_dir_all(root.join("txgen/once")).unwrap();
+        std::fs::write(root.join("txgen/once/txgen.jsonl"), lines(&txgen)).unwrap();
+        let page = |list: &[(&str, u64)]| {
+            let data: Vec<Value> = (list.iter())
+                .map(|(a, b)| json!({"address": a, "balance": b.to_string()}))
+                .collect();
+            json!({"status": 200, "headers": {"connection": "close", "x-block-height": "265"},
+                "body": {"meta": {"count": data.len(), "totalCount": data.len()}, "data": data}})
+        };
+        let answers: Vec<Value> = (cases.iter())
+            .map(|(name, left, right)| {
+                json!({"file": "05-wallets.json", "name": name,
+                    "request": {"method": "GET", "path": "/api/wallets"},
+                    "left": page(left), "right": page(right)})
+            })
+            .collect();
+        std::fs::create_dir_all(root.join(api::RUN_ANSWERS_DIR)).unwrap();
+        std::fs::write(
+            root.join(api::RUN_ANSWERS_DIR).join(api::ANSWERS),
+            lines(&answers),
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_tie_place_one_node_s_own_refusal_moved_is_free_and_nothing_else_is() {
+        let wallets = |order: &str| -> Vec<(&'static str, u64)> {
+            (order.split(' '))
+                .map(|a| match a {
+                    "A" => ("A", 100),
+                    "D" => ("D", 1),
+                    "G" => ("G", 50),
+                    "V" => ("V", 50),
+                    "B" => ("B", 50),
+                    "C" => ("C", 50),
+                    _ => ("L", 50),
+                })
+                .collect()
+        };
+        let ours = wallets("A G V B C L D");
+        let dir = listing_run(&[
+            // G's transfer node 3 alone refused: its place in the tie is free.
+            ("moved-g", &ours, &wallets("A V B C G L D")),
+            // V's vote node 1 alone refused: so is its place.
+            ("moved-v", &ours, &wallets("A G B C V L D")),
+            // B's refusal came before the handler: its place is not free.
+            ("moved-b", &ours, &wallets("A G V C B L D")),
+            // C's transaction was accepted and broadcast: neither is its place.
+            ("moved-c", &ours, &wallets("A C G V B L D")),
+            // L's refusal came after the corpus was recorded.
+            ("moved-l", &ours, &wallets("A L G V B C D")),
+            // G moved and the other wallets out of their order too.
+            ("moved-g-and-more", &ours, &wallets("A V C B G L D")),
+        ]);
+        let run_dir = dir.path();
+        let manifest = Manifest::load(run_dir).unwrap();
+        let report = api::compare(&ApiCompareArgs::Recorded {
+            run: run_dir.to_path_buf(),
+        })
+        .unwrap();
+        assert_eq!(
+            report
+                .results
+                .iter()
+                .filter(|r| r.outcome.is_failure())
+                .count(),
+            6
+        );
+        let mut cases = Cases {
+            run: "mixed-split".into(),
+            results: Vec::new(),
+        };
+        let report = free_places(run_dir, &manifest, report, &mut cases);
+        let outcome = |name: &str| {
+            let r = report.results.iter().find(|r| r.label == name).unwrap();
+            r.outcome.clone()
+        };
+        assert_eq!(outcome("moved-g"), Outcome::Pass);
+        assert_eq!(outcome("moved-v"), Outcome::Pass);
+        for name in ["moved-b", "moved-c", "moved-l", "moved-g-and-more"] {
+            assert!(outcome(name).is_failure(), "{name}");
+        }
+        let recorded: Vec<&str> = cases.results.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(recorded.len(), 1, "{recorded:?}");
+        assert!(
+            recorded[0].contains("2 listings equal with the places of G, V left free")
+                && recorded[0]
+                    .contains("transaction tx-g refused by node3 (ERR_APPLY), never sent to node1")
+                && recorded[0]
+                    .contains("transaction tx-v refused by node1 (ERR_APPLY), never sent to node3"),
+            "{recorded:?}"
+        );
+        // Evidence that cannot be read fails rather than frees: no node for txgen's submissions.
+        std::fs::write(run_dir.join("steps.jsonl"), "").unwrap();
+        std::fs::write(
+            run_dir.join("txgen/once/txgen.jsonl"),
+            "{\"event\":\"submitted\",\"id\":\"tx-g\"}\n",
+        )
+        .unwrap();
+        let report = api::compare(&ApiCompareArgs::Recorded {
+            run: run_dir.to_path_buf(),
+        })
+        .unwrap();
+        let mut cases = Cases {
+            run: "mixed-split".into(),
+            results: Vec::new(),
+        };
+        let report = free_places(run_dir, &manifest, report, &mut cases);
+        assert!(report.results.iter().all(|r| r.outcome.is_failure()));
+        assert!(cases.results.iter().any(|r| {
+            r.outcome.is_failure()
+                && r.label
+                    .contains("the wallets node1 or node3 alone re-indexed")
+        }));
     }
 }

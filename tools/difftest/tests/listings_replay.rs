@@ -26,9 +26,12 @@ use heartwood_crypto::Transaction;
 use heartwood_crypto::blocks::factory;
 use heartwood_crypto::identities::{Address, PublicKeyBytes};
 use heartwood_crypto::utils::hex;
+use heartwood_difftest::api::http::{Reply, Request};
+use heartwood_difftest::api::{Recorded, judge};
 use heartwood_difftest::levels::l2::call;
 use heartwood_difftest::lockstep::heart::Heart;
 use heartwood_difftest::oracle::{Mode, Oracle, OracleServer};
+use heartwood_difftest::report::Outcome;
 use heartwood_kernel::config::crypto::{self, CryptoTexts};
 use heartwood_kernel::utils::round_calculator::{calculate_round, is_new_round};
 use heartwood_state::digest::Step as DigestStep;
@@ -518,6 +521,82 @@ fn the_majority_s_tie_follows_the_refusals_one_node_alone_received() {
     };
     assert_eq!(strip(&a.addresses), strip(&b.addresses));
     assert!(genesis_1.is_some_and(|g| moved.contains(&g)), "{moved:?}");
+}
+
+/// A recorded `GET /api/wallets` with node 1's page `ours` and node 3's `theirs`.
+fn listing_case(ours: &[(String, u64)], theirs: &[(String, u64)]) -> Recorded {
+    let reply = |list: &[(String, u64)]| {
+        let data: Vec<Value> = (list.iter())
+            .map(|(a, b)| json!({"address": a, "balance": b.to_string()}))
+            .collect();
+        serde_json::from_value::<Reply>(json!({"status": 200,
+            "headers": {"connection": "close", "x-block-height": "265"},
+            "body": {"meta": {"count": data.len(), "totalCount": 350}, "data": data}}))
+        .expect("an answer")
+    };
+    Recorded {
+        file: "05-wallets.json".into(),
+        name: "wallets/list/all".into(),
+        repeat: None,
+        request: Some(Request {
+            method: "GET".into(),
+            path: "/api/wallets".into(),
+            query: String::new(),
+            headers: Vec::new(),
+            body: None,
+        }),
+        outside: false,
+        documented: None,
+        skipped: None,
+        left: Some(reply(ours)),
+        right: Some(reply(theirs)),
+    }
+}
+
+#[test]
+fn the_replayed_pages_are_equal_only_with_the_places_of_the_refused_wallets_free() {
+    let fixture = Fixture::load();
+    let (one, _) = replay(&fixture, "node1", None, &BTreeSet::new());
+    let (three, _) = replay(&fixture, "node3", None, &BTreeSet::new());
+    let (ours, theirs) = (one.listed(100), three.listed(100));
+    // The evidence the live check reads: the parties of the transactions node 3 alone received
+    // and refused in their handler.
+    let free: BTreeSet<String> = received_alone(&fixture, "node3", "node1")
+        .into_iter()
+        .filter(|(_, verdict)| verdict == "ERR_APPLY")
+        .flat_map(|(index, _)| fixture.parties(&three.heart, index))
+        .collect();
+    let genesis_1 = (one.heart.state.wallets().find_by_username("genesis_1"))
+        .map(|w| w.address().to_base58())
+        .expect("genesis_1");
+    let line = listing_case(&ours, &theirs);
+    assert!(
+        judge::outcome(&line).is_failure(),
+        "the pages differ in a tie"
+    );
+    let (outcome, moved) = judge::outcome_with_free_places(&line, &free);
+    assert_eq!(outcome, Outcome::Pass);
+    assert!(moved.contains(&genesis_1), "{moved:?}");
+    // Without that delegate's evidence the tie order fails.
+    let mut short = free.clone();
+    short.remove(&genesis_1);
+    assert!(
+        judge::outcome_with_free_places(&line, &short)
+            .0
+            .is_failure()
+    );
+    // Two other wallets of one balance swapped on node 3's page: an unrelated order difference.
+    let mut swapped = theirs.clone();
+    let tie = (0..swapped.len() - 1)
+        .find(|&i| {
+            swapped[i].1 == swapped[i + 1].1
+                && !free.contains(&swapped[i].0)
+                && !free.contains(&swapped[i + 1].0)
+        })
+        .expect("a tie of two wallets without evidence");
+    swapped.swap(tie, tie + 1);
+    let line = listing_case(&ours, &swapped);
+    assert!(judge::outcome_with_free_places(&line, &free).0.is_failure());
 }
 
 // The integration test: the real reference.
