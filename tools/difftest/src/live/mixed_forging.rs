@@ -1232,6 +1232,77 @@ mod tests {
     }
 
     #[test]
+    fn a_branch_the_reference_did_not_accept_or_whose_anchors_fail_fails() {
+        // Rewrite the judged branch's file `file` line by line with `edit` (a line it maps to
+        // `None` is dropped), and its manifest again.
+        let edited = |file: &str, edit: &dyn Fn(Value) -> Option<Value>| {
+            let f = recorded(true);
+            let dir = f.root.join(BRANCH_CORPUS);
+            let path = dir.join(file);
+            let text = std::fs::read_to_string(&path).expect("a judged file");
+            let out: String = if file == "anchors.json" {
+                let v: Value = serde_json::from_str(&text).expect("the anchors");
+                format!("{}\n", edit(v).expect("the anchors"))
+            } else {
+                text.lines()
+                    .filter_map(|l| edit(serde_json::from_str(l).expect("a line")))
+                    .map(|v| format!("{v}\n"))
+                    .collect()
+            };
+            std::fs::write(&path, out).expect("the file writes");
+            crate::corpus::write_manifest(&dir).expect("the manifest");
+            let cases = branch_cases(&f, &no_oracle);
+            let branch = format!("{BRANCH_CORPUS}: {BRANCH}");
+            assert!(
+                !cases
+                    .iter()
+                    .any(|c| c.label.starts_with(&branch) && !c.outcome.is_failure()),
+                "{file}: {cases:#?}"
+            );
+            failures(&cases)
+                .into_iter()
+                .filter(|p| p.starts_with(&branch))
+                .collect::<Vec<_>>()
+        };
+        let at = |height: u64, step: &'static str| {
+            move |v: &Value| v["h"] == height && v["step"] == step
+        };
+        // The reference's processor refused the minority's block.
+        let refused = edited(TS_PROCESSOR, &|mut v| {
+            if at(156, "apply")(&v) {
+                v["result"] = Value::String("Rejected".into());
+            }
+            Some(v)
+        });
+        assert!(
+            refused
+                .iter()
+                .any(|p| p.contains("1 refused (\"Rejected\" at height 156)")),
+            "{refused:#?}"
+        );
+        // A block below it without a processor result.
+        let missing = edited(TS_PROCESSOR, &|v| (!at(100, "apply")(&v)).then_some(v));
+        assert!(
+            missing
+                .iter()
+                .any(|p| p.contains("0 refused (), 1 without a result")),
+            "{missing:#?}"
+        );
+        // The judge's round anchor does not hold.
+        let anchors = edited("anchors.json", &|mut v| {
+            v["ok"] = Value::Bool(false);
+            v["anchors"]["A1"]["ok"] = Value::Bool(false);
+            Some(v)
+        });
+        assert!(
+            anchors
+                .iter()
+                .any(|p| p.contains("the judge's anchors do not hold (A1")),
+            "{anchors:#?}"
+        );
+    }
+
+    #[test]
     fn a_branch_ends_at_the_latest_line_that_holds_each_recorded_block() {
         let key = |h: u32, id: &str| (h, id.to_owned());
         let blocks = |list: &[(u32, &str)]| -> RecordedBlocks {
