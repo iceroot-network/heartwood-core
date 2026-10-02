@@ -39,34 +39,87 @@ pub(super) fn crate_dirs(paths: &[String], packages: &[String]) -> Vec<String> {
     out.into_iter().collect()
 }
 
-/// The tables of a crate's manifest that reach its build, without comments and blank lines, by
-/// header: every table but those of its tests, benchmarks, examples and dev-dependencies.
-fn build_tables(manifest: &str) -> BTreeMap<String, Vec<String>> {
-    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut header: Option<String> = Some(String::new());
+/// A manifest's tables in order, each its header (`[profile.release]`, `[[bin]] 2` for the second
+/// `[[bin]]`; the empty header for what comes before the first table) and its statements: each
+/// `key = value` on one line, a value spread over several lines (an array, an inline table)
+/// joined, comments and blank lines left out.
+fn tables(manifest: &str) -> Vec<(String, Vec<String>)> {
+    let mut out: Vec<(String, Vec<String>)> = vec![(String::new(), Vec::new())];
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut pending = String::new();
     for line in manifest.lines().map(strip_comment) {
         let line = line.trim();
-        if line.starts_with('[') {
-            let left_out = ["[[test]]", "[[bench]]", "[[example]]", "[dev-dependencies"]
-                .iter()
-                .any(|start| line.starts_with(start))
-                || line.contains(".dev-dependencies");
-            header = (!left_out).then(|| {
-                // A repeated table (`[[bin]]`) is told apart by its place.
+        if line.is_empty() {
+            continue;
+        }
+        if pending.is_empty() && line.starts_with('[') {
+            let header = if line.starts_with("[[") {
                 let n = counts.entry(line.to_owned()).or_insert(0);
                 *n += 1;
                 format!("{line} {n}")
-            });
+            } else {
+                line.to_owned()
+            };
+            out.push((header, Vec::new()));
             continue;
         }
-        if let Some(header) = &header
-            && !line.is_empty()
-        {
-            out.entry(header.clone()).or_default().push(line.to_owned());
+        if !pending.is_empty() {
+            pending.push(' ');
+        }
+        pending.push_str(line);
+        if balanced(&pending) {
+            let statement = std::mem::take(&mut pending);
+            if let Some((_, statements)) = out.last_mut() {
+                statements.push(statement);
+            }
         }
     }
+    if !pending.is_empty()
+        && let Some((_, statements)) = out.last_mut()
+    {
+        statements.push(pending);
+    }
+    out.retain(|(header, statements)| !header.is_empty() || !statements.is_empty());
     out
+}
+
+/// Whether every bracket and brace a statement opens outside a string is closed.
+fn balanced(text: &str) -> bool {
+    let mut depth = 0i64;
+    let mut quoted = false;
+    for c in text.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            '[' | '{' if !quoted => depth += 1,
+            ']' | '}' if !quoted => depth -= 1,
+            _ => {}
+        }
+    }
+    depth <= 0
+}
+
+/// The key of a statement, unquoted.
+fn key_of(statement: &str) -> &str {
+    statement
+        .split_once('=')
+        .map_or(statement, |(key, _)| key)
+        .trim()
+        .trim_matches('"')
+}
+
+/// The tables of a crate's manifest that reach its build, by header: every table but those of
+/// its tests, benchmarks, examples and dev-dependencies.
+fn build_tables(manifest: &str) -> BTreeMap<String, Vec<String>> {
+    tables(manifest)
+        .into_iter()
+        .filter(|(header, _)| {
+            let left_out = ["[[test]]", "[[bench]]", "[[example]]", "[dev-dependencies"]
+                .iter()
+                .any(|start| header.starts_with(start))
+                || header.contains(".dev-dependencies");
+            !left_out
+        })
+        .collect()
 }
 
 /// Whether a crate's manifest changed in what reaches its build (a manifest that appeared or went
@@ -81,16 +134,37 @@ pub(super) fn manifest_changed(before: Option<&str>, after: Option<&str>) -> boo
 
 /// The `name` of a manifest's `[package]` table.
 pub(super) fn package_name(manifest: &str) -> Option<String> {
-    let mut in_package = false;
-    for line in manifest.lines().map(strip_comment) {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_package = line == "[package]";
-        } else if in_package && let Some(value) = assigned(line, "name") {
-            return Some(value);
-        }
-    }
-    None
+    tables(manifest)
+        .into_iter()
+        .find(|(header, _)| header == "[package]")
+        .and_then(|(_, statements)| {
+            statements
+                .iter()
+                .find_map(|statement| assigned(statement, "name"))
+        })
+}
+
+/// The member directories a workspace's manifest names (`members`), its globs as written: a
+/// pattern ending in `/*` stands for every directory under its stem.
+pub(super) fn members(manifest: &str) -> Vec<String> {
+    let Some((_, statements)) = tables(manifest)
+        .into_iter()
+        .find(|(header, _)| header == "[workspace]")
+    else {
+        return Vec::new();
+    };
+    statements
+        .iter()
+        .filter(|statement| key_of(statement) == "members")
+        .flat_map(|statement| {
+            let value = statement.split_once('=').map_or("", |(_, v)| v);
+            value
+                .split(['[', ']', ','])
+                .map(|item| item.trim().trim_matches('"').to_owned())
+                .filter(|item| !item.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// A line without its comment (a `#` outside a string).
@@ -187,45 +261,72 @@ fn closure(lock: &[Locked], roots: &BTreeSet<String>) -> BTreeMap<String, Locked
     out
 }
 
-/// The sections of the workspace's manifest that reach every crate's build, without comments and
-/// blank lines: the package settings, the profiles, the lints and the patches, by header.
-fn shared_sections(manifest: &str) -> BTreeMap<String, Vec<String>> {
-    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut header: Option<String> = None;
-    for line in manifest.lines().map(strip_comment) {
-        let line = line.trim();
-        if line.starts_with('[') {
-            let shared = [
-                "[workspace.package]",
-                "[profile.",
-                "[workspace.lints",
-                "[patch",
-            ];
-            header = shared
-                .iter()
-                .any(|start| line.starts_with(start))
-                .then(|| line.to_owned());
-            continue;
-        }
-        if let Some(header) = &header
-            && !line.is_empty()
-        {
-            out.entry(header.clone()).or_default().push(line.to_owned());
-        }
-    }
-    out
+/// How a table of the workspace's manifest reaches the crates' build.
+enum Reach {
+    /// Every crate's build (package settings, profiles, lints, patches, and any table the rule
+    /// does not know, which counts whole).
+    Shared,
+    /// The workspace's dependency table: an entry reaches the crates that take it.
+    Dependencies,
+    /// One entry of the dependency table, written as a table of its own.
+    Dependency(String),
+    /// Nothing that is built (`[workspace.metadata]`, the tools' own settings).
+    None,
 }
 
-/// The entries of the workspace's dependency table, by name, without comments.
-fn workspace_dependencies(manifest: &str) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    let mut inside = false;
-    for line in manifest.lines().map(strip_comment) {
-        let line = line.trim();
-        if line.starts_with('[') {
-            inside = line == "[workspace.dependencies]";
-        } else if inside && let Some((name, value)) = line.split_once('=') {
-            out.insert(name.trim().to_owned(), value.trim().to_owned());
+/// How the table `header` of the workspace's manifest reaches the build.
+fn reach_of(header: &str) -> Reach {
+    let name = header.trim_start_matches('[').trim_end_matches(']').trim();
+    if name == "workspace.dependencies" {
+        Reach::Dependencies
+    } else if let Some(dependency) = name.strip_prefix("workspace.dependencies.") {
+        Reach::Dependency(dependency.trim_matches('"').to_owned())
+    } else if name == "workspace.metadata" || name.starts_with("workspace.metadata.") {
+        Reach::None
+    } else {
+        Reach::Shared
+    }
+}
+
+/// The keys of the `[workspace]` table that name the members, which change with the tree's
+/// crates and not with any crate's build.
+const MEMBERSHIP: [&str; 3] = ["members", "exclude", "default-members"];
+
+/// What of the workspace's manifest reaches every crate's build, by header, and the entries of its
+/// dependency table, by name.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct WorkspaceManifest {
+    shared: BTreeMap<String, Vec<String>>,
+    dependencies: BTreeMap<String, Vec<String>>,
+}
+
+fn workspace_manifest(manifest: &str) -> WorkspaceManifest {
+    let mut out = WorkspaceManifest::default();
+    for (header, statements) in tables(manifest) {
+        match reach_of(&header) {
+            Reach::Shared => {
+                let kept: Vec<String> = statements
+                    .into_iter()
+                    .filter(|s| header != "[workspace]" || !MEMBERSHIP.contains(&key_of(s)))
+                    .collect();
+                if !kept.is_empty() {
+                    out.shared.insert(header, kept);
+                }
+            }
+            Reach::Dependencies => {
+                for statement in statements {
+                    let key = key_of(&statement);
+                    let name = key.split('.').next().unwrap_or(key).trim_matches('"');
+                    out.dependencies
+                        .entry(name.to_owned())
+                        .or_default()
+                        .push(statement);
+                }
+            }
+            Reach::Dependency(name) => {
+                out.dependencies.entry(name).or_default().extend(statements);
+            }
+            Reach::None => {}
         }
     }
     out
@@ -239,53 +340,81 @@ pub(super) struct Workspace<'a> {
     pub after: (&'a str, &'a str),
 }
 
-/// What changed in the workspace's manifest and lockfile between the two commits that reaches
-/// the build of the crates named `roots` (their package names), each as a short phrase.
-pub(super) fn workspace_changes(ws: &Workspace<'_>, roots: &BTreeSet<String>) -> Vec<String> {
+/// What of the workspace's manifest and lockfile reaches the build of the crates named `roots`
+/// (their package names) and changed between the two commits, each as a short phrase, and the
+/// names of the packages of the tree (no registry source) the crates are built with at either
+/// commit, whose own manifests are build inputs too.
+pub(super) fn workspace_changes(
+    ws: &Workspace<'_>,
+    roots: &BTreeSet<String>,
+) -> (Vec<String>, BTreeSet<String>) {
     let mut out = Vec::new();
     let (before, after) = (
         closure(&lock_packages(ws.before.1), roots),
         closure(&lock_packages(ws.after.1), roots),
     );
-    let names = |c: &BTreeMap<String, Locked>| -> BTreeMap<String, Locked> {
-        c.values().map(|p| (p.name.clone(), p.clone())).collect()
+    let versions = |c: &BTreeMap<String, Locked>, name: &str| -> Vec<String> {
+        c.values()
+            .filter(|p| p.name == name)
+            .map(|p| p.version.clone())
+            .collect()
     };
-    let (by_name_before, by_name_after) = (names(&before), names(&after));
-    let every: BTreeSet<&String> = by_name_before.keys().chain(by_name_after.keys()).collect();
+    let every: BTreeSet<String> = before
+        .values()
+        .chain(after.values())
+        .map(|p| p.name.clone())
+        .collect();
     for name in &every {
-        match (by_name_before.get(*name), by_name_after.get(*name)) {
-            (Some(was), Some(now)) if was.version != now.version => out.push(format!(
-                "Cargo.lock: {name} {} -> {}",
-                was.version, now.version
-            )),
-            (Some(was), Some(now)) if was != now => {
-                out.push(format!("Cargo.lock: {name} {} changed", now.version));
+        let (was, now) = (versions(&before, name), versions(&after, name));
+        match (was.as_slice(), now.as_slice()) {
+            ([one], [other]) if one != other => {
+                out.push(format!("Cargo.lock: {name} {one} -> {other}"));
             }
-            (None, Some(now)) => out.push(format!("Cargo.lock: {name} {} added", now.version)),
-            (Some(was), None) => out.push(format!("Cargo.lock: {name} {} removed", was.version)),
-            _ => {}
+            _ => {
+                for gone in was.iter().filter(|v| !now.contains(v)) {
+                    out.push(format!("Cargo.lock: {name} {gone} removed"));
+                }
+                for new in now.iter().filter(|v| !was.contains(v)) {
+                    out.push(format!("Cargo.lock: {name} {new} added"));
+                }
+            }
+        }
+        for version in was.iter().filter(|v| now.contains(v)) {
+            let key = format!("{name} {version}");
+            if before.get(&key) != after.get(&key) {
+                out.push(format!("Cargo.lock: {name} {version} changed"));
+            }
         }
     }
-    let (shared_before, shared_after) = (shared_sections(ws.before.0), shared_sections(ws.after.0));
-    let headers: BTreeSet<&String> = shared_before.keys().chain(shared_after.keys()).collect();
+    let (manifest_before, manifest_after) = (
+        workspace_manifest(ws.before.0),
+        workspace_manifest(ws.after.0),
+    );
+    let headers: BTreeSet<&String> = manifest_before
+        .shared
+        .keys()
+        .chain(manifest_after.shared.keys())
+        .collect();
     for header in headers {
-        if shared_before.get(header) != shared_after.get(header) {
+        if manifest_before.shared.get(header) != manifest_after.shared.get(header) {
             out.push(format!("Cargo.toml: {header} changed"));
         }
     }
-    let (deps_before, deps_after) = (
-        workspace_dependencies(ws.before.0),
-        workspace_dependencies(ws.after.0),
-    );
-    let used: BTreeSet<&String> = every.iter().copied().chain(roots.iter()).collect();
+    let used: BTreeSet<&String> = every.iter().chain(roots.iter()).collect();
     for name in used {
-        if deps_before.get(name) != deps_after.get(name) {
+        if manifest_before.dependencies.get(name) != manifest_after.dependencies.get(name) {
             out.push(format!(
                 "Cargo.toml: the workspace's {name} dependency changed"
             ));
         }
     }
-    out
+    let local = before
+        .values()
+        .chain(after.values())
+        .filter(|p| p.source.is_empty())
+        .map(|p| p.name.clone())
+        .collect();
+    (out, local)
 }
 
 #[cfg(test)]
@@ -351,6 +480,7 @@ panic = "abort"
             },
             &roots(),
         )
+        .0
     }
 
     #[test]
@@ -426,5 +556,72 @@ panic = "abort"
             changes(&manifest, LOCK),
             ["Cargo.toml: [workspace.lints.rust] changed"]
         );
+    }
+
+    #[test]
+    fn two_versions_of_one_library_are_told_apart() {
+        let lock = LOCK.replace("\"util 1.0.0\",", "\"util 1.0.0\",\n \"util 2.0.0\",")
+            + "\n[[package]]\nname = \"util\"\nversion = \"2.0.0\"\n\
+               source = \"registry+https://example.invalid/index\"\nchecksum = \"dd\"\n";
+        let ws = |before: &str, after: &str| {
+            workspace_changes(
+                &Workspace {
+                    before: (MANIFEST, before),
+                    after: (MANIFEST, after),
+                },
+                &roots(),
+            )
+            .0
+        };
+        assert!(ws(&lock, &lock).is_empty());
+        // The older of the two versions changes; the newer one is the same.
+        let older = lock.replace("checksum = \"bb\"", "checksum = \"cc\"");
+        assert_eq!(ws(&lock, &older), ["Cargo.lock: util 1.0.0 changed"]);
+        let bumped = lock
+            .replace("\"util 1.0.0\"", "\"util 1.5.0\"")
+            .replace("version = \"1.0.0\"\nsource", "version = \"1.5.0\"\nsource");
+        // The crate that takes it names the new version too.
+        assert_eq!(
+            ws(&lock, &bumped),
+            [
+                "Cargo.lock: app 0.1.0 changed",
+                "Cargo.lock: util 1.0.0 removed",
+                "Cargo.lock: util 1.5.0 added"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_resolver_and_a_dependency_s_own_table_reach_the_build_and_the_members_do_not() {
+        let manifest = "[workspace]\nresolver = \"2\"\nmembers = [\n  \"packages/*\",\n]\n\n\
+                        [workspace.dependencies.lib]\nversion = \"2\"\n\n\
+                        [workspace.metadata.tool]\nx = 1\n";
+        let ws = |after: &str| {
+            workspace_changes(
+                &Workspace {
+                    before: (manifest, LOCK),
+                    after: (after, LOCK),
+                },
+                &roots(),
+            )
+            .0
+        };
+        assert!(ws(manifest).is_empty());
+        let more = manifest.replace("\"packages/*\",", "\"packages/*\",\n  \"tools/x\",");
+        assert!(ws(&more).is_empty(), "{:?}", ws(&more));
+        assert_eq!(members(&more), ["packages/*", "tools/x"]);
+        let metadata = manifest.replace("x = 1", "x = 2");
+        assert!(ws(&metadata).is_empty());
+        assert_eq!(
+            ws(&manifest.replace("resolver = \"2\"", "resolver = \"3\"")),
+            ["Cargo.toml: [workspace] changed"]
+        );
+        assert_eq!(
+            ws(&manifest.replace("version = \"2\"", "version = \"2.1\"")),
+            ["Cargo.toml: the workspace's lib dependency changed"]
+        );
+        // A table the rule does not know counts whole.
+        let unknown = format!("{manifest}\n[workspace.someday]\nflag = true\n");
+        assert_eq!(ws(&unknown), ["Cargo.toml: [workspace.someday] changed"]);
     }
 }

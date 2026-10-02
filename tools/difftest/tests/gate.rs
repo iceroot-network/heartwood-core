@@ -241,8 +241,8 @@ fn a_record_keeps_the_narrow_paths_of_its_command_and_the_counts_and_hits_of_its
     assert_eq!(record["format"], "heartwood-gate-record/1");
     assert_eq!(
         record["testedPaths"],
-        json!(["src/p1.rs"]),
-        "the property's paths, not --tested"
+        json!(["src/p1.rs", "tools/gate-record.sh"]),
+        "the property's paths and the recorder, not --tested"
     );
     assert_eq!(record["result"], "pass");
     assert_eq!(record["dirty"], false);
@@ -1705,6 +1705,73 @@ fn a_change_to_the_build_of_a_tested_crate_makes_its_record_stale_and_another_cr
     rig.commit("profile");
     let now = t(&rig);
     assert!(now.contains("[profile.release] changed"), "{now}");
+}
+
+#[test]
+fn a_feature_of_a_crate_of_the_tree_that_a_tested_crate_uses_makes_its_record_stale() {
+    let rig = Rig::new();
+    rig.write(
+        "Cargo.toml",
+        "[workspace]\nresolver = \"3\"\nmembers = [\n    \"packages/*\",\n]\n",
+    );
+    rig.write(
+        "Cargo.lock",
+        "version = 4\n\n[[package]]\nname = \"crate-a\"\nversion = \"0.1.0\"\ndependencies = [\n \"crate-b\",\n]\n\n\
+         [[package]]\nname = \"crate-b\"\nversion = \"0.1.0\"\n\n\
+         [[package]]\nname = \"crate-c\"\nversion = \"0.1.0\"\n",
+    );
+    rig.write(
+        "packages/a/Cargo.toml",
+        "[package]\nname = \"crate-a\"\n\n[dependencies]\ncrate-b = { path = \"../b\" }\n",
+    );
+    rig.write("packages/a/src/lib.rs", "pub fn a() {}\n");
+    rig.write("packages/b/Cargo.toml", "[package]\nname = \"crate-b\"\n");
+    rig.write("packages/b/src/lib.rs", "pub fn b() {}\n");
+    rig.write("packages/c/Cargo.toml", "[package]\nname = \"crate-c\"\n");
+    rig.write("packages/c/src/lib.rs", "pub fn c() {}\n");
+    rig.commit("crates");
+    rig.criteria(&with_row(json!([{"kind": "record", "target": "lines"}])));
+    assert!(
+        rig.gate(&[
+            "record",
+            "--target",
+            "lines",
+            "--command",
+            "make lines",
+            "--exit",
+            "0",
+            "--started",
+            T1,
+            "--finished",
+            T1,
+            "--out",
+            &rig.arg("records"),
+            "--tested",
+            "packages/a/src",
+            "--machine",
+            "box-1",
+        ])
+        .ok
+    );
+    let t = |rig: &Rig| row_t(&s1(rig, &["--verbose"]).text);
+    // A crate the tested one does not use changes nothing.
+    rig.write(
+        "packages/c/Cargo.toml",
+        "[package]\nname = \"crate-c\"\n\n[features]\nloud = []\n",
+    );
+    rig.commit("another crate's feature");
+    assert!(t(&rig).contains("T        pass"), "{}", t(&rig));
+    // A default feature of the crate it uses reaches its build, with the lockfile unchanged.
+    rig.write(
+        "packages/b/Cargo.toml",
+        "[package]\nname = \"crate-b\"\n\n[features]\ndefault = [\"loud\"]\nloud = []\n",
+    );
+    rig.commit("a used crate's feature");
+    let now = t(&rig);
+    assert!(
+        now.contains("packages/b/Cargo.toml (the build of a crate it uses)"),
+        "{now}"
+    );
 }
 
 #[test]

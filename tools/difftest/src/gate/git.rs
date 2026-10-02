@@ -1,6 +1,6 @@
 //! The git questions the path rule asks, through the `git` command in a chosen tree.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -200,6 +200,8 @@ pub struct PathRule {
     head: String,
     allow_dirty: bool,
     cache: std::cell::RefCell<std::collections::HashMap<(String, Vec<String>), Validity>>,
+    /// The workspace's member directories at each commit asked, by package name.
+    members: std::cell::RefCell<std::collections::HashMap<String, BTreeMap<String, String>>>,
 }
 
 impl PathRule {
@@ -211,6 +213,7 @@ impl PathRule {
             head,
             allow_dirty,
             cache: std::cell::RefCell::default(),
+            members: std::cell::RefCell::default(),
         })
     }
 
@@ -260,8 +263,8 @@ impl PathRule {
 
     /// What changed between `from` and the final head in the build inputs of `paths` (none to
     /// look at when the paths are the whole tree, which holds them): the tested crates' manifests,
-    /// the fuzz targets' lockfile, and what of the workspace's manifest and lockfile reaches them
-    /// ([`build`]).
+    /// the fuzz targets' lockfile, what of the workspace's manifest and lockfile reaches them
+    /// ([`build`]), and the manifests of the tree's other crates they are built with.
     fn build_changes(&self, from: &str, paths: &[String]) -> Result<Vec<String>> {
         if paths.is_empty() {
             return Ok(Vec::new());
@@ -271,42 +274,89 @@ impl PathRule {
         let mut out = Vec::new();
         let mut roots = BTreeSet::new();
         for dir in &dirs {
-            let manifest = format!("{dir}/Cargo.toml");
-            let (before, after) = (
-                self.repo.show(from, &manifest)?,
-                self.repo.show(&self.head, &manifest)?,
-            );
-            if build::manifest_changed(before.as_deref(), after.as_deref()) {
-                out.push(format!("{manifest} (its build)"));
+            if self.manifest_changed(from, dir)? {
+                out.push(format!("{dir}/Cargo.toml (its build)"));
             }
             if dir != "fuzz" {
-                roots.extend(after.as_deref().and_then(build::package_name));
+                let manifest = self.repo.show(&self.head, &format!("{dir}/Cargo.toml"))?;
+                roots.extend(manifest.as_deref().and_then(build::package_name));
             }
         }
         if dirs.iter().any(|d| d == "fuzz") {
             let lock = [build::FUZZ_LOCK.to_owned()];
             out.extend(self.repo.changed(from, &self.head, &lock)?);
         }
-        if !roots.is_empty() {
-            let workspace = build::WORKSPACE.map(str::to_owned);
-            if !self.repo.changed(from, &self.head, &workspace)?.is_empty() {
-                let read = |rev: &str, file: &str| -> Result<String> {
-                    Ok(self.repo.show(rev, file)?.unwrap_or_default())
-                };
-                let before = (read(from, "Cargo.toml")?, read(from, "Cargo.lock")?);
-                let after = (
-                    read(&self.head, "Cargo.toml")?,
-                    read(&self.head, "Cargo.lock")?,
-                );
-                out.extend(build::workspace_changes(
-                    &build::Workspace {
-                        before: (&before.0, &before.1),
-                        after: (&after.0, &after.1),
-                    },
-                    &roots,
-                ));
+        if roots.is_empty() {
+            return Ok(out);
+        }
+        let read = |rev: &str, file: &str| -> Result<String> {
+            Ok(self.repo.show(rev, file)?.unwrap_or_default())
+        };
+        let [manifest, lock] = build::WORKSPACE;
+        let before = (read(from, manifest)?, read(from, lock)?);
+        let after = (read(&self.head, manifest)?, read(&self.head, lock)?);
+        let (changes, local) = build::workspace_changes(
+            &build::Workspace {
+                before: (&before.0, &before.1),
+                after: (&after.0, &after.1),
+            },
+            &roots,
+        );
+        out.extend(changes);
+        // The tree's crates the tested ones are built with: a feature of theirs reaches the
+        // build without a line of the lockfile changing.
+        let mut used = BTreeSet::new();
+        for rev in [from, self.head.as_str()] {
+            let members = self.member_dirs(rev)?;
+            used.extend(local.iter().filter_map(|name| members.get(name).cloned()));
+        }
+        for dir in used.iter().filter(|d| !dirs.contains(d)) {
+            if self.manifest_changed(from, dir)? {
+                out.push(format!("{dir}/Cargo.toml (the build of a crate it uses)"));
             }
         }
+        Ok(out)
+    }
+
+    /// Whether the manifest of the crate in `dir` changed between `from` and the final head in
+    /// what reaches its build.
+    fn manifest_changed(&self, from: &str, dir: &str) -> Result<bool> {
+        let manifest = format!("{dir}/Cargo.toml");
+        let before = self.repo.show(from, &manifest)?;
+        let after = self.repo.show(&self.head, &manifest)?;
+        Ok(build::manifest_changed(before.as_deref(), after.as_deref()))
+    }
+
+    /// The workspace's member directories at `rev`, by the package name of each one's manifest.
+    fn member_dirs(&self, rev: &str) -> Result<BTreeMap<String, String>> {
+        if let Some(found) = self.members.borrow().get(rev) {
+            return Ok(found.clone());
+        }
+        let manifest = self
+            .repo
+            .show(rev, build::WORKSPACE[0])?
+            .unwrap_or_default();
+        let mut out = BTreeMap::new();
+        for pattern in build::members(&manifest) {
+            let dirs = match pattern.strip_suffix("/*") {
+                Some(stem) => self
+                    .repo
+                    .dirs(rev, stem)?
+                    .into_iter()
+                    .map(|d| format!("{stem}/{d}"))
+                    .collect(),
+                None => vec![pattern],
+            };
+            for dir in dirs {
+                let manifest = self.repo.show(rev, &format!("{dir}/Cargo.toml"))?;
+                if let Some(name) = manifest.as_deref().and_then(build::package_name) {
+                    out.insert(name, dir);
+                }
+            }
+        }
+        self.members
+            .borrow_mut()
+            .insert(rev.to_owned(), out.clone());
         Ok(out)
     }
 }

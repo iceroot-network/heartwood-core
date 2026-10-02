@@ -34,6 +34,10 @@ use super::store;
 use super::time;
 use crate::errors::{Error, Result};
 
+/// The files that make every record, which a narrowed record tests beside its list: the recorder
+/// the Makefile's `$(gate)` runs.
+const RECORDING_INPUTS: [&str; 1] = ["tools/gate-record.sh"];
+
 /// The reach a property's runs check, as the `l1` command's flag and the ledger's key.
 const REACH: [(&str, &str, &str); 3] = [
     ("P13", "--min-reach", "minReach"),
@@ -96,6 +100,12 @@ pub fn run(args: &[String]) -> Result<bool> {
         Some(path) => Criteria::read(Path::new(path))?.narrowed_paths(&target, &command),
         None => None,
     };
+    // A narrowed record keeps the recorder's own inputs too, which the list of a make target or a
+    // property names no more than the Makefile's default does.
+    let narrowed = narrowed.map(|mut paths| {
+        paths.extend(RECORDING_INPUTS.map(str::to_owned));
+        paths
+    });
     let tested_paths = tested_paths(narrowed.unwrap_or(tested))?;
 
     let parsed = match &output_file {
