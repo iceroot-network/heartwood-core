@@ -50,6 +50,10 @@ pub const EXPIRY_ROUND: u32 = 7;
 /// The blocks of one download of a syncing node.
 pub const DOWNLOAD_BLOCKS: u32 = 400;
 
+/// The blocks a delegate the recipe registers misses its slots after its registration: more than
+/// the 100 blocks of a job of the reference's download cut.
+pub const SILENT_BLOCKS: u32 = 115;
+
 /// The delegates no recipe attests: a vote for one is refused `ERR_OFFLINE` by both pools.
 const UNATTESTED: [&str; 3] = ["genesis_51", "genesis_52", "genesis_53"];
 
@@ -456,21 +460,18 @@ impl Plan {
     /// drawn chains that have rounds to forge in; the second, which resigns for a time and
     /// revokes it, where the chain is long enough for the revoke.
     ///
-    /// A vote comes two rounds after the registration at the soonest, so that the delegate's first
-    /// block is more than a round and a half, over 100 blocks, after the registration's: a job of
-    /// the reference's download cut never holds both, and the one-block jobs of the judge and the
-    /// jobs of the cut give the same answers. (A delegate whose registration and first block fall
-    /// in one job is a case of its own, which the processor replay shows as a mismatch: the batch
-    /// names every chain whose delegate forges within one download, see [`registered_forgers`].)
+    /// A registered delegate takes a place among the active ones from the next round, with votes
+    /// or without (every delegate has the same weight and the keys decide), so each is silent for
+    /// [`SILENT_BLOCKS`] blocks from its registration: its first block is then more than a job of
+    /// the reference's download cut after the registration, and no job holds both. The judge's
+    /// one-block jobs and the cut's jobs give the same answers on such a chain. (A delegate whose
+    /// registration and first block fall in one job is a case of its own, which the processor
+    /// replay shows as a mismatch; [`registered_forgers`] names every chain whose delegate forges
+    /// within one download.)
     fn delegates(&mut self) {
-        let wins = self.rounds >= 4 && !self.index.is_multiple_of(3);
+        let wins = self.rounds >= 3 && !self.index.is_multiple_of(3);
         let revokes = wins && self.rounds >= 6 && self.index.is_multiple_of(2);
-        let last_round = if wins {
-            self.rounds - 3
-        } else {
-            self.rounds.saturating_sub(2)
-        }
-        .clamp(1, 8);
+        let last_round = self.rounds.saturating_sub(2).clamp(1, 8);
         let round = self.rng.between(1, last_round);
         let height = self.in_round(round, 3).min(self.tip - 2);
         let name = format!("bd{}x1", self.index);
@@ -478,16 +479,12 @@ impl Plan {
             height,
             spec("delegateRegistration", "d1", json!({ "username": name })),
         );
-        self.restarts.insert(height);
-        self.registered.push(Registered {
-            username: name.clone(),
-            round: round_of(height),
-        });
+        self.register(&name, height);
         let mut resigned = height + self.rng.between(1, 20);
         if wins {
             let voting = self
                 .rng
-                .between(round + 2, (round + 4).min(self.rounds - 1));
+                .between(round + 1, (round + 3).min(self.rounds - 1));
             let at = self.in_round(voting, 3);
             let voter = self.sender();
             self.add(at, vote(&voter, &[(name, 100)]));
@@ -504,11 +501,8 @@ impl Plan {
                 at,
                 spec("delegateRegistration", "d2", json!({ "username": name })),
             );
-            self.registered.push(Registered {
-                username: name.clone(),
-                round: round_of(at),
-            });
-            let voting = round + 2;
+            self.register(&name, at);
+            let voting = round + 1;
             let vote_at = self.in_round(voting, 3);
             let voter = self.sender();
             self.add(vote_at, vote(&voter, &[(name, 100)]));
@@ -522,6 +516,21 @@ impl Plan {
                 self.add(rests, resignation("d2", 0));
             }
         }
+    }
+
+    /// Note the delegate `name`, registered at `height`: a restart point there, its name given
+    /// to the online steps of later rounds, and its forger stopped for [`SILENT_BLOCKS`].
+    fn register(&mut self, name: &str, height: u32) {
+        self.restarts.insert(height);
+        self.registered.push(Registered {
+            username: name.to_owned(),
+            round: round_of(height),
+        });
+        self.steps.push(Step::Missed {
+            delegate: name.to_owned(),
+            from_height: height,
+            to_height: (height + SILENT_BLOCKS).min(self.tip),
+        });
     }
 
     /// Missed-slot patterns: one delegate over a long stretch, a few over short ones that cross a
@@ -590,9 +599,16 @@ impl Plan {
     fn reverts(&mut self) {
         let rounds = self.rounds;
         let tip = self.tip;
-        // Across a round end: back into the round before it, never to its last block.
+        // Across a round end: back into the round before it, never to its last block. One is
+        // always drawn, and up to two more; a draw the long chain's proof window or an earlier
+        // revert takes is drawn again.
         if rounds >= 2 {
-            for _ in 0..self.rng.between(1, 3) {
+            let wanted = self.rng.between(1, 3);
+            let mut made = 0;
+            for _ in 0..32 {
+                if made == wanted {
+                    break;
+                }
                 let end = self.rng.between(1, rounds - 1) * ROUND;
                 let past = self.rng.between(2, 10);
                 let back = self.rng.between(1, 8);
@@ -604,6 +620,7 @@ impl Plan {
                     after_height: height,
                     blocks: past + back,
                 });
+                made += 1;
             }
         }
         // Inside a round.
@@ -646,10 +663,10 @@ impl Plan {
     /// Restart points: a round start, a round end, the heights after a revert or a fork, and a
     /// few anywhere.
     fn restarts(&mut self, milestone: Option<u32>) {
-        let round = self.rng.between(1, self.rounds);
-        self.restarts.insert(round_first(round).max(2));
-        let round = self.rng.between(1, self.rounds);
-        self.restarts.insert(round * ROUND);
+        let first = self.rng.between(self.rounds.min(2), self.rounds);
+        self.restarts.insert(round_first(first).max(2));
+        let last = self.rng.between(1, self.rounds);
+        self.restarts.insert(last * ROUND);
         let after: Vec<u32> = self.after.iter().copied().collect();
         for height in after.into_iter().take(2) {
             self.restarts.insert(height);
@@ -1160,6 +1177,39 @@ mod tests {
     }
 
     #[test]
+    fn from_two_rounds_on_every_chain_reverts_across_a_round_end_and_restarts_at_both_ends() {
+        for rounds in [2, 3, 5, 7, 9, 50] {
+            for index in 1..=20 {
+                let chain = draw("crossing", index, rounds, rounds > 5).unwrap();
+                let steps = &chain.recipe.steps;
+                assert!(
+                    steps
+                        .iter()
+                        .any(|s| matches!(s, Step::Revert { after_height, blocks }
+                        if round_of(*after_height) != round_of(after_height - blocks))),
+                    "{} of {rounds} rounds",
+                    chain.name
+                );
+                let restarts: Vec<u32> = steps
+                    .iter()
+                    .filter_map(|s| match s {
+                        Step::Restart { height } => Some(*height),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(
+                    restarts.iter().any(|h| (h - 1) % ROUND == 0 && *h > 2),
+                    "a round start: {restarts:?}"
+                );
+                assert!(
+                    restarts.iter().any(|h| h % ROUND == 0),
+                    "a round end: {restarts:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_ten_chain_batch_covers_forks_milestones_registered_forgers_and_revokes() {
         let chains: Vec<DrawnChain> = (1..=10)
             .map(|i| draw("2026", i, 5, false).unwrap())
@@ -1202,43 +1252,48 @@ mod tests {
     }
 
     #[test]
-    fn a_registered_delegates_first_possible_block_is_over_a_job_after_its_registration() {
-        let mut winners = 0;
-        for rounds in [4, 5, 7, 20] {
+    fn a_registered_delegate_is_silent_for_over_a_job_after_its_registration() {
+        let mut registrations = 0;
+        for rounds in [1, 2, 4, 5, 7, 20] {
             for index in 1..=12 {
-                let chain = draw("spacing", index, rounds, rounds > 5).unwrap();
-                let mut registered: BTreeMap<String, u32> = BTreeMap::new();
-                let mut voted: BTreeMap<String, u32> = BTreeMap::new();
+                let chain = draw("silent", index, rounds, rounds > 5).unwrap();
+                let tip = rounds * ROUND;
+                let silent: Vec<(&str, u32, u32)> = chain
+                    .recipe
+                    .steps
+                    .iter()
+                    .filter_map(|s| match s {
+                        Step::Missed {
+                            delegate,
+                            from_height,
+                            to_height,
+                        } if delegate.starts_with("bd") => {
+                            Some((delegate.as_str(), *from_height, *to_height))
+                        }
+                        _ => None,
+                    })
+                    .collect();
                 for step in &chain.recipe.steps {
                     let Step::Transactions { height, build } = step else {
                         continue;
                     };
-                    for item in build {
-                        if item.kind == "delegateRegistration" {
-                            registered
-                                .insert(item.asset["username"].as_str().unwrap().into(), *height);
-                        }
-                        if item.kind == "vote"
-                            && let Some(name) = item.asset["votes"][0][0].as_str()
-                            && name.starts_with("bd")
-                        {
-                            voted.insert(name.into(), *height);
-                        }
+                    for item in build.iter().filter(|b| b.kind == "delegateRegistration") {
+                        registrations += 1;
+                        let name = item.asset["username"].as_str().unwrap();
+                        assert!(
+                            silent.iter().any(|(n, from, to)| {
+                                *n == name
+                                    && from <= height
+                                    && *to >= (height + SILENT_BLOCKS).min(tip)
+                            }),
+                            "{name} of {} registered at {height} is not silent",
+                            chain.name
+                        );
                     }
-                }
-                for (name, at) in voted {
-                    winners += 1;
-                    let active_from = round_first(round_of(at) + 1);
-                    assert!(
-                        active_from - registered[&name] > 100,
-                        "{name} of {}: registered at {}, active from {active_from}",
-                        chain.name,
-                        registered[&name]
-                    );
                 }
             }
         }
-        assert!(winners >= 10, "{winners}");
+        assert!(registrations >= 60, "{registrations}");
     }
 
     #[test]
