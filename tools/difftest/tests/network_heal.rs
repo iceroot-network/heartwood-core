@@ -245,6 +245,23 @@ fn a_judged_run_without_its_block_evidence_fails() {
     std::fs::write(&path, text).expect("rows");
     let problems = judged(&numeric);
     assert_eq!(problems.len(), 1, "{problems:?}");
+    // The highest height a record can name, at a node not yet timed, is read without overflow;
+    // that node's other tip keeps the network from converging.
+    let highest = scratch.path().join("highest");
+    write_run(&highest, &split(35_000), &heal_actions(), true);
+    let rows = highest.join("propagation.jsonl");
+    let mut text = std::fs::read_to_string(&rows).expect("rows");
+    text.push_str(&format!(
+        "{{\"t\":\"{}\",\"node\":\"node9\",\"h\":{},\"id\":\"far\"}}\n",
+        at(150_000),
+        u64::MAX
+    ));
+    std::fs::write(&rows, text).expect("rows");
+    let problems = judged(&highest);
+    assert!(
+        problems.iter().any(|p| p.contains("did not converge")),
+        "{problems:?}"
+    );
     // The bound is the rule's, not the run's: a report that names a looser limit is a problem
     // itself, and the late block is still judged against one block time.
     let report = numeric.join("propagation-lag.json");

@@ -1602,7 +1602,7 @@ pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
     for (t, node, h, _) in &rows {
         tip = tip.max(*h);
         if !joined.contains(node.as_str()) {
-            if *h + 1 < tip {
+            if h.saturating_add(1) < tip {
                 continue;
             }
             joined.insert(node.as_str());
