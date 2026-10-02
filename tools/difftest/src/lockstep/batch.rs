@@ -246,6 +246,8 @@ struct Plan {
     transactions: BTreeMap<u32, Vec<BuildSpec>>,
     steps: Vec<Step>,
     registered: Vec<Registered>,
+    /// The heights of the registrations of `registered`.
+    registrations: Vec<u32>,
     /// The heights after which a revert or a fork runs.
     after: BTreeSet<u32>,
     restarts: BTreeSet<u32>,
@@ -300,6 +302,7 @@ impl Plan {
             transactions: BTreeMap::new(),
             steps: Vec::new(),
             registered: Vec::new(),
+            registrations: Vec::new(),
             after: BTreeSet::new(),
             restarts: BTreeSet::new(),
         }
@@ -320,6 +323,12 @@ impl Plan {
         let first = round_first(round).max(from);
         let last = round * ROUND;
         self.rng.between(first, last)
+    }
+
+    /// A height in the middle of `round`, clear of the blocks a revert across its ends takes back.
+    fn mid_round(&mut self, round: u32) -> u32 {
+        let first = round_first(round);
+        (first + self.rng.between(12, 44)).min(self.tip - 2)
     }
 
     fn sender(&mut self) -> String {
@@ -473,7 +482,7 @@ impl Plan {
         let revokes = wins && self.rounds >= 6 && self.index.is_multiple_of(2);
         let last_round = self.rounds.saturating_sub(2).clamp(1, 8);
         let round = self.rng.between(1, last_round);
-        let height = self.in_round(round, 3).min(self.tip - 2);
+        let height = self.mid_round(round);
         let name = format!("bd{}x1", self.index);
         self.add(
             height,
@@ -496,7 +505,7 @@ impl Plan {
         if revokes {
             let name = format!("bd{}x2", self.index);
             let round = self.rng.between(1, 2);
-            let at = self.in_round(round, 3);
+            let at = self.mid_round(round);
             self.add(
                 at,
                 spec("delegateRegistration", "d2", json!({ "username": name })),
@@ -522,6 +531,7 @@ impl Plan {
     /// to the online steps of later rounds, and its forger stopped for [`SILENT_BLOCKS`].
     fn register(&mut self, name: &str, height: u32) {
         self.restarts.insert(height);
+        self.registrations.push(height);
         self.registered.push(Registered {
             username: name.to_owned(),
             round: round_of(height),
@@ -595,6 +605,20 @@ impl Plan {
             && (round_first(EXPIRY_ROUND - 1)..=round_first(EXPIRY_ROUND) + 25).contains(&height))
     }
 
+    /// Whether a revert or fork of `blocks` blocks after `height` leaves alone the registrations
+    /// of delegates that a round start has attested since: the reference keeps a delegate's
+    /// online entry in its wallet, which the revert of its registration takes away, and a vote for
+    /// the delegate is then refused there until the next round's attestation, where Heartwood's
+    /// record outlives the revert and admits it. A registration reverted within its own round, with
+    /// no attestation yet, is drawn.
+    fn clear_of_attested_registrations(&self, height: u32, blocks: u32) -> bool {
+        let first = height - blocks + 1;
+        !self
+            .registrations
+            .iter()
+            .any(|&at| (first..=height).contains(&at) && round_of(height) > round_of(at))
+    }
+
     /// Reverts across round ends, within a round, and forks.
     fn reverts(&mut self) {
         let rounds = self.rounds;
@@ -612,13 +636,17 @@ impl Plan {
                 let end = self.rng.between(1, rounds - 1) * ROUND;
                 let past = self.rng.between(2, 10);
                 let back = self.rng.between(1, 8);
-                let height = end + past;
-                if height > tip || !self.clear_of_proof(height) || !self.after.insert(height) {
+                let (height, blocks) = (end + past, past + back);
+                if height > tip
+                    || !self.clear_of_proof(height)
+                    || !self.clear_of_attested_registrations(height, blocks)
+                    || !self.after.insert(height)
+                {
                     continue;
                 }
                 self.steps.push(Step::Revert {
                     after_height: height,
-                    blocks: past + back,
+                    blocks,
                 });
                 made += 1;
             }
@@ -629,7 +657,10 @@ impl Plan {
             let height = self.in_round(round, 12);
             let position = height - round_first(round) + 1;
             let blocks = self.rng.between(1, position.saturating_sub(2).clamp(1, 20));
-            if position <= blocks + 1 || !self.clear_of_proof(height) || !self.after.insert(height)
+            if position <= blocks + 1
+                || !self.clear_of_proof(height)
+                || !self.clear_of_attested_registrations(height, blocks)
+                || !self.after.insert(height)
             {
                 continue;
             }
@@ -649,7 +680,10 @@ impl Plan {
             let height = self.in_round(round, 12);
             let position = height - round_first(round) + 1;
             let blocks = self.rng.between(1, 4);
-            if position <= blocks + 2 || !self.clear_of_proof(height) || !self.after.insert(height)
+            if position <= blocks + 2
+                || !self.clear_of_proof(height)
+                || !self.clear_of_attested_registrations(height, blocks)
+                || !self.after.insert(height)
             {
                 continue;
             }
@@ -1294,6 +1328,52 @@ mod tests {
             }
         }
         assert!(registrations >= 60, "{registrations}");
+    }
+
+    #[test]
+    fn no_revert_or_fork_takes_back_a_registration_after_a_round_start_attested_it() {
+        let mut inside = 0;
+        for rounds in [2, 3, 5, 7, 12] {
+            for index in 1..=25 {
+                let chain = draw("attested", index, rounds, rounds > 5).unwrap();
+                let registrations: Vec<u32> = chain
+                    .recipe
+                    .steps
+                    .iter()
+                    .filter_map(|s| match s {
+                        Step::Transactions { height, build } => Some((height, build)),
+                        _ => None,
+                    })
+                    .flat_map(|(h, build)| {
+                        build
+                            .iter()
+                            .filter(|b| b.kind == "delegateRegistration")
+                            .map(move |_| *h)
+                    })
+                    .collect();
+                for step in &chain.recipe.steps {
+                    let (Step::Revert {
+                        after_height,
+                        blocks,
+                    }
+                    | Step::Fork {
+                        after_height,
+                        blocks,
+                    }) = step
+                    else {
+                        continue;
+                    };
+                    for at in &registrations {
+                        if (after_height - blocks + 1..=*after_height).contains(at) {
+                            inside += 1;
+                            assert_eq!(round_of(*after_height), round_of(*at), "{}", chain.name);
+                        }
+                    }
+                }
+            }
+        }
+        // A registration reverted in its own round is still drawn.
+        assert!(inside >= 1);
     }
 
     #[test]
