@@ -18,8 +18,10 @@
 //!    (`nodes`), its starts against the run's scripted restarts of it, and that a kill during its
 //!    initial sync ended its first start below node 1's height at its start; a reference relay's
 //!    archive against node 1's;
-//! 4. `api`: the route corpus's answers, judged by `api compare` ([`crate::api`]), and the rate
-//!    limit's answers from an address that no node whitelists;
+//! 4. `api`: the route corpus's answers, judged by `api compare` ([`crate::api`]), a listing's
+//!    tie judged again with the places of the wallets one node of the pair alone re-indexed by its
+//!    own refusals left free (`free_places`), and the rate limit's answers from an address that no
+//!    node whitelists;
 //! 5. `bans`: every ban of a node under test's address ([`bans`]);
 //! 6. `invariants`: one tip at the pause, at or below the run's stop height; the control's chain
 //!    checked by the devnet tooling (every generator the scheduled one, the supply; not in runs `m`
@@ -1180,6 +1182,7 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
             e.to_string(),
         ),
         Ok(Ok(report)) => {
+            let report = free_places(run_dir, manifest, report, cases);
             // One line per corpus: the first (`api/`), then each of `apiExtra`.
             let main = (left.as_str(), right.as_str(), api::RUN_ANSWERS_DIR);
             let extra = (manifest.api_extra.iter())
@@ -1227,6 +1230,103 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
         }
     }
     built
+}
+
+/// The route corpora's failed cases judged again with the places of the wallets one node of the
+/// corpus's pair alone re-indexed left free inside their ties ([`api::judge::outcome_with_free_places`]):
+/// the parties of the transactions the run's records show sent to one of the two nodes and refused
+/// there by their handler ([`nodes::refused_alone`]). A case that passes so is recorded with the
+/// wallets and their evidence; every other case stays as it was judged, and evidence that cannot
+/// be read, or a corpus whose recording has no time, is a failure.
+fn free_places(
+    run_dir: &Path,
+    manifest: &Manifest,
+    mut report: Report,
+    cases: &mut Cases,
+) -> Report {
+    let Some((left, right)) = &manifest.api else {
+        return report;
+    };
+    let main = (left.as_str(), right.as_str(), api::RUN_ANSWERS_DIR);
+    let extra =
+        (manifest.api_extra.iter()).map(|e| (e.left.as_str(), e.right.as_str(), e.dir.as_str()));
+    let mut steps = None;
+    for (left, right, dir) in std::iter::once(main).chain(extra) {
+        let dir = run_dir.join(dir);
+        let failing: Vec<usize> = (report.results.iter().enumerate())
+            .filter(|(_, r)| r.outcome.is_failure() && Path::new(&r.file).starts_with(&dir))
+            .map(|(i, _)| i)
+            .collect();
+        if failing.is_empty() {
+            continue;
+        }
+        let label = format!("the wallets {left} or {right} alone re-indexed");
+        let steps = match &steps {
+            Some(steps) => steps,
+            None => match run::steps(run_dir) {
+                Ok(read) => steps.insert(read),
+                Err(e) => {
+                    cases.fail("api", label, e.to_string());
+                    continue;
+                }
+            },
+        };
+        // The submissions before the corpus was recorded: its step names its directory.
+        let recorded = (steps.iter())
+            .find(|s| s.text("dir").is_some_and(|d| run_dir.join(d) == dir))
+            .and_then(|s| s.start);
+        if recorded.is_none() {
+            let message = format!("no step records when {} was recorded", dir.display());
+            cases.fail("api", label, message);
+            continue;
+        }
+        let evidence = match nodes::refused_alone(run_dir, manifest, steps, (left, right), recorded)
+        {
+            Ok(evidence) if evidence.is_empty() => continue,
+            Ok(evidence) => evidence,
+            Err(e) => {
+                cases.fail("api", label, e.to_string());
+                continue;
+            }
+        };
+        let free = evidence.keys().cloned().collect();
+        let mut files: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let (mut judged, mut moved) = (0, std::collections::BTreeSet::new());
+        for i in failing {
+            let file = report.results[i].file.clone();
+            if !files.contains_key(&file) {
+                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                files.insert(file.clone(), text.lines().map(str::to_owned).collect());
+            }
+            let line = (report.results[i].line.checked_sub(1))
+                .and_then(|at| files[&file].get(at))
+                .and_then(|text| serde_json::from_str::<api::Recorded>(text).ok());
+            let Some(line) = line else {
+                continue;
+            };
+            let (outcome, freed) = api::judge::outcome_with_free_places(&line, &free);
+            if outcome == Outcome::Pass {
+                report.results[i].outcome = Outcome::Pass;
+                judged += 1;
+                moved.extend(freed);
+            }
+        }
+        if judged > 0 {
+            let reasons: Vec<String> = (moved.iter())
+                .map(|a| format!("{a}: {}", evidence[a].join("; ")))
+                .collect();
+            cases.record(
+                "api",
+                format!(
+                    "{left} against {right}: {judged} listings equal with the places of {} left \
+                     free inside their ties ({})",
+                    moved.iter().cloned().collect::<Vec<_>>().join(", "),
+                    reasons.join(" | ")
+                ),
+            );
+        }
+    }
+    report
 }
 
 fn check_bans(
@@ -1315,6 +1415,246 @@ fn check_bans(
         format!("{others} bans of other addresses (not gated)"),
     );
     Ok(())
+}
+
+/// The seconds a suite run's fault window lasts after its recovery, as the suites' recipe gives it.
+pub const SUITE_WINDOW_SECONDS: i64 = 30;
+
+/// The last millisecond of the year 9999, the latest time a recorded text can name.
+const LAST_MILLISECOND: f64 = 253_402_300_799_999.0;
+
+/// The longest a suite's network may take to converge on one tip after a heal: the window the
+/// partition and heal scenario gives its check that every node is on one chain (24 blocks of
+/// 8 s).
+pub const HEAL_CONVERGENCE_SECONDS: i64 = 192;
+
+/// The block-lag rule of a suite run's `propagation-lag` step, judged from the run's records:
+/// `Ok(None)` when the recipe records the step without judging it (`propagation-lag.json`'s
+/// `judged`; only the network suite judges it), else the problems, none when the rule holds.
+///
+/// As the recipe's rule: a node is timed from when it first holds a tip within one block of the
+/// highest, and every block must reach it within [`LAG_LIMIT_SECONDS`] of its first arrival
+/// at any node, outside the fault windows of `actions.jsonl` (a stop, start or restart: that node
+/// from its start to [`SUITE_WINDOW_SECONDS`] after its end; a partition: every node from its
+/// start to that long after its heal's end). And after each heal, the minority (the nodes of
+/// every side of the partition but its largest) has the window the mixed run's check gives it:
+/// from the heal's start to [`SUITE_WINDOW_SECONDS`] after the network converged, the first
+/// moment from the heal's end on when every node holds one tip (`propagation.jsonl`). A partition
+/// without a heal, a heal without a partition, and a network that does not converge within
+/// [`HEAL_CONVERGENCE_SECONDS`] of the heal are problems themselves, and so are a run without a
+/// block arrival to judge, a partitioned node without one, and a report that names a limit other
+/// than [`LAG_LIMIT_SECONDS`] (the bound is the rule's, not the run's).
+pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
+    let report = run::read_json(&run_dir.join("propagation-lag.json"))?;
+    if report.get("judged").and_then(Value::as_bool) != Some(true) {
+        return Ok(None);
+    }
+    // The rule's bound is one block time, whatever the run's report names: a report that names
+    // another is a problem, and the blocks are judged against the rule's.
+    let limit = LAG_LIMIT_SECONDS;
+    let mut problems = Vec::new();
+    let named = report.get("limitSeconds").and_then(Value::as_f64);
+    if named.is_some_and(|named| (named - limit).abs() > f64::EPSILON) {
+        problems.push(format!(
+            "propagation-lag.json names a limit of {} s, not the rule's {limit} s",
+            named.unwrap_or_default()
+        ));
+    }
+    let window = SUITE_WINDOW_SECONDS * 1_000;
+    let mut rows: Vec<(i64, String, u64, String)> = Vec::new();
+    for r in run::read_lines(&run_dir.join("propagation.jsonl"))? {
+        // A time as the recipe reads it: a text, or milliseconds since the Unix epoch (within the
+        // years a text can name).
+        let t = r.get("t").and_then(|t| match t {
+            Value::String(text) => run::parse_time(text),
+            #[allow(clippy::cast_possible_truncation)]
+            Value::Number(ms) => (ms.as_f64())
+                .filter(|f| (0.0..=LAST_MILLISECOND).contains(f))
+                .map(|f| f.round() as i64),
+            _ => None,
+        });
+        let node = r.get("node").and_then(Value::as_str);
+        let (Some(t), Some(node), Some(h)) = (t, node, r.get("h").and_then(Value::as_u64)) else {
+            continue;
+        };
+        let id = r.get("id").and_then(Value::as_str).unwrap_or_default();
+        rows.push((t, node.to_owned(), h, id.to_owned()));
+    }
+    rows.sort();
+    if rows.is_empty() {
+        problems.push("propagation.jsonl holds no block arrival to judge".to_owned());
+    }
+    let mut windows = Vec::new();
+    let mut partition: Option<(i64, Vec<Vec<String>>)> = None;
+    let time = |a: &Value, key: &str| a.get(key).and_then(Value::as_str).and_then(run::parse_time);
+    for a in run::read_lines(&run_dir.join("actions.jsonl"))? {
+        let verb = a.get("verb").and_then(Value::as_str).unwrap_or_default();
+        let args: Vec<String> = (a
+            .get("args")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten())
+        .filter_map(|v| match v {
+            Value::String(text) => Some(text.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
+        .collect();
+        let (Some(start), Some(end)) = (time(&a, "start"), time(&a, "end")) else {
+            problems.push(format!("actions.jsonl: a {verb} without its start and end"));
+            continue;
+        };
+        match verb {
+            "partition" => {
+                if partition.is_some() {
+                    problems.push(format!(
+                        "a partition at {} while another stands",
+                        run::format_time(start)
+                    ));
+                }
+                let sides = args
+                    .iter()
+                    .map(|side| side.split(',').map(|n| format!("node{n}")).collect())
+                    .collect();
+                partition = Some((start, sides));
+            }
+            "heal" => {
+                let Some((from, sides)) = partition.take() else {
+                    problems.push(format!(
+                        "a heal at {} without a partition",
+                        run::format_time(start)
+                    ));
+                    continue;
+                };
+                windows.push(run::Window {
+                    fault: "partition".to_owned(),
+                    nodes: Vec::new(),
+                    start: from,
+                    end: end + window,
+                });
+                // A partitioned node without a block arrival shows neither its lag nor its
+                // catch-up: the convergence below would leave it out.
+                let silent: Vec<&String> = (sides.iter().flatten())
+                    .filter(|n| !rows.iter().any(|r| &r.1 == *n))
+                    .collect();
+                if !silent.is_empty() {
+                    for node in silent {
+                        problems.push(format!(
+                            "{node} of the partition holds no block arrival in propagation.jsonl"
+                        ));
+                    }
+                    continue;
+                }
+                match converged(&rows, end) {
+                    None => problems.push(format!(
+                        "the network did not converge on one tip after the heal at {}",
+                        run::format_time(end)
+                    )),
+                    Some(at) if at - end > HEAL_CONVERGENCE_SECONDS * 1_000 => {
+                        problems.push(format!(
+                            "the network converged {:.1} s after the heal at {}, beyond \
+                             {HEAL_CONVERGENCE_SECONDS} s",
+                            seconds(at - end),
+                            run::format_time(end)
+                        ));
+                    }
+                    Some(at) => {
+                        let largest = sides.iter().map(Vec::len).max().unwrap_or(0);
+                        let first = sides.iter().position(|s: &Vec<String>| s.len() == largest);
+                        let minority = (sides.iter().enumerate())
+                            .filter(|(i, _)| Some(*i) != first)
+                            .flat_map(|(_, side)| side.iter().cloned())
+                            .collect();
+                        windows.push(run::Window {
+                            fault: "minority".to_owned(),
+                            nodes: minority,
+                            start,
+                            end: at + window,
+                        });
+                    }
+                }
+            }
+            "stop" | "start" | "restart" => {
+                if let Some(node) = args.first() {
+                    windows.push(run::Window {
+                        fault: verb.to_owned(),
+                        nodes: vec![format!("node{node}")],
+                        start,
+                        end: end + window,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some((from, _)) = partition {
+        problems.push(format!(
+            "the partition at {} has no heal in actions.jsonl",
+            run::format_time(from)
+        ));
+    }
+    let mut first: BTreeMap<u64, i64> = BTreeMap::new();
+    for (t, _, h, _) in &rows {
+        first.entry(*h).or_insert(*t);
+    }
+    let (mut tip, mut joined) = (0, std::collections::BTreeSet::new());
+    let mut late = Vec::new();
+    for (t, node, h, _) in &rows {
+        tip = tip.max(*h);
+        if !joined.contains(node.as_str()) {
+            if h.saturating_add(1) < tip {
+                continue;
+            }
+            joined.insert(node.as_str());
+        }
+        if windows.iter().any(|w| w.concerns(node) && w.contains(*t)) {
+            continue;
+        }
+        let lag = seconds(t - first[h]);
+        if lag > limit {
+            late.push(format!(
+                "{node} got block {h} {lag:.1} s after its first arrival"
+            ));
+        }
+    }
+    if !late.is_empty() {
+        problems.push(format!(
+            "{} blocks later than {limit} s outside the fault windows: {}",
+            late.len(),
+            late.iter().take(10).cloned().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    Ok(Some(problems))
+}
+
+/// The first moment from `from` on when every node of `rows` holds one tip, if any; a block
+/// without its id shows no tip.
+fn converged(rows: &[(i64, String, u64, String)], from: i64) -> Option<i64> {
+    let nodes: std::collections::BTreeSet<&str> = rows.iter().map(|r| r.1.as_str()).collect();
+    let mut last: BTreeMap<&str, &str> = BTreeMap::new();
+    let one = |last: &BTreeMap<&str, &str>| {
+        let tips: std::collections::BTreeSet<_> = last.values().collect();
+        last.len() == nodes.len() && tips.len() == 1 && !tips.contains(&"")
+    };
+    let mut rows = rows.iter().peekable();
+    while let Some((_, node, _, id)) = rows.next_if(|r| r.0 <= from) {
+        last.insert(node, id);
+    }
+    if one(&last) {
+        return Some(from);
+    }
+    for (t, node, _, id) in rows {
+        last.insert(node, id);
+        if one(&last) {
+            return Some(*t);
+        }
+    }
+    None
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn seconds(ms: i64) -> f64 {
+    ms as f64 / 1_000.0
 }
 
 fn check_invariants(
@@ -1792,6 +2132,264 @@ mod tests {
                 .iter()
                 .any(|r| r.outcome.is_failure() && r.label.contains("node4")),
             "{undated:?}"
+        );
+    }
+
+    /// A listing case: its name, node 1's page and node 3's (each wallet an address and a
+    /// balance).
+    type Listing<'a> = (&'a str, &'a [(&'a str, u64)], &'a [(&'a str, u64)]);
+
+    /// A run whose route corpus pairs node 1 (under test) with node 3, with txgen's submissions to
+    /// node 3, a vote node 1 alone refused, and the listings `cases` (name, node 1's page, node
+    /// 3's page; each wallet an address and a balance).
+    fn listing_run(cases: &[Listing<'_>]) -> crate::vectors::testutil::TestDir {
+        let dir = crate::vectors::testutil::TestDir::new("free-places");
+        let root = dir.path();
+        let run = json!({"format": run::FORMAT, "run": "mixed-split", "network": "n", "seed": "4",
+            "nodes": [
+                {"name": "node1", "ip": "10.0.0.11", "implementation": "heartwood"},
+                {"name": "node3", "ip": "10.0.0.13", "implementation": "reference"}],
+            "api": {"left": "node1", "right": "node3"}});
+        std::fs::write(root.join("run.json"), run.to_string()).unwrap();
+        let steps = [
+            json!({"step": "txgen-once", "node": "node3", "ok": true, "submit": "node3"}),
+            json!({"step": "vote-a", "node": "node1", "ok": true,
+                "start": "2026-10-02T00:59:30.000Z", "detail": {"id": "tx-v",
+                "outcome": "rejected", "code": "ERR_APPLY", "wallet": "V"}}),
+            json!({"step": "api-corpus", "node": "node1", "ok": true,
+                "start": "2026-10-02T01:00:00.000Z", "dir": api::RUN_ANSWERS_DIR}),
+            // A refusal after the corpus was recorded moved nothing it holds.
+            json!({"step": "vote-b", "node": "node1", "ok": true,
+                "start": "2026-10-02T01:00:05.000Z", "detail": {"id": "tx-l",
+                "outcome": "rejected", "code": "ERR_APPLY", "wallet": "L"}}),
+        ];
+        let lines = |values: &[Value]| values.iter().map(|v| format!("{v}\n")).collect::<String>();
+        std::fs::write(root.join("steps.jsonl"), lines(&steps)).unwrap();
+        let submitted = |id: &str, sender: &str, response: Value, to: &[&str]| {
+            json!({"event": "submitted", "id": id, "sender": sender, "response": response,
+                "ts": "2026-10-02T00:59:00.000Z",
+                "tx": {"asset": {"transfers": to.iter().map(|t| json!({"recipientId": t})).collect::<Vec<_>>()}}})
+        };
+        let txgen = [
+            json!({"event": "start", "api": "http://10.0.0.13:6003"}),
+            submitted(
+                "tx-g",
+                "G",
+                json!({"outcome": "rejected", "code": "ERR_APPLY"}),
+                &["R"],
+            ),
+            submitted(
+                "tx-b",
+                "B",
+                json!({"outcome": "rejected", "code": "ERR_LOW_FEE"}),
+                &[],
+            ),
+            submitted(
+                "tx-c",
+                "C",
+                json!({"outcome": "accepted", "broadcast": true}),
+                &[],
+            ),
+        ];
+        std::fs::create_dir_all(root.join("txgen/once")).unwrap();
+        std::fs::write(root.join("txgen/once/txgen.jsonl"), lines(&txgen)).unwrap();
+        let page = |list: &[(&str, u64)]| {
+            let data: Vec<Value> = (list.iter())
+                .map(|(a, b)| json!({"address": a, "balance": b.to_string()}))
+                .collect();
+            json!({"status": 200, "headers": {"connection": "close", "x-block-height": "265"},
+                "body": {"meta": {"count": data.len(), "totalCount": data.len()}, "data": data}})
+        };
+        let answers: Vec<Value> = (cases.iter())
+            .map(|(name, left, right)| {
+                json!({"file": "05-wallets.json", "name": name,
+                    "request": {"method": "GET", "path": "/api/wallets"},
+                    "left": page(left), "right": page(right)})
+            })
+            .collect();
+        std::fs::create_dir_all(root.join(api::RUN_ANSWERS_DIR)).unwrap();
+        std::fs::write(
+            root.join(api::RUN_ANSWERS_DIR).join(api::ANSWERS),
+            lines(&answers),
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_tie_place_one_node_s_own_refusal_moved_is_free_and_nothing_else_is() {
+        let wallets = |order: &str| -> Vec<(&'static str, u64)> {
+            (order.split(' '))
+                .map(|a| match a {
+                    "A" => ("A", 100),
+                    "D" => ("D", 1),
+                    "G" => ("G", 50),
+                    "V" => ("V", 50),
+                    "B" => ("B", 50),
+                    "C" => ("C", 50),
+                    _ => ("L", 50),
+                })
+                .collect()
+        };
+        let ours = wallets("A G V B C L D");
+        let dir = listing_run(&[
+            // G's transfer node 3 alone refused: its place in the tie is free.
+            ("moved-g", &ours, &wallets("A V B C G L D")),
+            // V's vote node 1 alone refused: so is its place.
+            ("moved-v", &ours, &wallets("A G B C V L D")),
+            // B's refusal came before the handler: its place is not free.
+            ("moved-b", &ours, &wallets("A G V C B L D")),
+            // C's transaction was accepted and broadcast: neither is its place.
+            ("moved-c", &ours, &wallets("A C G V B L D")),
+            // L's refusal came after the corpus was recorded.
+            ("moved-l", &ours, &wallets("A L G V B C D")),
+            // G moved and the other wallets out of their order too.
+            ("moved-g-and-more", &ours, &wallets("A V C B G L D")),
+        ]);
+        let run_dir = dir.path();
+        let manifest = Manifest::load(run_dir).unwrap();
+        let report = api::compare(&ApiCompareArgs::Recorded {
+            run: run_dir.to_path_buf(),
+        })
+        .unwrap();
+        assert_eq!(
+            report
+                .results
+                .iter()
+                .filter(|r| r.outcome.is_failure())
+                .count(),
+            6
+        );
+        let mut cases = Cases {
+            run: "mixed-split".into(),
+            results: Vec::new(),
+        };
+        let report = free_places(run_dir, &manifest, report, &mut cases);
+        let outcome = |name: &str| {
+            let r = report.results.iter().find(|r| r.label == name).unwrap();
+            r.outcome.clone()
+        };
+        assert_eq!(outcome("moved-g"), Outcome::Pass);
+        assert_eq!(outcome("moved-v"), Outcome::Pass);
+        for name in ["moved-b", "moved-c", "moved-l", "moved-g-and-more"] {
+            assert!(outcome(name).is_failure(), "{name}");
+        }
+        let recorded: Vec<&str> = cases.results.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(recorded.len(), 1, "{recorded:?}");
+        assert!(
+            recorded[0].contains("2 listings equal with the places of G, V left free")
+                && recorded[0]
+                    .contains("transaction tx-g refused by node3 (ERR_APPLY), never sent to node1")
+                && recorded[0]
+                    .contains("transaction tx-v refused by node1 (ERR_APPLY), never sent to node3"),
+            "{recorded:?}"
+        );
+        // Evidence that cannot be read fails rather than frees: no node for txgen's submissions.
+        std::fs::write(run_dir.join("steps.jsonl"), "").unwrap();
+        std::fs::write(
+            run_dir.join("txgen/once/txgen.jsonl"),
+            "{\"event\":\"submitted\",\"id\":\"tx-g\"}\n",
+        )
+        .unwrap();
+        let report = api::compare(&ApiCompareArgs::Recorded {
+            run: run_dir.to_path_buf(),
+        })
+        .unwrap();
+        let mut cases = Cases {
+            run: "mixed-split".into(),
+            results: Vec::new(),
+        };
+        let report = free_places(run_dir, &manifest, report, &mut cases);
+        assert!(report.results.iter().all(|r| r.outcome.is_failure()));
+        assert!(cases.results.iter().any(|r| {
+            r.outcome.is_failure()
+                && r.label
+                    .contains("the wallets node1 or node3 alone re-indexed")
+        }));
+    }
+
+    #[test]
+    fn a_refusal_whose_time_or_whose_corpus_s_is_unknown_frees_nothing() {
+        let wallets = |order: &str| -> Vec<(&'static str, u64)> {
+            (order.split(' '))
+                .map(|a| match a {
+                    "A" => ("A", 100),
+                    "D" => ("D", 1),
+                    "G" => ("G", 50),
+                    "T" => ("T", 50),
+                    "B" => ("B", 50),
+                    _ => ("L", 50),
+                })
+                .collect()
+        };
+        let ours = wallets("A G B L T D");
+        let dir = listing_run(&[
+            ("moved-g", &ours, &wallets("A B L G T D")),
+            ("moved-l", &ours, &wallets("A L G B T D")),
+            ("moved-t", &ours, &wallets("A T G B L D")),
+        ]);
+        let run_dir = dir.path();
+        let manifest = Manifest::load(run_dir).unwrap();
+        let judge = |cases: &mut Cases| {
+            let report = api::compare(&ApiCompareArgs::Recorded {
+                run: run_dir.to_path_buf(),
+            })
+            .unwrap();
+            free_places(run_dir, &manifest, report, cases)
+        };
+        let fresh = || Cases {
+            run: "mixed-split".into(),
+            results: Vec::new(),
+        };
+        // The recipient a transaction names outside its transfers is a party too: T's place is
+        // free with G's.
+        let txgen = run_dir.join("txgen/once/txgen.jsonl");
+        let text = std::fs::read_to_string(&txgen).unwrap();
+        std::fs::write(
+            &txgen,
+            text.replace(
+                r#""asset":{"transfers":["#,
+                r#""recipientId":"T","asset":{"transfers":["#,
+            ),
+        )
+        .unwrap();
+        let mut cases = fresh();
+        let report = judge(&mut cases);
+        let outcome = |report: &Report, name: &str| {
+            let r = report.results.iter().find(|r| r.label == name).unwrap();
+            r.outcome.clone()
+        };
+        assert_eq!(outcome(&report, "moved-g"), Outcome::Pass);
+        assert_eq!(outcome(&report, "moved-t"), Outcome::Pass);
+        assert!(outcome(&report, "moved-l").is_failure());
+        // A submission without its time is no evidence that it came before the corpus.
+        let text = std::fs::read_to_string(&txgen).unwrap();
+        std::fs::write(
+            &txgen,
+            text.replace(r#""ts":"2026-10-02T00:59:00.000Z","#, ""),
+        )
+        .unwrap();
+        let mut cases = fresh();
+        let report = judge(&mut cases);
+        assert!(outcome(&report, "moved-g").is_failure());
+        // A corpus whose recording has no time: no refusal can be placed before it, and the
+        // evidence fails rather than freeing the refusal after it.
+        let steps = run_dir.join("steps.jsonl");
+        let text = std::fs::read_to_string(&steps).unwrap();
+        std::fs::write(
+            &steps,
+            text.replace(r#""start":"2026-10-02T01:00:00.000Z","#, ""),
+        )
+        .unwrap();
+        let mut cases = fresh();
+        let report = judge(&mut cases);
+        assert!(outcome(&report, "moved-l").is_failure());
+        assert!(
+            cases.results.iter().any(|r| r.outcome.is_failure()
+                && r.label
+                    .contains("the wallets node1 or node3 alone re-indexed")),
+            "{:?}",
+            cases.results
         );
     }
 }

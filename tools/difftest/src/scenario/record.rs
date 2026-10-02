@@ -424,17 +424,27 @@ fn planned(run: &Path) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// The scripted steps of a run (`steps.jsonl`) that did not meet their expectation.
+/// The scripted steps of a run (`steps.jsonl`) that did not meet their expectation; the block-lag
+/// step judged from the run's records ([`crate::live::suite_propagation`]) where the recipe judged it.
 fn failed_steps(run: &Path) -> std::result::Result<(usize, Vec<String>), String> {
     let path = run.join("steps.jsonl");
     let lines = crate::live::run::read_lines(&path).map_err(|e| e.to_string())?;
     let failed = lines
         .iter()
-        .filter(|l| l.get("ok") != Some(&Value::Bool(true)))
-        .map(|l| {
+        .filter_map(|l| {
             let step = l.get("step").and_then(Value::as_str).unwrap_or("?");
             let node = l.get("node").and_then(Value::as_str).unwrap_or("?");
-            format!("{step} ({node})")
+            if step == "propagation-lag" {
+                match crate::live::suite_propagation(run) {
+                    Ok(None) => {}
+                    Ok(Some(problems)) if problems.is_empty() => return None,
+                    Ok(Some(problems)) => {
+                        return Some(format!("{step} ({node}): {}", problems.join("; ")));
+                    }
+                    Err(e) => return Some(format!("{step} ({node}): {e}")),
+                }
+            }
+            (l.get("ok") != Some(&Value::Bool(true))).then(|| format!("{step} ({node})"))
         })
         .collect();
     Ok((lines.len(), failed))

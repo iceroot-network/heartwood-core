@@ -20,6 +20,9 @@
 //! - the pool list compares its `meta`, and its transactions as a set when both pages hold the
 //!   whole pool (the order of equal priorities is the order of arrival).
 //!
+//! A live run's check may leave free, inside its tie, the place of a wallet one node of the pair
+//! alone re-indexed by its own refusals ([`outcome_with_free_places`]): nothing else may differ.
+//!
 //! A case marked with a documented difference (`heightAboveTip`, `storeFailure`, `peersIpFilter`,
 //! `tieOrder`, `decodeReason`, `roundOrder`, `estimatedCount`, `feeTypes`, `specKeptOnly`)
 //! passes as documented when the answers differ and the node under test shows the documented
@@ -31,7 +34,7 @@
 //! last item (a tie that the page's start or end cuts).
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use heartwood_api::RouteId;
 use heartwood_api::resources::fee_statistics::REGISTERED;
@@ -154,6 +157,153 @@ pub fn outcome(line: &Recorded) -> Outcome {
         Some(reason) => Outcome::Documented(reason.to_owned()),
         None => Outcome::Mismatch(differences),
     }
+}
+
+/// The outcome of one recorded request of a listing over the state's indexes (`/wallets`,
+/// `/wallets/top`, a delegate's voters, `/delegates`) with the places of the wallets `free` left
+/// free inside their ties, and the free wallets whose places the two answers hold apart.
+///
+/// The listings follow the indexes' orders in their ties, and a node's own refusals re-index
+/// their parties in its state: a wallet whose transactions one node of the pair alone refused
+/// may stand elsewhere in its tie on that node, with nothing else changed. The answers are
+/// judged as [`outcome`] judges them after the control's page is put in the order of the node's
+/// under test, which is allowed only when both pages hold the same wallets, the other wallets in
+/// one order, and every pair of wallets the reordering swaps ties on the listing's order (the
+/// `orderBy` properties, then the route's own: the balance for the wallet listings, the rank and
+/// the username for the delegates). Any other difference is judged as without it: a wrong tie
+/// order of any other wallet, a free wallet moved across another value of the order, or a
+/// difference of a value still fails.
+pub fn outcome_with_free_places(
+    line: &Recorded,
+    free: &BTreeSet<String>,
+) -> (Outcome, Vec<String>) {
+    let plain = outcome(line);
+    if !plain.is_failure() || free.is_empty() {
+        return (plain, Vec::new());
+    }
+    let request = line.request.as_ref();
+    let route = request.and_then(|r| route_of(&r.method, &r.path));
+    let tail: &[&str] = match route {
+        Some(RouteId::WalletsIndex | RouteId::WalletsTop | RouteId::DelegatesVoters) => {
+            &["balance"]
+        }
+        // The reference sorts the delegates by rank, then username, after any `orderBy`.
+        Some(RouteId::DelegatesIndex) => &["rank", "username"],
+        _ => return (plain, Vec::new()),
+    };
+    let (
+        Some(Reply::Answer {
+            status: 200,
+            body: left,
+            ..
+        }),
+        Some(Reply::Answer {
+            status: 200,
+            headers,
+            body: right,
+        }),
+    ) = (&line.left, &line.right)
+    else {
+        return (plain, Vec::new());
+    };
+    let query = request
+        .map(|r| parse_query(&r.query))
+        .unwrap_or(Value::Null);
+    let mut order = order_properties(&query);
+    order.extend(tail.iter().map(|p| (*p).to_owned()));
+    let (Some(ours), Some(theirs)) = (left["data"].as_array(), right["data"].as_array()) else {
+        return (plain, Vec::new());
+    };
+    let Some((reordered, moved)) = free_reorder(ours, theirs, free, &order) else {
+        return (plain, Vec::new());
+    };
+    let mut body = right.clone();
+    body["data"] = Value::Array(reordered);
+    let mut freed = line.clone();
+    freed.right = Some(Reply::Answer {
+        status: 200,
+        headers: headers.clone(),
+        body,
+    });
+    match outcome(&freed) {
+        Outcome::Pass => (Outcome::Pass, moved),
+        _ => (plain, Vec::new()),
+    }
+}
+
+/// The properties a query's `orderBy` sorts by, in order (`property:direction`, comma-separated
+/// or repeated).
+fn order_properties(query: &Value) -> Vec<String> {
+    let entries: Vec<&str> = match &query["orderBy"] {
+        Value::String(text) => vec![text.as_str()],
+        Value::Array(items) => items.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    };
+    entries
+        .iter()
+        .flat_map(|entry| entry.split(','))
+        .filter_map(|one| one.split(':').next())
+        .filter(|property| !property.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The value of an item at the dotted `path` (`attributes.delegate.producedBlocks`), `null` when
+/// it has none.
+fn at_path<'v>(item: &'v Value, path: &str) -> &'v Value {
+    path.split('.').fold(item, |at, key| &at[key])
+}
+
+/// The control's page `theirs` in the order of `ours` and the free wallets it moves, when the two
+/// pages differ only by the places of wallets of `free` inside their ties on `order`.
+fn free_reorder(
+    ours: &[Value],
+    theirs: &[Value],
+    free: &BTreeSet<String>,
+    order: &[String],
+) -> Option<(Vec<Value>, Vec<String>)> {
+    let address = |item: &Value| item["address"].as_str().map(str::to_owned);
+    let ours: Vec<String> = ours.iter().map(address).collect::<Option<_>>()?;
+    let theirs_at: BTreeMap<String, (usize, &Value)> = (theirs.iter().enumerate())
+        .map(|(at, item)| Some((address(item)?, (at, item))))
+        .collect::<Option<_>>()?;
+    // The same wallets on both pages, each once, and the others in one order.
+    let ours_once: BTreeSet<&String> = ours.iter().collect();
+    if theirs_at.len() != theirs.len()
+        || ours_once.len() != ours.len()
+        || ours.len() != theirs.len()
+        || ours.iter().any(|a| !theirs_at.contains_key(a))
+    {
+        return None;
+    }
+    let others = |list: &mut dyn Iterator<Item = String>| -> Vec<String> {
+        list.filter(|a| !free.contains(a)).collect()
+    };
+    let theirs_order: Vec<String> = theirs.iter().filter_map(address).collect();
+    if others(&mut ours.iter().cloned()) != others(&mut theirs_order.into_iter()) {
+        return None;
+    }
+    // Every pair the reordering swaps ties on the order.
+    let key = |a: &str| -> Vec<Value> {
+        let item = theirs_at.get(a).map_or(&Value::Null, |(_, item)| *item);
+        order.iter().map(|p| at_path(item, p).clone()).collect()
+    };
+    let mut moved = BTreeSet::new();
+    for (i, a) in ours.iter().enumerate() {
+        for b in &ours[i + 1..] {
+            if theirs_at[a].0 > theirs_at[b].0 {
+                if key(a) != key(b) {
+                    return None;
+                }
+                moved.extend([a, b].into_iter().filter(|x| free.contains(*x)).cloned());
+            }
+        }
+    }
+    if moved.is_empty() {
+        return None;
+    }
+    let reordered = ours.iter().map(|a| theirs_at[a].1.clone()).collect();
+    Some((reordered, moved.into_iter().collect()))
 }
 
 fn value(path: &str, expected: Value, actual: Value) -> Difference {
@@ -699,6 +849,165 @@ mod tests {
 
     fn is(outcome: &Outcome, difference: ApiDifference) -> bool {
         matches!(outcome, Outcome::Documented(r) if r == difference.reason())
+    }
+
+    /// A recorded `/api/wallets` request with `query`, its pages the wallets `left` and `right`
+    /// (each an address and a balance).
+    fn wallets(query: &str, left: &[(&str, u64)], right: &[(&str, u64)]) -> Recorded {
+        let items = |list: &[(&str, u64)]| -> Value {
+            let items: Vec<Value> = (list.iter())
+                .map(|(a, b)| json!({"address": a, "balance": b.to_string(), "nonce": "1"}))
+                .collect();
+            json!({"meta": {"count": items.len(), "totalCount": items.len()}, "data": items})
+        };
+        let mut line = list(
+            query,
+            "",
+            answer(200, items(left)),
+            answer(200, items(right)),
+        );
+        line.documented = None;
+        if let Some(request) = &mut line.request {
+            request.path = "/api/wallets".into();
+        }
+        line
+    }
+
+    fn free(addresses: &[&str]) -> BTreeSet<String> {
+        addresses.iter().map(|a| (*a).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_wallet_one_node_re_indexed_is_free_inside_its_tie_only() {
+        let ours = [("A", 100), ("G", 50), ("B", 50), ("C", 50), ("D", 10)];
+        let theirs = [("A", 100), ("B", 50), ("C", 50), ("G", 50), ("D", 10)];
+        let line = wallets("", &ours, &theirs);
+        assert!(outcome(&line).is_failure());
+        // The re-indexed wallet's place is free in its tie.
+        let (judged, moved) = outcome_with_free_places(&line, &free(&["G"]));
+        assert_eq!((judged, moved), (Outcome::Pass, vec!["G".to_owned()]));
+        // Without the evidence, or with another wallet's, the tie order fails.
+        assert!(outcome_with_free_places(&line, &free(&[])).0.is_failure());
+        assert!(
+            outcome_with_free_places(&line, &free(&["B"]))
+                .0
+                .is_failure()
+        );
+        // Another wallet out of place as well: still a failure.
+        let swapped = [("A", 100), ("C", 50), ("B", 50), ("G", 50), ("D", 10)];
+        let line = wallets("", &ours, &swapped);
+        assert!(
+            outcome_with_free_places(&line, &free(&["G"]))
+                .0
+                .is_failure()
+        );
+        // The free wallet across another value of the order: no tie explains it.
+        let across = [("A", 100), ("B", 50), ("C", 50), ("D", 10), ("G", 50)];
+        let line = wallets("", &ours, &across);
+        assert!(
+            outcome_with_free_places(&line, &free(&["G"]))
+                .0
+                .is_failure()
+        );
+        // A value that differs is a difference whatever the places.
+        let richer = [("A", 100), ("B", 50), ("C", 50), ("G", 51), ("D", 10)];
+        let line = wallets("", &ours, &richer);
+        assert!(
+            outcome_with_free_places(&line, &free(&["G"]))
+                .0
+                .is_failure()
+        );
+        // Another wallet on the page in its place (a page's end): not a place inside a tie.
+        let other = [("A", 100), ("B", 50), ("C", 50), ("E", 50), ("D", 10)];
+        let line = wallets("", &ours, &other);
+        assert!(
+            outcome_with_free_places(&line, &free(&["G", "E"]))
+                .0
+                .is_failure()
+        );
+        // A wallet twice on one page and another missing: not the same wallets.
+        let twice = [("A", 100), ("G", 50), ("G", 50), ("C", 50), ("D", 10)];
+        let line = wallets("", &twice, &theirs);
+        assert!(
+            outcome_with_free_places(&line, &free(&["G", "B"]))
+                .0
+                .is_failure()
+        );
+        // The tie is the order's: on `orderBy` and then the balance.
+        let by_nonce =
+            |a: &str, n: &str, b: u64| json!({"address": a, "balance": b.to_string(), "nonce": n});
+        let page =
+            |items: Vec<Value>| json!({"meta": {"count": 3, "totalCount": 3}, "data": items});
+        let line = list(
+            "orderBy=nonce:desc",
+            "",
+            answer(
+                200,
+                page(vec![
+                    by_nonce("G", "2", 50),
+                    by_nonce("B", "1", 50),
+                    by_nonce("C", "1", 50),
+                ]),
+            ),
+            answer(
+                200,
+                page(vec![
+                    by_nonce("B", "1", 50),
+                    by_nonce("G", "2", 50),
+                    by_nonce("C", "1", 50),
+                ]),
+            ),
+        );
+        let mut line = line;
+        line.documented = None;
+        if let Some(request) = &mut line.request {
+            request.path = "/api/wallets".into();
+        }
+        assert!(
+            outcome_with_free_places(&line, &free(&["G"]))
+                .0
+                .is_failure()
+        );
+        // The delegates' listing is ordered by rank, then username: a free delegate placed
+        // against its rank is no tie.
+        let delegate = |name: &str, rank: u64| json!({"username": name, "address": name, "rank": rank, "votes": "0"});
+        let delegates = |items: Vec<Value>| {
+            let mut line = list(
+                "",
+                "",
+                answer(
+                    200,
+                    json!({"meta": {"count": 3, "totalCount": 3}, "data": [
+                        delegate("B", 1), delegate("C", 2), delegate("G", 3)]}),
+                ),
+                answer(
+                    200,
+                    json!({"meta": {"count": 3, "totalCount": 3}, "data": items}),
+                ),
+            );
+            line.documented = None;
+            if let Some(request) = &mut line.request {
+                request.path = "/api/delegates".into();
+            }
+            line
+        };
+        let line = delegates(vec![delegate("G", 3), delegate("B", 1), delegate("C", 2)]);
+        assert!(outcome(&line).is_failure());
+        assert!(
+            outcome_with_free_places(&line, &free(&["G"]))
+                .0
+                .is_failure()
+        );
+        // A route that is not a listing over the state is judged as it is.
+        let mut blocks = wallets("", &ours, &theirs);
+        if let Some(request) = &mut blocks.request {
+            request.path = "/api/blocks".into();
+        }
+        assert!(
+            outcome_with_free_places(&blocks, &free(&["G"]))
+                .0
+                .is_failure()
+        );
     }
 
     #[test]
