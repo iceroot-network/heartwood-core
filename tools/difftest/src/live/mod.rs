@@ -318,7 +318,9 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
     if MIXED_RUNS.contains(&manifest.run.as_str())
         || MIXED_FORGING_RUNS.contains(&manifest.run.as_str())
     {
-        windows.extend(run::minority_window(&manifest, &run::steps(run_dir)?));
+        let steps = run::steps(run_dir)?;
+        windows.extend(run::minority_window(&manifest, &steps));
+        windows.extend(mixed_forging::heal_window(&manifest, &steps));
     }
     // The route corpus first: whether its judge is built in this tree decides how a failed
     // recording of it counts.

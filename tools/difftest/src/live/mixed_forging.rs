@@ -390,6 +390,35 @@ fn evidence(run: &ForgingRun<'_>, data: &Data) -> Vec<String> {
     problems
 }
 
+/// The window of a partition's minority after the heal in a run that declares no minority (the
+/// mixed run): the nodes of every side of the `partition` step but its largest, from the `heal`
+/// step's start to `window_seconds` after the end of the `converged` step, as
+/// [`run::minority_window`] gives it for a declared one. Until the recipe sees one tip (and
+/// restarts a relay still behind 60 s after the heal) the minority's late blocks and its lines are
+/// the heal's, not a relay's.
+pub(super) fn heal_window(manifest: &Manifest, steps: &[Step]) -> Option<Window> {
+    if manifest.minority.is_some() {
+        return None;
+    }
+    let sides = sides(steps.iter().find(|s| s.name == "partition")?)?;
+    let largest = sides.iter().map(Vec::len).max()?;
+    let first_largest = sides.iter().position(|side| side.len() == largest)?;
+    let nodes: Vec<String> = sides
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != first_largest)
+        .flat_map(|(_, side)| side.iter().cloned())
+        .collect();
+    let heal = steps.iter().find(|s| s.name == "heal")?.start?;
+    let converged = steps.iter().find(|s| s.name == "converged")?.time("end")?;
+    (!nodes.is_empty() && converged >= heal).then(|| Window {
+        fault: "minority".to_owned(),
+        nodes,
+        start: heal,
+        end: converged.saturating_add(manifest.window_seconds.saturating_mul(1_000)),
+    })
+}
+
 /// The sides a `partition` step recorded, as node names.
 fn sides(step: &Step) -> Option<Vec<Vec<String>>> {
     let groups = step
@@ -630,6 +659,68 @@ pub(super) fn one_tip(run: &ForgingRun<'_>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_undeclared_minority_s_convergence_after_the_heal_is_its_window() {
+        let at = |text: &str| run::parse_time(text).expect("a time");
+        let step = |name: &str, record: Value| Step {
+            name: name.to_owned(),
+            node: "all".to_owned(),
+            ok: true,
+            start: record["start"].as_str().and_then(run::parse_time),
+            record,
+        };
+        let steps = vec![
+            step(
+                "partition",
+                serde_json::json!({"start": "2026-10-02T01:05:16.556Z",
+                    "groups": [["node1", "node2", "node3"], ["node4", "node5"]]}),
+            ),
+            step(
+                "heal",
+                serde_json::json!({"start": "2026-10-02T01:06:52.990Z"}),
+            ),
+            step(
+                "converged",
+                serde_json::json!({"start": "2026-10-02T01:06:53.298Z",
+                    "end": "2026-10-02T01:08:08.142Z"}),
+            ),
+        ];
+        let mut manifest = Manifest {
+            run: "mixed".into(),
+            network: "b8-mixed".into(),
+            dry_run: false,
+            seed: "4".into(),
+            round_length: 53,
+            block_time: 8,
+            stop_height: 265,
+            control: "node1".into(),
+            nodes: Vec::new(),
+            corpora: BTreeMap::new(),
+            pair: None,
+            minority: None,
+            api: None,
+            api_extra: Vec::new(),
+            window_seconds: 30,
+            status: "complete".into(),
+            relay_image: None,
+            relay_binary_sha256: None,
+            worktree: None,
+        };
+        let window = heal_window(&manifest, &steps).expect("a window");
+        assert_eq!(window.fault, "minority");
+        assert_eq!(window.nodes, ["node4", "node5"]);
+        assert_eq!(window.start, at("2026-10-02T01:06:52.990Z"));
+        assert_eq!(window.end, at("2026-10-02T01:08:38.142Z"));
+        // Node 5's block 165, 37 s after its first arrival elsewhere, falls inside it.
+        assert!(window.contains(at("2026-10-02T01:07:45.000Z")) && window.concerns("node5"));
+        assert!(!window.concerns("node1"));
+        // A declared minority has its own window; a run without a converged step has none.
+        manifest.minority = Some((vec!["node4".to_owned()], "live-x".to_owned()));
+        assert_eq!(heal_window(&manifest, &steps), None);
+        manifest.minority = None;
+        assert_eq!(heal_window(&manifest, &steps[..2]), None);
+    }
 
     fn data(reach: u64, has_quorum: u64, no_quorum: u64, status: u64) -> Data {
         let validator = Validator {
