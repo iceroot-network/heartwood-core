@@ -289,6 +289,28 @@ fn private_key_refuses_a_key_that_is_not_64_hexadecimal_characters() {
 }
 
 #[test]
+fn private_key_checks_the_key_before_it_reads_the_file() {
+    // The reference's validator runs before its `require`: a bad key with no file is the key's
+    // refusal, and the file is not read.
+    let instance = instance(&scratch("key-first"));
+    fs::create_dir_all(&instance.paths.config).unwrap();
+    let refused = forger_private_key(&instance, "xyz").unwrap_err();
+    assert_eq!(refused, ConfigError::Key);
+}
+
+#[test]
+fn private_key_refuses_a_fifo_without_waiting_for_a_writer() {
+    let instance = instance(&scratch("fifo"));
+    fs::create_dir_all(&instance.paths.config).unwrap();
+    nix::unistd::mkfifo(&delegates(&instance), nix::sys::stat::Mode::S_IRWXU).unwrap();
+    let (sent, got) = std::sync::mpsc::channel();
+    std::thread::spawn(move || sent.send(forger_private_key(&instance, KEY)));
+    let done = got.recv_timeout(std::time::Duration::from_secs(10));
+    let done = done.expect("the command waits for a writer of the FIFO");
+    assert!(matches!(done, Err(ConfigError::Io { .. })), "{done:?}");
+}
+
+#[test]
 fn private_key_refuses_a_symbolic_link_and_leaves_its_target() {
     let instance = with_file("link", "{\"keys\": []}\n");
     let target = instance.paths.config.join("elsewhere.json");

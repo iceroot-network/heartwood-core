@@ -143,6 +143,8 @@ pub fn forger(
 /// `delegates.json`.
 pub fn forger_private_key(instance: &Instance, key: &str) -> Result<(), ConfigError> {
     let path = instance.paths.config.join("delegates.json");
+    // The key is checked before the file is read, as the reference validates its flags first.
+    with_key("{}", key)?;
     let text = match read_file(&path) {
         Err(e) if e.kind() == ErrorKind::NotFound => return Err(ConfigError::Absent(path)),
         read => read.map_err(|e| io(&path, e))?,
@@ -172,7 +174,8 @@ fn read_file(path: &Path) -> std::io::Result<Zeroizing<String>> {
     if fs::symlink_metadata(path)?.is_symlink() {
         return Err(std::io::Error::other("is a symbolic link"));
     }
-    let flags = OFlag::O_NOFOLLOW.bits();
+    // A FIFO in the file's place reads as empty instead of waiting for a writer.
+    let flags = (OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK).bits();
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(flags)
