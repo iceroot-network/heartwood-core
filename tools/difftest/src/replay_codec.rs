@@ -206,6 +206,40 @@ fn describe_ping(pong: &Value) -> String {
     )
 }
 
+/// Why a non-strict reading that accepts a malformed `id` is a documented difference.
+const NON_STRICT_ID: &str = "a non-strict reading of JSON whose `id` is present and malformed: \
+    the reference's schema checks the form of an id in either mode and refuses it, while \
+    Heartwood's non-strict reading does not look at the id (the strict reading does)";
+
+/// Whether the reference refused `expected` for its `id` alone.
+fn refuses_id_only(expected: &Expected) -> bool {
+    matches!(expected, Expected::Error(error)
+        if error.class == "TransactionSchemaError"
+            && error.message.split(", ").all(|part| part.starts_with("data.id ")))
+}
+
+/// `outcome` as this replay reports it. Where both sides refuse, the replay compares what the
+/// targets promise, the verdicts, not the reference's error class: the payload decoder's
+/// refusals have more than one class in the reference (a text too short to hold a checksum is a
+/// RangeError, a wrong checksum an Error), and a transaction's text is refused by its JSON
+/// parser, its number conversions, its type lookup or its schema, each with a class of its own,
+/// where the subject answers with one.
+fn refined(op: &str, input: &Value, expected: &Expected, outcome: Outcome) -> Outcome {
+    match outcome {
+        Outcome::ClassMismatch { .. } if op == "address.toBuffer" || op == "tx.fromData" => {
+            Outcome::Pass
+        }
+        Outcome::VerdictMismatch { .. }
+            if op == "tx.fromData"
+                && input["strict"] == json!(false)
+                && refuses_id_only(expected) =>
+        {
+            Outcome::Documented(NON_STRICT_ID.to_owned())
+        }
+        other => other,
+    }
+}
+
 /// What the reference answers to `op` and what Heartwood's subject makes of it: the judged
 /// outcome, and whether the reference accepted.
 fn judged(
@@ -224,13 +258,12 @@ fn judged(
         height: HEIGHT,
         input,
     };
-    let outcome = match l0::judge_case(&case, &expected, registry) {
-        // The payload decoder's refusals have more than one class in the reference (a text too
-        // short to hold a checksum is a RangeError, a wrong checksum an Error), which the subject
-        // answers with one; this replay compares what the target promises, the verdicts.
-        Outcome::ClassMismatch { .. } if op == "address.toBuffer" => Outcome::Pass,
-        other => other,
-    };
+    let outcome = refined(
+        op,
+        input,
+        &expected,
+        l0::judge_case(&case, &expected, registry),
+    );
     Ok((outcome, accepted))
 }
 
@@ -520,6 +553,58 @@ mod tests {
         ] {
             assert_eq!(address_round_trip(other), None, "{other:?}");
         }
+    }
+
+    fn refusal(class: &str, message: &str) -> Expected {
+        Expected::Error(crate::vectors::ErrorRecord {
+            class: class.into(),
+            message: message.into(),
+        })
+    }
+
+    #[test]
+    fn two_refusals_agree_whatever_their_classes_and_only_an_id_difference_is_documented() {
+        let classes = Outcome::ClassMismatch {
+            oracle: "SyntaxError".into(),
+            heartwood: "TransactionSchemaError".into(),
+        };
+        let input = json!({ "text": "{}", "strict": false });
+        let none = refusal("SyntaxError", "x");
+        for op in ["address.toBuffer", "tx.fromData"] {
+            assert_eq!(refined(op, &input, &none, classes.clone()), Outcome::Pass);
+        }
+        // Another operation's class mismatch stays a failure.
+        assert!(refined("address.validate", &input, &none, classes.clone()).is_failure());
+        let accepted = Outcome::VerdictMismatch {
+            oracle: "rejected".into(),
+            heartwood: "accepted".into(),
+        };
+        let id = refusal(
+            "TransactionSchemaError",
+            "data.id should NOT be longer than 64 characters, data.id should be null",
+        );
+        assert!(matches!(
+            refined("tx.fromData", &input, &id, accepted.clone()),
+            Outcome::Documented(_)
+        ));
+        // Strictly, a malformed id is a refusal on both sides; a refusal for another field, or
+        // for the id and another field, is a difference.
+        let strict = json!({ "text": "{}", "strict": true });
+        assert!(refined("tx.fromData", &strict, &id, accepted.clone()).is_failure());
+        let other = refusal("TransactionSchemaError", "data.fee should be integer");
+        assert!(refined("tx.fromData", &input, &other, accepted.clone()).is_failure());
+        let both = refusal(
+            "TransactionSchemaError",
+            "data.id should be null, data.fee should be integer",
+        );
+        assert!(refined("tx.fromData", &input, &both, accepted).is_failure());
+        // Heartwood refusing what the reference accepts is never documented here.
+        let refused = Outcome::VerdictMismatch {
+            oracle: "accepted".into(),
+            heartwood: "rejected".into(),
+        };
+        let output = Expected::Output(json!({}));
+        assert!(refined("tx.fromData", &input, &output, refused).is_failure());
     }
 
     #[test]
