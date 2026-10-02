@@ -10,7 +10,7 @@ equal byte for byte, including which inputs each side rejects.
 
 | Level | What is compared | Status |
 |---|---|---|
-| L0 | golden vectors written by the reference, against Heartwood | runs against the eleven crates with vector classes: 9,172 of 9,419 records compared, all equal, the other 247 documented differences (see below) |
+| L0 | golden vectors written by the reference, against Heartwood | runs against the thirteen crates with vector classes: 11,641 of 11,956 records compared, all equal, the other 315 documented differences (see below) |
 | L1 | random and mutated cases, one oracle call each | runs: twenty-three properties, from the fee floor to the pool, the crypto files, the peer-to-peer client, the block processor, the forger's blocks and decisions, the relay's forging quorum and the answers it serves its peers, and the API's listings, wallet search and query grammar (see below) |
 | L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets through Heartwood's store and through its block processor and jobs, with seeded reverts, restarts at every height, synthetic blocks, pool sessions and kills of a running relay, every block of those chains rebuilt by the forger, the rollback command's cases on them with the start and the sync after each, and chains that Heartwood forges itself beside the reference (the lockstep producer, in batches of drawn recipes and up to 50 rounds), judged the same way (see below) |
 | L3 | one scenario, observed through the node under test | runs: a scenario on a reference devnet whose observer is a reference relay, then the same with a Heartwood relay in its place; one scenario on a devnet of five reference nodes and on a devnet of five Heartwood relays with their forgers, compared submission by submission; a Heartwood devnet through faults and forger failover, and the scenario suites (transactions, lifecycle, network and a split network) on both implementations (see below) |
@@ -1896,11 +1896,11 @@ models the reference's class. On a run of every class (reference tag `s1-ref-v2`
 
 | Outcome | Records |
 |---|---|
-| compared, equal to the reference | 9,172 |
-| documented differences, each with its form checked on the input or shown by the oracle's answer | 247 |
+| compared, equal to the reference | 11,641 |
+| documented differences, each with its form checked on the input or shown by the oracle's answer | 315 |
 | skipped | 0 |
 
-That is 9,419 records in 33 files, and a run of the image and a local run agree on every one. The
+That is 11,956 records in 35 files, and a run of the image and a local run agree on every one. The
 gate runs with `--strict` (`make l0`), which fails a record that is skipped or has no Rust subject
 as it fails a difference. The builders of the removed types and of the extended header, which
 Heartwood does not have, are documented refusals (checked on the builder's input), so nothing is
