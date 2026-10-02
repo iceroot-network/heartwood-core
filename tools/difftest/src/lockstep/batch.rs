@@ -1340,7 +1340,7 @@ mod tests {
                 .collect();
             types.contains(&0) && types.contains(&2)
         };
-        assert!(!chains.iter().any(|c| revokes(c)));
+        assert!(!chains.iter().any(&revokes));
         let long: Vec<DrawnChain> = (1..=10)
             .map(|i| draw("2026", i, 7, true).unwrap())
             .collect();
