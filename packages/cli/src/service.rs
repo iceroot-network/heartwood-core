@@ -222,7 +222,7 @@ pub fn install_text(
     }
     let path = install(instance, role, manager, binary, dir)?.path;
     Ok(format!(
-        "Wrote {}\nTo enable it, run:\n{steps}\n",
+        "Wrote {}\nTo enable it from the manager's unit directory, run:\n{steps}\n",
         path.display()
     ))
 }
