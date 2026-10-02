@@ -2544,6 +2544,46 @@ fn a_reorg_across_a_round_end_with_reverted_votes_runs_on_the_lockstep_chain() {
 
 #[test]
 #[ignore = "integration"]
+fn the_short_balance_cases_run_on_the_lockstep_chain_and_each_fails_on_a_wrong_answer() {
+    let Some(oracle) = oracle_or_skip("insufficient-balance") else {
+        return;
+    };
+    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("scenarios/transactions/06-insufficient-balance.json");
+    let (ok, text) = lockstep(&file, &oracle);
+    assert!(ok, "{text}");
+    assert!(text.contains("0 failed"), "{text}");
+    // Each case planted wrong on its own: the second-signature registration from a wallet that
+    // can pay it, and the resignation whose fee is exactly the delegate's balance. The file
+    // still expects ERR_APPLY for each, so the reference's pools must tell the difference.
+    let committed = std::fs::read_to_string(&file).expect("the scenario file");
+    let scratch = ScratchDir::new("scenario-short-balance").expect("scratch");
+    for (name, right, wrong) in [
+        (
+            "second-signature-funded",
+            r#""ref": "short-second-signature", "type": "secondSignature", "from": "poor""#,
+            r#""ref": "short-second-signature", "type": "secondSignature", "from": "voter-a""#,
+        ),
+        (
+            "resignation-at-balance",
+            r#""ref": "short-resignation", "type": "delegateResignation", "from": "voter-b", "nonce": 2, "fee": "2400000001""#,
+            r#""ref": "short-resignation", "type": "delegateResignation", "from": "voter-b", "nonce": 2, "fee": "2400000000""#,
+        ),
+    ] {
+        assert_eq!(committed.matches(right).count(), 1, "{name}");
+        let path = scratch.path().join(format!("{name}.json"));
+        std::fs::write(&path, committed.replace(right, wrong)).expect("write");
+        let (ok, out) = lockstep(&path, &oracle);
+        assert!(!ok, "{name}: {out}");
+        assert!(
+            out.contains("the recipe expects ERR_APPLY, both pools answer [\"accept\""),
+            "{name}: {out}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "integration"]
 fn the_lockstep_backend_fails_what_the_chain_does_not_do_and_refuses_what_it_cannot() {
     let Some(oracle) = oracle_or_skip("lockstep refusals") else {
         return;
