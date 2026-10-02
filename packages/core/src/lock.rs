@@ -77,7 +77,8 @@ impl Drop for ProcessLock {
 }
 
 /// Take the locks of the roles that `instance`'s role also holds ([`Role::also_locks`]), and
-/// remove any pid file of theirs (one there names no running process, since the lock was free).
+/// remove any pid file or manager record of theirs (one there names no running process, since the
+/// lock was free).
 /// Those roles' commands see them held, and find no pid to signal.
 pub fn hold_also(instance: &Instance) -> Result<Vec<File>, LockError> {
     let io = |error: &dyn std::fmt::Display| LockError::Io(error.to_string());
@@ -87,7 +88,9 @@ pub fn hold_also(instance: &Instance) -> Result<Vec<File>, LockError> {
         let (path, role) = (other.lock_path(), role.name());
         let file = take_lock_in(&dir, &path).map_err(|e| io(&e))?;
         held.push(file.ok_or(LockError::Held { role, path })?);
-        let _ = dir.remove(&other.pid_path());
+        for stale in [other.pid_path(), other.manager_path()] {
+            let _ = dir.remove(&stale);
+        }
     }
     Ok(held)
 }
@@ -250,6 +253,30 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         probe.join().unwrap();
         assert!(probed() >= 50);
+        fs::remove_dir_all(&data).unwrap();
+    }
+
+    #[test]
+    fn a_core_node_removes_the_manager_records_of_the_roles_it_also_holds() {
+        let data = scratch("lock-also");
+        let paths = Paths {
+            config: data.clone(),
+            data: data.clone(),
+            cache: data.clone(),
+            log: data.clone(),
+            temp: data.clone(),
+        };
+        let relay = instance(Role::Relay, "t", "n", &paths);
+        // An earlier relay unit's record, left when its node stopped.
+        fs::create_dir_all(data.join("run")).unwrap();
+        let record = "{\"manager\": \"systemd\", \"unit\": \"t-n-relay.service\"}\n";
+        fs::write(relay.manager_path(), record).unwrap();
+        let held = hold_also(&instance(Role::Core, "t", "n", &paths)).unwrap();
+        assert!(!relay.manager_path().exists());
+        // The relay's lock is held by the core node, which no unit of the relay runs.
+        let status = heartwood_cli::process::status(&relay).unwrap().status;
+        assert_eq!(status, heartwood_cli::SupervisedStatus::OnlineUnsupervised);
+        drop(held);
         fs::remove_dir_all(&data).unwrap();
     }
 }
