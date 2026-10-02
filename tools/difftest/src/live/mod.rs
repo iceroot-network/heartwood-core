@@ -1433,7 +1433,7 @@ pub const HEAL_CONVERGENCE_SECONDS: i64 = 192;
 /// `judged`; only the network suite judges it), else the problems, none when the rule holds.
 ///
 /// As the recipe's rule: a node is timed from when it first holds a tip within one block of the
-/// highest, and every block must reach it within the file's `limitSeconds` of its first arrival
+/// highest, and every block must reach it within [`LAG_LIMIT_SECONDS`] of its first arrival
 /// at any node, outside the fault windows of `actions.jsonl` (a stop, start or restart: that node
 /// from its start to [`SUITE_WINDOW_SECONDS`] after its end; a partition: every node from its
 /// start to that long after its heal's end). And after each heal, the minority (the nodes of
@@ -1442,16 +1442,24 @@ pub const HEAL_CONVERGENCE_SECONDS: i64 = 192;
 /// moment from the heal's end on when every node holds one tip (`propagation.jsonl`). A partition
 /// without a heal, a heal without a partition, and a network that does not converge within
 /// [`HEAL_CONVERGENCE_SECONDS`] of the heal are problems themselves, and so are a run without a
-/// block arrival to judge and a partitioned node without one.
+/// block arrival to judge, a partitioned node without one, and a report that names a limit other
+/// than [`LAG_LIMIT_SECONDS`] (the bound is the rule's, not the run's).
 pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
     let report = run::read_json(&run_dir.join("propagation-lag.json"))?;
     if report.get("judged").and_then(Value::as_bool) != Some(true) {
         return Ok(None);
     }
-    let limit = report
-        .get("limitSeconds")
-        .and_then(Value::as_f64)
-        .unwrap_or(LAG_LIMIT_SECONDS);
+    // The rule's bound is one block time, whatever the run's report names: a report that names
+    // another is a problem, and the blocks are judged against the rule's.
+    let limit = LAG_LIMIT_SECONDS;
+    let mut problems = Vec::new();
+    let named = report.get("limitSeconds").and_then(Value::as_f64);
+    if named.is_some_and(|named| (named - limit).abs() > f64::EPSILON) {
+        problems.push(format!(
+            "propagation-lag.json names a limit of {} s, not the rule's {limit} s",
+            named.unwrap_or_default()
+        ));
+    }
     let window = SUITE_WINDOW_SECONDS * 1_000;
     let mut rows: Vec<(i64, String, u64, String)> = Vec::new();
     for r in run::read_lines(&run_dir.join("propagation.jsonl"))? {
@@ -1473,7 +1481,6 @@ pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
         rows.push((t, node.to_owned(), h, id.to_owned()));
     }
     rows.sort();
-    let mut problems = Vec::new();
     if rows.is_empty() {
         problems.push("propagation.jsonl holds no block arrival to judge".to_owned());
     }
