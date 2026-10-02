@@ -129,7 +129,7 @@ The configuration directory holds:
 | --- | --- | --- |
 | `crypto/network.json`, `crypto/milestones.json`, `crypto/genesisBlock.json` | both | The network's definition, its rule changes by height with the version floor (section 18), and its first block |
 | `crypto/exceptions.json` | both | Must hold exactly `{}` |
-| `app.json` | both | The components each role starts, in three profiles: `relay`, `forger` and `core` |
+| `app.json` | both | The components each role starts, in three profiles: `relay`, `forger` and `core`. All three must be present, even on a machine that runs one role |
 | `peers.json` | relay | A `list` of seed peers, each `{"ip": ..., "port": ...}`, and an optional `sources` list |
 | `.env` | both | Settings, one `NAME=value` per line. Required, even when empty |
 | `delegates.json` | forger | The forger's private keys (section 7) |
@@ -442,14 +442,32 @@ rm ~/.local/share/solar-core/guide/forger/signing-record.json
 
 **2. Let the relay admit the forger's address.** A relay answers the forger's calls only for
 addresses in the `remoteAccess` option of its `p2p` component in `app.json`. The default is
-loopback only. Put the forger's plain IP address in the list. This writes the relay's profile
-again with the address added (it replaces the file, so keep any other setting you made), and
-restarts the relay. The firewall of a private relay must let the forger's address, and no other,
+loopback only. Put the forger's plain IP address in the list. This writes the file again with
+the address added to the relay's profile (it replaces the file, so keep any other setting you
+made; a node refuses an `app.json` that lacks any of the three profiles, even one it does not
+run), and restarts the relay. The empty `dns` and `ntp` lists are copied from the test network's
+file; the node checks their form and does not use them. The firewall of a private relay must let the forger's address, and no other,
 reach the peer-to-peer port (section 14).
 
 ```sh timeout=120
 cat > ~/.config/solar-core/guide/app.json <<'EOF'
 {
+    "core": {
+        "plugins": [
+            {"package": "@solar-network/logger"},
+            {"package": "@solar-network/state"},
+            {"package": "@solar-network/database"},
+            {"package": "@solar-network/transactions"},
+            {"package": "@solar-network/pool"},
+            {
+                "package": "@solar-network/p2p",
+                "options": {"remoteAccess": ["127.0.0.1", "::ffff:127.0.0.1", "::1"], "dns": [], "ntp": []}
+            },
+            {"package": "@solar-network/blockchain"},
+            {"package": "@solar-network/api"},
+            {"package": "@solar-network/forger"}
+        ]
+    },
     "relay": {
         "plugins": [
             {"package": "@solar-network/logger"},
@@ -468,6 +486,13 @@ cat > ~/.config/solar-core/guide/app.json <<'EOF'
             {"package": "@solar-network/blockchain"},
             {"package": "@solar-network/api"}
         ]
+    },
+    "forger": {
+        "plugins": [
+            {"package": "@solar-network/logger"},
+            {"package": "@solar-network/transactions"},
+            {"package": "@solar-network/forger"}
+        ]
     }
 }
 EOF
@@ -477,11 +502,37 @@ until curl -fsS http://127.0.0.1:6003/api/node/status >/dev/null 2>&1; do sleep 
 
 **3. Point the forger at the relay.** In the forger's `app.json`, the forger component's `hosts`
 lists the relays it uses, by IP address and port, and its profile needs only the logger, the
-transaction code and the forger. Its `.env` may be empty but must exist.
+transaction code and the forger. The file still holds the `core` and `relay` profiles, which this
+machine never runs. Its `.env` may be empty but must exist.
 
 ```sh second
 cat > ~/.config/solar-core/guide/app.json <<'EOF'
 {
+    "core": {
+        "plugins": [
+            {"package": "@solar-network/logger"},
+            {"package": "@solar-network/state"},
+            {"package": "@solar-network/database"},
+            {"package": "@solar-network/transactions"},
+            {"package": "@solar-network/pool"},
+            {"package": "@solar-network/p2p"},
+            {"package": "@solar-network/blockchain"},
+            {"package": "@solar-network/api"},
+            {"package": "@solar-network/forger"}
+        ]
+    },
+    "relay": {
+        "plugins": [
+            {"package": "@solar-network/logger"},
+            {"package": "@solar-network/state"},
+            {"package": "@solar-network/database"},
+            {"package": "@solar-network/transactions"},
+            {"package": "@solar-network/pool"},
+            {"package": "@solar-network/p2p"},
+            {"package": "@solar-network/blockchain"},
+            {"package": "@solar-network/api"}
+        ]
+    },
     "forger": {
         "plugins": [
             {"package": "@solar-network/logger"},
