@@ -1,0 +1,88 @@
+{
+    "core": {
+        "plugins": [
+            {
+                "package": "@solar-network/logger"
+            },
+            {
+                "package": "@solar-network/state"
+            },
+            {
+                "package": "@solar-network/database"
+            },
+            {
+                "package": "@solar-network/transactions"
+            },
+            {
+                "package": "@solar-network/pool"
+            },
+            {
+                "package": "@solar-network/p2p",
+                "options": {
+                    "remoteAccess": [
+                        "127.0.0.1",
+                        "::ffff:127.0.0.1",
+                        "::1"
+                    ]
+                }
+            },
+            {
+                "package": "@solar-network/blockchain"
+            },
+            {
+                "package": "@solar-network/api"
+            },
+            {
+                "package": "@solar-network/forger"
+            }
+        ]
+    },
+    "relay": {
+        "plugins": [
+            {
+                "package": "@solar-network/logger"
+            },
+            {
+                "package": "@solar-network/state"
+            },
+            {
+                "package": "@solar-network/database"
+            },
+            {
+                "package": "@solar-network/transactions"
+            },
+            {
+                "package": "@solar-network/pool"
+            },
+            {
+                "package": "@solar-network/p2p",
+                "options": {
+                    "remoteAccess": [
+                        "127.0.0.1",
+                        "::ffff:127.0.0.1",
+                        "::1"
+                    ]
+                }
+            },
+            {
+                "package": "@solar-network/blockchain"
+            },
+            {
+                "package": "@solar-network/api"
+            }
+        ]
+    },
+    "forger": {
+        "plugins": [
+            {
+                "package": "@solar-network/logger"
+            },
+            {
+                "package": "@solar-network/transactions"
+            },
+            {
+                "package": "@solar-network/forger"
+            }
+        ]
+    }
+}
