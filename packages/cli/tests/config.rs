@@ -196,7 +196,11 @@ fn publish_refuses_a_symbolic_link_in_place_of_a_file_and_leaves_its_target() {
     assert!(matches!(refused, ConfigError::Io { .. }), "{refused:?}");
     assert!(refused.to_string().contains("symbolic link"), "{refused}");
     assert_eq!(fs::read_to_string(&target).unwrap(), "KEPT=1\n");
-    assert!(fs::symlink_metadata(config.join(".env")).unwrap().is_symlink());
+    assert!(
+        fs::symlink_metadata(config.join(".env"))
+            .unwrap()
+            .is_symlink()
+    );
 }
 
 #[test]

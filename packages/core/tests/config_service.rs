@@ -8,7 +8,9 @@ mod common;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 /// The key the tests write.
 const KEY: &str = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
