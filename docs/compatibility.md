@@ -1861,8 +1861,9 @@ re-add (about one in eighty), and, rarely, the online record in a sender's view.
 changed the online record or a full pool evicted, both answers carry their pool session, and a case
 counts as documented only when the pool's own rules find that difference in the two sessions, each
 collation follows from its own pool (in priority order, which keeps each sender's transactions in
-nonce order, every transaction collated or removed until the block is full), the two collations
-list the transactions both pools held in the same order, Heartwood's block holds its collation and
+nonce order, every transaction collated or removed until the block is full), the two collators
+decide alike each transaction both pools held and both reached before a limit stopped them, and
+collate those they both collated in the same order, Heartwood's block holds its collation and
 agrees with the reference's in every field the transactions do not set and in its verification, and
 Heartwood's forger makes the reference's block from the reference's collated transactions. What
 the reference cannot witness is trusted to Heartwood's own pool: the steps after the documented

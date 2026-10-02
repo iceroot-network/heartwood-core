@@ -187,9 +187,9 @@ fn collate_and_forge(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
 ///
 /// - each side's collation follows from its own pool as the collator chooses: in priority order,
 ///   each transaction collated or removed, until the block is full;
-/// - the collations list the transactions that both pools held in the same order, and remove the
-///   same ones among them (when a limit stopped a collation, the one that went less far lists a
-///   beginning of the other's);
+/// - the collators decide alike (collated, or removed) each transaction that both pools held and
+///   both reached before a limit stopped them, and collate those they both collated in the same
+///   order; a transaction one of them did not reach is decided by the other alone;
 /// - Heartwood's block holds its collation and agrees with the reference's block in every field
 ///   that does not depend on the transactions, and in its verification (`block_unexplained`);
 /// - Heartwood's forger makes the reference's block, byte for byte, from the reference's collated
@@ -278,7 +278,10 @@ fn ids(list: &Value) -> Vec<String> {
 /// `their_pool`) and Heartwood's (`ours`, of `our_pool`), differ otherwise than the two pools do;
 /// `None` when they differ only as the pools do. A pool is the contents after the session's last
 /// step (`all`, `highest`), an answer gives `collated` and `removed`, and Heartwood's notes give
-/// the bytes of each transaction and the block's limits.
+/// the bytes of each transaction and the block's limits. A transaction both pools held is
+/// compared where both collators reached it: there it is collated on both sides or removed on
+/// both, and the ones both collated stand in the same order. Where a limit stopped one collator
+/// before it, the other's decision stands alone (the pools' other transactions moved the limit).
 fn unexplained_collation(
     their_pool: &Value,
     theirs: &Value,
@@ -291,43 +294,58 @@ fn unexplained_collation(
         actual: Value::from(what),
     };
     let notes = &ours[NOTES];
-    let stopped_theirs = match follows(their_pool, theirs, notes) {
-        Ok(stopped) => stopped,
-        Err(why) => return Some(problem("$.collated, the reference's", why)),
-    };
-    let stopped_ours = match follows(our_pool, ours, notes) {
-        Ok(stopped) => stopped,
-        Err(why) => return Some(problem("$.collated, Heartwood's", why)),
-    };
-    let (in_theirs, in_ours): (BTreeSet<String>, BTreeSet<String>) = (
-        ids(&their_pool["all"]).into_iter().collect(),
-        ids(&our_pool["all"]).into_iter().collect(),
-    );
-    let shared = |list: &Value, other: &BTreeSet<String>| -> Vec<String> {
-        ids(list)
-            .into_iter()
-            .filter(|id| other.contains(id))
-            .collect()
-    };
-    let limited = stopped_theirs || stopped_ours;
-    for key in ["collated", "removed"] {
-        let (a, b) = (
-            shared(&theirs[key], &in_ours),
-            shared(&ours[key], &in_theirs),
+    // Each side's collation follows from its own pool, so a transaction of its pool that it
+    // neither collated nor removed lies beyond the limit that stopped it: it was never tried.
+    if let Err(why) = follows(their_pool, theirs, notes) {
+        return Some(problem("$.collated, the reference's", why));
+    }
+    if let Err(why) = follows(our_pool, ours, notes) {
+        return Some(problem("$.collated, Heartwood's", why));
+    }
+    let in_ours: BTreeSet<String> = ids(&our_pool["all"]).into_iter().collect();
+    let decisions = |answer: &Value| -> BTreeMap<String, &'static str> {
+        let mut out: BTreeMap<String, &'static str> = (ids(&answer["removed"]).into_iter())
+            .map(|id| (id, "removed"))
+            .collect();
+        out.extend(
+            ids(&answer["collated"])
+                .into_iter()
+                .map(|id| (id, "collated")),
         );
-        let agree = match (key, limited) {
-            (_, false) => a == b,
-            // A limit stopped a collation: how far each went depends on the other transactions.
-            ("collated", true) => a.starts_with(&b) || b.starts_with(&a),
-            (_, true) => true,
-        };
-        if !agree {
+        out
+    };
+    let (their_decisions, our_decisions) = (decisions(theirs), decisions(ours));
+    // The transactions both pools held that both collators reached: decided alike.
+    for id in ids(&their_pool["all"])
+        .iter()
+        .filter(|id| in_ours.contains(*id))
+    {
+        if let (Some(&a), Some(&b)) = (their_decisions.get(id), our_decisions.get(id))
+            && a != b
+        {
             return Some(Difference::Value {
-                path: format!("$.{key}, of the transactions both pools held"),
+                path: format!(
+                    "$.collated and $.removed: {id}, which both pools held and both collators \
+                     reached"
+                ),
                 expected: json!(a),
                 actual: json!(b),
             });
         }
+    }
+    // And those both collated, in the same order.
+    let both = |answer: &Value, other: &BTreeMap<String, &'static str>| -> Vec<String> {
+        (ids(&answer["collated"]).into_iter())
+            .filter(|id| other.get(id) == Some(&"collated"))
+            .collect()
+    };
+    let (a, b) = (both(theirs, &our_decisions), both(ours, &their_decisions));
+    if a != b {
+        return Some(Difference::Value {
+            path: "$.collated, of the transactions both pools held and both collated".into(),
+            expected: json!(a),
+            actual: json!(b),
+        });
     }
     None
 }
@@ -912,6 +930,59 @@ mod tests {
                 &one(&["s"])
             ),
             None
+        );
+    }
+
+    #[test]
+    fn a_limit_does_not_excuse_a_shared_transaction_both_collators_reached_and_decided_otherwise() {
+        let one = |collated: &[&str], removed: &[&str]| answer(collated, removed, 1, 2_097_152);
+        // One transaction a block. The reference's pool holds s and t, Heartwood's also l (the
+        // documented eviction's). The reference collates s; Heartwood removes s, valid and
+        // shared, collates l and stops before t. Each collation follows from its own pool, but
+        // both collators reached s and decided it otherwise.
+        let (theirs, ours) = (pool(&["s", "t"]), pool(&["s", "l", "t"]));
+        assert_eq!(checked(&theirs, &one(&["s"], &[])), Ok(true));
+        assert_eq!(checked(&ours, &one(&["l"], &["s"])), Ok(true));
+        let found = unexplained_collation(&theirs, &one(&["s"], &[]), &ours, &one(&["l"], &["s"]));
+        assert!(
+            matches!(&found, Some(Difference::Value { path, expected, actual })
+                if path.starts_with("$.collated and $.removed: s, ")
+                    && *expected == json!("collated") && *actual == json!("removed")),
+            "{found:?}"
+        );
+        // Where l comes first in Heartwood's priority order, its collator stops before s: s is
+        // beyond its limit, so it decided nothing about it.
+        assert_eq!(
+            unexplained_collation(
+                &theirs,
+                &one(&["s"], &[]),
+                &pool(&["l", "s", "t"]),
+                &one(&["l"], &[])
+            ),
+            None
+        );
+        // Two a block: the two collate s, Heartwood then its own l, the reference t, which
+        // Heartwood's collator did not reach.
+        let two = |collated: &[&str]| answer(collated, &[], 2, 2_097_152);
+        assert_eq!(
+            unexplained_collation(
+                &pool(&["s", "t", "u"]),
+                &two(&["s", "t"]),
+                &pool(&["s", "l", "t", "u"]),
+                &two(&["s", "l"])
+            ),
+            None
+        );
+        // A shared transaction one side collated and the other removed is no limit's doing.
+        let three = |collated: &[&str], removed: &[&str]| answer(collated, removed, 3, 2_097_152);
+        assert!(
+            unexplained_collation(
+                &pool(&["s", "t", "u"]),
+                &three(&["s", "t", "u"], &[]),
+                &pool(&["s", "l", "t", "u"]),
+                &three(&["s", "l", "u"], &["t"])
+            )
+            .is_some()
         );
     }
 }
