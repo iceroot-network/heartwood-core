@@ -191,6 +191,21 @@ fn a_judged_run_without_its_block_evidence_fails() {
         problems.iter().any(|p| p.contains("no block arrival")),
         "{problems:?}"
     );
+    // A partitioned node without a block arrival: its catch-up is not shown, so the network's
+    // convergence is not either.
+    let silent = scratch.path().join("silent");
+    let rows: Vec<_> = split(35_000)
+        .into_iter()
+        .filter(|(_, node, _, _)| *node != 5)
+        .collect();
+    write_run(&silent, &rows, &heal_actions(), true);
+    let problems = judged(&silent);
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("node5 of the partition holds no block arrival")),
+        "{problems:?}"
+    );
     // Arrivals without the blocks' ids cannot show one tip: no convergence after the heal.
     let anonymous = scratch.path().join("anonymous");
     let rows: Vec<_> = split(35_000)

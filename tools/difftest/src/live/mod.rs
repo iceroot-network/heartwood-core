@@ -1441,8 +1441,8 @@ pub const HEAL_CONVERGENCE_SECONDS: i64 = 192;
 /// from the heal's start to [`SUITE_WINDOW_SECONDS`] after the network converged, the first
 /// moment from the heal's end on when every node holds one tip (`propagation.jsonl`). A partition
 /// without a heal, a heal without a partition, and a network that does not converge within
-/// [`HEAL_CONVERGENCE_SECONDS`] of the heal are problems themselves, and so is a run without a
-/// block arrival to judge.
+/// [`HEAL_CONVERGENCE_SECONDS`] of the heal are problems themselves, and so are a run without a
+/// block arrival to judge and a partitioned node without one.
 pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
     let report = run::read_json(&run_dir.join("propagation-lag.json"))?;
     if report.get("judged").and_then(Value::as_bool) != Some(true) {
@@ -1525,6 +1525,19 @@ pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
                     start: from,
                     end: end + window,
                 });
+                // A partitioned node without a block arrival shows neither its lag nor its
+                // catch-up: the convergence below would leave it out.
+                let silent: Vec<&String> = (sides.iter().flatten())
+                    .filter(|n| !rows.iter().any(|r| &r.1 == *n))
+                    .collect();
+                if !silent.is_empty() {
+                    for node in silent {
+                        problems.push(format!(
+                            "{node} of the partition holds no block arrival in propagation.jsonl"
+                        ));
+                    }
+                    continue;
+                }
                 match converged(&rows, end) {
                     None => problems.push(format!(
                         "the network did not converge on one tip after the heal at {}",
