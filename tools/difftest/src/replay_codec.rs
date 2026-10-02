@@ -129,6 +129,15 @@ impl FromData {
     }
 }
 
+/// `json` with a null `id` where it has none, which the strict reading requires of it.
+fn with_id(json: &Value) -> Value {
+    let mut out = json.clone();
+    if let Value::Object(fields) = &mut out {
+        fields.entry("id").or_insert(Value::Null);
+    }
+    out
+}
+
 /// `{id, hex, json, isVerified}` of a transaction, as the oracle writes it.
 fn output(tx: &Transaction, params: &Params) -> Value {
     json!({
@@ -164,8 +173,10 @@ impl Subject for FromData {
             .at(u32::try_from(case.height).unwrap_or(u32::MAX));
         match Transaction::from_json_with(&json, params, Mode::NonStrict) {
             Ok(tx) => Ok(Verdict::Output(output(&tx, params))),
-            // A refusal by design (a removed type, an extended header) holds in either mode.
-            Err(error) => match self.strict_verdict(case, &json)? {
+            // A refusal by design (a removed type, an extended header, a multi-signature entry,
+            // votes given as indices) holds in either mode; the strict reading names it, once the
+            // `id` that only it requires is there.
+            Err(error) => match self.strict_verdict(case, &with_id(&json))? {
                 refused @ Verdict::RefusedByDesign { .. } => Ok(refused),
                 _ => Ok(Verdict::Rejected {
                     class: None,
