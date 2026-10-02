@@ -1777,8 +1777,16 @@ checked on the entries or shown by the oracle's answer:
 - a full pool that the reference emptied by one eviction for a transaction it then refused (the
   oracle notes each such eviction): Heartwood must refuse the same transaction and agree on every
   entry before it; its pool keeps the transaction the reference evicted, so the rest of the session
-  is not compared;
-- after the session changed the online record, an entry refused as offline on one side only: the
+  is not compared. A re-add (a re-add step, or the re-add of a restart) evicts in the same way, and
+  the oracle notes it on that step with the transactions the re-add tried, in order, and whether
+  each entered the pool; Heartwood's answer lists its own, in the order its re-add documents, and
+  the two must agree up to and including the reference's first refusal after an eviction. With no
+  result per transaction there, the pool's contents show the rest: Heartwood's pool holds a
+  transaction the reference refused only where the reference's pool holds it too, and every
+  transaction only Heartwood's pool holds is one the reference evicted or a later one of its
+  sender;
+- after the session changed the online record, an entry refused as offline on one side only (once
+  the entries of a removed type and the JSON votes given as an array or a string are left out): the
   reference's view of the sender kept the delegate's wallet as it copied it before the change. The
   rest of the session is not compared;
 - a count in a message that the oracle's default locale groups otherwise (the oracle notes its
@@ -1845,9 +1853,21 @@ P14 to P16 agree with the reference at 10,000 cases each with the date as the se
 documented differences among them are P14's: a fork segment whose headers do not chain (about one
 case in twenty-seven), and a fork segment that starts with our own block (about one case in fifty),
 both of which Heartwood refuses (see heartwood-p2p). P17 to P19 agree with the reference at
-10,000 cases each with the date as the seed. P17's documented cases are the pool's full-pool
-eviction (about one in eighty); P18 has none. P19's are the over-height header of the delegate's own
-key that is not an empty block and whose signature verifies (about one in sixteen), on which
+10,000 cases each with the date as the seed. P17's documented cases are the pool's two differences
+after which the two pools hold different transactions: the full-pool eviction, in a batch or a
+re-add (about one in eighty), and, rarely, the online record in a sender's view. Where a step
+changed the online record or a full pool evicted, both answers carry their pool session, and a case
+counts as documented only when the pool's own rules find that difference in the two sessions, each
+collation follows from its own pool (in priority order, which keeps each sender's transactions in
+nonce order, every transaction collated or removed until the block is full), the two collations
+list the transactions both pools held in the same order, Heartwood's block holds its collation and
+agrees with the reference's in every field the transactions do not set and in its verification, and
+Heartwood's forger makes the reference's block from the reference's collated transactions. What
+the reference cannot witness is trusted to Heartwood's own pool: the steps after the documented
+one, where a transaction only Heartwood's pool holds stands among other senders' transactions in
+its priority order, and whether such a transaction was rightly removed at the collation. P18 has
+none. P19's are the over-height header of the delegate's own key that is not an empty block and
+whose signature verifies (about one in sixteen), on which
 Heartwood does not forge; the report counts the reference's actions, and every action of an attempt
 and every reason of the quorum's refusal appears. From 10,000 cases `make l1` fails the run when one
 of them appears fewer than 20 times (`--decision-reach`, `L1_DECISION_REACH`); at 10,000 cases the
