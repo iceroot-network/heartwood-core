@@ -382,6 +382,32 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             );
             Ok(true)
         }
+        Command::LockstepBatch(args) => {
+            let batch = heartwood_difftest::lockstep::batch::run(&args)?;
+            let stopped = batch.chains.iter().filter(|c| c.stopped.is_some()).count();
+            println!(
+                "lockstep batch: {} chains of batch {} in {}, {stopped} stopped",
+                batch.chains.len(),
+                batch.seed,
+                args.out.display()
+            );
+            Ok(stopped == 0)
+        }
+        Command::RunL2Batch(args) => {
+            let report = heartwood_difftest::levels::l2_batch::run(&args)?;
+            print!("{report}");
+            Ok(verdict(&report, strict))
+        }
+        Command::OracleReplayCodec(args) => {
+            let replayed = heartwood_difftest::replay_codec::run_command(&args)?;
+            print!("{}", replayed.report);
+            println!(
+                "  the reference accepted {} of the {} inputs",
+                replayed.accepted,
+                replayed.report.results.len()
+            );
+            Ok(verdict(&replayed.report, strict))
+        }
         Command::StoreSummary { dir } => {
             let summary = heartwood_difftest::store_summary::summary(&dir)?;
             println!("{summary}");

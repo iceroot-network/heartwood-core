@@ -5,8 +5,10 @@
 //! for `corpus judge`, `l2`, `l2-processor`, `l2-restart` and `forge-replay`.
 //!
 //! A chain is at most 5 rounds unless it is asked for as a long chain, and at most 50 rounds in
-//! any case.
+//! any case. [`batch`] makes many chains at once, each with a drawn recipe
+//! (`difftest lockstep batch`).
 
+pub mod batch;
 pub mod heart;
 mod labels;
 mod output;

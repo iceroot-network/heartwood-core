@@ -147,3 +147,24 @@ path = "fuzz_targets/api_query.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "address_decode"
+path = "fuzz_targets/address_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transaction_json"
+path = "fuzz_targets/transaction_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "api_head"
+path = "fuzz_targets/api_head.rs"
+test = false
+doc = false
+bench = false

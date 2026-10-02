@@ -13,7 +13,10 @@
 //! answered as the reference answers it, with a bare 400. Stopping the server closes the listener
 //! and waits for the connections in flight, each bounded by that timeout.
 
-mod head;
+// Public only for the head fuzz target's entry, which only `cargo fuzz`'s builds (configuration
+// `fuzzing`) and the tests have: a release build's `head` has no public item.
+#[allow(unexpected_cfgs)]
+pub mod head;
 
 use std::convert::Infallible;
 use std::net::{SocketAddr, ToSocketAddrs};

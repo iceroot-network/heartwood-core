@@ -24,6 +24,9 @@
 #   make live-resources api-compare   the forging runs' resource series, and their route answers
 #   make l1-long fuzz-long ledger-merge gate-s1   the long runs, the cumulative ledger and the
 #                       baseline record; with GATE_RECORDS set, every gate target writes its record
+#   make lockstep-batch l2-batch   lockstep chains made in batches with drawn recipes, and judged
+#   make fuzz-codec replay-codec   the codec and head fuzz targets, and their corpora through the oracle
+#   make ops-doc-check  the operator guide's command blocks, run as written
 #
 # Settings for this machine (SOLAR_REPO, LOCAL_SOLAR, TOOLCHAIN_ENV, ...) go in local.mk, which is
 # git-ignored, or on the command line: make e2e SOLAR_REPO=/path/to/solar-core-ref
@@ -147,7 +150,7 @@ GATE_TESTED   ?= packages tools/difftest tools/oracle fuzz Cargo.toml Cargo.lock
                  tools/fuzz-run.sh
 GATE_LEDGER   ?=
 GATE_ORACLE_TARGETS := l0 l1 corpus-judge l2-synthetic rollback-replay lockstep replay-api scenario suites \
-                       oracle-image vectors-diff vectors-install
+                       oracle-image vectors-diff vectors-install lockstep-batch l2-batch replay-codec
 gate-reads-oracle = $(or $(filter $(1),$(GATE_ORACLE_TARGETS)),$(and $(filter forge-replay,$(1)),$(filter oracle,$(DIRECTION))))
 gate-image-of = $(if $(filter live-check,$(1)),$(if $(or $(is-mixed),$(is-forging),$(filter suites,$(RUN))),$(IMAGE)),$(if $(and $(call gate-reads-oracle,$(1)),$(filter --image%,$(ORACLE_ARGS))),$(IMAGE)))
 # The run directories whose tooling.sha256 a live run's record names, each run apart (a run
@@ -1078,7 +1081,8 @@ GATED_MAKE = $(MAKE)
 GATE_SELF_RECORDING := l0 l1 corpus-judge l2 l2-synthetic l2-restart rollback-replay crash-test \
                        l2-processor live-check api-compare p2p-compare await-report live-resources \
                        forge-replay forger-crash binary-tests lockstep fuzz-api replay-api scenario \
-                       suites deny l1-long fuzz-long
+                       suites deny l1-long fuzz-long lockstep-batch l2-batch fuzz-codec replay-codec \
+                       ops-doc-check
 gated: build ## each target of GATED run through the recorder, a gate record named by it per target (GATED)
 	$(if $(GATED),,$(error set GATED, the targets to run through the recorder))
 	$(if $(filter $(GATE_SELF_RECORDING),$(GATED)),$(error $(filter $(GATE_SELF_RECORDING),$(GATED)) write their own records; run them without gated))
@@ -1092,3 +1096,95 @@ gate-s1: build ## the S1 record's table from the gate records, the ledger and th
 	$(DIFFTEST) gate s1 --criteria '$(S1_CRITERIA)' --records '$(GATE_RECORDS)' --ledger '$(LEDGER_DIR)' \
 	    $(if $(PART),--part $(PART)) $(STRICT)
 # ---- end of the scenarios, the suites and the baseline record ----
+
+# ---- the lockstep batch, the codec and head fuzz targets and the operator guide ----
+# lockstep-batch makes COUNT lockstep chains of ROUNDS rounds (5 at most; more only with LONG=1,
+# the long chains, and 50 at most), BATCH_JOBS at once (the machine's parallelism when empty), each
+# with a recipe drawn from SEED and the genesis profile PROFILE (devnet when empty), into CORPUS as
+# batch-SEED-1 to batch-SEED-COUNT, listed in CORPUS/batch-SEED.json: one gate record per batch.
+# l2-batch judges and replays every chain of the batches in CORPUS (BATCH, seeds separated by
+# commas; every batch file when empty), with the reference of ORACLE_ARGS: one gate record.
+# fuzz-codec runs each codec and head fuzz target (CODEC_FUZZ) for FUZZ_SECONDS with FUZZ_FORK
+# jobs, one after the other, each a gate record, on corpora seeded by tools/codec-fuzz-seeds.js
+# from the vector run CODEC_SEEDS when both exist; replay-codec sends the corpus of each target
+# that has a replay (CODEC_REPLAY) through the oracle and Heartwood, each a gate record.
+# ops-doc-check runs the operator guide's Linux command blocks (OPS_GUIDE) as written, with this
+# tree's release binary, in a scratch data root under OPS_DOC_ROOT, its devnets on the loopback
+# block OPS_DOC_PREFIX (the first three octets); it refuses to start within 40 minutes of 00:00
+# UTC, when the nodes' logs rotate.
+COUNT         ?=
+BATCH         ?=
+BATCH_JOBS    ?=
+CODEC_FUZZ    := address_decode transaction_json api_head
+CODEC_REPLAY  ?= address_decode transaction_json
+CODEC_SEEDS   ?= $(VECTORS)/local
+CODEC_LOGS    ?= target/codec-fuzz
+OPS_GUIDE     ?= docs/operating.md
+OPS_DOC_PREFIX ?= 127.49.0
+OPS_DOC_ROOT  ?= target/ops-doc-check
+
+.PHONY: lockstep-batch l2-batch fuzz-codec replay-codec ops-doc-check
+
+lockstep-batch: build ## COUNT lockstep chains of ROUNDS rounds from SEED, BATCH_JOBS at once (5 rounds; more only with LONG=1, 50 at most)
+	$(need-image)
+	$(if $(COUNT),,$(error set COUNT, the number of chains))
+	$(if $(SEED),,$(error set SEED, the batch's seed))
+	@if ! [ '$(ROUNDS)' -ge 1 ] 2>/dev/null || [ '$(ROUNDS)' -gt 50 ]; then \
+	    echo "lockstep-batch: ROUNDS=$(ROUNDS) is not a number of rounds from 1 to 50" >&2; exit 2; \
+	fi; \
+	if [ '$(ROUNDS)' -gt 5 ] && [ -z '$(LONG)' ]; then \
+	    echo "lockstep-batch: ROUNDS=$(ROUNDS) makes long chains; set LONG=1 for more than 5 rounds" >&2; exit 2; \
+	fi
+	$(TOOLCHAIN) && $(gate) $(DIFFTEST) lockstep batch --count '$(COUNT)' --rounds $(ROUNDS) --seed '$(SEED)' \
+	    $(if $(LONG),--long) $(if $(PROFILE),--profile '$(PROFILE)') --out $(CORPUS) \
+	    $(if $(BATCH_JOBS),--jobs '$(BATCH_JOBS)') $(ORACLE_ARGS)
+
+l2-batch: build ## judge and replay every chain of the lockstep batches in CORPUS (BATCH: seeds, every batch when empty)
+	$(need-image)
+	$(TOOLCHAIN) && $(gate) $(DIFFTEST) run l2-batch $(CORPUS) \
+	    $(foreach batch,$(subst $(comma), ,$(BATCH)),--batch '$(batch)') $(STRICT) $(ORACLE_ARGS)
+
+fuzz-codec: build ## the codec and head fuzz targets, FUZZ_SECONDS each (nightly and cargo-fuzz); logs in CODEC_LOGS
+	@$(TOOLCHAIN) && if [ -f tools/codec-fuzz-seeds.js ] && [ -d '$(CODEC_SEEDS)' ]; then \
+	    node tools/codec-fuzz-seeds.js '$(CODEC_SEEDS)' $(FUZZ_CORPUS) $(WIRE_SEED_MAX); \
+	else \
+	    echo "fuzz-codec: no seeds: tools/codec-fuzz-seeds.js or $(CODEC_SEEDS) does not exist"; \
+	fi
+	$(need-fork)
+	$(TOOLCHAIN) && for target in $(CODEC_FUZZ); do cargo +nightly fuzz build $$target || exit 1; done
+	@$(TOOLCHAIN) && mkdir -p $(CODEC_LOGS) && fail=0; for target in $(CODEC_FUZZ); do \
+	    mkdir -p $(FUZZ_CORPUS)/$$target; log=$(CODEC_LOGS)/$$target.log; \
+	    echo "fuzz-codec: $$target running for $(FUZZ_SECONDS) s, $(FUZZ_FORK) jobs; log in $$log"; \
+	    $(gate) tools/fuzz-run.sh $$log cargo +nightly fuzz run $$target -- $(WIRE_LIBFUZZER) || fail=1; \
+	    files=$$(find $(FUZZ_CORPUS)/$$target -type f | wc -l); \
+	    echo "fuzz-codec: $$target: corpus $$files files"; \
+	done; exit $$fail
+
+# Every input of a corpus must be compared, as in replay-api.
+replay-codec: build ## each codec target's corpus (CODEC_REPLAY) through the oracle (ORACLE_ARGS) and Heartwood; logs in CODEC_LOGS
+	$(need-image)
+	@$(TOOLCHAIN) && mkdir -p $(CODEC_LOGS) && fail=0; \
+	for target in $(CODEC_REPLAY); do \
+	    log=$(CODEC_LOGS)/replay-$$target.log; \
+	    if [ -z "$$(ls -A $(FUZZ_CORPUS)/$$target 2>/dev/null)" ]; then \
+	        echo "replay-codec: $(FUZZ_CORPUS)/$$target is missing or empty (make fuzz-codec)" >&2; fail=1; continue; \
+	    fi; \
+	    $(gate) $(DIFFTEST) oracle replay-codec $$target $(FUZZ_CORPUS)/$$target --vectors packages/crypto/tests/vectors \
+	        $(STRICT) $(ORACLE_ARGS) > $$log 2>&1; status=$$?; cat $$log; \
+	    if [ $$status != 0 ]; then \
+	        echo "replay-codec: $$target: the replay failed (exit $$status)" >&2; fail=1; \
+	    elif grep -qE '^  [0-9]+ (skipped|records have no Rust implementation)' $$log; then \
+	        echo "replay-codec: $$target: some inputs were not compared" >&2; fail=1; \
+	    fi; \
+	done; \
+	exit $$fail
+
+ops-doc-check: ## the operator guide's Linux command blocks run as written (OPS_GUIDE, OPS_DOC_PREFIX, OPS_DOC_ROOT)
+	@now=$$(( 10#$$(date -u +%H) * 60 + 10#$$(date -u +%M) )); \
+	if [ $$now -ge 1400 ] || [ $$now -lt 40 ]; then \
+	    echo "ops-doc-check: $$(date -u +%H:%M) UTC is within 40 minutes of 00:00 UTC, when the nodes' logs rotate" >&2; exit 2; \
+	fi
+	$(TOOLCHAIN) && cargo build --release --locked -p heartwood-core
+	$(TOOLCHAIN) && HEARTWOOD_DEVNET_PREFIX='$(OPS_DOC_PREFIX)' OPS_DOC_BINARY='$(CURDIR)/target/release/heartwood' \
+	    OPS_DOC_ROOT='$(abspath $(OPS_DOC_ROOT))' $(gate) tools/ops-doc-check.sh '$(OPS_GUIDE)'
+# ---- end of the lockstep batch, the codec and head fuzz targets and the operator guide ----

@@ -15,7 +15,8 @@
 //! - [`strategies`]: the `proptest` strategies of L1.
 //! - [`compare`]: the structural diff, with byte offsets for hex values.
 //! - [`report`]: outcomes and the text report.
-//! - [`replay`]: a corpus of inputs (a fuzz corpus) through the oracle and Heartwood.
+//! - [`replay`]: a corpus of inputs (a fuzz corpus) through the oracle and Heartwood;
+//!   [`replay_codec`]: the codec fuzz targets' corpora, as each target reads its input.
 //! - [`corpus`]: the chains that L2 replays: import from devnet archives, the corpus directory,
 //!   and revert plans; [`corpus_from_blocks`]: a corpus from a Heartwood relay's block files.
 //! - [`digests`]: the state digest files of L2 replays, and their comparison.
@@ -63,6 +64,7 @@ pub mod network_generate;
 pub mod oracle;
 pub mod p2p_compare;
 pub mod replay;
+pub mod replay_codec;
 pub mod report;
 pub mod restart;
 pub mod runtime_kill;
