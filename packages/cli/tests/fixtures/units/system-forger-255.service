@@ -1,0 +1,29 @@
+[Unit]
+Description=Heartwood forger of node1 on devnet
+StartLimitIntervalSec=10
+StartLimitBurst=5
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/heartwood forger run --token=node1 --network=devnet
+Restart=always
+KillSignal=SIGINT
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=yes
+Environment=CORE_SERVICE_MANAGER=systemd
+SystemCallArchitectures=native
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target
