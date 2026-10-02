@@ -8,17 +8,17 @@ mod snapshot;
 
 use std::sync::Arc;
 
-use heartwood_api::ApiError;
-use heartwood_api::RouteId;
-use heartwood_api::controllers::{delegates, wallets_list};
+use heartwood_api::controllers::{delegate_history, delegates, wallets_list};
 use heartwood_api::pagination::Pagination;
 use heartwood_api::resources::delegate::{delegate, supply};
 use heartwood_api::schemas::validate_query;
 use heartwood_api::search::criteria::{of_query, sorting_of};
 use heartwood_api::search::{Criteria, Direction, plain};
+use heartwood_api::{ApiContext, ApiError, RouteId};
 use heartwood_api::{DelegateProduction, Hundredths, ProductivityTable};
-use heartwood_state::{Resignation, Wallet};
+use heartwood_state::{Resignation, StateView, Wallet};
 use serde_json::{Value, json};
+use tokio::sync::watch;
 
 use listing::{query, request, stand_in};
 use snapshot::chain;
@@ -445,6 +445,87 @@ async fn a_delegate_is_found_by_name_address_and_key_and_nothing_else_is() {
         );
         let missing = ask(RouteId::DelegatesVoters, id).await.unwrap_err();
         assert_eq!(missing.status, 404, "{id}");
+    }
+}
+
+/// The chain's state with every balance spent, so that no supply is behind any vote percent, and
+/// `genesis_34` without votes: the reference's vote percent then divides by zero.
+fn without_supply() -> StateView {
+    let mut state = chain().state.clone();
+    let funded: Vec<_> = (state.wallets.iter())
+        .map(|wallet| (*wallet.address(), wallet.balance()))
+        .collect();
+    for (address, balance) in funded {
+        let wallet = state.wallets.wallet_mut(&address).unwrap();
+        wallet.debit(balance).unwrap();
+    }
+    let delegate = state.wallets.find_by_username("genesis_34").unwrap();
+    let address = *delegate.address();
+    let wallet = state.wallets.wallet_mut(&address).unwrap();
+    wallet.delegate_mut().unwrap().vote_balance = 0;
+    state
+}
+
+/// The answer of `route` for `id` over `ctx`, with the route's default query.
+async fn ask_over(ctx: &Arc<ApiContext>, route: RouteId, id: &str) -> Result<Value, ApiError> {
+    let request = request(route, Some(id), query(route, "").unwrap());
+    let ctx = Arc::clone(ctx);
+    match route {
+        RouteId::DelegatesShow => delegates::show(ctx, request).await,
+        RouteId::DelegatesVoters => delegates::voters(ctx, request).await,
+        RouteId::DelegatesBlocks => delegate_history::blocks(ctx, request).await,
+        _ => delegate_history::missed_blocks(ctx, request).await,
+    }
+    .map(|reply| reply.body)
+}
+
+#[tokio::test]
+async fn every_route_of_one_delegate_answers_500_where_its_resource_cannot_be_made() {
+    // The reference builds a delegate's resource before any route of one delegate answers, the
+    // voters and the blocks included, which use only the name: with no supply behind the vote
+    // percent that resource throws, and each route answers 500. A wallet that is no delegate is
+    // still not found first.
+    let chain = chain();
+    let context = |name: &str, state: StateView| {
+        let mut context = snapshot::context(
+            name,
+            chain.pool(Vec::new()),
+            Vec::new(),
+            snapshot::local_config(),
+        );
+        context.state = watch::channel(Arc::new(state)).1;
+        Arc::new(context)
+    };
+    let state = without_supply();
+    assert_eq!(supply(&state.wallets), 0);
+    let empty = context("delegates-without-supply", state);
+    let funded = context("delegates-with-supply", chain.state.clone());
+    let routes = [
+        RouteId::DelegatesShow,
+        RouteId::DelegatesVoters,
+        RouteId::DelegatesBlocks,
+        RouteId::DelegatesMissedBlocks,
+    ];
+    let named = [
+        "genesis_34",
+        "dDnegkP1tnzssM15CAs3rq3KuwFqkikNjY",
+        "02b85b15ff121c2408ea682a6f6bf1a1079bf42537cdeef9e039befa26671949df",
+        "genesis_1",
+    ];
+    for route in routes {
+        for id in named {
+            let refused = ask_over(&empty, route, id).await.unwrap_err();
+            assert_eq!(refused.status, 500, "{route:?} {id}");
+            assert!(ask_over(&funded, route, id).await.is_ok(), "{route:?} {id}");
+        }
+        for id in ["nobody", "dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2"] {
+            let missing = ask_over(&empty, route, id).await.unwrap_err();
+            assert_eq!(
+                (missing.status, missing.message.as_str()),
+                (404, "Delegate not found"),
+                "{route:?} {id}"
+            );
+        }
     }
 }
 

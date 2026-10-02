@@ -9,8 +9,9 @@
 //! absent.
 
 use heartwood_crypto::BlockId;
+use heartwood_crypto::identities::PublicKey;
 use heartwood_pool::PoolView;
-use heartwood_state::{Resignation, Wallet, WalletRepository};
+use heartwood_state::{Delegate, Resignation, Wallet, WalletRepository};
 use serde_json::{Map, Value, json};
 
 use super::hundredths;
@@ -32,12 +33,8 @@ pub fn delegate(
     pool: &PoolView,
     table: &ProductivityTable,
 ) -> Result<Value, ApiError> {
-    let (Some(delegate), Some(key)) = (wallet.delegate(), wallet.public_key()) else {
-        return Err(ApiError::internal());
-    };
+    let (delegate, key, percent) = checked(wallet, supply)?;
     let key = key.to_compressed();
-    let percent =
-        vote_percent(u128::from(delegate.vote_balance), supply).ok_or_else(ApiError::internal)?;
     let resignation = delegate.resigned.map(|resigned| match resigned {
         Resignation::Permanent => "permanent",
         Resignation::Temporary => "temporary",
@@ -112,6 +109,27 @@ pub fn delegate(
     let version = pool.version(&key).filter(|version| !version.is_empty());
     put(&mut resource, "version", version.map(semver));
     Ok(Value::Object(resource))
+}
+
+/// Whether the resource of the delegate `wallet` can be made at `supply`: the error (a 500) that
+/// [`delegate`] answers where the reference's resource throws, for a wallet without a public key
+/// and for a vote percent the reference's arithmetic cannot make (no supply, or votes with more
+/// than four digits beyond the supply's). The reference builds the resource before every route of
+/// one delegate answers, so the routes that use only its name (its voters, its blocks and its
+/// missed blocks) answer this error too.
+pub fn check_resource(wallet: &Wallet, supply: u128) -> Result<(), ApiError> {
+    checked(wallet, supply).map(|_| ())
+}
+
+/// The delegate record, the public key and the vote percent that the resource of `wallet` is
+/// made from at `supply`, or the error of [`check_resource`].
+fn checked(wallet: &Wallet, supply: u128) -> Result<(&Delegate, &PublicKey, f64), ApiError> {
+    let (Some(delegate), Some(key)) = (wallet.delegate(), wallet.public_key()) else {
+        return Err(ApiError::internal());
+    };
+    let percent =
+        vote_percent(u128::from(delegate.vote_balance), supply).ok_or_else(ApiError::internal)?;
+    Ok((delegate, key, percent))
 }
 
 /// `calculateVotePercent`: the share of the supply that `votes` are, in percent to two places, as

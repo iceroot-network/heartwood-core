@@ -2,7 +2,8 @@
 //! `GET /delegates/{id}/blocks/missed` (its missed slots).
 //!
 //! `{id}` is found as a wallet and must be a delegate's: anything else is 404 "Delegate not
-//! found". The delegate's name replaces any `username` criterion.
+//! found". As on the reference, which builds the delegate's resource first, a delegate whose
+//! resource cannot be made is a 500. The delegate's name replaces any `username` criterion.
 
 use std::sync::Arc;
 
@@ -12,7 +13,7 @@ use crate::context::{ApiContext, ApiReply, ApiRequest};
 use crate::controllers::blocks::{
     block_criteria, block_listing, missed_criteria, missed_listing, storable,
 };
-use crate::controllers::wallets;
+use crate::controllers::delegates::named_delegate;
 use crate::errors::ApiError;
 
 /// `GET /delegates/{id}/blocks`: a delegate's blocks; the query's `transform` chooses the
@@ -44,11 +45,9 @@ pub async fn missed_blocks(
     missed_listing(&ctx, &request, criteria).await
 }
 
-/// The name of the delegate that `{id}` finds.
+/// The name of the delegate that `{id}` finds, or the 500 of a resource that cannot be made
+/// ([`named_delegate`]).
 fn delegate_name(ctx: &ApiContext, request: &ApiRequest) -> Result<String, ApiError> {
-    let not_found = || ApiError::not_found("Delegate not found");
-    let wallet = wallets::find(&ctx.state(), request.param("id").unwrap_or_default())
-        .map_err(|_| not_found())?;
-    let delegate = wallet.delegate().ok_or_else(not_found)?;
-    Ok(delegate.username().to_owned())
+    let id = request.param("id").unwrap_or_default();
+    named_delegate(&ctx.state().wallets, id)
 }

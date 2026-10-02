@@ -1,6 +1,8 @@
 //! The delegate routes over the state: `GET /delegates` (the delegate search over the username
 //! index), `GET /delegates/{id}` (one delegate's resource) and `GET /delegates/{id}/voters` (the
-//! wallets that vote for the delegate, over the public-key index).
+//! wallets that vote for the delegate, over the public-key index). As on the reference, a route of
+//! one delegate answers the 500 of a resource that cannot be made even where it shows only the
+//! delegate's name ([`named_delegate`]).
 
 use std::sync::Arc;
 
@@ -11,7 +13,7 @@ use serde_json::{Map, Value, json};
 use crate::context::{ApiContext, ApiReply, ApiRequest, ProductivityTable};
 use crate::errors::ApiError;
 use crate::pagination::{Pagination, envelope};
-use crate::resources::delegate::{delegate, supply};
+use crate::resources::delegate::{check_resource, delegate, supply};
 use crate::search::criteria::{of_query, sorting_of};
 use crate::search::{Criteria, Direction, ResultsPage, Sorting, plain};
 
@@ -100,6 +102,18 @@ pub fn find_delegate(wallets: &WalletRepository, id: &str) -> Result<Wallet, Api
     }
 }
 
+/// The name of the delegate that `id` names, for the routes of one delegate that use only its
+/// name (its voters, its blocks and its missed blocks): [`find_delegate`]'s wallet. The reference
+/// builds that delegate's resource at the supply of every wallet before any of these routes
+/// answers (`getDelegate`), so where the resource cannot be made ([`check_resource`]) they answer
+/// its 500.
+pub fn named_delegate(wallets: &WalletRepository, id: &str) -> Result<String, ApiError> {
+    let wallet = find_delegate(wallets, id)?;
+    check_resource(&wallet, supply(wallets))?;
+    let name = wallet.delegate().map(|delegate| delegate.username());
+    Ok(name.unwrap_or_default().to_owned())
+}
+
 /// `GET /delegates/{id}`: one delegate, by username, address or public key.
 pub async fn show(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
     let state = ctx.state();
@@ -112,16 +126,10 @@ pub async fn show(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply,
 /// `GET /delegates/{id}/voters`: the wallets voting for a delegate.
 pub async fn voters(ctx: Arc<ApiContext>, request: ApiRequest) -> Result<ApiReply, ApiError> {
     let state = ctx.state();
-    let wallet = find_delegate(&state.wallets, request.param("id").unwrap_or_default())?;
+    let name = named_delegate(&state.wallets, request.param("id").unwrap_or_default())?;
     let table = table(&ctx, &state)?;
-    let name = wallet
-        .delegate()
-        .map(|delegate| delegate.username().to_owned());
     let mut voting = Map::new();
-    voting.insert(
-        "votingFor".to_owned(),
-        json!([{ name.unwrap_or_default(): "*" }]),
-    );
+    voting.insert("votingFor".to_owned(), json!([{ name: "*" }]));
     let query = &request.query;
     let pagination = Pagination::of(query);
     let criteria = [of_query(query), Criteria(voting)];
