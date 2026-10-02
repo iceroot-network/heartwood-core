@@ -3,10 +3,12 @@
 //! oracle configured (DIFFTEST_TEST_SOLAR_DIR or DIFFTEST_TEST_IMAGE, as `make test-oracle` sets
 //! them), a short run of every property must pass.
 
+use std::cell::Cell;
 use std::path::Path;
 use std::sync::Arc;
 
 use heartwood_crypto::Transaction;
+use heartwood_crypto::transactions::types::Asset;
 use heartwood_crypto::utils::hex;
 use heartwood_difftest::fixture::Fixture;
 use heartwood_difftest::levels;
@@ -18,7 +20,7 @@ use heartwood_difftest::subject;
 use heartwood_difftest::subjects::Devnet;
 use heartwood_difftest::vectors::{Expected, VectorSet};
 use proptest::strategy::{Strategy, ValueTree};
-use proptest::test_runner::TestRunner;
+use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 use serde_json::Value;
 
 fn devnet() -> (VectorSet, Devnet, Arc<TxContext>) {
@@ -84,6 +86,33 @@ fn fee_cases_decode() {
         let params = devnet.milestones.at(u32::try_from(height).unwrap());
         assert!(Transaction::decode(&bytes, params).is_ok(), "{input}");
     }
+}
+
+/// P1 makes a case of almost every draw: a draw the builder refuses is thrown away, and a run
+/// stops once proptest's limit of such draws is reached. Its votes reach 20 names and more.
+#[test]
+fn fee_cases_are_made_from_almost_every_draw() {
+    let (_, devnet, context) = devnet();
+    let config = Config {
+        cases: 1_000,
+        max_local_rejects: 10,
+        failure_persistence: None,
+        ..Config::default()
+    };
+    let mut runner =
+        TestRunner::new_with_rng(config, TestRng::deterministic_rng(RngAlgorithm::ChaCha));
+    let most_votes = Cell::new(0);
+    let outcome = runner.run(&fee_cases(context), |(height, input)| {
+        let bytes = hex::decode(input["hex"].as_str().unwrap()).unwrap();
+        let params = devnet.milestones.at(u32::try_from(height).unwrap());
+        let tx = Transaction::decode(&bytes, params).unwrap();
+        if let Asset::Vote { votes } = &tx.data().asset {
+            most_votes.set(most_votes.get().max(votes.len()));
+        }
+        Ok(())
+    });
+    assert!(outcome.is_ok(), "{outcome:?}\n{runner}");
+    assert!(most_votes.get() >= 20, "{}", most_votes.get());
 }
 
 /// The minimal cases that long runs of the properties saved (`tests/fixtures/l1-saved`, one JSON

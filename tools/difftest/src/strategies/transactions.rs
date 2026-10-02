@@ -162,8 +162,17 @@ pub fn aim_floor(params: &Params, key: &str, length: usize) -> u64 {
     .unwrap_or(0)
 }
 
-fn username() -> impl Strategy<Value = String> {
-    "[a-z0-9!@$&_.]{1,20}"
+/// A delegate name in the grammar of the reference's schemas (a registration's username and a
+/// vote's names): 1 to 20 of `a-z`, `0-9` and `!@$&_.`, not starting with `_` and not only digits.
+/// The builders refuse a registration under any other name, and drop such a name from a vote,
+/// whose shares then add up to less than 10,000, so the vote is refused too.
+fn delegate_name() -> impl Strategy<Value = String> {
+    prop_oneof![
+        3 => "[a-z!@$&.][a-z0-9!@$&_.]{0,19}",
+        // 1 to 19 digits, then a non-digit, which the cut to 20 characters keeps.
+        1 => "[0-9]{1,19}[a-z!@$&_.][a-z0-9!@$&_.]{0,18}"
+            .prop_map(|name: String| name.chars().take(20).collect::<String>()),
+    ]
 }
 
 fn memo_free_specs(ctx: &Arc<TxContext>) -> BoxedStrategy<TxSpec> {
@@ -185,25 +194,23 @@ fn memo_free_specs(ctx: &Arc<TxContext>) -> BoxedStrategy<TxSpec> {
         })
     });
     let votes = (1usize..=53).prop_flat_map(|n| {
-        (super::split(n), prop::collection::vec("[a-z0-9_]{1,20}", n)).prop_map(
-            |(bps, mut names)| {
-                names.sort();
-                names.dedup();
-                let n = names.len();
-                let mut bps = bps;
-                bps.truncate(n);
-                let sum: u32 = bps.iter().map(|b| u32::from(*b)).sum();
-                if let Some(last) = bps.last_mut() {
-                    *last = u16::try_from(u32::from(*last) + 10_000 - sum).unwrap_or(*last);
-                }
-                TxSpec::Vote(names.into_iter().zip(bps).collect())
-            },
-        )
+        (super::split(n), prop::collection::vec(delegate_name(), n)).prop_map(|(bps, mut names)| {
+            names.sort();
+            names.dedup();
+            let n = names.len();
+            let mut bps = bps;
+            bps.truncate(n);
+            let sum: u32 = bps.iter().map(|b| u32::from(*b)).sum();
+            if let Some(last) = bps.last_mut() {
+                *last = u16::try_from(u32::from(*last) + 10_000 - sum).unwrap_or(*last);
+            }
+            TxSpec::Vote(names.into_iter().zip(bps).collect())
+        })
     });
     prop_oneof![
         3 => transfer,
         1 => "[a-z]{1,12}".prop_map(|p| TxSpec::SecondSignature(format!("l1 second {p}"))),
-        1 => username().prop_map(TxSpec::DelegateRegistration),
+        1 => delegate_name().prop_map(TxSpec::DelegateRegistration),
         1 => prop::option::of(prop_oneof![Just(ResignationType::PermanentResign), Just(ResignationType::NotResigned)])
             .prop_map(TxSpec::Resignation),
         1 => (1u64..=100_000_000_000).prop_map(TxSpec::Burn),
@@ -246,13 +253,13 @@ fn dynamic_fees() -> impl Strategy<Value = Value> {
         })
 }
 
-/// A case of P1: the rule height and the input of `fee.minimum`.
+/// A case of P1: the rule height and the input of `fee.minimum`. Every part of a draw is in the
+/// domain the builder takes, so a draw is thrown away only if the builder refuses what the
+/// reference builds.
 pub fn fee_cases(ctx: Arc<TxContext>) -> BoxedStrategy<(u64, Value)> {
-    let memo = prop_oneof![
-        Just(None),
-        Just(Some(String::new())),
-        "[ -~]{1,255}".prop_map(Some)
-    ];
+    // No empty memo: the reference's builder ignores one and writes no memo, which the first
+    // alternative covers, and Heartwood's builder takes a memo of 1 to 255 bytes.
+    let memo = prop_oneof![Just(None), "[ -~]{1,255}".prop_map(Some)];
     (
         memo_free_specs(&ctx),
         prop::option::weighted(0.7, dynamic_fees()),
