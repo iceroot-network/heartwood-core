@@ -627,10 +627,21 @@ mod tests {
     #[test]
     #[ignore = "integration"]
     fn the_replay_agrees_with_the_reference_on_addresses_and_transaction_json() {
-        let Some(solar) = std::env::var_os("DIFFTEST_TEST_SOLAR_DIR") else {
+        let oracle = if let Some(dir) = std::env::var_os("DIFFTEST_TEST_SOLAR_DIR") {
+            OracleArgs {
+                solar_dir: Some(PathBuf::from(dir)),
+                ..OracleArgs::default()
+            }
+        } else if let Ok(image) = std::env::var("DIFFTEST_TEST_IMAGE") {
+            OracleArgs {
+                image: Some(image),
+                ..OracleArgs::default()
+            }
+        } else {
             assert!(
                 std::env::var_os("DIFFTEST_TEST_NO_ORACLE").is_some(),
-                "set DIFFTEST_TEST_SOLAR_DIR, or DIFFTEST_TEST_NO_ORACLE to skip this test"
+                "set DIFFTEST_TEST_IMAGE or DIFFTEST_TEST_SOLAR_DIR, or DIFFTEST_TEST_NO_ORACLE to \
+                 skip this test"
             );
             return;
         };
@@ -677,10 +688,7 @@ mod tests {
             // An input that is not UTF-8 text is a documented difference.
             fs::write(dir.join("zz-binary"), [0xff, 0xfe, 0x7b]).unwrap();
             let args = CodecReplayArgs {
-                oracle: OracleArgs {
-                    solar_dir: Some(PathBuf::from(&solar)),
-                    ..OracleArgs::default()
-                },
+                oracle: oracle.clone(),
                 target: target.parse().unwrap(),
                 corpus: dir,
                 vectors: vectors(),
