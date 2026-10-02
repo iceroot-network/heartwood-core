@@ -2345,8 +2345,9 @@ have forged, nodes 3 and 4 must converge on the majority's chain by themselves, 
 equal the judge's on the minority's chain and then on the majority's, and of the two conflicting
 transfers only the majority's may be in the final chain, while the other has left every pool.
 
-The route corpus (`tools/difftest/api-corpus`, 1,038 queries: each served route, each criterion
-alone and in pairs, orders, pages, `offset=0`, unknown keys, invalid values, the 404 texts, wallets
+The route corpus (`tools/difftest/api-corpus`, 1,038 queries while it covered the first 18
+routes, and since then the queries of every route of the full list: each served route, each
+criterion alone and in pairs, orders, pages, `offset=0`, unknown keys, invalid values, the 404 texts, wallets
 by address, key and name, the peers' filters, the pool after two submissions, and 102 requests for
 the rate limit) is sent at the run's pause to node 1 and to the node under test, alternately, and
 their answers are judged: equal status codes, `connection: close` and `X-Block-Height` present and

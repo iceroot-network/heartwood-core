@@ -165,6 +165,7 @@ the same bytes. Do it directly into the configuration directory of the instance:
 
 ```sh expect="Wrote"
 heartwood network generate --network guide --seed operating-guide --out ~/.config/solar-core/guide
+chmod 700 ~/.config/solar-core/guide
 ```
 
 ```sh expect="600 "
@@ -172,7 +173,8 @@ stat -c '%a %n' ~/.config/solar-core/guide/delegates.json
 ```
 
 The command refuses a directory that is not empty unless you pass `--force`. It writes the key
-files, `delegates.json` and `genesis-wallet.json`, at mode 0600. `genesis-wallet.json` holds every
+files, `delegates.json` and `genesis-wallet.json`, at mode 0600; the `chmod` closes the directory
+itself to other users, which every configuration directory with a key in it should be. `genesis-wallet.json` holds every
 key and passphrase of the test network; a real network has no such file. The instance's `.env`
 binds the node to `127.0.0.1` with P2P port 6002 and API port 6003, and its `peers.json` names the
 node itself, so that a one-node network has a seed.
@@ -594,6 +596,7 @@ Make a second test network for it, so that nothing of the earlier ones is in the
 
 ```sh expect="Wrote"
 heartwood network generate --network solo --seed core-role --out ~/.config/solar-core/solo
+chmod 700 ~/.config/solar-core/solo
 ```
 
 ```sh
