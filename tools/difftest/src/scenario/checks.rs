@@ -430,6 +430,7 @@ impl Ctx<'_, '_> {
             Invariant::RestartEqual => "restartEqual",
             Invariant::Supply => "supply",
             Invariant::Schedule => "schedule",
+            Invariant::SecondaryReward => "secondaryReward",
         };
         if let Some(said) = self.backend().verified(name) {
             return Ok(said.map_or_else(|why| expected("it holds", why), |()| Outcome::Pass));
@@ -437,6 +438,7 @@ impl Ctx<'_, '_> {
         match which {
             Invariant::Supply => self.supply(),
             Invariant::Schedule => self.schedule(),
+            Invariant::SecondaryReward => self.secondary_reward(),
             _ => Ok(Outcome::Skipped(
                 "a live network's revert and restart lines are judged by live check".into(),
             )),
@@ -565,6 +567,108 @@ impl Ctx<'_, '_> {
             }
         }
         Ok(Outcome::Pass)
+    }
+
+    /// A delegate's second block of a round carries the milestone's `secondaryReward`, as the
+    /// reference's round state gives it (`getRewardForBlockInRound`): where the milestone of the
+    /// block's height enables dynamic rewards, a block whose generator forged an earlier block of
+    /// the same round is rewarded with `secondaryReward`. Its first block's reward follows its
+    /// rank, which the reference's processing judges. A chain with no second block of a delegate
+    /// in a round compares nothing, and says so.
+    fn secondary_reward(&mut self) -> Probe {
+        let (node, tip) = self.runner.observe()?;
+        let length = self.runner.chain.round_length.max(1);
+        let milestones = self.runner.chain.crypto["milestones"].clone();
+        let mut forged: std::collections::HashMap<u32, Vec<String>> =
+            std::collections::HashMap::new();
+        let (mut compared, mut wrong) = (0_usize, Vec::new());
+        for block in self.blocks(node, tip.height)? {
+            let height = block["height"]
+                .as_u64()
+                .and_then(|h| u32::try_from(h).ok())
+                .unwrap_or(0);
+            if height < 2 {
+                continue;
+            }
+            let Some(generator) = block["generator"]["publicKey"]
+                .as_str()
+                .or_else(|| block["generatorPublicKey"].as_str())
+                .or_else(|| block["generator"]["username"].as_str())
+                .filter(|g| !g.is_empty())
+            else {
+                return Ok(Outcome::HarnessError(format!(
+                    "the block at height {height} of /api/blocks names no generator"
+                )));
+            };
+            let round = height.div_ceil(length);
+            let earlier = forged.entry(round).or_default();
+            let second = earlier.iter().any(|g| g == generator);
+            earlier.push(generator.to_owned());
+            let Some(want) = secondary_reward_at(&milestones, height).filter(|_| second) else {
+                continue;
+            };
+            compared += 1;
+            if amount(&block["forged"]["reward"]) != Some(want) {
+                wrong.push(format!(
+                    "{generator}'s second block of round {round}, at {height}: reward {}, not {want}",
+                    block["forged"]["reward"]
+                ));
+            }
+        }
+        Ok(if !wrong.is_empty() {
+            expected(
+                "the secondaryReward for a delegate's second block of a round",
+                wrong.join("; "),
+            )
+        } else if compared == 0 {
+            Outcome::Skipped(format!(
+                "no delegate forged a second block of a round up to height {}, so no \
+                 secondaryReward was compared",
+                tip.height
+            ))
+        } else {
+            Outcome::Pass
+        })
+    }
+}
+
+/// An amount the API gives as a decimal string or a number.
+fn amount(value: &Value) -> Option<u128> {
+    value
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| value.as_u64().map(|n| n.to_string()))
+        .and_then(|t| t.parse().ok())
+}
+
+/// The `secondaryReward` of the milestone at `height` when it enables dynamic rewards: the
+/// milestones up to that height merged in order, as the reference's configuration manager merges
+/// them, each later key over an earlier one.
+fn secondary_reward_at(milestones: &Value, height: u32) -> Option<u128> {
+    let mut merged = Value::Null;
+    for milestone in milestones.as_array().into_iter().flatten() {
+        if milestone["height"]
+            .as_u64()
+            .is_some_and(|h| h <= u64::from(height))
+        {
+            merge(&mut merged, &milestone["dynamicReward"]);
+        }
+    }
+    (merged["enabled"] == Value::Bool(true))
+        .then(|| amount(&merged["secondaryReward"]))
+        .flatten()
+}
+
+/// `over` merged into `into`: objects key by key, anything else replacing what was there.
+fn merge(into: &mut Value, over: &Value) {
+    match (into, over) {
+        (_, Value::Null) => {}
+        (Value::Object(into), Value::Object(over)) => {
+            for (key, value) in over {
+                merge(into.entry(key.clone()).or_insert(Value::Null), value);
+            }
+        }
+        (into, over) => *into = over.clone(),
     }
 }
 

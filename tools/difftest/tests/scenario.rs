@@ -1214,6 +1214,64 @@ fn every_block_is_forged_by_a_delegate_of_its_round() {
     assert_eq!(run_with(["aa", "aa"]), Outcome::Pass);
 }
 
+#[test]
+fn a_delegate_s_second_block_of_a_round_carries_the_secondary_reward() {
+    let compiled = compiled(
+        json!([{"at": {"height": 60}, "check": {"invariant": ["secondaryReward"]}}]),
+        &[],
+    );
+    // The devnet's milestones enable dynamic rewards from height 1, with a secondary reward of
+    // 1.8 and rank rewards of 1.8 to 2.2.
+    let secondary = "180000000";
+    let run_with = |blocks: Value| {
+        let mut fake = Fake::new(1);
+        fake.page(1, BLOCKS, json!({ "data": blocks }));
+        run_on(&mut fake, &compiled).0.results.remove(0).outcome
+    };
+    let block = |height: u32, generator: &str, reward: &str| json!({"height": height, "generator": {"publicKey": generator}, "forged": {"reward": reward}});
+    let genesis = json!({"height": 1, "generator": {"publicKey": "g"}, "forged": {"reward": "0"}});
+    // Delegate aa forges height 2 at its rank's reward, then height 4, a slot of its round that
+    // came to it again, at the secondary reward.
+    let chain = |second: &str| {
+        json!([
+            genesis.clone(),
+            block(2, "aa", "220000000"),
+            block(3, "bb", "200000000"),
+            block(4, "aa", second),
+        ])
+    };
+    assert_eq!(run_with(chain(secondary)), Outcome::Pass);
+    // Its rank's reward again on the second block is the wrong answer; so is a number of another
+    // value.
+    for wrong in ["220000000", "180000001"] {
+        let outcome = run_with(chain(wrong));
+        assert!(
+            matches!(&outcome, Outcome::VerdictMismatch { oracle, heartwood }
+                if oracle.contains("secondaryReward")
+                    && heartwood.contains(&format!("at 4: reward \"{wrong}\", not {secondary}"))),
+            "{outcome:?}"
+        );
+    }
+    // A numeric reward is read as the API may give it.
+    let mut numeric = chain(secondary);
+    numeric[3]["forged"]["reward"] = json!(180_000_000);
+    assert_eq!(run_with(numeric), Outcome::Pass);
+    // A delegate's blocks in two rounds are each its first: nothing is compared, and it says so.
+    let apart = json!([
+        genesis.clone(),
+        block(2, "aa", "220000000"),
+        block(54, "aa", "1")
+    ]);
+    assert!(
+        matches!(run_with(apart), Outcome::Skipped(why) if why.contains("no delegate forged a second block")),
+    );
+    // A block that names no generator cannot be placed.
+    let nameless = json!([genesis, {"height": 2, "forged": {"reward": "1"}}]);
+    assert!(
+        matches!(run_with(nameless), Outcome::HarnessError(m) if m.contains("names no generator"))
+    );
+}
+
 // The records and their comparison.
 
 fn record(id: &str, backend: &str, tip: (u32, &str), answer: bool, digest: Outcome) -> Record {

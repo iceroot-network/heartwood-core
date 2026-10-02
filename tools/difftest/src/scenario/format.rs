@@ -386,6 +386,9 @@ pub enum Invariant {
     /// Every block was forged by a delegate of its round (round membership; that the forger is
     /// the one its slot names is judged with the chain against the reference).
     Schedule,
+    /// A delegate's second block of a round (a slot that came to it again after missed ones)
+    /// carries the milestone's `secondaryReward` wherever dynamic rewards are enabled.
+    SecondaryReward,
     /// A revert and its reapply give the same states.
     RevertSymmetry,
     /// A restart gives the state of the continuous run.
