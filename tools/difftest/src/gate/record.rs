@@ -84,6 +84,11 @@ pub struct GateRecord {
     pub counts: Option<Counts>,
     /// The command's exit status.
     pub exit_status: i32,
+    /// Whether the recorder was asked to stop the command (an interrupt, a terminate or a hang-up
+    /// it passed on), which a run killed by anything else (the kernel's out-of-memory killer, a
+    /// crash) never is.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interrupted: bool,
     /// Its verdict.
     pub result: GateResult,
     /// The documented differences it met, by code name.
@@ -167,6 +172,7 @@ mod tests {
                 ..Counts::default()
             }),
             exit_status: 0,
+            interrupted: false,
             result: GateResult::Pass,
             hits: BTreeMap::from([("Documented::ReplayIndexOrder".to_owned(), 25)]),
             scenarios: BTreeMap::from([("transactions/burns".to_owned(), "pass".to_owned())]),

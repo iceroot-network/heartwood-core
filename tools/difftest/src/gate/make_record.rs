@@ -5,7 +5,7 @@
 //!     [--variables V] [--image I] [--criteria FILE] [--tested PATH]... [--output FILE]
 //!     [--tooling DIR]... [--head REV --dirty-before 0|1]
 //!     [--ledger "kind=property id=P13 cases=1000000 seed=7" --ledger-dir DIR]
-//!     [--repo DIR] [--machine NAME] [--allow-dirty]
+//!     [--repo DIR] [--machine NAME] [--allow-dirty] [--interrupted]
 //! ```
 //!
 //! The head and whether the tree is dirty come from the tree in `--repo`; `--head` and
@@ -17,9 +17,12 @@
 //! directories) whose `tooling.sha256` lists the devnet tooling the run was made with.
 //!
 //! A long run's ledger entry is written only for a run whose cases all count: a property run that
-//! was not strict, or that skipped cases, gets none. A run that a signal ended before it judged
-//! its cases (no failed case in its counts) is entered as stopped: it counts for none of its
-//! cases or time, and it is not a failed run.
+//! was not strict, that skipped cases or that compared fewer cases than it was asked to, and a
+//! fuzz run out of libFuzzer's fork mode, get none. `--interrupted` says the recorder was asked to
+//! stop the command (it passed on an interrupt, a terminate or a hang-up): such a run, unless a
+//! case of it failed, is entered as stopped, which counts for none of its cases or time and is no
+//! failed run. A run that ended otherwise without passing (a crash, the kernel's out-of-memory
+//! killer) is a failed run.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -47,7 +50,7 @@ const REACH: [(&str, &str, &str); 3] = [
 
 /// Run `gate record`; whether it wrote what it was asked to.
 pub fn run(args: &[String]) -> Result<bool> {
-    let mut flags = Flags::parse(args, &["allow-dirty"])?;
+    let mut flags = Flags::parse(args, &["allow-dirty", "interrupted"])?;
     let head_before = flags.one("head")?;
     let dirty_before = flags.one("dirty-before")?;
     let tooling_dirs = flags.many("tooling");
@@ -69,6 +72,7 @@ pub fn run(args: &[String]) -> Result<bool> {
     let repo_dir = flags.one("repo")?.unwrap_or_else(|| ".".to_owned());
     let machine = machine_name(flags.one("machine")?);
     let allow_dirty = flags.switch("allow-dirty");
+    let interrupted = flags.switch("interrupted");
     flags.finish()?;
 
     for stamp in [&started, &finished] {
@@ -129,6 +133,7 @@ pub fn run(args: &[String]) -> Result<bool> {
         machine: machine.clone(),
         counts: parsed.counts,
         exit_status: exit,
+        interrupted,
         result: if exit == 0 {
             GateResult::Pass
         } else {
@@ -213,6 +218,7 @@ pub fn write_own(
         machine: machine_name(None),
         counts: Some(own.counts),
         exit_status: i32::from(!own.pass),
+        interrupted: false,
         result: if own.pass {
             GateResult::Pass
         } else {
@@ -308,29 +314,42 @@ fn tooling_of(dirs: &[String]) -> Result<BTreeMap<String, Vec<String>>> {
 }
 
 /// Why a long run's entry would count for nothing, when it would not: a passing property run that
-/// was not strict, or that skipped cases (its cases were not all compared).
+/// was not strict, that skipped cases or that compared fewer than its cases (its cases were not
+/// all compared), and a passing fuzz run out of libFuzzer's fork mode, whose exit status does not
+/// cover a crash, a timeout or an out-of-memory stop.
 fn not_counted(entry: &LedgerEntry, record: &GateRecord) -> Option<String> {
-    // A failed run is entered whatever its strictness: it fails its property.
-    if entry.kind != LedgerKind::Property || entry.stopped || entry.result != GateResult::Pass {
+    // A failed run is entered whatever its strictness: it fails its property or target.
+    if entry.stopped || entry.result != GateResult::Pass {
         return None;
     }
+    if entry.kind == LedgerKind::Target {
+        return (entry.forks == Some(0)).then(|| {
+            "the run was not in libFuzzer's fork mode (forks=0), so its time does not count"
+                .to_owned()
+        });
+    }
     let strict = record.command.split_whitespace().any(|w| w == "--strict");
-    let skipped = record.counts.map_or(0, |c| c.skipped);
+    let (compared, skipped) = record.counts.map_or((0, 0), |c| (c.compared, c.skipped));
+    let cases = entry.cases.unwrap_or(0);
     if !strict {
         Some("the run was not strict, so its cases do not count".to_owned())
     } else if skipped > 0 {
         Some(format!(
             "the run skipped {skipped} cases, so its cases do not count"
         ))
+    } else if compared < cases {
+        Some(format!(
+            "the run compared {compared} of its {cases} cases, so its cases do not count"
+        ))
     } else {
         None
     }
 }
 
-/// Whether a run's record says a signal ended it before it judged its cases: an exit status of a
-/// signal (above 128) and no failed case in its counts.
+/// Whether a run's record says it was stopped on purpose before it judged its cases: its recorder
+/// passed on an interrupt, and no case of it failed.
 pub(super) fn stopped(record: &GateRecord) -> bool {
-    record.exit_status > 128 && record.counts.is_none_or(|c| c.failed == 0)
+    record.interrupted && record.counts.is_none_or(|c| c.failed == 0)
 }
 
 /// The ledger entry of a long run, from the `k=v` words of `--ledger` and its record.
@@ -384,6 +403,7 @@ fn entry_from(spec: &str, record: &GateRecord, source: &str) -> Result<LedgerEnt
         result: record.result,
         reach: BTreeMap::new(),
         stopped: stopped(record),
+        strict: None,
         source: source.to_owned(),
     };
     match kind {
@@ -395,6 +415,7 @@ fn entry_from(spec: &str, record: &GateRecord, source: &str) -> Result<LedgerEnt
                 ));
             }
             entry.reach = reach_of(&id, &record.command);
+            entry.strict = Some(record.command.split_whitespace().any(|w| w == "--strict"));
         }
         LedgerKind::Target => {
             entry.seconds = Some(number("seconds")?);
@@ -444,6 +465,7 @@ mod tests {
             machine: "m".to_owned(),
             counts: None,
             exit_status: 0,
+            interrupted: false,
             result: GateResult::Pass,
             hits: BTreeMap::new(),
             scenarios: BTreeMap::new(),
@@ -477,10 +499,20 @@ mod tests {
     }
 
     #[test]
-    fn a_run_a_signal_ended_is_stopped_and_a_lenient_or_skipping_run_counts_for_nothing() {
+    fn a_run_is_stopped_only_when_its_recorder_was_asked_to_stop_it() {
         let mut killed = record("difftest run l1 --property P13 --cases 5 --strict");
         killed.exit_status = 137;
         killed.result = GateResult::Fail;
+        // Killed by something else (the kernel's out-of-memory killer, say): a failed run.
+        let entry = entry_from("kind=property id=P13 cases=5 seed=9", &killed, "x").unwrap();
+        assert!(!entry.stopped);
+        for status in [134, 139] {
+            killed.exit_status = status;
+            assert!(!stopped(&killed), "{status}");
+        }
+        // Its recorder passed on an interrupt: stopped, and no failed run.
+        killed.exit_status = 130;
+        killed.interrupted = true;
         let entry = entry_from("kind=property id=P13 cases=5 seed=9", &killed, "x").unwrap();
         assert!(entry.stopped);
         assert_eq!(not_counted(&entry, &killed), None);
@@ -495,8 +527,13 @@ mod tests {
                 .unwrap()
                 .stopped
         );
+    }
+
+    #[test]
+    fn a_lenient_skipping_or_short_run_counts_for_nothing_and_a_strict_one_says_so() {
         let lenient = record("difftest run l1 --property P13 --cases 5");
         let entry = entry_from("kind=property id=P13 cases=5 seed=9", &lenient, "x").unwrap();
+        assert_eq!(entry.strict, Some(false));
         assert!(not_counted(&entry, &lenient).is_some());
         let mut skipping = record("difftest run l1 --property P13 --cases 5 --strict");
         skipping.counts = Some(Counts {
@@ -511,9 +548,32 @@ mod tests {
                 .unwrap()
                 .contains("skipped 2")
         );
-        let strict = record("difftest run l1 --property P13 --cases 5 --strict");
+        let mut short = record("difftest run l1 --property P13 --cases 5 --strict");
+        short.counts = Some(Counts {
+            compared: 4,
+            passed: 4,
+            ..Counts::default()
+        });
+        let entry = entry_from("kind=property id=P13 cases=5 seed=9", &short, "x").unwrap();
+        assert!(
+            not_counted(&entry, &short)
+                .unwrap()
+                .contains("compared 4 of its 5 cases")
+        );
+        let mut strict = record("difftest run l1 --property P13 --cases 5 --strict");
+        strict.counts = Some(Counts {
+            compared: 6,
+            passed: 6,
+            ..Counts::default()
+        });
         let entry = entry_from("kind=property id=P13 cases=5 seed=9", &strict, "x").unwrap();
+        assert_eq!(entry.strict, Some(true));
         assert_eq!(not_counted(&entry, &strict), None);
+        let fuzz = record("cargo +nightly fuzz run t -- -fork=0");
+        let entry = entry_from("kind=target id=t seconds=60 forks=0", &fuzz, "x").unwrap();
+        assert!(not_counted(&entry, &fuzz).unwrap().contains("fork mode"));
+        let entry = entry_from("kind=target id=t seconds=60 forks=2", &fuzz, "x").unwrap();
+        assert_eq!(not_counted(&entry, &fuzz), None);
     }
 
     #[test]

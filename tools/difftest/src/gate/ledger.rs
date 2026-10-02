@@ -2,8 +2,10 @@
 //! on any machine, the earlier runs' counts entered by hand from the documents that recorded
 //! them. The baseline record sums them per property (cases and independently seeded runs) and per
 //! target (CPU hours, seconds times forks), each entry counting at the final head by the gate
-//! records' path rule. A failed run never counts and fails its property or target; a run that a
-//! signal stopped before it judged its cases counts for none of them and fails nothing.
+//! records' path rule. A failed run never counts and fails its property or target, unless a person
+//! explained it with a cause outside the tested code and one later run of it passed; a run its
+//! recorder was asked to stop before it judged its cases counts for none of them and fails
+//! nothing.
 //!
 //! ```json
 //! {"format": "heartwood-ledger-entry/1", "kind": "property", "id": "P21", "cases": 1000000,
@@ -69,10 +71,16 @@ pub struct LedgerEntry {
     /// How often it reached each result its reach check counts (P13's and P19's).
     #[serde(default)]
     pub reach: BTreeMap<String, u64>,
-    /// Whether a signal ended the run before it judged its cases (no case failed): it counts for
-    /// none of its cases or time, and it is no failed run.
+    /// Whether the run was stopped on purpose before it judged its cases (its recorder passed on an
+    /// interrupt, and no case failed): it counts for none of its cases or time, and it is no
+    /// failed run. A run killed otherwise is a failed run.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stopped: bool,
+    /// Whether a property run was strict (every case compared, none skipped), when the entry
+    /// says: an entry written from a gate record says, an older one does not, and its record then
+    /// tells.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
     /// Where the entry comes from: a gate record, or the document its counts were entered from.
     pub source: String,
 }

@@ -493,8 +493,33 @@ fn ledger_run_as(
     started: &str,
     (command, exit): (&str, i32),
 ) -> Ran {
+    ledger_run_with(rig, dir, machine, spec, started, (command, exit), false)
+}
+
+/// A long run's record and ledger entry, with its recorder's interrupt mark. A run that passed
+/// printed its report: every case of its spec compared and passed.
+fn ledger_run_with(
+    rig: &Rig,
+    dir: &str,
+    machine: &str,
+    spec: &str,
+    started: &str,
+    (command, exit): (&str, i32),
+    interrupted: bool,
+) -> Ran {
+    let cases = spec
+        .split_whitespace()
+        .find_map(|w| w.strip_prefix("cases="))
+        .unwrap_or("0");
+    let printed = if exit == 0 {
+        format!("  {cases} compared: {cases} passed, 0 failed\n")
+    } else {
+        String::new()
+    };
+    let output = rig.arg("printed-ledger.txt");
+    std::fs::write(&output, printed).expect("printed");
     let exit = exit.to_string();
-    rig.gate(&[
+    let mut args = vec![
         "record",
         "--target",
         "l1-long",
@@ -506,17 +531,26 @@ fn ledger_run_as(
         started,
         "--finished",
         started,
-        "--out",
-        &rig.arg("records"),
-        "--criteria",
-        &rig.arg("criteria.json"),
+        "--output",
+        &output,
         "--ledger",
         spec,
-        "--ledger-dir",
-        &rig.arg(dir),
         "--machine",
         machine,
-    ])
+    ];
+    let (records, criteria, ledger) = (rig.arg("records"), rig.arg("criteria.json"), rig.arg(dir));
+    args.extend([
+        "--out",
+        &records,
+        "--criteria",
+        &criteria,
+        "--ledger-dir",
+        &ledger,
+    ]);
+    if interrupted {
+        args.push("--interrupted");
+    }
+    rig.gate(&args)
 }
 
 #[test]
@@ -787,6 +821,9 @@ fn a_ledger_entry_that_misses_its_reach_is_not_counted() {
     criteria["properties"]["P13"] =
         json!({"name": "processor", "paths": ["src/p1.rs"], "reach": {"minReach": 20}});
     rig.criteria(&criteria);
+    // Each run printed its report: its cases and its reach check compared.
+    let printed = rig.arg("printed-reach.txt");
+    std::fs::write(&printed, "  1001 compared: 1001 passed, 0 failed\n").expect("printed");
     let low = rig.gate(&[
         "record",
         "--target",
@@ -803,6 +840,8 @@ fn a_ledger_entry_that_misses_its_reach_is_not_counted() {
         &rig.arg("records"),
         "--criteria",
         &rig.arg("criteria.json"),
+        "--output",
+        &printed,
         "--ledger",
         "kind=property id=P13 cases=1000 seed=1",
         "--ledger-dir",
@@ -844,6 +883,8 @@ fn a_ledger_entry_that_misses_its_reach_is_not_counted() {
         &rig.arg("records"),
         "--criteria",
         &rig.arg("criteria.json"),
+        "--output",
+        &printed,
         "--ledger",
         "kind=property id=P13 cases=1000 seed=2",
         "--ledger-dir",
@@ -1775,18 +1816,31 @@ fn a_feature_of_a_crate_of_the_tree_that_a_tested_crate_uses_makes_its_record_st
 }
 
 #[test]
-fn a_run_a_signal_stopped_counts_for_nothing_and_fails_nothing_and_a_lenient_run_has_no_entry() {
+fn a_run_stopped_on_purpose_counts_for_nothing_a_killed_one_fails_and_a_lenient_one_has_no_entry() {
     let rig = Rig::new();
     rig.criteria(&base_criteria());
-    let killed = ledger_run_as(
+    let p1 = |rig: &Rig| -> String {
+        let show = rig.gate(&[
+            "ledger",
+            "show",
+            "--criteria",
+            &rig.arg("criteria.json"),
+            "--ledger",
+            &rig.arg("ledger"),
+        ]);
+        show.text
+    };
+    // Its recorder was asked to stop it: no case counts, and nothing failed.
+    let stopped = ledger_run_with(
         &rig,
         "ledger",
         "box-1",
         "kind=property id=P1 cases=600 seed=1",
         T1,
-        ("difftest run l1 --property P1 --strict", 137),
+        ("difftest run l1 --property P1 --strict", 130),
+        true,
     );
-    assert!(killed.ok, "{}", killed.text);
+    assert!(stopped.ok, "{}", stopped.text);
     let lenient = ledger_run_as(
         &rig,
         "ledger",
@@ -1803,28 +1857,98 @@ fn a_run_a_signal_stopped_counts_for_nothing_and_fails_nothing_and_a_lenient_run
         "{}",
         lenient.text
     );
-    let show = rig.gate(&[
-        "ledger",
-        "show",
-        "--criteria",
-        &rig.arg("criteria.json"),
-        "--ledger",
-        &rig.arg("ledger"),
-    ]);
-    let p1 = show
-        .text
+    let text = p1(&rig);
+    let line = text
         .lines()
         .find(|l| l.trim_start().starts_with("P1 "))
         .expect("P1 line");
     assert!(
-        p1.contains("0 cases") && p1.contains("0 failed  1 stopped"),
-        "{p1}"
+        line.contains("0 cases") && line.contains("0 failed  1 stopped"),
+        "{line}"
     );
     assert!(
-        show.text.contains("stopped by a signal, no case counted"),
-        "{}",
-        show.text
+        text.contains("stopped on purpose, no case counted"),
+        "{text}"
     );
+    // Killed by anything else (the out-of-memory killer's 137, an abort's 134): a failed run.
+    let killed = ledger_run_as(
+        &rig,
+        "ledger",
+        "box-1",
+        "kind=property id=P1 cases=600 seed=3",
+        T3,
+        ("difftest run l1 --property P1 --strict", 137),
+    );
+    assert!(killed.ok, "{}", killed.text);
+    let text = p1(&rig);
+    let line = text
+        .lines()
+        .find(|l| l.trim_start().starts_with("P1 "))
+        .expect("P1 line");
+    assert!(line.contains("1 failed  1 stopped"), "{line}");
+}
+
+#[test]
+fn a_failed_long_run_is_superseded_only_when_explained_and_its_seed_passed_once_since() {
+    let rig = Rig::new();
+    let mut criteria = base_criteria();
+    criteria["explanations"] = json!("explained.json");
+    rig.criteria(&criteria);
+    let explain = |records: &[&str]| {
+        let failures: Vec<Value> = records
+            .iter()
+            .map(|r| json!({"record": r, "cause": "the runner ran out of memory", "evidence": "dmesg"}))
+            .collect();
+        let file = json!({"format": "heartwood-s1-explanations/1", "failures": failures});
+        std::fs::write(rig.path("explained.json"), file.to_string()).expect("explanations");
+    };
+    explain(&[]);
+    let run = |seed: u32, exit: i32, started: &str| {
+        let ran = ledger_run_as(
+            &rig,
+            "ledger",
+            "box-1",
+            &format!("kind=property id=P1 cases=600 seed={seed}"),
+            started,
+            ("difftest run l1 --property P1 --strict", exit),
+        );
+        assert!(ran.ok, "{}", ran.text);
+    };
+    let show = |rig: &Rig| -> String {
+        rig.gate(&[
+            "ledger",
+            "show",
+            "--criteria",
+            &rig.arg("criteria.json"),
+            "--ledger",
+            &rig.arg("ledger"),
+        ])
+        .text
+    };
+    let line = |text: &str| -> String {
+        text.lines()
+            .find(|l| l.trim_start().starts_with("P1 "))
+            .expect("P1 line")
+            .to_owned()
+    };
+    run(7, 137, T1);
+    run(7, 0, T2);
+    // Unexplained, the failure stands beside the passing repeat.
+    assert!(line(&show(&rig)).contains("1 failed"), "{}", show(&rig));
+    let failed = format!("{}-l1-long.json", T1.replace(':', "-"));
+    explain(&[&failed]);
+    let text = show(&rig);
+    assert!(
+        line(&text).contains("600 cases") && line(&text).contains("0 failed"),
+        "{text}"
+    );
+    assert!(
+        text.contains("failed, explained and repeated: superseded"),
+        "{text}"
+    );
+    // A second failure of the same seed is not superseded again.
+    run(7, 1, T3);
+    assert!(line(&show(&rig)).contains("2 failed"), "{}", show(&rig));
 }
 
 #[test]

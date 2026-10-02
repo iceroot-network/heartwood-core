@@ -31,11 +31,17 @@ pub struct PropertyTotal {
     pub failed: Vec<String>,
     /// Valid, passing runs left out for a reach below the criteria's.
     pub unreached: Vec<String>,
-    /// Runs a signal ended before they judged their cases: counted for none of them.
+    /// Runs stopped on purpose before they judged their cases: counted for none of them.
     pub stopped: Vec<String>,
-    /// Passing runs whose record shows they were not strict or skipped cases: counted for none
-    /// of their cases.
+    /// Passing runs whose entry or record shows they were not strict or skipped cases: counted
+    /// for none of their cases.
     pub lenient: Vec<String>,
+    /// Passing runs written from a gate record that did not say whether they were strict, whose
+    /// record the evidence does not hold: counted for none of their cases.
+    pub unverified: Vec<String>,
+    /// Failed runs a person explained with a cause outside the tested code, each repeated once
+    /// since with a pass: they fail nothing and count for nothing.
+    pub superseded: Vec<String>,
     /// Runs that no longer count, with the reason.
     pub stale: Vec<String>,
 }
@@ -51,8 +57,11 @@ pub struct TargetTotal {
     pub counted: usize,
     /// Valid runs that failed (a crash, timeout or out-of-memory stop).
     pub failed: Vec<String>,
-    /// Runs a signal ended before their time was up: counted for none of it.
+    /// Runs stopped on purpose before their time was up: counted for none of it.
     pub stopped: Vec<String>,
+    /// Failed runs a person explained with a cause outside the tested code, each repeated once
+    /// since with a pass: they fail nothing and count for nothing.
+    pub superseded: Vec<String>,
     /// Runs that no longer count, with the reason.
     pub stale: Vec<String>,
 }
@@ -99,10 +108,13 @@ enum Standing {
     Counted,
     /// It failed: it fails its property or target.
     Failed,
-    /// A signal ended it before it judged its cases.
+    /// It was stopped on purpose before it judged its cases.
     Stopped,
     /// It passed, but its cases were not all compared.
     Lenient,
+    /// It passed, written from a gate record that the evidence does not hold, without saying
+    /// whether it was strict.
+    Unverified,
 }
 
 /// The gate record an entry names as its source, when the evidence holds it.
@@ -128,16 +140,72 @@ fn standing(evidence: &Evidence, entry: &LedgerEntry) -> Standing {
     if entry.result != GateResult::Pass {
         return Standing::Failed;
     }
-    let lenient = record.is_some_and(|r| {
-        entry.kind == LedgerKind::Property
-            && (!r.command.split_whitespace().any(|w| w == "--strict")
-                || r.counts.is_some_and(|c| c.skipped > 0))
-    });
-    if lenient {
-        Standing::Lenient
-    } else {
-        Standing::Counted
+    if entry.kind != LedgerKind::Property {
+        return Standing::Counted;
     }
+    let lenient_record = |r: &GateRecord| {
+        !r.command.split_whitespace().any(|w| w == "--strict")
+            || r.counts.is_some_and(|c| c.skipped > 0)
+    };
+    match (entry.strict, record) {
+        (Some(false), _) => Standing::Lenient,
+        (_, Some(r)) if lenient_record(r) => Standing::Lenient,
+        (None, None) if entry.source.starts_with(FROM_A_RECORD) => Standing::Unverified,
+        _ => Standing::Counted,
+    }
+}
+
+/// The start of an entry's source when a gate record wrote it.
+const FROM_A_RECORD: &str = "gate record ";
+
+/// The run an entry is of: whether it is a property's, its property or target, and a property
+/// run's seed.
+type RunId = (bool, String, Option<String>);
+
+/// The run an entry is of.
+fn run_of(entry: &LedgerEntry) -> RunId {
+    (
+        entry.kind == LedgerKind::Property,
+        entry.id.clone(),
+        entry.seed.clone(),
+    )
+}
+
+/// The failed entries of `items` (with their standing) that the criteria's explanations and a
+/// later passing run of the same run supersede, by their files: a valid run that failed once,
+/// whose failure a person explained (by its gate record's file name), and that passed later. A
+/// run that failed more than once is never superseded.
+fn superseded<'e>(
+    criteria: &Criteria,
+    items: &[(&'e Item<LedgerEntry>, Standing)],
+) -> BTreeSet<&'e Path> {
+    let mut failures: BTreeMap<RunId, Vec<&Item<LedgerEntry>>> = BTreeMap::new();
+    for (item, standing) in items {
+        if *standing == Standing::Failed && item.validity.counts() {
+            failures.entry(run_of(&item.value)).or_default().push(item);
+        }
+    }
+    let mut out = BTreeSet::new();
+    for (run, failed) in failures {
+        let [only] = failed.as_slice() else {
+            continue;
+        };
+        let explained = only
+            .value
+            .source
+            .strip_prefix(FROM_A_RECORD)
+            .is_some_and(|name| criteria.explained.contains_key(name));
+        let repeated = items.iter().any(|(item, standing)| {
+            *standing == Standing::Counted
+                && item.validity.counts()
+                && run_of(&item.value) == run
+                && item.value.started > only.value.started
+        });
+        if explained && repeated {
+            out.insert(only.path.as_path());
+        }
+    }
+    out
 }
 
 /// Sum the entries of `evidence` for the properties and targets of `criteria`.
@@ -157,29 +225,37 @@ pub fn totals(criteria: &Criteria, evidence: &Evidence) -> Totals {
             unreached: Vec::new(),
             stopped: Vec::new(),
             lenient: Vec::new(),
+            unverified: Vec::new(),
+            superseded: Vec::new(),
             stale: Vec::new(),
         };
         // One seed draws the same cases in the same order, so its runs overlap: the longest
         // holds every shorter one, and only it counts.
         let mut seeds: BTreeMap<String, u64> = BTreeMap::new();
         let mut unseeded = 0u32;
-        for item in evidence
+        let items: Vec<(&Item<LedgerEntry>, Standing)> = evidence
             .entries
             .iter()
             .filter(|i| i.value.kind == LedgerKind::Property && &i.value.id == id)
-        {
-            let entry = &item.value;
-            let standing = standing(evidence, entry);
+            .map(|i| (i, standing(evidence, &i.value)))
+            .collect();
+        let gone = superseded(criteria, &items);
+        for (item, standing) in &items {
+            let (entry, standing) = (&item.value, *standing);
             if !item.validity.counts() {
                 total
                     .stale
                     .push(format!("{}: {}", describe(entry), item.validity.describe()));
             } else if standing == Standing::Stopped {
                 total.stopped.push(describe(entry));
+            } else if standing == Standing::Failed && gone.contains(item.path.as_path()) {
+                total.superseded.push(describe(entry));
             } else if standing == Standing::Failed {
                 total.failed.push(describe(entry));
             } else if standing == Standing::Lenient {
                 total.lenient.push(describe(entry));
+            } else if standing == Standing::Unverified {
+                total.unverified.push(describe(entry));
             } else if spec
                 .reach
                 .iter()
@@ -216,21 +292,26 @@ pub fn totals(criteria: &Criteria, evidence: &Evidence) -> Totals {
             counted: 0,
             failed: Vec::new(),
             stopped: Vec::new(),
+            superseded: Vec::new(),
             stale: Vec::new(),
         };
-        for item in evidence
+        let items: Vec<(&Item<LedgerEntry>, Standing)> = evidence
             .entries
             .iter()
             .filter(|i| i.value.kind == LedgerKind::Target && &i.value.id == id)
-        {
-            let entry = &item.value;
-            let standing = standing(evidence, entry);
+            .map(|i| (i, standing(evidence, &i.value)))
+            .collect();
+        let gone = superseded(criteria, &items);
+        for (item, standing) in &items {
+            let (entry, standing) = (&item.value, *standing);
             if !item.validity.counts() {
                 total
                     .stale
                     .push(format!("{}: {}", describe(entry), item.validity.describe()));
             } else if standing == Standing::Stopped {
                 total.stopped.push(describe(entry));
+            } else if standing == Standing::Failed && gone.contains(item.path.as_path()) {
+                total.superseded.push(describe(entry));
             } else if standing == Standing::Failed {
                 total.failed.push(describe(entry));
             } else {
@@ -352,13 +433,26 @@ pub fn render_show(criteria: &Criteria, totals: &Totals) -> String {
             .chain(
                 p.stopped
                     .iter()
-                    .map(|l| ("stopped by a signal, no case counted", l)),
+                    .map(|l| ("stopped on purpose, no case counted", l)),
             )
             .chain(
                 p.lenient
                     .iter()
                     .map(|l| ("not strict or with skipped cases, no case counted", l)),
             )
+            .chain(p.unverified.iter().map(|l| {
+                (
+                    "its gate record was not read and the entry does not say it was strict, \
+                     no case counted",
+                    l,
+                )
+            }))
+            .chain(p.superseded.iter().map(|l| {
+                (
+                    "failed, explained and repeated: superseded, no case counted",
+                    l,
+                )
+            }))
             .chain(p.stale.iter().map(|l| ("not counted", l)))
         {
             let _ = writeln!(problems, "  {}: {}: {}", p.id, line.0, line.1);
@@ -372,8 +466,14 @@ pub fn render_show(criteria: &Criteria, totals: &Totals) -> String {
             .chain(
                 t.stopped
                     .iter()
-                    .map(|l| ("stopped by a signal, no time counted", l)),
+                    .map(|l| ("stopped on purpose, no time counted", l)),
             )
+            .chain(t.superseded.iter().map(|l| {
+                (
+                    "failed, explained and repeated: superseded, no time counted",
+                    l,
+                )
+            }))
             .chain(t.stale.iter().map(|l| ("not counted", l)))
         {
             let _ = writeln!(problems, "  {}: {}: {}", t.id, line.0, line.1);
