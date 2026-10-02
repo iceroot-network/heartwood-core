@@ -19,7 +19,9 @@ if [ $# -lt 2 ]; then
 fi
 log=$1
 shift
-"$@" >"$log" 2>&1 &
+# The fuzzer keeps the default handling of an interrupt and a quit, which a job in the background
+# would ignore.
+env --default-signal=INT,QUIT "$@" >"$log" 2>&1 &
 child=$!
 trap 'kill -TERM "$child" 2>/dev/null' INT TERM HUP
 while :; do

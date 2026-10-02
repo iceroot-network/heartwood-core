@@ -297,6 +297,67 @@ fn a_recorded_fuzz_run_is_judged_by_its_status_line_and_tests_the_script_that_ju
     );
 }
 
+/// tools/gate-record.sh run on `command` with a stand-in harness that keeps the arguments it was
+/// given; the child, and the file the stand-in writes them to.
+fn recorder(rig: &Rig, command: &[&str]) -> (std::process::Child, PathBuf) {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate-record.sh");
+    let given = rig.path("given.txt");
+    let stand_in = rig.path("stand-in.sh");
+    std::fs::write(
+        &stand_in,
+        format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", given.display()),
+    )
+    .expect("stand-in");
+    let chmod = Command::new("chmod")
+        .args(["+x", &stand_in.to_string_lossy()])
+        .status()
+        .expect("chmod");
+    assert!(chmod.success());
+    let child = Command::new(script)
+        .args(command)
+        .current_dir(rig.tree())
+        .env("GATE_RECORDS", rig.arg("records"))
+        .env("GATE_TARGET", "t")
+        .env("GATE_DIFFTEST", &stand_in)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("gate-record.sh runs");
+    (child, given)
+}
+
+#[test]
+fn the_recorder_keeps_the_command_s_signals_and_marks_a_run_it_was_asked_to_stop() {
+    let rig = Rig::new();
+    // The command handles an interrupt and a quit as it would have alone.
+    let (child, given) = recorder(&rig, &["sh", "-c", "grep SigIgn /proc/self/status"]);
+    let out = child.wait_with_output().expect("wait");
+    assert!(out.status.success());
+    let printed = String::from_utf8_lossy(&out.stdout).into_owned();
+    let mask = printed
+        .split_whitespace()
+        .nth(1)
+        .and_then(|hex| u64::from_str_radix(hex, 16).ok())
+        .expect("a SigIgn mask");
+    assert_eq!(mask & 0b110, 0, "SIGINT or SIGQUIT ignored: {printed}");
+    let args = std::fs::read_to_string(&given).expect("given");
+    assert!(!args.contains("--interrupted"), "{args}");
+    // A terminate sent to the recorder reaches the command, and the record says so.
+    let (mut child, given) = recorder(&rig, &["sleep", "30"]);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let term = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("kill");
+    assert!(term.success());
+    let status = child.wait().expect("wait");
+    assert_eq!(status.code(), Some(143));
+    let args = std::fs::read_to_string(&given).expect("given");
+    assert!(
+        args.contains("--interrupted") && args.contains("143"),
+        "{args}"
+    );
+}
+
 #[test]
 fn a_record_of_a_command_without_narrowing_keeps_the_paths_it_was_given() {
     let rig = Rig::new();

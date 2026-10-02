@@ -41,9 +41,10 @@ trap pass_on INT TERM HUP
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 tee "$printed" <"$pipe" &
 reader=$!
-# The command keeps this script's standard input (a job in the background would read nothing).
+# The command keeps this script's standard input (a job in the background would read nothing) and
+# the default handling of an interrupt and a quit (which a job in the background would ignore).
 exec 3<&0
-"$@" <&3 3<&- >"$pipe" &
+env --default-signal=INT,QUIT "$@" <&3 3<&- >"$pipe" &
 command_pid=$!
 exec 3<&-
 # A signal this script handles ends a wait early: wait again until the command has ended.
