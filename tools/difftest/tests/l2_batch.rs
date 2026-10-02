@@ -6,6 +6,10 @@
 //! and a long chain shows the expiry of an online entry in both pools. Without an oracle the
 //! integration tests fail, unless `DIFFTEST_TEST_NO_ORACLE` says to skip them, as `lockstep.rs`'s
 //! do. The tests that need no oracle run in every `cargo test`.
+//!
+//! The long chain's test makes a chain of 7 rounds and a control of as many. A chain of more than
+//! 5 rounds is made only for a named purpose, so that test runs only when
+//! `DIFFTEST_TEST_LONG_CHAIN` is set, and says that it is skipped otherwise.
 
 use std::path::{Path, PathBuf};
 
@@ -47,6 +51,19 @@ fn oracle_or_skip(test: &str) -> Option<OracleArgs> {
     );
     eprintln!("{test}: skipped (DIFFTEST_TEST_NO_ORACLE)");
     None
+}
+
+/// Whether the run asks for the long chain's test (`DIFFTEST_TEST_LONG_CHAIN`): it makes two
+/// chains of more than 5 rounds, which no ordinary integration run may make. Says so when not.
+fn long_chain_wanted() -> bool {
+    let wanted = std::env::var_os("DIFFTEST_TEST_LONG_CHAIN").is_some_and(|v| !v.is_empty());
+    if !wanted {
+        eprintln!(
+            "the long chain: skipped: it makes chains of 7 rounds, more than the 5 of an ordinary \
+             run; set DIFFTEST_TEST_LONG_CHAIN=1 to make them"
+        );
+    }
+    wanted
 }
 
 fn batch_args(
@@ -188,6 +205,9 @@ fn attested(chain: &BatchChain, round: u64) -> Option<&Attested> {
 #[test]
 #[ignore = "integration"]
 fn a_long_chain_shows_the_online_entry_expire_in_both_pools() {
+    if !long_chain_wanted() {
+        return;
+    }
     let Some(oracle) = oracle_or_skip("the long chain") else {
         return;
     };
