@@ -17,8 +17,9 @@
 //! directories) whose `tooling.sha256` lists the devnet tooling the run was made with.
 //!
 //! A long run's ledger entry is written only for a run whose cases all count: a property run that
-//! was not strict, that skipped cases or that compared fewer cases than it was asked to, and a
-//! fuzz run out of libFuzzer's fork mode, get none. `--interrupted` says the recorder was asked to
+//! was not strict, that skipped cases or that judged fewer cases than it was asked to (a case is
+//! judged when it was compared or met a documented difference), and a fuzz run out of libFuzzer's
+//! fork mode, get none. `--interrupted` says the recorder was asked to
 //! stop the command (it passed on an interrupt, a terminate or a hang-up): such a run, unless a
 //! case of it failed, is entered as stopped, which counts for none of its cases or time and is no
 //! failed run. A run that ended otherwise without passing (a crash, the kernel's out-of-memory
@@ -355,9 +356,11 @@ fn tooling_of(dirs: &[String]) -> Result<BTreeMap<String, BTreeMap<String, Strin
 }
 
 /// Why a long run's entry would count for nothing, when it would not: a passing property run that
-/// was not strict, that skipped cases or that compared fewer than its cases (its cases were not
-/// all compared), and a passing fuzz run out of libFuzzer's fork mode, whose exit status does not
-/// cover a crash, a timeout or an out-of-memory stop.
+/// was not strict, that skipped cases or that judged fewer than its cases, and a passing fuzz run
+/// out of libFuzzer's fork mode, whose exit status does not cover a crash, a timeout or an
+/// out-of-memory stop. A case is judged when it was compared or met a documented difference (the
+/// report counts the two apart); a passing run's other cases are skipped ones. A property's reach
+/// checks are lines of the report beside its cases, so a run may count more than its cases.
 fn not_counted(entry: &LedgerEntry, record: &GateRecord) -> Option<String> {
     // A failed run is entered whatever its strictness: it fails its property or target.
     if entry.stopped || entry.result != GateResult::Pass {
@@ -370,7 +373,9 @@ fn not_counted(entry: &LedgerEntry, record: &GateRecord) -> Option<String> {
         });
     }
     let strict = record.command.split_whitespace().any(|w| w == "--strict");
-    let (compared, skipped) = record.counts.map_or((0, 0), |c| (c.compared, c.skipped));
+    let (judged, skipped) = record.counts.map_or((0, 0), |c| {
+        (c.compared.saturating_add(c.documented), c.skipped)
+    });
     let cases = entry.cases.unwrap_or(0);
     if !strict {
         Some("the run was not strict, so its cases do not count".to_owned())
@@ -378,9 +383,10 @@ fn not_counted(entry: &LedgerEntry, record: &GateRecord) -> Option<String> {
         Some(format!(
             "the run skipped {skipped} cases, so its cases do not count"
         ))
-    } else if compared < cases {
+    } else if judged < cases {
         Some(format!(
-            "the run compared {compared} of its {cases} cases, so its cases do not count"
+            "the run judged {judged} of its {cases} cases (compared, or met a documented \
+             difference), so its cases do not count"
         ))
     } else {
         None
@@ -600,7 +606,7 @@ mod tests {
         assert!(
             not_counted(&entry, &short)
                 .unwrap()
-                .contains("compared 4 of its 5 cases")
+                .contains("judged 4 of its 5 cases")
         );
         let mut strict = record("difftest run l1 --property P13 --cases 5 --strict");
         strict.counts = Some(Counts {
@@ -616,6 +622,46 @@ mod tests {
         assert!(not_counted(&entry, &fuzz).unwrap().contains("fork mode"));
         let entry = entry_from("kind=target id=t seconds=60 forks=2", &fuzz, "x").unwrap();
         assert_eq!(not_counted(&entry, &fuzz), None);
+    }
+
+    #[test]
+    fn a_strict_run_counts_its_documented_cases_as_judged() {
+        // The pool property's commit tier: 81 cases compared and 175 that met a documented
+        // difference, of 256, every one judged.
+        let mut documented = record("difftest run l1 --property P10 --cases 256 --strict");
+        documented.counts = Some(Counts {
+            compared: 81,
+            passed: 81,
+            documented: 175,
+            ..Counts::default()
+        });
+        let entry = entry_from("kind=property id=P10 cases=256 seed=1", &documented, "x").unwrap();
+        assert_eq!(not_counted(&entry, &documented), None);
+        // One case fewer judged: neither compared nor documented, so the run is short.
+        documented.counts = Some(Counts {
+            compared: 81,
+            passed: 81,
+            documented: 174,
+            ..Counts::default()
+        });
+        assert!(
+            not_counted(&entry, &documented)
+                .unwrap()
+                .contains("judged 255 of its 256 cases")
+        );
+        // A skipped case still counts the run for nothing, whatever the others were.
+        documented.counts = Some(Counts {
+            compared: 80,
+            passed: 80,
+            documented: 175,
+            skipped: 1,
+            ..Counts::default()
+        });
+        assert!(
+            not_counted(&entry, &documented)
+                .unwrap()
+                .contains("skipped 1")
+        );
     }
 
     #[test]
