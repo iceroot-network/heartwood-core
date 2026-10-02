@@ -759,6 +759,31 @@ impl Plan {
         self.add(round_first(EXPIRY_ROUND), refused);
     }
 
+    /// The pool refuses a second vote of a sender while its first is pending, before it looks at
+    /// the delegate, so no sender has two votes in one height's batch: the later vote stays, the
+    /// earlier moves to the next height (and is dropped past the tip).
+    fn one_vote_per_sender(&mut self) {
+        let mut carried: Vec<BuildSpec> = Vec::new();
+        for height in 2..=self.tip {
+            let mut list = std::mem::take(&mut carried);
+            list.extend(self.transactions.remove(&height).unwrap_or_default());
+            let mut senders = BTreeSet::new();
+            let mut kept = Vec::new();
+            for item in list.into_iter().rev() {
+                if item.kind == "vote" && !senders.insert(item.sender.clone()) {
+                    carried.push(item);
+                } else {
+                    kept.push(item);
+                }
+            }
+            kept.reverse();
+            carried.reverse();
+            if !kept.is_empty() {
+                self.transactions.insert(height, kept);
+            }
+        }
+    }
+
     /// A vote that would repeat the wallet's last vote, in height order, votes for the next
     /// delegate instead.
     fn vary_votes(&mut self) {
@@ -784,6 +809,7 @@ impl Plan {
 
     /// The steps, in height order.
     fn finish(mut self) -> Recipe {
+        self.one_vote_per_sender();
         self.vary_votes();
         for (height, build) in std::mem::take(&mut self.transactions) {
             self.steps.push(Step::Transactions { height, build });
@@ -1379,6 +1405,34 @@ mod tests {
         }
         // A registration reverted in its own round is still drawn.
         assert!(inside >= 1);
+    }
+
+    #[test]
+    fn no_sender_has_two_votes_in_one_height() {
+        // The chain that once drew two votes of one wallet in one height, and 40 chains of each
+        // of five lengths.
+        let mut chains = vec![draw("explore3-r3", 8, 3, false).unwrap()];
+        for rounds in [1, 2, 3, 5, 7] {
+            for index in 1..=40 {
+                chains.push(draw("votes", index, rounds, rounds > 5).unwrap());
+            }
+        }
+        for chain in chains {
+            for step in &chain.recipe.steps {
+                let Step::Transactions { height, build } = step else {
+                    continue;
+                };
+                let mut voters = BTreeSet::new();
+                for item in build.iter().filter(|b| b.kind == "vote") {
+                    assert!(
+                        voters.insert(item.sender.clone()),
+                        "{} votes twice at {height} in {}",
+                        item.sender,
+                        chain.name
+                    );
+                }
+            }
+        }
     }
 
     #[test]
