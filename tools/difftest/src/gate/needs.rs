@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::criteria::{Criteria, Need, Scenario};
+use super::criteria::{Criteria, Need, Scenario, SeedsOf};
 use super::git::Validity;
 use super::record::{GateRecord, GateResult};
 use super::store::{Evidence, Item};
@@ -144,6 +144,22 @@ struct Asked<'n> {
     distinct: bool,
     distinct_by: &'n [String],
     scenario: Option<&'n str>,
+    seeds_of: Option<&'n SeedsOf>,
+}
+
+/// The number a record's variables give the first `{n}` of the numbered term `term` (the digits
+/// of the variable's word that the pattern matches), if a word matches it.
+fn number_in<'r>(record: &'r GateRecord, term: &str) -> Option<&'r str> {
+    let (before, _) = term.split_once(NUMBER)?;
+    record
+        .variables
+        .split_whitespace()
+        .filter(|word| matches_pattern(word, term))
+        .find_map(|word| {
+            let rest = word.strip_prefix(before)?;
+            let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            rest.get(..digits)
+        })
 }
 
 /// Whether `word` is `pattern` with each `{n}` replaced by one or more digits.
@@ -332,6 +348,7 @@ impl<'a> Judge<'a> {
                 distinct,
                 distinct_by,
                 scenario,
+                seeds_of,
             } => vec![self.record(&Asked {
                 target,
                 contains,
@@ -340,6 +357,7 @@ impl<'a> Judge<'a> {
                 distinct: *distinct,
                 distinct_by,
                 scenario: scenario.as_deref(),
+                seeds_of: seeds_of.as_ref(),
             })],
             Need::Properties { ids, cases, runs } => vec![self.properties(ids, *cases, *runs)],
             Need::Fuzz { ids, hours } => vec![self.fuzz(ids, *hours)],
@@ -514,6 +532,28 @@ impl<'a> Judge<'a> {
                 },
             }
         };
+        // The runs a numbered need follows: the seeds of the passing records of its query; a
+        // record of another number is not read.
+        let numbered = asked.contains.iter().find(|term| term.contains(NUMBER));
+        let seeds: Option<BTreeSet<String>> = asked.seeds_of.map(|query| {
+            (self.evidence.records.iter())
+                .filter(|i| i.value.target == query.target)
+                .filter(|i| query.contains.iter().all(|c| mentions(&i.value, c)))
+                .filter(|i| i.validity.counts() && i.value.result == GateResult::Pass)
+                .filter_map(|i| {
+                    assignments(&i.value.variables)
+                        .get("SEED")
+                        .map(|s| (*s).to_owned())
+                })
+                .filter(|seed| !seed.is_empty())
+                .collect()
+        });
+        let followed = |i: &Item<GateRecord>| match (&seeds, numbered) {
+            (Some(seeds), Some(term)) => {
+                number_in(&i.value, term).is_some_and(|n| seeds.contains(n))
+            }
+            _ => true,
+        };
         let matching: Vec<&Item<GateRecord>> = self
             .evidence
             .records
@@ -526,6 +566,7 @@ impl<'a> Judge<'a> {
                     .scenario
                     .is_none_or(|id| scenario_verdict(&i.value, id).is_some())
             })
+            .filter(|i| followed(i))
             .collect();
         let valid = |result: GateResult| {
             matching
@@ -607,11 +648,35 @@ impl<'a> Judge<'a> {
         }
         let have = counted.len();
         let what = if asked.distinct { "run" } else { "record" };
-        if have >= asked.min as usize {
+        // Each run the need follows needs a passing record of its own.
+        let unjudged: Vec<String> = match (&seeds, numbered) {
+            (Some(seeds), Some(term)) => {
+                let judged: BTreeSet<&str> = (counted.iter())
+                    .filter_map(|i| number_in(&i.value, term))
+                    .collect();
+                (seeds.iter())
+                    .filter(|seed| !judged.contains(seed.as_str()))
+                    .map(|seed| term.replace(NUMBER, seed))
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        if let Some(query) = asked.seeds_of {
+            notes.push_str(&format!(
+                "; the runs of {} [{}]: {}",
+                query.target,
+                query.contains.join(" "),
+                seeds.as_ref().map_or(0, BTreeSet::len)
+            ));
+        }
+        if have >= asked.min as usize && unjudged.is_empty() {
             return Verdict {
                 status: Status::Pass,
                 detail: format!("{label}: {have} passing {what}{}{notes}", plural(have)),
             };
+        }
+        if !unjudged.is_empty() {
+            notes.push_str(&format!("; no passing record of {}", unjudged.join(", ")));
         }
         let stale: Vec<&&Item<GateRecord>> =
             matching.iter().filter(|i| !i.validity.counts()).collect();
@@ -854,5 +919,29 @@ mod tests {
         ));
         // A pattern is never looked for in the command.
         assert!(!mentions(&record("", "run live-mixed-3"), "live-mixed-{n}"));
+    }
+
+    #[test]
+    fn a_numbered_term_gives_the_number_of_the_word_it_names() {
+        let named = |variables: &str, term: &str| {
+            number_in(&record(variables, "x"), term).map(str::to_owned)
+        };
+        assert_eq!(
+            named("NAME=live-mixed-31 PROCESSOR=1", "NAME=live-mixed-{n}").as_deref(),
+            Some("31")
+        );
+        assert_eq!(
+            named(
+                "NAME=live-mixed-split-4-minority",
+                "NAME=live-mixed-split-{n}-minority"
+            )
+            .as_deref(),
+            Some("4")
+        );
+        assert_eq!(
+            named("NAME=live-mixed-short-3", "NAME=live-mixed-{n}"),
+            None
+        );
+        assert_eq!(named("RUN=mixed SEED=3", "NAME=live-mixed-{n}"), None);
     }
 }

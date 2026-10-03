@@ -1621,6 +1621,77 @@ fn row_t(text: &str) -> String {
 }
 
 #[test]
+fn a_chain_need_follows_the_runs_its_live_check_counts() {
+    // The chains of the runs the live check counts (seeds 11 and 13), each judged once; a chain
+    // of another run (2, an earlier run's under the same pattern) neither stands in for one of
+    // them nor blocks them.
+    let rig = Rig::new();
+    let runs = json!({"target": "live-check", "contains": ["RUN=mixed-short"]});
+    rig.criteria(&with_row(json!([
+        {"kind": "record", "target": "live-check", "contains": ["RUN=mixed-short"], "min": 2,
+         "distinct": true, "distinctBy": ["SEED"]},
+        {"kind": "record", "target": "corpus-judge",
+         "contains": ["NAME=live-mixed-short-{n}", "PROCESSOR=1"], "min": 2, "distinct": true,
+         "distinctBy": ["NAME"], "seedsOf": runs}
+    ])));
+    for (variables, started) in [
+        ("RUN=mixed-short SEED=11", T1),
+        ("RUN=mixed-short SEED=13", T1),
+    ] {
+        assert!(record_of(&rig, "live-check", variables, 0, "", started).ok);
+    }
+    for (variables, exit) in [
+        ("NAME=live-mixed-short-11 PROCESSOR=1", 0),
+        ("NAME=live-mixed-short-2 PROCESSOR=1", 0),
+    ] {
+        assert!(record_of(&rig, "corpus-judge", variables, exit, "", T2).ok);
+    }
+    let text = s1(&rig, &["--verbose"]).text;
+    assert!(!text.contains("T        pass"), "{text}");
+    assert!(text.contains("live-mixed-short-13"), "{text}");
+    // A failed judgement of the earlier run's chain blocks nothing; the counted run's chain
+    // judged, the row passes.
+    assert!(
+        record_of(
+            &rig,
+            "corpus-judge",
+            "NAME=live-mixed-short-3 PROCESSOR=1",
+            1,
+            "",
+            T2
+        )
+        .ok
+    );
+    assert!(
+        record_of(
+            &rig,
+            "corpus-judge",
+            "NAME=live-mixed-short-13 PROCESSOR=1",
+            0,
+            "",
+            T3
+        )
+        .ok
+    );
+    let text = s1(&rig, &["--verbose"]).text;
+    assert!(row_t(&text).contains("T        pass"), "{text}");
+    // A failed judgement of a counted run's chain blocks it.
+    assert!(
+        record_of(
+            &rig,
+            "corpus-judge",
+            "NAME=live-mixed-short-11 PROCESSOR=1",
+            1,
+            "",
+            "2026-10-01T13:00:00Z"
+        )
+        .ok
+    );
+    let text = s1(&rig, &["--verbose"]).text;
+    assert!(row_t(&text).contains("T        FAIL"), "{text}");
+}
+
+#[test]
 fn one_run_counts_once_whatever_the_order_or_the_machine_settings_of_its_command_line() {
     let rig = Rig::new();
     rig.criteria(&with_row(json!([{"kind": "record", "target": "live-check",

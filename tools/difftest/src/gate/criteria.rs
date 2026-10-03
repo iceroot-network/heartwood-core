@@ -127,6 +127,11 @@ pub enum Need {
         /// The scenario (its file's id) a counted record must have run or compared, with a pass.
         #[serde(default)]
         scenario: Option<String>,
+        /// The runs a numbered need follows: the `{n}` of its `contains` stands for each `SEED`
+        /// of the valid, passing records of this query, every one of which needs a passing
+        /// record of its own; a record of another number is not read.
+        #[serde(default, rename = "seedsOf")]
+        seeds_of: Option<SeedsOf>,
     },
     /// Ledger sums of L1 properties (every property when `ids` is left out).
     Properties {
@@ -172,6 +177,18 @@ pub enum Need {
 
 const fn one() -> u32 {
     1
+}
+
+/// The runs a numbered record need follows ([`Need::Record`]'s `seedsOf`): the valid, passing
+/// records of `target` that name every term of `contains`, by their `SEED`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SeedsOf {
+    /// The make target.
+    pub target: String,
+    /// Text every such record's variables or command must contain.
+    #[serde(default)]
+    pub contains: Vec<String>,
 }
 
 /// One row of the baseline table.
@@ -516,6 +533,17 @@ impl Criteria {
                     return Err(format!(
                         "a distinct need of {target} names no variable a run is known by \
                          (distinctBy)"
+                    ));
+                }
+                Need::Record {
+                    target,
+                    contains,
+                    seeds_of: Some(_),
+                    ..
+                } if !contains.iter().any(|term| term.contains("{n}")) => {
+                    return Err(format!(
+                        "a need of {target} follows the runs of a query (seedsOf) but names no \
+                         numbered term ({{n}})"
                     ));
                 }
                 _ => {}
