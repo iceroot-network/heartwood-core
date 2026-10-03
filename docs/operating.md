@@ -11,10 +11,11 @@ what the code in this repository does today.
   `heartwood network generate` makes.
 - What is not built yet is marked **Not built yet** and listed in the last section.
 - Every block in the language `sh` runs as written on a Linux machine: `make ops-doc-check` builds
-  the release binary and runs them in order on two private machines (network namespaces, no
-  root), so a command that stops working fails the check. Blocks marked `text`, `json` and
-  `ini` are shown, never run. Where a block says `forger-host` or `relay-host`, it is
-  addressing another machine, as `scp` does.
+  the release binary and runs them in order on two private machines (network namespaces inside a
+  user namespace: no root on the host, though a block runs as that namespace's own root), so a
+  command that stops working fails the check. Blocks marked `text`, `json` and `ini` are shown,
+  never run, so the commands in a `text` block are not checked. Where a block says `forger-host`
+  or `relay-host`, it is addressing another machine, as `scp` does.
 
 The test network's keys come from a seed that anyone can read in this guide. Never use a key, an
 address or a file from the examples for anything of value.
@@ -94,7 +95,8 @@ platform and the features the build has; a release build never lists `difftest`.
 
 **Verifying a download.** Downloads start with the public testnet. Each announcement names the
 release and the SHA-256 checksum of every download; compare the checksum in the release notes
-with the one in the announcement, then compute your file's:
+with the one in the announcement, then compute your file's (the check does not run this; there is
+no download yet):
 
 ```text
 sha256sum heartwood
@@ -141,8 +143,8 @@ The configuration directory holds:
 The four `crypto` files are required and there are no built-in networks: a network's release gives
 you its files. Put them in place before the first start.
 
-- Only the first entry of `sources` in `peers.json` is read, and it must be a plain HTTP URL. An
-  HTTPS source stops the relay at start.
+- Only the first entry of `sources` in `peers.json` is read: a plain HTTP URL, or the absolute
+  path of a file. An HTTPS entry anywhere in the list stops the relay at start.
 - A relay with no seed at all stops. A peer at a private address (`10.x.x.x`, `172.16.x.x`,
   `192.168.x.x`, or a link-local or unique-local one) is accepted only when
   `CORE_P2P_ALLOW_PRIVATE_IP_RANGES` is set to a value in `.env`. A loopback address and any
@@ -154,8 +156,7 @@ you its files. Put them in place before the first start.
 
 **Choosing the instance.** Every role command takes `--token` and `--network`; a flag always wins.
 To save typing, put `{"token": "...", "network": "..."}` in a `config.json` one level up,
-`~/.config/<token>-core/config.json`, or in the instance's own configuration directory. If
-nothing names the network and exactly one network directory under the token's configuration
+`~/.config/<token>-core/config.json`. If nothing names the network and exactly one network directory under the token's configuration
 directory holds a complete `crypto` directory, that network is used. The colon spellings of the
 reference (`relay:start`, `config:forger:private-key`) work for every command. This guide always
 names the network.
@@ -242,8 +243,9 @@ ID     Name               Version                Status  Uptime  Restarts  CPU  
 `status` prints a table row with the process id, name (`<token>-<network>-<role>`), version,
 status, uptime, restarts, CPU and memory. The statuses are `launching`, `online`,
 `online (unsupervised)` (a node started with `run` in a terminal), `stopping`, `stopped` and
-`errored`. `heartwood top` lists every running instance of a token across its networks with the
-same columns:
+`errored`. `heartwood top` lists every instance of a token, across its networks, that runs under
+the supervisor (a role started with `start`), with the same columns; a node started with `run` or
+under a systemd unit (section 13) is not listed:
 
 ```sh expect="solar-guide-relay"
 heartwood top
@@ -685,8 +687,9 @@ heartwood core status --network solo
 heartwood top
 ```
 
-A core node refuses to start when the relay's `remoteAccess` does not admit the address its forger
-connects from, and when its profile has no forger. If the forger inside it stops with an error, the
+A core node refuses to start when its forger reaches the relay on a loopback address that the
+relay's `remoteAccess` does not admit (`127.0.0.1`, or the forger's `localAddress`), and when its
+profile has no forger. If the forger inside it stops with an error, the
 whole node stops with the error. Stop it with `core stop`, which asks the node to shut down in
 order:
 
@@ -757,11 +760,39 @@ is the real file of the binary you ran `service install` with, every symbolic li
 from the binary at its permanent place, and after an upgrade that puts the binary somewhere else,
 install the unit again. A link you repoint later does not change a unit that is already written.
 
-Check the unit before you install it, where `systemd-analyze` exists:
+**The unit's environment.** A unit runs with the service manager's environment, not your shell's,
+and it names none of the instance's directories. If you set `CORE_PATH_*` or an `XDG_*_HOME`
+variable for the instance (section 4), add the same values to the unit as `Environment=` lines
+before you enable it, and keep them set wherever you run `heartwood` commands for the instance.
+Otherwise the node under the unit uses the default directories, with another database, an empty
+signing record and another lock, and `status`, `stop` and `start` in your shell do not see it: the
+lock then keeps no second copy of the role, with the same keys, from starting. Stop a role you
+started with `start` before you enable its unit.
+
+**Temporary files.** A system unit carries `PrivateTmp=yes` where the host's systemd supports it,
+so the node under it has a temporary directory of its own: the marker files that `state clear` and
+`pool clear` leave in the instance's temporary directory (section 18) do not reach it. To use those
+commands on such a node, stop the unit, run the command, start the relay once in a terminal with
+`heartwood relay run` until it is in sync (that start reads the marker), stop it, and start the
+unit again. A user unit shares your temporary directory.
+
+**Output.** Under a unit the node's output goes to the journal: read it with
+`journalctl --user -u <unit>` (`journalctl -u <unit>` for a system unit). `heartwood <role> log`
+reads only what a role started with `start` printed; the node's own log file (section 17) is
+written either way.
+
+Check the unit before you install it, where `systemd-analyze` exists. It exits 0 even on a key it
+does not know or a value it cannot read (systemd then ignores that line), so read what it prints:
+a line that names the unit is a problem to fix; lines about other units of your account are not
+about this one.
 
 ```sh optional=systemd-analyze
-systemd-analyze --user verify ~/units/solar-solo-relay.service
+out=$(systemd-analyze --user verify ~/units/solar-solo-relay.service 2>&1)
+if printf '%s\n' "$out" | grep -F solar-solo-relay; then exit 1; fi
 ```
+
+Then place the unit and enable it. These commands reach your service manager, so the guide's check
+shows them and does not run them:
 
 ```text
 mkdir -p ~/.config/systemd/user
@@ -773,6 +804,20 @@ loginctl enable-linger "$USER"
 
 The last line lets a user unit run when you are not logged in. Run the forger and the relay as two
 units; start the relay first.
+
+To remove a unit, stop and disable it while its file is still in place, then remove the file and
+reload the manager (not run by the check either):
+
+```text
+systemctl --user disable --now solar-solo-relay.service
+heartwood service uninstall --role relay --network solo
+systemctl --user daemon-reload
+```
+
+`service uninstall` removes the unit file from `~/.config/systemd/user` (from `DIR` with
+`--out DIR`). Disable the unit first: `systemctl --user disable` fails on a unit whose file is
+gone, which leaves the node running and the unit enabled. If that happened, stop the unit by name
+(`systemctl --user stop <unit>`), install the unit again, disable it, and then uninstall it.
 
 ## 14. Ports and firewall
 
@@ -874,7 +919,8 @@ Each role has the same commands.
 
 Replace `relay` with `forger` or `core` for the other roles. Add `--token` and `--network` unless
 `config.json` names them. `start` refuses a role that already runs for that token and network
-("... is already running"): a lock file prevents a second copy. The relay and the forger refuse to
+("... is already running"): a lock file in the instance's data directory prevents a second copy
+that uses the same data directory (section 13 says what a unit needs for that). The relay and the forger refuse to
 start while the core role of the same instance runs, and the core role refuses while either does.
 To keep a started role in the foreground use `--daemon=false`, or use `run`. An unknown flag is an
 error, with a usage line and exit status 2.
@@ -916,7 +962,9 @@ independent:
 ls ~/.local/state/solar-core/guide
 ```
 
-`heartwood <role> log` reads the captured output, not the node's own log file:
+`heartwood <role> log` reads the captured output of a role started with `start`, not the node's
+own log file; a node under a systemd unit prints to the journal instead (section 13). The forms
+below are shown, not run by the check:
 
 ```text
 heartwood relay log --network <network>
@@ -964,7 +1012,9 @@ record.
 
 - `heartwood state clear` makes the relay rebuild its state from its stored blocks, from the first
   block, at its next start. `heartwood pool clear` empties the transaction pool at the next start.
-  Both ask first; `--force` skips the question.
+  Both ask first; `--force` skips the question. Both leave a marker in the instance's temporary
+  directory, which a relay under a system unit does not see (section 13): start such a relay once
+  with `heartwood relay run` instead.
 - `heartwood snapshot rollback --height H` rolls a stopped relay's store back to the last block of
   the round before height `H` (`--number N` counts N blocks down from the tip); the relay syncs
   the rest from its peers.
@@ -999,7 +1049,7 @@ syncing again from the network, which takes time: a fresh sync is plan B, not a 
 Start with the diagnostics command. `heartwood doctor` examines your node on this machine,
 prints what is wrong and what to do, reads only and never opens a key file. Run it as the node's
 user, with the same `--token` and `--network` as your roles. [The doctor](doctor.md) describes
-its checks, its report and its exit codes.
+its checks, its report and its exit codes. The forms below are shown, not run by the check:
 
 ```text
 heartwood doctor --network <network>
