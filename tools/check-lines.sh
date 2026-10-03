@@ -162,7 +162,8 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 #   its conversions and its validation 1,153 (650 planned), the history routes with the store's
 #   refusals by column type 579 (500), the chain routes, the fees and the document 478 (350), the
 #   pagination 376, the wallet search 427 and the productivity 151; the API root (20 lines) joins it
-#   when the listings are carried onto it.
+#   when the listings are carried onto it. It measures 8,270 at the head: the API root (20), a later
+#   fix of the listings (21) and the head fuzz target's entry (19) on the 8,210.
 # With the listings carried onto the recovery commands and the diagnostics command (the same rule):
 # - heartwood-database goes from 3,300 to 3,400: the listings' 3,300 counted the rollback's
 #   planned store work but not the diagnostics command's read-only store opener and its reads, so
@@ -182,8 +183,9 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 #   flags, and the verbose version: 279 lines) and the combined role's root; the commands of top
 #   and env (30), the combined role (240), config and service (30) and a quarter of those (75)
 #   join it. None of these lines takes part in consensus.
-# - heartwood-p2p keeps 8,500: it measures 8,251 with the attestation record's types and hook, and
-#   the record's three call sites (up to 10 lines) fit.
+# - heartwood-p2p keeps 8,500: it measured 8,251 with the attestation record's types and hook, and
+#   measures 8,294 at the head with the record's three call sites (5 lines) and a later fix of the
+#   record (38 lines).
 # heartwood-forger goes from 2,200 to 2,300: it measures 2,172, and the work planned in it next
 # (the forger's hooks, about 12 lines, the sort of the block header's fields, about 30, and the
 # network hash's comparison, about 10) takes it to about 2,224; the rest leaves room for the
