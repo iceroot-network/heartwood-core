@@ -6,7 +6,11 @@
 //!   there by their handler ([`nodes::refused_alone`]) before the corpus was recorded;
 //! - a listing's tie between two reference nodes (`run.json` names both nodes of the corpus
 //!   `reference`), with the place of every wallet free inside its tie: each reference node orders
-//!   a tie by its own index, so both orders are the reference's.
+//!   a tie by its own index, so both orders are the reference's;
+//! - the answers of `/blocks/missed` of a Heartwood relay whose store differs from the control's
+//!   by the rows one of its starts wrote for the slots before block 2 only, judged as the
+//!   reference answers over each store's rows ([`api::missed`]): the reference's start writes the
+//!   same rows when its store holds no missed-slot row, and the control never wrote them.
 //!
 //! A case that passes so is recorded with the wallets and their evidence; every other case stays
 //! as it was judged, and evidence that cannot be read, or a corpus whose recording has no time, is
@@ -15,10 +19,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use super::nodes;
+use serde_json::Value;
+
 use super::run::{self, Implementation, Manifest};
+use super::{digest, nodes, recovery};
 use crate::api;
+use crate::api::missed::MissedSlot;
 use crate::report::{CaseResult, Outcome, Report};
+use crate::store::ScratchDir;
 
 /// The operation of a report's case that holds a note of the evidence ([`Note`]).
 pub const EVIDENCE: &str = "evidence";
@@ -103,29 +111,31 @@ pub fn route_corpora(
             })
             .filter_map(|i| recorded_line(&mut files, &report.results[i]).map(|line| (i, line)))
             .collect();
+        let corpus = Corpus {
+            run_dir,
+            manifest,
+            pair: (left, right),
+            dir: &dir,
+        };
         let listings: Vec<&(usize, api::Recorded)> = (failing.iter())
             .filter(|(_, line)| api::judge::is_listing(line))
             .collect();
-        if listings.is_empty() {
-            continue;
-        }
-        let reference = |name: &str| {
-            manifest
-                .node(name)
-                .is_some_and(|n| n.implementation == Implementation::Reference)
-        };
-        let note = if reference(left) && reference(right) {
-            reference_ties(&mut report, &listings, (left, right))
-        } else {
-            let corpus = Corpus {
-                run_dir,
-                manifest,
-                pair: (left, right),
-                dir: &dir,
+        if !listings.is_empty() {
+            let note = if corpus.runs(left, Implementation::Reference)
+                && corpus.runs(right, Implementation::Reference)
+            {
+                reference_ties(&mut report, &listings, (left, right))
+            } else {
+                refusal_places(&corpus, &mut steps, &mut report, &listings)
             };
-            refusal_places(&corpus, &mut steps, &mut report, &listings)
-        };
-        notes.extend(note);
+            notes.extend(note);
+        }
+        let missed: Vec<&(usize, api::Recorded)> = (failing.iter())
+            .filter(|(_, line)| api::missed::is_missed_blocks(line))
+            .collect();
+        if !missed.is_empty() {
+            notes.extend(backfilled_rows(&corpus, &mut report, &missed));
+        }
     }
     (report, notes)
 }
@@ -137,6 +147,142 @@ struct Corpus<'a> {
     manifest: &'a Manifest,
     pair: (&'a str, &'a str),
     dir: &'a Path,
+}
+
+impl Corpus<'_> {
+    /// Whether the run's node `name` runs `implementation`.
+    fn runs(&self, name: &str, implementation: Implementation) -> bool {
+        (self.manifest.node(name)).is_some_and(|n| n.implementation == implementation)
+    }
+}
+
+/// What shows that a Heartwood relay's store differs from the control's by the rows its start
+/// wrote for the slots before block 2 only, as the reference's start writes them
+/// (`calculateMissedBlocks`) when the store holds no missed-slot row: both stores' rows, the
+/// network's epoch, the rows the start wrote and the tip it started at.
+struct Backfill {
+    ours: Vec<MissedSlot>,
+    theirs: Vec<MissedSlot>,
+    epoch_ms: i64,
+    written: usize,
+    start: u32,
+}
+
+/// The failed `/blocks/missed` answers `missed` of a corpus whose node under test is a Heartwood
+/// relay and whose control is a reference node, judged again as the reference answers over each
+/// store's rows ([`api::missed::outcome_over_rows`]), when the relay's store differs from the
+/// control's by the rows a start of the relay wrote for the slots before block 2 only
+/// ([`backfill_evidence`]); what the evidence showed, if anything.
+fn backfilled_rows(
+    corpus: &Corpus<'_>,
+    report: &mut Report,
+    missed: &[&(usize, api::Recorded)],
+) -> Option<Note> {
+    let (left, right) = corpus.pair;
+    if !corpus.runs(left, Implementation::Heartwood)
+        || !corpus.runs(right, Implementation::Reference)
+    {
+        return None;
+    }
+    let evidence = match backfill_evidence(corpus) {
+        Ok(evidence) => evidence?,
+        Err(why) => {
+            let label = format!("the rows {left}'s start wrote for the slots before block 2");
+            return Some(Note::failure(label, why));
+        }
+    };
+    let mut judged = 0;
+    for (i, line) in missed {
+        let outcome = api::missed::outcome_over_rows(
+            line,
+            &evidence.ours,
+            &evidence.theirs,
+            evidence.epoch_ms,
+        );
+        if outcome == Outcome::Pass {
+            report.results[*i].outcome = Outcome::Pass;
+            judged += 1;
+        }
+    }
+    (judged > 0).then(|| {
+        Note::record(format!(
+            "{left} against {right}: {judged} answers of /blocks/missed equal the reference's \
+             answers over {left}'s rows, which hold the {} rows its start at {} wrote for the \
+             slots before block 2, as the reference's start writes them when its store holds no \
+             missed-slot row ({right}'s store holds none)",
+            evidence.written, evidence.start
+        ))
+    })
+}
+
+/// The evidence of a corpus's back-filled rows ([`Backfill`]): the control's rows from its
+/// archive (imported anew), the relay's from its store, and the start of the relay that found no
+/// missed-slot row ([`nodes::backfilling_start`]). `Ok(None)` when no start of the relay
+/// back-filled or the stores differ otherwise; an error when the evidence cannot be read.
+fn backfill_evidence(corpus: &Corpus<'_>) -> Result<Option<Backfill>, String> {
+    let (left, right) = corpus.pair;
+    let archives =
+        run::archives(&corpus.run_dir.join("archives").join(right)).map_err(|e| e.to_string())?;
+    if archives.is_empty() {
+        return Err(format!("no archive of {right}, the control"));
+    }
+    let scratch = ScratchDir::new("live-backfill").map_err(|e| e.to_string())?;
+    let dir = scratch.path().join(right);
+    crate::corpus::import(&archives, &dir, &corpus.manifest.seed).map_err(|e| e.to_string())?;
+    let control = crate::corpus::Corpus::load(&dir).map_err(|e| e.to_string())?;
+    let epoch_ms = (control.meta.pointer("/chain/epoch").and_then(Value::as_str))
+        .and_then(run::parse_time)
+        .ok_or_else(|| format!("the archive of {right} names no epoch"))?;
+    let rows = nodes::rows_of(&dir).map_err(|e| e.to_string())?;
+    let times = recovery::backfill_times(&control, corpus.manifest.block_time);
+    let read = digest::read(&corpus.run_dir.join("nodes").join(left).join("difftest"))
+        .map_err(|e| e.to_string())?;
+    let starts = digest::starts_of(&read);
+    let Some(start) = nodes::backfilling_start(&starts, &rows.missed, &rows.refused, false) else {
+        return Ok(None);
+    };
+    let ours = nodes::store_missed(corpus.run_dir, left)?;
+    let Some(written) = backfill_of(&ours, &rows.missed, &times) else {
+        return Ok(None);
+    };
+    let slots = |rows: &[nodes::MissedKey]| -> Vec<MissedSlot> {
+        (rows.iter())
+            .map(|(timestamp, height, username)| MissedSlot {
+                timestamp: *timestamp,
+                height: *height,
+                username: username.clone(),
+            })
+            .collect()
+    };
+    Ok(Some(Backfill {
+        ours: slots(&ours),
+        theirs: slots(&rows.missed),
+        epoch_ms,
+        written,
+        start,
+    }))
+}
+
+/// The number of rows `ours` holds beyond `theirs` when they are the rows a start writes for the
+/// slots before block 2, at `times`: every row of `theirs` in `ours`, and each other row at height
+/// 2, one at each of `times` and no other. `None` otherwise, or when `times` is empty.
+fn backfill_of(
+    ours: &[nodes::MissedKey],
+    theirs: &[nodes::MissedKey],
+    times: &[i64],
+) -> Option<usize> {
+    let mut extra: Vec<&nodes::MissedKey> = ours.iter().collect();
+    for row in theirs {
+        let at = extra.iter().position(|ours| *ours == row)?;
+        extra.swap_remove(at);
+    }
+    let mut written: Vec<i64> = (extra.iter())
+        .map(|(timestamp, height, _)| (*height == 2).then_some(*timestamp))
+        .collect::<Option<_>>()?;
+    written.sort_unstable();
+    let mut wanted = times.to_vec();
+    wanted.sort_unstable();
+    (!wanted.is_empty() && written == wanted).then_some(written.len())
 }
 
 /// The failed listings `listings` of `report` judged again with the places of the wallets one
@@ -697,5 +843,37 @@ mod tests {
                 .any(|r| r.op == EVIDENCE && r.outcome.is_failure()),
             "{report}"
         );
+    }
+
+    #[test]
+    fn a_store_differs_by_the_back_fill_only_when_every_extra_row_is_its() {
+        let row = |timestamp: i64, height: u64, username: &str| -> nodes::MissedKey {
+            (timestamp, height, username.to_owned())
+        };
+        let theirs = vec![row(1224, 151, "tx1n2290"), row(1704, 210, "tx1n2290")];
+        let times = [8, 16, 24];
+        let backfill = [
+            row(8, 2, "genesis_41"),
+            row(16, 2, "genesis_44"),
+            row(24, 2, "genesis_51"),
+        ];
+        let ours: Vec<nodes::MissedKey> = theirs.iter().chain(&backfill).cloned().collect();
+        assert_eq!(backfill_of(&ours, &theirs, &times), Some(3));
+        // Without the back-fill, or with a slot of it missing, one twice or one more.
+        assert_eq!(backfill_of(&theirs, &theirs, &times), None);
+        assert_eq!(backfill_of(&ours[..4], &theirs, &times), None);
+        let mut twice = ours.clone();
+        twice.push(row(16, 2, "genesis_44"));
+        assert_eq!(backfill_of(&twice, &theirs, &times), None);
+        let mut more = ours.clone();
+        more.push(row(32, 2, "genesis_53"));
+        assert_eq!(backfill_of(&more, &theirs, &times), None);
+        // A row at another height, or a row of the control's that the store lacks.
+        let mut higher = ours.clone();
+        higher[2].1 = 3;
+        assert_eq!(backfill_of(&higher, &theirs, &times), None);
+        assert_eq!(backfill_of(&ours[1..], &theirs, &times), None);
+        // No slot before block 2: nothing to write.
+        assert_eq!(backfill_of(&theirs, &theirs, &[]), None);
     }
 }

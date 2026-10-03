@@ -8,7 +8,9 @@
 //!
 //! - [`corpus`]: the corpus files and their variables; [`http`]: the client;
 //! - [`record`]: sending the corpus and recording the answers (`answers.jsonl`, `run.json`);
-//! - [`judge`]: the projections and the outcome of each request;
+//! - [`judge`]: the projections and the outcome of each request; [`missed`]: the reference's
+//!   answer to `/blocks/missed` over a store's rows, for a node whose start wrote rows the
+//!   control's store does not hold;
 //! - [`outside`]: a live run's answers to the `outside` section, which its recipe sends itself;
 //! - [`parse_query_case`] and [`paginate_case`]: the query grammar's and the pagination's records
 //!   of class V28, answered with `heartwood_api`.
@@ -16,6 +18,7 @@
 pub mod corpus;
 pub mod http;
 pub mod judge;
+pub mod missed;
 pub mod outside;
 pub mod record;
 

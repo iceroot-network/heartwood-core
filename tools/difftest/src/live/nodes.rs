@@ -241,6 +241,27 @@ fn backfill_in_store(
     )))
 }
 
+/// The missed-slot rows of the store of the Heartwood relay `node` of the run in `run_dir`, read
+/// from a copy (opening a store may write to it).
+pub(super) fn store_missed(
+    run_dir: &Path,
+    node: &str,
+) -> std::result::Result<Vec<MissedKey>, String> {
+    let data = run_dir.join("nodes").join(node).join("data");
+    let copy = ScratchDir::new("live-store-missed").map_err(|e| e.to_string())?;
+    copy_dir(&data, copy.path()).map_err(|e| e.to_string())?;
+    let database = match store::guarded(|| Database::open(&Settings::in_data_dir(copy.path()))) {
+        Err(unbuilt) => return Err(format!("the store is not built yet: {}", unbuilt.0)),
+        Ok(Err(e)) => return Err(format!("the store of {node} does not open: {e}")),
+        Ok(Ok(database)) => database,
+    };
+    let rows = database.missed_blocks().map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|m| (m.timestamp, u64::from(m.height), m.username))
+        .collect())
+}
+
 /// The store of the Heartwood relay `node` against the final chain's corpus in `corpus_dir`.
 pub fn heartwood_store(
     run_dir: &Path,
