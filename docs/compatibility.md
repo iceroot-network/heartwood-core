@@ -1870,7 +1870,14 @@ and only the sandboxing directives the host's systemd supports. A node whose env
 manager records it at its start (`<data>/run/<role>.manager.json`, written through a temporary
 file in the held run directory, a link in its place refused), and `status` then reports `online
 (systemd)` while `stop` refuses and names the manager's command, so a stop never fights the
-manager. `service uninstall` removes the unit file. There is no launchd variant: nodes run on
+manager. Both hold only where the unit and the commands use one data directory: the unit names
+none of the instance's directories and runs with the service manager's environment, so the
+operator guide has any `CORE_PATH_*` or `XDG_*_HOME` value added to the unit as an `Environment=`
+line, and a role started with `start` stopped before its unit is enabled. A system unit's
+`PrivateTmp=yes` gives its node a temporary directory of its own, which the marker files of `pool
+clear` and `state clear` do not reach; the guide has such a relay started once with `relay run`
+for them. `service uninstall` removes the unit file; the guide has the unit disabled first, since
+`systemctl disable` fails on a unit whose file is gone. There is no launchd variant: nodes run on
 Linux only. The unit's text is checked with `systemd-analyze verify` where it is installed.
 
 ```sh
@@ -2073,12 +2080,16 @@ collate those they both collated in the same order (except the transactions of a
 difference concerns, one whose transaction the reference's full pool evicted or that only one pool
 held after a step: the reference breaks a tie of fees by the order in which the senders entered its
 pool, so a sender whose evicted transaction was admitted again comes after the others of the same
-fee, where Heartwood's pool kept it in its place), Heartwood's block holds its collation and
+fee, with its later transactions behind it whatever their fees, where Heartwood's pool kept it in
+its place), each pool's priority order takes at every place a sender's next transaction of the
+highest fee (so a concerned sender's transaction moves only where the senders' order breaks a tie
+of fees), Heartwood's block holds its collation and
 agrees with the reference's in every field the transactions do not set and in its verification, and
 Heartwood's forger makes the reference's block from the reference's collated transactions. What
 the reference cannot witness is trusted to Heartwood's own pool: the steps after the documented
-one, where a transaction only Heartwood's pool holds stands among other senders' transactions in
-its priority order, and whether such a transaction was rightly removed at the collation. P18 has
+one, where, among transactions of equal fee, a transaction only Heartwood's pool holds or one of a
+concerned sender stands among other senders' transactions, and whether a transaction only
+Heartwood's pool holds was rightly removed at the collation. P18 has
 none. P19's are the over-height header of the delegate's own key that is not an empty block and
 whose signature verifies (about one in sixteen), on which
 Heartwood does not forge; the report counts the reference's actions, and every action of an attempt
@@ -2597,8 +2608,13 @@ supervisor, with the node's `CORE_PATH_*` variables, so the supervisor, the lock
 logs are the ones an operator gets; reference nodes run their relay and their forger as two
 processes. A forger reaches its own relay on `127.0.0.1`, so its relay attests its keys. A partition
 puts, in each node's namespace, an unreachable route to every address of the other groups, and the
-heal removes those routes: the addresses stay, so the peers find each other again after the heal,
-and a send to the other side fails at once. A fault is a line in the run's `faults.jsonl` with its
+heal removes those routes, and a send to the other side fails at once. A node goes back to its
+seeds only when it holds fewer peers than the network's minimum reach (one here), and its
+discovery asks only the peers it knows, so after a partition that leaves each node a peer on its
+own side neither implementation finds the other side again by itself: 60 s after the heal the
+recipe restarts the relay of each minority node still 10 or more blocks behind, of either
+implementation, which then syncs from its seeds. The convergence these runs show is the
+restarted relays'; a heal followed without a restart is not shown. A fault is a line in the run's `faults.jsonl` with its
 nodes and its start; its window ends 30 seconds after the node answers its API again, or after the
 heal. The recipes are the maintainers' tooling (not published); the runs, named by content, are:
 
@@ -2606,7 +2622,7 @@ heal. The recipes are the maintainers' tooling (not published); the runs, named 
 |---|---|---|
 | `mixed-short` | the first split and the second in turn; 2 rounds | forging on both sides, votes admitted on both, a batch reaching every pool before the next block, every relay listing every other, no ban line, equal digests across the implementations |
 | `mixed` | the first split; 5 rounds | the same with a missed slot stored on every node, restarts of Heartwood relays on both start paths, a supervised kill of a forger, a partition along the implementations and its heal, and the route corpus compared on like-for-like pairs |
-| `mixed-split` | the second split, with `minimumDelegateReach` 15 on every node; 5 rounds | a partition across implementations in which both sides forge, conflicting transfers, and both minority nodes converging on the majority chain after the heal |
+| `mixed-split` | the second split, with `minimumDelegateReach` 15 on every node; 5 rounds | a partition across implementations in which both sides forge, conflicting transfers, and both minority nodes converging on the majority chain after the heal and the restart of their relays |
 | `churn` | five Heartwood nodes, a relay without keys (node 6), node 5's forger on a second machine (its own namespace) and a reference relay that joins late; 5 rounds | every node stopped and started in turn, supervised kills, a transaction pool filled to its limit and drained, two nodes down (forging goes on) and three (the chain halts and resumes), a vote for the split-host forger's delegate refused as offline (the relay does not attest it), the relay without keys serving every route, and a fresh reference relay syncing from one Heartwood relay alone |
 | `core` | three Heartwood `core` nodes in mode B; 2 rounds | one process per node holding the three locks, forging and attestation as split nodes, `relay start` refused while `core` runs, a graceful stop within 30 seconds |
 | `observer` | reference nodes 1 to 3 and a Heartwood relay without delegates (node 4); 3 rounds | the transaction generator's scenarios submitted through the Heartwood relay (all but a resignation's revoke, which falls past round 3), a batch through it, and a vote through it before and after its restart; then the route corpus of the full route list sent to a Heartwood relay and a reference node, alternately |
@@ -2617,7 +2633,8 @@ Every run stops at its planned height, which its recipe refuses to pass (2 round
 fault windows; the scripted votes admitted on both sides, none for a restarted relay's own
 delegates before the next round's start; after the first round every reference relay lists a
 version for each Heartwood-hosted delegate, and every Heartwood relay's network state counts all
-53 delegates before a partition; both sides of a partition forged and converged after the heal;
+53 delegates before a partition; both sides of a partition forged and converged after the heal
+(with each lagging minority relay restarted, which the check records);
 no reference node banned a Heartwood node; each block was made by the delegate its slot names; and
 every Heartwood relay's digest lines equal the judge's. A block that a relay of the minority applied
 in the first slots of a partition, before it found it had lost its peers, is on no judged chain: the
@@ -2626,22 +2643,31 @@ reference with its processor's results, and the relay's lines of the block must 
 branch's. In a run whose recipe sends a transaction to one node of an API pair only, that node's
 handler may refuse it and so move its parties inside their ties in the wallet indexes, where the
 other node never sees it: the check then lets such a wallet, and only such a wallet, stand at
-another place inside its tie on the listings of that pair (the wallets the search finds, which the
-reference lists in its index's order, included), with its evidence read from the run's own records
-(sent to that node alone and refused there by its handler before the route corpus was recorded),
-and names the wallet. Where both nodes of a pair are reference nodes, each orders a tie by its own
+another place inside its tie on the listings of that pair, with its evidence read from the run's
+own records (sent to that node alone and refused there by its handler, not at the pool's entry,
+before the route corpus was recorded), and names the wallet. The wallets the search finds are
+sorted by the reference (an active delegate before a wallet that is no delegate, active delegates
+by name, any other pair by address): such a wallet's place is free there only inside a tie of
+names the numeric collation holds equal, or where a resigned delegate stands among active ones,
+whose order the comparator leaves to the index. Where both nodes of a pair are reference nodes, each orders a tie by its own
 index, so any order inside a tie is the reference's. A Heartwood relay restarted on a store that
 holds no missed-slot row writes the rows of the slots before block 2, as the reference's start
-does; a control that never restarted holds none, so the pair's answers to `/blocks/missed` are
+does, each charged to the delegate of round 1's forging order at the slot's place (the order is
+computed from the control's round rows and checked against every block of round 1); a control that never restarted holds none, so the pair's answers to `/blocks/missed` are
 judged as the reference answers over each node's rows, once that rule gives the control's own
 answers over the control's rows exactly. `make api-compare` judges a run's recorded answers with
 the same evidence. A scripted batch whose transactions one reference relay listed only in part
-before its next block is the reference's own race when that relay's log shows it: the relay
-received the batch from two relays at once, its pool ran the two posts side by side and refused
-the later nonces for a gap the other post filled a moment later; the step is then documented,
-provided every Heartwood relay listed the whole batch and every transaction of the batch was
-forged later. The attestation record is required of a relay whose forger connects over loopback,
-which alone is offered statuses to sign. A reference node writes no block file, so
+before its next block is the reference's own race, two posts of the batch reaching that relay at
+once, its pool running them side by side and refusing the later nonces for a gap the other post
+filled a moment later. The relay's own pool lines name no post (one post out of nonce order writes
+the same lines), so the step is documented only when the run's logs show the two posts as well:
+two other relays broadcast exactly the batch's number of transactions within a millisecond a
+transaction of each other, no later than the relay's first pool line of the batch; the relay's
+outcomes come in an order two posts each in nonce order can give; another reference relay took the
+whole batch in nonce order; every Heartwood relay listed the whole batch; and every transaction of
+the batch was forged later. The attestation record is required of a relay whose forger connects
+over loopback, which alone is offered statuses to sign; a signature attached, or a status served
+signed, in the record of a relay whose forger is elsewhere fails. A reference node writes no block file, so
 the chain's blocks are the Heartwood relays': each holds every block it applied, those of an
 abandoned branch included. The resource series of the longer runs (each node's whole process
 tree, every 10 seconds, with the bytes written and the log growth) are recorded and read against
