@@ -63,7 +63,7 @@ fn heartwood(record: &Value, registry: &Registry) -> Value {
 fn each_case_is_the_pools_documented_difference_it_names() {
     let registry = registry();
     let cases = cases();
-    assert_eq!(cases.len(), 6);
+    assert_eq!(cases.len(), 11);
     let wrong: Vec<(&Value, Outcome)> = cases
         .iter()
         .filter_map(|record| {
@@ -215,4 +215,41 @@ fn a_pool_order_against_a_senders_nonce_order_fails() {
         checked += 1;
     }
     assert!(checked > 0, "no case holds a sender with two transactions");
+}
+
+#[test]
+fn a_tie_order_no_eviction_or_held_difference_explains_fails() {
+    // In the cases where the reference evicted a transfer and admitted it again within one batch,
+    // the two pools held the same transactions after every step: only the eviction note says
+    // that the transfer's sender came back last among equal fees. Without the evicted ids in the
+    // note, the swapped order of the two collations is no longer explained.
+    let registry = registry();
+    let mut checked = 0;
+    for record in cases().iter().filter(|record| {
+        (record["name"].as_str()).is_some_and(|name| name.contains("in the same batch"))
+    }) {
+        let name = &record["name"];
+        assert_eq!(
+            judged(record, record["output"].clone(), &registry),
+            Outcome::Documented(Documented::FullPoolEviction.reason().into()),
+            "{name}"
+        );
+        let mut silent = record["output"].clone();
+        for step in silent["notes"]["session"]["results"]
+            .as_array_mut()
+            .unwrap()
+        {
+            let evictions = &mut step["result"]["notes"]["evictions"];
+            for eviction in evictions.as_array_mut().into_iter().flatten() {
+                eviction["evicted"] = Value::Array(Vec::new());
+            }
+        }
+        let outcome = judged(record, silent, &registry);
+        assert!(
+            format!("{outcome:?}").contains("the pools' difference does not concern"),
+            "{name}: {outcome:?}"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 2);
 }

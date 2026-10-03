@@ -2068,7 +2068,11 @@ counts as documented only when the pool's own rules find that difference in the 
 collation follows from its own pool (in priority order, which keeps each sender's transactions in
 nonce order, every transaction collated or removed until the block is full), the two collators
 decide alike each transaction both pools held and both reached before a limit stopped them, and
-collate those they both collated in the same order, Heartwood's block holds its collation and
+collate those they both collated in the same order (except the transactions of a sender the
+difference concerns, one whose transaction the reference's full pool evicted or that only one pool
+held after a step: the reference breaks a tie of fees by the order in which the senders entered its
+pool, so a sender whose evicted transaction was admitted again comes after the others of the same
+fee, where Heartwood's pool kept it in its place), Heartwood's block holds its collation and
 agrees with the reference's in every field the transactions do not set and in its verification, and
 Heartwood's forger makes the reference's block from the reference's collated transactions. What
 the reference cannot witness is trusted to Heartwood's own pool: the steps after the documented

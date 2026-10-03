@@ -189,7 +189,9 @@ fn collate_and_forge(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
 ///   each transaction collated or removed, until the block is full;
 /// - the collators decide alike (collated, or removed) each transaction that both pools held and
 ///   both reached before a limit stopped them, and collate those they both collated in the same
-///   order; a transaction one of them did not reach is decided by the other alone;
+///   order, apart from the transactions of the senders the difference concerns
+///   ([`moved_by_difference`]), whose place among equal fees may differ; a transaction one of them
+///   did not reach is decided by the other alone;
 /// - Heartwood's block holds its collation and agrees with the reference's block in every field
 ///   that does not depend on the transactions, and in its verification (`block_unexplained`);
 /// - Heartwood's forger makes the reference's block, byte for byte, from the reference's collated
@@ -234,7 +236,9 @@ pub fn collation_difference(
             .and_then(|last| session["results"].get(last))
             .map_or(Value::Null, |step| step["contents"].clone())
     };
-    if let Some(found) = unexplained_collation(&pool(theirs), expected, &pool(ours), actual) {
+    let moved = moved_by_difference(theirs, ours, user_steps);
+    if let Some(found) = unexplained_collation(&pool(theirs), expected, &pool(ours), actual, &moved)
+    {
         return unexplained(vec![found]);
     }
     if let Some(found) = block_unexplained(case, expected, actual, registry) {
@@ -280,13 +284,16 @@ fn ids(list: &Value) -> Vec<String> {
 /// step (`all`, `highest`), an answer gives `collated` and `removed`, and Heartwood's notes give
 /// the bytes of each transaction and the block's limits. A transaction both pools held is
 /// compared where both collators reached it: there it is collated on both sides or removed on
-/// both, and the ones both collated stand in the same order. Where a limit stopped one collator
-/// before it, the other's decision stands alone (the pools' other transactions moved the limit).
+/// both, and the ones both collated stand in the same order, leaving out the transactions of
+/// `moved`, whose senders the documented difference concerns (see [`moved_by_difference`]).
+/// Where a limit stopped one collator before it, the other's decision stands alone (the pools'
+/// other transactions moved the limit).
 fn unexplained_collation(
     their_pool: &Value,
     theirs: &Value,
     our_pool: &Value,
     ours: &Value,
+    moved: &BTreeSet<String>,
 ) -> Option<Difference> {
     let problem = |path: &str, what: String| Difference::Value {
         path: path.to_owned(),
@@ -333,21 +340,88 @@ fn unexplained_collation(
             });
         }
     }
-    // And those both collated, in the same order.
+    // And those both collated, in the same order, but for the senders the difference concerns.
     let both = |answer: &Value, other: &BTreeMap<String, &'static str>| -> Vec<String> {
         (ids(&answer["collated"]).into_iter())
-            .filter(|id| other.get(id) == Some(&"collated"))
+            .filter(|id| other.get(id) == Some(&"collated") && !moved.contains(id))
             .collect()
     };
     let (a, b) = (both(theirs, &our_decisions), both(ours, &their_decisions));
     if a != b {
         return Some(Difference::Value {
-            path: "$.collated, of the transactions both pools held and both collated".into(),
+            path: "$.collated, of the transactions both pools held and both collated, of the \
+                   senders the pools' difference does not concern"
+                .into(),
             expected: json!(a),
             actual: json!(b),
         });
     }
     None
+}
+
+/// The transactions whose place among equal fees the pools' documented difference may change: in
+/// either session (`theirs`, the reference's, and `ours`), each transaction any step's contents
+/// list for a sender the difference concerns. A sender is concerned when, in the session's own
+/// `steps` (the collation after them left out), the reference's full pool evicted one of its
+/// transactions (the evictions the oracle notes in a step's result, in a batch or a re-add), or
+/// one pool held one of its transactions after a step and the other did not.
+///
+/// The reference orders transactions of equal fees by the order in which their senders' mempools
+/// were made (`getFromHighestPriority` merges the senders' lists in the mempool's insertion order,
+/// and a tie keeps the earlier sender), and a sender whose mempool emptied is made again last when
+/// a transaction of its own is admitted. After an eviction that Heartwood does not make, the
+/// evicted transaction admitted again (sent again, or re-added) comes after the senders of the same
+/// fee in the reference's order, while Heartwood's pool kept it in its place. The pools' own
+/// priority orders are checked against each collation by `follows`.
+fn moved_by_difference(theirs: &Value, ours: &Value, steps: usize) -> BTreeSet<String> {
+    let results = |session: &Value| -> Vec<Value> {
+        session["results"].as_array().cloned().unwrap_or_default()
+    };
+    let (their_steps, our_steps) = (results(theirs), results(ours));
+    // Each sender's transactions, and each transaction's sender, from every step of both sessions.
+    let mut held_by: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut sender_of: BTreeMap<String, String> = BTreeMap::new();
+    for step in their_steps.iter().chain(&our_steps) {
+        for sender in step["contents"]["bySender"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let Some(address) = sender[0].as_str() else {
+                continue;
+            };
+            for id in ids(&sender[1]) {
+                sender_of.insert(id.clone(), address.to_owned());
+                held_by.entry(address.to_owned()).or_default().insert(id);
+            }
+        }
+    }
+    let evicted = (their_steps.iter().take(steps))
+        .flat_map(|step| ids_of_evictions(&step["result"][NOTES]["evictions"]));
+    let held =
+        |step: &Value| -> BTreeSet<String> { ids(&step["contents"]["all"]).into_iter().collect() };
+    let one_side = (their_steps.iter().zip(&our_steps).take(steps)).flat_map(|(a, b)| {
+        held(a)
+            .symmetric_difference(&held(b))
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    let concerned: BTreeSet<&String> = evicted
+        .chain(one_side)
+        .filter_map(|id| sender_of.get(&id))
+        .collect();
+    (concerned.into_iter())
+        .filter_map(|address| held_by.get(address))
+        .flatten()
+        .cloned()
+        .collect()
+}
+
+/// The evicted ids of the oracle's eviction notes (`[{id, evicted: [id]}]`).
+fn ids_of_evictions(evictions: &Value) -> Vec<String> {
+    (evictions.as_array().into_iter().flatten())
+        .flat_map(|eviction| ids(&eviction["evicted"]))
+        .collect()
 }
 
 /// Whether `answer`'s collation follows from `pool` as the collator chooses it. Down the pool's
@@ -786,6 +860,17 @@ mod tests {
         follows(pool, answer, &answer[NOTES])
     }
 
+    /// Where the two collations differ otherwise than the pools do, with no sender the pools'
+    /// difference concerns.
+    fn unexplained(
+        their_pool: &Value,
+        theirs: &Value,
+        our_pool: &Value,
+        ours: &Value,
+    ) -> Option<Difference> {
+        unexplained_collation(their_pool, theirs, our_pool, ours, &BTreeSet::new())
+    }
+
     #[test]
     fn a_collation_follows_its_pool_in_priority_order_until_the_block_is_full() {
         let free = |collated: &[&str], removed: &[&str]| answer(collated, removed, 150, 2_097_152);
@@ -890,7 +975,7 @@ mod tests {
         let free = |collated: &[&str]| answer(collated, &[], 150, 2_097_152);
         // Heartwood's pool also holds l, which it collates after s.
         assert_eq!(
-            unexplained_collation(
+            unexplained(
                 &pool(&["s"]),
                 &free(&["s"]),
                 &pool(&["s", "l"]),
@@ -900,7 +985,7 @@ mod tests {
         );
         // Heartwood leaves out its own l with room in the block.
         assert!(
-            unexplained_collation(
+            unexplained(
                 &pool(&["s"]),
                 &free(&["s"]),
                 &pool(&["s", "l"]),
@@ -911,7 +996,7 @@ mod tests {
         // The two collate the transactions both pools hold in another order.
         let both = pool(&["s", "t"]);
         assert!(
-            unexplained_collation(
+            unexplained(
                 &both,
                 &free(&["s", "t"]),
                 &pool(&["t", "s"]),
@@ -923,7 +1008,7 @@ mod tests {
         // of s, which Heartwood collates.
         let one = |collated: &[&str]| answer(collated, &[], 1, 2_097_152);
         assert_eq!(
-            unexplained_collation(
+            unexplained(
                 &pool(&["x", "s"]),
                 &one(&["x"]),
                 &pool(&["s"]),
@@ -943,7 +1028,7 @@ mod tests {
         let (theirs, ours) = (pool(&["s", "t"]), pool(&["s", "l", "t"]));
         assert_eq!(checked(&theirs, &one(&["s"], &[])), Ok(true));
         assert_eq!(checked(&ours, &one(&["l"], &["s"])), Ok(true));
-        let found = unexplained_collation(&theirs, &one(&["s"], &[]), &ours, &one(&["l"], &["s"]));
+        let found = unexplained(&theirs, &one(&["s"], &[]), &ours, &one(&["l"], &["s"]));
         assert!(
             matches!(&found, Some(Difference::Value { path, expected, actual })
                 if path.starts_with("$.collated and $.removed: s, ")
@@ -953,7 +1038,7 @@ mod tests {
         // Where l comes first in Heartwood's priority order, its collator stops before s: s is
         // beyond its limit, so it decided nothing about it.
         assert_eq!(
-            unexplained_collation(
+            unexplained(
                 &theirs,
                 &one(&["s"], &[]),
                 &pool(&["l", "s", "t"]),
@@ -965,7 +1050,7 @@ mod tests {
         // Heartwood's collator did not reach.
         let two = |collated: &[&str]| answer(collated, &[], 2, 2_097_152);
         assert_eq!(
-            unexplained_collation(
+            unexplained(
                 &pool(&["s", "t", "u"]),
                 &two(&["s", "t"]),
                 &pool(&["s", "l", "t", "u"]),
@@ -976,7 +1061,7 @@ mod tests {
         // A shared transaction one side collated and the other removed is no limit's doing.
         let three = |collated: &[&str], removed: &[&str]| answer(collated, removed, 3, 2_097_152);
         assert!(
-            unexplained_collation(
+            unexplained(
                 &pool(&["s", "t", "u"]),
                 &three(&["s", "t", "u"], &[]),
                 &pool(&["s", "l", "t", "u"]),
@@ -984,5 +1069,88 @@ mod tests {
             )
             .is_some()
         );
+    }
+
+    #[test]
+    fn a_sender_the_pools_difference_concerns_may_take_another_place_among_equal_fees() {
+        let free = |collated: &[&str]| answer(collated, &[], 150, 2_097_152);
+        let moved =
+            |ids: &[&str]| -> BTreeSet<String> { ids.iter().map(|id| (*id).to_owned()).collect() };
+        // The reference evicted t and admitted it again, last among equal fees; Heartwood kept it
+        // first. Both pools hold s and t and both collate them.
+        let (theirs, ours) = (pool(&["s", "t"]), pool(&["t", "s"]));
+        assert_eq!(
+            unexplained_collation(
+                &theirs,
+                &free(&["s", "t"]),
+                &ours,
+                &free(&["t", "s"]),
+                &moved(&["t"])
+            ),
+            None
+        );
+        // No sender of the two is concerned: the order is the collators' own.
+        assert!(
+            unexplained_collation(
+                &theirs,
+                &free(&["s", "t"]),
+                &ours,
+                &free(&["t", "s"]),
+                &moved(&["u"])
+            )
+            .is_some()
+        );
+        // A third sender's place may differ, the order of the others may not.
+        let (theirs, ours) = (pool(&["s", "t", "u"]), pool(&["u", "t", "s"]));
+        assert!(
+            unexplained_collation(
+                &theirs,
+                &free(&["s", "t", "u"]),
+                &ours,
+                &free(&["u", "t", "s"]),
+                &moved(&["u"])
+            )
+            .is_some()
+        );
+        // The moved transaction is still decided alike: collated on one side, removed on the other
+        // fails.
+        assert!(
+            unexplained_collation(
+                &pool(&["s", "t"]),
+                &free(&["s", "t"]),
+                &pool(&["t", "s"]),
+                &answer(&["s"], &["t"], 150, 2_097_152),
+                &moved(&["t"])
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn the_senders_a_pools_difference_concerns_are_the_evicted_ones_and_those_held_on_one_side() {
+        // Senders A (a1, a2), B (b1), C (c1) and D (d1). The reference's full pool evicted a1 at
+        // step 0; after step 1 only Heartwood's pool holds c1; B and D are held alike.
+        let step = |by_sender: Value, all: &[&str], notes: Value| json!({"result": {NOTES: notes}, "contents": {"all": all, "bySender": by_sender}});
+        let evicted = json!({"evictions": [{"id": "x", "evicted": ["a1"]}]});
+        let theirs = json!({"results": [
+            step(json!([["B", ["b1"]], ["D", ["d1"]]]), &["b1", "d1"], evicted),
+            step(json!([["B", ["b1"]], ["D", ["d1"]], ["A", ["a2"]]]), &["b1", "d1", "a2"], json!({})),
+        ]});
+        let ours = json!({"results": [
+            step(json!([["A", ["a1"]], ["B", ["b1"]], ["D", ["d1"]]]), &["a1", "b1", "d1"], json!({})),
+            step(
+                json!([["A", ["a1", "a2"]], ["B", ["b1"]], ["D", ["d1"]], ["C", ["c1"]]]),
+                &["a1", "a2", "b1", "d1", "c1"],
+                json!({})
+            ),
+        ]});
+        let moved: Vec<String> = moved_by_difference(&theirs, &ours, 2).into_iter().collect();
+        assert_eq!(moved, ["a1", "a2", "c1"]);
+        // The collation's own step is left out: c1 differs only after step 1.
+        let moved: Vec<String> = moved_by_difference(&theirs, &ours, 1).into_iter().collect();
+        assert_eq!(moved, ["a1", "a2"]);
+        // Without the eviction note and with the same transactions on both sides, none.
+        let plain = json!({"results": [step(json!([["B", ["b1"]]]), &["b1"], json!({}))]});
+        assert!(moved_by_difference(&plain, &plain, 1).is_empty());
     }
 }
