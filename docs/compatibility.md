@@ -2199,10 +2199,16 @@ tooling derives from the chain's seed. Each rebuilt block must equal the stored 
 whose first block does not rebuild is reported as "aux unknown", never as passed, unless that aux
 reproduces the block's own signature: then the forging differs, and the block is a mismatch. With
 `DIRECTION=oracle` the reference rebuilds the blocks instead, which checks a chain that Heartwood
-forged. Every block of the committed corpus, of the maintainers' fault and restart chains (to
-height 265), of the chains of the live runs with reference forgers and of run `t` rebuilds
-through Heartwood's forger, and every block of runs `m` and `f`, which Heartwood's forgers made,
-rebuilds through the reference's (see L3 and L4).
+forged. The forger keys are those the devnet tooling derives from the chain's seed and, for a chain
+of a lockstep batch (`batch-S-K`), the keys of its recipe's wallets, any of which may register as
+a delegate and forge: the replay reads their labels from the batch file beside the chain
+(`batch-S.json`), whose entry for the chain must have the chain's seed. A block whose generator is
+none of these keys (a chain made alone from a recipe that registers a delegate, or a batch chain
+copied without its batch file) is reported as a harness error, never as passed. Every block of
+the committed corpus, of the maintainers' fault and restart chains (to height 265), of the chains
+of the live runs with reference forgers and of run `t` rebuilds through Heartwood's forger, and
+every block of runs `m` and `f`, which Heartwood's forgers made, rebuilds through the reference's
+(see L3 and L4).
 
 **The forger's own blocks.** `make l2-synthetic` also runs four cases of a block that the node's
 own forger posts, on top of the chain, through the reference's receipt and job and through
