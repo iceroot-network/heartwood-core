@@ -382,6 +382,53 @@ fn a_failed_command_makes_a_failed_record_and_a_bad_stamp_is_refused() {
 }
 
 #[test]
+fn a_failed_long_run_is_recorded_whatever_the_explanations_file_the_criteria_name() {
+    // The criteria name an explanations file that is not there (a machine the file was not
+    // copied to): the failed run still leaves its failed record and its failed ledger entry, so
+    // the totals see the failure. Recording reads the criteria for the tested paths alone.
+    let rig = Rig::new();
+    let mut criteria = base_criteria();
+    criteria["explanations"] = json!("missing-explanations.json");
+    rig.criteria(&criteria);
+    let printed = report(10, &[]);
+    std::fs::write(rig.path("p.txt"), &printed).expect("p");
+    let ran = rig.gate(&[
+        "record",
+        "--target",
+        "l1",
+        "--command",
+        "difftest run l1 --property P1",
+        "--exit",
+        "2",
+        "--started",
+        T1,
+        "--finished",
+        T1,
+        "--out",
+        &rig.arg("records"),
+        "--criteria",
+        &rig.arg("criteria.json"),
+        "--ledger",
+        "kind=property id=P1 cases=10 seed=1",
+        "--ledger-dir",
+        &rig.arg("ledger"),
+        "--output",
+        &rig.arg("p.txt"),
+    ]);
+    assert!(ran.ok, "{}", ran.text);
+    assert_eq!(rig.records().len(), 1, "{}", ran.text);
+    assert_eq!(rig.records()[0]["result"], "fail");
+    let entries: Vec<PathBuf> = std::fs::read_dir(rig.path("ledger"))
+        .expect("the ledger entry is written")
+        .map(|e| e.expect("entry").path())
+        .collect();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(read(&entries[0])["result"], "fail");
+    // The stage table still needs the file: it reads the explanations.
+    assert!(!s1(&rig, &[]).ok);
+}
+
+#[test]
 fn a_dirty_tree_is_recorded_as_dirty_and_refuses_the_ledger_entry() {
     let rig = Rig::new();
     rig.criteria(&base_criteria());

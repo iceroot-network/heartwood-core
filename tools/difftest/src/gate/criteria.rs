@@ -387,8 +387,22 @@ pub struct ScopeSpec {
 }
 
 impl Criteria {
-    /// Read and check the criteria file at `path`.
+    /// Read and check the criteria file at `path`, with the explanations file it names.
     pub fn read(path: &Path) -> Result<Criteria> {
+        Criteria::read_with(path, true)
+    }
+
+    /// Read and check the criteria file at `path` for a gate record, which takes from it only the
+    /// tested paths ([`Criteria::narrowed_paths`]): without the explanations file the criteria
+    /// name, which the readers of the records alone use, so that a run is recorded, failed or not,
+    /// whether that file is there or not.
+    pub fn read_for_records(path: &Path) -> Result<Criteria> {
+        Criteria::read_with(path, false)
+    }
+
+    /// Read and check the criteria file at `path`, with the explanations file it names when
+    /// `explanations`.
+    fn read_with(path: &Path, explanations: bool) -> Result<Criteria> {
         let text = std::fs::read_to_string(path).map_err(|e| Error::io(path, e))?;
         let criteria: Criteria = serde_json::from_str(&text).map_err(|e| Error::Corpus {
             path: path.to_path_buf(),
@@ -406,6 +420,9 @@ impl Criteria {
         if let Some(file) = criteria.explanations.as_mut() {
             let at = base.join(&*file);
             *file = at.to_string_lossy().into_owned();
+            if !explanations {
+                return Ok(criteria);
+            }
             let text = std::fs::read_to_string(&at).map_err(|e| Error::io(&at, e))?;
             let read: ExplanationsFile =
                 serde_json::from_str(&text).map_err(|e| Error::Corpus {

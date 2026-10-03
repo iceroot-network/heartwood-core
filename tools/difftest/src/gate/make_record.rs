@@ -109,9 +109,8 @@ pub fn run(args: &[String]) -> Result<bool> {
     let dirty = changed_meanwhile || head != head_now || repo.dirty()?;
 
     let narrowed = match &criteria {
-        Some(path) => {
-            Criteria::read(Path::new(path))?.narrowed_paths(&target, &variables, &command)
-        }
+        Some(path) => Criteria::read_for_records(Path::new(path))?
+            .narrowed_paths(&target, &variables, &command),
         None => None,
     };
     // A narrowed record keeps the recorder's own inputs too, which the list of a make target or a
