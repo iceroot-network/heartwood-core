@@ -6,22 +6,27 @@
 
 use std::path::Path;
 
+use heartwood_crypto::Transaction;
+use heartwood_crypto::utils::hex;
 use heartwood_difftest::levels::{self, l1};
 use heartwood_difftest::report::Outcome;
 use heartwood_difftest::subject::{self, Case, Documented, Registry, Verdict};
 use heartwood_difftest::subjects::{Devnet, collation_difference};
 use heartwood_difftest::vectors::{Expected, VectorSet};
-use serde_json::Value;
+use serde_json::{Value, json};
 
-fn registry() -> Registry {
+/// The devnet of the committed vectors.
+fn devnet() -> Devnet {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/crypto/tests/vectors");
     let set = VectorSet::load(&dir).expect("the committed vectors load");
     l1::devnet_milestones(&set).expect("the devnet milestone file");
-    subject::heartwood(Some(
-        Devnet::from_vectors(&set)
-            .unwrap()
-            .expect("a genesis class"),
-    ))
+    Devnet::from_vectors(&set)
+        .unwrap()
+        .expect("a genesis class")
+}
+
+fn registry() -> Registry {
+    subject::heartwood(Some(devnet()))
 }
 
 /// The cases: `{op, network, height, name, difference, input, output}`, one per line.
@@ -63,7 +68,7 @@ fn heartwood(record: &Value, registry: &Registry) -> Value {
 fn each_case_is_the_pools_documented_difference_it_names() {
     let registry = registry();
     let cases = cases();
-    assert_eq!(cases.len(), 11);
+    assert_eq!(cases.len(), 13);
     let wrong: Vec<(&Value, Outcome)> = cases
         .iter()
         .filter_map(|record| {
@@ -252,4 +257,97 @@ fn a_tie_order_no_eviction_or_held_difference_explains_fails() {
         checked += 1;
     }
     assert_eq!(checked, 2);
+}
+
+#[test]
+fn a_concerned_transaction_placed_across_a_higher_fee_fails() {
+    // The reference evicted a 50M transfer and admitted it again last among equal fees, after a
+    // 60M transfer: its collation is the 60M one, the other sender's 50M one, then the evicted
+    // one. Heartwood's pool, priority order, collation and block made with the evicted transfer
+    // first, ahead of the 60M one, is no tie the senders' order decides: it must fail, although
+    // the evicted transfer's sender is one the pools' difference concerns.
+    let devnet = devnet();
+    let registry = subject::heartwood(Some(devnet.clone()));
+    let record = (cases().into_iter())
+        .find(|record| {
+            (record["name"].as_str()).is_some_and(|name| name.contains("ahead of the 60M one"))
+        })
+        .expect("the case is committed");
+    assert_eq!(
+        judged(&record, record["output"].clone(), &registry),
+        Outcome::Documented(Documented::FullPoolEviction.reason().into())
+    );
+    let ours = heartwood(&record, &registry);
+    let evicted = (record["output"]["notes"]["session"]["results"]
+        .as_array()
+        .unwrap()
+        .iter())
+    .flat_map(|step| {
+        step["result"]["notes"]["evictions"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    })
+    .flat_map(|eviction| eviction["evicted"].as_array().cloned().unwrap_or_default())
+    .next()
+    .expect("an eviction is noted");
+    let height = record["height"].as_u64().unwrap();
+    let fee = |id: &Value| {
+        let text = ours["notes"]["transactions"][id.as_str().unwrap()]
+            .as_str()
+            .unwrap();
+        let bytes = hex::decode(text).unwrap();
+        let params = devnet.milestones.at(u32::try_from(height).unwrap());
+        Transaction::decode_trusted(&bytes, params).unwrap().fee()
+    };
+    let mut order: Vec<Value> = vec![evicted.clone()];
+    order.extend(
+        (ours["collated"].as_array().unwrap().iter())
+            .filter(|id| **id != evicted)
+            .cloned(),
+    );
+    assert!(
+        order[1..].iter().any(|id| fee(id) > fee(&evicted)),
+        "a higher fee follows the evicted transfer"
+    );
+    let steps = record["input"]["steps"].as_array().unwrap().len();
+    let mut moved = ours.clone();
+    moved["notes"]["session"]["results"][steps - 1]["contents"]["highest"] = json!(order);
+    moved["notes"]["session"]["results"][steps]["result"]["ids"] = json!(order);
+    moved["notes"]["session"]["results"][steps]["contents"]["highest"] = json!(order);
+    moved["collated"] = json!(order);
+    let transactions: Vec<Value> = (order.iter())
+        .map(|id| ours["notes"]["transactions"][id.as_str().unwrap()].clone())
+        .collect();
+    let input = &record["input"];
+    let forge = json!({
+        "privateKey": input["privateKey"], "aux": input["aux"],
+        "previousBlock": {"id": input["previousBlock"]["id"], "height": ours["notes"]["tip"]},
+        "timestamp": input["timestamp"], "reward": input["reward"], "transactions": transactions,
+    });
+    let request = Case {
+        op: "forger.forge",
+        network: "devnet",
+        height,
+        input: &forge,
+    };
+    match registry.get("forger.forge").unwrap().run(&request) {
+        Ok(Verdict::Output(block)) => {
+            moved["hex"] = block["hex"].clone();
+            moved["id"] = block["id"].clone();
+        }
+        other => panic!("forger.forge: {other:?}"),
+    }
+    let case = Case {
+        op: record["op"].as_str().unwrap(),
+        network: record["network"].as_str().unwrap(),
+        height,
+        input,
+    };
+    let outcome = collation_difference(&case, &record["output"], &moved, &registry, Vec::new());
+    assert!(
+        outcome.is_failure()
+            && format!("{outcome:?}").contains("the next transaction of another sender"),
+        "{outcome:?}"
+    );
 }

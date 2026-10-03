@@ -190,8 +190,11 @@ fn collate_and_forge(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
 /// - the collators decide alike (collated, or removed) each transaction that both pools held and
 ///   both reached before a limit stopped them, and collate those they both collated in the same
 ///   order, apart from the transactions of the senders the difference concerns
-///   (`moved_by_difference`), whose place among equal fees may differ; a transaction one of them
-///   did not reach is decided by the other alone;
+///   (`moved_by_difference`), which may take any place that another order of the senders gives
+///   where their next transactions tie on fees (each pool's priority order takes a sender's next
+///   transaction of the highest fee, `by_fee`, so a concerned transaction never passes over a
+///   higher fee, while the sender's later ones follow it whatever their fees); a transaction one
+///   of them did not reach is decided by the other alone;
 /// - Heartwood's block holds its collation and agrees with the reference's block in every field
 ///   that does not depend on the transactions, and in its verification (`block_unexplained`);
 /// - Heartwood's forger makes the reference's block, byte for byte, from the reference's collated
@@ -359,8 +362,8 @@ fn unexplained_collation(
     None
 }
 
-/// The transactions whose place among equal fees the pools' documented difference may change: in
-/// either session (`theirs`, the reference's, and `ours`), each transaction any step's contents
+/// The transactions whose place the pools' documented difference may change, where the senders'
+/// next transactions tie on fees (see `by_fee`): in either session (`theirs`, the reference's, and `ours`), each transaction any step's contents
 /// list for a sender the difference concerns. A sender is concerned when, in the session's own
 /// `steps` (the collation after them left out), the reference's full pool evicted one of its
 /// transactions (the evictions the oracle notes in a step's result, in a batch or a re-add), or
@@ -371,8 +374,9 @@ fn unexplained_collation(
 /// and a tie keeps the earlier sender), and a sender whose mempool emptied is made again last when
 /// a transaction of its own is admitted. After an eviction that Heartwood does not make, the
 /// evicted transaction admitted again (sent again, or re-added) comes after the senders of the same
-/// fee in the reference's order, while Heartwood's pool kept it in its place. The pools' own
-/// priority orders are checked against each collation by `follows`.
+/// fee in the reference's order, while Heartwood's pool kept it in its place, and the sender's
+/// later transactions follow it there whatever their fees. The pools' own priority orders are
+/// checked against each collation by `follows`, and against their fees by `by_fee`.
 fn moved_by_difference(theirs: &Value, ours: &Value, steps: usize) -> BTreeSet<String> {
     let results = |session: &Value| -> Vec<Value> {
         session["results"].as_array().cloned().unwrap_or_default()
@@ -417,6 +421,72 @@ fn moved_by_difference(theirs: &Value, ours: &Value, steps: usize) -> BTreeSet<S
         .collect()
 }
 
+/// Whether the priority order `highest` of `pool` takes, at every place, a sender's next
+/// transaction whose fee is the highest of the senders' next transactions (`bySender` lists each
+/// sender's oldest first), as both implementations merge their senders' lists. A tie may go to
+/// any of them: the order in which the senders' lists were made breaks it, and that order is what
+/// the pools' documented differences change. A pool holding a transaction whose fee `notes` do
+/// not give (an entry no step names under that id) is not checked here. Why not, when it does
+/// not hold.
+fn by_fee(pool: &Value, highest: &[String], notes: &Value) -> Result<(), String> {
+    let lists: Vec<Vec<String>> = (pool["bySender"].as_array().into_iter().flatten())
+        .map(|sender| ids(&sender[1]))
+        .collect();
+    let mut fees: BTreeMap<&str, u64> = BTreeMap::new();
+    for id in lists.iter().flatten() {
+        let Some(fee) = notes[TRANSACTIONS][id.as_str()]
+            .as_str()
+            .and_then(header_fee)
+        else {
+            return Ok(());
+        };
+        fees.insert(id.as_str(), fee);
+    }
+    let list_of: BTreeMap<&str, usize> = (lists.iter().enumerate())
+        .flat_map(|(at, list)| list.iter().map(move |id| (id.as_str(), at)))
+        .collect();
+    // The place of each sender's next transaction in its list.
+    let mut heads = vec![0usize; lists.len()];
+    for id in highest {
+        let (Some(&sender), Some(&fee)) = (list_of.get(id.as_str()), fees.get(id.as_str())) else {
+            continue;
+        };
+        let higher = (lists.iter().enumerate())
+            .filter(|(at, _)| *at != sender)
+            .filter_map(|(at, list)| list.get(heads[at]))
+            .find_map(|head| {
+                let other = fees.get(head.as_str()).copied()?;
+                (other > fee).then_some((head, other))
+            });
+        if let Some((head, other)) = higher {
+            return Err(format!(
+                "{id} (fee {fee}) comes before {head}, the next transaction of another sender, \
+                 of the higher fee {other}, in the priority order"
+            ));
+        }
+        if let Some(next) = heads.get_mut(sender) {
+            *next += 1;
+        }
+    }
+    Ok(())
+}
+
+/// The place of the fee in a transaction's bytes: after the standard header's byte, the version
+/// and the network (one byte each), the type group (4 bytes), the type (2), the nonce (8) and the
+/// sender's key (33). The fee takes 8 bytes, little-endian.
+const FEE_AT: usize = 50;
+
+/// The fee of a transaction whose bytes are `text` (hex), read from its standard header; `None`
+/// when they are not hex or not a transaction with that header.
+fn header_fee(text: &str) -> Option<u64> {
+    let bytes = hex::decode(text).ok()?;
+    if bytes.first() != Some(&0xff) {
+        return None;
+    }
+    let raw: [u8; 8] = bytes.get(FEE_AT..FEE_AT + 8)?.try_into().ok()?;
+    Some(u64::from_le_bytes(raw))
+}
+
 /// The evicted ids of the oracle's eviction notes (`[{id, evicted: [id]}]`).
 fn ids_of_evictions(evictions: &Value) -> Vec<String> {
     (evictions.as_array().into_iter().flatten())
@@ -426,7 +496,7 @@ fn ids_of_evictions(evictions: &Value) -> Vec<String> {
 
 /// Whether `answer`'s collation follows from `pool` as the collator chooses it. Down the pool's
 /// priority order (`highest`, which must keep each sender's transactions in the order `bySender`
-/// lists them, oldest first):
+/// lists them, oldest first, and take a sender's next transaction of the highest fee: `by_fee`):
 ///
 /// - a transaction whose sender's earlier one was removed is removed too (the removal takes the
 ///   sender's later transactions with it), wherever it stands;
@@ -483,6 +553,7 @@ fn follows(pool: &Value, answer: &Value, notes: &Value) -> Result<bool, String> 
             earlier.insert(id.clone(), list[..at].to_vec());
         }
     }
+    by_fee(pool, &highest, notes)?;
     let size = |id: &str| -> Result<i64, String> {
         (notes[TRANSACTIONS][id].as_str())
             .map(|text| i64::try_from(text.len() / 2).unwrap_or(i64::MAX))
@@ -1121,6 +1192,105 @@ mod tests {
                 &pool(&["t", "s"]),
                 &answer(&["s"], &["t"], 150, 2_097_152),
                 &moved(&["t"])
+            )
+            .is_some()
+        );
+    }
+
+    /// The bytes (hex, 100 bytes) of a transaction with the standard header and the fee `fee`:
+    /// the header byte, version 3, the network, type group 1, type 6, nonce 1, a sender key, the
+    /// fee, then the rest.
+    fn with_fee(fee: u64) -> String {
+        let mut bytes = vec![0xff, 3, 30];
+        bytes.extend(1u32.to_le_bytes());
+        bytes.extend(6u16.to_le_bytes());
+        bytes.extend(1u64.to_le_bytes());
+        bytes.push(2);
+        bytes.extend([0; 32]);
+        bytes.extend(fee.to_le_bytes());
+        bytes.resize(100, 0);
+        hex::encode(&bytes)
+    }
+
+    /// `answer` with the transactions `fees` names given those fees.
+    fn priced(mut answer: Value, fees: &[(&str, u64)]) -> Value {
+        for (id, fee) in fees {
+            answer[NOTES][TRANSACTIONS][*id] = Value::from(with_fee(*fee));
+        }
+        answer
+    }
+
+    #[test]
+    fn the_fee_is_read_from_the_standard_header() {
+        assert_eq!(header_fee(&with_fee(60_000_000)), Some(60_000_000));
+        assert_eq!(header_fee(&with_fee(u64::MAX)), Some(u64::MAX));
+        // Not the standard header, too short, or not hex: no fee.
+        assert_eq!(header_fee(&"00".repeat(100)), None);
+        assert_eq!(header_fee(&with_fee(1)[..100]), None);
+        assert_eq!(header_fee("zz"), None);
+    }
+
+    #[test]
+    fn a_concerned_sender_moves_only_where_the_senders_order_breaks_a_tie_of_fees() {
+        let fees = [
+            ("h", 60_000_000),
+            ("r", 50_000_000),
+            ("t", 50_000_000),
+            ("u", 100_000_000),
+        ];
+        let free = |collated: &[&str]| priced(answer(collated, &[], 150, 2_097_152), &fees);
+        let moved =
+            |ids: &[&str]| -> BTreeSet<String> { ids.iter().map(|id| (*id).to_owned()).collect() };
+        // The reference evicted t and admitted it again, last of the 50M transactions; Heartwood
+        // kept it before r: a tie the senders' order decides.
+        assert_eq!(
+            unexplained_collation(
+                &pool(&["h", "r", "t"]),
+                &free(&["h", "r", "t"]),
+                &pool(&["h", "t", "r"]),
+                &free(&["h", "t", "r"]),
+                &moved(&["t"])
+            ),
+            None
+        );
+        // Heartwood's pool and collation with t (50M) ahead of h (60M): no tie decides that.
+        let found = unexplained_collation(
+            &pool(&["h", "r", "t"]),
+            &free(&["h", "r", "t"]),
+            &pool(&["t", "h", "r"]),
+            &free(&["t", "h", "r"]),
+            &moved(&["t"]),
+        );
+        assert!(
+            matches!(&found, Some(Difference::Value { path, actual, .. })
+                if path == "$.collated, Heartwood's"
+                    && actual.as_str().is_some_and(|text| text.contains("higher fee"))),
+            "{found:?}"
+        );
+        // The re-made sender's later transaction u (100M) follows its head t across r's 50M on
+        // the reference's side: each pool takes a sender's next transaction of the highest fee.
+        let (theirs, ours) = (
+            pool_of(&["r", "t", "u"], &[&["t", "u"]]),
+            pool_of(&["t", "u", "r"], &[&["t", "u"]]),
+        );
+        assert_eq!(
+            unexplained_collation(
+                &theirs,
+                &free(&["r", "t", "u"]),
+                &ours,
+                &free(&["t", "u", "r"]),
+                &moved(&["t", "u"])
+            ),
+            None
+        );
+        // A pool order that passes over a higher fee on the reference's side fails as well.
+        assert!(
+            unexplained_collation(
+                &pool(&["r", "h"]),
+                &free(&["r", "h"]),
+                &pool(&["h", "r"]),
+                &free(&["h", "r"]),
+                &moved(&["r"])
             )
             .is_some()
         );
