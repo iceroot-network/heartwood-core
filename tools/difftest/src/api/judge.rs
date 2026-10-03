@@ -214,7 +214,7 @@ pub fn listed_wallets(line: &Recorded) -> BTreeSet<String> {
 /// `orderBy` properties, then the route's own: the balance for the wallet listings, the rank and
 /// the username for the delegates; for the search, the reference's comparator, whose ties are
 /// names its numeric collation holds equal, and under which every wallet ties where it orders
-/// nothing: a resigned delegate beside active ones, [`search_order_holds`]). Any other difference
+/// nothing: a resigned delegate beside active ones, `search_order_holds`). Any other difference
 /// is judged as without it: a wrong tie order of any other wallet, a free wallet moved across
 /// another value of the order, or a difference of a value still fails.
 pub fn outcome_with_free_places(
