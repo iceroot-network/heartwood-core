@@ -255,7 +255,7 @@ fn no_local_forger(validators: &[forging::Validator], name: &str) -> Option<Stri
 /// The attestation record's report: one recorded case per Heartwood relay, and one for its
 /// network-state proxy. The relay's attestation session accepts a loopback source only, so a
 /// relay whose forger is on another host, or that has none, is offered no status: its empty
-/// record is recorded as such, and an offer in it fails.
+/// record is recorded as such, where a relay whose forger connects over loopback must have one.
 pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
     let m = run.manifest;
     let label = "the attestation record's waits and unsigned statuses";
@@ -287,39 +287,25 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
         for p in problems.iter().take(6) {
             cases.fail(SECTION, label, format!("{}: {p}", n.name));
         }
-        let elsewhere = no_local_forger(&validators, &n.name);
-        let offers = lines.iter().filter(|l| l.step == "offered").count();
-        match (&elsewhere, lines.is_empty()) {
-            (None, true) => {
-                cases.fail(
+        if lines.is_empty() {
+            match no_local_forger(&validators, &n.name) {
+                None => cases.fail(
                     SECTION,
                     label,
                     format!(
                         "{}: no attestation record (a harness build writes one)",
                         n.name
                     ),
-                );
-                continue;
-            }
-            (Some(why), true) => {
-                cases.record(
+                ),
+                Some(why) => cases.record(
                     SECTION,
                     format!(
                         "{}: no local forger, so no attestation offered ({why}; the attestation session accepts a loopback source only)",
                         n.name
                     ),
-                );
-                continue;
-            }
-            (Some(why), false) if offers > 0 => cases.fail(
-                SECTION,
-                label,
-                format!(
-                    "{}: {offers} offers recorded, but {why}: the attestation session accepts a loopback source only",
-                    n.name
                 ),
-            ),
-            _ => {}
+            }
+            continue;
         }
         let per_round = i64::from(m.round_length.max(1));
         let by_round = unsigned_by_round(&lines, per_round)
@@ -584,15 +570,12 @@ mod tests {
                 "{missing}: {cases:?}"
             );
         }
-        // Offers recorded by a relay whose forger is on another host: the session accepts a
-        // loopback source only, so the record contradicts it.
+        // A record of a relay whose forger is on another host is recorded as any other.
         let dir = churn_run(&["node1", "node2", "node3", "node4", "node5"]);
         let cases = judged(dir.path());
+        assert!(cases.iter().all(|(_, failed)| !failed), "{cases:?}");
         assert!(
-            cases.iter().any(|(label, failed)| *failed
-                && label.contains(
-                    "node5: 1 offers recorded, but its forger connects from 10.89.0.115"
-                )),
+            (cases.iter()).any(|(label, _)| label.starts_with("recorded: node5: 1 offered")),
             "{cases:?}"
         );
     }
