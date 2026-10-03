@@ -384,6 +384,10 @@ pub struct ScopeSpec {
     pub file: String,
     /// The row ids of the scope table, each of which the audit must name once.
     pub row_ids: Vec<String>,
+    /// The rows whose status in the audit is `deviation` that a decision accepted, each with the
+    /// decision that accepts it. Every other row's status must be `mapped`, `absent` or `unbuilt`.
+    #[serde(default)]
+    pub accepted: BTreeMap<String, String>,
 }
 
 impl Criteria {

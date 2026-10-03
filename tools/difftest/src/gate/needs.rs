@@ -226,6 +226,15 @@ pub struct Judge<'a> {
 /// The start of a manual need's detail.
 const BY_A_PERSON: &str = "to be shown by a person: ";
 
+/// A scope row's status when its KEEP or ADD row has code and a named test.
+const SETTLED_MAPPED: &str = "mapped";
+/// A scope row's status when its REMOVE or not-present row is shown absent.
+const SETTLED_ABSENT: &str = "absent";
+/// A scope row's status when its DEFER row is shown unbuilt.
+const SETTLED_UNBUILT: &str = "unbuilt";
+/// A scope row's status when the code departs from the row's class.
+const DEVIATION: &str = "deviation";
+
 impl<'a> Judge<'a> {
     /// A judge over `evidence`.
     pub fn new(criteria: &'a Criteria, evidence: &'a Evidence) -> Judge<'a> {
@@ -381,6 +390,10 @@ impl<'a> Judge<'a> {
         out
     }
 
+    /// The scope audit: each of the criteria's row ids the first cell of exactly one row of the
+    /// audit's tables, and each such row's status (its last cell) settled: `mapped`, `absent` or
+    /// `unbuilt`, or a `deviation` the criteria's scope accepts with the decision that accepts it.
+    /// A row missing or named twice fails; a row not settled waits on a person, named.
     fn scope(&self) -> Verdict {
         let Some(scope) = &self.criteria.scope else {
             return Verdict {
@@ -395,11 +408,17 @@ impl<'a> Judge<'a> {
             };
         };
         let mut firsts: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut statuses: BTreeMap<&str, &str> = BTreeMap::new();
         for line in text.lines() {
             if let Some(rest) = line.trim_start().strip_prefix('|')
                 && let Some((cell, _)) = rest.split_once('|')
             {
-                *firsts.entry(cell.trim()).or_insert(0) += 1;
+                let id = cell.trim();
+                *firsts.entry(id).or_insert(0) += 1;
+                let status = (rest.trim_end().trim_end_matches('|').rsplit('|').next())
+                    .unwrap_or_default()
+                    .trim();
+                statuses.insert(id, status);
             }
         }
         let missing: Vec<&str> = scope
@@ -422,16 +441,8 @@ impl<'a> Judge<'a> {
                 shown.join(", ")
             }
         };
-        if missing.is_empty() && twice.is_empty() {
-            Verdict {
-                status: Status::Pass,
-                detail: format!(
-                    "scope audit: each of {} rows appears once",
-                    scope.row_ids.len()
-                ),
-            }
-        } else {
-            Verdict {
+        if !missing.is_empty() || !twice.is_empty() {
+            return Verdict {
                 status: Status::Fail,
                 detail: format!(
                     "scope audit: {} rows absent ({}), {} listed twice ({})",
@@ -440,7 +451,42 @@ impl<'a> Judge<'a> {
                     twice.len(),
                     shorten(&twice)
                 ),
+            };
+        }
+        let mut accepted = Vec::new();
+        let mut unsettled = Vec::new();
+        for id in &scope.row_ids {
+            let status = statuses.get(id.as_str()).copied().unwrap_or_default();
+            match (status, scope.accepted.get(id)) {
+                (SETTLED_MAPPED | SETTLED_ABSENT | SETTLED_UNBUILT, _) => {}
+                (DEVIATION, Some(by)) if !by.trim().is_empty() => {
+                    accepted.push(format!("{id} (a deviation accepted by {})", by.trim()));
+                }
+                _ => unsettled.push(format!("{id} ({status})")),
             }
+        }
+        if !unsettled.is_empty() {
+            let named: Vec<&str> = unsettled.iter().map(String::as_str).collect();
+            return Verdict {
+                status: Status::Pending,
+                detail: format!(
+                    "{BY_A_PERSON}the scope audit's rows whose status is not mapped, absent or \
+                     unbuilt, each settled in the audit or, a deviation, accepted in the criteria's \
+                     scope with the decision that accepts it: {}",
+                    shorten(&named)
+                ),
+            };
+        }
+        let mut detail = format!(
+            "scope audit: each of {} rows appears once, every row settled",
+            scope.row_ids.len()
+        );
+        if !accepted.is_empty() {
+            detail.push_str(&format!("; {}", accepted.join(", ")));
+        }
+        Verdict {
+            status: Status::Pass,
+            detail,
         }
     }
 

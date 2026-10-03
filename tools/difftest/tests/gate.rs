@@ -494,6 +494,70 @@ fn a_missing_record_fails_its_row_and_a_waiting_row_stays_pending() {
     assert!(ran.text.contains("waits on a live run"), "{}", ran.text);
 }
 
+/// The criteria with a row R4 that needs the scope audit `scope.md` of the rows `ids`, written
+/// with `rows` (`id`, status).
+fn scope_rig(rows: &[(&str, &str)], ids: &[&str], accepted: Option<Value>) -> Rig {
+    let rig = Rig::new();
+    let mut criteria = base_criteria();
+    criteria["scope"] = json!({"file": "scope.md", "rowIds": ids});
+    if let Some(accepted) = accepted {
+        criteria["scope"]["accepted"] = accepted;
+    }
+    criteria["rows"].as_array_mut().expect("rows").push(
+        json!({"id": "R4", "criterion": "scope", "requires": "every row settled",
+                     "shownBy": "the scope audit", "needs": [{"kind": "scope"}]}),
+    );
+    rig.criteria(&criteria);
+    let mut table = String::from("| ID | Item | Status |\n|---|---|---|\n");
+    for (id, status) in rows {
+        table.push_str(&format!("| {id} | an item | {status} |\n"));
+    }
+    std::fs::write(rig.path("scope.md"), table).expect("scope");
+    rig
+}
+
+#[test]
+fn the_scope_audit_passes_only_with_every_row_settled_or_accepted() {
+    let ids = ["KEEP1", "REMOVE1", "DEFER1"];
+    let settled = [
+        ("KEEP1", "mapped"),
+        ("REMOVE1", "absent"),
+        ("DEFER1", "unbuilt"),
+    ];
+    let text = s1(&scope_rig(&settled, &ids, None), &["--verbose"]).text;
+    assert!(text.contains("R4       pass"), "{text}");
+    // A REMOVE row the audit records as a deviation waits on a person, named.
+    let deviation = [
+        ("KEEP1", "mapped"),
+        ("REMOVE1", "deviation"),
+        ("DEFER1", "unbuilt"),
+    ];
+    let text = s1(&scope_rig(&deviation, &ids, None), &["--verbose"]).text;
+    assert!(text.contains("R4       pending"), "{text}");
+    assert!(text.contains("REMOVE1 (deviation)"), "{text}");
+    // Accepted by a named decision, it passes; an unsettled row cannot be accepted.
+    let accepted = Some(json!({"REMOVE1": "the decision that accepts it"}));
+    let text = s1(
+        &scope_rig(&deviation, &ids, accepted.clone()),
+        &["--verbose"],
+    )
+    .text;
+    assert!(text.contains("R4       pass"), "{text}");
+    assert!(text.contains("accepted"), "{text}");
+    let unsure = [
+        ("KEEP1", "unsure"),
+        ("REMOVE1", "deviation"),
+        ("DEFER1", "unbuilt"),
+    ];
+    let text = s1(&scope_rig(&unsure, &ids, accepted), &["--verbose"]).text;
+    assert!(text.contains("R4       pending"), "{text}");
+    assert!(text.contains("KEEP1 (unsure)"), "{text}");
+    // A row missing from the audit, or named twice, fails it.
+    let missing = [("KEEP1", "mapped"), ("DEFER1", "unbuilt")];
+    let text = s1(&scope_rig(&missing, &ids, None), &[]).text;
+    assert!(text.contains("R4       FAIL"), "{text}");
+}
+
 #[test]
 fn a_documentation_only_commit_keeps_a_record_valid_and_a_change_to_a_tested_file_does_not() {
     let rig = Rig::new();
