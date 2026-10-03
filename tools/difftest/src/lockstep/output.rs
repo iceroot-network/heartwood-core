@@ -34,9 +34,9 @@ fn pretty(value: &Value) -> String {
 /// The revert plan of a chain of `tip` blocks: an ordinary corpus's plan (every round end and
 /// the random reverts of `seed`), with the recipe's `reverts`, which the producer ran on both
 /// sides, joined in height order; and the generated steps it changed. A generated revert that
-/// would return to a round's last block reverts one block more, as a live chain's plan does: the
-/// judge's node deletes the next round's rows there and does not save them again, so the step
-/// would test the plan, not the chain.
+/// would return to a round's last block reverts one block more, as a live chain's plan does
+/// ([`RevertPlan::move_round_ends`]): the judge's node deletes the next round's rows there and does
+/// not save them again, so the step would test the plan, not the chain.
 fn revert_plan(
     seed: u64,
     tip: u32,
@@ -44,20 +44,7 @@ fn revert_plan(
     reverts: &[RevertStep],
 ) -> (RevertPlan, Vec<Value>) {
     let mut plan = RevertPlan::generate(seed, tip, round_length);
-    let length = round_length.max(1);
-    let mut adjusted = Vec::new();
-    for step in &mut plan.steps {
-        let to = step.after_height - step.blocks;
-        if to >= length && to % length == 0 {
-            let moved = if step.blocks + 1 < step.after_height {
-                step.blocks + 1
-            } else {
-                step.blocks - 1
-            };
-            adjusted.push(serde_json::json!({"after": step.after_height, "blocks": step.blocks, "now": moved}));
-            step.blocks = moved;
-        }
-    }
+    let adjusted = plan.move_round_ends();
     for step in reverts {
         if !plan.steps.contains(step) {
             plan.steps.push(*step);
