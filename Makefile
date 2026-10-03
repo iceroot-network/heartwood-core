@@ -740,10 +740,11 @@ live-check: build $(call relay-of-run,relay-binary) ## the comparisons of a live
 	        $(run-dir) $(if $(and $(is-mixed),$(mixed-compare)),--compare $(results-of-run)/$(mixed-compare)) $(mixed-spread) $(STRICT); \
 	fi
 
-# A forging run records the route corpus of each pair it compares (PAIR=5,3: node 5 against node
-# 3) in its run directory's api/node5-node3.
+# A forging run records the route corpus of each pair it compares (the first in its run
+# directory's api/, the others in directories of their own), each named in its run.json by its two
+# nodes; PAIR=5,3 judges the pair of node 5 against node 3 alone.
 PAIR               ?=
-pair-dir = $(if $(PAIR),/api/node$(word 1,$(subst $(comma), ,$(PAIR)))-node$(word 2,$(subst $(comma), ,$(PAIR))))
+pair-arg = $(if $(PAIR),--pair node$(word 1,$(subst $(comma), ,$(PAIR)))$(comma)node$(word 2,$(subst $(comma), ,$(PAIR))))
 comma := ,
 api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the API answers a live run recorded (RUN, LIVE_RESULTS, MIXED_RESULTS, OBSERVER_RESULTS, or FORGING_RESULTS with SEED and PAIR=5,3|4,2), or two nodes' (LEFT, RIGHT)
 	$(need-seed)
@@ -752,7 +753,7 @@ api-compare: build $(if $(LEFT),,$(call relay-of-run,relay-binary)) ## judge the
 	else \
 	    [ -n '$(RUN)' ] && [ -n '$(results-of-run)' ] || { echo "api-compare: set RUN and $(results-name-of-run), or LEFT and RIGHT" >&2; exit 2; }; \
 	    $(if $(is-forging),[ -n '$(PAIR)' ] || { echo "api-compare: set PAIR for RUN=$(RUN) (such as PAIR=5$(comma)3)" >&2; exit 2; };) \
-	    $(gate) $(DIFFTEST) api compare --run $(run-dir)$(pair-dir) $(STRICT); \
+	    $(gate) $(DIFFTEST) api compare --run $(run-dir) $(pair-arg) $(STRICT); \
 	fi
 
 p2p-compare: build $(call relay-of-run,relay-binary) ## the reference-client probe's records of a mixed run's two relays (RUN=w0|w|s, MIXED_RESULTS)

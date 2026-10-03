@@ -1266,11 +1266,22 @@ fn parse_l2_processor(args: &[&str]) -> Result<Command> {
 
 fn parse_api_compare(args: &[&str]) -> Result<Command> {
     let (mut run, mut left, mut right, mut corpus, mut out) = (None, None, None, None, None);
+    let mut pair = None;
     let mut it = args.iter();
     while let Some(&flag) = it.next() {
         let v = value(flag, it.next())?;
         match flag {
             "--run" => run = Some(PathBuf::from(v)),
+            "--pair" => match v.split_once(',') {
+                Some((l, r)) if !l.is_empty() && !r.is_empty() && !r.contains(',') => {
+                    pair = Some((l.to_owned(), r.to_owned()));
+                }
+                _ => {
+                    return Err(usage(format!(
+                        "--pair takes LEFT,RIGHT (node4,node2), not {v}"
+                    )));
+                }
+            },
             "--left" => left = Some(v.to_owned()),
             "--right" => right = Some(v.to_owned()),
             "--corpus" => corpus = Some(PathBuf::from(v)),
@@ -1281,12 +1292,17 @@ fn parse_api_compare(args: &[&str]) -> Result<Command> {
     let default_corpus =
         || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::api::CORPUS_DIR);
     match (run, left, right, out) {
-        (Some(run), None, None, None) if corpus.is_none() => {
-            Ok(Command::ApiCompare(crate::api::ApiCompareArgs::Recorded {
+        (Some(run), None, None, None) if corpus.is_none() => match pair {
+            None => Ok(Command::ApiCompare(crate::api::ApiCompareArgs::Recorded {
                 run,
-            }))
-        }
-        (None, Some(left), Some(right), Some(out)) => {
+            })),
+            Some((left, right)) => Ok(Command::ApiCompare(crate::api::ApiCompareArgs::Pair {
+                run,
+                left,
+                right,
+            })),
+        },
+        (None, Some(left), Some(right), Some(out)) if pair.is_none() => {
             Ok(Command::ApiCompare(crate::api::ApiCompareArgs::Live {
                 left,
                 right,
@@ -1295,7 +1311,8 @@ fn parse_api_compare(args: &[&str]) -> Result<Command> {
             }))
         }
         _ => Err(usage(
-            "api compare takes --run DIR, or --left URL --right URL --out DIR [--corpus DIR]",
+            "api compare takes --run DIR [--pair LEFT,RIGHT], or --left URL --right URL --out DIR \
+             [--corpus DIR]",
         )),
     }
 }
@@ -1733,6 +1750,21 @@ mod tests {
                 run: "runs/h".into()
             })
         );
+        assert_eq!(
+            p("api compare --run runs/w --pair node4,node2").unwrap(),
+            Command::ApiCompare(crate::api::ApiCompareArgs::Pair {
+                run: "runs/w".into(),
+                left: "node4".into(),
+                right: "node2".into()
+            })
+        );
+        for bad in ["node4", "node4,", ",node2", "node4,node2,node1"] {
+            assert!(
+                p(&format!("api compare --run runs/w --pair {bad}")).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(p("api compare --left a --right b --out o --pair node4,node2").is_err());
         assert_eq!(
             p("store replay c --db d --to 9").unwrap(),
             Command::StoreReplay {

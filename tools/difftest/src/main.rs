@@ -424,7 +424,8 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
         Command::ApiCompare(args) => {
             let mut report = api::compare(&args)?;
             // Recorded answers of a Heartwood relay count only for the tree whose relay answered.
-            if let api::ApiCompareArgs::Recorded { run } = &args
+            if let api::ApiCompareArgs::Recorded { run } | api::ApiCompareArgs::Pair { run, .. } =
+                &args
                 && let Some(case) = api::relay_case(run, Path::new(live::run::RELAY_BINARY))
             {
                 report.results.insert(0, case);

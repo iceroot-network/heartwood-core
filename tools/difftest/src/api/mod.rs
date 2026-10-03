@@ -51,6 +51,17 @@ pub enum ApiCompareArgs {
         /// The run directory.
         run: PathBuf,
     },
+    /// The answers of one pair of nodes a live run recorded: the route corpus whose nodes the
+    /// run's `run.json` names as `left` against `right` (the first corpus, in `api/`, or one of
+    /// its `apiExtra`), judged as the whole run judges it.
+    Pair {
+        /// The run directory.
+        run: PathBuf,
+        /// The node under test, as the run names it (`node4`).
+        left: String,
+        /// The control node, as the run names it (`node2`).
+        right: String,
+    },
     /// Two live nodes, queried now.
     Live {
         /// The node under test's API.
@@ -73,64 +84,15 @@ pub enum ApiCompareArgs {
 /// `apiExtra`, each from its own directory, without the `outside` section (the recipe sends it
 /// once, for the first corpus's nodes) and without the posts of a body the first corpus posted to
 /// the same control node, which the control answered from its cooldown; the report's source
-/// counts both.
+/// counts both. One pair's answers ([`ApiCompareArgs::Pair`]) are judged the same way: the first
+/// corpus with its `outside` section, or one corpus of `apiExtra` alone.
 /// Live, the corpus is sent to both nodes first, and the report is also written to
 /// `report.txt` in the output directory.
 pub fn compare(args: &ApiCompareArgs) -> Result<Report> {
     match args {
-        ApiCompareArgs::Recorded { run } => {
-            let root = run.join(RUN_ANSWERS_DIR);
-            let root = if root.is_dir() { root } else { run.clone() };
-            let mut files = Vec::new();
-            answer_files(&root, &mut files)?;
-            if files.is_empty() {
-                return Err(Error::Corpus {
-                    path: root,
-                    message: format!("no recorded {ANSWERS}"),
-                });
-            }
-            let outside = OutsideAnswers::load(&run.join(outside::RATE_LIMIT))?;
-            let source = format!("answers recorded under {}", root.display());
-            let mut report = judge_files(&files, source, outside.as_ref())?;
-            let manifest = Manifest::load(run).ok();
-            for extra in manifest.iter().flat_map(|m| &m.api_extra) {
-                let path = run.join(&extra.dir).join(ANSWERS);
-                let right = manifest.as_ref().and_then(|m| m.api.as_ref()).map(|a| &a.1);
-                let posted = match right {
-                    Some(right) if *right == extra.right => posted_bodies(&files)?,
-                    _ => BTreeSet::new(),
-                };
-                let mut more = judge_files(std::slice::from_ref(&path), String::new(), None)?;
-                let answers = read_answers(&path)?;
-                let (mut unsent, mut repeats) = (0, 0);
-                let kept = more
-                    .results
-                    .drain(..)
-                    .zip(&answers)
-                    .filter(|(_, (_, recorded))| {
-                        let (outside, repeat) = (
-                            OutsideAnswers::covers(recorded),
-                            repeated_posts(recorded, &posted),
-                        );
-                        unsent += usize::from(outside);
-                        repeats += usize::from(repeat && !outside);
-                        !outside && !repeat
-                    });
-                report
-                    .results
-                    .extend(kept.map(|(case, _)| case).collect::<Vec<_>>());
-                report.source = format!(
-                    "{}, and {} against {} under {} ({unsent} requests of the outside section, \
-                     which the recipe sends for the first corpus only, and {repeats} posts the \
-                     control node answered from its cooldown, not judged)",
-                    report.source,
-                    extra.left,
-                    extra.right,
-                    run.join(&extra.dir).display()
-                );
-                report.files += 1;
-            }
-            Ok(report)
+        ApiCompareArgs::Recorded { run } => judge_run(run, None),
+        ApiCompareArgs::Pair { run, left, right } => {
+            judge_run(run, Some((left.as_str(), right.as_str())))
         }
         ApiCompareArgs::Live {
             left,
@@ -149,6 +111,113 @@ pub fn compare(args: &ApiCompareArgs) -> Result<Report> {
             Ok(report)
         }
     }
+}
+
+/// The pairs a run's manifest names, for a refusal: `node5 against node3 (api), ...`.
+fn recorded_pairs(manifest: Option<&Manifest>) -> String {
+    let Some(manifest) = manifest else {
+        return "no run.json that loads".to_owned();
+    };
+    let first = (manifest.api.iter()).map(|(l, r)| format!("{l} against {r} ({RUN_ANSWERS_DIR})"));
+    let extra =
+        (manifest.api_extra.iter()).map(|e| format!("{} against {} ({})", e.left, e.right, e.dir));
+    let pairs: Vec<String> = first.chain(extra).collect();
+    if pairs.is_empty() {
+        "none".to_owned()
+    } else {
+        pairs.join(", ")
+    }
+}
+
+/// Judge the answers a live run recorded in `run`: every route corpus it recorded, or the one of
+/// `pair` (its node under test and its control node, as `run.json` names them).
+fn judge_run(run: &Path, pair: Option<(&str, &str)>) -> Result<Report> {
+    let root = run.join(RUN_ANSWERS_DIR);
+    let root = if root.is_dir() {
+        root
+    } else {
+        run.to_path_buf()
+    };
+    let mut files = Vec::new();
+    answer_files(&root, &mut files)?;
+    if files.is_empty() {
+        return Err(Error::Corpus {
+            path: root,
+            message: format!("no recorded {ANSWERS}"),
+        });
+    }
+    let manifest = Manifest::load(run).ok();
+    let first_pair = manifest.as_ref().and_then(|m| m.api.as_ref());
+    let all_extra: Vec<&live_run::ApiCorpus> = manifest.iter().flat_map(|m| &m.api_extra).collect();
+    // The corpora to judge: every one, or the first alone, or one of `apiExtra` alone.
+    let (judge_first, extras) = match pair {
+        None => (true, all_extra),
+        Some((l, r)) if first_pair.is_some_and(|(a, b)| a == l && b == r) => (true, Vec::new()),
+        Some((l, r)) => {
+            let found: Vec<&live_run::ApiCorpus> = (all_extra.into_iter())
+                .filter(|e| e.left == l && e.right == r)
+                .collect();
+            if found.is_empty() {
+                return Err(Error::Corpus {
+                    path: run.join("run.json"),
+                    message: format!(
+                        "the run recorded no route corpus of {l} against {r}; it recorded {}",
+                        recorded_pairs(manifest.as_ref())
+                    ),
+                });
+            }
+            (false, found)
+        }
+    };
+    let mut report = if judge_first {
+        let outside = OutsideAnswers::load(&run.join(outside::RATE_LIMIT))?;
+        let source = format!("answers recorded under {}", root.display());
+        judge_files(&files, source, outside.as_ref())?
+    } else {
+        judge_files(&[], String::new(), None)?
+    };
+    for extra in extras {
+        let path = run.join(&extra.dir).join(ANSWERS);
+        let right = first_pair.map(|a| &a.1);
+        let posted = match right {
+            Some(right) if *right == extra.right => posted_bodies(&files)?,
+            _ => BTreeSet::new(),
+        };
+        let mut more = judge_files(std::slice::from_ref(&path), String::new(), None)?;
+        let answers = read_answers(&path)?;
+        let (mut unsent, mut repeats) = (0, 0);
+        let kept = more
+            .results
+            .drain(..)
+            .zip(&answers)
+            .filter(|(_, (_, recorded))| {
+                let (outside, repeat) = (
+                    OutsideAnswers::covers(recorded),
+                    repeated_posts(recorded, &posted),
+                );
+                unsent += usize::from(outside);
+                repeats += usize::from(repeat && !outside);
+                !outside && !repeat
+            });
+        report
+            .results
+            .extend(kept.map(|(case, _)| case).collect::<Vec<_>>());
+        let before = if report.source.is_empty() {
+            String::new()
+        } else {
+            format!("{}, and ", report.source)
+        };
+        report.source = format!(
+            "{before}{} against {} under {} ({unsent} requests of the outside section, which the \
+             recipe sends for the first corpus only, and {repeats} posts the control node \
+             answered from its cooldown, not judged)",
+            extra.left,
+            extra.right,
+            run.join(&extra.dir).display()
+        );
+        report.files += 1;
+    }
+    Ok(report)
 }
 
 /// The case of the relay that answered the answers a live run recorded in `run`: whether it is
@@ -478,6 +547,75 @@ mod tests {
         let failed = report.results.iter().find(|r| r.outcome.is_failure());
         assert!(failed.unwrap().file.contains("api-node6"), "{report}");
         assert!(report.source.contains("and 1 posts"), "{}", report.source);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_pair_of_a_run_is_judged_alone_as_the_whole_run_judges_it() {
+        let dir = std::env::temp_dir().join(format!("heartwood-api-pair-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for sub in [RUN_ANSWERS_DIR, "api-node6"] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+        }
+        let manifest = json!({"format": live_run::FORMAT, "run": "w", "network": "devnet",
+            "seed": "s", "nodes": [], "api": {"left": "node4", "right": "node1"},
+            "apiExtra": [{"left": "node6", "right": "node1", "dir": "api-node6"}]});
+        std::fs::write(dir.join("run.json"), manifest.to_string()).unwrap();
+        let get = json!({"method": "GET", "path": "/api"});
+        let missing = json!({"statusCode": 404, "error": "Not Found", "message": "Not Found"});
+        let post = json!({"method": "POST", "path": "/api/transactions", "body": "{\"t\":1}"});
+        let tried = |kind: &str| json!({"errors": {"x": {"type": kind}}});
+        let first = answer(
+            "g",
+            get.clone(),
+            (404, missing.clone()),
+            (404, missing.clone()),
+        ) + &answer(
+            "p",
+            post.clone(),
+            (200, tried("ERR_APPLY")),
+            (200, tried("ERR_APPLY")),
+        );
+        std::fs::write(dir.join(RUN_ANSWERS_DIR).join(ANSWERS), first).unwrap();
+        let other = json!({"statusCode": 404, "error": "Not Found", "message": "Other"});
+        let second = answer(
+            "p",
+            post,
+            (200, tried("ERR_APPLY")),
+            (200, tried("ERR_COOLDOWN")),
+        ) + &answer("g", get, (404, other), (404, missing));
+        std::fs::write(dir.join("api-node6").join(ANSWERS), second).unwrap();
+        let pair = |left: &str, right: &str| ApiCompareArgs::Pair {
+            run: dir.clone(),
+            left: left.into(),
+            right: right.into(),
+        };
+        // The first pair: its own two answers, both equal; the second corpus is not read.
+        let report = compare(&pair("node4", "node1")).unwrap();
+        assert_eq!((report.files, report.results.len()), (1, 2), "{report}");
+        assert_eq!(report.failed(), 0, "{report}");
+        // The second pair: its differing GET, and its repeated post left out as in the whole run.
+        let report = compare(&pair("node6", "node1")).unwrap();
+        assert_eq!((report.files, report.results.len()), (1, 1), "{report}");
+        assert_eq!(report.failed(), 1, "{report}");
+        assert!(report.results[0].file.contains("api-node6"), "{report}");
+        assert!(
+            report.source.starts_with("node6 against node1"),
+            "{}",
+            report.source
+        );
+        assert!(report.source.contains("and 1 posts"), "{}", report.source);
+        // A pair the run did not record is refused, naming the pairs it did.
+        let refused = compare(&pair("node5", "node3")).unwrap_err().to_string();
+        assert!(
+            refused.contains("no route corpus of node5 against node3"),
+            "{refused}"
+        );
+        assert!(refused.contains("node4 against node1 (api)"), "{refused}");
+        assert!(
+            refused.contains("node6 against node1 (api-node6)"),
+            "{refused}"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
