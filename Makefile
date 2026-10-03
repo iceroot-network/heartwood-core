@@ -681,11 +681,12 @@ relay-image: relay-binary ## the relay's release binary and its devnet image (RE
 relay-of-run = $(if $(filter-out r t w0 suites,$(RUN)),$(1))
 live-prerequisite = $(if $(is-observer),build relay-image,$(if $(filter m f $(FORGING_RUNS),$(RUN)),relay-binary,$(if $(is-mixed),$(call relay-of-run,relay-binary),$(call relay-of-run,relay-image))))
 
-# The planned stop height of each forging run and scenario suite: 2 rounds (106), the lifecycle
-# suite 3 (159: a temporary resignation's revoke is valid no earlier than 107 blocks after it),
-# the faulted mixed runs and the churn run 5 (265, every fault or churn event in one run). A run
-# never passes its planned height or round 5, and never starts within 40 minutes of 00:00 UTC,
-# when the nodes' logs rotate; the recipes refuse the same.
+# The planned stop height of each forging run, scenario suite and the observer run: 2 rounds
+# (106), the lifecycle suite and the observer run 3 (159: a temporary resignation's revoke is
+# valid no earlier than 107 blocks after it), the faulted mixed runs and the churn run 5 (265,
+# every fault or churn event in one run). A run never passes its planned height or round 5, and
+# never starts within 40 minutes of 00:00 UTC, when the nodes' logs rotate; the recipes refuse the
+# same.
 planned-mixed-short := 106
 planned-mixed := 265
 planned-mixed-split := 265
@@ -695,6 +696,7 @@ planned-transactions := 106
 planned-lifecycle := 159
 planned-network := 106
 planned-network-split := 106
+planned-observer := 159
 STOP_HEIGHT ?=
 define live-guard
 @planned='$(1)'; stop='$(STOP_HEIGHT)'; seed='$(SEED)'; \
@@ -711,13 +713,42 @@ define live-guard
 	fi
 endef
 
+# The observer run's guard: the stop height its recipe reads, OBSERVER_ENV's STOP_HEIGHT (env sets
+# it over any other), must be set and at most the run's planned 159 (3 rounds), and the run never
+# starts within 40 minutes of 00:00 UTC.
+define observer-guard
+@planned='$(planned-observer)'; stop=''; \
+	for word in $(OBSERVER_ENV); do case "$$word" in STOP_HEIGHT=*) stop=$${word#STOP_HEIGHT=} ;; esac; done; \
+	if ! { [ -n "$$stop" ] && [ "$$stop" -ge 1 ] && [ "$$stop" -le "$$planned" ]; } 2>/dev/null; then \
+	    echo "$@: OBSERVER_ENV's STOP_HEIGHT ($${stop:-not set}) is not a height from 1 to the observer run's planned stop height $$planned" >&2; exit 2; \
+	fi; \
+	now=$$(( 10#$$(date -u +%H) * 60 + 10#$$(date -u +%M) )); \
+	if [ $$now -ge 1400 ] || [ $$now -lt 40 ]; then \
+	    echo "$@: $$(date -u +%H:%M) UTC is within 40 minutes of 00:00 UTC, when the nodes' logs rotate" >&2; exit 2; \
+	fi
+endef
+
+# A forging run's recipe, run once; when it fails after its network started (a run.json the
+# attempt wrote) and GATE_RECORDS names the records, the run's live check records it, failed: a
+# failed run is a failing record, which only an explained repeat of the same run supersedes.
+define forging-live
+stamp=$$(mktemp) || exit 2; status=0; \
+	STOP_HEIGHT=$(or $(STOP_HEIGHT),$(planned-$(RUN))) $(recipe-of-run) $(RUN) '$(SEED)' $(run-dir) $(CURDIR) || status=$$?; \
+	if [ "$$status" != 0 ] && [ -n '$(GATE_RECORDS)' ] && [ '$(run-dir)/run.json' -nt "$$stamp" ]; then \
+	    echo "$@: the run $(RUN) $(SEED) failed after its network started (exit $$status): its live check records it" >&2; \
+	    $(MAKE) --no-print-directory live-check RUN='$(RUN)' SEED='$(SEED)' || true; \
+	fi; \
+	rm -f "$$stamp"; exit $$status
+endef
+
 live: $(live-prerequisite) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2 with LIVE_RECIPE, t|m|f with DEVNET_RECIPE, w0|w|p|s with MIXED_RECIPE, observer with OBSERVER_RECIPE and OBSERVER_ENV, mixed-short|mixed|mixed-split|churn|core with SEED)
 	$(need-run)
 	$(need-live)
 	$(need-observer)
 	$(need-seed)
 	$(if $(is-forging),$(call live-guard,$(planned-$(RUN)),run $(RUN)))
-	$(if $(is-forging),STOP_HEIGHT=$(or $(STOP_HEIGHT),$(planned-$(RUN))) $(recipe-of-run) $(RUN) '$(SEED)' $(run-dir),$(if $(is-observer),env $(OBSERVER_ENV) $(recipe-of-run) h,$(recipe-of-run) $(RUN))) $(CURDIR)
+	$(if $(is-observer),$(observer-guard))
+	$(if $(is-forging),$(forging-live),$(if $(is-observer),env $(OBSERVER_ENV) $(recipe-of-run) h,$(recipe-of-run) $(RUN)) $(CURDIR))
 
 # A mixed run's check reads the oracle's image (its rollback's prediction), and its baseline run
 # from --compare, not from COMPARE in difftest's environment. The baseline of runs w, p and s is
