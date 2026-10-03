@@ -1183,13 +1183,8 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
             e.to_string(),
         ),
         Ok(Ok(report)) => {
-            let (report, notes) = evidence::route_corpora(run_dir, manifest, report);
-            for note in notes {
-                match note.failure {
-                    Some(why) => cases.fail("api", note.label, why),
-                    None => cases.record("api", note.label),
-                }
-            }
+            // `api compare` judged the failed cases again with the run's evidence; its notes
+            // are the cases of operation `evidence`.
             // One line per corpus: the first (`api/`), then each of `apiExtra`.
             let main = (left.as_str(), right.as_str(), api::RUN_ANSWERS_DIR);
             let extra = (manifest.api_extra.iter())
@@ -1213,7 +1208,9 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
                 }
             }
             for r in report.results {
-                if r.outcome != Outcome::Pass {
+                if r.op == evidence::EVIDENCE {
+                    cases.push("api", r.label, 0, r.outcome);
+                } else if r.outcome != Outcome::Pass {
                     cases.push(
                         "api",
                         format!("{}: {}", r.file, r.label),

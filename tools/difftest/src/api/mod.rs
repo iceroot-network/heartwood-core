@@ -85,7 +85,9 @@ pub enum ApiCompareArgs {
 /// once, for the first corpus's nodes) and without the posts of a body the first corpus posted to
 /// the same control node, which the control answered from its cooldown; the report's source
 /// counts both. One pair's answers ([`ApiCompareArgs::Pair`]) are judged the same way: the first
-/// corpus with its `outside` section, or one corpus of `apiExtra` alone.
+/// corpus with its `outside` section, or one corpus of `apiExtra` alone. A live run's failed cases
+/// are then judged again with its own records ([`crate::live::evidence`]), as its live check
+/// judges them.
 /// Live, the corpus is sent to both nodes first, and the report is also written to
 /// `report.txt` in the output directory.
 pub fn compare(args: &ApiCompareArgs) -> Result<Report> {
@@ -130,8 +132,21 @@ fn recorded_pairs(manifest: Option<&Manifest>) -> String {
 }
 
 /// Judge the answers a live run recorded in `run`: every route corpus it recorded, or the one of
-/// `pair` (its node under test and its control node, as `run.json` names them).
+/// `pair` (its node under test and its control node, as `run.json` names them); then a live run's
+/// failed cases again with its own records ([`crate::live::evidence`]).
 fn judge_run(run: &Path, pair: Option<(&str, &str)>) -> Result<Report> {
+    let (report, manifest) = judge_recorded(run, pair)?;
+    Ok(match &manifest {
+        Some(manifest) => crate::live::evidence::judged_with_evidence(run, manifest, report),
+        None => report,
+    })
+}
+
+/// [`judge_run`]'s answers judged as they were recorded, and the run's `run.json` when it loads.
+pub(crate) fn judge_recorded(
+    run: &Path,
+    pair: Option<(&str, &str)>,
+) -> Result<(Report, Option<Manifest>)> {
     let root = run.join(RUN_ANSWERS_DIR);
     let root = if root.is_dir() {
         root
@@ -217,7 +232,7 @@ fn judge_run(run: &Path, pair: Option<(&str, &str)>) -> Result<Report> {
         );
         report.files += 1;
     }
-    Ok(report)
+    Ok((report, manifest))
 }
 
 /// The case of the relay that answered the answers a live run recorded in `run`: whether it is

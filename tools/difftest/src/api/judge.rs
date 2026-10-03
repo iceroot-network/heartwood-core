@@ -175,6 +175,12 @@ fn listing(route: Option<RouteId>) -> Option<(&'static str, &'static [&'static s
     }
 }
 
+/// Whether `line` requests a listing over the state's indexes ([`outcome_with_free_places`]'s
+/// routes).
+pub fn is_listing(line: &Recorded) -> bool {
+    listing((line.request.as_ref()).and_then(|r| route_of(&r.method, &r.path))).is_some()
+}
+
 /// The addresses of the wallets both answers of a recorded listing over the state's indexes
 /// list ([`outcome_with_free_places`]'s routes), on either page; none for another route.
 pub fn listed_wallets(line: &Recorded) -> BTreeSet<String> {

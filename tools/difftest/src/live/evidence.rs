@@ -18,7 +18,14 @@ use std::path::Path;
 use super::nodes;
 use super::run::{self, Implementation, Manifest};
 use crate::api;
-use crate::report::{Outcome, Report};
+use crate::report::{CaseResult, Outcome, Report};
+
+/// The operation of a report's case that holds a note of the evidence ([`Note`]).
+pub const EVIDENCE: &str = "evidence";
+
+/// The step of the earlier recipe that records the run's one route corpus, in `api/`, without
+/// naming its directory.
+const CORPUS_STEP: &str = "api-corpus";
 
 /// What the evidence of one route corpus showed: the record of the cases it passed, or why it
 /// could not be read.
@@ -47,6 +54,30 @@ impl Note {
 }
 
 /// The failed cases of `report` (the route corpora of the run in `run_dir`, whose `run.json` is
+/// `manifest`) judged again with the run's evidence, with one case for each note: operation
+/// [`EVIDENCE`], the file the run's `run.json`, a record passing (its label `recorded: ...`) and
+/// evidence that cannot be read failing.
+pub fn judged_with_evidence(run_dir: &Path, manifest: &Manifest, report: Report) -> Report {
+    let (mut report, notes) = route_corpora(run_dir, manifest, report);
+    let file = run_dir.join("run.json").display().to_string();
+    for note in notes {
+        let (label, outcome) = match note.failure {
+            None => (format!("recorded: {}", note.label), Outcome::Pass),
+            Some(why) => (note.label, Outcome::HarnessError(why)),
+        };
+        report.results.push(CaseResult {
+            file: file.clone(),
+            line: 0,
+            op: EVIDENCE.to_owned(),
+            label,
+            height: 0,
+            outcome,
+        });
+    }
+    report
+}
+
+/// The failed cases of `report` (the route corpora of the run in `run_dir`, whose `run.json` is
 /// `manifest`) judged again with the run's evidence, and what the evidence showed.
 pub fn route_corpora(
     run_dir: &Path,
@@ -60,14 +91,22 @@ pub fn route_corpora(
     let main = (left.as_str(), right.as_str(), api::RUN_ANSWERS_DIR);
     let extra =
         (manifest.api_extra.iter()).map(|e| (e.left.as_str(), e.right.as_str(), e.dir.as_str()));
+    let mut files: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut steps = None;
     for (left, right, dir) in std::iter::once(main).chain(extra) {
         let dir = run_dir.join(dir);
-        let failing: Vec<usize> = (report.results.iter().enumerate())
-            .filter(|(_, r)| r.outcome.is_failure() && Path::new(&r.file).starts_with(&dir))
-            .map(|(i, _)| i)
+        // The corpus's failed cases, each with its recorded request.
+        let failing: Vec<(usize, api::Recorded)> = (0..report.results.len())
+            .filter(|&i| {
+                let r = &report.results[i];
+                r.outcome.is_failure() && Path::new(&r.file).starts_with(&dir)
+            })
+            .filter_map(|i| recorded_line(&mut files, &report.results[i]).map(|line| (i, line)))
             .collect();
-        if failing.is_empty() {
+        let listings: Vec<&(usize, api::Recorded)> = (failing.iter())
+            .filter(|(_, line)| api::judge::is_listing(line))
+            .collect();
+        if listings.is_empty() {
             continue;
         }
         let reference = |name: &str| {
@@ -75,99 +114,127 @@ pub fn route_corpora(
                 .node(name)
                 .is_some_and(|n| n.implementation == Implementation::Reference)
         };
-        if reference(left) && reference(right) {
-            let judged = reference_ties(&mut report, &failing);
-            if judged > 0 {
-                notes.push(Note::record(format!(
-                    "{left} against {right}: {judged} listings equal with the place of every \
-                     wallet free inside its tie (both answers are the reference's, and each \
-                     reference node orders a tie by its own index)"
-                )));
-            }
-            continue;
-        }
-        let label = format!("the wallets {left} or {right} alone re-indexed");
-        let steps = match &steps {
-            Some(steps) => steps,
-            None => match run::steps(run_dir) {
-                Ok(read) => steps.insert(read),
-                Err(e) => {
-                    notes.push(Note::failure(label, e.to_string()));
-                    continue;
-                }
-            },
-        };
-        // The submissions before the corpus was recorded: its step names its directory.
-        let recorded = (steps.iter())
-            .find(|s| s.text("dir").is_some_and(|d| run_dir.join(d) == dir))
-            .and_then(|s| s.start);
-        if recorded.is_none() {
-            let message = format!("no step records when {} was recorded", dir.display());
-            notes.push(Note::failure(label, message));
-            continue;
-        }
-        let evidence = match nodes::refused_alone(run_dir, manifest, steps, (left, right), recorded)
-        {
-            Ok(evidence) if evidence.is_empty() => continue,
-            Ok(evidence) => evidence,
-            Err(e) => {
-                notes.push(Note::failure(label, e.to_string()));
-                continue;
-            }
-        };
-        let free = evidence.keys().cloned().collect();
-        let mut files: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        let (mut judged, mut moved) = (0, BTreeSet::new());
-        for i in failing {
-            let Some(line) = recorded_line(&mut files, &report.results[i]) else {
-                continue;
+        let note = if reference(left) && reference(right) {
+            reference_ties(&mut report, &listings, (left, right))
+        } else {
+            let corpus = Corpus {
+                run_dir,
+                manifest,
+                pair: (left, right),
+                dir: &dir,
             };
-            let (outcome, freed) = api::judge::outcome_with_free_places(&line, &free);
-            if outcome == Outcome::Pass {
-                report.results[i].outcome = Outcome::Pass;
-                judged += 1;
-                moved.extend(freed);
-            }
-        }
-        if judged > 0 {
-            let reasons: Vec<String> = (moved.iter())
-                .map(|a| format!("{a}: {}", evidence[a].join("; ")))
-                .collect();
-            notes.push(Note::record(format!(
-                "{left} against {right}: {judged} listings equal with the places of {} left free \
-                 inside their ties ({})",
-                moved.iter().cloned().collect::<Vec<_>>().join(", "),
-                reasons.join(" | ")
-            )));
-        }
+            refusal_places(&corpus, &mut steps, &mut report, &listings)
+        };
+        notes.extend(note);
     }
     (report, notes)
 }
 
-/// The cases `failing` of `report`, a corpus of two reference nodes, judged again with the place
-/// of every wallet of a listing free inside its tie: both answers are the reference's, so any
-/// tie order is the reference's own. Whatever else differs still fails. The cases passed so.
-fn reference_ties(report: &mut Report, failing: &[usize]) -> usize {
-    let mut files: BTreeMap<String, Vec<String>> = BTreeMap::new();
+/// A route corpus of the run: the run's directory and `run.json`, its pair of nodes (under test,
+/// control) and its directory.
+struct Corpus<'a> {
+    run_dir: &'a Path,
+    manifest: &'a Manifest,
+    pair: (&'a str, &'a str),
+    dir: &'a Path,
+}
+
+/// The failed listings `listings` of `report` judged again with the places of the wallets one
+/// node of the corpus's pair alone re-indexed free inside their ties (the run's `steps`, read
+/// once): what the evidence showed, if anything.
+fn refusal_places(
+    corpus: &Corpus<'_>,
+    steps: &mut Option<Vec<run::Step>>,
+    report: &mut Report,
+    listings: &[&(usize, api::Recorded)],
+) -> Option<Note> {
+    let (left, right) = corpus.pair;
+    let label = format!("the wallets {left} or {right} alone re-indexed");
+    let steps = match steps {
+        Some(steps) => steps,
+        None => match run::steps(corpus.run_dir) {
+            Ok(read) => steps.insert(read),
+            Err(e) => return Some(Note::failure(label, e.to_string())),
+        },
+    };
+    // The submissions before the corpus was recorded: its step names its directory, or, in the
+    // earlier recipe, is the one route corpus step, which records `api/`.
+    let recorded = (steps.iter())
+        .find(|s| match s.text("dir") {
+            Some(d) => corpus.run_dir.join(d) == corpus.dir,
+            None => {
+                s.name == CORPUS_STEP && corpus.dir == corpus.run_dir.join(api::RUN_ANSWERS_DIR)
+            }
+        })
+        .and_then(|s| s.start);
+    if recorded.is_none() {
+        let message = format!("no step records when {} was recorded", corpus.dir.display());
+        return Some(Note::failure(label, message));
+    }
+    let evidence = match nodes::refused_alone(
+        corpus.run_dir,
+        corpus.manifest,
+        steps,
+        corpus.pair,
+        recorded,
+    ) {
+        Ok(evidence) if evidence.is_empty() => return None,
+        Ok(evidence) => evidence,
+        Err(e) => return Some(Note::failure(label, e.to_string())),
+    };
+    let free = evidence.keys().cloned().collect();
+    let (mut judged, mut moved) = (0, BTreeSet::new());
+    for (i, line) in listings {
+        let (outcome, freed) = api::judge::outcome_with_free_places(line, &free);
+        if outcome == Outcome::Pass {
+            report.results[*i].outcome = Outcome::Pass;
+            judged += 1;
+            moved.extend(freed);
+        }
+    }
+    (judged > 0).then(|| {
+        let reasons: Vec<String> = (moved.iter())
+            .map(|a| format!("{a}: {}", evidence[a].join("; ")))
+            .collect();
+        Note::record(format!(
+            "{left} against {right}: {judged} listings equal with the places of {} left free \
+             inside their ties ({})",
+            moved.iter().cloned().collect::<Vec<_>>().join(", "),
+            reasons.join(" | ")
+        ))
+    })
+}
+
+/// The failed listings `listings` of `report`, a corpus of two reference nodes (`pair`), judged
+/// again with the place of every wallet free inside its tie: both answers are the reference's, so
+/// any tie order is the reference's own. Whatever else differs still fails.
+fn reference_ties(
+    report: &mut Report,
+    listings: &[&(usize, api::Recorded)],
+    (left, right): (&str, &str),
+) -> Option<Note> {
     let mut judged = 0;
-    for &i in failing {
-        let Some(line) = recorded_line(&mut files, &report.results[i]) else {
-            continue;
-        };
-        let free = api::judge::listed_wallets(&line);
-        if api::judge::outcome_with_free_places(&line, &free).0 == Outcome::Pass {
-            report.results[i].outcome = Outcome::Pass;
+    for (i, line) in listings {
+        let free = api::judge::listed_wallets(line);
+        if api::judge::outcome_with_free_places(line, &free).0 == Outcome::Pass {
+            report.results[*i].outcome = Outcome::Pass;
             judged += 1;
         }
     }
-    judged
+    (judged > 0).then(|| {
+        Note::record(format!(
+            "{left} against {right}: {judged} listings equal with the place of every wallet free \
+             inside its tie (both answers are the reference's, and each reference node orders a \
+             tie by its own index)"
+        ))
+    })
 }
 
 /// The recorded request of the case `result` (its file's line), read once per file into
 /// `files`; `None` when the line does not read as one.
 fn recorded_line(
     files: &mut BTreeMap<String, Vec<String>>,
-    result: &crate::report::CaseResult,
+    result: &CaseResult,
 ) -> Option<api::Recorded> {
     let lines = files.entry(result.file.clone()).or_insert_with(|| {
         let text = std::fs::read_to_string(&result.file).unwrap_or_default();
@@ -264,14 +331,16 @@ mod tests {
         dir
     }
 
-    /// The route corpora of the run in `run_dir` judged plainly, then with the run's evidence.
+    /// The route corpora of the run in `run_dir` judged as recorded.
+    fn plain(run_dir: &Path) -> Report {
+        api::judge_recorded(run_dir, None).unwrap().0
+    }
+
+    /// The route corpora of the run in `run_dir` judged as recorded, then with the run's
+    /// evidence.
     fn judged(run_dir: &Path) -> (Report, Vec<Note>) {
         let manifest = Manifest::load(run_dir).unwrap();
-        let report = api::compare(&api::ApiCompareArgs::Recorded {
-            run: run_dir.to_path_buf(),
-        })
-        .unwrap();
-        route_corpora(run_dir, &manifest, report)
+        route_corpora(run_dir, &manifest, plain(run_dir))
     }
 
     fn outcome(report: &Report, name: &str) -> Outcome {
@@ -311,10 +380,7 @@ mod tests {
         ]);
         let run_dir = dir.path();
         let manifest = Manifest::load(run_dir).unwrap();
-        let report = api::compare(&api::ApiCompareArgs::Recorded {
-            run: run_dir.to_path_buf(),
-        })
-        .unwrap();
+        let report = plain(run_dir);
         assert_eq!(
             report
                 .results
@@ -525,5 +591,111 @@ mod tests {
         for name in ["tied", "tied-three", "across"] {
             assert!(outcome(&report, name).is_failure(), "{name}");
         }
+    }
+
+    /// An observer run of the earlier recipe: txgen's submissions to node 4 alone (one refused by
+    /// its handler for wallet G), and a route corpus whose step names no directory, then the
+    /// listing `ours` (node 4's) against `theirs` (node 1's).
+    fn observer_run(
+        ours: &[(&str, u64)],
+        theirs: &[(&str, u64)],
+    ) -> crate::vectors::testutil::TestDir {
+        let dir = crate::vectors::testutil::TestDir::new("observer-evidence");
+        let root = dir.path();
+        let run = json!({"format": run::FORMAT, "run": "h", "network": "n", "seed": "s",
+            "nodes": [
+                {"name": "node1", "ip": "10.0.0.11", "implementation": "reference"},
+                {"name": "node4", "ip": "10.0.0.14", "implementation": "heartwood",
+                    "underTest": true}],
+            "api": {"left": "node4", "right": "node1"}});
+        std::fs::write(root.join("run.json"), run.to_string()).unwrap();
+        let steps = [
+            json!({"step": "txgen-once", "node": "node4", "ok": true, "read": "node1",
+                "submit": "node4", "start": "2026-10-02T00:58:00.000Z"}),
+            json!({"step": "api-corpus", "node": "node4", "ok": true, "left": "node4",
+                "right": "node1", "start": "2026-10-02T01:00:00.000Z"}),
+        ];
+        let lines = |values: &[Value]| values.iter().map(|v| format!("{v}\n")).collect::<String>();
+        std::fs::write(root.join("steps.jsonl"), lines(&steps)).unwrap();
+        let txgen = [
+            json!({"event": "start", "api": "http://127.0.0.1:7991"}),
+            json!({"event": "submitted", "id": "tx-g", "sender": "G",
+                "ts": "2026-10-02T00:59:00.000Z", "tx": {"type": 7},
+                "response": {"outcome": "rejected", "code": "ERR_APPLY"}}),
+        ];
+        std::fs::create_dir_all(root.join("txgen/once")).unwrap();
+        std::fs::write(root.join("txgen/once/txgen.jsonl"), lines(&txgen)).unwrap();
+        let page = |list: &[(&str, u64)]| {
+            let data: Vec<Value> = (list.iter())
+                .map(|(a, b)| json!({"address": a, "balance": b.to_string()}))
+                .collect();
+            json!({"status": 200, "headers": {"connection": "close", "x-block-height": "159"},
+                "body": {"meta": {"count": data.len(), "totalCount": data.len()}, "data": data}})
+        };
+        let answer = json!({"file": "wallets-list.json", "name": "wallets/list/all",
+            "request": {"method": "GET", "path": "/api/wallets"},
+            "left": page(ours), "right": page(theirs)});
+        std::fs::create_dir_all(root.join(api::RUN_ANSWERS_DIR)).unwrap();
+        std::fs::write(
+            root.join(api::RUN_ANSWERS_DIR).join(api::ANSWERS),
+            lines(&[answer]),
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_run_s_recorded_answers_are_judged_with_its_evidence_by_api_compare() {
+        // Node 4 alone refused G's transaction and moved G to the end of its tie.
+        let ours = [("A", 100), ("B", 50), ("C", 50), ("G", 50), ("D", 1)];
+        let theirs = [("A", 100), ("G", 50), ("B", 50), ("C", 50), ("D", 1)];
+        let dir = observer_run(&ours, &theirs);
+        let report = api::compare(&api::ApiCompareArgs::Recorded {
+            run: dir.path().to_path_buf(),
+        })
+        .unwrap();
+        assert_eq!(
+            outcome(&report, "wallets/list/all"),
+            Outcome::Pass,
+            "{report}"
+        );
+        assert!(
+            report.results.iter().any(|r| r.op == EVIDENCE
+                && r.outcome == Outcome::Pass
+                && r.label.contains("places of G left free")
+                && r.label.contains(
+                    "transaction tx-g refused by node4 (ERR_APPLY), never sent to node1"
+                )),
+            "{report}"
+        );
+        // Another wallet moved: a failure, whatever the evidence.
+        let moved = [("A", 100), ("C", 50), ("B", 50), ("G", 50), ("D", 1)];
+        let dir = observer_run(&moved, &theirs);
+        let report = api::compare(&api::ApiCompareArgs::Recorded {
+            run: dir.path().to_path_buf(),
+        })
+        .unwrap();
+        assert!(outcome(&report, "wallets/list/all").is_failure());
+        // A recording without a time frees nothing, and says why.
+        let dir = observer_run(&ours, &theirs);
+        let steps = dir.path().join("steps.jsonl");
+        let text = std::fs::read_to_string(&steps).unwrap();
+        std::fs::write(
+            &steps,
+            text.replace(r#""start":"2026-10-02T01:00:00.000Z""#, r#""x":0"#),
+        )
+        .unwrap();
+        let report = api::compare(&api::ApiCompareArgs::Recorded {
+            run: dir.path().to_path_buf(),
+        })
+        .unwrap();
+        assert!(outcome(&report, "wallets/list/all").is_failure());
+        assert!(
+            report
+                .results
+                .iter()
+                .any(|r| r.op == EVIDENCE && r.outcome.is_failure()),
+            "{report}"
+        );
     }
 }
