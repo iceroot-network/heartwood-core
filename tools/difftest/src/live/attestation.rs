@@ -9,7 +9,9 @@
 //! a step that is not one of the four, fails: the record is evidence, and a gap in it is a fault
 //! of the run's recording. Only a relay whose forger runs on its host has offers to record: the
 //! attestation session accepts a loopback source only, so the record of a relay whose forger
-//! connects from another address (`forgerAddress` in `run.json`), or that has no forger, is empty.
+//! connects from another address (`forgerAddress` in `run.json`), or that has no forger, holds no
+//! signature: a signature attached or a status served signed there fails (offers alone, which an
+//! earlier relay recorded, are recorded as any other).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -255,7 +257,8 @@ fn no_local_forger(validators: &[forging::Validator], name: &str) -> Option<Stri
 /// The attestation record's report: one recorded case per Heartwood relay, and one for its
 /// network-state proxy. The relay's attestation session accepts a loopback source only, so a
 /// relay whose forger is on another host, or that has none, is offered no status: its empty
-/// record is recorded as such, where a relay whose forger connects over loopback must have one.
+/// record is recorded as such, and a signature in its record fails, where a relay whose forger
+/// connects over loopback must have a record.
 pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
     let m = run.manifest;
     let label = "the attestation record's waits and unsigned statuses";
@@ -306,6 +309,21 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
                 ),
             }
             continue;
+        }
+        if let Some(why) = no_local_forger(&validators, &n.name) {
+            let signed = (lines.iter())
+                .filter(|l| l.step == "signed" || l.step == "served")
+                .count();
+            if signed > 0 {
+                cases.fail(
+                    SECTION,
+                    label,
+                    format!(
+                        "{}: its forger is not on its host ({why}), yet its record holds {signed} signatures attached or statuses served signed: the attestation session accepts a loopback source only",
+                        n.name
+                    ),
+                );
+            }
         }
         let per_round = i64::from(m.round_length.max(1));
         let by_round = unsigned_by_round(&lines, per_round)
@@ -464,7 +482,18 @@ mod tests {
     /// without a recorded address, as a mixed run names none), node 5 whose forger connects from
     /// another host, node 6 with no forger, and a reference relay; `attest` names the relays whose
     /// record holds an offer and its signatures.
+    /// An offer and its signatures, as a relay with a loopback forger records them.
+    const OFFERED_AND_SIGNED: &str = "{\"t\":\"2026-10-03T02:00:00.000Z\",\"step\":\"offered\",\"status\":\"a\",\"slot\":5}\n\
+        {\"t\":\"2026-10-03T02:00:00.020Z\",\"step\":\"signed\",\"status\":\"a\",\"slot\":5,\"attestations\":11}\n";
+
     fn churn_run(attest: &[&str]) -> crate::vectors::testutil::TestDir {
+        let records: Vec<(&str, &str)> = attest.iter().map(|n| (*n, OFFERED_AND_SIGNED)).collect();
+        churn_run_with(&records)
+    }
+
+    /// Churn's node set, with the attestation record of each node of `records` (name, lines) and
+    /// an empty one for every other Heartwood relay.
+    fn churn_run_with(records: &[(&str, &str)]) -> crate::vectors::testutil::TestDir {
         let dir = crate::vectors::testutil::TestDir::new("live-attestation-churn");
         let validator = |name: &str, forger: Option<&str>| {
             let mut node = serde_json::json!({"name": name, "ip": format!("10.89.0.1{}", &name[4..]),
@@ -486,18 +515,15 @@ mod tests {
             {"name": "node7", "ip": "10.89.0.17", "implementation": "reference", "role": "relay"},
         ]);
         let manifest = serde_json::json!({"format": run::FORMAT, "run": "churn",
-            "network": "b8-churn", "seed": "1", "nodes": nodes, "status": "complete"});
+            "network": "churn-1", "seed": "1", "nodes": nodes, "status": "complete"});
         std::fs::write(dir.path().join("run.json"), manifest.to_string()).unwrap();
         for n in 1..=6 {
             let record = dir.path().join(format!("nodes/node{n}/difftest"));
             std::fs::create_dir_all(&record).unwrap();
             let name = format!("node{n}");
-            let lines = if attest.contains(&name.as_str()) {
-                "{\"t\":\"2026-10-03T02:00:00.000Z\",\"step\":\"offered\",\"status\":\"a\",\"slot\":5}\n\
-                 {\"t\":\"2026-10-03T02:00:00.020Z\",\"step\":\"signed\",\"status\":\"a\",\"slot\":5,\"attestations\":11}\n"
-            } else {
-                ""
-            };
+            let lines = (records.iter())
+                .find(|(node, _)| *node == name)
+                .map_or("", |(_, lines)| *lines);
             std::fs::write(record.join("attest-0001.jsonl"), lines).unwrap();
         }
         dir
@@ -570,14 +596,37 @@ mod tests {
                 "{missing}: {cases:?}"
             );
         }
-        // A record of a relay whose forger is on another host is recorded as any other.
-        let dir = churn_run(&["node1", "node2", "node3", "node4", "node5"]);
+        // A record of offers of a relay whose forger is on another host, as an earlier relay
+        // wrote one, is recorded as any other.
+        let offered = "{\"t\":\"2026-10-03T02:00:00.000Z\",\"step\":\"offered\",\"status\":\"a\",\"slot\":5}\n";
+        let loopback: Vec<(&str, &str)> = ["node1", "node2", "node3", "node4"]
+            .map(|n| (n, OFFERED_AND_SIGNED))
+            .to_vec();
+        let mut with_offers = loopback.clone();
+        with_offers.push(("node5", offered));
+        let dir = churn_run_with(&with_offers);
         let cases = judged(dir.path());
         assert!(cases.iter().all(|(_, failed)| !failed), "{cases:?}");
         assert!(
             (cases.iter()).any(|(label, _)| label.starts_with("recorded: node5: 1 offered")),
             "{cases:?}"
         );
+        // Signatures attached on such a relay, or statuses it served signed, fail: its session
+        // accepts a loopback source only.
+        for lines in [
+            OFFERED_AND_SIGNED,
+            "{\"t\":\"2026-10-03T02:00:01.000Z\",\"step\":\"served\",\"status\":\"a\",\"slot\":5,\"attestations\":11}\n",
+        ] {
+            let mut signed = loopback.clone();
+            signed.push(("node5", lines));
+            let dir = churn_run_with(&signed);
+            let cases = judged(dir.path());
+            assert!(
+                cases.iter().any(|(label, failed)| *failed
+                    && label.contains("node5: its forger is not on its host")),
+                "{cases:?}"
+            );
+        }
     }
 
     #[test]
