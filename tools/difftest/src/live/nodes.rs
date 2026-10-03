@@ -200,18 +200,19 @@ pub(super) fn backfilling_start(
 
 /// The rows of the slots before block 2 in the Heartwood relay `node`'s store (`missed`), which
 /// node 1 never writes: when one of its starts found no missed-slot row ([`backfilling_start`]),
-/// they must be exactly the reference's (their height 2 and times, [`super::recovery::backfill_times`];
-/// the delegates are the relay's own tests'), and they are taken out of `missed` for the anchors;
+/// they must be exactly the reference's (their height 2, times and delegates,
+/// [`super::recovery::backfill_rows`]), and they are taken out of `missed` for the anchors;
 /// otherwise they are left for the anchors to find. The passing case's text, if any.
 fn backfill_in_store(
     run_dir: &Path,
     node: &Node,
     corpus_dir: &Path,
-    block_time: u32,
+    (round_length, block_time): (u32, u32),
     missed: &mut Vec<heartwood_database::MissedRow>,
 ) -> std::result::Result<Option<String>, String> {
     let corpus = Corpus::load(corpus_dir).map_err(|e| e.to_string())?;
-    let times = super::recovery::backfill_times(&corpus, block_time);
+    let expected = super::recovery::backfill_rows(&corpus, block_time, round_length)?;
+    let times: Vec<i64> = expected.iter().map(|(time, _)| *time).collect();
     if times.is_empty() {
         return Ok(None);
     }
@@ -222,21 +223,23 @@ fn backfill_in_store(
         return Ok(None);
     };
     let last = times.last().copied().unwrap_or(0);
-    let mut held: Vec<i64> = missed
+    let mut held: Vec<(i64, String)> = missed
         .iter()
         .filter(|m| m.height == 2 && m.timestamp <= last)
-        .map(|m| m.timestamp)
+        .map(|m| (m.timestamp, m.username.clone()))
         .collect();
     held.sort_unstable();
-    if held != times {
+    let mut wanted = expected.clone();
+    wanted.sort_unstable();
+    if held != wanted {
         return Err(format!(
-            "its start at {tip} found no missed-slot row, so the {} rows of the slots before block 2 at {times:?} are expected at height 2; the store holds {held:?}",
+            "its start at {tip} found no missed-slot row, so the {} rows of the slots before block 2 (time and delegate) {wanted:?} are expected at height 2; the store holds {held:?}",
             times.len()
         ));
     }
     missed.retain(|m| !(m.height == 2 && m.timestamp <= last));
     Ok(Some(format!(
-        "its start at {tip} found no missed-slot row and wrote the {} rows of the slots before block 2, as the reference's start does (node 1's store has none)",
+        "its start at {tip} found no missed-slot row and wrote the {} rows of the slots before block 2 with the delegates of round 1's order at their slots, as the reference's start does (node 1's store has none)",
         times.len()
     )))
 }
@@ -316,7 +319,13 @@ pub fn heartwood_store(
             return out;
         }
     };
-    match backfill_in_store(run_dir, node, corpus_dir, block_time, &mut rows.missed) {
+    match backfill_in_store(
+        run_dir,
+        node,
+        corpus_dir,
+        (round_length, block_time),
+        &mut rows.missed,
+    ) {
         Ok(Some(text)) => out.push(pass(format!("{}: {text}", node.name))),
         Ok(None) => {}
         Err(e) => out.push(fail(&label, e)),

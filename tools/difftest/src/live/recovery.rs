@@ -25,9 +25,12 @@
 //!   start after it (`chain.restart`), whose summary is the prediction after node 6's start.
 //! - Node 6's own log: `logs/node6` when the node is a reference node.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use heartwood_crypto::Block;
+use heartwood_crypto::transactions::Asset;
+use heartwood_state::round_state::shuffle_delegates;
 use serde_json::{Value, json};
 
 use super::digest;
@@ -111,6 +114,99 @@ pub(super) fn backfill_times(corpus: &Corpus, block_time: u32) -> Vec<i64> {
     (first..slot(decoded.header().timestamp))
         .map(|s| s * i64::from(block_time))
         .collect()
+}
+
+/// The rows a start writes for the slots before block 2 when its store holds no missed-slot row,
+/// as the reference's start does ([`backfill_times`]), each with the delegate the reference names
+/// for its slot (`calculateMissedBlocks`: round 1's delegates in their forging order, at the
+/// place of the slot's number modulo their count, [`round_one_order`]). An error when the corpus
+/// does not give round 1's order.
+pub(super) fn backfill_rows(
+    corpus: &Corpus,
+    block_time: u32,
+    round_length: u32,
+) -> std::result::Result<Vec<(i64, String)>, String> {
+    let times = backfill_times(corpus, block_time);
+    if times.is_empty() {
+        return Ok(Vec::new());
+    }
+    let order = round_one_order(corpus, block_time, round_length)?;
+    let count = i64::try_from(order.len()).map_err(|e| e.to_string())?;
+    (times.into_iter())
+        .map(|time| {
+            let slot = time / i64::from(block_time.max(1));
+            let place = usize::try_from(slot.rem_euclid(count.max(1))).unwrap_or(usize::MAX);
+            let name = order
+                .get(place)
+                .ok_or_else(|| format!("round 1 has no delegate at place {place}"))?;
+            Ok((time, name.clone()))
+        })
+        .collect()
+}
+
+/// Round 1's delegates in their forging order, as the reference's start reads them for its
+/// missed-slot rows (`getActiveDelegates` of the round): the round's rows of the corpus
+/// (`reference/rounds.jsonl`) by balance, the highest first, then by public key, named by the
+/// genesis block's registrations and shuffled for the round. Checked against the corpus's blocks
+/// of round 1 (heights 2 to `round_length`): each was forged by the delegate at its slot's place
+/// in the order, or the order is no evidence.
+fn round_one_order(
+    corpus: &Corpus,
+    block_time: u32,
+    round_length: u32,
+) -> std::result::Result<Vec<String>, String> {
+    let names: BTreeMap<String, String> = (corpus.genesis.transactions().iter())
+        .filter_map(|transaction| match &transaction.data().asset {
+            Asset::DelegateRegistration { username } => Some((
+                transaction.data().sender_public_key.to_hex(),
+                username.clone(),
+            )),
+            _ => None,
+        })
+        .collect();
+    let path = corpus.dir.join("reference/rounds.jsonl");
+    let rows = run::read_lines(&path).map_err(|e| e.to_string())?;
+    let balance = |row: &Value| -> Option<u128> {
+        match &row["balance"] {
+            Value::String(text) => text.parse().ok(),
+            other => other.as_u64().map(u128::from),
+        }
+    };
+    let mut delegates = Vec::new();
+    for row in rows.iter().filter(|row| row["round"].as_u64() == Some(1)) {
+        let key = row["publicKey"].as_str().unwrap_or_default();
+        let amount = balance(row)
+            .ok_or_else(|| format!("{}: a balance of round 1 that is no amount", path.display()))?;
+        let name = names
+            .get(key)
+            .ok_or_else(|| format!("the genesis block registers no delegate {key} of round 1"))?;
+        delegates.push((amount, key.to_owned(), name.clone()));
+    }
+    if delegates.is_empty() {
+        return Err(format!("{} holds no row of round 1", path.display()));
+    }
+    delegates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let ranked: Vec<String> = delegates.into_iter().map(|(_, _, name)| name).collect();
+    let order = shuffle_delegates(1, &ranked);
+    let slot = |timestamp: u32| timestamp / block_time.max(1);
+    for block in (corpus.blocks.iter()).filter(|b| (2..=round_length).contains(&b.height)) {
+        let decoded = Block::decode(&block.bytes, &corpus.milestones)
+            .map_err(|e| format!("block {} does not decode: {e}", block.height))?;
+        let header = decoded.header();
+        let forger = names
+            .get(&header.generator_public_key.to_hex())
+            .map_or("no registered delegate", String::as_str);
+        let at = slot(header.timestamp);
+        let place = usize::try_from(at).unwrap_or(usize::MAX) % order.len();
+        let named = order.get(place).map_or("nobody", String::as_str);
+        if forger != named {
+            return Err(format!(
+                "block {} of round 1 was forged by {forger} in slot {at}, where round 1's order computed from the round's rows names {named}",
+                block.height
+            ));
+        }
+    }
+    Ok(order)
 }
 
 /// The number of rows of [`backfill_times`].
@@ -921,5 +1017,57 @@ mod tests {
             })
         );
         assert_eq!(Summary::of(&json!({"tip": 1})), None);
+    }
+
+    /// A copy of the directory `from` at `to`.
+    fn copy(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn round_one_s_order_holds_only_where_every_block_of_round_1_agrees_with_it() {
+        // The committed one-node chain, forged by the reference: round 1's rows in the
+        // reference's order, shuffled for the round, name the forger of each block of the round.
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus/txgen-one-node");
+        let order = round_one_order(&Corpus::load(&dir).unwrap(), 8, 53).unwrap();
+        assert_eq!(order.len(), 53);
+        assert_eq!(
+            order
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            53
+        );
+        // One delegate's round balance raised: the rows' order and so the round's order change,
+        // and the chain no longer agrees with it.
+        let scratch = ScratchDir::new("round-one-order").unwrap();
+        let changed = scratch.path().join("txgen-one-node");
+        copy(&dir, &changed);
+        let rounds = changed.join("reference/rounds.jsonl");
+        let text = std::fs::read_to_string(&rounds).unwrap();
+        let mut lines: Vec<Value> = (text.lines())
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let last = (lines.iter()).rposition(|row| row["round"] == 1).unwrap();
+        lines[last]["balance"] = json!("100000000000");
+        let written: String = lines.iter().map(|row| format!("{row}\n")).collect();
+        std::fs::write(&rounds, written).unwrap();
+        corpus::write_manifest(&changed).unwrap();
+        let found = round_one_order(&Corpus::load(&changed).unwrap(), 8, 53);
+        assert!(
+            found
+                .as_ref()
+                .is_err_and(|why| why.contains("of round 1 was forged by")),
+            "{found:?}"
+        );
     }
 }

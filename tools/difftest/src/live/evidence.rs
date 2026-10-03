@@ -8,9 +8,12 @@
 //!   `reference`), with the place of every wallet free inside its tie: each reference node orders
 //!   a tie by its own index, so both orders are the reference's;
 //! - the answers of `/blocks/missed` of a Heartwood relay whose store differs from the control's
-//!   by the rows one of its starts wrote for the slots before block 2 only, judged as the
-//!   reference answers over each store's rows ([`api::missed`]): the reference's start writes the
-//!   same rows when its store holds no missed-slot row, and the control never wrote them.
+//!   by the rows one of its starts wrote for the slots before block 2 only, each at its slot's
+//!   time and charged to the delegate the reference names for the slot (round 1's forging order,
+//!   computed from the control's round rows and checked against every block of round 1), judged
+//!   as the reference answers over each store's rows ([`api::missed`]): the reference's start
+//!   writes the same rows when its store holds no missed-slot row, and the control never wrote
+//!   them.
 //!
 //! A case that passes so is recorded with the wallets and their evidence; every other case stays
 //! as it was judged, and evidence that cannot be read, or a corpus whose recording has no time, is
@@ -208,8 +211,9 @@ fn backfilled_rows(
         Note::record(format!(
             "{left} against {right}: {judged} answers of /blocks/missed equal the reference's \
              answers over {left}'s rows, which hold the {} rows its start at {} wrote for the \
-             slots before block 2, as the reference's start writes them when its store holds no \
-             missed-slot row ({right}'s store holds none)",
+             slots before block 2, at the times and with the delegates (round 1's at each slot's \
+             place) the reference's start writes when its store holds no missed-slot row \
+             ({right}'s store holds none)",
             evidence.written, evidence.start
         ))
     })
@@ -234,7 +238,11 @@ fn backfill_evidence(corpus: &Corpus<'_>) -> Result<Option<Backfill>, String> {
         .and_then(run::parse_time)
         .ok_or_else(|| format!("the archive of {right} names no epoch"))?;
     let rows = nodes::rows_of(&dir).map_err(|e| e.to_string())?;
-    let times = recovery::backfill_times(&control, corpus.manifest.block_time);
+    let expected = recovery::backfill_rows(
+        &control,
+        corpus.manifest.block_time,
+        corpus.manifest.round_length,
+    )?;
     let read = digest::read(&corpus.run_dir.join("nodes").join(left).join("difftest"))
         .map_err(|e| e.to_string())?;
     let starts = digest::starts_of(&read);
@@ -242,7 +250,7 @@ fn backfill_evidence(corpus: &Corpus<'_>) -> Result<Option<Backfill>, String> {
         return Ok(None);
     };
     let ours = nodes::store_missed(corpus.run_dir, left)?;
-    let Some(written) = backfill_of(&ours, &rows.missed, &times) else {
+    let Some(written) = backfill_of(&ours, &rows.missed, &expected) else {
         return Ok(None);
     };
     let slots = |rows: &[nodes::MissedKey]| -> Vec<MissedSlot> {
@@ -264,23 +272,26 @@ fn backfill_evidence(corpus: &Corpus<'_>) -> Result<Option<Backfill>, String> {
 }
 
 /// The number of rows `ours` holds beyond `theirs` when they are the rows a start writes for the
-/// slots before block 2, at `times`: every row of `theirs` in `ours`, and each other row at height
-/// 2, one at each of `times` and no other. `None` otherwise, or when `times` is empty.
+/// slots before block 2, `expected` (each slot's time and delegate): every row of `theirs` in
+/// `ours`, and each other row at height 2, one at each of `expected`'s times and no other. `None`
+/// otherwise, or when `expected` is empty.
 fn backfill_of(
     ours: &[nodes::MissedKey],
     theirs: &[nodes::MissedKey],
-    times: &[i64],
+    expected: &[(i64, String)],
 ) -> Option<usize> {
     let mut extra: Vec<&nodes::MissedKey> = ours.iter().collect();
     for row in theirs {
         let at = extra.iter().position(|ours| *ours == row)?;
         extra.swap_remove(at);
     }
-    let mut written: Vec<i64> = (extra.iter())
-        .map(|(timestamp, height, _)| (*height == 2).then_some(*timestamp))
+    let mut written: Vec<(i64, &str)> = (extra.iter())
+        .map(|(timestamp, height, name)| (*height == 2).then_some((*timestamp, name.as_str())))
         .collect::<Option<_>>()?;
     written.sort_unstable();
-    let mut wanted = times.to_vec();
+    let mut wanted: Vec<(i64, &str)> = (expected.iter())
+        .map(|(time, name)| (*time, name.as_str()))
+        .collect();
     wanted.sort_unstable();
     (!wanted.is_empty() && written == wanted).then_some(written.len())
 }
@@ -851,28 +862,40 @@ mod tests {
             (timestamp, height, username.to_owned())
         };
         let theirs = vec![row(1224, 151, "tx1n2290"), row(1704, 210, "tx1n2290")];
-        let times = [8, 16, 24];
+        let times: Vec<(i64, String)> = [(8, "genesis_41"), (16, "genesis_44"), (24, "genesis_51")]
+            .map(|(time, name)| (time, name.to_owned()))
+            .to_vec();
+        let times = times.as_slice();
         let backfill = [
             row(8, 2, "genesis_41"),
             row(16, 2, "genesis_44"),
             row(24, 2, "genesis_51"),
         ];
         let ours: Vec<nodes::MissedKey> = theirs.iter().chain(&backfill).cloned().collect();
-        assert_eq!(backfill_of(&ours, &theirs, &times), Some(3));
+        assert_eq!(backfill_of(&ours, &theirs, times), Some(3));
+        // A back-filled slot charged to another delegate than the reference's start names.
+        let mut renamed = ours.clone();
+        renamed[3].2 = "genesis_45".to_owned();
+        assert_eq!(backfill_of(&renamed, &theirs, times), None);
+        let mut nobody = ours.clone();
+        for row in &mut nobody[2..] {
+            row.2 = "nobody".to_owned();
+        }
+        assert_eq!(backfill_of(&nobody, &theirs, times), None);
         // Without the back-fill, or with a slot of it missing, one twice or one more.
-        assert_eq!(backfill_of(&theirs, &theirs, &times), None);
-        assert_eq!(backfill_of(&ours[..4], &theirs, &times), None);
+        assert_eq!(backfill_of(&theirs, &theirs, times), None);
+        assert_eq!(backfill_of(&ours[..4], &theirs, times), None);
         let mut twice = ours.clone();
         twice.push(row(16, 2, "genesis_44"));
-        assert_eq!(backfill_of(&twice, &theirs, &times), None);
+        assert_eq!(backfill_of(&twice, &theirs, times), None);
         let mut more = ours.clone();
         more.push(row(32, 2, "genesis_53"));
-        assert_eq!(backfill_of(&more, &theirs, &times), None);
+        assert_eq!(backfill_of(&more, &theirs, times), None);
         // A row at another height, or a row of the control's that the store lacks.
         let mut higher = ours.clone();
         higher[2].1 = 3;
-        assert_eq!(backfill_of(&higher, &theirs, &times), None);
-        assert_eq!(backfill_of(&ours[1..], &theirs, &times), None);
+        assert_eq!(backfill_of(&higher, &theirs, times), None);
+        assert_eq!(backfill_of(&ours[1..], &theirs, times), None);
         // No slot before block 2: nothing to write.
         assert_eq!(backfill_of(&theirs, &theirs, &[]), None);
     }
