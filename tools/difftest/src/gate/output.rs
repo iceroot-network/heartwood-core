@@ -189,6 +189,24 @@ mod tests {
     }
 
     #[test]
+    fn the_batch_replay_s_download_line_is_counted_under_its_code_name() {
+        // As `run l2-batch` prints the registered delegates that forge within one download.
+        let text = "  12 compared: 12 passed, 0 failed\n  2 documented differences (on purpose):\n\
+                    \x20       2  a delegate registered in the chain forges within one download of \
+                    its registration, which the judge's one-block jobs do not show\n";
+        let parsed = parse(text);
+        assert_eq!(
+            parsed
+                .hits
+                .get("levels::l2_batch::REGISTERED_FORGER_DOWNLOAD"),
+            Some(&2),
+            "{:?}",
+            parsed.hits
+        );
+        assert_eq!(parsed.hits.len(), 1, "{:?}", parsed.hits);
+    }
+
+    #[test]
     fn a_scenario_s_verdict_line_is_kept_by_its_id() {
         let text = "scenarios at L2: 4 records in 2 files\n  4 compared: 4 passed, 0 failed\n\
                     scenario burns: pass\nscenario transactions/double-spend: fail\n\

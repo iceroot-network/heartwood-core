@@ -29,6 +29,11 @@ use crate::report::{CaseResult, Outcome, Report};
 use crate::restart::{self, ReferenceMode, RestartOutcome};
 use crate::store::ScratchDir;
 
+/// The reason of a documented case of the batch replay: a delegate the chain registers forges
+/// within one download of its registration, which the judge's jobs of one block do not show.
+pub const REGISTERED_FORGER_DOWNLOAD: &str = "a delegate registered in the chain forges within one \
+     download of its registration, which the judge's one-block jobs do not show";
+
 /// The batch files `args` names in its corpus directory, in name order.
 pub fn batch_files(args: &L2BatchArgs) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
@@ -222,11 +227,7 @@ fn registered_forgers(chain: &BatchChain, dir: &Path) -> Vec<CaseResult> {
                         f.username, f.registered_at, f.blocks, f.first_block
                     ),
                     f.first_block,
-                    Outcome::Documented(
-                        "a delegate registered in the chain forges within one download of its \
-                         registration, which the judge's one-block jobs do not show"
-                            .to_owned(),
-                    ),
+                    Outcome::Documented(REGISTERED_FORGER_DOWNLOAD.to_owned()),
                 )
             })
             .collect(),
