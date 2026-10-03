@@ -13,7 +13,7 @@
 //! signature: a signature attached or a status served signed there fails (offers alone, which an
 //! earlier relay recorded, are recorded as any other).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::Value;
@@ -254,11 +254,22 @@ fn no_local_forger(validators: &[forging::Validator], name: &str) -> Option<Stri
     })
 }
 
+/// The nodes of the run in `run_dir` that run the combined role (`combined` in `run.json`): their
+/// forger runs in the relay's own process and reaches it over loopback, whatever address
+/// `run.json` names for it.
+fn combined_nodes(run_dir: &Path) -> Result<BTreeSet<String>> {
+    let run = run::read_json(&run_dir.join("run.json"))?;
+    Ok((run["nodes"].as_array().into_iter().flatten())
+        .filter(|n| n["combined"].as_bool() == Some(true))
+        .filter_map(|n| n["name"].as_str().map(str::to_owned))
+        .collect())
+}
+
 /// The attestation record's report: one recorded case per Heartwood relay, and one for its
 /// network-state proxy. The relay's attestation session accepts a loopback source only, so a
 /// relay whose forger is on another host, or that has none, is offered no status: its empty
 /// record is recorded as such, and a signature in its record fails, where a relay whose forger
-/// connects over loopback must have a record.
+/// connects over loopback (a combined node's always does) must have a record.
 pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
     let m = run.manifest;
     let label = "the attestation record's waits and unsigned statuses";
@@ -276,6 +287,14 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
         return Ok(());
     }
     let validators = forging::validators(run.run_dir)?;
+    let combined = combined_nodes(run.run_dir)?;
+    let elsewhere = |name: &str| {
+        if combined.contains(name) {
+            None
+        } else {
+            no_local_forger(&validators, name)
+        }
+    };
     // The proxy is recorded beside the record: a node without answers or tips says so.
     let (answers, _) = forging::answers(run.run_dir, m)?;
     for n in relays {
@@ -291,7 +310,7 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
             cases.fail(SECTION, label, format!("{}: {p}", n.name));
         }
         if lines.is_empty() {
-            match no_local_forger(&validators, &n.name) {
+            match elsewhere(&n.name) {
                 None => cases.fail(
                     SECTION,
                     label,
@@ -310,7 +329,7 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
             }
             continue;
         }
-        if let Some(why) = no_local_forger(&validators, &n.name) {
+        if let Some(why) = elsewhere(&n.name) {
             let signed = (lines.iter())
                 .filter(|l| l.step == "signed" || l.step == "served")
                 .count();
