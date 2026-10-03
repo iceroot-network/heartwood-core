@@ -21,7 +21,8 @@
 //!   whole pool (the order of equal priorities is the order of arrival).
 //!
 //! A live run's check may leave free, inside its tie, the place of a wallet one node of the pair
-//! alone re-indexed by its own refusals ([`outcome_with_free_places`]): nothing else may differ.
+//! alone re-indexed by its own refusals, or of every wallet when both nodes run the reference
+//! ([`outcome_with_free_places`], [`listed_wallets`]): nothing else may differ.
 //!
 //! A case marked with a documented difference (`heightAboveTip`, `storeFailure`, `peersIpFilter`,
 //! `tieOrder`, `decodeReason`, `roundOrder`, `estimatedCount`, `feeTypes`, `specKeptOnly`)

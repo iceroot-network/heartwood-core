@@ -1,8 +1,12 @@
-//! The route corpora's failed cases of a live run judged again with the run's own evidence: a
-//! listing's tie with the places of the wallets one node of the corpus's pair alone re-indexed
-//! left free inside their ties ([`api::judge::outcome_with_free_places`]), the parties of the
-//! transactions the run's records show sent to one of the two nodes and refused there by their
-//! handler ([`nodes::refused_alone`]) before the corpus was recorded.
+//! The route corpora's failed cases of a live run judged again with the run's own evidence:
+//!
+//! - a listing's tie with the places of the wallets one node of the corpus's pair alone
+//!   re-indexed left free inside their ties ([`api::judge::outcome_with_free_places`]), the
+//!   parties of the transactions the run's records show sent to one of the two nodes and refused
+//!   there by their handler ([`nodes::refused_alone`]) before the corpus was recorded;
+//! - a listing's tie between two reference nodes (`run.json` names both nodes of the corpus
+//!   `reference`), with the place of every wallet free inside its tie: each reference node orders
+//!   a tie by its own index, so both orders are the reference's.
 //!
 //! A case that passes so is recorded with the wallets and their evidence; every other case stays
 //! as it was judged, and evidence that cannot be read, or a corpus whose recording has no time, is
@@ -12,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use super::nodes;
-use super::run::{self, Manifest};
+use super::run::{self, Implementation, Manifest};
 use crate::api;
 use crate::report::{Outcome, Report};
 
@@ -64,6 +68,22 @@ pub fn route_corpora(
             .map(|(i, _)| i)
             .collect();
         if failing.is_empty() {
+            continue;
+        }
+        let reference = |name: &str| {
+            manifest
+                .node(name)
+                .is_some_and(|n| n.implementation == Implementation::Reference)
+        };
+        if reference(left) && reference(right) {
+            let judged = reference_ties(&mut report, &failing);
+            if judged > 0 {
+                notes.push(Note::record(format!(
+                    "{left} against {right}: {judged} listings equal with the place of every \
+                     wallet free inside its tie (both answers are the reference's, and each \
+                     reference node orders a tie by its own index)"
+                )));
+            }
             continue;
         }
         let label = format!("the wallets {left} or {right} alone re-indexed");
@@ -122,6 +142,25 @@ pub fn route_corpora(
         }
     }
     (report, notes)
+}
+
+/// The cases `failing` of `report`, a corpus of two reference nodes, judged again with the place
+/// of every wallet of a listing free inside its tie: both answers are the reference's, so any
+/// tie order is the reference's own. Whatever else differs still fails. The cases passed so.
+fn reference_ties(report: &mut Report, failing: &[usize]) -> usize {
+    let mut files: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut judged = 0;
+    for &i in failing {
+        let Some(line) = recorded_line(&mut files, &report.results[i]) else {
+            continue;
+        };
+        let free = api::judge::listed_wallets(&line);
+        if api::judge::outcome_with_free_places(&line, &free).0 == Outcome::Pass {
+            report.results[i].outcome = Outcome::Pass;
+            judged += 1;
+        }
+    }
+    judged
 }
 
 /// The recorded request of the case `result` (its file's line), read once per file into
@@ -383,5 +422,108 @@ mod tests {
                     .contains("the wallets node1 or node3 alone re-indexed")),
             "{notes:?}"
         );
+    }
+
+    /// A run whose route corpora pair node 4 with node 1 (`api/`) and node 6 with node 1
+    /// (`api-node6/`), every node of `implementations` (node 1, 4 and 6 in that order), no
+    /// transaction refused, and the wallet listings `cases` in node 6's corpus (name, node 6's
+    /// page, node 1's page).
+    fn pair_run(
+        implementations: [&str; 3],
+        cases: &[Listing<'_>],
+    ) -> crate::vectors::testutil::TestDir {
+        let dir = crate::vectors::testutil::TestDir::new("reference-ties");
+        let root = dir.path();
+        let node = |name: &str, implementation: &str| {
+            json!({"name": name, "ip": format!("10.0.0.1{}", &name[4..]),
+                "implementation": implementation})
+        };
+        let run = json!({"format": run::FORMAT, "run": "w0", "network": "n", "seed": "s",
+            "nodes": [node("node1", implementations[0]), node("node4", implementations[1]),
+                node("node6", implementations[2])],
+            "api": {"left": "node4", "right": "node1"},
+            "apiExtra": [{"left": "node6", "right": "node1", "dir": "api-node6"}]});
+        std::fs::write(root.join("run.json"), run.to_string()).unwrap();
+        let steps = [
+            json!({"step": "api-corpus", "node": "node4", "ok": true,
+                "start": "2026-10-02T01:00:00.000Z", "dir": api::RUN_ANSWERS_DIR}),
+            json!({"step": "api-corpus-node6", "node": "node6", "ok": true,
+                "start": "2026-10-02T01:00:10.000Z", "dir": "api-node6"}),
+        ];
+        let lines = |values: &[Value]| values.iter().map(|v| format!("{v}\n")).collect::<String>();
+        std::fs::write(root.join("steps.jsonl"), lines(&steps)).unwrap();
+        let page = |list: &[(&str, u64)]| {
+            let data: Vec<Value> = (list.iter())
+                .map(|(a, b)| json!({"address": a, "balance": b.to_string(), "nonce": "0"}))
+                .collect();
+            json!({"status": 200, "headers": {"connection": "close", "x-block-height": "212"},
+                "body": {"meta": {"count": data.len(), "totalCount": data.len()}, "data": data}})
+        };
+        let answers: Vec<Value> = (cases.iter())
+            .map(|(name, left, right)| {
+                json!({"file": "wallets-list.json", "name": name,
+                    "request": {"method": "GET", "path": "/api/wallets"},
+                    "left": page(left), "right": page(right)})
+            })
+            .collect();
+        for corpus in [api::RUN_ANSWERS_DIR, "api-node6"] {
+            std::fs::create_dir_all(root.join(corpus)).unwrap();
+            let written = if corpus == "api-node6" {
+                lines(&answers)
+            } else {
+                String::new()
+            };
+            std::fs::write(root.join(corpus).join(api::ANSWERS), written).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn a_tie_between_two_reference_nodes_may_fall_in_either_order() {
+        let wallets = |order: &str| -> Vec<(&'static str, u64)> {
+            (order.split(' '))
+                .map(|a| match a {
+                    "A" => ("A", 100),
+                    "D" => ("D", 1),
+                    "P" => ("P", 50),
+                    "Z" => ("Z", 50),
+                    _ => ("Q", 50),
+                })
+                .collect()
+        };
+        let ours = wallets("A P Z Q D");
+        let cases: [Listing<'_>; 3] = [
+            // Node 6 and node 1 order the wallets of one balance otherwise: both are the
+            // reference's own orders.
+            ("tied", &ours, &wallets("A Z P Q D")),
+            ("tied-three", &ours, &wallets("A Q Z P D")),
+            // A wallet across another balance is no tie.
+            ("across", &ours, &wallets("A P Z D Q")),
+        ];
+        let dir = pair_run(["reference", "reference", "reference"], &cases);
+        let (report, notes) = judged(dir.path());
+        assert_eq!(outcome(&report, "tied"), Outcome::Pass);
+        assert_eq!(outcome(&report, "tied-three"), Outcome::Pass);
+        assert!(outcome(&report, "across").is_failure());
+        assert!(
+            notes.iter().any(|n| n.failure.is_none()
+                && n.label.contains("node6 against node1: 2 listings equal")
+                && n.label.contains("both answers are the reference's")),
+            "{notes:?}"
+        );
+        // A value that differs is a difference whatever the order.
+        let richer = [("A", 100), ("Z", 51), ("P", 50), ("Q", 50), ("D", 1)];
+        let dir = pair_run(
+            ["reference", "reference", "reference"],
+            &[("richer", &ours, &richer)],
+        );
+        let (report, _) = judged(dir.path());
+        assert!(outcome(&report, "richer").is_failure());
+        // A Heartwood node against the reference keeps its tie order, without evidence.
+        let dir = pair_run(["reference", "reference", "heartwood"], &cases);
+        let (report, _) = judged(dir.path());
+        for name in ["tied", "tied-three", "across"] {
+            assert!(outcome(&report, name).is_failure(), "{name}");
+        }
     }
 }
