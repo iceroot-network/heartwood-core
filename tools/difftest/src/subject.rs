@@ -345,7 +345,8 @@ impl ApiDifference {
         match self {
             ApiDifference::StoreFailure => {
                 "a store failure on a list: the reference answers an empty 200, Heartwood a logged \
-                 500 with a Boom body (a fault or a timeout only)"
+                 500 with a Boom body (a store fault, a timeout, or a memo pattern that ends with \
+                 its escape character, which a client can send)"
             }
             ApiDifference::HeightAboveTip => {
                 "a height above the tip: the reference matches an id prefix and answers an \
