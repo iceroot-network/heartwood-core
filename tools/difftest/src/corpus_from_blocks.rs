@@ -12,8 +12,11 @@
 //! The corpus's rows of `reference/` (the round rows, the missed rows and the block columns the
 //! judge's anchors compare with) are those of a replay of the chain through Heartwood's store,
 //! marked `"anchorSource": "heartwood-replay"` in `corpus.json`; a live check compares each relay's
-//! own store with them too, so the reference's judge and the relays' stores meet in them. Nothing
-//! is written to `out` (which must be empty) before the corpus replays.
+//! own store with them too, so the reference's judge and the relays' stores meet in them. The revert
+//! plan is a stored chain's, as `corpus import` writes it ([`RevertPlan::for_stored_chain`]: no
+//! revert returns to a round's last block; the steps moved are listed in `corpus.json`'s
+//! `revertPlanAdjusted`). Nothing is written to `out` (which must be empty) before the corpus
+//! replays.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -180,7 +183,7 @@ pub fn from_blocks(blocks: &[PathBuf], crypto: &Path, seed: &str, out: &Path) ->
         .ok()
         .and_then(|b| b.get(..8).and_then(|b| <[u8; 8]>::try_from(b).ok()))
         .map_or(0, u64::from_be_bytes);
-    let plan = RevertPlan::generate(revert_seed, tip, length);
+    let (plan, moved) = RevertPlan::for_stored_chain(revert_seed, tip, length);
     write(
         &staged.join("revert-plan.json"),
         &format!(
@@ -188,13 +191,16 @@ pub fn from_blocks(blocks: &[PathBuf], crypto: &Path, seed: &str, out: &Path) ->
             serde_json::to_string_pretty(&plan.to_json()).unwrap_or_default()
         ),
     )?;
-    let meta = json!({
+    let mut meta = json!({
         "format": corpus::FORMAT, "seed": seed, "tip": tip, "blocks": chain.len(),
         "anchorSource": ANCHOR_SOURCE, "tornRecords": torn,
         "chain": {"nethash": network.nethash, "genesisId": genesis.id().to_hex(),
             "epoch": params.epoch(), "activeDelegates": length, "blockTime": params.block_time()},
         "revertSteps": plan.steps.len(), "revertSeed": revert_seed.to_string(),
     });
+    if !moved.is_empty() {
+        meta["revertPlanAdjusted"] = Value::Array(moved);
+    }
     write(
         &staged.join("corpus.json"),
         &format!(
@@ -234,4 +240,52 @@ pub fn from_blocks(blocks: &[PathBuf], crypto: &Path, seed: &str, out: &Path) ->
     corpus::write_manifest(&staged)?;
     Corpus::load(&staged)?;
     copy_dir(&staged, out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::live::run::read_lines;
+
+    #[test]
+    fn a_chain_s_plan_never_reverts_to_a_round_s_last_block() {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus/txgen-one-node");
+        let rows = read_lines(&source.join("blocks.jsonl")).unwrap();
+        let landing = |plan: &RevertPlan| {
+            plan.steps.iter().any(|s| {
+                let to = s.after_height - s.blocks;
+                to >= plan.round_length && to % plan.round_length == 0
+            })
+        };
+        // The first tip of the recorded chain whose id seeds a plan that returns to a round end.
+        let tip = (107..=265_u32)
+            .find(|tip| {
+                let id = rows[usize::try_from(*tip).unwrap() - 2]["id"]
+                    .as_str()
+                    .unwrap();
+                let seed = u64::from_be_bytes(hex::decode(id).unwrap()[..8].try_into().unwrap());
+                landing(&RevertPlan::generate(seed, *tip, 53))
+            })
+            .expect("a tip whose plan returns to a round end");
+        let scratch = ScratchDir::new("from-blocks-round-end").unwrap();
+        let file = scratch.path().join("blocks-0001.bin");
+        let kept = &rows[..usize::try_from(tip).unwrap() - 1];
+        lines(&file, kept.iter().cloned()).unwrap();
+        let out = scratch.path().join("corpus");
+        from_blocks(
+            &[file],
+            &source.join("crypto"),
+            crate::synthetic::DEVNET_SEED,
+            &out,
+        )
+        .unwrap();
+        let corpus = Corpus::load(&out).unwrap();
+        assert_eq!(corpus.tip(), tip);
+        assert!(!landing(&corpus.revert_plan), "{:?}", corpus.revert_plan);
+        let seed: u64 = corpus.meta["revertSeed"].as_str().unwrap().parse().unwrap();
+        let (expected, moved) = RevertPlan::for_stored_chain(seed, tip, 53);
+        assert_eq!(corpus.revert_plan, expected);
+        assert!(!moved.is_empty());
+        assert_eq!(corpus.meta["revertPlanAdjusted"], Value::Array(moved));
+    }
 }

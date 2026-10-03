@@ -16,7 +16,9 @@
 //! rows, as a reference node that reverts to a round's last block does, and does not save them
 //! again when it applies the next blocks, while the live node, which never reverted, holds them: the
 //! round rows' anchor would fail on the plan, not on the chain. The steps changed are listed in
-//! `corpus.json` (`revertPlanAdjusted`).
+//! `corpus.json` (`revertPlanAdjusted`). `corpus import` and `corpus from-blocks` write such a
+//! plan themselves ([`crate::corpus::RevertPlan::for_stored_chain`]); a corpus an older tree
+//! imported is adjusted here.
 
 use std::path::{Path, PathBuf};
 
@@ -108,20 +110,7 @@ fn judged_by(dir: &Path, oracle: &Oracle) -> Result<bool> {
 fn adjust_plan(dir: &Path) -> Result<()> {
     let path = dir.join("revert-plan.json");
     let mut plan = RevertPlan::from_json(&read_json(&path)?, &path)?;
-    let length = plan.round_length.max(1);
-    let mut changed = Vec::new();
-    for step in &mut plan.steps {
-        let to = step.after_height - step.blocks;
-        if to >= length && to % length == 0 {
-            let moved = if step.blocks + 1 < step.after_height {
-                step.blocks + 1
-            } else {
-                step.blocks - 1
-            };
-            changed.push(serde_json::json!({"after": step.after_height, "blocks": step.blocks, "now": moved}));
-            step.blocks = moved;
-        }
-    }
+    let changed = plan.move_round_ends();
     if changed.is_empty() {
         return Ok(());
     }
