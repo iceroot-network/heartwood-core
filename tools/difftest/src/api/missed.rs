@@ -94,13 +94,13 @@ pub fn answer(
     }
     let read = |key: &str, default: i64| criteria.get(key).map_or(Some(default), number);
     let (page, limit) = (read("page", 1)?, read("limit", 100)?);
+    if page < 1 || limit < 1 {
+        return None;
+    }
     let offset = match read("offset", 0)? {
         offset if offset > 0 => offset,
         _ => (page - 1).checked_mul(limit)?,
     };
-    if page < 1 || limit < 1 || offset < 0 {
-        return None;
-    }
     let total = i64::try_from(matched.len()).ok()?;
     let start = usize::try_from(offset.min(total)).ok()?;
     let end = usize::try_from(offset.saturating_add(limit).min(total)).ok()?;
@@ -114,7 +114,7 @@ pub fn answer(
     };
     let link = |page: i64| with_page(self_link, page).map(Value::String);
     let next = if total > 0 && page < page_count {
-        link(page + 1)?
+        link(page.checked_add(1)?)?
     } else {
         Value::Null
     };
@@ -467,7 +467,13 @@ mod tests {
         assert!(read("username.from=a").is_none());
         // An order that leaves rows tied: the store's tie order is not the model's to give.
         assert!(read("orderBy=height:asc").is_none());
-        // A link without its page cannot be paged.
+        // A link without its page cannot be paged, and a page or a limit out of range is no
+        // answer of the route.
         assert!(answer(&rows, &Value::Null, EPOCH_MS, "/blocks/missed", &estimate).is_none());
+        assert!(read("page=0").is_none());
+        assert!(read("limit=0").is_none());
+        assert!(read(&format!("page={}", i64::MIN)).is_none());
+        assert!(read(&format!("page={}&limit=100", i64::MAX)).is_none());
+        assert!(read("offset=9223372036854775807").is_some());
     }
 }

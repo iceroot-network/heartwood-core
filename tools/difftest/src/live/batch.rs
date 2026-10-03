@@ -206,7 +206,7 @@ fn taken_apart<'a>(
         .find(|(i, ..)| *i == 0)
         .map_or(0, |(_, _, n, _)| *n);
     for (index, from, nonce, _) in &seen {
-        let expected = u64::try_from(*index).ok().map(|i| first + i);
+        let expected = (u64::try_from(*index).ok()).and_then(|i| first.checked_add(i));
         if from != sender || Some(*nonce) != expected || first == 0 {
             return Err("the batch is not one sender's consecutive nonces in its log".to_owned());
         }
@@ -218,7 +218,8 @@ fn taken_apart<'a>(
             continue;
         };
         let has = gap(reason, *nonce).ok_or_else(|| format!("nonce {nonce} refused: {reason}"))?;
-        if has + 1 >= *nonce || has + 1 < first {
+        let next = has.saturating_add(1);
+        if next >= *nonce || next < first {
             return Err(format!(
                 "nonce {nonce} refused with the sender's nonce {has}: no gap inside the batch"
             ));
@@ -241,7 +242,7 @@ fn taken_apart<'a>(
         .collect();
     Ok(format!(
         "its pool took the batch of {sender} (nonces {first} to {}) apart: {} (nonces {} refused for a gap inside the batch that a lower nonce filled after them)",
-        first + u64::try_from(ids.len()).unwrap_or(0) - 1,
+        first.saturating_add(u64::try_from(ids.len()).unwrap_or(0) - 1),
         order.join(", "),
         refused.join(", ")
     ))
@@ -408,6 +409,14 @@ mod tests {
         let renumbered =
             pool_lines(&REPEAT).replace(&format!("{SENDER}#2 "), &format!("{SENDER}#6 "));
         assert!(failed(&renumbered, &all));
+        // Nonces and senders' nonces at the end of the range read as any other number.
+        let huge = pool_lines(&REPEAT)
+            .replace(&format!("{SENDER}#3 "), &format!("{SENDER}#{} ", u64::MAX))
+            .replace(
+                "the sender has nonce 1",
+                &format!("the sender has nonce {}", u64::MAX),
+            );
+        assert!(failed(&huge, &all));
         // A Heartwood relay that did not list the whole batch: never the reference's race.
         let (dir, manifest, mut step) = race_run(&pool_lines(&REPEAT), &all);
         step.record["detail"]["relays"]["node5"] =
