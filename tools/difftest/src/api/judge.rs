@@ -40,6 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use heartwood_api::RouteId;
 use heartwood_api::resources::fee_statistics::REGISTERED;
 use heartwood_api::schemas::parse_query;
+use heartwood_api::search::locale_compare;
 use serde_json::Value;
 
 use super::http::Reply;
@@ -163,7 +164,7 @@ pub fn outcome(line: &Recorded) -> Outcome {
 /// Where a listing over the state's indexes holds its wallets, and the properties its order ends
 /// with after any `orderBy`: the balance for the wallet listings, the rank and the username for
 /// the delegates (as the reference sorts them), none for the search's wallets, which the
-/// reference lists in its index's order. `None` for another route.
+/// reference sorts with a comparator of its own ([`search_compare`]). `None` for another route.
 fn listing(route: Option<RouteId>) -> Option<(&'static str, &'static [&'static str])> {
     match route? {
         RouteId::WalletsIndex | RouteId::WalletsTop | RouteId::DelegatesVoters => {
@@ -211,9 +212,11 @@ pub fn listed_wallets(line: &Recorded) -> BTreeSet<String> {
 /// under test, which is allowed only when both pages hold the same wallets, the other wallets in
 /// one order, and every pair of wallets the reordering swaps ties on the listing's order (the
 /// `orderBy` properties, then the route's own: the balance for the wallet listings, the rank and
-/// the username for the delegates; the search has no order, so its wallets tie). Any other
-/// difference is judged as without it: a wrong tie order of any other wallet, a free wallet moved
-/// across another value of the order, or a difference of a value still fails.
+/// the username for the delegates; for the search, the reference's comparator, whose ties are
+/// names its numeric collation holds equal, and under which every wallet ties where it orders
+/// nothing: a resigned delegate beside active ones, [`search_order_holds`]). Any other difference
+/// is judged as without it: a wrong tie order of any other wallet, a free wallet moved across
+/// another value of the order, or a difference of a value still fails.
 pub fn outcome_with_free_places(
     line: &Recorded,
     free: &BTreeSet<String>,
@@ -252,7 +255,16 @@ pub fn outcome_with_free_places(
     let (Some(ours), Some(theirs)) = (ours, theirs) else {
         return (plain, Vec::new());
     };
-    let Some((reordered, moved)) = free_reorder(ours, theirs, free, &order) else {
+    let search = route == Some(RouteId::BlockchainSearch);
+    let index_decides = search && !search_order_holds(theirs);
+    let tie = |a: &Value, b: &Value| -> bool {
+        if search {
+            index_decides || search_compare(a, b) == Ordering::Equal
+        } else {
+            order.iter().all(|p| at_path(a, p) == at_path(b, p))
+        }
+    };
+    let Some((reordered, moved)) = free_reorder(ours, theirs, free, &tie) else {
         return (plain, Vec::new());
     };
     let mut body = right.clone();
@@ -296,12 +308,13 @@ fn at_path<'v>(item: &'v Value, path: &str) -> &'v Value {
 }
 
 /// The control's page `theirs` in the order of `ours` and the free wallets it moves, when the two
-/// pages differ only by the places of wallets of `free` inside their ties on `order`.
+/// pages differ only by the places of wallets of `free` inside their ties (`tie`, of two of the
+/// control's items).
 fn free_reorder(
     ours: &[Value],
     theirs: &[Value],
     free: &BTreeSet<String>,
-    order: &[String],
+    tie: &dyn Fn(&Value, &Value) -> bool,
 ) -> Option<(Vec<Value>, Vec<String>)> {
     let address = |item: &Value| item["address"].as_str().map(str::to_owned);
     let ours: Vec<String> = ours.iter().map(address).collect::<Option<_>>()?;
@@ -325,15 +338,12 @@ fn free_reorder(
         return None;
     }
     // Every pair the reordering swaps ties on the order.
-    let key = |a: &str| -> Vec<Value> {
-        let item = theirs_at.get(a).map_or(&Value::Null, |(_, item)| *item);
-        order.iter().map(|p| at_path(item, p).clone()).collect()
-    };
+    let item = |a: &str| theirs_at.get(a).map_or(&Value::Null, |(_, item)| *item);
     let mut moved = BTreeSet::new();
     for (i, a) in ours.iter().enumerate() {
         for b in &ours[i + 1..] {
             if theirs_at[a].0 > theirs_at[b].0 {
-                if key(a) != key(b) {
+                if !tie(item(a), item(b)) {
                     return None;
                 }
                 moved.extend([a, b].into_iter().filter(|x| free.contains(*x)).cloned());
@@ -345,6 +355,64 @@ fn free_reorder(
     }
     let reordered = ours.iter().map(|a| theirs_at[a].1.clone()).collect();
     Some((reordered, moved.into_iter().collect()))
+}
+
+/// The reference's comparator of the wallets `/blockchain/search` finds (its wallet search
+/// service sorts the first 100 matches with it): a delegate that has not resigned before a wallet
+/// that is no delegate, two such delegates by username, every other pair by address, each as
+/// `localeCompare` with numeric collation compares them.
+fn search_compare(a: &Value, b: &Value) -> Ordering {
+    let delegate = |item: &Value| item["delegate"].is_object();
+    let active = |item: &Value| delegate(item) && item["delegate"]["resigned"].is_null();
+    fn text<'v>(item: &'v Value, at: &str) -> &'v str {
+        item.pointer(at).and_then(Value::as_str).unwrap_or("")
+    }
+    if active(a) && !delegate(b) {
+        Ordering::Less
+    } else if active(b) && !delegate(a) {
+        Ordering::Greater
+    } else if active(a) && active(b) {
+        locale_compare(text(a, "/delegate/username"), text(b, "/delegate/username"))
+    } else {
+        locale_compare(text(a, "/address"), text(b, "/address"))
+    }
+}
+
+/// Whether [`search_compare`] orders the wallets `list` (a strict weak order on them): then the
+/// reference's answer is the list in that order, a tie in its index's order. It is not where a
+/// resigned delegate stands beside active ones that the comparator places by name, so that the
+/// place each wallet takes follows the index.
+fn search_order_holds(list: &[Value]) -> bool {
+    let compared: Vec<Vec<Ordering>> = (list.iter())
+        .map(|a| list.iter().map(|b| search_compare(a, b)).collect())
+        .collect();
+    let at = |i: usize, j: usize| {
+        compared
+            .get(i)
+            .and_then(|row| row.get(j))
+            .copied()
+            .unwrap_or(Ordering::Equal)
+    };
+    let n = list.len();
+    for i in 0..n {
+        for j in 0..n {
+            if at(i, j) != at(j, i).reverse() {
+                return false;
+            }
+            for k in 0..n {
+                let (ij, jk, ik) = (at(i, j), at(j, k), at(i, k));
+                let through = match (ij, jk) {
+                    (Ordering::Greater, _) | (_, Ordering::Greater) => continue,
+                    (Ordering::Equal, Ordering::Equal) => Ordering::Equal,
+                    _ => Ordering::Less,
+                };
+                if ik != through {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 fn value(path: &str, expected: Value, actual: Value) -> Difference {
@@ -1051,12 +1119,22 @@ mod tests {
         );
     }
 
-    /// A recorded `/api/blockchain/search/{term}` request, its answers' wallets `left` and
-    /// `right` (each an address and a delegate's username).
-    fn search(left: &[(&str, &str)], right: &[(&str, &str)]) -> Recorded {
-        let found = |list: &[(&str, &str)]| -> Value {
+    /// A wallet the search finds: an address, and a delegate's username and whether it resigned.
+    type Found<'a> = (&'a str, Option<(&'a str, bool)>);
+
+    /// A recorded `/api/blockchain/search/{term}` request whose answers find the wallets `left`
+    /// and `right`.
+    fn search_found(left: &[Found<'_>], right: &[Found<'_>]) -> Recorded {
+        let found = |list: &[Found<'_>]| -> Value {
             let wallets: Vec<Value> = (list.iter())
-                .map(|(a, u)| json!({"address": a, "delegate": {"username": u, "rank": 1}}))
+                .map(|(address, delegate)| match delegate {
+                    Some((username, false)) => {
+                        json!({"address": address, "delegate": {"username": username, "rank": 1}})
+                    }
+                    Some((username, true)) => json!({"address": address,
+                        "delegate": {"username": username, "resigned": "temporary"}}),
+                    None => json!({"address": address}),
+                })
                 .collect();
             json!({"data": {"blocks": [], "transactions": [], "wallets": wallets}})
         };
@@ -1068,50 +1146,141 @@ mod tests {
         line
     }
 
+    /// A recorded search whose answers find active delegates (an address and a username each).
+    fn search<'a>(left: &[(&'a str, &'a str)], right: &[(&'a str, &'a str)]) -> Recorded {
+        fn active<'a>(list: &[(&'a str, &'a str)]) -> Vec<Found<'a>> {
+            list.iter().map(|(a, u)| (*a, Some((*u, false)))).collect()
+        }
+        search_found(&active(left), &active(right))
+    }
+
+    /// The wallets `index` lists, in the order the reference's search answers them: its
+    /// comparator under Node's sort.
+    fn sorted<'a>(index: &[Found<'a>]) -> Vec<Found<'a>> {
+        let line = search_found(index, index);
+        let Some(Reply::Answer { body, .. }) = &line.left else {
+            return Vec::new();
+        };
+        let mut items: Vec<(Value, Found<'a>)> =
+            (body["data"]["wallets"].as_array().unwrap().iter())
+                .cloned()
+                .zip(index.iter().copied())
+                .collect();
+        heartwood_api::search::v8_sort(&mut items, |a, b| search_compare(&a.0, &b.0));
+        items.into_iter().map(|(_, found)| found).collect()
+    }
+
     #[test]
-    fn a_searched_wallet_one_node_re_indexed_is_free_and_nothing_else_is() {
-        // The reference answers in its index's order, which its own refusals moved: the search
-        // has no order of its own, so the moved wallet may stand anywhere in the list.
+    fn a_searched_wallet_one_node_re_indexed_is_free_where_the_index_decides_its_place() {
+        // A resigned delegate among active ones: the reference's comparator is no order on the
+        // list (ann before bob by name, bob before rex and rex before ann by address), so the
+        // index decides where a wallet stands, and the node's own refusals moved rex there.
+        let ann = ("dZann", Some(("ann", false)));
+        let bob = ("dAbob", Some(("bob", false)));
+        let rex = ("dMrex", Some(("rex", true)));
+        let (ours, theirs) = (sorted(&[rex, ann, bob]), sorted(&[ann, bob, rex]));
+        assert_ne!(ours, theirs, "the two index orders give two answers");
+        let line = search_found(&ours, &theirs);
+        assert!(outcome(&line).is_failure());
+        let (judged, moved) = outcome_with_free_places(&line, &free(&["dMrex"]));
+        assert_eq!(judged, Outcome::Pass);
+        assert!(moved.contains(&"dMrex".to_owned()), "{moved:?}");
+        // Without the evidence, or with another wallet's, the order fails.
+        assert!(outcome_with_free_places(&line, &free(&[])).0.is_failure());
+        assert!(
+            outcome_with_free_places(&line, &free(&["dXnone"]))
+                .0
+                .is_failure()
+        );
+    }
+
+    #[test]
+    fn a_searched_wallet_keeps_the_place_the_reference_s_order_gives_it() {
+        // Active delegates only: the reference sorts them by name whatever its index's order,
+        // so a wallet out of that order is a difference, freed or not.
         let ours = [("G", "gina"), ("B", "bert"), ("C", "cara"), ("D", "dave")];
         let theirs = [("B", "bert"), ("C", "cara"), ("D", "dave"), ("G", "gina")];
         let line = search(&ours, &theirs);
         assert!(outcome(&line).is_failure());
-        let (judged, moved) = outcome_with_free_places(&line, &free(&["G"]));
-        assert_eq!((judged, moved), (Outcome::Pass, vec!["G".to_owned()]));
-        // Without the evidence, or with another wallet's, the order fails.
-        assert!(outcome_with_free_places(&line, &free(&[])).0.is_failure());
         assert!(
-            outcome_with_free_places(&line, &free(&["B"]))
+            outcome_with_free_places(&line, &free(&["G"]))
                 .0
                 .is_failure()
         );
-        // Another wallet out of its place as well.
-        let swapped = [("C", "cara"), ("B", "bert"), ("D", "dave"), ("G", "gina")];
+        // An active delegate and wallets that are no delegate: the delegate first, the others
+        // by address.
+        let gina = ("dGgina", Some(("gina", false)));
+        let (x, y) = (("dXwallet", None), ("dYwallet", None));
+        let line = search_found(&[x, gina, y], &[gina, x, y]);
+        assert!(outcome(&line).is_failure());
         assert!(
-            outcome_with_free_places(&search(&ours, &swapped), &free(&["G"]))
+            outcome_with_free_places(&line, &free(&["dGgina"]))
                 .0
                 .is_failure()
         );
-        // A value that differs, or another wallet found.
-        let renamed = [("B", "bert"), ("C", "cara"), ("D", "dave"), ("G", "gwen")];
+        // Two names the numeric collation holds equal tie: their order is the index's.
+        let (plain, padded) = (
+            ("dAdave", Some(("dave7", false))),
+            ("dBdave", Some(("dave07", false))),
+        );
+        let line = search_found(&[padded, plain], &[plain, padded]);
+        assert!(outcome(&line).is_failure());
+        assert_eq!(
+            outcome_with_free_places(&line, &free(&["dBdave"])).0,
+            Outcome::Pass
+        );
+        // Where the index decides: another wallet out of its place, a value that differs, or
+        // another wallet found, still fail.
+        let ann = ("dZann", Some(("ann", false)));
+        let bob = ("dAbob", Some(("bob", false)));
+        let rex = ("dMrex", Some(("rex", true)));
+        let (ours, theirs) = (sorted(&[rex, ann, bob]), sorted(&[ann, bob, rex]));
+        let mut swapped = theirs.clone();
+        let (a, b) = (
+            swapped.iter().position(|f| *f == ann).unwrap(),
+            swapped.iter().position(|f| *f == bob).unwrap(),
+        );
+        swapped.swap(a, b);
         assert!(
-            outcome_with_free_places(&search(&ours, &renamed), &free(&["G"]))
+            outcome_with_free_places(&search_found(&ours, &swapped), &free(&["dMrex"]))
                 .0
                 .is_failure()
         );
-        let other = [("B", "bert"), ("C", "cara"), ("D", "dave"), ("E", "gina")];
+        let renamed: Vec<Found<'_>> = (theirs.iter())
+            .map(|f| {
+                if *f == rex {
+                    ("dMrex", Some(("rey", true)))
+                } else {
+                    *f
+                }
+            })
+            .collect();
         assert!(
-            outcome_with_free_places(&search(&ours, &other), &free(&["G", "E"]))
+            outcome_with_free_places(&search_found(&ours, &renamed), &free(&["dMrex"]))
+                .0
+                .is_failure()
+        );
+        let other: Vec<Found<'_>> = (theirs.iter())
+            .map(|f| {
+                if *f == rex {
+                    ("dNrex", Some(("rex", true)))
+                } else {
+                    *f
+                }
+            })
+            .collect();
+        assert!(
+            outcome_with_free_places(&search_found(&ours, &other), &free(&["dMrex", "dNrex"]))
                 .0
                 .is_failure()
         );
         // The blocks and transactions found are judged as they are.
-        let mut line = search(&ours, &theirs);
+        let mut line = search_found(&ours, &theirs);
         if let Some(Reply::Answer { body, .. }) = &mut line.right {
             body["data"]["blocks"] = json!([{"id": "b"}]);
         }
         assert!(
-            outcome_with_free_places(&line, &free(&["G"]))
+            outcome_with_free_places(&line, &free(&["dMrex"]))
                 .0
                 .is_failure()
         );
