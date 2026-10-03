@@ -2144,7 +2144,11 @@ definition, every block as a relay receives it, and what the node itself recorde
 missed slots, block columns, API checkpoints). The oracle's
 judge, `replay-chain.js` (`difftest corpus judge`), replays the corpus in the reference's own state
 classes with storage replaced by memory, checks that replay against the node's records, follows a
-seeded plan of reverts and re-applies, and writes one digest line per step. `difftest run l2`
+seeded plan of reverts and re-applies, and writes one digest line per step. A planned revert that
+would return to the last block of a round reverts one block more (`corpus.json` lists each such
+step as `revertPlanAdjusted`), in a corpus that `corpus import`, `corpus from-blocks` or a live
+check makes alike: the judge's node deletes the next round's rows at such a revert and does not
+save them again, while the node that stored the chain never reverted. `difftest run l2`
 replays the same steps in Heartwood and compares every line; it also checks, before each block,
 that the scheduled forger is the block's generator and that the reward in its round is the header's,
 and runs the supply check after every step, with a check of the one value the digest leaves out:
@@ -2621,9 +2625,22 @@ reference with its processor's results, and the relay's lines of the block must 
 branch's. In a run whose recipe sends a transaction to one node of an API pair only, that node's
 handler may refuse it and so move its parties inside their ties in the wallet indexes, where the
 other node never sees it: the check then lets such a wallet, and only such a wallet, stand at
-another place inside its tie on the listings of that pair, with its evidence read from the run's
-own records (sent to that node alone and refused there by its handler before the route corpus was
-recorded), and names the wallet. A reference node writes no block file, so
+another place inside its tie on the listings of that pair (the wallets the search finds, which the
+reference lists in its index's order, included), with its evidence read from the run's own records
+(sent to that node alone and refused there by its handler before the route corpus was recorded),
+and names the wallet. Where both nodes of a pair are reference nodes, each orders a tie by its own
+index, so any order inside a tie is the reference's. A Heartwood relay restarted on a store that
+holds no missed-slot row writes the rows of the slots before block 2, as the reference's start
+does; a control that never restarted holds none, so the pair's answers to `/blocks/missed` are
+judged as the reference answers over each node's rows, once that rule gives the control's own
+answers over the control's rows exactly. `make api-compare` judges a run's recorded answers with
+the same evidence. A scripted batch whose transactions one reference relay listed only in part
+before its next block is the reference's own race when that relay's log shows it: the relay
+received the batch from two relays at once, its pool ran the two posts side by side and refused
+the later nonces for a gap the other post filled a moment later; the step is then documented,
+provided every Heartwood relay listed the whole batch and every transaction of the batch was
+forged later. The attestation record is required of a relay whose forger connects over loopback,
+which alone is offered statuses to sign. A reference node writes no block file, so
 the chain's blocks are the Heartwood relays': each holds every block it applied, those of an
 abandoned branch included. The resource series of the longer runs (each node's whole process
 tree, every 10 seconds, with the bytes written and the log growth) are recorded and read against
