@@ -7,7 +7,9 @@
 //! received or forged), the first answer of its network-state record at that height that counted
 //! every delegate of the round, timed from that line. A line that is not a record, or a record of
 //! a step that is not one of the four, fails: the record is evidence, and a gap in it is a fault
-//! of the run's recording.
+//! of the run's recording. Only a relay whose forger runs on its host has offers to record: the
+//! attestation session accepts a loopback source only, so the record of a relay whose forger
+//! connects from another address (`forgerAddress` in `run.json`), or that has no forger, is empty.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -233,8 +235,27 @@ fn proxy(tips: &BTreeMap<u64, i64>, answers: &[&Answer], delegates: u64) -> Stri
     )
 }
 
+/// Why the relay `name` has no forger on its host, from the run's validators: `None` when one of
+/// them is its forger and connects over loopback (a validator without a recorded address runs its
+/// forger beside its relay, as the mixed runs do).
+fn no_local_forger(validators: &[forging::Validator], name: &str) -> Option<String> {
+    let Some(validator) = validators.iter().find(|v| v.name == name) else {
+        return Some("it has no forger".to_owned());
+    };
+    let loopback = validator.forger.is_empty()
+        || (validator.forger.parse::<std::net::IpAddr>()).is_ok_and(|ip| ip.is_loopback());
+    (!loopback).then(|| {
+        format!(
+            "its forger connects from {}, not over loopback",
+            validator.forger
+        )
+    })
+}
+
 /// The attestation record's report: one recorded case per Heartwood relay, and one for its
-/// network-state proxy.
+/// network-state proxy. The relay's attestation session accepts a loopback source only, so a
+/// relay whose forger is on another host, or that has none, is offered no status: its empty
+/// record is recorded as such, and an offer in it fails.
 pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
     let m = run.manifest;
     let label = "the attestation record's waits and unsigned statuses";
@@ -251,6 +272,7 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
         );
         return Ok(());
     }
+    let validators = forging::validators(run.run_dir)?;
     // The proxy is recorded beside the record: a node without answers or tips says so.
     let (answers, _) = forging::answers(run.run_dir, m)?;
     for n in relays {
@@ -265,16 +287,39 @@ pub(super) fn check(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
         for p in problems.iter().take(6) {
             cases.fail(SECTION, label, format!("{}: {p}", n.name));
         }
-        if lines.is_empty() {
-            cases.fail(
+        let elsewhere = no_local_forger(&validators, &n.name);
+        let offers = lines.iter().filter(|l| l.step == "offered").count();
+        match (&elsewhere, lines.is_empty()) {
+            (None, true) => {
+                cases.fail(
+                    SECTION,
+                    label,
+                    format!(
+                        "{}: no attestation record (a harness build writes one)",
+                        n.name
+                    ),
+                );
+                continue;
+            }
+            (Some(why), true) => {
+                cases.record(
+                    SECTION,
+                    format!(
+                        "{}: no local forger, so no attestation offered ({why}; the attestation session accepts a loopback source only)",
+                        n.name
+                    ),
+                );
+                continue;
+            }
+            (Some(why), false) if offers > 0 => cases.fail(
                 SECTION,
                 label,
                 format!(
-                    "{}: no attestation record (a harness build writes one)",
+                    "{}: {offers} offers recorded, but {why}: the attestation session accepts a loopback source only",
                     n.name
                 ),
-            );
-            continue;
+            ),
+            _ => {}
         }
         let per_round = i64::from(m.round_length.max(1));
         let by_round = unsigned_by_round(&lines, per_round)
@@ -426,6 +471,129 @@ mod tests {
         assert_eq!(
             proxy(&BTreeMap::new(), &a, 53),
             "no line of a new block in the node's file logs"
+        );
+    }
+
+    /// A churn run's directory: four Heartwood relays whose forgers connect over loopback (one
+    /// without a recorded address, as a mixed run names none), node 5 whose forger connects from
+    /// another host, node 6 with no forger, and a reference relay; `attest` names the relays whose
+    /// record holds an offer and its signatures.
+    fn churn_run(attest: &[&str]) -> crate::vectors::testutil::TestDir {
+        let dir = crate::vectors::testutil::TestDir::new("live-attestation-churn");
+        let validator = |name: &str, forger: Option<&str>| {
+            let mut node = serde_json::json!({"name": name, "ip": format!("10.89.0.1{}", &name[4..]),
+                "implementation": "heartwood", "role": "forger", "underTest": true,
+                "delegates": [{"username": format!("genesis_{}", &name[4..]), "publicKey": "02aa"}]});
+            if let Some(address) = forger {
+                node["forgerAddress"] = serde_json::json!(address);
+            }
+            node
+        };
+        let nodes = serde_json::json!([
+            validator("node1", Some("127.0.0.1")),
+            validator("node2", Some("127.0.0.1")),
+            validator("node3", Some("127.0.0.1")),
+            validator("node4", None),
+            validator("node5", Some("10.89.0.115")),
+            {"name": "node6", "ip": "10.89.0.16", "implementation": "heartwood", "role": "relay",
+                "underTest": true},
+            {"name": "node7", "ip": "10.89.0.17", "implementation": "reference", "role": "relay"},
+        ]);
+        let manifest = serde_json::json!({"format": run::FORMAT, "run": "churn",
+            "network": "b8-churn", "seed": "1", "nodes": nodes, "status": "complete"});
+        std::fs::write(dir.path().join("run.json"), manifest.to_string()).unwrap();
+        for n in 1..=6 {
+            let record = dir.path().join(format!("nodes/node{n}/difftest"));
+            std::fs::create_dir_all(&record).unwrap();
+            let name = format!("node{n}");
+            let lines = if attest.contains(&name.as_str()) {
+                "{\"t\":\"2026-10-03T02:00:00.000Z\",\"step\":\"offered\",\"status\":\"a\",\"slot\":5}\n\
+                 {\"t\":\"2026-10-03T02:00:00.020Z\",\"step\":\"signed\",\"status\":\"a\",\"slot\":5,\"attestations\":11}\n"
+            } else {
+                ""
+            };
+            std::fs::write(record.join("attest-0001.jsonl"), lines).unwrap();
+        }
+        dir
+    }
+
+    /// The attestation cases of the run in `dir`: (label, failed).
+    fn judged(dir: &Path) -> Vec<(String, bool)> {
+        let manifest = run::Manifest::load(dir).unwrap();
+        let oracle = || -> Result<crate::oracle::Oracle> { Err(Error::Usage("no oracle".into())) };
+        let forging = ForgingRun {
+            run_dir: dir,
+            manifest: &manifest,
+            windows: &[],
+            corpus_root: dir,
+            oracle: &oracle,
+        };
+        let mut cases = Cases {
+            run: "churn".into(),
+            results: Vec::new(),
+        };
+        check(&forging, &mut cases).unwrap();
+        (cases.results.into_iter())
+            .map(|r| {
+                let failed = r.outcome.is_failure();
+                let label = match r.outcome {
+                    crate::report::Outcome::HarnessError(why) => format!("{}: {why}", r.label),
+                    _ => r.label,
+                };
+                (label, failed)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn only_a_relay_whose_forger_is_on_its_host_is_offered_statuses() {
+        // Churn's set: the four relays with a loopback forger recorded offers, nodes 5 and 6 none.
+        let dir = churn_run(&["node1", "node2", "node3", "node4"]);
+        let cases = judged(dir.path());
+        assert!(cases.iter().all(|(_, failed)| !failed), "{cases:?}");
+        for (node, why) in [
+            ("node5", "its forger connects from 10.89.0.115"),
+            ("node6", "it has no forger"),
+        ] {
+            assert!(
+                cases.iter().any(|(label, _)| label.contains(&format!(
+                    "{node}: no local forger, so no attestation offered ({why}"
+                ))),
+                "{node}: {cases:?}"
+            );
+        }
+        for node in ["node1", "node2", "node3", "node4"] {
+            assert!(
+                cases
+                    .iter()
+                    .any(|(label, _)| label.starts_with(&format!("recorded: {node}: 1 offered"))),
+                "{node}: {cases:?}"
+            );
+        }
+        // A relay with a loopback forger and no record still fails, the unnamed address included.
+        for missing in ["node1", "node4"] {
+            let others: Vec<&str> = ["node1", "node2", "node3", "node4"]
+                .into_iter()
+                .filter(|n| *n != missing)
+                .collect();
+            let dir = churn_run(&others);
+            let cases = judged(dir.path());
+            assert!(
+                cases.iter().any(|(label, failed)| *failed
+                    && label.contains(&format!("{missing}: no attestation record"))),
+                "{missing}: {cases:?}"
+            );
+        }
+        // Offers recorded by a relay whose forger is on another host: the session accepts a
+        // loopback source only, so the record contradicts it.
+        let dir = churn_run(&["node1", "node2", "node3", "node4", "node5"]);
+        let cases = judged(dir.path());
+        assert!(
+            cases.iter().any(|(label, failed)| *failed
+                && label.contains(
+                    "node5: 1 offers recorded, but its forger connects from 10.89.0.115"
+                )),
+            "{cases:?}"
         );
     }
 
