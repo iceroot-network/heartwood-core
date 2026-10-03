@@ -3,7 +3,7 @@
 //! - a listing's tie with the places of the wallets one node of the corpus's pair alone
 //!   re-indexed left free inside their ties ([`api::judge::outcome_with_free_places`]), the
 //!   parties of the transactions the run's records show sent to one of the two nodes and refused
-//!   there by their handler ([`nodes::refused_alone`]) before the corpus was recorded;
+//!   there by their handler (`nodes::refused_alone`) before the corpus was recorded;
 //! - a listing's tie between two reference nodes (`run.json` names both nodes of the corpus
 //!   `reference`), with the place of every wallet free inside its tie: each reference node orders
 //!   a tie by its own index, so both orders are the reference's;
