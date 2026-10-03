@@ -1111,9 +1111,11 @@ gate-s1: build ## the S1 record's table from the gate records, the ledger and th
 # from the vector run CODEC_SEEDS when both exist; replay-codec sends the corpus of each target
 # that has a replay (CODEC_REPLAY) through the oracle and Heartwood, each a gate record.
 # ops-doc-check runs the operator guide's Linux command blocks (OPS_GUIDE) as written, with this
-# tree's release binary, in a scratch data root under OPS_DOC_ROOT, its devnets on the loopback
-# block OPS_DOC_PREFIX (the first three octets); it refuses to start within 40 minutes of 00:00
-# UTC, when the nodes' logs rotate.
+# tree's release binary built without the harness's feature into a target directory of its own
+# (OPS_DOC_TARGET, so that it never replaces target/release/heartwood, the relay the live runs
+# execute), in a scratch data root under OPS_DOC_ROOT, its devnets on the loopback block
+# OPS_DOC_PREFIX (the first three octets); it refuses to start within 40 minutes of 00:00 UTC,
+# when the nodes' logs rotate. The check prints the binary's SHA-256 and features.
 COUNT         ?=
 BATCH         ?=
 BATCH_JOBS    ?=
@@ -1124,6 +1126,7 @@ CODEC_LOGS    ?= target/codec-fuzz
 OPS_GUIDE     ?= docs/operating.md
 OPS_DOC_PREFIX ?= 127.49.0
 OPS_DOC_ROOT  ?= target/ops-doc-check
+OPS_DOC_TARGET ?= target/plain
 
 .PHONY: lockstep-batch l2-batch fuzz-codec replay-codec ops-doc-check
 
@@ -1186,7 +1189,7 @@ ops-doc-check: ## the operator guide's Linux command blocks run as written (OPS_
 	if [ $$now -ge 1400 ] || [ $$now -lt 40 ]; then \
 	    echo "ops-doc-check: $$(date -u +%H:%M) UTC is within 40 minutes of 00:00 UTC, when the nodes' logs rotate" >&2; exit 2; \
 	fi
-	$(TOOLCHAIN) && cargo build --release --locked -p heartwood-core
-	$(TOOLCHAIN) && HEARTWOOD_DEVNET_PREFIX='$(OPS_DOC_PREFIX)' OPS_DOC_BINARY='$(CURDIR)/target/release/heartwood' \
+	$(TOOLCHAIN) && CARGO_TARGET_DIR='$(abspath $(OPS_DOC_TARGET))' cargo build --release --locked -p heartwood-core
+	$(TOOLCHAIN) && HEARTWOOD_DEVNET_PREFIX='$(OPS_DOC_PREFIX)' OPS_DOC_BINARY='$(abspath $(OPS_DOC_TARGET))/release/heartwood' \
 	    OPS_DOC_ROOT='$(abspath $(OPS_DOC_ROOT))' $(gate) tools/ops-doc-check.sh '$(OPS_GUIDE)'
 # ---- end of the lockstep batch, the codec and head fuzz targets and the operator guide ----

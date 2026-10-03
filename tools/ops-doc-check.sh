@@ -8,8 +8,12 @@
 #
 #   HEARTWOOD_DEVNET_PREFIX   the loopback block of the guide's devnet: the first three octets,
 #                             such as 127.49.0 (required)
-#   OPS_DOC_BINARY            the heartwood binary [target/release/heartwood]
+#   OPS_DOC_BINARY            the heartwood binary [target/release/heartwood]: a release build, which
+#                             never lists the difftest feature; the check prints its SHA-256 and its
+#                             features and refuses a harness build
 #   OPS_DOC_ROOT              where the scratch data roots are made [target/ops-doc-check]
+#   OPS_DOC_ALLOW_SKIP        1 lets a block whose optional tool is missing be skipped; otherwise a
+#                             skipped block fails the check, so that every block has run
 #
 # Exit status: 0 every block ran as the guide says, 1 a block or a rule of the guide failed, 2 a
 # usage error or a machine that cannot run the check.
@@ -21,9 +25,11 @@
 #
 #   second          run on the second machine (the forger's host) instead of the first
 #   follows         the command follows a log until it is interrupted: stop it after 8 s, success
-#   fails           the block must end with a failure (a refusal the guide shows)
+#   fails           the block must end with a failure (a refusal the guide shows): an exit status
+#                   from 1 to 123, not the timeout's or a signal's
 #   timeout=N       give the block N seconds instead of 240
-#   optional=TOOL   skip the block with a note when TOOL is not installed on this machine
+#   optional=TOOL   skip the block with a note when TOOL is not installed on this machine, and
+#                   then fail the check unless OPS_DOC_ALLOW_SKIP=1
 #   expect="TEXT"   the block's output must contain TEXT (repeat the word for more than one)
 #
 # Where the blocks run. The check makes a private network of two machines without root: one user
@@ -69,6 +75,12 @@ prefix=${HEARTWOOD_DEVNET_PREFIX:-}
 binary=${OPS_DOC_BINARY:-target/release/heartwood}
 [ -x "$binary" ] || refuse "$binary is not an executable (build it: cargo build --release --locked -p heartwood-core)"
 binary=$(readlink -f -- "$binary")
+binary_sha=$(sha256sum -- "$binary" | cut -d' ' -f1) || refuse "cannot read $binary"
+features=$("$binary" version --verbose 2>/dev/null | grep -m1 '^features:') || refuse "$binary version --verbose names no features"
+echo "ops-doc-check: the binary $binary, SHA-256 $binary_sha, $features"
+case ", ${features#features:}," in
+    *[,\ ]difftest,*) refuse "$binary is a harness build ($features): the guide runs a release build (cargo build --release --locked -p heartwood-core, without --features difftest)" ;;
+esac
 root=${OPS_DOC_ROOT:-target/ops-doc-check}
 mkdir -p -- "$root" || refuse "cannot make $root"
 root=$(cd -- "$root" && pwd)
@@ -301,7 +313,7 @@ for number in $(seq -f '%03g' 1 "$count"); do
     if [ "$follows" = 1 ]; then
         [ "$status" = 124 ] || ok=0
     elif [ "$fails" = 1 ]; then
-        { [ "$status" != 0 ] && [ "$status" != 124 ]; } || ok=0
+        { [ "$status" -ge 1 ] && [ "$status" -lt 124 ]; } || ok=0
     else
         [ "$status" = 0 ] || ok=0
     fi
@@ -329,5 +341,8 @@ for number in $(seq -f '%03g' 1 "$count"); do
     ran=$((ran + 1))
 done
 
-echo "ops-doc-check: $ran blocks of $guide ran as written, $skipped skipped"
+echo "ops-doc-check: $ran blocks of $guide ran as written, $skipped skipped (the binary's SHA-256 $binary_sha)"
+if [ "$skipped" != 0 ] && [ "${OPS_DOC_ALLOW_SKIP:-}" != 1 ]; then
+    fail "$skipped blocks were skipped: every block must run (OPS_DOC_ALLOW_SKIP=1 allows it outside the gate)"
+fi
 exit 0
