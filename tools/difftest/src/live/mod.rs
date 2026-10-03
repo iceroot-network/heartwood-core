@@ -69,6 +69,7 @@ mod attest;
 mod attestation;
 pub mod await_block;
 pub mod bans;
+pub mod batch;
 mod churn;
 mod core_run;
 pub(crate) mod corpora;
@@ -547,6 +548,25 @@ fn check_run(
             for f in verdict.failures.iter().take(20) {
                 cases.fail("run", format!("txgen {name} ({})", verdict.text), f.clone());
             }
+        }
+    }
+    // A batch step whose relays missed part of the batch by the reference's own race of two
+    // posts is documented, from those relays' logs and the chain ([`batch`]).
+    for s in (steps.iter_mut()).filter(|s| !s.ok && s.name.starts_with("batch-")) {
+        match batch::reference_race(run_dir, manifest, s) {
+            Ok(text) => {
+                s.ok = true;
+                let reason = batch::REFERENCE_BATCH_RACE.to_owned();
+                let label = format!("step {} ({}): {text}", s.name, s.node);
+                cases.push("run", label, 0, Outcome::Documented(reason));
+            }
+            Err(why) => cases.record(
+                "run",
+                format!(
+                    "step {} ({}) is not the reference's batch race: {why}",
+                    s.name, s.node
+                ),
+            ),
         }
     }
     let problems = steps::problems(&manifest.run, &steps);

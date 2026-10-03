@@ -143,7 +143,7 @@ pub const fn api_name(difference: ApiDifference) -> &'static str {
 
 /// The documented differences whose reason is a named text of the harness, not a variant: the
 /// code name (the constant's path) and the text.
-pub const NAMED_REASONS: [(&str, &str); 3] = [
+pub const NAMED_REASONS: [(&str, &str); 4] = [
     ("levels::BOUND_KEY", crate::levels::BOUND_KEY),
     (
         "synthetic_rollback::OLDER_SAVED_STATE",
@@ -152,6 +152,10 @@ pub const NAMED_REASONS: [(&str, &str); 3] = [
     (
         "levels::l2_batch::REGISTERED_FORGER_DOWNLOAD",
         crate::levels::l2_batch::REGISTERED_FORGER_DOWNLOAD,
+    ),
+    (
+        "live::batch::REFERENCE_BATCH_RACE",
+        crate::live::batch::REFERENCE_BATCH_RACE,
     ),
 ];
 
