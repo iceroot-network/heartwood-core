@@ -190,7 +190,7 @@ fn collate_and_forge(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
 /// - the collators decide alike (collated, or removed) each transaction that both pools held and
 ///   both reached before a limit stopped them, and collate those they both collated in the same
 ///   order, apart from the transactions of the senders the difference concerns
-///   ([`moved_by_difference`]), whose place among equal fees may differ; a transaction one of them
+///   (`moved_by_difference`), whose place among equal fees may differ; a transaction one of them
 ///   did not reach is decided by the other alone;
 /// - Heartwood's block holds its collation and agrees with the reference's block in every field
 ///   that does not depend on the transactions, and in its verification (`block_unexplained`);
