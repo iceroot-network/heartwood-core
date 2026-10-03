@@ -1091,12 +1091,12 @@ gated: build ## each target of GATED run through the recorder, a gate record nam
 	$(need-records)
 	@fail=0; $(foreach t,$(GATED),$(call gate-for,'$(t)',$(t)) $(GATED_MAKE) --no-print-directory $(t) || fail=1;) exit $$fail
 
-gate-s1: build ## the S1 record's table from the gate records, the ledger and the criteria file (PART)
+gate-s1: build ## the S1 record's table from the gate records, the ledger and the criteria file (PART; FINAL=1 for the final reading, where missing evidence fails its row)
 	$(need-records)
 	$(need-ledger)
 	$(need-criteria)
 	$(DIFFTEST) gate s1 --criteria '$(S1_CRITERIA)' --records '$(GATE_RECORDS)' --ledger '$(LEDGER_DIR)' \
-	    $(if $(PART),--part $(PART)) $(STRICT)
+	    $(if $(PART),--part $(PART)) $(if $(FINAL),--final) $(STRICT)
 # ---- end of the scenarios, the suites and the baseline record ----
 
 # ---- the lockstep batch, the codec and head fuzz targets and the operator guide ----
