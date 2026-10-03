@@ -1740,7 +1740,7 @@ fn a_failure_is_superseded_only_when_explained_and_repeated_once() {
         std::fs::write(rig.path("explained.json"), file.to_string()).expect("explanations");
     };
     explain(&[]);
-    // Another agent's loopback block and another word order name the same run.
+    // Another machine's loopback block and another word order name the same run.
     assert!(
         record_of(
             &rig,

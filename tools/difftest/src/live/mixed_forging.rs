@@ -1437,7 +1437,7 @@ mod tests {
         ];
         let mut manifest = Manifest {
             run: "mixed".into(),
-            network: "b8-mixed".into(),
+            network: "mixed-net".into(),
             dry_run: false,
             seed: "4".into(),
             round_length: 53,
