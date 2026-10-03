@@ -407,6 +407,12 @@ mod tests {
 
     use super::*;
 
+    /// A handler's refusal, after which a node re-indexed the transaction's parties.
+    const HANDLER_TEXT: &str = "G#3 0f32267a DelegateResignation v3 cannot be applied: Failed to apply transaction, because the wallet has not resigned as a delegate";
+    /// A refusal at the pool's entry, which the handler never saw.
+    const POOL_ENTRY_TEXT: &str =
+        "P#2 46f7033b Vote v3 cannot be applied: P already has a vote transaction in the pool";
+
     /// A listing case: its name, node 1's page and node 3's (each wallet an address and a
     /// balance).
     type Listing<'a> = (&'a str, &'a [(&'a str, u64)], &'a [(&'a str, u64)]);
@@ -427,13 +433,17 @@ mod tests {
             json!({"step": "txgen-once", "node": "node3", "ok": true, "submit": "node3"}),
             json!({"step": "vote-a", "node": "node1", "ok": true,
                 "start": "2026-10-02T00:59:30.000Z", "detail": {"id": "tx-v",
-                "outcome": "rejected", "code": "ERR_APPLY", "wallet": "V"}}),
+                "outcome": "rejected", "code": "ERR_APPLY", "wallet": "V", "message": HANDLER_TEXT}}),
+            // A refusal at the pool's entry, before the handler: it moved nothing.
+            json!({"step": "vote-p", "node": "node1", "ok": true,
+                "start": "2026-10-02T00:59:40.000Z", "detail": {"id": "tx-p",
+                "outcome": "rejected", "code": "ERR_APPLY", "wallet": "P", "message": POOL_ENTRY_TEXT}}),
             json!({"step": "api-corpus", "node": "node1", "ok": true,
                 "start": "2026-10-02T01:00:00.000Z", "dir": api::RUN_ANSWERS_DIR}),
             // A refusal after the corpus was recorded moved nothing it holds.
             json!({"step": "vote-b", "node": "node1", "ok": true,
                 "start": "2026-10-02T01:00:05.000Z", "detail": {"id": "tx-l",
-                "outcome": "rejected", "code": "ERR_APPLY", "wallet": "L"}}),
+                "outcome": "rejected", "code": "ERR_APPLY", "wallet": "L", "message": HANDLER_TEXT}}),
         ];
         let lines = |values: &[Value]| values.iter().map(|v| format!("{v}\n")).collect::<String>();
         std::fs::write(root.join("steps.jsonl"), lines(&steps)).unwrap();
@@ -447,7 +457,7 @@ mod tests {
             submitted(
                 "tx-g",
                 "G",
-                json!({"outcome": "rejected", "code": "ERR_APPLY"}),
+                json!({"outcome": "rejected", "code": "ERR_APPLY", "message": HANDLER_TEXT}),
                 &["R"],
             ),
             submitted(
@@ -516,11 +526,13 @@ mod tests {
                     "V" => ("V", 50),
                     "B" => ("B", 50),
                     "C" => ("C", 50),
+                    "P" => ("P", 50),
                     _ => ("L", 50),
                 })
                 .collect()
         };
         let ours = wallets("A G V B C L D");
+        let entry = wallets("A P B D");
         let dir = listing_run(&[
             // G's transfer node 3 alone refused: its place in the tie is free.
             ("moved-g", &ours, &wallets("A V B C G L D")),
@@ -532,6 +544,9 @@ mod tests {
             ("moved-c", &ours, &wallets("A C G V B L D")),
             // L's refusal came after the corpus was recorded.
             ("moved-l", &ours, &wallets("A L G V B C D")),
+            // P's vote node 1 alone refused at the pool's entry, before its handler: P was never
+            // re-indexed, so its place is not free.
+            ("moved-p", &entry, &wallets("A B P D")),
             // G moved and the other wallets out of their order too.
             ("moved-g-and-more", &ours, &wallets("A V C B G L D")),
         ]);
@@ -544,12 +559,18 @@ mod tests {
                 .iter()
                 .filter(|r| r.outcome.is_failure())
                 .count(),
-            6
+            7
         );
         let (report, notes) = route_corpora(run_dir, &manifest, report);
         assert_eq!(outcome(&report, "moved-g"), Outcome::Pass);
         assert_eq!(outcome(&report, "moved-v"), Outcome::Pass);
-        for name in ["moved-b", "moved-c", "moved-l", "moved-g-and-more"] {
+        for name in [
+            "moved-b",
+            "moved-c",
+            "moved-l",
+            "moved-p",
+            "moved-g-and-more",
+        ] {
             assert!(outcome(&report, name).is_failure(), "{name}");
         }
         assert_eq!(notes.len(), 1, "{notes:?}");
@@ -778,7 +799,7 @@ mod tests {
             json!({"event": "start", "api": "http://127.0.0.1:7991"}),
             json!({"event": "submitted", "id": "tx-g", "sender": "G",
                 "ts": "2026-10-02T00:59:00.000Z", "tx": {"type": 7},
-                "response": {"outcome": "rejected", "code": "ERR_APPLY"}}),
+                "response": {"outcome": "rejected", "code": "ERR_APPLY", "message": HANDLER_TEXT}}),
         ];
         std::fs::create_dir_all(root.join("txgen/once")).unwrap();
         std::fs::write(root.join("txgen/once/txgen.jsonl"), lines(&txgen)).unwrap();

@@ -779,8 +779,25 @@ pub fn reference(
 
 /// The refusal of a transaction's handler: the one refusal after which a node re-indexes the
 /// transaction's sender and recipients in its state, as both implementations do (a refusal before
-/// the handler leaves its indexes alone).
+/// the handler leaves its indexes alone). The code also covers the refusals at the pool's entry,
+/// which run before the handler: [`handler_refused`] tells them apart by their message.
 pub const HANDLER_REFUSAL: &str = "ERR_APPLY";
+
+/// Whether the message of a [`HANDLER_REFUSAL`] (`<transaction> cannot be applied: <reason>`) is
+/// the handler's: not one of the refusals at the pool's entry (a transaction of its kind already
+/// in the pool, a delegate that is not online, a recipient of another network), which both
+/// implementations give under the same code before the handler runs, so that they re-index
+/// nothing.
+pub fn handler_refused(message: &str) -> bool {
+    let Some((_, reason)) = message.split_once(" cannot be applied: ") else {
+        return false;
+    };
+    let reason = reason.trim_end();
+    !(reason.ends_with(" transaction in the pool")
+        || reason.ends_with("' already in the pool")
+        || reason.ends_with(" is not operating a node on the network")
+        || reason.starts_with("Recipient "))
+}
 
 /// One transaction the run's records show sent to a node: the node, its verdict there (`None`
 /// when it was accepted) and the transaction's parties as far as the record names them.
@@ -788,6 +805,8 @@ struct Sent {
     id: String,
     node: String,
     refused: Option<String>,
+    /// The refusal's message, when the record keeps one.
+    message: Option<String>,
     parties: Vec<String>,
     /// When it was sent, in milliseconds since the Unix epoch, when the record says.
     at: Option<i64>,
@@ -859,6 +878,7 @@ fn sent(run_dir: &Path, manifest: &Manifest, steps: &[Step]) -> Result<Vec<Sent>
                 id: id.to_owned(),
                 node: node.clone(),
                 refused: (!accepted).then(|| code.to_owned()),
+                message: r["response"]["message"].as_str().map(str::to_owned),
                 parties,
                 at: r["ts"].as_str().and_then(super::run::parse_time),
             });
@@ -881,6 +901,7 @@ fn sent(run_dir: &Path, manifest: &Manifest, steps: &[Step]) -> Result<Vec<Sent>
             node: step.node.clone(),
             refused: (outcome != "accepted")
                 .then(|| detail["code"].as_str().unwrap_or("refused").to_owned()),
+            message: detail["message"].as_str().map(str::to_owned),
             parties,
             at: step.start,
         });
@@ -890,7 +911,8 @@ fn sent(run_dir: &Path, manifest: &Manifest, steps: &[Step]) -> Result<Vec<Sent>
 
 /// The wallets whose places one node of the pair `left` and `right` alone moved in its state's
 /// indexes, each with its evidence: the sender and the recipients of every transaction the run's
-/// records show sent to one of the two and refused there by its handler ([`HANDLER_REFUSAL`]),
+/// records show sent to one of the two and refused there by its handler ([`HANDLER_REFUSAL`],
+/// with a message [`handler_refused`] reads as the handler's: a refusal without one frees nothing),
 /// and never sent to the other, at a recorded time before `before` (the route corpus's
 /// recording; none when it is not known). A refused transaction is not broadcast, so the other
 /// node never re-indexed its parties for it.
@@ -914,7 +936,9 @@ pub fn refused_alone(
             .collect();
         let ours = s.node == left || s.node == right;
         let early = matches!((s.at, before), (Some(at), Some(before)) if at < before);
-        if pair.len() != 1 || !ours || !early || s.refused.as_deref() != Some(HANDLER_REFUSAL) {
+        let by_handler = s.refused.as_deref() == Some(HANDLER_REFUSAL)
+            && s.message.as_deref().is_some_and(handler_refused);
+        if pair.len() != 1 || !ours || !early || !by_handler {
             continue;
         }
         let other = if s.node == left { right } else { left };
