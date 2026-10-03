@@ -159,9 +159,43 @@ pub fn outcome(line: &Recorded) -> Outcome {
     }
 }
 
+/// Where a listing over the state's indexes holds its wallets, and the properties its order ends
+/// with after any `orderBy`: the balance for the wallet listings, the rank and the username for
+/// the delegates (as the reference sorts them), none for the search's wallets, which the
+/// reference lists in its index's order. `None` for another route.
+fn listing(route: Option<RouteId>) -> Option<(&'static str, &'static [&'static str])> {
+    match route? {
+        RouteId::WalletsIndex | RouteId::WalletsTop | RouteId::DelegatesVoters => {
+            Some(("/data", &["balance"]))
+        }
+        RouteId::DelegatesIndex => Some(("/data", &["rank", "username"])),
+        RouteId::BlockchainSearch => Some(("/data/wallets", &[])),
+        _ => None,
+    }
+}
+
+/// The addresses of the wallets both answers of a recorded listing over the state's indexes
+/// list ([`outcome_with_free_places`]'s routes), on either page; none for another route.
+pub fn listed_wallets(line: &Recorded) -> BTreeSet<String> {
+    let route = (line.request.as_ref()).and_then(|r| route_of(&r.method, &r.path));
+    let Some((at, _)) = listing(route) else {
+        return BTreeSet::new();
+    };
+    [&line.left, &line.right]
+        .into_iter()
+        .filter_map(|reply| match reply {
+            Some(Reply::Answer { body, .. }) => body.pointer(at).and_then(Value::as_array),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|wallet| wallet["address"].as_str().map(str::to_owned))
+        .collect()
+}
+
 /// The outcome of one recorded request of a listing over the state's indexes (`/wallets`,
-/// `/wallets/top`, a delegate's voters, `/delegates`) with the places of the wallets `free` left
-/// free inside their ties, and the free wallets whose places the two answers hold apart.
+/// `/wallets/top`, a delegate's voters, `/delegates`, the wallets `/blockchain/search` finds)
+/// with the places of the wallets `free` left free inside their ties, and the free wallets whose
+/// places the two answers hold apart.
 ///
 /// The listings follow the indexes' orders in their ties, and a node's own refusals re-index
 /// their parties in its state: a wallet whose transactions one node of the pair alone refused
@@ -170,9 +204,9 @@ pub fn outcome(line: &Recorded) -> Outcome {
 /// under test, which is allowed only when both pages hold the same wallets, the other wallets in
 /// one order, and every pair of wallets the reordering swaps ties on the listing's order (the
 /// `orderBy` properties, then the route's own: the balance for the wallet listings, the rank and
-/// the username for the delegates). Any other difference is judged as without it: a wrong tie
-/// order of any other wallet, a free wallet moved across another value of the order, or a
-/// difference of a value still fails.
+/// the username for the delegates; the search has no order, so its wallets tie). Any other
+/// difference is judged as without it: a wrong tie order of any other wallet, a free wallet moved
+/// across another value of the order, or a difference of a value still fails.
 pub fn outcome_with_free_places(
     line: &Recorded,
     free: &BTreeSet<String>,
@@ -183,13 +217,8 @@ pub fn outcome_with_free_places(
     }
     let request = line.request.as_ref();
     let route = request.and_then(|r| route_of(&r.method, &r.path));
-    let tail: &[&str] = match route {
-        Some(RouteId::WalletsIndex | RouteId::WalletsTop | RouteId::DelegatesVoters) => {
-            &["balance"]
-        }
-        // The reference sorts the delegates by rank, then username, after any `orderBy`.
-        Some(RouteId::DelegatesIndex) => &["rank", "username"],
-        _ => return (plain, Vec::new()),
+    let Some((at, tail)) = listing(route) else {
+        return (plain, Vec::new());
     };
     let (
         Some(Reply::Answer {
@@ -211,14 +240,19 @@ pub fn outcome_with_free_places(
         .unwrap_or(Value::Null);
     let mut order = order_properties(&query);
     order.extend(tail.iter().map(|p| (*p).to_owned()));
-    let (Some(ours), Some(theirs)) = (left["data"].as_array(), right["data"].as_array()) else {
+    let ours = left.pointer(at).and_then(Value::as_array);
+    let theirs = right.pointer(at).and_then(Value::as_array);
+    let (Some(ours), Some(theirs)) = (ours, theirs) else {
         return (plain, Vec::new());
     };
     let Some((reordered, moved)) = free_reorder(ours, theirs, free, &order) else {
         return (plain, Vec::new());
     };
     let mut body = right.clone();
-    body["data"] = Value::Array(reordered);
+    let Some(list) = body.pointer_mut(at) else {
+        return (plain, Vec::new());
+    };
+    *list = Value::Array(reordered);
     let mut freed = line.clone();
     freed.right = Some(Reply::Answer {
         status: 200,
@@ -1005,6 +1039,72 @@ mod tests {
         }
         assert!(
             outcome_with_free_places(&blocks, &free(&["G"]))
+                .0
+                .is_failure()
+        );
+    }
+
+    /// A recorded `/api/blockchain/search/{term}` request, its answers' wallets `left` and
+    /// `right` (each an address and a delegate's username).
+    fn search(left: &[(&str, &str)], right: &[(&str, &str)]) -> Recorded {
+        let found = |list: &[(&str, &str)]| -> Value {
+            let wallets: Vec<Value> = (list.iter())
+                .map(|(a, u)| json!({"address": a, "delegate": {"username": u, "rank": 1}}))
+                .collect();
+            json!({"data": {"blocks": [], "transactions": [], "wallets": wallets}})
+        };
+        let mut line = list("", "", answer(200, found(left)), answer(200, found(right)));
+        line.documented = None;
+        if let Some(request) = &mut line.request {
+            request.path = "/api/blockchain/search/genesis_".into();
+        }
+        line
+    }
+
+    #[test]
+    fn a_searched_wallet_one_node_re_indexed_is_free_and_nothing_else_is() {
+        // The reference answers in its index's order, which its own refusals moved: the search
+        // has no order of its own, so the moved wallet may stand anywhere in the list.
+        let ours = [("G", "gina"), ("B", "bert"), ("C", "cara"), ("D", "dave")];
+        let theirs = [("B", "bert"), ("C", "cara"), ("D", "dave"), ("G", "gina")];
+        let line = search(&ours, &theirs);
+        assert!(outcome(&line).is_failure());
+        let (judged, moved) = outcome_with_free_places(&line, &free(&["G"]));
+        assert_eq!((judged, moved), (Outcome::Pass, vec!["G".to_owned()]));
+        // Without the evidence, or with another wallet's, the order fails.
+        assert!(outcome_with_free_places(&line, &free(&[])).0.is_failure());
+        assert!(
+            outcome_with_free_places(&line, &free(&["B"]))
+                .0
+                .is_failure()
+        );
+        // Another wallet out of its place as well.
+        let swapped = [("C", "cara"), ("B", "bert"), ("D", "dave"), ("G", "gina")];
+        assert!(
+            outcome_with_free_places(&search(&ours, &swapped), &free(&["G"]))
+                .0
+                .is_failure()
+        );
+        // A value that differs, or another wallet found.
+        let renamed = [("B", "bert"), ("C", "cara"), ("D", "dave"), ("G", "gwen")];
+        assert!(
+            outcome_with_free_places(&search(&ours, &renamed), &free(&["G"]))
+                .0
+                .is_failure()
+        );
+        let other = [("B", "bert"), ("C", "cara"), ("D", "dave"), ("E", "gina")];
+        assert!(
+            outcome_with_free_places(&search(&ours, &other), &free(&["G", "E"]))
+                .0
+                .is_failure()
+        );
+        // The blocks and transactions found are judged as they are.
+        let mut line = search(&ours, &theirs);
+        if let Some(Reply::Answer { body, .. }) = &mut line.right {
+            body["data"]["blocks"] = json!([{"id": "b"}]);
+        }
+        assert!(
+            outcome_with_free_places(&line, &free(&["G"]))
                 .0
                 .is_failure()
         );
