@@ -211,6 +211,7 @@ oracle answers, in the image and locally), `make oracle-save` (`docker save` of 
 | `DEVNET_PREFIX` | `127.10.0` | the loopback addresses of `make devnet-smoke`'s devnets |
 | `LIVE_RECIPE`, `RELAY_IMAGE_RECIPE`, `LIVE_RESULTS` | empty | the devnet tooling's live recipe, its recipe of the relay's container image, and the directory of the live runs (a separate tool of the maintainers, which is not published) |
 | `DEVNET_RECIPE` | empty | the devnet tooling's recipe of the forging devnets' runs (not published either) |
+| `OBSERVER_RECIPE`, `OBSERVER_ENV`, `OBSERVER_RESULTS` | `$(LIVE_RECIPE)`, empty, empty | the recipe whose run `h` is `RUN=observer` (a reference devnet with a Heartwood observer relay), that run's environment (its network's name and subnet, host ports, stop height and results directory), and the directory that holds its run |
 | `RUN` | empty | the live run: `r`, `h`, `m1` or `m2` (see L3 and L4) with `LIVE_RECIPE`, or `t`, `m` or `f`, the runs of a forging devnet, with `DEVNET_RECIPE` |
 | `LEFT`, `RIGHT`, `API_COMPARE_OUT` | empty, empty, `target/api-compare` | two nodes' API URLs for a direct `api-compare`, and where it writes their answers |
 | `SEED`, `PROFILE`, `RECIPE`, `ROUNDS`, `LONG` | empty, empty, empty, `5`, empty | the chain `make lockstep` forges: its seed, its genesis profile, its recipe, its rounds, and `LONG=1`, which allows more than 5 (50 at most) |

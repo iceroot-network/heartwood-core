@@ -600,14 +600,14 @@ replay-p2p: build ## the reply_check and listed_block corpora through the oracle
 # this tree's release binary on loopback addresses), MIXED_RECIPE (the mixed runs: w0, reference
 # nodes only, the baseline; w and p, reference nodes beside Heartwood relays; s, Heartwood relays
 # and forgers with a reference observer), RELAY_IMAGE_RECIPE (the relay's container image from a
-# binary), LIVE_RESULTS (the run directories) and MIXED_RESULTS (the mixed runs' directories) are
-# set in local.mk. The comparisons of a run are the harness's (live check, api compare, p2p
-# compare, live await). CHUNKS names one job cut of l2-processor (reference or 1; both when empty);
-# LEFT and RIGHT are two nodes' API URLs for a direct api-compare; COMPARE names the run a run is
-# compared with (m for t and t for m; w0 for w, p and s). MIXED_SPREAD, set in local.mk, lists
-# other runs of w0's recipe with reference nodes only (the recipe's dry runs): the log counts of
-# runs w, p and s are then compared with the most any of w0 and those runs gave, as the reference's
-# own counts spread from run to run.
+# binary), LIVE_RESULTS (the run directories), MIXED_RESULTS (the mixed runs' directories) and
+# OBSERVER_RECIPE (the observer run's recipe, below) are set in local.mk. The comparisons of a run
+# are the harness's (live check, api compare, p2p compare, live await). CHUNKS names one job cut of
+# l2-processor (reference or 1; both when empty); LEFT and RIGHT are two nodes' API URLs for a
+# direct api-compare; COMPARE names the run a run is compared with (m for t and t for m; w0 for w, p
+# and s). MIXED_SPREAD, set in local.mk, lists other runs of w0's recipe with reference nodes only
+# (the recipe's dry runs): the log counts of runs w, p and s are then compared with the most any of
+# w0 and those runs gave, as the reference's own counts spread from run to run.
 LIVE_RECIPE        ?=
 DEVNET_RECIPE      ?=
 MIXED_RECIPE       ?=
@@ -626,10 +626,11 @@ API_COMPARE_OUT    ?= target/api-compare
 DEVNET_RUNS        := t m f
 MIXED_RUNS         := w0 w p s
 is-mixed = $(filter $(MIXED_RUNS),$(RUN))
-# The observer run: LIVE_RECIPE's run h (a reference devnet with a Heartwood observer relay) under
-# OBSERVER_ENV, the recipe's environment (its network's name and subnet, its host ports, its stop
-# height and its RESULTS directory), whose run directory is OBSERVER_RESULTS/h. Both are set in
-# local.mk.
+# The observer run: OBSERVER_RECIPE's run h (a reference devnet with a Heartwood observer relay;
+# LIVE_RECIPE unless local.mk names another recipe of the same runs for it) under OBSERVER_ENV, the
+# recipe's environment (its network's name and subnet, its host ports, its stop height and its
+# RESULTS directory), whose run directory is OBSERVER_RESULTS/h. They are set in local.mk.
+OBSERVER_RECIPE    ?= $(LIVE_RECIPE)
 OBSERVER_ENV       ?=
 OBSERVER_RESULTS   ?=
 OBSERVER_RUNS      := observer
@@ -642,7 +643,7 @@ need-observer = $(if $(is-observer),$(if $(OBSERVER_ENV),,$(error set OBSERVER_E
 FORGING_RUNS       := mixed-short mixed mixed-split churn core
 is-forging = $(filter $(FORGING_RUNS),$(RUN))
 forging-recipe-name = $(if $(filter churn,$(RUN)),CHURN_RECIPE,$(if $(filter core,$(RUN)),CORE_RECIPE,MIXED_FORGING_RECIPE))
-recipe-name-of-run = $(if $(is-forging),$(forging-recipe-name),$(if $(filter $(DEVNET_RUNS),$(RUN)),DEVNET_RECIPE,$(if $(is-mixed),MIXED_RECIPE,LIVE_RECIPE)))
+recipe-name-of-run = $(if $(is-forging),$(forging-recipe-name),$(if $(filter $(DEVNET_RUNS),$(RUN)),DEVNET_RECIPE,$(if $(is-mixed),MIXED_RECIPE,$(if $(is-observer),OBSERVER_RECIPE,LIVE_RECIPE))))
 recipe-of-run = $($(recipe-name-of-run))
 results-name-of-run = $(if $(is-forging),FORGING_RESULTS,$(if $(is-mixed),MIXED_RESULTS,$(if $(is-observer),OBSERVER_RESULTS,LIVE_RESULTS)))
 results-of-run = $($(results-name-of-run))
@@ -710,7 +711,7 @@ define live-guard
 	fi
 endef
 
-live: $(live-prerequisite) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2 with LIVE_RECIPE, t|m|f with DEVNET_RECIPE, w0|w|p|s with MIXED_RECIPE, observer with LIVE_RECIPE and OBSERVER_ENV, mixed-short|mixed|mixed-split|churn|core with SEED)
+live: $(live-prerequisite) ## one live run of at most 5 rounds on a devnet (RUN=r|h|m1|m2 with LIVE_RECIPE, t|m|f with DEVNET_RECIPE, w0|w|p|s with MIXED_RECIPE, observer with OBSERVER_RECIPE and OBSERVER_ENV, mixed-short|mixed|mixed-split|churn|core with SEED)
 	$(need-run)
 	$(need-live)
 	$(need-observer)
