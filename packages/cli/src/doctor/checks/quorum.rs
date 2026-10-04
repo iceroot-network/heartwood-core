@@ -112,7 +112,15 @@ pub fn attestation(input: &CheckInput<'_>) -> Vec<Finding> {
             }
             Some(_) => {}
         }
-        let events = |role| view.log(role).map_or(&[][..], |log| &log.events);
+        let forger_log = view.log(Role::Forger)?;
+        let relay_log = view.log(Role::Relay)?;
+        let events = |role| {
+            if role == Role::Forger {
+                forger_log.events.as_slice()
+            } else {
+                relay_log.events.as_slice()
+            }
+        };
         let refusing = |e: &&LogEvent| matches!(e.kind, K::NotAttesting { .. });
         let refused: Vec<&LogEvent> = events(Role::Forger).iter().filter(refusing).collect();
         if let Some(last) = refused.last() {
