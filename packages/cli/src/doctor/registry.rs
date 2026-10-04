@@ -203,17 +203,17 @@ pub static ENTRIES: [CheckEntry; 47] = [
     CheckEntry { id: "sync.forks", area: Area::Sync, subjects: &[RELAY], sources: &[S::RelayLog, S::Process], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::sync::forks },
     // Slots.
     CheckEntry { id: "slots.active", area: Area::Slots, subjects: &[FORGER], sources: &[S::ForgerLog], statuses: &[P, W, U, K], profiles: DEFAULT, run: checks::slots::active },
-    CheckEntry { id: "slots.missed", area: Area::Slots, subjects: &[FORGER], sources: &[S::Store, S::ForgerLog, S::Api], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::slots::missed },
+    CheckEntry { id: "slots.missed", area: Area::Slots, subjects: &[FORGER], sources: &[S::Store, S::ForgerLog, S::Api, S::SigningRecord, S::Config, S::Process], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::slots::missed },
     // The forger's link and failover.
     CheckEntry { id: "forger.hosts", area: Area::Forger, subjects: &[FORGER], sources: &[S::Config], statuses: &[P, W, U, K], profiles: DEFAULT, run: checks::forger::hosts },
     CheckEntry { id: "forger.link", area: Area::Forger, subjects: &[FORGER], sources: &[S::Sockets, S::Config], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::forger::link },
     CheckEntry { id: "forger.link-history", area: Area::Forger, subjects: &[FORGER], sources: &[S::ForgerLog, S::Sockets], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::forger::link_history },
-    CheckEntry { id: "forger.one-key-one-forger", area: Area::Forger, subjects: &[FORGER], sources: &[S::ForgerLog, S::Store, S::Api, S::SigningRecord], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::forger::one_key_one_forger },
+    CheckEntry { id: "forger.one-key-one-forger", area: Area::Forger, subjects: &[FORGER], sources: &[S::ForgerLog, S::Store, S::Api, S::SigningRecord, S::Config], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::forger::one_key_one_forger },
     CheckEntry { id: "forger.signing-record", area: Area::Forger, subjects: &[FORGER], sources: &[S::SigningRecord, S::Files, S::ForgerLog], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::forger::signing_record },
     CheckEntry { id: "forger.start-errors", area: Area::Forger, subjects: &[FORGER], sources: &[S::ErrorCapture, S::Process], statuses: &[P, F, U, K], profiles: DEFAULT, run: checks::forger::start_errors },
     // Attestation and quorum.
-    CheckEntry { id: "quorum.forging-allowed", area: Area::Quorum, subjects: &[FORGER], sources: &[S::ForgerLog, S::Api], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::quorum::forging_allowed },
-    CheckEntry { id: "quorum.attestation", area: Area::Quorum, subjects: &[FORGER, RELAY], sources: &[S::ForgerLog, S::RelayLog, S::Sockets, S::Process], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::quorum::attestation },
+    CheckEntry { id: "quorum.forging-allowed", area: Area::Quorum, subjects: &[FORGER], sources: &[S::ForgerLog, S::Api, S::Config, S::Process], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::quorum::forging_allowed },
+    CheckEntry { id: "quorum.attestation", area: Area::Quorum, subjects: &[FORGER, RELAY], sources: &[S::ForgerLog, S::RelayLog, S::Sockets, S::Process, S::Config], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::quorum::attestation },
     CheckEntry { id: "quorum.reach", area: Area::Quorum, subjects: &[RELAY], sources: &[S::Files], statuses: &[K], profiles: DEFAULT, run: checks::quorum::reach },
     // Network exposure.
     CheckEntry { id: "net.p2p-listen", area: Area::Net, subjects: &[RELAY], sources: &[S::Config, S::Sockets], statuses: &[P, W, F, U, K], profiles: DEFAULT, run: checks::net::p2p_listen },

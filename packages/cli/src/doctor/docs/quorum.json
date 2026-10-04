@@ -10,7 +10,9 @@
       ],
       "sources": [
         "the forger's log",
-        "the relay's API"
+        "the relay's API",
+        "the configuration",
+        "the process table"
       ],
       "rules": {
         "pass": "No refusal at our slots in the window: the forger logs a refusal at its own slot when the relay's network state forbids forging.",
@@ -44,7 +46,8 @@
         "the forger's log",
         "the relay's log",
         "the socket table",
-        "the process table"
+        "the process table",
+        "the configuration"
       ],
       "rules": {
         "pass": "The forger is linked to a relay at a loopback address and attests without warnings.",

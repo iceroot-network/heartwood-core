@@ -88,7 +88,8 @@
         "the forger's log",
         "the relay's store",
         "the relay's API",
-        "the signing record"
+        "the signing record",
+        "the configuration"
       ],
       "rules": {
         "pass": "No line of the forger saying our delegate has already forged on another node or already forged a block; or each such line is cleared by the chain: the chain's block in that slot is this forger's own (a forger restarted inside a slot it had signed).",

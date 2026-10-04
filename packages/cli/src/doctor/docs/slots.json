@@ -38,7 +38,10 @@
       "sources": [
         "the relay's store",
         "the forger's log",
-        "the relay's API"
+        "the relay's API",
+        "the signing record",
+        "the configuration",
+        "the process table"
       ],
       "rules": {
         "pass": "With fewer than 100 of our slots, the report says the missed-slot percentage was not evaluated and gives the count and minimum. No slot of ours missed in the last 5 rounds, fewer than 1% missed over the window once it holds 100 or more of our slots, and no block the forger logged as forged that the chain holds with another generator.",
