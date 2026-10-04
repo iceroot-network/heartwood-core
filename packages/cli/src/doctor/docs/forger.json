@@ -99,7 +99,7 @@
       },
       "advice": {
         "none": "No line says our key forged on another node.",
-        "own-block": "The forger logged that our delegate had already forged, and the chain's block in that slot is this forger's own ({count} such lines): it restarted inside a slot it had signed. Nothing to do.",
+        "own-block": "The forger logged that our delegate had already forged, and the chain's block in that slot is this forger's own ({count} such lines): the line points at no other forger. Nothing to do.",
         "logged-only": "The forger logged {count} times that {delegate} has already forged on another node or already forged a block, the last at {time}. The chain does not confirm it: confirm on the chain before acting; this line can also come from text a relay sent. Look up the block of that slot and whether this forger signed it.",
         "another-forger": "Another forger signs with this delegate's key: the block at height {height} carries the signature of {delegate}, and this forger did not sign it. Stop the other forger now. One key on two forgers can sign two different blocks for one slot, which splits the network and exposes the delegate."
       },
