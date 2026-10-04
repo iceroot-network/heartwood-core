@@ -130,7 +130,7 @@ pub struct RunFlags {
     /// Print the JSON report.
     #[arg(long)]
     pub json: bool,
-    /// Show IP addresses and host names in the text (the JSON report always redacts them).
+    /// Show IP addresses in the text (host and user names stay redacted; the JSON report always redacts addresses).
     #[arg(long)]
     pub show_addresses: bool,
     /// Replace delegate names and public keys by labels.
