@@ -467,16 +467,20 @@ fn sigint_stops_a_core_node_within_30_seconds_in_the_core_order() {
     assert!(status.success(), "{}", node.output("core"));
     assert!(signalled.elapsed() < Duration::from_secs(30));
     let log = node.output("core");
-    // The signal, the relay's first steps (its server closes its forger's sessions, its API and
-    // blockchain service stop), the forger's stop, then the relay's last steps (the pool is
-    // flushed and the store closed): the order of the lines.
+    // The signal, the relay's first steps (its server closes its forger's sessions, its API stops,
+    // its blockchain service is stopped and awaited), the forger's stop, then the relay's last
+    // steps (the pool is flushed and the store closed): the order of the lines. The blockchain's
+    // own "has been stopped" line is written by its state machine, which can log it just after
+    // the forger's first line on a busy machine, so it is only required before the store closes.
     let signal = position(&log, "Received signal 2, stopping the core", 0);
     let api = position(&log, "Public API (HTTP) Server stopped", signal);
-    let chain = position(&log, "The blockchain has been stopped", api);
-    let stopping = position(&log, "Stopping the forger", chain);
+    let manager = position(&log, "Stopping Blockchain Manager", api);
+    let stopping = position(&log, "Stopping the forger", manager);
     let forger = position(&log, "The forger has stopped", stopping);
-    let store = position(&log, "its store is closed", forger);
-    assert!(signal < api && api < chain && chain < stopping && stopping < forger && forger < store);
+    let chain = position(&log, "The blockchain has been stopped", manager);
+    let store = position(&log, "its store is closed", forger.max(chain));
+    assert!(signal < api && api < manager && manager < stopping && stopping < forger);
+    assert!(chain < store && forger < store);
     assert!(!node.locked("core") && !node.locked("relay") && !node.locked("forger"));
 }
 
