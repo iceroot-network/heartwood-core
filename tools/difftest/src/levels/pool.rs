@@ -37,14 +37,20 @@
 //!   side refused a vote or revoke as offline ([`Documented::OnlineView`]): the reference's
 //!   sender view keeps the delegate's version it copied before the change. The entries of a
 //!   documented form are left out first, as in any other step, and must be refused on both sides;
-//!   decode reasons are allowed. The later steps are not compared, since the two pools may differ
-//!   from there.
+//!   decode reasons are allowed. A later entry of the same sender in that step may differ too, as
+//!   a knock-on of the refused transactions that the other side admitted: in the same lists with
+//!   an error of the same type on both sides, a balance or nonce refusal whose figures differ by
+//!   exactly those transactions' fees and amounts, or by their number in the nonce. The later
+//!   steps are not compared, since the two pools may differ from there.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use heartwood_crypto::Transaction;
 use heartwood_crypto::crypto::hash::sha256;
 use heartwood_crypto::identities::Address;
+use heartwood_crypto::transactions::Asset;
+use heartwood_crypto::transactions::deserialiser::deserialise;
+use heartwood_crypto::utils::format_satoshi;
 use heartwood_crypto::utils::hex;
 use heartwood_pool::{Options, Pool};
 use serde_json::{Map, Value, json};
@@ -326,10 +332,15 @@ fn result_ids(result: &Value) -> BTreeSet<String> {
 /// does not hold.
 const OFFLINE: &str = "is not operating a node on the network";
 
-/// Whether every entry whose outcome differs between the two processor results was refused as
-/// offline on one side (and at least one differs). The reason of an entry that does not decode is
-/// left out, as the decode-reason rule does.
-fn only_offline_differs(expected: &Value, actual: &Value) -> bool {
+/// Whether every entry whose outcome differs between the two processor results of the `process`
+/// step `step` was refused as offline on one side, or is a knock-on of such a refusal (and at least
+/// one differs). The reason of an entry that does not decode is left out, as the decode-reason rule
+/// does. `ours` is Heartwood's notes of the step, which name each entry by its transaction's id.
+///
+/// A knock-on is a later entry of the same sender (read from the step's entry) whose outcome
+/// differs only because one side's view of that sender applied the offline-refused transactions
+/// and the other's did not ([`knock_on_holds`]).
+fn only_offline_differs(step: &Value, ours: &Value, expected: &Value, actual: &Value) -> bool {
     let outcome = |result: &Value, id: &str| {
         let mut error = result["errors"][id].clone();
         let decode = error["type"] == "ERR_BAD_DATA"
@@ -339,15 +350,7 @@ fn only_offline_differs(expected: &Value, actual: &Value) -> bool {
         if decode {
             error["message"] = Value::from(DECODE_PREFIX);
         }
-        let listed: Vec<bool> = LISTS
-            .iter()
-            .map(|list| {
-                result[*list]
-                    .as_array()
-                    .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(id)))
-            })
-            .collect();
-        json!([listed, error])
+        json!([listed_in(result, id), error])
     };
     let offline = |result: &Value, id: &str| {
         result["errors"][id]["message"]
@@ -360,10 +363,314 @@ fn only_offline_differs(expected: &Value, actual: &Value) -> bool {
         .iter()
         .filter(|id| outcome(expected, id) != outcome(actual, id))
         .collect();
+    let entries = step_entries(step, ours);
     !differing.is_empty()
-        && differing
+        && differing.iter().all(|id| {
+            offline(expected, id)
+                || offline(actual, id)
+                || knock_on_holds(&entries, id, expected, actual)
+        })
+}
+
+/// In which lists of a processor result `id` is, in the order of [`LISTS`].
+fn listed_in(result: &Value, id: &str) -> Vec<bool> {
+    LISTS
+        .iter()
+        .map(|list| {
+            result[*list]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(id)))
+        })
+        .collect()
+}
+
+/// An entry of a `process` step as the knock-on rule reads it: the ids either side may give it,
+/// and, when it decodes, its sender's public key and what admitting it takes from the sender's
+/// balance (its fee and amounts).
+struct StepEntry {
+    ids: BTreeSet<String>,
+    spend: Option<(String, u128)>,
+}
+
+/// The entries of a `process` step, in order, with the ids Heartwood's notes `ours` give them.
+fn step_entries(step: &Value, ours: &Value) -> Vec<StepEntry> {
+    let named = ours[ENTRY_IDS]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let list = step
+        .get("entries")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    entry_ids(step)
+        .into_iter()
+        .zip(list)
+        .enumerate()
+        .map(|(i, (mut ids, entry))| {
+            if let Some(id) = named.get(i).and_then(Value::as_str) {
+                ids.insert(id.to_owned());
+            }
+            StepEntry {
+                ids,
+                spend: entry_spend(entry),
+            }
+        })
+        .collect()
+}
+
+/// The sender's public key (lower-case hex) of an entry of a `process` step, and its fee plus its
+/// amounts: the transfers' amounts and the top-level amount (a burn's). `None` for an entry that
+/// does not decode.
+fn entry_spend(entry: &Value) -> Option<(String, u128)> {
+    if let Some(text) = entry.get("hex").and_then(Value::as_str) {
+        let data = deserialise(&hex::decode(text).ok()?).ok()?;
+        let items: u128 = match &data.asset {
+            Asset::Transfer { transfers } => transfers.iter().map(|t| u128::from(t.amount)).sum(),
+            _ => 0,
+        };
+        let spend = u128::from(data.fee) + u128::from(data.amount()) + items;
+        return Some((data.sender_public_key.to_hex(), spend));
+    }
+    let json = entry.get("json")?;
+    let figure = |value: &Value| -> Option<u128> {
+        match value {
+            Value::String(text) => text.parse().ok(),
+            Value::Number(n) => n.as_u64().map(u128::from),
+            _ => None,
+        }
+    };
+    let sender = json.get("senderPublicKey")?.as_str()?.to_ascii_lowercase();
+    let fee = figure(json.get("fee")?)?;
+    let amount = json.get("amount").map_or(Some(0), figure)?;
+    let items = match json.pointer("/asset/transfers") {
+        Some(Value::Array(list)) => list
             .iter()
-            .all(|id| offline(expected, id) || offline(actual, id))
+            .map(|t| figure(&t["amount"]))
+            .sum::<Option<u128>>()?,
+        _ => 0,
+    };
+    Some((sender, fee.checked_add(amount)?.checked_add(items)?))
+}
+
+/// The start of the reference's balance refusal, after the transaction's description.
+const BALANCE: &str = "Insufficient balance in the wallet: tried to spend ";
+
+/// The start of the reference's nonce refusal at apply, after the transaction's description.
+const NONCE: &str = "Cannot apply a transaction with nonce ";
+
+/// The figures of a balance or nonce refusal's message, with the text before them.
+#[derive(Debug, PartialEq, Eq)]
+enum Figures<'a> {
+    Balance {
+        before: &'a str,
+        needed: &'a str,
+        balance: &'a str,
+        left: &'a str,
+    },
+    Nonce {
+        before: &'a str,
+        nonce: &'a str,
+        wallet: &'a str,
+    },
+}
+
+/// The figures of `message`, a balance or a nonce refusal, or `None`.
+fn figures(message: &str) -> Option<Figures<'_>> {
+    if let Some((before, rest)) = message.split_once(BALANCE) {
+        let (needed, rest) = rest.split_once(" but the wallet only has ")?;
+        let (balance, rest) = rest.split_once(" available (")?;
+        let left = rest.strip_suffix(')')?;
+        return Some(Figures::Balance {
+            before,
+            needed,
+            balance,
+            left,
+        });
+    }
+    let (before, rest) = message.split_once(NONCE)?;
+    let (nonce, wallet) = rest.split_once(": the sender has nonce ")?;
+    Some(Figures::Nonce {
+        before,
+        nonce,
+        wallet,
+    })
+}
+
+/// An amount as `formatSatoshi` writes it ("-1,234.5 dRT"): base units and the symbol.
+fn satoshi(text: &str) -> Option<(i128, &str)> {
+    let (number, symbol) = text.rsplit_once(' ')?;
+    let (negative, digits) = match number.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, number),
+    };
+    let all_digits = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    let (whole, fraction) = match digits.split_once('.') {
+        Some((whole, fraction)) if all_digits(fraction) && fraction.len() <= 8 => (whole, fraction),
+        Some(_) => return None,
+        None => (digits, ""),
+    };
+    let whole: String = whole.chars().filter(|c| *c != ',').collect();
+    if !all_digits(&whole) {
+        return None;
+    }
+    let value = whole
+        .parse::<i128>()
+        .ok()?
+        .checked_mul(100_000_000)?
+        .checked_add(format!("{fraction:0<8}").parse::<i128>().ok()?)?;
+    Some((if negative { -value } else { value }, symbol))
+}
+
+/// The base units `formatSatoshi` writes as `text`, an interval since it writes the double
+/// nearest an amount (beyond 2^53 base units, or about 16 digits written, several amounts give one
+/// text), with the symbol; `None` for a text it does not write.
+fn written_as(text: &str) -> Option<(i128, i128, &str)> {
+    let (at, symbol) = satoshi(text)?;
+    let value = |v: i128| satoshi(&format_satoshi(v, symbol)).map(|(x, _)| x);
+    // Wider than the rounding of any amount below 2^64 base units.
+    let reach = (at.abs() >> 40) + 1024;
+    let (mut low, mut high) = (at - reach, at + reach);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if value(middle)? >= at {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    let first = low;
+    let (mut low, mut high) = (at - reach, at + reach);
+    while low < high {
+        let middle = low + (high - low + 1) / 2;
+        if value(middle)? <= at {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    (first <= low && format_satoshi(first, symbol) == text).then_some((first, low, symbol))
+}
+
+/// Whether two amounts as `formatSatoshi` writes them, the reference's `theirs` and Heartwood's
+/// `ours`, can be two amounts `delta` base units apart (`theirs` minus `ours`) in the same token:
+/// exactly that difference where the texts are exact, and within the amounts each text stands for
+/// beyond.
+fn amounts_apart(theirs: &str, ours: &str, delta: i128) -> bool {
+    let (Some((t_first, t_last, t_symbol)), Some((o_first, o_last, o_symbol))) =
+        (written_as(theirs), written_as(ours))
+    else {
+        return false;
+    };
+    t_symbol == o_symbol && t_first.max(o_first + delta) <= t_last.min(o_last + delta)
+}
+
+/// Whether the entry `id`, whose outcome differs between the reference's result `expected` and
+/// Heartwood's `actual`, is a knock-on of offline refusals earlier in the step `entries`:
+///
+/// - earlier entries of its sender were refused as offline on one side and admitted on the other,
+///   so one side's view of the sender applied them and the other's did not;
+/// - it is in the same lists on both sides, with an error of the same type on both;
+/// - both errors are a balance refusal, or both a nonce refusal, with the same text but for the
+///   figures that view changes: the sender's balance and what is left once the transaction is
+///   paid, apart by exactly those transactions' fees and amounts, or the sender's nonce, apart by
+///   exactly their number, the side that applied them having the lower balance and the higher
+///   nonce.
+fn knock_on_holds(entries: &[StepEntry], id: &str, expected: &Value, actual: &Value) -> bool {
+    let Some(at) = entries.iter().position(|e| e.ids.contains(id)) else {
+        return false;
+    };
+    let Some((sender, _)) = &entries[at].spend else {
+        return false;
+    };
+    let any = |result: &Value, ids: &BTreeSet<String>, offline: bool| {
+        ids.iter().any(|id| {
+            if offline {
+                result["errors"][id]["message"]
+                    .as_str()
+                    .is_some_and(|m| m.ends_with(OFFLINE))
+            } else {
+                result["accept"]
+                    .as_array()
+                    .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(id.as_str())))
+            }
+        })
+    };
+    // The reference's view's balance minus Heartwood's, and its nonce minus Heartwood's.
+    let (mut balance, mut nonce, mut applied) = (0_i128, 0_i128, false);
+    for earlier in &entries[..at] {
+        let Some((from, spend)) = &earlier.spend else {
+            continue;
+        };
+        if from != sender {
+            continue;
+        }
+        let Ok(spend) = i128::try_from(*spend) else {
+            return false;
+        };
+        if any(actual, &earlier.ids, true) && any(expected, &earlier.ids, false) {
+            (balance, nonce, applied) = (balance - spend, nonce + 1, true);
+        } else if any(expected, &earlier.ids, true) && any(actual, &earlier.ids, false) {
+            (balance, nonce, applied) = (balance + spend, nonce - 1, true);
+        }
+    }
+    let (a, b) = (&expected["errors"][id], &actual["errors"][id]);
+    let same_rest = {
+        let (mut a, mut b) = (a.clone(), b.clone());
+        if let (Some(a), Some(b)) = (a.as_object_mut(), b.as_object_mut()) {
+            a.shift_remove("message");
+            b.shift_remove("message");
+        }
+        a.is_object() && a == b && listed_in(expected, id) == listed_in(actual, id)
+    };
+    if !applied || !same_rest {
+        return false;
+    }
+    let (Some(theirs), Some(ours)) = (
+        a["message"].as_str().and_then(figures),
+        b["message"].as_str().and_then(figures),
+    ) else {
+        return false;
+    };
+    match (theirs, ours) {
+        (
+            Figures::Balance {
+                before,
+                needed,
+                balance: t_balance,
+                left: t_left,
+            },
+            Figures::Balance {
+                before: o_before,
+                needed: o_needed,
+                balance: o_balance,
+                left: o_left,
+            },
+        ) => {
+            before == o_before
+                && needed == o_needed
+                && amounts_apart(t_balance, o_balance, balance)
+                && amounts_apart(t_left, o_left, balance)
+        }
+        (
+            Figures::Nonce {
+                before,
+                nonce: t_nonce,
+                wallet: t_wallet,
+            },
+            Figures::Nonce {
+                before: o_before,
+                nonce: o_nonce,
+                wallet: o_wallet,
+            },
+        ) => {
+            let (Ok(t), Ok(o)) = (t_wallet.parse::<i128>(), o_wallet.parse::<i128>()) else {
+                return false;
+            };
+            before == o_before && t_nonce == o_nonce && t - o == nonce
+        }
+        _ => false,
+    }
 }
 
 /// The ids either side may give each entry of a `process` step, in entry order: its index, the
@@ -788,12 +1095,12 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
         ));
     }
     let locale = expected[NOTES]["locale"] == Value::Bool(true);
-    let online_view = |i: usize, a: &Value, b: &Value| {
+    let online_view = |i: usize, ours: &Value, a: &Value, b: &Value| {
         steps.get(..i).is_some_and(|before| {
             before
                 .iter()
                 .any(|s| s.get("op").and_then(Value::as_str) == Some("setOnline"))
-        }) && only_offline_differs(a, b)
+        }) && only_offline_differs(&steps[i], ours, a, b)
     };
     let mut documented: Option<Documented> = None;
     for (i, ((step, a), b)) in steps.iter().zip(&theirs).zip(&ours).enumerate() {
@@ -859,7 +1166,7 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
             if !equal {
                 // An offline refusal is judged beside the documented entries, left out as here
                 // once both sides have refused them.
-                return if online_view(i, &a_left, &b_left)
+                return if online_view(i, &ours, &a_left, &b_left)
                     && documented_refused(&a_result, &theirs, b_result, &ids)
                 {
                     Outcome::Documented(Documented::OnlineView.reason().to_owned())
@@ -889,7 +1196,7 @@ pub fn judge(input: &Value, expected: &Value, actual: &Value) -> Outcome {
                 documented.get_or_insert(Documented::Locale);
             }
             Messages::Different
-                if online_view(i, &a_left, &b_left)
+                if online_view(i, &ours, &a_left, &b_left)
                     && documented_refused(&a_result, &left_out.0, b_result, &left_out.1) =>
             {
                 return Outcome::Documented(Documented::OnlineView.reason().to_owned());
@@ -1459,6 +1766,309 @@ mod tests {
             )
             .is_failure()
         );
+    }
+
+    /// The two senders of the knock-on tests.
+    const SENDER: &str = "03581c3e579f732dfe5393f4b339cdf7f2593b1b83df75fc5f6a74684b87fbf330";
+    const OTHER: &str = "03a9fde1879a375050d68d7657a2c60a18b9b0c6aea1df20b7d7af47d4c202e0a1";
+
+    /// A JSON entry `id` of `sender` with `nonce` and `fee`, and `asset`.
+    fn entry(id: &str, sender: &str, nonce: u64, fee: u64, asset: Value) -> Value {
+        json!({"json": {"id": id, "type": 6, "nonce": nonce.to_string(), "senderPublicKey": sender,
+                        "fee": fee.to_string(), "asset": asset}})
+    }
+
+    /// The pool-entry message of a balance refusal of `id`: `needed` against `balance`.
+    fn balance(id: &str, needed: i128, balance: i128) -> String {
+        let amount = |value: i128| heartwood_crypto::utils::format_satoshi(value, "dRT");
+        format!(
+            "{id} cannot be applied: Insufficient balance in the wallet: tried to spend {} but the \
+             wallet only has {} available ({})",
+            amount(needed),
+            amount(balance),
+            amount(balance - needed)
+        )
+    }
+
+    /// The pool-entry message of a nonce refusal of `id`.
+    fn nonce(id: &str, nonce: u64, wallet: u64) -> String {
+        format!(
+            "{id} cannot be applied: Cannot apply a transaction with nonce {nonce}: the sender has \
+             nonce {wallet}"
+        )
+    }
+
+    const OFFLINE_R: &str = "r cannot be applied: d2 is not operating a node on the network";
+
+    /// A session that changes the online record, then processes `entries`, judged with the two
+    /// results of the batch.
+    fn knock_on(entries: Value, theirs: Value, ours: Value) -> Outcome {
+        let session = json!({"steps": [{"op": "setOnline", "delegates": [], "expireAt": 9},
+                                       {"op": "process", "entries": entries, "now": 0}]});
+        let answer = |result: Value| run(vec![step(json!({"online": []}), &[]), step(result, &[])]);
+        judge(&session, &answer(theirs), &answer(ours))
+    }
+
+    /// A batch result: `accepted` in `accept` and `broadcast`, the `refused` entries in `invalid`
+    /// with their errors, in order.
+    fn batch(accepted: &[&str], refused: &[(&str, &str, &str)]) -> Value {
+        let errors: Map<String, Value> = refused
+            .iter()
+            .map(|(id, kind, message)| {
+                ((*id).to_owned(), json!({"type": kind, "message": message}))
+            })
+            .collect();
+        let invalid: Vec<&str> = refused.iter().map(|(id, _, _)| *id).collect();
+        let mut out = json!({"accept": accepted, "broadcast": accepted, "invalid": invalid,
+                             "excess": []});
+        if !errors.is_empty() {
+            out["errors"] = Value::Object(errors);
+        }
+        out
+    }
+
+    #[test]
+    fn a_knock_on_of_an_offline_refusal_in_the_same_senders_later_entry_is_documented() {
+        // The reference's view admitted the revoke r (fee 1) of a delegate Heartwood saw offline;
+        // the same sender's later transfer t is refused for its balance on both sides, the figures
+        // one fee apart, or for its nonce, the sender's nonce one apart.
+        let revoke = entry("r", SENDER, 11, 1, json!({"resignationType": 2}));
+        let transfer = entry(
+            "t",
+            SENDER,
+            14,
+            10,
+            json!({"transfers": [{"amount": "1990"}]}),
+        );
+        let entries = json!([revoke.clone(), transfer.clone()]);
+        let online_view = Outcome::Documented(Documented::OnlineView.reason().into());
+        let theirs = |message: &str| batch(&["r"], &[("t", "ERR_APPLY", message)]);
+        let ours = |message: &str| {
+            batch(
+                &[],
+                &[("r", "ERR_APPLY", OFFLINE_R), ("t", "ERR_APPLY", message)],
+            )
+        };
+        assert_eq!(
+            knock_on(
+                entries.clone(),
+                theirs(&balance("t", 2000, 999)),
+                ours(&balance("t", 2000, 1000))
+            ),
+            online_view
+        );
+        assert_eq!(
+            knock_on(
+                entries.clone(),
+                theirs(&nonce("t", 14, 11)),
+                ours(&nonce("t", 14, 10))
+            ),
+            online_view
+        );
+        // The other way round: Heartwood admitted r, the reference refused it as offline.
+        let other_way = |a: String, b: String| {
+            knock_on(
+                entries.clone(),
+                batch(
+                    &[],
+                    &[("r", "ERR_APPLY", OFFLINE_R), ("t", "ERR_APPLY", &a)],
+                ),
+                batch(&["r"], &[("t", "ERR_APPLY", &b)]),
+            )
+        };
+        assert_eq!(
+            other_way(balance("t", 2000, 1000), balance("t", 2000, 999)),
+            online_view
+        );
+        assert_eq!(
+            other_way(nonce("t", 14, 10), nonce("t", 14, 11)),
+            online_view
+        );
+        // Two offline refusals of the sender before it, a revoke (fee 1) and a vote (fee 7): the
+        // figures differ by both fees.
+        let vote = entry("v", SENDER, 12, 7, json!({"votes": {"d2": 10000}}));
+        let later = entry(
+            "t",
+            SENDER,
+            13,
+            10,
+            json!({"transfers": [{"amount": "5000"}]}),
+        );
+        let offline_v = "v cannot be applied: d2 is not operating a node on the network";
+        let both = |a: String, b: String| {
+            knock_on(
+                json!([revoke.clone(), vote.clone(), later.clone()]),
+                batch(&["r", "v"], &[("t", "ERR_APPLY", &a)]),
+                batch(
+                    &[],
+                    &[
+                        ("r", "ERR_APPLY", OFFLINE_R),
+                        ("v", "ERR_APPLY", offline_v),
+                        ("t", "ERR_APPLY", &b),
+                    ],
+                ),
+            )
+        };
+        assert_eq!(
+            both(balance("t", 5010, 2992), balance("t", 5010, 3000)),
+            online_view
+        );
+        assert!(both(balance("t", 5010, 2999), balance("t", 5010, 3000)).is_failure());
+        assert_eq!(both(nonce("t", 13, 12), nonce("t", 13, 10)), online_view);
+        assert!(both(nonce("t", 13, 11), nonce("t", 13, 10)).is_failure());
+    }
+
+    #[test]
+    fn a_knock_on_the_offline_refusal_does_not_explain_fails() {
+        let revoke = entry("r", SENDER, 11, 1, json!({"resignationType": 2}));
+        let transfer = entry(
+            "t",
+            SENDER,
+            14,
+            10,
+            json!({"transfers": [{"amount": "1990"}]}),
+        );
+        let entries = json!([revoke.clone(), transfer.clone()]);
+        let theirs = |kind: &str, message: &str| batch(&["r"], &[("t", kind, message)]);
+        let ours = |kind: &str, message: &str| {
+            batch(&[], &[("r", "ERR_APPLY", OFFLINE_R), ("t", kind, message)])
+        };
+        let fails = |entries: &Value, a: Value, b: Value| {
+            let outcome = knock_on(entries.clone(), a, b);
+            assert!(outcome.is_failure(), "{outcome:?}");
+        };
+        // The knock-on in another sender's entry.
+        let foreign = entry(
+            "t",
+            OTHER,
+            14,
+            10,
+            json!({"transfers": [{"amount": "1990"}]}),
+        );
+        fails(
+            &json!([revoke.clone(), foreign]),
+            theirs("ERR_APPLY", &balance("t", 2000, 999)),
+            ours("ERR_APPLY", &balance("t", 2000, 1000)),
+        );
+        // A different error type.
+        fails(
+            &entries,
+            theirs("ERR_APPLY", &balance("t", 2000, 999)),
+            ours("ERR_OTHER", &balance("t", 2000, 1000)),
+        );
+        // A different list: refused as excess on one side.
+        let mut excess = ours("ERR_APPLY", &balance("t", 2000, 1000));
+        excess["invalid"] = json!(["r"]);
+        excess["excess"] = json!(["t"]);
+        fails(
+            &entries,
+            theirs("ERR_APPLY", &balance("t", 2000, 999)),
+            excess,
+        );
+        // Admitted on one side (a nonce the other side's view does not reach).
+        fails(
+            &entries,
+            batch(&["r", "t"], &[]),
+            ours("ERR_APPLY", &nonce("t", 14, 10)),
+        );
+        // A figure off by anything else: by 2, the wrong way, or a figure that should be equal.
+        fails(
+            &entries,
+            theirs("ERR_APPLY", &balance("t", 2000, 998)),
+            ours("ERR_APPLY", &balance("t", 2000, 1000)),
+        );
+        fails(
+            &entries,
+            theirs("ERR_APPLY", &balance("t", 2000, 1001)),
+            ours("ERR_APPLY", &balance("t", 2000, 1000)),
+        );
+        fails(
+            &entries,
+            theirs("ERR_APPLY", &balance("t", 2001, 999)),
+            ours("ERR_APPLY", &balance("t", 2000, 1000)),
+        );
+        fails(
+            &entries,
+            theirs("ERR_APPLY", &nonce("t", 14, 12)),
+            ours("ERR_APPLY", &nonce("t", 14, 10)),
+        );
+        fails(
+            &entries,
+            theirs("ERR_APPLY", &nonce("t", 14, 9)),
+            ours("ERR_APPLY", &nonce("t", 14, 10)),
+        );
+        fails(
+            &entries,
+            theirs("ERR_APPLY", &nonce("t", 15, 11)),
+            ours("ERR_APPLY", &nonce("t", 14, 10)),
+        );
+        // A balance figure next to a nonce figure, or another text.
+        fails(
+            &entries,
+            theirs("ERR_APPLY", &balance("t", 2000, 999)),
+            ours("ERR_APPLY", &nonce("t", 14, 10)),
+        );
+        fails(
+            &entries,
+            theirs("ERR_APPLY", "t cannot be applied: another reason"),
+            ours("ERR_APPLY", "t cannot be applied: a third reason"),
+        );
+        // No offline refusal before it: the transfer first, or the revoke refused offline on one
+        // side and for another reason on the other (neither view applied it).
+        fails(
+            &json!([transfer.clone(), revoke.clone()]),
+            batch(&["r"], &[("t", "ERR_APPLY", &balance("t", 2000, 999))]),
+            batch(
+                &[],
+                &[
+                    ("t", "ERR_APPLY", &balance("t", 2000, 1000)),
+                    ("r", "ERR_APPLY", OFFLINE_R),
+                ],
+            ),
+        );
+        fails(
+            &entries,
+            batch(
+                &[],
+                &[
+                    ("r", "ERR_APPLY", "r cannot be applied: another reason"),
+                    ("t", "ERR_APPLY", &balance("t", 2000, 999)),
+                ],
+            ),
+            ours("ERR_APPLY", &balance("t", 2000, 1000)),
+        );
+        fails(
+            &entries,
+            batch(&["r"], &[("t", "ERR_APPLY", &balance("t", 2000, 999))]),
+            batch(&["r"], &[("t", "ERR_APPLY", &balance("t", 2000, 1000))]),
+        );
+    }
+
+    #[test]
+    fn amounts_are_read_as_format_satoshi_writes_them() {
+        let write = |value: i128| format_satoshi(value, "dRT");
+        assert_eq!(
+            satoshi("322,238.54719612 dRT"),
+            Some((32_223_854_719_612, "dRT"))
+        );
+        assert_eq!(satoshi("-10.22831726 dRT"), Some((-1_022_831_726, "dRT")));
+        assert_eq!(satoshi("1,000,000 dRT"), Some((100_000_000_000_000, "dRT")));
+        assert_eq!(satoshi("1.5 dRT"), Some((150_000_000, "dRT")));
+        for bad in ["1.123456789 dRT", "1.5", "a dRT", ".5 dRT", "1. dRT"] {
+            assert_eq!(satoshi(bad), None, "{bad}");
+        }
+        assert!(amounts_apart(&write(999), &write(1000), -1));
+        assert!(!amounts_apart(&write(999), &write(1000), 1));
+        assert!(!amounts_apart("0.00000999 dRT", "0.00001 ARK", -1));
+        // A balance beyond what a double writes to the base unit (1 base unit apart, written 30
+        // apart): each text stands for the amounts written so, two of which must be the
+        // difference apart. A text no amount is written as (nine decimals) is none.
+        let big = 127_804_863_467_630_136;
+        assert!(amounts_apart(&write(big - 1), &write(big), -1));
+        assert!(amounts_apart(&write(big - 17), &write(big), -17));
+        assert!(!amounts_apart(&write(big - 1_000), &write(big), -1));
+        assert!(!amounts_apart(&write(big - 100), &write(big), 100));
+        assert!(!amounts_apart("1,278,048,634.67630151 dRT", &write(big), 0));
     }
 
     /// A step's answer whose contents after it hold `all`, each transaction of a sender of its own

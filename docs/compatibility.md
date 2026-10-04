@@ -1999,8 +1999,14 @@ checked on the entries or shown by the oracle's answer:
   stored rows) is equal;
 - after the session changed the online record, an entry refused as offline on one side only (once
   the entries of a removed type and the JSON votes given as an array or a string are left out): the
-  reference's view of the sender kept the delegate's wallet as it copied it before the change. The
-  rest of the session is not compared;
+  reference's view of the sender kept the delegate's wallet as it copied it before the change. A
+  later entry of the same sender in that step (the sender read from the entry itself) may differ
+  too, as a knock-on of the sender's earlier offline-refused transactions that the other side
+  admitted and its view applied: in the same lists and with an error of the same type on both
+  sides, a balance refusal whose balance figures differ by exactly those transactions' fees and
+  amounts, or a nonce refusal whose sender nonce differs by exactly their number, the side that
+  applied them having the lower balance and the higher nonce.
+  The rest of the session is not compared;
 - a count in a message that the oracle's default locale groups otherwise (the oracle notes its
   locale; in the image and on the maintainers' machines it is English, so no case shows it).
 

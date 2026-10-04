@@ -68,7 +68,7 @@ fn heartwood(record: &Value, registry: &Registry) -> Value {
 fn each_case_is_the_pools_documented_difference_it_names() {
     let registry = registry();
     let cases = cases();
-    assert_eq!(cases.len(), 13);
+    assert_eq!(cases.len(), 14);
     let wrong: Vec<(&Value, Outcome)> = cases
         .iter()
         .filter_map(|record| {
