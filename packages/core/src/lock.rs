@@ -13,7 +13,9 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
+use heartwood_cli::instance_index;
 use heartwood_cli::supervisor::RunDir;
+use heartwood_cli::supervisor::manager::ManagerRecord;
 use heartwood_cli::supervisor::signals::{record_manager, take_lock_in};
 use heartwood_cli::{Instance, Role};
 use heartwood_kernel::paths::Paths;
@@ -51,8 +53,15 @@ impl ProcessLock {
         let (path, role) = (instance.lock_path(), instance.role.name());
         let file = take_lock_in(&dir, &path).map_err(|e| io(&e))?;
         let file = file.ok_or(LockError::Held { role, path })?;
-        // A node a service manager starts records it, beside the lock, for `status` and `stop`.
-        record_manager(&dir, instance, &|name| std::env::var(name).ok()).map_err(|e| io(&e))?;
+        // A node a service manager starts records it, beside the lock, for `status` and `stop`,
+        // and lists itself in the token's index for `top`, as a supervisor lists the nodes it
+        // starts. A node that cannot be listed still runs.
+        let env = |name: &str| std::env::var(name).ok();
+        record_manager(&dir, instance, &env).map_err(|e| io(&e))?;
+        if ManagerRecord::from_env(instance, &env).is_some() {
+            let root = instance_index::process_data_root(&instance.token);
+            let _ = instance_index::write(&root, instance);
+        }
         // The lock is held, so a pid file that is there names no running process of the role.
         let pid = instance.pid_path();
         let _ = dir.remove(&pid);

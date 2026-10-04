@@ -1,9 +1,11 @@
 //! The instance index: one file per started instance, `<data-root>/instances/<name>.json`, where
 //! `<data-root>` is the token's data root (the parent of every network's data directory) and
 //! `<name>` is [`Instance::name`]. The supervisor writes an instance's entry at its start and
-//! removes it at its stop, through the writer that refuses a link in its place; `top` lists the
-//! token's entries. An entry carries no pid: the supervisor's pid and its liveness come from its
-//! held lock, so an entry whose supervisor is gone is ignored, never trusted.
+//! removes it at its stop, through the writer that refuses a link in its place; a node a service
+//! manager starts writes its own, which stays after it stops; `top` lists the token's entries. An
+//! entry carries no pid: the supervisor's pid and its liveness come from its held lock (a managed
+//! node's from its own lock and record), so an entry whose process is gone is ignored, never
+//! trusted.
 //!
 //! An entry is a JSON object: `name`, `token`, `network`, `role` and `paths` (the instance's
 //! `config`, `data`, `cache`, `log` and `temp` directories, absolute), so that `top` can read the
