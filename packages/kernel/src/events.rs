@@ -1,16 +1,15 @@
 //! The event names.
 //!
-//! [`Event`] has one variant per event name of the reference, and [`Event::name`] returns the
-//! reference's string, which the API's event topics and the webhooks use. Emitting events, and
-//! their payloads, belong to the crates that own the transitions.
+//! [`Event`] has one variant per event name of the reference that the port keeps, and
+//! [`Event::name`] returns the reference's string, which the API's event topics and the webhooks
+//! use. The reference's dropped names have no variant: the `cache.*` and `schedule.*` names of
+//! services that are not ported, and `kernel.booting`, `kernel.booted`, `database.postConnect`,
+//! `peer.disconnecting` and `peer.disconnected`. Emitting events, and their payloads, belong to
+//! the crates that own the transitions.
 
 /// An event, by the reference's name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Event {
-    /// `kernel.booted`: the kernel booted.
-    KernelBooted,
-    /// `kernel.booting`: the kernel is booting.
-    KernelBooting,
     /// `kernel.bootstrapper.bootstrapped`: a bootstrap step finished.
     KernelBootstrapped,
     /// `kernel.bootstrapper.bootstrapping`: a bootstrap step started.
@@ -21,16 +20,6 @@ pub enum Event {
     ServiceProviderDisposed,
     /// `kernel.serviceProvider.registered`: a component was registered.
     ServiceProviderRegistered,
-    /// `cache.flushed`: a cache was flushed.
-    CacheFlushed,
-    /// `cache.forgotten`: a cache entry was forgotten.
-    CacheForgotten,
-    /// `cache.hit`: a cache lookup hit.
-    CacheHit,
-    /// `cache.missed`: a cache lookup missed.
-    CacheMissed,
-    /// `cache.written`: a cache entry was written.
-    CacheWritten,
     /// `crypto.milestone.changed`: a new milestone came into force.
     MilestoneChanged,
     /// `blockchain.synced`: the node caught up with the network.
@@ -47,8 +36,6 @@ pub enum Event {
     BlockReverted,
     /// `database.preConnect`: the database is about to connect.
     DatabasePreConnect,
-    /// `database.postConnect`: the database connected.
-    DatabasePostConnect,
     /// `database.preDisconnect`: the database is about to disconnect.
     DatabasePreDisconnect,
     /// `database.postDisconnect`: the database disconnected.
@@ -71,10 +58,6 @@ pub enum Event {
     PeerAdded,
     /// `peer.disconnect`: a peer is to be disconnected.
     PeerDisconnect,
-    /// `peer.disconnected`: a peer was disconnected.
-    PeerDisconnected,
-    /// `peer.disconnecting`: a peer is being disconnected.
-    PeerDisconnecting,
     /// `peer.removed`: a peer was removed.
     PeerRemoved,
     /// `round.applied`: a round started.
@@ -103,10 +86,6 @@ pub enum Event {
     TransactionRemovedFromPool,
     /// `transaction.reverted`: a transaction was reverted.
     TransactionReverted,
-    /// `schedule.blockJob.finished`: a scheduled block job finished.
-    ScheduleBlockJobFinished,
-    /// `schedule.cronJob.finished`: a scheduled cron job finished.
-    ScheduleCronJobFinished,
     /// `queue.finished`: a queue job finished.
     QueueFinished,
     /// `queue.failed`: a queue job failed.
@@ -115,19 +94,12 @@ pub enum Event {
 
 impl Event {
     /// Every event, in the order of the reference's event enums.
-    pub const ALL: [Event; 52] = [
-        Event::KernelBooted,
-        Event::KernelBooting,
+    pub const ALL: [Event; 40] = [
         Event::KernelBootstrapped,
         Event::KernelBootstrapping,
         Event::ServiceProviderBooted,
         Event::ServiceProviderDisposed,
         Event::ServiceProviderRegistered,
-        Event::CacheFlushed,
-        Event::CacheForgotten,
-        Event::CacheHit,
-        Event::CacheMissed,
-        Event::CacheWritten,
         Event::MilestoneChanged,
         Event::BlockchainSynced,
         Event::BlockApplied,
@@ -136,7 +108,6 @@ impl Event {
         Event::BlockReceived,
         Event::BlockReverted,
         Event::DatabasePreConnect,
-        Event::DatabasePostConnect,
         Event::DatabasePreDisconnect,
         Event::DatabasePostDisconnect,
         Event::DelegateProductivityChanged,
@@ -148,8 +119,6 @@ impl Event {
         Event::ForgerStarted,
         Event::PeerAdded,
         Event::PeerDisconnect,
-        Event::PeerDisconnected,
-        Event::PeerDisconnecting,
         Event::PeerRemoved,
         Event::RoundApplied,
         Event::RoundCreated,
@@ -164,8 +133,6 @@ impl Event {
         Event::TransactionRejectedByPool,
         Event::TransactionRemovedFromPool,
         Event::TransactionReverted,
-        Event::ScheduleBlockJobFinished,
-        Event::ScheduleCronJobFinished,
         Event::QueueFinished,
         Event::QueueFailed,
     ];
@@ -173,18 +140,11 @@ impl Event {
     /// The reference's name of the event.
     pub const fn name(self) -> &'static str {
         match self {
-            Event::KernelBooted => "kernel.booted",
-            Event::KernelBooting => "kernel.booting",
             Event::KernelBootstrapped => "kernel.bootstrapper.bootstrapped",
             Event::KernelBootstrapping => "kernel.bootstrapper.bootstrapping",
             Event::ServiceProviderBooted => "kernel.serviceProvider.booted",
             Event::ServiceProviderDisposed => "kernel.serviceProvider.disposed",
             Event::ServiceProviderRegistered => "kernel.serviceProvider.registered",
-            Event::CacheFlushed => "cache.flushed",
-            Event::CacheForgotten => "cache.forgotten",
-            Event::CacheHit => "cache.hit",
-            Event::CacheMissed => "cache.missed",
-            Event::CacheWritten => "cache.written",
             Event::MilestoneChanged => "crypto.milestone.changed",
             Event::BlockchainSynced => "blockchain.synced",
             Event::BlockApplied => "block.applied",
@@ -193,7 +153,6 @@ impl Event {
             Event::BlockReceived => "block.received",
             Event::BlockReverted => "block.reverted",
             Event::DatabasePreConnect => "database.preConnect",
-            Event::DatabasePostConnect => "database.postConnect",
             Event::DatabasePreDisconnect => "database.preDisconnect",
             Event::DatabasePostDisconnect => "database.postDisconnect",
             Event::DelegateProductivityChanged => "delegate.productivityChanged",
@@ -205,8 +164,6 @@ impl Event {
             Event::ForgerStarted => "forger.started",
             Event::PeerAdded => "peer.added",
             Event::PeerDisconnect => "peer.disconnect",
-            Event::PeerDisconnected => "peer.disconnected",
-            Event::PeerDisconnecting => "peer.disconnecting",
             Event::PeerRemoved => "peer.removed",
             Event::RoundApplied => "round.applied",
             Event::RoundCreated => "round.created",
@@ -221,8 +178,6 @@ impl Event {
             Event::TransactionRejectedByPool => "transaction.pool.rejected",
             Event::TransactionRemovedFromPool => "transaction.pool.removed",
             Event::TransactionReverted => "transaction.reverted",
-            Event::ScheduleBlockJobFinished => "schedule.blockJob.finished",
-            Event::ScheduleCronJobFinished => "schedule.cronJob.finished",
             Event::QueueFinished => "queue.finished",
             Event::QueueFailed => "queue.failed",
         }
@@ -247,6 +202,27 @@ mod tests {
                     .iter()
                     .all(|other| other.name() != event.name())
             );
+        }
+    }
+
+    /// The reference's dropped names have no variant.
+    #[test]
+    fn unused_reference_names_have_no_variant() {
+        for name in [
+            "kernel.booted",
+            "kernel.booting",
+            "cache.flushed",
+            "cache.forgotten",
+            "cache.hit",
+            "cache.missed",
+            "cache.written",
+            "database.postConnect",
+            "peer.disconnected",
+            "peer.disconnecting",
+            "schedule.blockJob.finished",
+            "schedule.cronJob.finished",
+        ] {
+            assert_eq!(Event::from_name(name), None, "{name}");
         }
     }
 }
