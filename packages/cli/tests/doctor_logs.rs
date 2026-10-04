@@ -1239,3 +1239,35 @@ fn a_forger_start_inside_the_window_leaves_no_delegate_lines_from_before_it() {
     });
     assert_eq!(loaded.count(), 1);
 }
+
+#[test]
+fn the_captured_forger_start_keeps_its_roster_after_the_manager_starts() {
+    // The captured start loaded its delegates after the manager, while waiting for the relay.
+    let version = CAPTURED_FORGER.find("Heartwood Core").unwrap();
+    let manager = CAPTURED_FORGER.find("Forger Manager started").unwrap();
+    let loaded = CAPTURED_FORGER.find("Loaded 10 active delegates").unwrap();
+    assert!(version < manager && manager < loaded);
+    let mut rig = Rig::new();
+    rig.window = Window {
+        from_ms: DAY_MS + 13 * 3_600_000 + 3_000,
+        to_ms: DAY_MS + 14 * 3_600_000,
+    };
+    rig.put("node1-current.log", CAPTURED_FORGER, NOW_MS);
+    let window = rig.log(Role::Forger).unwrap();
+    let names: Vec<_> = window
+        .roster
+        .iter()
+        .flat_map(|event| match &event.kind {
+            LineKind::DelegatesLoaded { names, .. } => {
+                names.iter().map(|name| name.as_str()).collect()
+            }
+            _ => Vec::new(),
+        })
+        .collect();
+    assert_eq!(
+        names,
+        (34..=43)
+            .map(|n| format!("genesis_{n}"))
+            .collect::<Vec<_>>()
+    );
+}

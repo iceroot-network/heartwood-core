@@ -33,9 +33,11 @@ pub fn sync_proof(input: &CheckInput<'_>) -> Vec<Finding> {
             return Ok((Chain, (Fail, "not-ready"), facts));
         }
         let port = view.api_address()?.port();
+        let inodes = view.role_socket_inodes(crate::seams::Role::Relay)?;
         let rows = view.sockets()?.iter();
-        let listening =
-            rows.filter(|row| row.state == TcpState::Listen && row.local.port() == port);
+        let listening = rows.filter(|row| {
+            row.state == TcpState::Listen && row.local.port() == port && inodes.contains(&row.inode)
+        });
         let addresses: Vec<IpAddr> = listening.map(|row| row.local.ip()).collect();
         if addresses.is_empty() {
             return Err(Unknown::new(Source::Sockets, Reason::Missing));
@@ -46,7 +48,7 @@ pub fn sync_proof(input: &CheckInput<'_>) -> Vec<Finding> {
         facts.push(("tip_id", hex(&tip.id)?));
         let block_2 = block.map_or(Err(unparsed), |b| hex(&b.id))?;
         facts.push(("block_2_id", block_2));
-        let loopback = addresses.iter().all(IpAddr::is_loopback);
+        let loopback = addresses.iter().all(|ip| ip.to_canonical().is_loopback());
         let word = if loopback {
             "loopback-only"
         } else {

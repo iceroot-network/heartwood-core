@@ -104,14 +104,17 @@ restrict,from="<client address>",command="/usr/bin/env -i HOME=<home> USER=<user
 Put the line in the node user's file, not root's: the doctor needs no privilege (as root it warns
 and keeps its rules). Revoking access is deleting the line.
 
+The node account needs a working login shell: sshd runs the forced command through it, so
+`nologin` or `false` prevents the server from starting.
+
 On the operator's machine, the client starts the server with `ssh`:
 
 ```text
-ssh -T -i ~/.ssh/doctor_mcp node@relay.example.com
+ssh -T -o IdentitiesOnly=yes -o BatchMode=yes -i ~/.ssh/doctor_mcp node@relay.example.com
 ```
 
 In a client that lists its servers as a command and its arguments, that is `"command": "ssh"` and
-`"args": ["-T", "-i", "~/.ssh/doctor_mcp", "node@relay.example.com"]`.
+`"args": ["-T", "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-i", "~/.ssh/doctor_mcp", "node@relay.example.com"]`.
 
 ## The client session
 

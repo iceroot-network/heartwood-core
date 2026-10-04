@@ -17,7 +17,12 @@ struct Rule {
     allowed_in: &'static [&'static str],
 }
 
-const RULES: [Rule; 6] = [
+const RULES: [Rule; 7] = [
+    Rule {
+        what: "external run-file readers only through HostProcesses",
+        words: &["crate::process::", "crate::supervisor::"],
+        allowed_in: &["mod.rs"],
+    },
     Rule {
         what: "files only through DoctorFs",
         words: &[
@@ -177,4 +182,72 @@ fn the_key_file_list_holds_the_forgers_key_file_and_readable_refuses_it() {
     ] {
         assert!(Readable::new(Path::new(path), &roots).is_ok(), "{path}");
     }
+}
+
+#[test]
+fn external_run_file_readers_use_checked_directory_access() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let readers = [
+        (
+            "supervisor/signals.rs",
+            "pub fn is_locked(",
+            "pub fn",
+            "is_locked_in",
+            "RunDir::beside_if_there",
+        ),
+        (
+            "supervisor/signals.rs",
+            "pub fn is_locked_in(",
+            "pub fn",
+            "dir.file",
+            "OFlag::O_RDONLY",
+        ),
+        (
+            "supervisor/state.rs",
+            "    pub fn read(",
+            "    pub fn write",
+            "dir.read",
+            "RunDir::beside_if_there",
+        ),
+        (
+            "process.rs",
+            "pub fn status(",
+            "pub fn",
+            "is_locked",
+            "SupervisorState::read",
+        ),
+    ];
+    for (file, start, end, first, second) in readers {
+        let text = fs::read_to_string(root.join(file)).unwrap();
+        let body = text.split_once(start).unwrap().1;
+        let body = body.split_once(end).map_or(body, |(body, _)| body);
+        assert!(body.contains(first), "{file}: {first}");
+        assert!(body.contains(second), "{file}: {second}");
+        for word in ["File::open", "fs::read", "OpenOptions"] {
+            assert!(!body.contains(word), "{file}: {word}");
+        }
+    }
+    let adapter = fs::read_to_string(root.join("doctor/mod.rs")).unwrap();
+    let body = adapter
+        .split_once("impl ProcessView for HostProcesses")
+        .unwrap()
+        .1
+        .split_once("/// The real")
+        .unwrap()
+        .0;
+    let allowed = [
+        "crate::process::status(instance)",
+        "crate::supervisor::state::SupervisorState::read(&instance.state_path())",
+    ];
+    for line in adapter.lines().filter(|line| {
+        !line.trim_start().starts_with("//")
+            && (line.contains("crate::process::") || line.contains("crate::supervisor::"))
+    }) {
+        assert!(
+            allowed.iter().any(|call| line.contains(call)),
+            "unexpected external reader: {line}"
+        );
+    }
+    assert!(body.contains("crate::process::status(instance)"));
+    assert!(body.contains("crate::supervisor::state::SupervisorState::read"));
 }

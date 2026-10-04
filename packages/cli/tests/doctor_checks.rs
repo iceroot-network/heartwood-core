@@ -237,3 +237,22 @@ fn a_run_over_fakes_gives_one_finding_per_check_and_the_same_json_each_time() {
         assert_eq!(render_json(&run(&world, &scope, &options)), first);
     }
 }
+
+#[test]
+fn the_checks_declare_the_configuration_and_process_reads_they_make() {
+    use heartwood_cli::doctor::view::Source::{Config, Process, SigningRecord};
+    // The chain definition comes from the configuration; the process table gives a forger's or a
+    // relay's start and state; the signing record names our delegates when no log line does.
+    let reads = [
+        ("slots.missed", &[SigningRecord, Config, Process][..]),
+        ("forger.one-key-one-forger", &[Config][..]),
+        ("quorum.forging-allowed", &[Config, Process][..]),
+        ("quorum.attestation", &[Config, Process][..]),
+    ];
+    for (id, sources) in reads {
+        let entry = ENTRIES.iter().find(|entry| entry.id == id).unwrap();
+        for source in sources {
+            assert!(entry.sources.contains(source), "{id}: {source:?}");
+        }
+    }
+}

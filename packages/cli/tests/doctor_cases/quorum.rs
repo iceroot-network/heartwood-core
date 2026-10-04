@@ -317,3 +317,29 @@ fn sessions_taking_turns_are_a_warn_on_the_log_until_the_socket_table_shows_both
         "{findings:#?}"
     );
 }
+
+#[test]
+fn attestation_requires_both_logs_but_allows_hidden_info() {
+    let options = DoctorOptions::default();
+    for role in Role::SPLIT {
+        let mut view = linked(view(), &["127.0.0.1:6002"]);
+        let source = if role == Role::Relay {
+            Source::RelayLog
+        } else {
+            Source::ForgerLog
+        };
+        view.logs.insert(role, Err(unknown(source, Reason::Denied)));
+        let findings = run("quorum.attestation", &view, &options);
+        assert_eq!(findings[0].status, Status::Unknown, "{role:?}");
+    }
+    let mut view = linked(view(), &["127.0.0.1:6002"]);
+    for role in Role::SPLIT {
+        let mut window = log(role, Vec::new());
+        window.file_level = Some(Level::Warning);
+        view.logs.insert(role, Ok(window));
+    }
+    assert_eq!(
+        run("quorum.attestation", &view, &options)[0].status,
+        Status::Pass
+    );
+}
