@@ -1,9 +1,9 @@
-//! `gate s1`: the baseline record's table, a verdict per row from the gate records, the ledger and the
-//! criteria file.
+//! `gate baseline`: the baseline record's table, a verdict per row from the gate records, the
+//! ledger and the criteria file.
 //!
 //! ```text
-//! difftest gate s1 --criteria FILE --records DIR... [--ledger DIR...] [--part TAG] [--strict]
-//!     [--final] [--repo DIR] [--head REV] [--allow-dirty] [--verbose]
+//! difftest gate baseline --criteria FILE --records DIR... [--ledger DIR...] [--part TAG]
+//!     [--strict] [--final] [--repo DIR] [--head REV] [--allow-dirty] [--verbose]
 //! ```
 //!
 //! A row passes when every need is met; it fails when a need is missing, failed or stale; it is
@@ -134,13 +134,13 @@ pub struct Setup {
     pub sources: Sources,
 }
 
-/// Read the flags `s1`, `coverage` and `register` share.
+/// Read the flags `baseline`, `coverage` and `register` share.
 pub fn setup(flags: &mut Flags) -> Result<Setup> {
     let criteria_path = flags
         .one("criteria")?
-        .or_else(|| std::env::var("S1_CRITERIA").ok())
+        .or_else(|| std::env::var("BASELINE_CRITERIA").ok())
         .filter(|c| !c.is_empty())
-        .ok_or_else(|| Error::Usage("--criteria is required (or S1_CRITERIA)".to_owned()))?;
+        .ok_or_else(|| Error::Usage("--criteria is required (or BASELINE_CRITERIA)".to_owned()))?;
     let sources = Sources {
         records: flags
             .many("records")
@@ -162,7 +162,7 @@ pub fn setup(flags: &mut Flags) -> Result<Setup> {
     })
 }
 
-/// Run `gate s1`.
+/// Run `gate baseline`.
 pub fn run(args: &[String]) -> Result<bool> {
     let mut flags = Flags::parse(args, &["strict", "allow-dirty", "verbose", "final"])?;
     let strict = flags.switch("strict");
@@ -179,7 +179,7 @@ pub fn run(args: &[String]) -> Result<bool> {
     }
     let table = table(&setup.criteria, &evidence, part.as_deref(), verbose, last);
     println!(
-        "S1 gate at {} ({} records, {} ledger entries)",
+        "baseline gate at {} ({} records, {} ledger entries)",
         evidence.rule.head(),
         evidence.records.len(),
         evidence.entries.len()

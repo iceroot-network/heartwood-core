@@ -578,9 +578,9 @@ struct Common {
 fn common(flags: &mut Flags) -> Result<Common> {
     let criteria_path = flags
         .one("criteria")?
-        .or_else(|| std::env::var("S1_CRITERIA").ok())
+        .or_else(|| std::env::var("BASELINE_CRITERIA").ok())
         .filter(|c| !c.is_empty())
-        .ok_or_else(|| Error::Usage("--criteria is required (or S1_CRITERIA)".to_owned()))?;
+        .ok_or_else(|| Error::Usage("--criteria is required (or BASELINE_CRITERIA)".to_owned()))?;
     let mut ledger = flags.many("ledger");
     if ledger.is_empty()
         && let Ok(dir) = std::env::var("LEDGER_DIR")

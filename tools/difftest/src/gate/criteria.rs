@@ -1,7 +1,7 @@
 //! The criteria file: the baseline gate's rows, the ledger's totals, the paths each property and
 //! target tests, the coverage rows, the scenario levels and the register's entries.
 //!
-//! The file is JSON (`heartwood-s1-criteria/1`); every field is checked when it loads, and an
+//! The file is JSON (`heartwood-baseline-criteria/1`); every field is checked when it loads, and an
 //! unknown field is an error. A row's `needs` say what evidence it reads (see [`Need`]); the
 //! named lists in `evidence` are shared by rows that need the same records.
 
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::errors::{Error, Result};
 
 /// The format the criteria file names.
-pub const CRITERIA_FORMAT: &str = "heartwood-s1-criteria/1";
+pub const CRITERIA_FORMAT: &str = "heartwood-baseline-criteria/1";
 
 /// The criteria file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -361,7 +361,7 @@ struct ExplanationsFile {
 }
 
 /// The format of the explanations file.
-pub const EXPLANATIONS_FORMAT: &str = "heartwood-s1-explanations/1";
+pub const EXPLANATIONS_FORMAT: &str = "heartwood-baseline-explanations/1";
 
 /// The devnet tooling a record of a live run may name.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

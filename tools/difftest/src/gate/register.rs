@@ -31,6 +31,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Command;
 
+use super::baseline::setup;
 use super::criteria::{Criteria, Entry, EntryStatus, RecordRule, RunClass, TestRef};
 use super::flags::Flags;
 use super::git::Validity;
@@ -38,7 +39,6 @@ use super::make_record::{OwnRecord, write_own};
 use super::names;
 use super::needs::mentions;
 use super::record::{Counts, GateRecord, GateResult};
-use super::s1::setup;
 use super::store::{Evidence, Item, Sources};
 use super::time;
 use crate::errors::{Error, Result};

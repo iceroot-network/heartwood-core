@@ -45,8 +45,9 @@ pub(super) fn assignments(variables: &str) -> BTreeMap<&str, &str> {
 
 /// The variables that say how this machine ran a command, not which run it was: the recorder's,
 /// the loopback block's, the oracle's and the toolchain's, the tree's places and strictness (a
-/// need asks for `--strict` in the command itself).
-const INCIDENTAL: [&str; 17] = [
+/// need asks for `--strict` in the command itself). Every variable whose name ends in
+/// `_CRITERIA` is incidental too ([`identity`]).
+const INCIDENTAL: [&str; 16] = [
     "DEVNET_PREFIX",
     "HEARTWOOD_DEVNET_PREFIX",
     "HEARTWOOD_TEST_LOOPBACK",
@@ -57,7 +58,6 @@ const INCIDENTAL: [&str; 17] = [
     "SOLAR_REPO",
     "LOCAL_SOLAR",
     "LEDGER_DIR",
-    "S1_CRITERIA",
     "FORGING_RESULTS",
     "DIFFTEST",
     "DIFFTEST_DOCKER",
@@ -69,14 +69,20 @@ const INCIDENTAL: [&str; 17] = [
 /// The run a record is of. With `keys`, the values its command line gave them, in their order
 /// (none when one of them is not set: such a record names no run); without, every variable of
 /// its command line that is not incidental, in name order, so that the order of the words and
-/// the machine's own settings do not make two runs of one.
+/// the machine's own settings do not make two runs of one. Besides [`INCIDENTAL`], the
+/// recorder's `GATE_` variables are incidental, and so is every variable whose name ends in
+/// `_CRITERIA`: a criteria file narrows what a record lists, never what the run does, whatever
+/// the name of the variable that gave it.
 pub(super) fn identity(record: &GateRecord, keys: &[String]) -> Option<String> {
     let set = assignments(&record.variables);
     if keys.is_empty() {
         let kept: Vec<String> = set
             .iter()
             .filter(|(key, value)| {
-                !value.is_empty() && !key.starts_with("GATE_") && !INCIDENTAL.contains(key)
+                !value.is_empty()
+                    && !key.starts_with("GATE_")
+                    && !key.ends_with("_CRITERIA")
+                    && !INCIDENTAL.contains(key)
             })
             .map(|(key, value)| format!("{key}={value}"))
             .collect();
@@ -895,6 +901,24 @@ mod tests {
         assert_eq!(identity(&record("SEED= RUN=x", "x"), &by_seed), None);
         assert!(sets(&record("SUITE=network SEED=1", "x"), "SUITE"));
         assert!(!sets(&record("SUITE= SEED=1", "x"), "SUITE"));
+    }
+
+    #[test]
+    fn a_run_is_named_without_the_criteria_file_whatever_variable_set_it() {
+        let plain = identity(&record("RUN=mixed SEED=1", "x"), &[]);
+        assert_eq!(plain.as_deref(), Some("RUN=mixed SEED=1"));
+        for variables in [
+            "RUN=mixed SEED=1 BASELINE_CRITERIA=docs/baseline.json",
+            "STAGE_CRITERIA=docs/stage.json RUN=mixed SEED=1",
+            "BASELINE_CRITERIA=b.json RUN=mixed STAGE_CRITERIA=s.json SEED=1",
+        ] {
+            assert_eq!(identity(&record(variables, "x"), &[]), plain, "{variables}");
+        }
+        // A criteria variable is one whose name ends in `_CRITERIA`, not one that mentions it.
+        assert_eq!(
+            identity(&record("RUN=mixed CRITERIA_ROW=T SEED=1", "x"), &[]).as_deref(),
+            Some("CRITERIA_ROW=T RUN=mixed SEED=1")
+        );
     }
 
     #[test]

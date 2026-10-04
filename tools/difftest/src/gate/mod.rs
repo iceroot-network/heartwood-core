@@ -1,10 +1,11 @@
 //! The baseline record's evidence: the gate record every gate command writes ([`record`]), the
 //! cumulative ledger of the long runs ([`ledger`]), and the commands over them: `gate record`
 //! (write a record), `gate ledger merge|show|plan` (another machine's records into the ledger, its
-//! totals, what the criteria still need), `gate s1` (the baseline record's table from the records, the
-//! ledger and the criteria file), `gate coverage` (the coverage rows' records) and `gate register`
-//! (every register entry's trigger, test and hits).
+//! totals, what the criteria still need), `gate baseline` (the baseline record's table from the
+//! records, the ledger and the criteria file), `gate coverage` (the coverage rows' records) and
+//! `gate register` (every register entry's trigger, test and hits).
 
+pub mod baseline;
 mod build;
 pub mod closure;
 pub mod coverage;
@@ -18,7 +19,6 @@ pub mod needs;
 pub mod output;
 pub mod record;
 pub mod register;
-pub mod s1;
 pub mod store;
 pub mod time;
 pub mod totals;
@@ -31,7 +31,7 @@ pub use record::{Counts, GateRecord, GateResult, RECORD_FORMAT};
 /// A gate command, as `difftest gate ...` parses it: its verb and the rest of its arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GateArgs {
-    /// `record`, `ledger`, `s1`, `coverage` or `register`.
+    /// `record`, `ledger`, `baseline`, `coverage` or `register`.
     pub verb: GateVerb,
     /// The verb's arguments.
     pub args: Vec<String>,
@@ -44,8 +44,8 @@ pub enum GateVerb {
     Record,
     /// `gate ledger merge|show|plan`.
     Ledger,
-    /// `gate s1`: the baseline record's table.
-    S1,
+    /// `gate baseline`: the baseline record's table.
+    Baseline,
     /// `gate coverage`: the coverage rows' records.
     Coverage,
     /// `gate register`: the register's entries against the code and the records.
@@ -58,7 +58,7 @@ impl GateVerb {
         match self {
             GateVerb::Record => "record",
             GateVerb::Ledger => "ledger",
-            GateVerb::S1 => "s1",
+            GateVerb::Baseline => "baseline",
             GateVerb::Coverage => "coverage",
             GateVerb::Register => "register",
         }
@@ -66,12 +66,12 @@ impl GateVerb {
 }
 
 /// Run a gate command; whether its checks passed. `strict` is the harness's `--strict`, which the
-/// command line takes out of the arguments before they get here: it makes `s1`, `coverage`,
+/// command line takes out of the arguments before they get here: it makes `baseline`, `coverage`,
 /// `register` and `ledger show|plan` demand everything, not only that nothing failed.
 pub fn run(args: &GateArgs, strict: bool) -> Result<bool> {
     let mut rest = args.args.clone();
     let takes_strict = match args.verb {
-        GateVerb::S1 | GateVerb::Coverage | GateVerb::Register => true,
+        GateVerb::Baseline | GateVerb::Coverage | GateVerb::Register => true,
         GateVerb::Ledger => rest.first().is_some_and(|v| v == "show" || v == "plan"),
         GateVerb::Record => false,
     };
@@ -81,7 +81,7 @@ pub fn run(args: &GateArgs, strict: bool) -> Result<bool> {
     match args.verb {
         GateVerb::Record => make_record::run(&rest),
         GateVerb::Ledger => totals::run(&rest),
-        GateVerb::S1 => s1::run(&rest),
+        GateVerb::Baseline => baseline::run(&rest),
         GateVerb::Coverage => coverage::run(&rest),
         GateVerb::Register => register::run(&rest),
     }

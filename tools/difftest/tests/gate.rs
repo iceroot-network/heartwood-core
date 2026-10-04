@@ -183,7 +183,7 @@ fn reason_of(name: &str) -> String {
 /// A small criteria file: one property, one target, two make targets and a register.
 fn base_criteria() -> Value {
     json!({
-        "format": "heartwood-s1-criteria/1",
+        "format": "heartwood-baseline-criteria/1",
         "totals": {"propertyCases": 1000, "propertyRuns": 2, "targetCpuHours": 1.0},
         "properties": {"P1": {"name": "fee-floor", "paths": ["src/p1.rs"]}},
         "targets": {"parse": {"paths": ["src/a.rs"]}},
@@ -425,7 +425,7 @@ fn a_failed_long_run_is_recorded_whatever_the_explanations_file_the_criteria_nam
     assert_eq!(entries.len(), 1);
     assert_eq!(read(&entries[0])["result"], "fail");
     // The stage table still needs the file: it reads the explanations.
-    assert!(!s1(&rig, &[]).ok);
+    assert!(!baseline(&rig, &[]).ok);
 }
 
 #[test]
@@ -471,8 +471,8 @@ fn a_dirty_tree_is_recorded_as_dirty_and_refuses_the_ledger_entry() {
 
 // ----- the path rule and the stage table
 
-fn s1(rig: &Rig, extra: &[&str]) -> Ran {
-    let mut args = vec!["s1", "--criteria"];
+fn baseline(rig: &Rig, extra: &[&str]) -> Ran {
+    let mut args = vec!["baseline", "--criteria"];
     let criteria = rig.arg("criteria.json");
     let records = rig.arg("records");
     let ledger = rig.arg("ledger");
@@ -486,7 +486,7 @@ fn s1(rig: &Rig, extra: &[&str]) -> Ran {
 fn a_missing_record_fails_its_row_and_a_waiting_row_stays_pending() {
     let rig = Rig::new();
     rig.criteria(&base_criteria());
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(!ran.ok, "{}", ran.text);
     assert!(ran.text.contains("R1"), "{}", ran.text);
     assert!(ran.text.contains("R1       FAIL"), "{}", ran.text);
@@ -524,7 +524,7 @@ fn the_scope_audit_passes_only_with_every_row_settled_or_accepted() {
         ("REMOVE1", "absent"),
         ("DEFER1", "unbuilt"),
     ];
-    let text = s1(&scope_rig(&settled, &ids, None), &["--verbose"]).text;
+    let text = baseline(&scope_rig(&settled, &ids, None), &["--verbose"]).text;
     assert!(text.contains("R4       pass"), "{text}");
     // A REMOVE row the audit records as a deviation waits on a person, named.
     let deviation = [
@@ -532,12 +532,12 @@ fn the_scope_audit_passes_only_with_every_row_settled_or_accepted() {
         ("REMOVE1", "deviation"),
         ("DEFER1", "unbuilt"),
     ];
-    let text = s1(&scope_rig(&deviation, &ids, None), &["--verbose"]).text;
+    let text = baseline(&scope_rig(&deviation, &ids, None), &["--verbose"]).text;
     assert!(text.contains("R4       pending"), "{text}");
     assert!(text.contains("REMOVE1 (deviation)"), "{text}");
     // Accepted by a named decision, it passes; an unsettled row cannot be accepted.
     let accepted = Some(json!({"REMOVE1": "the decision that accepts it"}));
-    let text = s1(
+    let text = baseline(
         &scope_rig(&deviation, &ids, accepted.clone()),
         &["--verbose"],
     )
@@ -549,12 +549,12 @@ fn the_scope_audit_passes_only_with_every_row_settled_or_accepted() {
         ("REMOVE1", "deviation"),
         ("DEFER1", "unbuilt"),
     ];
-    let text = s1(&scope_rig(&unsure, &ids, accepted), &["--verbose"]).text;
+    let text = baseline(&scope_rig(&unsure, &ids, accepted), &["--verbose"]).text;
     assert!(text.contains("R4       pending"), "{text}");
     assert!(text.contains("KEEP1 (unsure)"), "{text}");
     // A row missing from the audit, or named twice, fails it.
     let missing = [("KEEP1", "mapped"), ("DEFER1", "unbuilt")];
-    let text = s1(&scope_rig(&missing, &ids, None), &[]).text;
+    let text = baseline(&scope_rig(&missing, &ids, None), &[]).text;
     assert!(text.contains("R4       FAIL"), "{text}");
 }
 
@@ -569,7 +569,7 @@ fn a_documentation_only_commit_keeps_a_record_valid_and_a_change_to_a_tested_fil
     );
     let part = ["--part", "none"];
     let _ = part;
-    let row1 = |rig: &Rig| s1(rig, &["--verbose"]).text;
+    let row1 = |rig: &Rig| baseline(rig, &["--verbose"]).text;
     assert!(row1(&rig).contains("R1       pass"), "{}", row1(&rig));
 
     // A commit that touches documentation and a file the record does not test.
@@ -588,7 +588,7 @@ fn a_documentation_only_commit_keeps_a_record_valid_and_a_change_to_a_tested_fil
     // A commit that changes a tested file.
     rig.write("src/a.rs", "fn a() { let _ = 3; }\n");
     rig.commit("change a");
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(!ran.ok);
     assert!(ran.text.contains("R1       FAIL"), "{}", ran.text);
     assert!(ran.text.contains("no longer count"), "{}", ran.text);
@@ -599,7 +599,7 @@ fn a_documentation_only_commit_keeps_a_record_valid_and_a_change_to_a_tested_fil
         rig.record("l0", "difftest run l0", 0, &report(50, &[]), T2)
             .ok
     );
-    assert!(s1(&rig, &[]).text.contains("R1       pass"));
+    assert!(baseline(&rig, &[]).text.contains("R1       pass"));
 }
 
 #[test]
@@ -608,10 +608,10 @@ fn a_record_of_a_dirty_tree_does_not_count_unless_dirty_records_are_allowed() {
     rig.criteria(&base_criteria());
     rig.write("src/a.rs", "fn a() { let _ = 4; }\n");
     assert!(rig.record("l0", "difftest run l0", 0, "", T1).ok);
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(ran.text.contains("R1       FAIL"), "{}", ran.text);
     assert!(ran.text.contains("dirty tree"), "{}", ran.text);
-    let allowed = s1(&rig, &["--allow-dirty"]);
+    let allowed = baseline(&rig, &["--allow-dirty"]);
     assert!(allowed.text.contains("R1       pass"), "{}", allowed.text);
 }
 
@@ -620,11 +620,11 @@ fn an_unexplained_failed_record_blocks_its_row_even_after_a_passing_repeat() {
     let rig = Rig::new();
     rig.criteria(&base_criteria());
     assert!(rig.record("l0", "difftest run l0", 1, "", T1).ok);
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(ran.text.contains("R1       FAIL"), "{}", ran.text);
     assert!(ran.text.contains("failed record"), "{}", ran.text);
     assert!(rig.record("l0", "difftest run l0", 0, "", T2).ok);
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(ran.text.contains("R1       FAIL"), "{}", ran.text);
     assert!(ran.text.contains("no explanation"), "{}", ran.text);
 }
@@ -641,14 +641,14 @@ fn a_strict_run_fails_while_a_row_is_pending_and_a_part_selects_rows() {
     let rig = Rig::new();
     rig.criteria(&criteria);
     assert!(rig.record("l0", "difftest run l0", 0, "", T1).ok);
-    let fast = s1(&rig, &["--part", "fast", "--strict"]);
+    let fast = baseline(&rig, &["--part", "fast", "--strict"]);
     assert!(fast.ok, "{}", fast.text);
     assert!(!fast.text.contains("R3"), "{}", fast.text);
-    let all = s1(&rig, &[]);
+    let all = baseline(&rig, &[]);
     assert!(all.ok, "pending is not a failure: {}", all.text);
-    let strict = s1(&rig, &["--strict"]);
+    let strict = baseline(&rig, &["--strict"]);
     assert!(!strict.ok, "{}", strict.text);
-    let unknown = s1(&rig, &["--part", "nothing"]);
+    let unknown = baseline(&rig, &["--part", "nothing"]);
     assert!(!unknown.ok);
 }
 
@@ -658,10 +658,10 @@ fn a_stale_record_is_missing_evidence_so_a_waiting_row_stays_pending() {
     rig.criteria(&base_criteria());
     // The live record tests src (it has no narrowing); the waiting row R3 reads it.
     assert!(rig.record("live", "make live", 0, "", T1).ok);
-    assert!(s1(&rig, &[]).text.contains("R3       pass"));
+    assert!(baseline(&rig, &[]).text.contains("R3       pass"));
     rig.write("src/a.rs", "fn a() { let _ = 7; }\n");
     rig.commit("change a");
-    let ran = s1(&rig, &["--verbose"]);
+    let ran = baseline(&rig, &["--verbose"]);
     assert!(
         ran.text.contains("R3       pending"),
         "a stale run is no failed run: {}",
@@ -674,7 +674,7 @@ fn a_stale_record_is_missing_evidence_so_a_waiting_row_stays_pending() {
     rig.write("src/a.rs", "fn a() { let _ = 8; }\n");
     assert!(rig.record("live", "make live", 0, "", T2).ok);
     rig.git(&["checkout", "--", "src/a.rs"]);
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(ran.text.contains("R3       FAIL"), "{}", ran.text);
     assert!(ran.text.contains("dirty tree"), "{}", ran.text);
 }
@@ -978,7 +978,7 @@ fn a_short_total_of_stale_runs_is_missing_so_a_waiting_row_stays_pending() {
     rig.write("src/a.rs", "fn a() { let _ = 9; }\n");
     rig.commit("both changed");
     assert!(rig.record("l0", "difftest run l0", 0, "", T1).ok);
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(ran.ok, "pending is not a failure: {}", ran.text);
     assert!(ran.text.contains("R2       pending"), "{}", ran.text);
     assert!(
@@ -987,7 +987,7 @@ fn a_short_total_of_stale_runs_is_missing_so_a_waiting_row_stays_pending() {
         ran.text
     );
     assert!(ran.text.contains("1 stale run not counted"), "{}", ran.text);
-    let strict = s1(&rig, &["--strict"]);
+    let strict = baseline(&rig, &["--strict"]);
     assert!(!strict.ok, "the final gate still fails a short total");
     // A failed run is a failure, waits or not.
     assert!(
@@ -1014,7 +1014,7 @@ fn a_short_total_of_stale_runs_is_missing_so_a_waiting_row_stays_pending() {
         ])
         .ok
     );
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(ran.text.contains("R2       FAIL"), "{}", ran.text);
     assert!(ran.text.contains("failed run"), "{}", ran.text);
 }
@@ -1494,13 +1494,13 @@ fn a_criteria_file_with_an_unknown_field_or_row_is_refused() {
     let mut criteria = base_criteria();
     criteria["surprise"] = json!(1);
     rig.criteria(&criteria);
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(!ran.ok);
     assert!(ran.text.contains("surprise"), "{}", ran.text);
     let mut criteria = base_criteria();
     criteria["rows"][1]["needs"] = json!([{"kind": "rows", "ids": ["R9"]}]);
     rig.criteria(&criteria);
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(!ran.ok);
     assert!(ran.text.contains("R9"), "{}", ran.text);
 }
@@ -1559,11 +1559,11 @@ fn a_failed_record_blocks_its_row_even_beside_enough_passes() {
     rig.criteria(&base_criteria());
     assert!(rig.record("l0", "difftest run l0", 0, "", T1).ok);
     assert!(rig.record("l0", "difftest run l0", 1, "", T2).ok);
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(ran.text.contains("R1       FAIL"), "{}", ran.text);
     assert!(ran.text.contains("failed record"), "{}", ran.text);
     assert!(rig.record("l0", "difftest run l0", 0, "", T3).ok);
-    assert!(s1(&rig, &[]).text.contains("R1       FAIL"));
+    assert!(baseline(&rig, &[]).text.contains("R1       FAIL"));
 }
 
 /// A record of `target` whose make command line set `variables`.
@@ -1646,7 +1646,7 @@ fn a_chain_need_follows_the_runs_its_live_check_counts() {
     ] {
         assert!(record_of(&rig, "corpus-judge", variables, exit, "", T2).ok);
     }
-    let text = s1(&rig, &["--verbose"]).text;
+    let text = baseline(&rig, &["--verbose"]).text;
     assert!(!text.contains("T        pass"), "{text}");
     assert!(text.contains("live-mixed-short-13"), "{text}");
     // A failed judgement of the earlier run's chain blocks nothing; the counted run's chain
@@ -1673,7 +1673,7 @@ fn a_chain_need_follows_the_runs_its_live_check_counts() {
         )
         .ok
     );
-    let text = s1(&rig, &["--verbose"]).text;
+    let text = baseline(&rig, &["--verbose"]).text;
     assert!(row_t(&text).contains("T        pass"), "{text}");
     // A failed judgement of a counted run's chain blocks it.
     assert!(
@@ -1687,7 +1687,7 @@ fn a_chain_need_follows_the_runs_its_live_check_counts() {
         )
         .ok
     );
-    let text = s1(&rig, &["--verbose"]).text;
+    let text = baseline(&rig, &["--verbose"]).text;
     assert!(row_t(&text).contains("T        FAIL"), "{text}");
 }
 
@@ -1704,7 +1704,7 @@ fn one_run_counts_once_whatever_the_order_or_the_machine_settings_of_its_command
     ] {
         assert!(record_of(&rig, "live-check", variables, 0, "", started).ok);
     }
-    let ran = s1(&rig, &["--verbose"]);
+    let ran = baseline(&rig, &["--verbose"]);
     let t = row_t(&ran.text);
     assert!(t.contains("1 of 2 passing runs"), "{t}");
     assert!(t.contains("1 record without SEED not counted"), "{t}");
@@ -1719,7 +1719,7 @@ fn one_run_counts_once_whatever_the_order_or_the_machine_settings_of_its_command
         )
         .ok
     );
-    let t = row_t(&s1(&rig, &["--verbose"]).text);
+    let t = row_t(&baseline(&rig, &["--verbose"]).text);
     assert!(t.contains("T        pass"), "{t}");
     assert!(t.contains("2 passing runs"), "{t}");
 }
@@ -1736,7 +1736,7 @@ fn a_failure_is_superseded_only_when_explained_and_repeated_once() {
             .iter()
             .map(|r| json!({"record": r, "cause": "the host stalled", "evidence": "load.jsonl"}))
             .collect();
-        let file = json!({"format": "heartwood-s1-explanations/1", "failures": failures});
+        let file = json!({"format": "heartwood-baseline-explanations/1", "failures": failures});
         std::fs::write(rig.path("explained.json"), file.to_string()).expect("explanations");
     };
     explain(&[]);
@@ -1753,14 +1753,14 @@ fn a_failure_is_superseded_only_when_explained_and_repeated_once() {
         .ok
     );
     assert!(record_of(&rig, "live-check", "RUN=mixed SEED=1", 0, "", T2).ok);
-    let t = row_t(&s1(&rig, &["--verbose"]).text);
+    let t = row_t(&baseline(&rig, &["--verbose"]).text);
     assert!(
         t.contains("T        FAIL") && t.contains("no explanation"),
         "{t}"
     );
     let failed = format!("{}-live-check.json", T1.replace(':', "-"));
     explain(&[&failed]);
-    let t = row_t(&s1(&rig, &["--verbose"]).text);
+    let t = row_t(&baseline(&rig, &["--verbose"]).text);
     assert!(t.contains("T        pass"), "{t}");
     assert!(
         t.contains("1 explained failure repeated") && t.contains("the host stalled"),
@@ -1768,7 +1768,61 @@ fn a_failure_is_superseded_only_when_explained_and_repeated_once() {
     );
     // The repeat failed too: the run is not repeated again.
     assert!(record_of(&rig, "live-check", "SEED=1 RUN=mixed", 1, "", T3).ok);
-    let t = row_t(&s1(&rig, &["--verbose"]).text);
+    let t = row_t(&baseline(&rig, &["--verbose"]).text);
+    assert!(
+        t.contains("T        FAIL") && t.contains("failed more than once"),
+        "{t}"
+    );
+}
+
+/// Row `T`, one need matched by the whole run, after the live-check records `runs` (variables,
+/// exit status, start), every failure explained.
+fn row_t_after_explained(runs: &[(&str, i32, &str)]) -> String {
+    let rig = Rig::new();
+    let mut criteria = with_row(json!([{"kind": "record", "target": "live-check",
+        "contains": ["RUN=mixed"]}]));
+    criteria["explanations"] = json!("explained.json");
+    rig.criteria(&criteria);
+    let failures: Vec<Value> = (runs.iter().filter(|(_, exit, _)| *exit != 0))
+        .map(|(_, _, started)| {
+            let record = format!("{}-live-check.json", started.replace(':', "-"));
+            json!({"record": record, "cause": "the host stalled", "evidence": "load.jsonl"})
+        })
+        .collect();
+    let file = json!({"format": "heartwood-baseline-explanations/1", "failures": failures});
+    std::fs::write(rig.path("explained.json"), file.to_string()).expect("explanations");
+    for (variables, exit, started) in runs {
+        assert!(record_of(&rig, "live-check", variables, *exit, "", started).ok);
+    }
+    row_t(&baseline(&rig, &["--verbose"]).text)
+}
+
+/// A run's variables with a criteria variable among them.
+const WITH_CRITERIA: &str = "RUN=mixed SEED=1 STAGE_CRITERIA=docs/stage.json";
+
+#[test]
+fn an_explained_failure_is_repeated_by_a_pass_that_set_another_criteria_variable_or_none() {
+    for repeat in [
+        "RUN=mixed SEED=1",
+        "RUN=mixed SEED=1 BASELINE_CRITERIA=docs/baseline.json",
+    ] {
+        let t = row_t_after_explained(&[(WITH_CRITERIA, 1, T1), (repeat, 0, T2)]);
+        assert!(
+            t.contains("T        pass") && t.contains("1 explained failure repeated"),
+            "{t}"
+        );
+    }
+}
+
+#[test]
+fn failures_with_and_without_a_criteria_variable_are_one_run_that_failed_twice() {
+    // Each failure is followed by a pass of its own form; the run still failed twice.
+    let t = row_t_after_explained(&[
+        (WITH_CRITERIA, 1, T1),
+        ("RUN=mixed SEED=1", 1, T2),
+        (WITH_CRITERIA, 0, T3),
+        ("RUN=mixed SEED=1", 0, "2026-10-01T13:00:00Z"),
+    ]);
     assert!(
         t.contains("T        FAIL") && t.contains("failed more than once"),
         "{t}"
@@ -1781,10 +1835,10 @@ fn an_explanations_file_without_a_cause_is_refused() {
     let mut criteria = base_criteria();
     criteria["explanations"] = json!("explained.json");
     rig.criteria(&criteria);
-    let file = json!({"format": "heartwood-s1-explanations/1",
+    let file = json!({"format": "heartwood-baseline-explanations/1",
         "failures": [{"record": "x.json", "cause": " ", "evidence": "e"}]});
     std::fs::write(rig.path("explained.json"), file.to_string()).expect("explanations");
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(!ran.ok);
     assert!(
         ran.text.contains("a cause and its evidence are needed"),
@@ -1824,7 +1878,7 @@ fn a_scenario_need_reads_the_scenario_s_own_verdict_in_its_record() {
         )
         .ok
     );
-    let text = s1(&rig, &["--verbose"]).text;
+    let text = baseline(&rig, &["--verbose"]).text;
     let t = row_t(&text);
     assert!(text.contains("ok      live-check [RUN=suites] without SUITE scenario chained-transfers: 1 passing record"), "{text}");
     assert!(
@@ -1856,7 +1910,7 @@ fn a_scenario_of_a_comparison_shows_nothing_unless_its_suite_s_chains_and_steps_
                    scenario transactions/chain: pass\nscenario lifecycle/chain: pass\n\
                    scenario lifecycle/restarts: pass\nscenario lifecycle/steps: pass\n";
     assert!(record_of(&rig, "live-check", "SEED=1 RUN=suites", 1, printed, T1).ok);
-    let text = s1(&rig, &["--verbose"]).text;
+    let text = baseline(&rig, &["--verbose"]).text;
     assert!(
         text.contains("FAIL    live-check [RUN=suites] scenario peer-discovery: 1 failed record"),
         "{text}"
@@ -1923,7 +1977,7 @@ fn a_record_counts_only_with_every_run_s_whole_tooling_in_versions_the_criteria_
             args.extend(["--tooling", &dir]);
         }
         assert!(rig.gate(&args).ok);
-        row_t(&s1(&rig, &["--verbose"]).text)
+        row_t(&baseline(&rig, &["--verbose"]).text)
     };
     let whole = [('b', "scripts/suites.sh"), ('d', "scripts/lib.sh")];
     list(&left, &whole);
@@ -2023,7 +2077,7 @@ fn a_change_to_the_build_of_a_tested_crate_makes_its_record_stale_and_another_cr
         ])
         .ok
     );
-    let t = |rig: &Rig| row_t(&s1(rig, &["--verbose"]).text);
+    let t = |rig: &Rig| row_t(&baseline(rig, &["--verbose"]).text);
     assert!(t(&rig).contains("T        pass"), "{}", t(&rig));
     // Another crate's dependency, a test target and a comment change nothing of crate-a's build.
     rig.write("Cargo.lock", &lock("1.0.0", "1.1.0"));
@@ -2113,7 +2167,7 @@ fn a_feature_of_a_crate_of_the_tree_that_a_tested_crate_uses_makes_its_record_st
         ])
         .ok
     );
-    let t = |rig: &Rig| row_t(&s1(rig, &["--verbose"]).text);
+    let t = |rig: &Rig| row_t(&baseline(rig, &["--verbose"]).text);
     // A crate the tested one does not use changes nothing.
     rig.write(
         "packages/c/Cargo.toml",
@@ -2192,7 +2246,7 @@ fn a_record_narrowed_to_a_module_goes_stale_on_what_its_code_reaches_only() {
             "tools/gate-record.sh"
         ])
     );
-    let t = |rig: &Rig| row_t(&s1(rig, &["--verbose"]).text);
+    let t = |rig: &Rig| row_t(&baseline(rig, &["--verbose"]).text);
     // A module the code does not reach (one the leaf alone names) changes nothing.
     rig.write("tool/src/other.rs", "pub fn all() { let _ = 1; }\n");
     rig.commit("another module");
@@ -2248,7 +2302,7 @@ fn a_record_narrowed_to_a_module_goes_stale_on_the_declaration_that_chooses_its_
             "tools/gate-record.sh"
         ])
     );
-    let t = |rig: &Rig| row_t(&s1(rig, &["--verbose"]).text);
+    let t = |rig: &Rig| row_t(&baseline(rig, &["--verbose"]).text);
     assert!(t(&rig).contains("T        pass"), "{}", t(&rig));
     // Only the parent's declaration changes: the path now compiles another file.
     rig.write("tool/src/b/other.rs", "pub fn answer() { let _ = 1; }\n");
@@ -2342,7 +2396,7 @@ fn a_failed_long_run_is_superseded_only_when_explained_and_its_seed_passed_once_
             .iter()
             .map(|r| json!({"record": r, "cause": "the runner ran out of memory", "evidence": "dmesg"}))
             .collect();
-        let file = json!({"format": "heartwood-s1-explanations/1", "failures": failures});
+        let file = json!({"format": "heartwood-baseline-explanations/1", "failures": failures});
         std::fs::write(rig.path("explained.json"), file.to_string()).expect("explanations");
     };
     explain(&[]);
@@ -2407,7 +2461,7 @@ fn a_strict_gate_passes_rows_that_wait_only_on_a_person_and_the_final_gate_fails
     ]);
     rig.criteria(&criteria);
     assert!(rig.record("l0", "difftest run l0", 0, "", T1).ok);
-    let strict = s1(&rig, &["--strict"]);
+    let strict = baseline(&rig, &["--strict"]);
     assert!(strict.ok, "{}", strict.text);
     assert!(
         strict
@@ -2420,8 +2474,8 @@ fn a_strict_gate_passes_rows_that_wait_only_on_a_person_and_the_final_gate_fails
         {"id": "R3", "criterion": "later", "requires": "live", "shownBy": "live",
          "waits": "a live run", "needs": [{"kind": "record", "target": "live"}]}));
     rig.criteria(&criteria);
-    assert!(!s1(&rig, &["--strict"]).ok);
-    let last = s1(&rig, &["--final"]);
+    assert!(!baseline(&rig, &["--strict"]).ok);
+    let last = baseline(&rig, &["--final"]);
     assert!(!last.ok);
     assert!(last.text.contains("R3       FAIL"), "{}", last.text);
 }
@@ -2444,7 +2498,7 @@ fn a_record_file_that_is_not_json_is_an_error_not_a_skip() {
     rig.criteria(&base_criteria());
     assert!(rig.record("l0", "difftest run l0", 0, "", T1).ok);
     std::fs::write(rig.path("records").join("cut-short.json"), "{\"format\": ").expect("write");
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(!ran.ok);
     assert!(ran.text.contains("cut-short.json"), "{}", ran.text);
 }
@@ -2491,10 +2545,10 @@ fn a_documentation_file_a_record_tests_makes_it_stale() {
     criteria["rows"][0]["needs"] = json!([{"kind": "record", "target": "guide-check"}]);
     rig.criteria(&criteria);
     assert!(rig.record("guide-check", "check the guide", 0, "", T1).ok);
-    assert!(s1(&rig, &[]).text.contains("R1       pass"));
+    assert!(baseline(&rig, &[]).text.contains("R1       pass"));
     rig.write("docs/notes.md", "the guide changed\n");
     rig.commit("guide");
-    let ran = s1(&rig, &[]);
+    let ran = baseline(&rig, &[]);
     assert!(ran.text.contains("R1       FAIL"), "{}", ran.text);
     assert!(ran.text.contains("docs/notes.md"), "{}", ran.text);
 }
