@@ -51,6 +51,8 @@ fn proof(median: u32, address: &str) -> FakeView {
     view.api_blocks.insert(2, Ok(Some(block(2, "b"))));
     view.api_address = Ok("127.0.0.1:4003".parse().expect("an address"));
     view.sockets = Ok(vec![listening(address)]);
+    view.role_inodes
+        .insert(heartwood_cli::Role::Relay, Ok(vec![7]));
     view
 }
 
@@ -191,5 +193,22 @@ fn the_proof_prints_the_facts_and_no_text_to_sign() {
         finding
             .facts
             .contains(&("api", Fact::Word("beyond-loopback")))
+    );
+}
+
+#[test]
+fn the_proof_uses_owned_listeners_and_canonical_loopback() {
+    let mapped = proof(100, "[::ffff:127.0.0.1]:4003");
+    assert_eq!(
+        run("onboarding.sync-proof", &mapped)[0].status,
+        Status::Warn
+    );
+    let mut unrelated = proof(100, "0.0.0.0:4003");
+    unrelated
+        .role_inodes
+        .insert(heartwood_cli::Role::Relay, Ok(vec![8]));
+    assert_eq!(
+        run("onboarding.sync-proof", &unrelated)[0].status,
+        Status::Unknown
     );
 }
