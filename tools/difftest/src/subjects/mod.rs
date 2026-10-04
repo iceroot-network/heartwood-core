@@ -547,9 +547,7 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
         }
         Documented::MultiSignature => (1..=bytes.len() / MULTI_SIGNATURE_ENTRY).any(|entries| {
             let end = bytes.len() - entries * MULTI_SIGNATURE_ENTRY;
-            bytes
-                .get(..end)
-                .is_some_and(|prefix| deserialiser::deserialise(prefix).is_ok())
+            bytes.get(..end).is_some_and(decoded)
         }),
         // The other differences are not forms of a transaction's bytes.
         Documented::VotesWithIndices
@@ -573,6 +571,16 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
     }
 }
 
+/// Whether `bytes` decode as the reference decodes them: read in full, though the rules may refuse
+/// them afterwards. The only schema refusal of the decoder is such a refusal, a delegate
+/// resignation of an unknown kind, which the reference reports once the bytes are read.
+fn decoded(bytes: &[u8]) -> bool {
+    matches!(
+        deserialiser::deserialise(bytes),
+        Ok(_) | Err(DecodeError::Schema(_))
+    )
+}
+
 /// The reference's error class where it refuses the transaction `bytes` when it decodes them,
 /// although Heartwood refuses them for the form of `difference`: multi-signature entries after
 /// bytes that are a transaction but for a version the reference does not support. The reference
@@ -590,7 +598,9 @@ fn refused_first(difference: Documented, bytes: &[u8]) -> Option<&'static str> {
         let end = bytes.len() - entries * MULTI_SIGNATURE_ENTRY;
         let mut prefix = bytes.get(..end).filter(|p| p.len() > VERSION_AT)?.to_vec();
         prefix[VERSION_AT] = codec::VERSION;
-        deserialiser::deserialise(&prefix).ok()?;
+        if !decoded(&prefix) {
+            return None;
+        }
         let mut participants = std::collections::BTreeSet::new();
         let repeated = bytes[end..]
             .chunks(MULTI_SIGNATURE_ENTRY)
@@ -793,6 +803,38 @@ mod tests {
             ),
             "{:?}",
             verdict(&garbage)
+        );
+    }
+
+    #[test]
+    fn entries_after_a_resignation_of_an_unknown_kind_are_read_as_the_reference_reads_them() {
+        let verdict = |bytes: &[u8]| decoded("tx.fromBytes", "transaction_decode", bytes);
+        // A delegate resignation whose kind byte is unknown, then one entry. The reference reads
+        // the kind without refusing it, reads the entry, then refuses the version, or at version
+        // 3 refuses the kind once the bytes are decoded.
+        let resignation = |version: u8| {
+            let mut bytes = vec![STANDARD_HEADER, version, 0x5a];
+            bytes.extend(1u32.to_le_bytes());
+            bytes.extend(7u16.to_le_bytes());
+            bytes.extend(1u64.to_le_bytes());
+            // The generator point's public key.
+            let key = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+            bytes.extend(hex::decode(key).unwrap());
+            bytes.extend(100u64.to_le_bytes());
+            bytes.extend([0x00, 0xf0]);
+            [bytes, entry(0)].concat()
+        };
+        assert_eq!(
+            verdict(&resignation(3)),
+            Verdict::RefusedByDesign {
+                difference: Documented::MultiSignature,
+                holds: true,
+            }
+        );
+        let refused = verdict(&resignation(255));
+        assert!(
+            matches!(&refused, Verdict::Rejected { class: Some(c), .. } if *c == "TransactionVersionError"),
+            "{refused:?}"
         );
     }
 
