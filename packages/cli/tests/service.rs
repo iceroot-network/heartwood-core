@@ -68,6 +68,18 @@ fn scratch(test: &str) -> PathBuf {
     dir
 }
 
+/// Wait until the lock at `path` is free. A lock this test drops stays held while a child that
+/// another test is spawning still has a copy of its descriptor, until that child's exec closes it.
+fn wait_released(path: &Path) {
+    for _ in 0..250 {
+        if !is_locked(path).unwrap() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    panic!("the lock at {} was not released", path.display());
+}
+
 /// Set in the child process that [`isolated`] runs: the test's scratch directory.
 const CHILD: &str = "HEARTWOOD_SERVICE_TEST_CHILD";
 
@@ -586,6 +598,7 @@ fn under_a_unit_status_names_the_manager_and_stop_and_restart_refuse() {
     record_manager(&dir, &relay, &env).unwrap();
     assert!(is_locked(&relay.lock_path()).unwrap());
     drop(lock);
+    wait_released(&relay.lock_path());
     assert_eq!(
         process::status(&relay).unwrap().status,
         SupervisedStatus::Stopped
@@ -715,6 +728,7 @@ fn uninstall_keeps_a_unit_that_is_enabled_or_runs_and_says_to_disable_it_first()
     let said = refused.expect_err("a running unit is kept").to_string();
     assert!(done.path.exists() && said.contains(&disable), "{said}");
     drop(lock);
+    wait_released(&relay.lock_path());
 
     // Disabled and stopped: the file goes, and only the reload is left to do.
     let said = uninstall_text(&relay, Role::Relay, Manager::SystemdUser, Some(&out)).unwrap();
@@ -843,6 +857,7 @@ fn under_a_unit_kill_refuses_log_names_the_journal_and_top_lists_the_node() {
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0].status, SupervisedStatus::OnlineSystemd);
     drop(lock);
+    wait_released(&relay.lock_path());
     assert!(heartwood_cli::top::top("node1", &index).unwrap().is_empty());
     bystander.kill().unwrap();
     bystander.wait().unwrap();
