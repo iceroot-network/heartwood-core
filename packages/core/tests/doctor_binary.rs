@@ -347,7 +347,8 @@ fn opened(line: &str) -> Option<String> {
 /// The system calls of the trace at `log` that break the doctor's rules: an open, or any call
 /// but a metadata read, of the key file; an open for writing, a creation, removal, rename or mode
 /// change under `root`; a successful open by the doctor's own process of a file outside `root`
-/// and [`SYSTEM_READS`], or of another process's environment or memory ([`process_secret`]);
+/// and [`SYSTEM_READS`], or any open by it of another process's environment or memory
+/// ([`process_secret`]), failed or not;
 /// a probe's `execve` with an environment other than `LANG=C` alone; a connection to an address that is not loopback (`api`, when given, is
 /// the only IP address and port allowed), or to a local socket that is not the system bus's.
 /// While a relay runs, `store` names its store: SQLite's read-only connection opens the store's
@@ -420,7 +421,9 @@ fn broken_in(
             broken.push(line.to_owned());
         }
         let own = doctor.is_some_and(|pid| line.split_whitespace().next() == Some(pid));
-        if own && opens && opened(line).is_some_and(|path| !inside(&path)) {
+        // Another process's environment or memory may not even be tried, whatever the result.
+        let secret = line.split('"').nth(1).is_some_and(process_secret);
+        if own && opens && (secret || opened(line).is_some_and(|path| !inside(&path))) {
             broken.push(line.to_owned());
         }
         // The doctor's children are its probes, each run with `LANG=C` alone.
@@ -477,6 +480,8 @@ fn the_trace_rules_catch_a_read_outside_the_node_and_the_system_files() {
         r#"4100 openat(AT_FDCWD, "/nodes/node1-other/config/app.json", O_RDONLY|O_CLOEXEC) = 4</nodes/node1-other/config/app.json>"#,
         r#"4100 openat(AT_FDCWD, "/proc/4242/environ", O_RDONLY|O_CLOEXEC) = 4</proc/4242/environ>"#,
         r#"4100 openat(AT_FDCWD, "/proc/4242/task/4243/mem", O_RDONLY|O_CLOEXEC) = 4</proc/4242/task/4243/mem>"#,
+        r#"4100 openat(AT_FDCWD, "/proc/1/environ", O_RDONLY|O_CLOEXEC) = -1 EACCES (Permission denied)"#,
+        r#"4100 openat(AT_FDCWD, "/proc/4242/mem", O_RDONLY|O_CLOEXEC <unfinished ...>"#,
         r#"4101 execve("/usr/bin/systemctl", ["/usr/bin/systemctl", "is-active", "ufw", "nftables", "firewalld"], ["LANG=C", "HOME=/users/op"]) = 0"#,
         r#"4101 execve("/usr/bin/systemctl", ["/usr/bin/systemctl", "is-active", "ufw", "nftables", "firewalld"], 0x7ffd /* 1 var */) = 0"#,
     ];
