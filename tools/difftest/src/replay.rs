@@ -122,3 +122,202 @@ pub fn run(
         accepted,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::cli::OracleArgs;
+    use crate::report::Outcome;
+    use crate::store::ScratchDir;
+    use crate::subject;
+    use crate::subjects::Devnet;
+    use crate::vectors::VectorSet;
+
+    fn manifest_dir() -> &'static Path {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    fn vectors() -> PathBuf {
+        manifest_dir().join("../../packages/crypto/tests/vectors")
+    }
+
+    /// The inputs kept from the long fuzz corpora's replays, by target.
+    fn kept(target: &str) -> PathBuf {
+        manifest_dir()
+            .join("tests/fixtures/corpus-replay")
+            .join(target)
+    }
+
+    /// The oracle of the tests that need the reference: the local checkout or the image the
+    /// environment names, or `None` (the test is skipped) when DIFFTEST_TEST_NO_ORACLE is set.
+    fn test_oracle() -> Option<OracleServer> {
+        let args = if let Some(dir) = std::env::var_os("DIFFTEST_TEST_SOLAR_DIR") {
+            OracleArgs {
+                solar_dir: Some(PathBuf::from(dir)),
+                ..OracleArgs::default()
+            }
+        } else if let Ok(image) = std::env::var("DIFFTEST_TEST_IMAGE") {
+            OracleArgs {
+                image: Some(image),
+                ..OracleArgs::default()
+            }
+        } else {
+            assert!(
+                std::env::var_os("DIFFTEST_TEST_NO_ORACLE").is_some(),
+                "set DIFFTEST_TEST_IMAGE or DIFFTEST_TEST_SOLAR_DIR, or DIFFTEST_TEST_NO_ORACLE to \
+                 skip this test"
+            );
+            return None;
+        };
+        let oracle = args.resolve(|name| std::env::var(name).ok()).unwrap();
+        Some(oracle.server().unwrap())
+    }
+
+    fn registry() -> Registry {
+        let set = VectorSet::load(&vectors()).unwrap();
+        let devnet = Devnet::from_vectors(&set)
+            .unwrap()
+            .unwrap()
+            .at_current_time()
+            .unwrap();
+        subject::heartwood(Some(devnet))
+    }
+
+    /// The bytes of the reference's transaction vector `name` in `file`.
+    fn vector_bytes(file: &str, name: &str) -> Vec<u8> {
+        let text = fs::read_to_string(vectors().join(file)).unwrap();
+        text.lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .find(|record| record["name"] == name)
+            .and_then(|record| {
+                heartwood_crypto::utils::hex::decode(record["input"]["hex"].as_str()?).ok()
+            })
+            .unwrap()
+    }
+
+    /// A multi-signature entry of participant `index`.
+    fn entry(index: u8) -> Vec<u8> {
+        let mut entry = vec![0x11; 65];
+        entry[0] = index;
+        entry
+    }
+
+    /// A query that no route's handler reads may be any query the plugins write: the oracle
+    /// answers 200 without writing it out, as the reference's server does.
+    #[test]
+    #[ignore = "integration"]
+    fn the_oracle_answers_a_query_a_route_does_not_read_whatever_it_holds() {
+        let Some(mut server) = test_oracle() else {
+            return;
+        };
+        let mut names: Vec<_> = fs::read_dir(kept("api_query"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        names.sort();
+        assert!(!names.is_empty());
+        for path in names {
+            // The route of the delegate lookup (choice 255), with a key whose dotted part is an
+            // index of hundreds of millions: a list of that many holes in the query.
+            let bytes = fs::read(&path).unwrap();
+            let input = json!({ "hex": heartwood_crypto::utils::hex::encode(&bytes) });
+            let answer = server.call("api.fuzzQuery", "devnet", 2, &input).unwrap();
+            assert_eq!(answer, Ok(json!({ "status": 200 })), "{}", path.display());
+        }
+        // A route that reads its query writes it out as before.
+        let input = json!({ "hex": heartwood_crypto::utils::hex::encode(b"\x00page=2") });
+        let answer = server
+            .call("api.fuzzQuery", "devnet", 2, &input)
+            .unwrap()
+            .unwrap();
+        assert_eq!(answer["status"], 200);
+        assert_eq!(answer["query"]["page"], 2, "{answer}");
+    }
+
+    /// The inputs that failed the long corpora's replays, and the forms around them, replay
+    /// strictly with no failure: the query the oracle could not write out, and the transactions of
+    /// a version the reference refuses with multi-signature entries after them, alone and in
+    /// blocks.
+    #[test]
+    #[ignore = "integration"]
+    fn the_inputs_kept_from_the_long_corpora_replay_with_no_failure() {
+        let Some(mut server) = test_oracle() else {
+            return;
+        };
+        let registry = registry();
+        let scratch = ScratchDir::new("corpus-replay").unwrap();
+        let copy = |target: &str| {
+            let dir = scratch.path().join(target);
+            fs::create_dir_all(&dir).unwrap();
+            for entry in fs::read_dir(kept(target)).unwrap() {
+                let path = entry.unwrap().path();
+                fs::copy(&path, dir.join(path.file_name().unwrap())).unwrap();
+            }
+            dir
+        };
+        let api = copy("api_query");
+        let transactions = copy("transaction_decode");
+        let blocks = copy("block_decode");
+        // A transaction the reference accepts, with an entry after its signature (the documented
+        // difference); of version 1 with one and two entries (the version refusal); of version 1
+        // with two entries of one participant (the participant refusal).
+        let valid = vector_bytes("V03-noncanonical-removed.jsonl", "version-0");
+        let mut version_1 = valid.clone();
+        version_1[1] = 1;
+        let formed = [
+            ("formed-documented", [valid, entry(0)].concat()),
+            ("formed-version-1", [version_1.clone(), entry(0)].concat()),
+            (
+                "formed-version-2",
+                [version_1.clone(), entry(0), entry(1)].concat(),
+            ),
+            (
+                "formed-participant",
+                [version_1, entry(7), entry(7)].concat(),
+            ),
+        ];
+        for (name, bytes) in &formed {
+            fs::write(transactions.join(name), bytes).unwrap();
+        }
+        let milestones = |target: &str| {
+            fs::read_to_string(manifest_dir().join(format!("../../fuzz/milestones/{target}.json")))
+                .unwrap()
+        };
+        let tx_milestones = milestones("transaction_decode");
+        let block_milestones = milestones("block_decode");
+        let replays = [
+            ("api.fuzzQuery", &api, None),
+            ("tx.fromBytes", &transactions, Some(tx_milestones.as_str())),
+            ("block.fromBytes", &blocks, Some(block_milestones.as_str())),
+        ];
+        for (op, corpus, milestones) in replays {
+            let replayed = run(
+                &mut server,
+                &registry,
+                &Replay {
+                    op,
+                    corpus,
+                    height: 2,
+                    milestones,
+                },
+            )
+            .unwrap();
+            assert!(replayed.report.passes(true), "{op}: {}", replayed.report);
+            for result in &replayed.report.results {
+                let documented = result.label == "formed-documented";
+                assert!(
+                    if documented {
+                        matches!(result.outcome, Outcome::Documented(_))
+                    } else {
+                        result.outcome == Outcome::Pass
+                    },
+                    "{op}: {}: {:?}",
+                    result.label,
+                    result.outcome
+                );
+            }
+        }
+    }
+}

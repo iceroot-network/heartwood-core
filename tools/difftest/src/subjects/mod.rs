@@ -117,7 +117,7 @@ use heartwood_crypto::crypto::hash::sha256;
 use heartwood_crypto::crypto::slots;
 use heartwood_crypto::errors::{BlockDecodeError, BuildError, DecodeError, EncodeError, MemoError};
 use heartwood_crypto::managers::{Milestones, Network, Params};
-use heartwood_crypto::transactions::deserialiser;
+use heartwood_crypto::transactions::{codec, deserialiser};
 use heartwood_crypto::utils::hex;
 use serde_json::Value;
 
@@ -491,13 +491,17 @@ fn documented(error: &DecodeError) -> Option<Documented> {
 }
 
 /// A refused transaction decode of `bytes`: a documented difference, with its form checked on
-/// `bytes`, or the reference's error class.
+/// `bytes`; the reference's own refusal at decode where it comes first ([`refused_first`]); or
+/// the reference's error class.
 fn decode_refused(error: &DecodeError, bytes: &[u8]) -> Verdict {
     match documented(error) {
-        Some(difference) => Verdict::RefusedByDesign {
-            difference,
-            holds: has_form(difference, bytes),
-        },
+        Some(difference) => {
+            let holds = has_form(difference, bytes);
+            match refused_first(difference, bytes) {
+                Some(class) if !holds => rejected(class),
+                _ => Verdict::RefusedByDesign { difference, holds },
+            }
+        }
         None => rejected(decode_class(error)),
     }
 }
@@ -515,6 +519,8 @@ const TYPE_AT: usize = 7;
 const MEMO_AT: usize = 58;
 /// Bytes of a multi-signature entry.
 const MULTI_SIGNATURE_ENTRY: usize = 65;
+/// Where the version byte is, in either header.
+const VERSION_AT: usize = 1;
 
 /// Whether the transaction `bytes` have the form of `difference`.
 fn has_form(difference: Documented, bytes: &[u8]) -> bool {
@@ -567,6 +573,36 @@ fn has_form(difference: Documented, bytes: &[u8]) -> bool {
     }
 }
 
+/// The reference's error class where it refuses the transaction `bytes` when it decodes them,
+/// although Heartwood refuses them for the form of `difference`: multi-signature entries after
+/// bytes that are a transaction but for a version the reference does not support. The reference
+/// reads the entries, refuses a second entry of one participant, then refuses the version; the
+/// documented difference (read at decode, refused when applied) does not apply.
+fn refused_first(difference: Documented, bytes: &[u8]) -> Option<&'static str> {
+    if difference != Documented::MultiSignature {
+        return None;
+    }
+    let version = *bytes.get(VERSION_AT)?;
+    if version == 0 || version == codec::VERSION {
+        return None;
+    }
+    (1..=bytes.len() / MULTI_SIGNATURE_ENTRY).find_map(|entries| {
+        let end = bytes.len() - entries * MULTI_SIGNATURE_ENTRY;
+        let mut prefix = bytes.get(..end).filter(|p| p.len() > VERSION_AT)?.to_vec();
+        prefix[VERSION_AT] = codec::VERSION;
+        deserialiser::deserialise(&prefix).ok()?;
+        let mut participants = std::collections::BTreeSet::new();
+        let repeated = bytes[end..]
+            .chunks(MULTI_SIGNATURE_ENTRY)
+            .any(|entry| !participants.insert(entry[0]));
+        Some(if repeated {
+            "DuplicateParticipantInMultiSignatureError"
+        } else {
+            "TransactionVersionError"
+        })
+    })
+}
+
 /// The bytes of transaction `index` in the block `bytes`, read with the fixed offsets of the
 /// block format: the header and signature, one `u32` length per transaction, then the
 /// transactions.
@@ -589,16 +625,18 @@ fn block_transaction(bytes: &[u8], index: usize) -> Option<&[u8]> {
 }
 
 /// A refused block decode of `bytes`: a transaction's documented difference, with its form
-/// checked on that transaction's bytes, or a refusal whose class is not observable.
+/// checked on that transaction's bytes, unless the reference refuses that transaction first
+/// ([`refused_first`]); else a refusal whose class is not observable.
 fn block_refused(error: &BlockDecodeError, bytes: &[u8]) -> Verdict {
     if let BlockDecodeError::Transaction { index, source } = error
         && let Some(difference) = documented(source)
     {
-        return Verdict::RefusedByDesign {
-            difference,
-            holds: block_transaction(bytes, *index)
-                .is_some_and(|transaction| has_form(difference, transaction)),
-        };
+        let transaction = block_transaction(bytes, *index);
+        let holds = transaction.is_some_and(|transaction| has_form(difference, transaction));
+        let first = transaction.and_then(|transaction| refused_first(difference, transaction));
+        if holds || first.is_none() {
+            return Verdict::RefusedByDesign { difference, holds };
+        }
     }
     unclassified(error)
 }
@@ -633,5 +671,142 @@ mod tests {
             subject.run(&case),
             Err(SubjectError::Unsupported(_))
         ));
+    }
+
+    fn manifest_dir() -> &'static std::path::Path {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// The inputs of a fuzz target kept from a long corpus's replay, in name order.
+    fn kept_inputs(target: &str) -> Vec<Vec<u8>> {
+        let dir = manifest_dir()
+            .join("tests/fixtures/corpus-replay")
+            .join(target);
+        let mut paths: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        paths.sort();
+        paths
+            .iter()
+            .map(|path| std::fs::read(path).unwrap())
+            .collect()
+    }
+
+    /// Heartwood's verdict on the bytes of a decode operation, under the milestones of `target`'s
+    /// replay.
+    fn decoded(op: &str, target: &str, bytes: &[u8]) -> Verdict {
+        let vectors = manifest_dir().join("../../packages/crypto/tests/vectors");
+        let set = VectorSet::load(&vectors).unwrap();
+        let devnet = Devnet::from_vectors(&set).unwrap().unwrap();
+        let registry = crate::subject::heartwood(Some(devnet));
+        let milestones = std::fs::read_to_string(
+            manifest_dir().join(format!("../../fuzz/milestones/{target}.json")),
+        )
+        .unwrap();
+        let input = serde_json::json!({ "hex": hex::encode(bytes), "milestones": milestones });
+        let case = Case {
+            op,
+            network: "devnet",
+            height: 2,
+            input: &input,
+        };
+        registry.get(op).unwrap().run(&case).unwrap()
+    }
+
+    /// The bytes of a transaction vector of the reference.
+    fn vector_bytes(file: &str, name: &str) -> Vec<u8> {
+        let path = manifest_dir()
+            .join("../../packages/crypto/tests/vectors")
+            .join(file);
+        let text = std::fs::read_to_string(path).unwrap();
+        text.lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .find(|record| record["name"] == name)
+            .and_then(|record| hex::decode(record["input"]["hex"].as_str()?).ok())
+            .unwrap()
+    }
+
+    /// A multi-signature entry of participant `index`.
+    fn entry(index: u8) -> Vec<u8> {
+        let mut entry = vec![0x11; MULTI_SIGNATURE_ENTRY];
+        entry[0] = index;
+        entry
+    }
+
+    #[test]
+    fn multi_signature_entries_after_a_version_the_reference_refuses_are_its_refusal() {
+        let verdict = |bytes: &[u8]| decoded("tx.fromBytes", "transaction_decode", bytes);
+        let refused_as = |class: &str, verdict: Verdict| matches!(verdict, Verdict::Rejected { class: Some(c), .. } if c == class);
+        let version_refused = |verdict: Verdict| refused_as("TransactionVersionError", verdict);
+        let participant_refused =
+            |verdict: Verdict| refused_as("DuplicateParticipantInMultiSignatureError", verdict);
+        // A transaction of version 255 with no signature and two entries of participant 0, from
+        // a long corpus of the transaction target: the reference reads the entries and refuses
+        // the second one, before it looks at the version.
+        for bytes in kept_inputs("transaction_decode") {
+            assert!(
+                participant_refused(verdict(&bytes)),
+                "{:?}",
+                verdict(&bytes)
+            );
+        }
+        // A transaction the reference accepts, with entries: the documented difference.
+        let valid = vector_bytes("V03-noncanonical-removed.jsonl", "version-0");
+        let with_entries = [valid.clone(), entry(0)].concat();
+        assert_eq!(
+            verdict(&with_entries),
+            Verdict::RefusedByDesign {
+                difference: Documented::MultiSignature,
+                holds: true,
+            }
+        );
+        // Version 1, which the reference refuses after it has read the entries.
+        let mut version_1 = valid;
+        version_1[1] = 1;
+        let one_entry = [version_1.clone(), entry(0)].concat();
+        assert!(
+            version_refused(verdict(&one_entry)),
+            "{:?}",
+            verdict(&one_entry)
+        );
+        let two_entries = [version_1.clone(), entry(0), entry(1)].concat();
+        assert!(
+            version_refused(verdict(&two_entries)),
+            "{:?}",
+            verdict(&two_entries)
+        );
+        // Two entries of one participant: the reference refuses them before the version.
+        let same_participant = [version_1, entry(7), entry(7)].concat();
+        assert!(
+            participant_refused(verdict(&same_participant)),
+            "{:?}",
+            verdict(&same_participant)
+        );
+        // Entries after bytes that are no transaction whatever their version: still a failed
+        // form, not a refusal named for them.
+        let garbage = [vec![STANDARD_HEADER, 0xff, 0x1e], entry(0)].concat();
+        assert!(
+            !matches!(
+                verdict(&garbage),
+                Verdict::RefusedByDesign { holds: true, .. }
+            ),
+            "{:?}",
+            verdict(&garbage)
+        );
+    }
+
+    #[test]
+    fn a_block_with_such_a_transaction_is_refused_without_a_documented_difference() {
+        // From a long corpus of the block target: a first transaction of version 255 with
+        // multi-signature entries. The reference refuses the block when it decodes it (its class
+        // is not observable), and so does Heartwood.
+        for bytes in kept_inputs("block_decode") {
+            let verdict = decoded("block.fromBytes", "block_decode", &bytes);
+            assert!(
+                matches!(verdict, Verdict::Rejected { class: None, .. }),
+                "{verdict:?}"
+            );
+        }
     }
 }
