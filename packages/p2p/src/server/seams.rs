@@ -82,11 +82,6 @@ impl SocketClosed {
         SocketClosed(NEVER.get_or_init(|| watch::channel(false).0).subscribe())
     }
 
-    /// Whether the signal has fired.
-    pub fn is_closed(&self) -> bool {
-        *self.0.borrow() || self.0.has_changed().is_err()
-    }
-
     /// Resolve once the signal fires.
     pub async fn closed(&mut self) {
         let _ = self.0.wait_for(|closed| *closed).await;

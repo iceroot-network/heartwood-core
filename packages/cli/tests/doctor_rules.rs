@@ -17,7 +17,13 @@ struct Rule {
     allowed_in: &'static [&'static str],
 }
 
-const RULES: [Rule; 6] = [
+const RULES: [Rule; 7] = [
+    Rule {
+        what: "external run-file readers only through HostProcesses",
+        // A grouped import could name either module unseen, so none is allowed.
+        words: &["crate::process", "crate::supervisor", "crate::{"],
+        allowed_in: &["mod.rs"],
+    },
     Rule {
         what: "files only through DoctorFs",
         words: &[
@@ -97,6 +103,46 @@ fn holds(line: &str, word: &str) -> bool {
     })
 }
 
+/// The lines of the doctor's file `name` (relative to `src/doctor`), whose text is `text`, that
+/// break a rule.
+fn broken_in(name: &str, text: &str) -> Vec<String> {
+    let mut broken = Vec::new();
+    for (number, line) in text.lines().enumerate() {
+        let code = line.trim_start();
+        if code.starts_with("//") {
+            continue;
+        }
+        for rule in &RULES {
+            if rule.allowed_in.contains(&name) {
+                continue;
+            }
+            for word in rule.words {
+                if holds(code, word) {
+                    broken.push(format!("{name}:{}: {} ({word})", number + 1, rule.what));
+                }
+            }
+        }
+        if holds(code, "unsafe") {
+            broken.push(format!("{name}:{}: unsafe", number + 1));
+        }
+    }
+    broken
+}
+
+#[test]
+fn the_run_file_rule_catches_a_module_import_and_a_grouped_one() {
+    for line in [
+        "use crate::process;",
+        "use crate::supervisor;",
+        "use crate::process as p;",
+        "use crate::{supervisor::state::SupervisorState};",
+        "let state = crate::supervisor::state::SupervisorState::read(path)?;",
+    ] {
+        assert!(!broken_in("checks/host.rs", line).is_empty(), "{line}");
+        assert!(broken_in("mod.rs", line).is_empty(), "{line}");
+    }
+}
+
 #[test]
 fn the_doctor_reaches_files_sockets_and_processes_only_through_its_seams() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/doctor");
@@ -112,25 +158,7 @@ fn the_doctor_reaches_files_sockets_and_processes_only_through_its_seams() {
             .to_string_lossy()
             .into_owned();
         let text = fs::read_to_string(file).unwrap();
-        for (number, line) in text.lines().enumerate() {
-            let code = line.trim_start();
-            if code.starts_with("//") {
-                continue;
-            }
-            for rule in &RULES {
-                if rule.allowed_in.contains(&name.as_str()) {
-                    continue;
-                }
-                for word in rule.words {
-                    if holds(code, word) {
-                        broken.push(format!("{name}:{}: {} ({word})", number + 1, rule.what));
-                    }
-                }
-            }
-            if holds(code, "unsafe") {
-                broken.push(format!("{name}:{}: unsafe", number + 1));
-            }
-        }
+        broken.extend(broken_in(&name, &text));
     }
     assert!(broken.is_empty(), "{broken:#?}");
 }
@@ -177,4 +205,72 @@ fn the_key_file_list_holds_the_forgers_key_file_and_readable_refuses_it() {
     ] {
         assert!(Readable::new(Path::new(path), &roots).is_ok(), "{path}");
     }
+}
+
+#[test]
+fn external_run_file_readers_use_checked_directory_access() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let readers = [
+        (
+            "supervisor/signals.rs",
+            "pub fn is_locked(",
+            "pub fn",
+            "is_locked_in",
+            "RunDir::beside_if_there",
+        ),
+        (
+            "supervisor/signals.rs",
+            "pub fn is_locked_in(",
+            "pub fn",
+            "dir.file",
+            "OFlag::O_RDONLY",
+        ),
+        (
+            "supervisor/state.rs",
+            "    pub fn read(",
+            "    pub fn write",
+            "dir.read",
+            "RunDir::beside_if_there",
+        ),
+        (
+            "process.rs",
+            "pub fn status(",
+            "pub fn",
+            "is_locked",
+            "SupervisorState::read",
+        ),
+    ];
+    for (file, start, end, first, second) in readers {
+        let text = fs::read_to_string(root.join(file)).unwrap();
+        let body = text.split_once(start).unwrap().1;
+        let body = body.split_once(end).map_or(body, |(body, _)| body);
+        assert!(body.contains(first), "{file}: {first}");
+        assert!(body.contains(second), "{file}: {second}");
+        for word in ["File::open", "fs::read", "OpenOptions"] {
+            assert!(!body.contains(word), "{file}: {word}");
+        }
+    }
+    let adapter = fs::read_to_string(root.join("doctor/mod.rs")).unwrap();
+    let body = adapter
+        .split_once("impl ProcessView for HostProcesses")
+        .unwrap()
+        .1
+        .split_once("/// The real")
+        .unwrap()
+        .0;
+    let allowed = [
+        "crate::process::status(instance)",
+        "crate::supervisor::state::SupervisorState::read(&instance.state_path())",
+    ];
+    for line in adapter.lines().filter(|line| {
+        !line.trim_start().starts_with("//")
+            && (line.contains("crate::process::") || line.contains("crate::supervisor::"))
+    }) {
+        assert!(
+            allowed.iter().any(|call| line.contains(call)),
+            "unexpected external reader: {line}"
+        );
+    }
+    assert!(body.contains("crate::process::status(instance)"));
+    assert!(body.contains("crate::supervisor::state::SupervisorState::read"));
 }

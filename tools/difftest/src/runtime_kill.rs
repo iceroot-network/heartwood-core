@@ -224,7 +224,8 @@ impl Node {
             (
                 ".env",
                 format!(
-                    "CORE_P2P_PORT={}\nCORE_P2P_MIN_NETWORK_REACH=1\nCORE_API_DISABLED=true\n",
+                    "CORE_P2P_HOST={}\nCORE_P2P_PORT={}\nCORE_P2P_MIN_NETWORK_REACH=1\nCORE_API_DISABLED=true\n",
+                    crate::forger_kill::relay_ip(),
                     free_port()?
                 ),
             ),
@@ -248,7 +249,7 @@ impl Node {
 /// A port that nothing on this host listens on now, for the relay's P2P server: a fixed port would
 /// clash with any other relay on the host, and fail this run's kills that start on it.
 fn free_port() -> Result<u16> {
-    let listener = std::net::TcpListener::bind(("0.0.0.0", 0));
+    let listener = std::net::TcpListener::bind((crate::forger_kill::relay_ip(), 0));
     let port = listener.and_then(|listener| listener.local_addr());
     port.map(|address| address.port())
         .map_err(|e| Error::Usage(format!("no free port for the relay: {e}")))
@@ -378,9 +379,10 @@ impl Run<'_> {
 
     /// A mock peer serving the corpus on a free port of this host, and its address.
     fn start_mock(&self, empty_first: bool) -> Result<(Guard, SocketAddr)> {
+        let address = SocketAddr::new(crate::forger_kill::relay_ip(), 0).to_string();
         let mut command = Command::new(self.mock);
         command
-            .args(["--listen", "127.0.0.1:0", "--chain"])
+            .args(["--listen", &address, "--chain"])
             .arg(&self.corpus.dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -704,8 +706,12 @@ mod tests {
             .find_map(|line| line.strip_prefix("CORE_P2P_PORT="))
             .and_then(|port| port.parse().ok())
             .unwrap();
+        assert!(env.contains(&format!(
+            "CORE_P2P_HOST={}\n",
+            crate::forger_kill::relay_ip()
+        )));
         assert_ne!(port, 4000, "another relay on this host may hold that port");
-        assert!(std::net::TcpListener::bind(("0.0.0.0", port)).is_ok());
+        assert!(std::net::TcpListener::bind((crate::forger_kill::relay_ip(), port)).is_ok());
     }
 
     /// The kill test on the committed chain, through the built relay and mock peer: a few kills.

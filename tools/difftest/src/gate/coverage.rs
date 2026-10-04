@@ -13,11 +13,11 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
+use super::baseline::{setup, status_word};
 use super::flags::Flags;
 use super::make_record::{OwnRecord, write_own};
 use super::needs::{Judge, Status};
 use super::record::Counts;
-use super::s1::{setup, status_word};
 use super::store::Evidence;
 use super::time;
 use crate::errors::Result;

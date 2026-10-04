@@ -259,9 +259,11 @@ fn traced(args: &[&str], vars: &[(String, String)], log: &Path) -> Option<Output
         eprintln!("strace is not installed: the traced run is skipped");
         return None;
     };
+    // `-v` prints each environment in full, so that a probe's can be read, not only counted.
     let trace = [
         "-f",
         "-qq",
+        "-v",
         "-y",
         "-s",
         "512",
@@ -298,6 +300,36 @@ const SYSTEM_READS: [&str; 11] = [
     "/usr/lib64/",
 ];
 
+/// Whether `path` is another process's environment or memory, or one of its threads':
+/// `/proc/<pid>/environ`, `/proc/<pid>/mem`, `/proc/<pid>/task/<tid>/environ` or `.../mem`. No
+/// read of the doctor's may reach them, although the rest of `/proc` is open to it.
+fn process_secret(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix("/proc/") else {
+        return false;
+    };
+    let parts: Vec<&str> = rest.split('/').collect();
+    let secret = |name: &str| name == "environ" || name == "mem";
+    let number = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    match parts.as_slice() {
+        [pid, name] => !pid.is_empty() && secret(name),
+        [pid, "task", tid, name] => !pid.is_empty() && number(tid) && secret(name),
+        _ => false,
+    }
+}
+
+/// The environment a probe's `execve` line passes, as `strace -v` prints it: the text after its
+/// argument list, up to the call's end.
+fn exec_environment(line: &str) -> &str {
+    let end = [") = ", " <unfinished"]
+        .iter()
+        .filter_map(|mark| line.rfind(mark))
+        .min()
+        .unwrap_or(line.len());
+    let call = &line[..end];
+    call.rsplit_once("], ")
+        .map_or(call, |(_, environment)| environment)
+}
+
 /// The file a successful open of a trace line opened: the path its descriptor's decoration names
 /// (`= 3</path>`), else the first quoted path.
 fn opened(line: &str) -> Option<String> {
@@ -315,7 +347,9 @@ fn opened(line: &str) -> Option<String> {
 /// The system calls of the trace at `log` that break the doctor's rules: an open, or any call
 /// but a metadata read, of the key file; an open for writing, a creation, removal, rename or mode
 /// change under `root`; a successful open by the doctor's own process of a file outside `root`
-/// and [`SYSTEM_READS`]; a connection to an address that is not loopback (`api`, when given, is
+/// and [`SYSTEM_READS`], or any open by it of another process's environment or memory
+/// ([`process_secret`]), failed or not;
+/// a probe's `execve` with an environment other than `LANG=C` alone; a connection to an address that is not loopback (`api`, when given, is
 /// the only IP address and port allowed), or to a local socket that is not the system bus's.
 /// While a relay runs, `store` names its store: SQLite's read-only connection opens the store's
 /// existing `-wal` and `-shm` read-write with the create flag, and never truncates them.
@@ -339,6 +373,9 @@ fn broken_in(
         .and_then(|line| line.split_whitespace().next());
     let program = env!("CARGO_BIN_EXE_heartwood");
     let inside = |path: &str| {
+        if process_secret(path) {
+            return false;
+        }
         path.starts_with(&format!("{root}/"))
             || path == program
             || SYSTEM_READS
@@ -384,7 +421,13 @@ fn broken_in(
             broken.push(line.to_owned());
         }
         let own = doctor.is_some_and(|pid| line.split_whitespace().next() == Some(pid));
-        if own && opens && opened(line).is_some_and(|path| !inside(&path)) {
+        // Another process's environment or memory may not even be tried, whatever the result.
+        let secret = line.split('"').nth(1).is_some_and(process_secret);
+        if own && opens && (secret || opened(line).is_some_and(|path| !inside(&path))) {
+            broken.push(line.to_owned());
+        }
+        // The doctor's children are its probes, each run with `LANG=C` alone.
+        if !own && name == "execve" && exec_environment(line) != r#"["LANG=C"]"# {
             broken.push(line.to_owned());
         }
         if line.contains(&root) && changes.iter().any(|change| name.starts_with(change)) {
@@ -425,6 +468,8 @@ fn the_trace_rules_catch_a_read_outside_the_node_and_the_system_files() {
         r#"4100 openat(AT_FDCWD, "/dev/null", O_RDWR|O_CLOEXEC) = 3</dev/null<char 1:3>>"#,
         r#"4100 openat(AT_FDCWD, "/users/op/.config/solar-core/config.json", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)"#,
         r#"4101 openat(AT_FDCWD, "/etc/systemd/system.conf", O_RDONLY|O_CLOEXEC) = 3</etc/systemd/system.conf>"#,
+        r#"4101 execve("/usr/bin/timedatectl", ["/usr/bin/timedatectl", "show", "--property=NTPSynchronized", "--property=NTP"], ["LANG=C"]) = 0"#,
+        r#"4102 execve("/usr/bin/chronyc", ["/usr/bin/chronyc", "-n", "tracking"], ["LANG=C"] <unfinished ...>"#,
     ];
     let clean = trace.join("\n");
     assert_eq!(broken_in(&clean, root, None, None), Vec::<String>::new());
@@ -433,6 +478,12 @@ fn the_trace_rules_catch_a_read_outside_the_node_and_the_system_files() {
         r#"4100 openat(AT_FDCWD, "/etc/shadow", O_RDONLY|O_CLOEXEC) = 4</etc/shadow>"#,
         r#"4100 openat(AT_FDCWD, "/etc/passwd", O_RDONLY|O_CLOEXEC) = 4</etc/passwd>"#,
         r#"4100 openat(AT_FDCWD, "/nodes/node1-other/config/app.json", O_RDONLY|O_CLOEXEC) = 4</nodes/node1-other/config/app.json>"#,
+        r#"4100 openat(AT_FDCWD, "/proc/4242/environ", O_RDONLY|O_CLOEXEC) = 4</proc/4242/environ>"#,
+        r#"4100 openat(AT_FDCWD, "/proc/4242/task/4243/mem", O_RDONLY|O_CLOEXEC) = 4</proc/4242/task/4243/mem>"#,
+        r#"4100 openat(AT_FDCWD, "/proc/1/environ", O_RDONLY|O_CLOEXEC) = -1 EACCES (Permission denied)"#,
+        r#"4100 openat(AT_FDCWD, "/proc/4242/mem", O_RDONLY|O_CLOEXEC <unfinished ...>"#,
+        r#"4101 execve("/usr/bin/systemctl", ["/usr/bin/systemctl", "is-active", "ufw", "nftables", "firewalld"], ["LANG=C", "HOME=/users/op"]) = 0"#,
+        r#"4101 execve("/usr/bin/systemctl", ["/usr/bin/systemctl", "is-active", "ufw", "nftables", "firewalld"], 0x7ffd /* 1 var */) = 0"#,
     ];
     for line in outside {
         let text = format!("{clean}\n{line}");

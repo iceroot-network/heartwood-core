@@ -22,7 +22,7 @@
 #   make fuzz-api replay-api   the API's query fuzz target, and its corpus through the oracle
 #   make scenario suites   the scenarios through the runner, and the scenario suites on devnets
 #   make live-resources api-compare   the forging runs' resource series, and their route answers
-#   make l1-long fuzz-long ledger-merge gate-s1   the long runs, the cumulative ledger and the
+#   make l1-long fuzz-long ledger-merge gate-baseline   the long runs, the cumulative ledger and the
 #                       baseline record; with GATE_RECORDS set, every gate target writes its record
 #   make lockstep-batch l2-batch   lockstep chains made in batches with drawn recipes, and judged
 #   make fuzz-codec replay-codec   the codec and head fuzz targets, and their corpora through the oracle
@@ -132,10 +132,10 @@ need-name = $(if $(NAME),,$(error set NAME, the corpus under CORPUS=$(CORPUS)))
 # empty in development, where nothing is written), `$(gate)` before a gate target's command runs it
 # through tools/gate-record.sh, which then writes the target's record with `difftest gate record`:
 # the target and its variables, the head, the tested paths (GATE_TESTED; the criteria file
-# S1_CRITERIA narrows them where it names the command), the oracle image, the machine, the
+# BASELINE_CRITERIA narrows them where it names the command), the oracle image, the machine, the
 # command's exit status and its UTC start and end. It exits with the command's status, or 1 when
 # the record cannot be written. A long run (l1-long, fuzz-long) also writes its ledger entry into
-# LEDGER_DIR. The ledger and the baseline record read them (ledger-merge, gate-s1). A record names the
+# LEDGER_DIR. The ledger and the baseline record read them (ledger-merge, gate-baseline). A record names the
 # oracle image only for a target that reads the oracle or its vectors (GATE_ORACLE_TARGETS; the
 # forge replay only with DIRECTION=oracle) with ORACLE_ARGS naming the image, and for a mixed or
 # forging run's live check, which reads IMAGE itself. A record of a live run's check (live-check,
@@ -144,7 +144,7 @@ need-name = $(if $(NAME),,$(error set NAME, the corpus under CORPUS=$(CORPUS)))
 # manifest and lockfile, this file and the check scripts the gate targets run.
 GATE_RECORDS  ?=
 LEDGER_DIR    ?=
-S1_CRITERIA   ?=
+BASELINE_CRITERIA ?=
 GATE_TESTED   ?= packages tools/difftest tools/oracle fuzz Cargo.toml Cargo.lock Makefile \
                  tools/check-layers.sh tools/check-lines.sh tools/test-integration.sh tools/gate-record.sh \
                  tools/fuzz-run.sh
@@ -157,7 +157,7 @@ gate-image-of = $(if $(filter live-check,$(1)),$(if $(or $(is-mixed),$(is-forgin
 # directory without one is named with none).
 gate-tooling-of = $(if $(filter suites,$(1)),$(suite-dir),$(if $(filter live-check api-compare live-resources p2p-compare await-report,$(1)),$(if $(filter suites,$(RUN)),$(FORGING_RESULTS)/suites/$(SEED)$(if $(SUITE),/$(SUITE)-reference $(FORGING_RESULTS)/suites/$(SEED)/$(SUITE)-heartwood),$(if $(and $(RUN),$(results-of-run)),$(run-dir)))))
 gate-for = GATE_RECORDS='$(GATE_RECORDS)' GATE_TARGET=$(1) GATE_VARIABLES='$(filter-out GATE_% GATED=% $(GATED) $(addsuffix \,$(GATED)),$(MAKEOVERRIDES))' \
-       GATE_IMAGE='$(call gate-image-of,$(2))' GATE_TESTED='$(GATE_TESTED)' GATE_CRITERIA='$(S1_CRITERIA)' \
+       GATE_IMAGE='$(call gate-image-of,$(2))' GATE_TESTED='$(GATE_TESTED)' GATE_CRITERIA='$(BASELINE_CRITERIA)' \
        GATE_TOOLING='$(call gate-tooling-of,$(2))' \
        GATE_LEDGER="$${GATE_LEDGER:-$(GATE_LEDGER)}" LEDGER_DIR='$(LEDGER_DIR)' GATE_DIFFTEST='$(DIFFTEST)' tools/gate-record.sh
 gate = $(call gate-for,'$@',$@)
@@ -168,14 +168,14 @@ need-fork = @jobs='$(FUZZ_FORK)'; case "$$jobs" in ''|*[!0-9]*) jobs=0 ;; esac; 
 	    echo "$@: FUZZ_FORK=$(FUZZ_FORK) is not a number of jobs from 1 (a recorded run uses libFuzzer's fork mode)" >&2; \
 	    exit 2; }
 need-ledger = $(if $(LEDGER_DIR),,$(error set LEDGER_DIR, the cumulative ledger's directory, in local.mk))
-need-criteria = $(if $(S1_CRITERIA),,$(error set S1_CRITERIA, the S1 gate's criteria file, in local.mk))
+need-criteria = $(if $(BASELINE_CRITERIA),,$(error set BASELINE_CRITERIA, the baseline gate's criteria file, in local.mk))
 
 .PHONY: help check build clippy fmt fmt-check test release-check oracle-context oracle-image \
         oracle-save vectors vectors-local vectors-diff vectors-install l0 ping test-oracle e2e \
         l1 corpus-import corpus-judge corpus-verify l2 l2-synthetic l2-restart crash-test pool-bench \
         layers lines lines-if-tokei l2-processor relay-binary relay-image live live-check api-compare doc \
         test-integration rollback-replay p2p-compare await-report scenario suites live-resources \
-        l1-long fuzz-long ledger-merge gate-s1 gated
+        l1-long fuzz-long ledger-merge gate-baseline gated
 
 help: ## this list
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | awk -F'\t' '{ printf "  make %-15s %s\n", $$1, $$2 }'
@@ -1016,8 +1016,8 @@ replay-api: build ## the api_query corpus through the oracle (ORACLE_ARGS) and H
 # l1-long runs L1_PROPERTY (one property) L1_CASES cases for each seed of L1_SEEDS (such as 1-7, or
 # a list) and fuzz-long runs every target of FUZZ_TARGETS for FUZZ_SECONDS with FUZZ_FORK jobs, each
 # run a gate record and a ledger entry. ledger-merge adds another machine's records (FROM, a
-# directory, and MACHINE, its name) to the ledger; gate-s1 prints the baseline record's table from the
-# records, the ledger and the criteria file (PART, one part of it, or all).
+# directory, and MACHINE, its name) to the ledger; gate-baseline prints the baseline record's table
+# from the records, the ledger and the criteria file (PART, one part of it, or all).
 SCENARIOS          := tools/difftest/scenarios
 SCENARIO           ?=
 DEVNET_ROOT        ?=
@@ -1122,11 +1122,11 @@ gated: build ## each target of GATED run through the recorder, a gate record nam
 	$(need-records)
 	@fail=0; $(foreach t,$(GATED),$(call gate-for,'$(t)',$(t)) $(GATED_MAKE) --no-print-directory $(t) || fail=1;) exit $$fail
 
-gate-s1: build ## the S1 record's table from the gate records, the ledger and the criteria file (PART; FINAL=1 for the final reading, where missing evidence fails its row)
+gate-baseline: build ## the baseline record's table from the gate records, the ledger and the criteria file (PART; FINAL=1 for the final reading, where missing evidence fails its row)
 	$(need-records)
 	$(need-ledger)
 	$(need-criteria)
-	$(DIFFTEST) gate s1 --criteria '$(S1_CRITERIA)' --records '$(GATE_RECORDS)' --ledger '$(LEDGER_DIR)' \
+	$(DIFFTEST) gate baseline --criteria '$(BASELINE_CRITERIA)' --records '$(GATE_RECORDS)' --ledger '$(LEDGER_DIR)' \
 	    $(if $(PART),--part $(PART)) $(if $(FINAL),--final) $(STRICT)
 # ---- end of the scenarios, the suites and the baseline record ----
 

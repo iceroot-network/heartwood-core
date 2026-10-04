@@ -244,8 +244,8 @@ ID     Name               Version                Status  Uptime  Restarts  CPU  
 status, uptime, restarts, CPU and memory. The statuses are `launching`, `online`,
 `online (unsupervised)` (a node started with `run` in a terminal), `stopping`, `stopped` and
 `errored`. `heartwood top` lists every instance of a token, across its networks, that runs under
-the supervisor (a role started with `start`), with the same columns; a node started with `run` or
-under a systemd unit (section 13) is not listed:
+the supervisor (a role started with `start`) or under a systemd unit (section 13), with the same
+columns; a node started with `run` in a terminal is not listed:
 
 ```sh expect="solar-guide-relay"
 heartwood top
@@ -735,15 +735,13 @@ The other method, a passphrase (`bip39`), is not offered: passphrases are deferr
 ## 13. Running under systemd
 
 `heartwood service install` writes a systemd unit for one role of an instance. It only writes: it
-calls no service manager, and it prints the commands that enable the unit. `service uninstall`
-removes the file. The unit is `<token>-<network>-<role>.service`: a user unit in
-`~/.config/systemd/user` by default. With `--system` the command writes nothing under `/etc`: it
-prints a system unit to save as `/etc/systemd/system/<unit>`. That unit names no user, so add a
-`User=` line with the node's own account before you place it: a node runs as a normal user, never
-as root. `--out DIR` writes the unit into a directory of your choice instead, so that you can read
-it and place it yourself.
+calls no service manager, and it prints the commands that enable the unit. The unit is
+`<token>-<network>-<role>.service`: a user unit in `~/.config/systemd/user` by default. With
+`--system` the command writes nothing under `/etc`: it prints a system unit to save as
+`/etc/systemd/system/<unit>`. `--out DIR` writes the unit into a directory of your choice instead,
+so that you can read it and place it yourself.
 
-```sh expect="solar-solo-relay.service"
+```sh expect="solar-solo-relay.service" expect="Environment=CORE_PATH_DATA="
 mkdir -p ~/units
 heartwood service install --role relay --network solo --out ~/units
 cat ~/units/solar-solo-relay.service
@@ -753,33 +751,38 @@ The unit starts `<binary> <role> run --token=<token> --network=<network>` in the
 `Type=exec`, `Restart=always`, `KillSignal=SIGINT` and `TimeoutStopSec=30` (the node stops on
 SIGINT and gets 30 seconds to finish), `UMask=0077` and `NoNewPrivileges=yes`, and whichever
 sandboxing directives the host's systemd supports (in a user unit, only those that need no mount
-namespace). It sets `CORE_SERVICE_MANAGER=systemd`, which the node records at its start: under a
-unit, `heartwood <role> status` reports `online (systemd)`, and `stop` and `restart` refuse and name
-the `systemctl` command to use, so a stop never fights the manager. The binary's path in `ExecStart`
-is the real file of the binary you ran `service install` with, every symbolic link resolved: run it
-from the binary at its permanent place, and after an upgrade that puts the binary somewhere else,
-install the unit again. A link you repoint later does not change a unit that is already written.
+namespace). The binary's path in `ExecStart` is the real file of the binary you ran
+`service install` with, every symbolic link resolved: run it from the binary at its permanent
+place, and after an upgrade that puts the binary somewhere else, install the unit again. A link you
+repoint later does not change a unit that is already written.
 
-**The unit's environment.** A unit runs with the service manager's environment, not your shell's,
-and it names none of the instance's directories. If you set `CORE_PATH_*` or an `XDG_*_HOME`
-variable for the instance (section 4), add the same values to the unit as `Environment=` lines
-before you enable it, and keep them set wherever you run `heartwood` commands for the instance.
-Otherwise the node under the unit uses the default directories, with another database, an empty
-signing record and another lock, and `status`, `stop` and `start` in your shell do not see it: the
-lock then keeps no second copy of the role, with the same keys, from starting. Stop a role you
-started with `start` before you enable its unit.
+**The unit's directories.** The unit names the instance's five directories as `CORE_PATH_*`
+`Environment=` lines, as `service install` resolved them in your shell, with your `CORE_PATH_*`
+and `XDG_*_HOME` values (section 4). The node under the unit therefore uses the same database,
+signing record and lock as the `heartwood` commands you run from that shell, whatever the service
+manager's own environment holds. If you move a directory later, install the unit again. Stop a
+role you started with `start` before you enable its unit: the unit's node refuses to start while
+it runs.
 
-**Temporary files.** A system unit carries `PrivateTmp=yes` where the host's systemd supports it,
-so the node under it has a temporary directory of its own: the marker files that `state clear` and
-`pool clear` leave in the instance's temporary directory (section 18) do not reach it. To use those
-commands on such a node, stop the unit, run the command, start the relay once in a terminal with
-`heartwood relay run` until it is in sync (that start reads the marker), stop it, and start the
-unit again. A user unit shares your temporary directory.
+**The service manager.** The unit sets `CORE_SERVICE_MANAGER=systemd` and `CORE_SERVICE_UNIT` to
+its own name, which the node records at its start. Under a unit, `heartwood <role> status` reports
+`online (systemd)`, `top` lists the node, and `stop`, `restart` and `kill` refuse and name the
+`systemctl` command to use (with the name the unit was saved under), so a stop never fights the
+manager.
+
+**A system unit** carries a `User=` line with the account that ran `service install`, whose
+directories the unit names. Run `heartwood service install --system` as the node's own account, not
+as root: it writes nothing under `/etc`, so it needs no root. A node runs as a normal user, never as
+root.
+
+**Temporary files.** No unit gets a private `/tmp`, so the marker files that `state clear` and
+`pool clear` leave in the instance's temporary directory (section 18) reach the relay under the
+unit at its next start: restart the unit after either command.
 
 **Output.** Under a unit the node's output goes to the journal: read it with
 `journalctl --user -u <unit>` (`journalctl -u <unit>` for a system unit). `heartwood <role> log`
-reads only what a role started with `start` printed; the node's own log file (section 17) is
-written either way.
+names that command for a node under a unit; the node's own log file (section 17) is written either
+way.
 
 Check the unit before you install it, where `systemd-analyze` exists. It exits 0 even on a key it
 does not know or a value it cannot read (systemd then ignores that line), so read what it prints:
@@ -815,9 +818,11 @@ systemctl --user daemon-reload
 ```
 
 `service uninstall` removes the unit file from `~/.config/systemd/user` (from `DIR` with
-`--out DIR`). Disable the unit first: `systemctl --user disable` fails on a unit whose file is
-gone, which leaves the node running and the unit enabled. If that happened, stop the unit by name
-(`systemctl --user stop <unit>`), install the unit again, disable it, and then uninstall it.
+`--out DIR`, and it then names a copy you placed in `~/.config/systemd/user`, which stays). It
+keeps a unit that is still enabled or whose node still runs, exits with status 1 and prints the
+steps above: `systemctl --user disable` fails on a unit whose file is gone, which would leave the
+node running and the unit enabled. With `--system` and no `--out` it removes nothing and prints the
+steps for `/etc/systemd/system`.
 
 ## 14. Ports and firewall
 
@@ -920,7 +925,7 @@ Each role has the same commands.
 Replace `relay` with `forger` or `core` for the other roles. Add `--token` and `--network` unless
 `config.json` names them. `start` refuses a role that already runs for that token and network
 ("... is already running"): a lock file in the instance's data directory prevents a second copy
-that uses the same data directory (section 13 says what a unit needs for that). The relay and the forger refuse to
+that uses the same data directory, as a unit's node does (section 13). The relay and the forger refuse to
 start while the core role of the same instance runs, and the core role refuses while either does.
 To keep a started role in the foreground use `--daemon=false`, or use `run`. An unknown flag is an
 error, with a usage line and exit status 2.
@@ -963,7 +968,8 @@ ls ~/.local/state/solar-core/guide
 ```
 
 `heartwood <role> log` reads the captured output of a role started with `start`, not the node's
-own log file; a node under a systemd unit prints to the journal instead (section 13). The forms
+own log file; a node under a systemd unit prints to the journal instead, and `log` names the
+`journalctl` command for it (section 13). The forms
 below are shown, not run by the check:
 
 ```text
@@ -1013,8 +1019,7 @@ record.
 - `heartwood state clear` makes the relay rebuild its state from its stored blocks, from the first
   block, at its next start. `heartwood pool clear` empties the transaction pool at the next start.
   Both ask first; `--force` skips the question. Both leave a marker in the instance's temporary
-  directory, which a relay under a system unit does not see (section 13): start such a relay once
-  with `heartwood relay run` instead.
+  directory, which the relay reads at its next start, under a unit too (section 13).
 - `heartwood snapshot rollback --height H` rolls a stopped relay's store back to the last block of
   the round before height `H` (`--number N` counts N blocks down from the tip); the relay syncs
   the rest from its peers.

@@ -149,8 +149,8 @@ Usage:
   difftest scenario compare DIR [--suite NAME]
                                   a suite's reference and Heartwood runs of one seed (DIR's
                                   NAME-reference and NAME-heartwood), side by side
-  difftest gate record|ledger|s1|coverage|register ARG...
-                                  the gate records, the cumulative ledger, the S1 record's
+  difftest gate record|ledger|baseline|coverage|register ARG...
+                                  the gate records, the cumulative ledger, the baseline record's
                                   table, the coverage rows and the register's checks
   difftest p2p compare RUN_DIR --left NODE --right NODE
                                   the reference-client probe's records of two relays of a live
@@ -174,7 +174,7 @@ Usage:
 
 --strict, with any command that compares (run, oracle replay, store crash, forger crash, network
 generate, live check, live await, live resources, api compare, p2p compare, scenario run,
-scenario compare, gate s1): a case that was skipped or has no Rust implementation fails the run too, as
+scenario compare, gate baseline): a case that was skipped or has no Rust implementation fails the run too, as
 a failed case does; the Makefile's gate targets pass it.
 
 ORACLE, where the reference runs (the flags win over the environment):
@@ -788,12 +788,12 @@ pub fn parse(args: &[String]) -> Result<Command> {
             let verb = match *verb {
                 "record" => GateVerb::Record,
                 "ledger" => GateVerb::Ledger,
-                "s1" => GateVerb::S1,
+                "baseline" => GateVerb::Baseline,
                 "coverage" => GateVerb::Coverage,
                 "register" => GateVerb::Register,
                 other => {
                     return Err(usage(format!(
-                        "unknown gate command {other}: record, ledger, s1, coverage or register"
+                        "unknown gate command {other}: record, ledger, baseline, coverage or register"
                     )));
                 }
             };

@@ -12,6 +12,12 @@ TimeoutStopSec=30
 UMask=0077
 NoNewPrivileges=yes
 Environment=CORE_SERVICE_MANAGER=systemd
+Environment=CORE_SERVICE_UNIT=%n
+Environment=CORE_PATH_CONFIG=/srv/node/.config/node1-core/devnet
+Environment=CORE_PATH_DATA=/srv/node/.local/share/node1-core/devnet
+Environment=CORE_PATH_CACHE=/srv/node/.cache/node1-core/devnet
+Environment=CORE_PATH_LOG=/srv/node/.local/state/node1-core/devnet
+Environment=CORE_PATH_TEMP=/tmp/node/node1-core/devnet
 
 [Install]
 WantedBy=default.target

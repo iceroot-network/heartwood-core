@@ -10,7 +10,9 @@
       ],
       "sources": [
         "the forger's log",
-        "the relay's API"
+        "the relay's API",
+        "the configuration",
+        "the process table"
       ],
       "rules": {
         "pass": "No refusal at our slots in the window: the forger logs a refusal at its own slot when the relay's network state forbids forging.",
@@ -44,13 +46,14 @@
         "the forger's log",
         "the relay's log",
         "the socket table",
-        "the process table"
+        "the process table",
+        "the configuration"
       ],
       "rules": {
         "pass": "The forger is linked to a relay at a loopback address and attests without warnings.",
         "warn": "Lines of the forger not attesting the relay's status in the window; the forger linked to a relay at a non-loopback address (the forger does not poll such a relay at all, so no line is logged: the socket table shows it); more attestation session replacements than forger starts; or sessions that take turns in the relay's log while the socket table does not show two forger connections.",
         "fail": "The forger runs with no link to any relay; or attestation sessions that take turns while the socket table shows two connections from those loopback addresses to this relay's P2P port.",
-        "unknown": "The forger's configuration or its sockets cannot be read, or the forger does not run.",
+        "unknown": "The forger's configuration or its sockets cannot be read, or the forger does not run; or, with no finding from the socket table, the forger's log cannot be read, or the relay's log cannot be read while a relay runs on this host.",
         "skipped": "No forger runs on this host."
       },
       "advice": {

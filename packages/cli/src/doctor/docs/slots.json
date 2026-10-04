@@ -38,28 +38,33 @@
       "sources": [
         "the relay's store",
         "the forger's log",
-        "the relay's API"
+        "the relay's API",
+        "the signing record",
+        "the configuration",
+        "the process table"
       ],
       "rules": {
-        "pass": "No slot of ours missed in the last 5 rounds, fewer than 1% missed over the window once it holds 100 or more of our slots, and no block the forger logged as forged that the chain holds with another generator.",
+        "pass": "With fewer than 100 of our slots, the report says the missed-slot percentage was not evaluated and gives the count and minimum. No slot of ours missed in the last 5 rounds, fewer than 1% missed over the window once it holds 100 or more of our slots, and no block the forger logged as forged that the chain holds with another generator.",
         "warn": "One or two slots missed in the last 5 rounds; 1% or more missed over the window (with 100 or more of our slots); or one block the forger logged as forged that the chain holds with another generator or not at all.",
         "fail": "Our last 2 slots both missed; 3 or more missed in the last 5 rounds; or two or more blocks the forger logged as forged that the chain does not hold as ours.",
         "unknown": "The relay's store (read only while the relay runs) or the chain definition cannot be read, the store's row cap cut the window, or no delegate of ours is known. The store is read from its own tip, so the relay's API may be off; it is read for at most the latest 4,900 blocks, so a longer window is judged on those.",
         "skipped": "No forger runs on this host."
       },
       "advice": {
-        "none": "No slot missed in the window ({slots} of our slots checked).",
-        "cause-quorum": "Slot at {time} missed by {delegate}: the forger found no quorum (see quorum.forging-allowed).",
-        "cause-not-running": "Slot at {time} missed by {delegate}: the forger was not running (see process.roles and forger.start-errors).",
-        "cause-late": "Slot at {time} missed by {delegate}: the forger left less than 2,000 ms to forge, or its clock refused the slot (see clock.symptoms).",
-        "cause-not-on-chain": "Slot at {time} missed by {delegate}: the forger signed a block at height {height}, but the chain does not hold it: the relay or the network refused or lost it (see forger.link-history and the relay's log at that time).",
-        "cause-none": "Slot at {time} missed by {delegate}: the forger did not act in this slot.",
-        "cause-unread": "Slot at {time} missed by {delegate}: the forger's log cannot be read, so the cause is not known.",
+        "none": "No slot missed in the window ({slots} of our slots checked).{percentage}",
+        "cause-quorum": "Slot at {time} missed by {delegate}: the forger found no quorum (see quorum.forging-allowed).{percentage}",
+        "cause-not-running": "Slot at {time} missed by {delegate}: the forger was not running (see process.roles and forger.start-errors).{percentage}",
+        "cause-late": "Slot at {time} missed by {delegate}: the forger left less than 2,000 ms to forge, or its clock refused the slot (see clock.symptoms).{percentage}",
+        "cause-not-on-chain": "Slot at {time} missed by {delegate}: the forger signed a block at height {height}, but the chain does not hold it: the relay or the network refused or lost it (see forger.link-history and the relay's log at that time).{percentage}",
+        "cause-none": "Slot at {time} missed by {delegate}: the forger did not act in this slot.{percentage}",
+        "cause-unread": "Slot at {time} missed by {delegate}: the forger's log cannot be read, so the cause is not known.{percentage}",
         "not-on-chain": "The forger logged {count} forged blocks that the chain holds with another generator or not at all, the last at height {height}. Either this forger signs outside its own slot, or the network refused its blocks. See forger.link-history and the relay's log at that time.",
         "no-delegates": "No delegate of this forger is known, so its slots are not checked. Name it with --delegate <name>."
       },
       "words": {
-        "unnamed": "a delegate"
+        "unnamed": "a delegate",
+        "not-evaluated": " The missed-slot percentage was not evaluated: the window holds {slots} of our slots, fewer than the {minimum_slots}-slot minimum.",
+        "evaluated": ""
       },
       "docs": "https://docs.iceroot.com/validators/doctor/#slots-missed"
     }

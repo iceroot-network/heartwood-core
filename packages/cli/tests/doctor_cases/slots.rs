@@ -759,3 +759,64 @@ fn a_chain_definition_at_the_limits_of_its_numbers_gives_findings_and_no_panic()
         }
     }
 }
+
+#[test]
+fn missed_percentage_reports_when_it_was_not_evaluated() {
+    use heartwood_cli::doctor::render::{render_json, render_text};
+    use heartwood_cli::doctor::report::{Fact, HostIdentity, Report, ReportScope};
+    use heartwood_cli::doctor::{DoctorProfile, Redaction};
+
+    for (count, missed, status) in [
+        (92, vec![], Status::Pass),
+        (100, vec![], Status::Pass),
+        (92, vec![60], Status::Warn),
+        (100, vec![300], Status::Warn),
+    ] {
+        let forged: Vec<i64> = (0..count - missed.len())
+            .map(|n| 7 + n as i64 * 53)
+            .collect();
+        let view = missing(&missed, &forged, vec![]);
+        let findings = run("slots.missed", &view, &DoctorOptions::default());
+        assert_eq!(findings.len(), 1);
+        let finding = &findings[0];
+        assert_eq!(finding.status, status);
+        let report = Report {
+            created_at_ms: NOW_MS,
+            tool: view.build.clone(),
+            scope: ReportScope {
+                token: "solar".into(),
+                network: "testnet".into(),
+                roles: vec![Role::Forger],
+                profile: DoctorProfile::Default,
+                window_minutes: 60,
+            },
+            redaction: Redaction::default(),
+            host: view.host.clone(),
+            identity: HostIdentity::default(),
+            findings: findings.clone(),
+        };
+        let json: serde_json::Value = serde_json::from_str(&render_json(&report)).unwrap();
+        let facts = &json["findings"][0]["facts"];
+        let text = render_text(&report, false);
+        if count < 100 {
+            assert_eq!(facts["percentage"], "not-evaluated");
+            assert_eq!(facts["slots"], count);
+            assert_eq!(facts["minimum_slots"], 100);
+            assert!(text.contains(&format!(
+                "The missed-slot percentage was not evaluated: the window holds {count} of our slots, fewer than the 100-slot minimum."
+            )));
+            assert!(!text.contains('{'));
+            assert!(
+                finding
+                    .facts
+                    .contains(&("percentage", Fact::Word("not-evaluated")))
+            );
+            assert!(finding.facts.contains(&("slots", Fact::Int(count as i64))));
+            assert!(finding.facts.contains(&("minimum_slots", Fact::Int(100))));
+        } else {
+            assert!(!text.contains("not evaluated"));
+            assert!(facts.get("percentage").is_none());
+            assert!(!finding.facts.iter().any(|(name, _)| *name == "percentage"));
+        }
+    }
+}

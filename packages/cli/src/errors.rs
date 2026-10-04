@@ -54,7 +54,8 @@ pub enum ProcessError {
         /// The instance's name.
         name: String,
     },
-    /// `stop` or `restart` of a role that a service manager runs.
+    /// `stop`, `restart` or `kill` of a role that a service manager runs, or its `log`, which
+    /// names the journal's command.
     #[error("{name} runs under {manager}: use {command}")]
     Managed {
         /// The instance's name.

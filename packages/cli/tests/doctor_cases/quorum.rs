@@ -10,7 +10,7 @@ use heartwood_cli::doctor::seams::{RoleState, Subject};
 use heartwood_cli::doctor::sources::api::ApiPeers;
 use heartwood_cli::doctor::sources::logs::LineKind;
 use heartwood_cli::doctor::sources::procfs::{SocketRow, TcpState};
-use heartwood_cli::doctor::view::{Reason, Source};
+use heartwood_cli::doctor::view::{Reason, RolePresence, Source};
 use heartwood_kernel::log::Level;
 
 use super::Case;
@@ -207,9 +207,7 @@ pub fn cases() -> Vec<Case> {
 
     // quorum.attestation
     let check = "quorum.attestation";
-    let mut remote = view();
-    remote.forger_config = Ok(forger(&["203.0.113.7:6002", "127.0.0.1:6002"]));
-    let remote = linked(remote, &["203.0.113.7:6002"]);
+    let remote = remote_view();
     let not_attesting = LineKind::NotAttesting { far_slot: true };
     let mut stopped = view();
     stopped.role_inodes.insert(
@@ -234,6 +232,18 @@ pub fn cases() -> Vec<Case> {
             "attestation: no link",
             check,
             linked(view(), &[]),
+            &[(F, Status::Fail, "no-link")],
+        ),
+        case(
+            "attestation: linked to another host's relay, no relay on this host",
+            check,
+            forger_only(remote_view()),
+            &[(F, Status::Warn, "remote-relay")],
+        ),
+        case(
+            "attestation: no link, no relay on this host",
+            check,
+            forger_only(linked(view(), &[])),
             &[(F, Status::Fail, "no-link")],
         ),
         case(
@@ -288,6 +298,54 @@ pub fn cases() -> Vec<Case> {
     cases
 }
 
+/// A forger linked to a relay on another host.
+fn remote_view() -> FakeView {
+    let mut remote = view();
+    remote.forger_config = Ok(forger(&["203.0.113.7:6002", "127.0.0.1:6002"]));
+    linked(remote, &["203.0.113.7:6002"])
+}
+
+/// The view with only a forger on this host: no relay runs here, so it has no relay log.
+fn forger_only(mut view: FakeView) -> FakeView {
+    view.roles_present = Ok(RolePresence {
+        relay: false,
+        forger: true,
+    });
+    view.logs
+        .insert(Role::Relay, Err(unknown(Source::RelayLog, Reason::Missing)));
+    view
+}
+
+#[test]
+fn attestation_keeps_its_link_findings_when_a_log_cannot_be_read() {
+    let options = DoctorOptions::default();
+    let statuses = |view: &FakeView| -> Vec<(Status, String)> {
+        run("quorum.attestation", view, &options)
+            .iter()
+            .map(|f| (f.status, f.advice.key.to_string()))
+            .collect()
+    };
+    let warn = vec![(Status::Warn, "remote-relay".to_string())];
+    let fail = vec![(Status::Fail, "no-link".to_string())];
+    // No relay on this host: its log is not needed.
+    assert_eq!(statuses(&forger_only(remote_view())), warn);
+    assert_eq!(statuses(&forger_only(linked(view(), &[]))), fail);
+    // A relay here whose log cannot be read, or a forger log that cannot be read, leaves the
+    // findings from the socket table.
+    for (role, source) in [
+        (Role::Relay, Source::RelayLog),
+        (Role::Forger, Source::ForgerLog),
+    ] {
+        let denied = || Err(unknown(source, Reason::Denied));
+        let mut remote = remote_view();
+        remote.logs.insert(role, denied());
+        assert_eq!(statuses(&remote), warn, "{role:?}");
+        let mut none = linked(view(), &[]);
+        none.logs.insert(role, denied());
+        assert_eq!(statuses(&none), fail, "{role:?}");
+    }
+}
+
 #[test]
 fn sessions_taking_turns_are_a_warn_on_the_log_until_the_socket_table_shows_both_forgers() {
     let options = DoctorOptions::default();
@@ -315,5 +373,31 @@ fn sessions_taking_turns_are_a_warn_on_the_log_until_the_socket_table_shows_both
     assert!(
         findings.iter().all(|f| f.status != Status::Fail),
         "{findings:#?}"
+    );
+}
+
+#[test]
+fn attestation_requires_both_logs_but_allows_hidden_info() {
+    let options = DoctorOptions::default();
+    for role in Role::SPLIT {
+        let mut view = linked(view(), &["127.0.0.1:6002"]);
+        let source = if role == Role::Relay {
+            Source::RelayLog
+        } else {
+            Source::ForgerLog
+        };
+        view.logs.insert(role, Err(unknown(source, Reason::Denied)));
+        let findings = run("quorum.attestation", &view, &options);
+        assert_eq!(findings[0].status, Status::Unknown, "{role:?}");
+    }
+    let mut view = linked(view(), &["127.0.0.1:6002"]);
+    for role in Role::SPLIT {
+        let mut window = log(role, Vec::new());
+        window.file_level = Some(Level::Warning);
+        view.logs.insert(role, Ok(window));
+    }
+    assert_eq!(
+        run("quorum.attestation", &view, &options)[0].status,
+        Status::Pass
     );
 }

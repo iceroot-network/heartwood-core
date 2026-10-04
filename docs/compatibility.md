@@ -1317,7 +1317,8 @@ and nix are used by this crate only (`make layers`).
   default) across its networks, with `status`'s columns (ID, Name, Version, Status, Uptime,
   Restarts, CPU, RAM), from an index each supervisor keeps in the token's data root
   (`instances/<name>.json`, written after the supervisor's lock is held and removed at its stop;
-  liveness comes from the held lock, never from the entry); with nothing running it says "No
+  a node a service manager starts writes its own; liveness comes from the held lock and, for such
+  a node, its manager record, never from the entry); with nothing running it says "No
   processes are running" and exits with 1. `env get|list|set|paths` read an instance's `.env`
   with the node's own parser; `env set` writes the file again as `NAME=value` lines in the parsed
   order, comments and blank lines dropped, through a temporary file renamed over the file with the
@@ -1861,22 +1862,23 @@ API, which the split roles avoid; it is optional, no default configuration or co
 `heartwood service install --role ROLE [--token T] [--network N] [--system] [--out DIR]` writes a
 systemd unit named `<token>-<network>-<role>.service` and prints the commands that enable it. It
 calls no service manager. A user unit goes to `~/.config/systemd/user`; `--system` prints a system
-unit to save under `/etc/systemd/system` and writes nothing there (the unit has no `User=` line,
-which the operator adds); `--out` writes the unit into a directory of your choice. The unit
-runs `<binary> <role> run --token=<t> --network=<n>` in the foreground, with `Type=exec`,
+unit to save under `/etc/systemd/system` and writes nothing there (the unit's `User=` line names
+the account that ran the command); `--out` writes the unit into a directory of your choice. The
+unit runs `<binary> <role> run --token=<t> --network=<n>` in the foreground, with `Type=exec`,
 `Restart=always`, `KillSignal=SIGINT`, `TimeoutStopSec=30`, `UMask=0077`, `NoNewPrivileges=yes`,
-`StartLimitIntervalSec=10`, `StartLimitBurst=5` and `Environment=CORE_SERVICE_MANAGER=systemd`,
-and only the sandboxing directives the host's systemd supports. A node whose environment names a
-manager records it at its start (`<data>/run/<role>.manager.json`, written through a temporary
-file in the held run directory, a link in its place refused), and `status` then reports `online
-(systemd)` while `stop` refuses and names the manager's command, so a stop never fights the
-manager. Both hold only where the unit and the commands use one data directory: the unit names
-none of the instance's directories and runs with the service manager's environment, so the
-operator guide has any `CORE_PATH_*` or `XDG_*_HOME` value added to the unit as an `Environment=`
-line, and a role started with `start` stopped before its unit is enabled. A system unit's
-`PrivateTmp=yes` gives its node a temporary directory of its own, which the marker files of `pool
-clear` and `state clear` do not reach; the guide has such a relay started once with `relay run`
-for them. `service uninstall` removes the unit file; the guide has the unit disabled first, since
+`StartLimitIntervalSec=10`, `StartLimitBurst=5`, `Environment=CORE_SERVICE_MANAGER=systemd`,
+`Environment=CORE_SERVICE_UNIT=%n` and one `Environment=CORE_PATH_<KIND>=<dir>` line for each of
+the instance's five directories as the command resolved them, and only the sandboxing directives
+the host's systemd supports, never a private `/tmp` (the marker files of `pool clear` and `state
+clear` are in the temp directory, which the relay under the unit must see). A node whose
+environment names a manager records it at its start (`<data>/run/<role>.manager.json`, written
+through a temporary file in the held run directory, a link in its place refused) and writes its
+entry in the token's instance index, and `status` then reports `online (systemd)`, `top` lists it,
+`stop`, `restart` and `kill` refuse and name the manager's command, so a stop never fights the
+manager, and `log` names the journal's command. Since the unit names the directories, the unit's
+node and the commands use one data directory, one lock and one signing record.
+`service uninstall` keeps a unit that is enabled (its link in the target's `.wants` directory) or
+whose node runs, and names `systemctl disable --now` as the step before it, since
 `systemctl disable` fails on a unit whose file is gone. There is no launchd variant: nodes run on
 Linux only. The unit's text is checked with `systemd-analyze verify` where it is installed.
 
@@ -1999,8 +2001,14 @@ checked on the entries or shown by the oracle's answer:
   stored rows) is equal;
 - after the session changed the online record, an entry refused as offline on one side only (once
   the entries of a removed type and the JSON votes given as an array or a string are left out): the
-  reference's view of the sender kept the delegate's wallet as it copied it before the change. The
-  rest of the session is not compared;
+  reference's view of the sender kept the delegate's wallet as it copied it before the change. A
+  later entry of the same sender in that step (the sender read from the entry itself) may differ
+  too, as a knock-on of the sender's earlier offline-refused transactions that the other side
+  admitted and its view applied: in the same lists and with an error of the same type on both
+  sides, a balance refusal whose balance figures differ by exactly those transactions' fees and
+  amounts, or a nonce refusal whose sender nonce differs by exactly their number, the side that
+  applied them having the lower balance and the higher nonce.
+  The rest of the session is not compared;
 - a count in a message that the oracle's default locale groups otherwise (the oracle notes its
   locale; in the image and on the maintainers' machines it is English, so no case shows it).
 

@@ -1,8 +1,8 @@
 //! The gate record: what one gate command ran, on which head and paths, and what it found. The
 //! Makefile's gate targets write one per run through `tools/gate-record.sh` and `difftest gate
-//! record`, as `<started>-<target>.json` in the records' directory. A record counts for the baseline
-//! record at a later head when its head is an ancestor of it and none of its tested paths changed
-//! since.
+//! record`, as `<started>-<target>.json` in the records' directory. A record counts for the
+//! baseline record at a later head when its head is an ancestor of it and none of its tested paths
+//! changed since.
 //!
 //! ```json
 //! {"format": "heartwood-gate-record/1", "target": "l1", "command": "target/debug/difftest run l1 ...",

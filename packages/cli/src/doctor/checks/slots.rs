@@ -304,6 +304,24 @@ pub fn missed(input: &CheckInput<'_>) -> Vec<Finding> {
         if findings.is_empty() {
             findings.push(out.to(status, Chain, "none", vec![("slots", int(taken.len()))]));
         }
+        for finding in &mut findings {
+            let percentage = if taken.len() < RATE_SLOTS {
+                let values = vec![
+                    ("percentage", Fact::Word("not-evaluated")),
+                    ("slots", int(taken.len())),
+                    ("minimum_slots", int(RATE_SLOTS)),
+                ];
+                for value in &values {
+                    if !finding.facts.iter().any(|(name, _)| *name == value.0) {
+                        finding.facts.push(value.clone());
+                    }
+                }
+                values
+            } else {
+                vec![("percentage", Fact::Word("evaluated"))]
+            };
+            finding.advice.values.extend(percentage);
+        }
         findings.extend(log.and_then(|log| lost(out, &ours, &store, log)));
         Ok(findings)
     })
