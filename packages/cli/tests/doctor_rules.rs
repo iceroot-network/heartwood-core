@@ -20,7 +20,8 @@ struct Rule {
 const RULES: [Rule; 7] = [
     Rule {
         what: "external run-file readers only through HostProcesses",
-        words: &["crate::process::", "crate::supervisor::"],
+        // A grouped import could name either module unseen, so none is allowed.
+        words: &["crate::process", "crate::supervisor", "crate::{"],
         allowed_in: &["mod.rs"],
     },
     Rule {
@@ -102,6 +103,46 @@ fn holds(line: &str, word: &str) -> bool {
     })
 }
 
+/// The lines of the doctor's file `name` (relative to `src/doctor`), whose text is `text`, that
+/// break a rule.
+fn broken_in(name: &str, text: &str) -> Vec<String> {
+    let mut broken = Vec::new();
+    for (number, line) in text.lines().enumerate() {
+        let code = line.trim_start();
+        if code.starts_with("//") {
+            continue;
+        }
+        for rule in &RULES {
+            if rule.allowed_in.contains(&name) {
+                continue;
+            }
+            for word in rule.words {
+                if holds(code, word) {
+                    broken.push(format!("{name}:{}: {} ({word})", number + 1, rule.what));
+                }
+            }
+        }
+        if holds(code, "unsafe") {
+            broken.push(format!("{name}:{}: unsafe", number + 1));
+        }
+    }
+    broken
+}
+
+#[test]
+fn the_run_file_rule_catches_a_module_import_and_a_grouped_one() {
+    for line in [
+        "use crate::process;",
+        "use crate::supervisor;",
+        "use crate::process as p;",
+        "use crate::{supervisor::state::SupervisorState};",
+        "let state = crate::supervisor::state::SupervisorState::read(path)?;",
+    ] {
+        assert!(!broken_in("checks/host.rs", line).is_empty(), "{line}");
+        assert!(broken_in("mod.rs", line).is_empty(), "{line}");
+    }
+}
+
 #[test]
 fn the_doctor_reaches_files_sockets_and_processes_only_through_its_seams() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/doctor");
@@ -117,25 +158,7 @@ fn the_doctor_reaches_files_sockets_and_processes_only_through_its_seams() {
             .to_string_lossy()
             .into_owned();
         let text = fs::read_to_string(file).unwrap();
-        for (number, line) in text.lines().enumerate() {
-            let code = line.trim_start();
-            if code.starts_with("//") {
-                continue;
-            }
-            for rule in &RULES {
-                if rule.allowed_in.contains(&name.as_str()) {
-                    continue;
-                }
-                for word in rule.words {
-                    if holds(code, word) {
-                        broken.push(format!("{name}:{}: {} ({word})", number + 1, rule.what));
-                    }
-                }
-            }
-            if holds(code, "unsafe") {
-                broken.push(format!("{name}:{}: unsafe", number + 1));
-            }
-        }
+        broken.extend(broken_in(&name, &text));
     }
     assert!(broken.is_empty(), "{broken:#?}");
 }
