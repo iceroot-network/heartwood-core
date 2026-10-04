@@ -1987,6 +1987,13 @@ mod tests {
             theirs("ERR_APPLY", &balance("t", 2001, 999)),
             ours("ERR_APPLY", &balance("t", 2000, 1000)),
         );
+        // A different amount needed that the balances' rounding would hide at this scale.
+        let big = 127_804_863_467_630_136;
+        fails(
+            &entries,
+            theirs("ERR_APPLY", &balance("t", 2032, big - 1)),
+            ours("ERR_APPLY", &balance("t", 2000, big)),
+        );
         fails(
             &entries,
             theirs("ERR_APPLY", &nonce("t", 14, 12)),
