@@ -112,14 +112,27 @@ pub fn attestation(input: &CheckInput<'_>) -> Vec<Finding> {
             }
             Some(_) => {}
         }
-        let forger_log = view.log(Role::Forger)?;
-        let relay_log = view.log(Role::Relay)?;
-        let events = |role| {
-            if role == Role::Forger {
-                forger_log.events.as_slice()
+        // The relay's log is needed only when a relay runs on this host: a forger may drive a
+        // relay on another machine. A log that cannot be read leaves the socket table's findings;
+        // with none, the answer is unknown.
+        let relay_here = view.roles_present()?.has(Role::Relay);
+        let logs = view.log(Role::Forger).and_then(|forger| {
+            let relay = if relay_here {
+                Some(view.log(Role::Relay)?)
             } else {
-                relay_log.events.as_slice()
-            }
+                None
+            };
+            Ok((forger, relay))
+        });
+        let (forger_log, relay_log) = match logs {
+            Ok(logs) => logs,
+            Err(unknown) if findings.is_empty() => return Err(unknown),
+            Err(_) => return Ok(findings),
+        };
+        let events = |role| match (role, relay_log) {
+            (Role::Forger, _) => forger_log.events.as_slice(),
+            (_, Some(relay_log)) => relay_log.events.as_slice(),
+            (_, None) => &[][..],
         };
         let refusing = |e: &&LogEvent| matches!(e.kind, K::NotAttesting { .. });
         let refused: Vec<&LogEvent> = events(Role::Forger).iter().filter(refusing).collect();
