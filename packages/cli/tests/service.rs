@@ -16,7 +16,8 @@ use heartwood_cli::process::{self};
 use heartwood_cli::process_table::render;
 use heartwood_cli::seams::{Instance, Role, SupervisedStatus};
 use heartwood_cli::service::{
-    Manager, install, install_text, render as render_unit, render_for, uninstall, uninstall_text,
+    Manager, ServiceError, install, install_text, render as render_unit,
+    render_for as render_for_account, uninstall, uninstall_text,
 };
 use heartwood_cli::supervisor::manager::{MANAGER_VARIABLE, ManagerRecord};
 use heartwood_cli::supervisor::signals::{is_locked, record_manager, take_lock};
@@ -25,6 +26,38 @@ use heartwood_kernel::paths::Paths;
 
 /// The program every golden unit runs.
 const BINARY: &str = "/usr/local/bin/heartwood";
+
+/// The account every system unit here runs as.
+const ACCOUNT: &str = "node";
+
+/// The unit for a host whose systemd has `version`, a system unit running as [`ACCOUNT`].
+fn render_for(
+    instance: &Instance,
+    role: Role,
+    manager: Manager,
+    binary: &Path,
+    version: Option<u32>,
+) -> Result<String, ServiceError> {
+    render_for_account(instance, role, manager, binary, version, ACCOUNT)
+}
+
+/// The instance of the golden units: the default directories of an account whose home is
+/// `/srv/node`.
+fn golden_instance(role: Role) -> Instance {
+    let home = Path::new("/srv/node");
+    Instance {
+        token: "node1".into(),
+        network: "devnet".into(),
+        role,
+        paths: Paths {
+            config: home.join(".config/node1-core/devnet"),
+            data: home.join(".local/share/node1-core/devnet"),
+            cache: home.join(".cache/node1-core/devnet"),
+            log: home.join(".local/state/node1-core/devnet"),
+            temp: PathBuf::from("/tmp/node/node1-core/devnet"),
+        },
+    }
+}
 
 fn scratch(test: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
@@ -57,11 +90,10 @@ fn golden(name: &str) -> String {
 
 #[test]
 fn units_equal_their_golden_files() {
-    let root = scratch("golden");
     let binary = Path::new(BINARY);
     let user = |role| {
         render_for(
-            &instance(&root, role),
+            &golden_instance(role),
             role,
             Manager::SystemdUser,
             binary,
@@ -70,7 +102,7 @@ fn units_equal_their_golden_files() {
     };
     let system = |role| {
         render_for(
-            &instance(&root, role),
+            &golden_instance(role),
             role,
             Manager::SystemdSystem,
             binary,
@@ -84,7 +116,7 @@ fn units_equal_their_golden_files() {
     );
     // A host whose systemd is not known gets no sandboxing at all.
     let core = render_for(
-        &instance(&root, Role::Core),
+        &golden_instance(Role::Core),
         Role::Core,
         Manager::SystemdUser,
         binary,
@@ -274,10 +306,11 @@ fn the_text_the_commands_print_names_the_commands_that_enable_and_disable_the_un
         "{said}"
     );
     assert!(said.contains("systemctl --user daemon-reload\nsystemctl --user enable --now node1-devnet-relay.service"), "{said}");
+    // A unit that is neither enabled nor running is removed, and the reload is what is left.
     let said = uninstall_text(&relay, Role::Relay, Manager::SystemdUser, Some(&out)).unwrap();
-    assert!(
-        said.contains("systemctl --user disable --now node1-devnet-relay.service"),
-        "{said}"
+    assert_eq!(
+        said,
+        "Removed node1-devnet-relay.service\nRun:\nsystemctl --user daemon-reload\n"
     );
     // A system unit with no directory is printed, and /etc is not written: the commands are
     // comments, so the text saved as the unit is still one.
@@ -291,10 +324,12 @@ fn the_text_the_commands_print_names_the_commands_that_enable_and_disable_the_un
         said.contains("# systemctl enable --now node1-devnet-relay.service\n"),
         "{said}"
     );
+    // Without a directory nothing is removed: the steps are printed in their order.
     let said = uninstall_text(&relay, Role::Relay, Manager::SystemdSystem, None).unwrap();
-    assert!(
-        said.contains("systemctl disable --now node1-devnet-relay.service"),
-        "{said}"
+    assert_eq!(
+        said,
+        "Run:\nsystemctl disable --now node1-devnet-relay.service\nthen remove \
+         /etc/systemd/system/node1-devnet-relay.service and run:\nsystemctl daemon-reload\n"
     );
 }
 
@@ -408,14 +443,32 @@ fn no_service_manager_is_called() {
     );
 }
 
-/// The environment a unit's `Environment=` lines give its process.
-fn unit_environment(unit: &str) -> HashMap<String, String> {
+/// The environment a unit's `Environment=` lines give its process, as systemd reads them: one
+/// assignment per line here, unquoted, its escapes undone and its specifiers expanded (`%n` is
+/// `name`, the unit's name, and `%%` a `%`).
+fn unit_environment(unit: &str, name: &str) -> HashMap<String, String> {
     let lines = unit
         .lines()
         .filter_map(|line| line.strip_prefix("Environment="));
+    let read = |pair: &str| {
+        let pair = match pair.strip_prefix('"').and_then(|p| p.strip_suffix('"')) {
+            Some(quoted) => {
+                let (mut out, mut chars) = (String::new(), quoted.chars());
+                while let Some(c) = chars.next() {
+                    out.push(if c == '\\' { chars.next().unwrap() } else { c });
+                }
+                out
+            }
+            None => pair.to_owned(),
+        };
+        pair.replace("%n", name).replace("%%", "%")
+    };
     lines
-        .filter_map(|pair| pair.split_once('='))
-        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .map(read)
+        .filter_map(|pair| {
+            let (k, v) = pair.split_once('=')?;
+            Some((k.to_owned(), v.to_owned()))
+        })
         .collect()
 }
 
@@ -433,7 +486,7 @@ fn under_a_unit_status_names_the_manager_and_stop_and_restart_refuse() {
 
     // The unit's own environment is what the node's start records.
     let unit = render_unit(&relay, Role::Relay, Manager::SystemdUser, Path::new(BINARY)).unwrap();
-    let vars = unit_environment(&unit);
+    let vars = unit_environment(&unit, "node1-devnet-relay.service");
     assert_eq!(
         vars.get(MANAGER_VARIABLE).map(String::as_str),
         Some("systemd")
@@ -443,6 +496,13 @@ fn under_a_unit_status_names_the_manager_and_stop_and_restart_refuse() {
     record_manager(&dir, &relay, &env).unwrap();
     let record = ManagerRecord::read(&relay.manager_path()).unwrap().unwrap();
     assert_eq!(record.unit, "node1-devnet-relay.service");
+    // The unit names itself, so a unit saved under another name is recorded as that one.
+    let renamed = unit_environment(&unit, "relay-a.service");
+    let renamed_env = |name: &str| renamed.get(name).cloned();
+    record_manager(&dir, &relay, &renamed_env).unwrap();
+    let record = ManagerRecord::read(&relay.manager_path()).unwrap().unwrap();
+    assert_eq!(record.unit, "relay-a.service");
+    record_manager(&dir, &relay, &env).unwrap();
 
     let row = process::status(&relay).unwrap();
     assert_eq!(row.status, SupervisedStatus::OnlineSystemd);
@@ -515,4 +575,211 @@ fn every_colon_spelling_of_service_is_its_spaced_form() {
         let colon = rewrite(args(&[&[colon][..], &more].concat()));
         assert_eq!(colon, args(&[spaced, &more].concat()), "{colon:?}");
     }
+}
+
+#[test]
+fn a_unit_names_every_directory_of_the_instance_it_was_installed_for() {
+    let root = scratch("paths");
+    let mut relay = instance(&root, Role::Relay);
+    // A data directory moved to another disk, with characters systemd would otherwise read.
+    relay.paths.data = root.join("ssd data/100% \"fast\"\\db");
+    for manager in [Manager::SystemdUser, Manager::SystemdSystem] {
+        let text = render_for(&relay, Role::Relay, manager, Path::new(BINARY), Some(255)).unwrap();
+        let vars = unit_environment(&text, "node1-devnet-relay.service");
+        let paths = &relay.paths;
+        for (kind, dir) in [
+            ("CONFIG", &paths.config),
+            ("DATA", &paths.data),
+            ("CACHE", &paths.cache),
+            ("LOG", &paths.log),
+            ("TEMP", &paths.temp),
+        ] {
+            let name = format!("CORE_PATH_{kind}");
+            assert_eq!(
+                vars.get(&name),
+                dir.to_str().map(str::to_owned).as_ref(),
+                "{name}\n{text}"
+            );
+        }
+    }
+    // A directory with a line break cannot start another setting: it is refused.
+    let mut odd = relay.clone();
+    odd.paths.log = root.join("log\nExecStartPre=/bin/evil");
+    let refused = render_for(
+        &odd,
+        Role::Relay,
+        Manager::SystemdUser,
+        Path::new(BINARY),
+        None,
+    );
+    assert!(refused.is_err(), "{refused:?}");
+}
+
+#[test]
+fn no_unit_hides_the_shared_temporary_directory_from_its_node() {
+    let root = scratch("private-tmp");
+    let relay = instance(&root, Role::Relay);
+    for manager in [Manager::SystemdUser, Manager::SystemdSystem] {
+        let text = render_for(&relay, Role::Relay, manager, Path::new(BINARY), Some(255)).unwrap();
+        // The markers of `state clear` and `pool clear` are in the instance's temp directory,
+        // which a private /tmp would hide from the relay.
+        for directive in [
+            "PrivateTmp",
+            "ProtectHome",
+            "TemporaryFileSystem",
+            "InaccessiblePaths",
+        ] {
+            assert!(
+                !text.contains(directive),
+                "{manager:?}: {directive}\n{text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn uninstall_keeps_a_unit_that_is_enabled_or_runs_and_says_to_disable_it_first() {
+    let root = scratch("uninstall-enabled");
+    let out = root.join("units");
+    let relay = instance(&root, Role::Relay);
+    let unit = "node1-devnet-relay.service";
+    let done = install(
+        &relay,
+        Role::Relay,
+        Manager::SystemdUser,
+        Path::new(BINARY),
+        Some(&out),
+    )
+    .unwrap();
+    // `systemctl --user enable` links the unit into its target's directory.
+    let wants = out.join("default.target.wants");
+    fs::create_dir_all(&wants).unwrap();
+    std::os::unix::fs::symlink(&done.path, wants.join(unit)).unwrap();
+    let refused = uninstall_text(&relay, Role::Relay, Manager::SystemdUser, Some(&out));
+    let said = refused.expect_err("an enabled unit is kept").to_string();
+    assert!(
+        done.path.exists(),
+        "the unit file was removed while enabled"
+    );
+    let disable = format!("systemctl --user disable --now {unit}");
+    assert!(said.contains(&disable), "{said}");
+    fs::remove_file(wants.join(unit)).unwrap();
+
+    // A node the unit runs (its lock held, its start's record naming the unit) keeps it too.
+    run_dir(&relay).unwrap();
+    let lock = take_lock(&relay.lock_path()).unwrap().unwrap();
+    let dir = RunDir::beside(&relay.lock_path()).unwrap();
+    let env = |name: &str| (name == MANAGER_VARIABLE).then(|| "systemd".to_owned());
+    record_manager(&dir, &relay, &env).unwrap();
+    let refused = uninstall_text(&relay, Role::Relay, Manager::SystemdUser, Some(&out));
+    let said = refused.expect_err("a running unit is kept").to_string();
+    assert!(done.path.exists() && said.contains(&disable), "{said}");
+    drop(lock);
+
+    // Disabled and stopped: the file goes, and only the reload is left to do.
+    let said = uninstall_text(&relay, Role::Relay, Manager::SystemdUser, Some(&out)).unwrap();
+    assert!(!done.path.exists());
+    assert!(said.contains("systemctl --user daemon-reload"), "{said}");
+    assert!(!said.contains("disable"), "{said}");
+}
+
+#[test]
+fn under_a_unit_kill_refuses_log_names_the_journal_and_top_lists_the_node() {
+    let root = scratch("managed-more");
+    let relay = instance(&root, Role::Relay);
+    run_dir(&relay).unwrap();
+    let lock = take_lock(&relay.lock_path()).unwrap().unwrap();
+    let mut bystander = Command::new("sleep").arg("30").spawn().unwrap();
+    fs::write(relay.pid_path(), bystander.id().to_string()).unwrap();
+    let dir = RunDir::beside(&relay.lock_path()).unwrap();
+    let env = |name: &str| (name == MANAGER_VARIABLE).then(|| "systemd".to_owned());
+    record_manager(&dir, &relay, &env).unwrap();
+    let unit = "node1-devnet-relay.service";
+
+    // `kill` would leave the manager to start the node again: it names the manager's stop.
+    let refused = process::kill(&relay).unwrap_err();
+    assert!(
+        matches!(refused, ProcessError::Managed { .. }),
+        "{refused:?}"
+    );
+    assert!(
+        refused
+            .to_string()
+            .contains(&format!("systemctl --user stop {unit}")),
+        "{refused}"
+    );
+    assert!(
+        bystander.try_wait().unwrap().is_none(),
+        "kill signalled the node"
+    );
+
+    // The node's output is in the journal, not in a capture.
+    let said = process::log(&relay, 5, false, false)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        said.contains(&format!("journalctl --user -u {unit}")),
+        "{said}"
+    );
+
+    // `top` lists a node a unit runs from its index entry, with no supervisor.
+    let index = root.join("index");
+    heartwood_cli::instance_index::write(&index, &relay).unwrap();
+    let rows = heartwood_cli::top::top("node1", &index).unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].status, SupervisedStatus::OnlineSystemd);
+    drop(lock);
+    assert!(heartwood_cli::top::top("node1", &index).unwrap().is_empty());
+    bystander.kill().unwrap();
+    bystander.wait().unwrap();
+}
+
+#[test]
+fn a_system_unit_runs_as_the_account_that_installed_it_and_a_user_unit_names_none() {
+    let root = scratch("account");
+    let relay = instance(&root, Role::Relay);
+    let unit = |manager, account| {
+        render_for_account(
+            &relay,
+            Role::Relay,
+            manager,
+            Path::new(BINARY),
+            None,
+            account,
+        )
+    };
+    let system = unit(Manager::SystemdSystem, "node-op").unwrap();
+    assert_eq!(
+        system.lines().filter(|l| l.starts_with("User=")).count(),
+        1,
+        "{system}"
+    );
+    assert!(system.lines().any(|l| l == "User=node-op"), "{system}");
+    let user = unit(Manager::SystemdUser, "node-op").unwrap();
+    assert!(!user.contains("User="), "{user}");
+    // An account given by its uid, as for one with no name, is written as it is.
+    assert!(
+        unit(Manager::SystemdSystem, "1000")
+            .unwrap()
+            .contains("\nUser=1000\n")
+    );
+    // A name systemd would not read, or one that would start another setting, is refused.
+    for odd in ["", "a b", "a\nExecStartPre=/bin/evil", "%n"] {
+        assert!(unit(Manager::SystemdSystem, odd).is_err(), "{odd:?}");
+    }
+    // `render` writes the account that runs it.
+    let rendered = render_unit(
+        &relay,
+        Role::Relay,
+        Manager::SystemdSystem,
+        Path::new(BINARY),
+    );
+    let rendered = rendered.unwrap();
+    let uid = nix::unistd::geteuid();
+    let name = nix::unistd::User::from_uid(uid).ok().flatten();
+    let expected = name.map_or_else(|| uid.to_string(), |user| user.name);
+    assert!(
+        rendered.lines().any(|l| l == format!("User={expected}")),
+        "{rendered}"
+    );
 }

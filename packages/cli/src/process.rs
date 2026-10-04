@@ -16,11 +16,13 @@
 //!   service manager ([`crate::supervisor::manager`]); `stop` and `restart` refuse such a node
 //!   and name the manager's command.
 //! - `log` prints the last lines of the output capture (15 by default), or of the error capture,
-//!   and follows it when asked.
+//!   and follows it when asked; for a node a service manager runs, whose output is in the
+//!   manager's journal, it names the journal's command instead.
 //!
 //! Every pid is signalled only while its lock is held, but for one process group: `kill` ends the
 //! group of the node that a supervisor in the foreground, killed a moment before, named last,
-//! which may not hold its lock yet ([`kill`]).
+//! which may not hold its lock yet ([`kill`]). `kill` refuses a node a service manager runs, as
+//! `stop` does: the manager would start it again.
 
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -165,6 +167,7 @@ pub fn stop(instance: &Instance) -> Result<(), ProcessError> {
 /// it named last, as it starts each node in a group of its own. Last, the node is killed through
 /// its own lock.
 pub fn kill(instance: &Instance) -> Result<(), ProcessError> {
+    refuse_managed(instance, "stop")?;
     let name = instance.name();
     let (supervisor_lock, node_lock) = (instance.supervisor_lock_path(), instance.lock_path());
     let seconds = EXIT_WAIT.as_secs();
@@ -284,7 +287,7 @@ pub fn status(instance: &Instance) -> Result<StatusRow, ProcessError> {
 /// The record of the service manager that runs `instance`: only while its node holds its lock
 /// without a supervisor, the record being the node's own ([`ManagerRecord`]), and a stale one
 /// naming nothing.
-fn managed_by(instance: &Instance) -> Result<Option<ManagerRecord>, ProcessError> {
+pub(crate) fn managed_by(instance: &Instance) -> Result<Option<ManagerRecord>, ProcessError> {
     let node = !is_locked(&instance.supervisor_lock_path())? && is_locked(&instance.lock_path())?;
     match node {
         true => ManagerRecord::read(&instance.manager_path()),
@@ -292,15 +295,24 @@ fn managed_by(instance: &Instance) -> Result<Option<ManagerRecord>, ProcessError
     }
 }
 
-/// Refuse `verb` (`stop` or `restart`) of a node that a service manager runs, naming the
-/// manager's command: the manager would start a stopped node again.
+/// Refuse the command of a node that a service manager runs, naming the manager's `verb`
+/// (`stop` or `restart`): the manager would start a stopped node again.
 fn refuse_managed(instance: &Instance, verb: &str) -> Result<(), ProcessError> {
+    refuse_managed_with(instance, |unit| {
+        format!("`systemctl --user {verb} {unit}` (`systemctl {verb} {unit}` for a system unit)")
+    })
+}
+
+/// Refuse the command of a node that a service manager runs, naming the command `command` gives
+/// for its unit.
+fn refuse_managed_with(
+    instance: &Instance,
+    command: impl FnOnce(&str) -> String,
+) -> Result<(), ProcessError> {
     let Some(record) = managed_by(instance)? else {
         return Ok(());
     };
-    let unit = record.unit;
-    let command =
-        format!("`systemctl --user {verb} {unit}` (`systemctl {verb} {unit}` for a system unit)");
+    let command = command(&record.unit);
     let (name, manager) = (instance.name(), record.manager.name());
     Err(ProcessError::Managed {
         name,
@@ -316,6 +328,11 @@ pub fn log(
     error: bool,
     follow: bool,
 ) -> Result<(), ProcessError> {
+    // A node a service manager runs prints to the manager's journal: a capture there is an
+    // earlier start's.
+    refuse_managed_with(instance, |unit| {
+        format!("`journalctl --user -u {unit}` (`journalctl -u {unit}` for a system unit)")
+    })?;
     let path = match error {
         true => instance.error_log_path(),
         false => instance.out_log_path(),
