@@ -766,8 +766,9 @@ it runs.
 
 **The service manager.** The unit sets `CORE_SERVICE_MANAGER=systemd` and `CORE_SERVICE_UNIT` to
 its own name, which the node records at its start. Under a unit, `heartwood <role> status` reports
-`online (systemd)`, `top` lists the node, and `stop` and `restart` refuse and name the `systemctl`
-command to use (with the name the unit was saved under), so a stop never fights the manager.
+`online (systemd)`, `top` lists the node, and `stop`, `restart` and `kill` refuse and name the
+`systemctl` command to use (with the name the unit was saved under), so a stop never fights the
+manager.
 
 **A system unit** carries a `User=` line with the account that ran `service install`, whose
 directories the unit names. Run `heartwood service install --system` as the node's own account, not

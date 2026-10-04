@@ -13,8 +13,8 @@
 //! - `status` gives the process table row: ID, Name, Version, Status, Uptime, Restarts, CPU, RAM.
 //!   The state file is trusted only while the supervisor's lock is held; a node whose lock is held
 //!   without one is `online (unsupervised)`, or `online (systemd)` when its start recorded a
-//!   service manager ([`crate::supervisor::manager`]); `stop` and `restart` refuse such a node
-//!   and name the manager's command.
+//!   service manager ([`crate::supervisor::manager`]); `stop`, `restart` and `kill` refuse such a
+//!   node and name the manager's command.
 //! - `log` prints the last lines of the output capture (15 by default), or of the error capture,
 //!   and follows it when asked; for a node a service manager runs, whose output is in the
 //!   manager's journal, it names the journal's command instead.

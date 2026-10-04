@@ -1874,12 +1874,12 @@ clear` are in the temp directory, which the relay under the unit must see). A no
 environment names a manager records it at its start (`<data>/run/<role>.manager.json`, written
 through a temporary file in the held run directory, a link in its place refused) and writes its
 entry in the token's instance index, and `status` then reports `online (systemd)`, `top` lists it,
-`stop` and `restart` refuse and name the manager's command, so a stop never fights the manager,
-and `log` names the journal's command. Since the unit names the directories, the unit's node and
-the commands use one data directory, one lock and one signing record. `service uninstall` keeps a
-unit that is enabled (its link in the target's `.wants` directory) or whose node runs, and names
-`systemctl disable --now` as the step before it, since `systemctl disable` fails on a unit whose
-file is gone. There is no launchd variant: nodes run on
+`stop`, `restart` and `kill` refuse and name the manager's command, so a stop never fights the
+manager, and `log` names the journal's command. Since the unit names the directories, the unit's
+node and the commands use one data directory, one lock and one signing record.
+`service uninstall` keeps a unit that is enabled (its link in the target's `.wants` directory) or
+whose node runs, and names `systemctl disable --now` as the step before it, since
+`systemctl disable` fails on a unit whose file is gone. There is no launchd variant: nodes run on
 Linux only. The unit's text is checked with `systemd-analyze verify` where it is installed.
 
 ```sh
