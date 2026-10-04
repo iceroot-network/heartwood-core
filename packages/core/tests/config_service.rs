@@ -43,7 +43,8 @@ impl Node {
             .env("HOME", &self.root);
         command
             .env_remove("CORE_SERVICE_MANAGER")
-            .env_remove("CORE_SERVICE_UNIT");
+            .env_remove("CORE_SERVICE_UNIT")
+            .env_remove("XDG_RUNTIME_DIR");
         for xdg in ["CONFIG", "DATA", "CACHE", "STATE"] {
             command.env_remove(format!("XDG_{xdg}_HOME"));
         }
@@ -271,6 +272,28 @@ fn service_writes_and_removes_a_unit_and_prints_the_commands() {
         .status
         .success()
     );
+    // With no directory the unit goes into the user manager's own; enabled there, uninstall
+    // keeps it, exits 1 and names the step that disables it first.
+    let placed = run(line(&["service", "install", "--role", "relay"], &[]));
+    assert!(placed.status.success(), "{}", text(&placed.stderr));
+    let own = node.root.join(".config/systemd/user");
+    let unit = own.join("t-devnet-relay.service");
+    assert!(unit.is_file());
+    let wants = own.join("default.target.wants");
+    fs::create_dir_all(&wants).unwrap();
+    std::os::unix::fs::symlink(&unit, wants.join("t-devnet-relay.service")).unwrap();
+    let kept = run(line(&["service", "uninstall", "--role", "relay"], &[]));
+    assert_eq!(kept.status.code(), Some(1), "{}", text(&kept.stderr));
+    assert!(
+        text(&kept.stderr).contains("systemctl --user disable --now t-devnet-relay.service"),
+        "{}",
+        text(&kept.stderr)
+    );
+    assert!(unit.is_file());
+    fs::remove_file(wants.join("t-devnet-relay.service")).unwrap();
+    let removed = run(line(&["service", "uninstall", "--role", "relay"], &[]));
+    assert!(removed.status.success(), "{}", text(&removed.stderr));
+    assert!(!unit.exists());
 }
 
 /// The environment a unit's `Environment=` lines give its process, as systemd reads them: one

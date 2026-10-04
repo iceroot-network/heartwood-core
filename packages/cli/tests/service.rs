@@ -68,6 +68,47 @@ fn scratch(test: &str) -> PathBuf {
     dir
 }
 
+/// Set in the child process that [`isolated`] runs: the test's scratch directory.
+const CHILD: &str = "HEARTWOOD_SERVICE_TEST_CHILD";
+
+/// The scratch directory of `test`, and whether this process runs the test's body. The first
+/// call makes the directory and runs `test` again in a child process whose HOME,
+/// `XDG_CONFIG_HOME` and `XDG_RUNTIME_DIR` lie inside it, with the variables `env` gives for
+/// that directory, and asserts that the child passed; the child is then told to run the body.
+/// So no test reads or writes the host's own unit directories.
+fn isolated(
+    test: &str,
+    env: impl FnOnce(&Path) -> Vec<(&'static str, OsString)>,
+) -> (PathBuf, bool) {
+    if let Some(root) = std::env::var_os(CHILD) {
+        return (PathBuf::from(root), true);
+    }
+    let root = scratch(test);
+    let home = root.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let ran = Command::new(std::env::current_exe().unwrap())
+        .args([test, "--exact", "--nocapture"])
+        .env(CHILD, &root)
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_RUNTIME_DIR", root.join("run"))
+        .envs(env(&root))
+        .output()
+        .unwrap();
+    let said =
+        String::from_utf8_lossy(&ran.stdout).into_owned() + &String::from_utf8_lossy(&ran.stderr);
+    assert!(ran.status.success() && said.contains("1 passed"), "{said}");
+    (root, false)
+}
+
+/// The user manager's own unit directory and its runtime one, as [`isolated`] places them.
+fn user_dirs(root: &Path) -> (PathBuf, PathBuf) {
+    (
+        root.join("home/.config/systemd/user"),
+        root.join("run/systemd/user"),
+    )
+}
+
 fn instance(root: &Path, role: Role) -> Instance {
     Instance {
         token: "node1".into(),
@@ -289,7 +330,11 @@ fn install_writes_the_unit_into_the_directory_and_uninstall_removes_it() {
 
 #[test]
 fn the_text_the_commands_print_names_the_commands_that_enable_and_disable_the_unit() {
-    let root = scratch("text");
+    let name = "the_text_the_commands_print_names_the_commands_that_enable_and_disable_the_unit";
+    let (root, child) = isolated(name, |_| Vec::new());
+    if !child {
+        return;
+    }
     let out = root.join("units");
     let relay = instance(&root, Role::Relay);
     let binary = Path::new(BINARY);
@@ -371,16 +416,42 @@ fn systemd_analyze_verifies_the_units() {
     }
 }
 
-/// Set in the child process that [`no_service_manager_is_called`] runs.
-const CHILD: &str = "HEARTWOOD_SERVICE_TEST_CHILD";
-
 /// The commands run with every systemd tool a fake that leaves a mark on the `PATH`.
 #[test]
 fn no_service_manager_is_called() {
     let binary = Path::new(BINARY);
-    if let Some(out) = std::env::var_os(CHILD) {
+    let fakes = |root: &Path| {
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let tools = [
+            "systemctl",
+            "systemd-analyze",
+            "systemd-run",
+            "loginctl",
+            "busctl",
+            "machinectl",
+        ];
+        for tool in tools {
+            let path = bin.join(tool);
+            let mark = root.join("called");
+            fs::write(
+                &path,
+                format!("#!/bin/sh\necho {tool} >> {}\n", mark.display()),
+            )
+            .unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let path = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        vec![("PATH", OsString::from(path))]
+    };
+    let (root, child) = isolated("no_service_manager_is_called", fakes);
+    let out = root.join("units");
+    if child {
         // The child: the commands over every role and manager, writing only into `out`.
-        let out = PathBuf::from(out);
         let relay = instance(&out, Role::Relay);
         for manager in [Manager::SystemdUser, Manager::SystemdSystem] {
             for role in [Role::Relay, Role::Forger, Role::Core] {
@@ -394,42 +465,7 @@ fn no_service_manager_is_called() {
         }
         return;
     }
-    let root = scratch("no-manager");
-    let out = root.join("units");
-    let (bin, mark) = (root.join("bin"), root.join("called"));
-    fs::create_dir_all(&bin).unwrap();
-    let tools = [
-        "systemctl",
-        "systemd-analyze",
-        "systemd-run",
-        "loginctl",
-        "busctl",
-        "machinectl",
-    ];
-    for tool in tools {
-        let path = bin.join(tool);
-        fs::write(
-            &path,
-            format!("#!/bin/sh\necho {tool} >> {}\n", mark.display()),
-        )
-        .unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    let name = "no_service_manager_is_called";
-    let ran = Command::new(std::env::current_exe().unwrap())
-        .args([name, "--exact", "--nocapture"])
-        .env(CHILD, &out)
-        .env("PATH", path)
-        .output()
-        .unwrap();
-    let said =
-        String::from_utf8_lossy(&ran.stdout).into_owned() + &String::from_utf8_lossy(&ran.stderr);
-    assert!(ran.status.success() && said.contains("1 passed"), "{said}");
+    let mark = root.join("called");
     assert!(
         !mark.exists(),
         "a service manager was called: {}",
@@ -639,7 +675,11 @@ fn no_unit_hides_the_shared_temporary_directory_from_its_node() {
 
 #[test]
 fn uninstall_keeps_a_unit_that_is_enabled_or_runs_and_says_to_disable_it_first() {
-    let root = scratch("uninstall-enabled");
+    let name = "uninstall_keeps_a_unit_that_is_enabled_or_runs_and_says_to_disable_it_first";
+    let (root, child) = isolated(name, |_| Vec::new());
+    if !child {
+        return;
+    }
     let out = root.join("units");
     let relay = instance(&root, Role::Relay);
     let unit = "node1-devnet-relay.service";
@@ -681,6 +721,80 @@ fn uninstall_keeps_a_unit_that_is_enabled_or_runs_and_says_to_disable_it_first()
     assert!(!done.path.exists());
     assert!(said.contains("systemctl --user daemon-reload"), "{said}");
     assert!(!said.contains("disable"), "{said}");
+}
+
+#[test]
+fn uninstall_looks_for_the_enable_link_in_the_managers_own_and_runtime_directories() {
+    let name = "uninstall_looks_for_the_enable_link_in_the_managers_own_and_runtime_directories";
+    let (root, child) = isolated(name, |_| Vec::new());
+    if !child {
+        return;
+    }
+    let (own, runtime) = user_dirs(&root);
+    let relay = instance(&root, Role::Relay);
+    let unit = "node1-devnet-relay.service";
+    let binary = Path::new(BINARY);
+    let user = Manager::SystemdUser;
+    let in_use = |dir: Option<&Path>| match uninstall_text(&relay, Role::Relay, user, dir) {
+        Err(ServiceError::InUse {
+            unit: named, steps, ..
+        }) => {
+            assert_eq!(named, unit);
+            assert!(steps.starts_with(&format!("systemctl --user disable --now {unit}\n")));
+        }
+        other => panic!("an enabled unit was not kept: {other:?}"),
+    };
+    // With no directory the unit goes into the manager's own, and an enable link in its
+    // target's directory there, or in the runtime directory, keeps it.
+    let placed = install(&relay, Role::Relay, user, binary, None).unwrap();
+    assert_eq!(placed.path, own.join(unit));
+    for base in [&own, &runtime] {
+        let wants = base.join("default.target.wants");
+        fs::create_dir_all(&wants).unwrap();
+        std::os::unix::fs::symlink(&placed.path, wants.join(unit)).unwrap();
+        in_use(None);
+        assert!(placed.path.exists(), "{}", base.display());
+        // A unit written elsewhere is kept too while the manager has it enabled.
+        let out = root.join("units");
+        install(&relay, Role::Relay, user, binary, Some(&out)).unwrap();
+        in_use(Some(&out));
+        assert!(out.join(unit).exists());
+        fs::remove_file(wants.join(unit)).unwrap();
+    }
+    // Neither enabled nor running: a unit written elsewhere goes, and the copy placed in the
+    // manager's own directory is named, as it stays.
+    let out = root.join("units");
+    let said = uninstall_text(&relay, Role::Relay, user, Some(&out)).unwrap();
+    assert_eq!(
+        said,
+        format!(
+            "Removed {unit}\nA copy at {} stays: remove it too, then run:\n\
+             systemctl --user daemon-reload\n",
+            placed.path.display()
+        )
+    );
+    assert!(!out.join(unit).exists() && placed.path.exists());
+    let said = uninstall_text(&relay, Role::Relay, user, None).unwrap();
+    assert_eq!(
+        said,
+        format!("Removed {unit}\nRun:\nsystemctl --user daemon-reload\n")
+    );
+    assert!(!placed.path.exists());
+    // A system unit written elsewhere is kept by its link in that directory's target.
+    let system = Manager::SystemdSystem;
+    let out = root.join("system");
+    let written = install(&relay, Role::Relay, system, binary, Some(&out)).unwrap();
+    let wants = out.join("multi-user.target.wants");
+    fs::create_dir_all(&wants).unwrap();
+    std::os::unix::fs::symlink(&written.path, wants.join(unit)).unwrap();
+    match uninstall_text(&relay, Role::Relay, system, Some(&out)) {
+        Err(ServiceError::InUse { steps, .. }) => {
+            assert!(steps.starts_with(&format!("systemctl disable --now {unit}\n")));
+            assert!(steps.contains(" --system "), "{steps}");
+        }
+        other => panic!("an enabled system unit was not kept: {other:?}"),
+    }
+    assert!(written.path.exists());
 }
 
 #[test]
