@@ -5,9 +5,11 @@
 //! changes, and the stop. After each commit the thread runs the pool's steps (the expiry of the
 //! online record at each round start, a re-add when a milestone starts, and the clean-up),
 //! publishes the new snapshots (the state, the pool, the chain status) through `watch` channels,
-//! and tells its listener, never between two blocks of a job. Network and API tasks send it work
-//! through a [`NodeHandle`] and read the snapshots; nothing else reads or writes the state or the
-//! store.
+//! and tells its listener, never between two blocks of a job. After each step of the pool that
+//! ran the handlers, the state re-indexes the parties they left ([`PoolTask::take_reindexed`]),
+//! and a state whose orders changed outside a commit is published again. Network and API tasks
+//! send it work through a [`NodeHandle`] and read the snapshots; nothing else reads or writes the
+//! state or the store.
 //!
 //! A job locks the shared chain state for one block at a time, so the service's actions and the
 //! network's reads come between two blocks, and see the tip as it moves. A fatal error ([`NodeError`]) ends the thread at once: the work it was
@@ -192,6 +194,7 @@ impl NodeThread {
                 if !admitted.is_empty() {
                     parts.broadcast.broadcast_transactions(&admitted);
                 }
+                reindex(parts, Some(&publish.state));
                 publish_pool(&parts.pool, &publish.pool);
                 let _ = answer.send(result);
             }
@@ -202,6 +205,7 @@ impl NodeThread {
                 }
                 saved?;
                 let readded = parts.pool.readd(&env!(parts), &[]).map(drop);
+                reindex(parts, Some(&publish.state));
                 publish_pool(&parts.pool, &publish.pool);
                 let readded = readded.map_err(NodeError::from);
                 if let Some(answer) = answer {
@@ -220,6 +224,7 @@ impl NodeThread {
                 reply,
             } => {
                 let collation = parts.pool.collate(&env!(parts), validate, &exclude)?;
+                reindex(parts, Some(&publish.state));
                 publish_pool(&parts.pool, &publish.pool);
                 let _ = reply.send(collation);
             }
@@ -275,6 +280,7 @@ impl NodeThread {
         }
         if count > 0 {
             parts.pool.committed(&env!(parts), &rounds, milestone)?;
+            reindex(parts, None);
             self.publish(&events);
         }
         Ok(outcome)
@@ -320,6 +326,7 @@ impl NodeThread {
         drop(chain);
         removed.reverse();
         parts.pool.readd(&env!(parts), &removed)?;
+        reindex(parts, None);
         let stored = parts.store.database().last_block();
         let stored = stored.map_err(StoreError::from)?.map(|stored| stored.row);
         if stored.as_ref().map(|row| row.id) != Some(*parts.state.last_block().id()) {
@@ -333,12 +340,28 @@ impl NodeThread {
     /// Publish the state, the pool and the chain status, then tell the listener `events`.
     fn publish(&self, events: &[NodeEvent]) {
         let (parts, publish) = (&self.parts, &self.publish);
-        let view = parts.state.view_after(&publish.state.borrow());
-        publish.state.send_replace(Arc::new(view));
+        publish_state(&parts.state, &publish.state);
         publish_pool(&parts.pool, &publish.pool);
         publish.chain.send_replace(Arc::new(status(&parts.chain)));
         parts.listener.committed(events);
     }
+}
+
+/// Re-index in the state the parties the pool's handler runs left; when there were any and
+/// `publish` is given, publish the state again, as its orders changed.
+fn reindex(parts: &mut NodeParts, publish: Option<&watch::Sender<Arc<StateView>>>) {
+    let parties = parts.pool.take_reindexed();
+    let changed = !parties.is_empty();
+    parts.state.reindex_parties(parties);
+    if let Some(sender) = publish.filter(|_| changed) {
+        publish_state(&parts.state, sender);
+    }
+}
+
+/// Publish the view of `state`, sharing the genesis block with the last one published.
+fn publish_state(state: &State, sender: &watch::Sender<Arc<StateView>>) {
+    let view = state.view_after(&sender.borrow());
+    sender.send_replace(Arc::new(view));
 }
 
 /// Publish the view of `pool`, sharing with the last one published the transactions it still

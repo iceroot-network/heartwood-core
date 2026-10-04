@@ -1,0 +1,119 @@
+[
+ {
+  "name": "rounds/delegates/round-1",
+  "path": "/api/rounds/1/delegates",
+  "documented": "roundOrder"
+ },
+ {
+  "name": "rounds/delegates/round-2",
+  "path": "/api/rounds/2/delegates",
+  "documented": "roundOrder"
+ },
+ {
+  "name": "rounds/delegates/round-3",
+  "path": "/api/rounds/3/delegates",
+  "documented": "roundOrder"
+ },
+ {
+  "name": "rounds/delegates/round-4",
+  "path": "/api/rounds/4/delegates",
+  "documented": "roundOrder"
+ },
+ {
+  "name": "rounds/delegates/round-5",
+  "path": "/api/rounds/5/delegates",
+  "documented": "roundOrder"
+ },
+ {
+  "name": "rounds/delegates/round-6",
+  "path": "/api/rounds/6/delegates",
+  "documented": "roundOrder"
+ },
+ {
+  "name": "rounds/delegates/trailing-slash",
+  "path": "/api/rounds/1/delegates/",
+  "documented": "roundOrder"
+ },
+ {
+  "name": "rounds/delegates/ignored-query",
+  "path": "/api/rounds/2/delegates",
+  "query": "foo=bar&limit=1&orderBy=nothing",
+  "documented": "roundOrder"
+ },
+ {
+  "name": "rounds/delegates/leading-zeros",
+  "path": "/api/rounds/003/delegates",
+  "documented": "roundOrder"
+ },
+ {
+  "name": "rounds/delegates/plus",
+  "path": "/api/rounds/+3/delegates",
+  "documented": "roundOrder"
+ },
+ {
+  "name": "rounds/delegates/exponent",
+  "path": "/api/rounds/1e1/delegates",
+  "documented": "roundOrder"
+ },
+ {
+  "name": "rounds/delegates/tip-height",
+  "path": "/api/rounds/${tipHeight}/delegates"
+ },
+ {
+  "name": "rounds/delegates/beyond",
+  "path": "/api/rounds/9999/delegates"
+ },
+ {
+  "name": "rounds/delegates/safe-limit",
+  "path": "/api/rounds/9007199254740991/delegates"
+ },
+ {
+  "name": "rounds/refused/zero",
+  "path": "/api/rounds/0/delegates"
+ },
+ {
+  "name": "rounds/refused/negative",
+  "path": "/api/rounds/-1/delegates"
+ },
+ {
+  "name": "rounds/refused/text",
+  "path": "/api/rounds/abc/delegates"
+ },
+ {
+  "name": "rounds/refused/fraction",
+  "path": "/api/rounds/1.5/delegates"
+ },
+ {
+  "name": "rounds/refused/unsafe",
+  "path": "/api/rounds/9007199254740992/delegates"
+ },
+ {
+  "name": "rounds/refused/empty-ish",
+  "path": "/api/rounds/%20/delegates"
+ },
+ {
+  "name": "rounds/refused/hex",
+  "path": "/api/rounds/0x1/delegates"
+ },
+ {
+  "name": "rounds/refused/upper-text",
+  "path": "/api/rounds/ROUND/delegates"
+ },
+ {
+  "name": "rounds/refused/dots",
+  "path": "/api/rounds/a.b/delegates"
+ },
+ {
+  "name": "rounds/delegates/float-zero",
+  "path": "/api/rounds/1.0/delegates",
+  "documented": "roundOrder"
+ },
+ {
+  "name": "rounds/refused/infinity",
+  "path": "/api/rounds/Infinity/delegates"
+ },
+ {
+  "name": "rounds/refused/large",
+  "path": "/api/rounds/99999999999999999999/delegates"
+ }
+]

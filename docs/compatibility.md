@@ -10,11 +10,11 @@ equal byte for byte, including which inputs each side rejects.
 
 | Level | What is compared | Status |
 |---|---|---|
-| L0 | golden vectors written by the reference, against Heartwood | runs against the eleven crates with vector classes: 9,172 of 9,419 records compared, all equal, the other 247 documented differences (see below) |
-| L1 | random and mutated cases, one oracle call each | runs: twenty properties, from the fee floor to the pool, the crypto files, the peer-to-peer client, the block processor, the forger's blocks and decisions, the relay's forging quorum and the answers it serves its peers (see below) |
-| L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets through Heartwood's store and through its block processor and jobs, with seeded reverts, restarts at every height, synthetic blocks, pool sessions and kills of a running relay, every block of those chains rebuilt by the forger, and the rollback command's cases on them with the start and the sync after each (see below) |
-| L3 | one scenario, observed through the node under test | runs: a scenario on a reference devnet whose observer is a reference relay, then the same with a Heartwood relay in its place; one scenario on a devnet of five reference nodes and on a devnet of five Heartwood relays with their forgers, compared submission by submission; and a Heartwood devnet through faults and forger failover (see below) |
-| L4 | a mixed network of reference and Heartwood nodes | runs: reference devnets with Heartwood relays that restart by every path, sync from an empty store, and follow a partition and its heal; and reference nodes served by Heartwood relays: a reference relay syncing from a Heartwood relay alone, the recovery commands on a live relay, a partition across a Heartwood relay, and a network of Heartwood forgers observed by a reference relay, with the reference's own peer client comparing a Heartwood relay's answers with a reference relay's (see below) |
+| L0 | golden vectors written by the reference, against Heartwood | runs against the thirteen crates with vector classes: 11,641 of 11,956 records compared, all equal, the other 315 documented differences (see below) |
+| L1 | random and mutated cases, one oracle call each | runs: twenty-three properties, from the fee floor to the pool, the crypto files, the peer-to-peer client, the block processor, the forger's blocks and decisions, the relay's forging quorum and the answers it serves its peers, and the API's listings, wallet search and query grammar (see below) |
+| L2 | block sequences replayed on both sides, a state digest per block | runs: chains of reference devnets through Heartwood's store and through its block processor and jobs, with seeded reverts, restarts at every height, synthetic blocks, pool sessions and kills of a running relay, every block of those chains rebuilt by the forger, the rollback command's cases on them with the start and the sync after each, and chains that Heartwood forges itself beside the reference (the lockstep producer, in batches of drawn recipes and up to 50 rounds), judged the same way (see below) |
+| L3 | one scenario, observed through the node under test | runs: a scenario on a reference devnet whose observer is a reference relay, then the same with a Heartwood relay in its place; one scenario on a devnet of five reference nodes and on a devnet of five Heartwood relays with their forgers, compared submission by submission; a Heartwood devnet through faults and forger failover, and the scenario suites (transactions, lifecycle, network and a split network) on both implementations (see below) |
+| L4 | a mixed network of reference and Heartwood nodes | runs: reference devnets with Heartwood relays that restart by every path, sync from an empty store, and follow a partition and its heal; and reference nodes served by Heartwood relays: a reference relay syncing from a Heartwood relay alone, the recovery commands on a live relay, a partition across a Heartwood relay, a network of Heartwood forgers observed by a reference relay, with the reference's own peer client comparing a Heartwood relay's answers with a reference relay's, and a network on which reference and Heartwood forgers make one chain, through restarts, a partition and its heal, and churn (see below) |
 
 ## Layout
 
@@ -53,19 +53,21 @@ packages/forger/      heartwood-forger: the forger (the slot loop its relay driv
                       client, block assembly, the signing record, the key file and the status
                       attester)
 packages/cli/         heartwood-cli: the commands' library (the colon aliases, instances, the
-                      supervisor and the role commands, `network generate`'s files, the local
-                      devnet, and the doctor (read-only diagnostics, its report and its MCP
-                      server))
+                      supervisor and the role commands, `top`, `env`, `config` and `service`,
+                      `network generate`'s files, the local devnet, and the doctor (read-only
+                      diagnostics, its report and its MCP server))
 packages/api/         heartwood-api: the public API a relay serves (routes, query grammar,
                       pagination, headers, rate limit, semaphore)
-packages/core/        heartwood-core: the `heartwood` binary, the relay and forger roles with
-                      their configuration, process lock and signals, `network generate`,
-                      `devnet` and `doctor`
+packages/core/        heartwood-core: the `heartwood` binary, the relay, forger and core roles
+                      with their configuration, process lock and signals, `network generate`,
+                      `devnet`, `top`, `env`, `config`, `service` and `doctor`
 packages/*/tests/vectors/  each crate's golden vectors, with its own MANIFEST.sha256
 tools/difftest/       heartwood-difftest: the harness library and the `difftest` binary
   corpus/               a committed L2 corpus (a reference devnet chain and its digest lines)
   api-corpus/           the route corpus: the queries of every served route, for L3 and L4
   p2p-corpus/           the peer-route cases the reference-client probe sends, for L4
+  recipes/              the lockstep producer's recipes
+  scenarios/            the scenario files, by suite
 tools/check-layers.sh the dependency edges between the crates, and no async, storage or HTTP crate
                       in the consensus crates
 tools/check-lines.sh  code lines per crate against the review ceilings
@@ -91,11 +93,19 @@ tools/wire-fuzz-seeds.js  seeds the wire fuzz corpora from the wire vectors
 tools/p2p-fuzz-seeds.js   seeds the p2p fuzz corpora from a vector run's V24 and V26 records
 tools/forger-fuzz-seeds.js  seeds the forger's internal_body corpus from a vector run's V29 records
 tools/server-fuzz-seeds.js  seeds the server's nes_server_session corpus from V31's requests
+tools/api-fuzz-seeds.js  seeds the API's api_query corpus from the vectors' queries
+tools/codec-fuzz-seeds.js  seeds the address_decode, transaction_json and api_head corpora from
+                      the addresses of V01 to V03, the transactions of V02 and V03 and the
+                      queries of V28 and V34
+tools/ops-doc-check.sh  runs the operator guide's command blocks on two private machines
+docs/operating.md     the operator guide: the relay, the forger and the core role, five nodes on
+                      one machine, `config`, `top`, `service install`, logs and upgrades
 packages/crypto/tests/vectors/external/  published vector files, with their source URLs and SHA-256
 fuzz/                 cargo-fuzz targets for the transaction and block decoders, the
                       transaction handlers, whole blocks on the state, the state's records, the
-                      pool, the wire decoders, the peer-to-peer client and the forger's inputs
-                      (own workspace)
+                      pool, the wire decoders, the peer-to-peer client, the forger's inputs, the
+                      API's queries and request heads, and the address and transaction JSON
+                      decoders (own workspace)
 ```
 
 ## Requirements
@@ -139,6 +149,12 @@ make devnet-smoke   # a forging devnet of this tree's binary: 1 node, then 5
 make live RUN=m     # a devnet of Heartwood relays and forgers (t, m and f: see L3 and L4)
 make rollback-replay NAME=txgen-one-node CORPUS=tools/difftest/corpus   # every rollback, the start and the sync after it
 make live RUN=w     # reference nodes on Heartwood relays (w0, w, p and s: see L3 and L4)
+make lockstep NAME=my-chain SEED=my-seed PROFILE=devnet RECIPE=tools/difftest/recipes/lockstep-5.json   # a chain forged beside the reference
+make lockstep-batch COUNT=10 SEED=7 ROUNDS=5   # ten chains with drawn recipes; make l2-batch judges and replays them
+make scenario LEVEL=l2   # the scenario files through the lockstep producer, no network
+make fuzz-api replay-api   # the API's query fuzz target, and its corpus through the oracle
+make fuzz-codec replay-codec   # the address, transaction JSON and request head fuzz targets, and the first two's replays
+make ops-doc-check   # the operator guide's command blocks, run on two private machines
 ```
 
 `make check` needs only Rust. It lints and tests every crate on its own, with no features and
@@ -171,7 +187,7 @@ oracle answers, in the image and locally), `make oracle-save` (`docker save` of 
 | `DIFFTEST_DOCKER` | `tools/oracle/docker.sh` | the docker command |
 | `DEVNET_GENERATOR` | empty | the devnet generator, `gen-network.js`, for the genesis class; a separate tool that is not published |
 | `VECTOR_CRATES` | every crate and its classes | which classes `make vectors-install` puts into which crate's `tests/vectors` |
-| `L1_CASES`, `L1_SEED`, `L1_PROPERTY` | `256`, `1`, all | cases per property, the generator's seed, the properties (`P1` to `P19`, or their names, comma separated) |
+| `L1_CASES`, `L1_SEED`, `L1_PROPERTY` | `256`, `1`, all | cases per property, the generator's seed, the properties (`P1` to `P23`, or their names, comma separated) |
 | `L1_MIN_REACH` | 20 from 1,000 cases, else none | how often P13 must reach each reachable result of the processor and each unchained status |
 | `L1_DECISION_REACH` | 20 from 10,000 cases, else none | how often P19 must reach each action and refusal of the reference's forging attempt |
 | `CORPUS`, `NAME` | `target/corpus`, empty | the L2 corpus `CORPUS/NAME` |
@@ -195,8 +211,16 @@ oracle answers, in the image and locally), `make oracle-save` (`docker save` of 
 | `DEVNET_PREFIX` | `127.10.0` | the loopback addresses of `make devnet-smoke`'s devnets |
 | `LIVE_RECIPE`, `RELAY_IMAGE_RECIPE`, `LIVE_RESULTS` | empty | the devnet tooling's live recipe, its recipe of the relay's container image, and the directory of the live runs (a separate tool of the maintainers, which is not published) |
 | `DEVNET_RECIPE` | empty | the devnet tooling's recipe of the forging devnets' runs (not published either) |
+| `OBSERVER_RECIPE`, `OBSERVER_ENV`, `OBSERVER_RESULTS` | `$(LIVE_RECIPE)`, empty, empty | the recipe whose run `h` is `RUN=observer` (a reference devnet with a Heartwood observer relay), that run's environment (its network's name and subnet, host ports, stop height and results directory), and the directory that holds its run |
 | `RUN` | empty | the live run: `r`, `h`, `m1` or `m2` (see L3 and L4) with `LIVE_RECIPE`, or `t`, `m` or `f`, the runs of a forging devnet, with `DEVNET_RECIPE` |
 | `LEFT`, `RIGHT`, `API_COMPARE_OUT` | empty, empty, `target/api-compare` | two nodes' API URLs for a direct `api-compare`, and where it writes their answers |
+| `SEED`, `PROFILE`, `RECIPE`, `ROUNDS`, `LONG` | empty, empty, empty, `5`, empty | the chain `make lockstep` forges: its seed, its genesis profile, its recipe, its rounds, and `LONG=1`, which allows more than 5 (50 at most) |
+| `COUNT`, `BATCH_JOBS`, `BATCH` | empty | `make lockstep-batch`'s number of chains and how many it makes at once (the machine's parallelism, at most 8, when empty), and the batch seeds `make l2-batch` judges (every batch of `CORPUS` when empty) |
+| `SCENARIO`, `LEVEL`, `BACKEND`, `DEVNET_ROOT` | every scenario, `l2`, `lockstep` at `l2` and `heartwood` above it, empty | the scenario files, level and backend `make scenario` runs, and the running devnet that a devnet backend drives |
+| `SUITE`, `IMPL` | empty | the scenario suite and implementation (`reference` or `heartwood`) `make suites` runs, with `SEED` as its network's seed |
+| `API_SEEDS`, `API_LOGS` | `packages/api/tests/vectors`, `target/api-fuzz` | the vectors that seed the `api_query` corpus, and the logs of `make fuzz-api` and `make replay-api` |
+| `CODEC_REPLAY`, `CODEC_SEEDS`, `CODEC_LOGS` | `address_decode transaction_json`, `$(VECTORS)/local`, `target/codec-fuzz` | the codec targets `make replay-codec` replays, the vector run that seeds their corpora, and the logs of `make fuzz-codec` and `make replay-codec` |
+| `OPS_GUIDE`, `OPS_DOC_PREFIX`, `OPS_DOC_ROOT` | `docs/operating.md`, `127.49.0`, `target/ops-doc-check` | the guide `make ops-doc-check` runs, the loopback block of its five-node devnet, and where it makes its scratch homes |
 
 A crate's vector tests, and the harness's tests of its classes (`tools/difftest/tests`), read the
 classes from the crate's own `tests/vectors`; there both fail when a class is missing.
@@ -366,8 +390,10 @@ cargo test -p heartwood-kernel --locked --all-features   # unit tests, the loade
 ```
 
 The class V28, installed beside the kernel and the API, holds the reference's reading of
-`app.json` (`config.loadApp`) and of the components' options (`config.pluginOptions`); difftest's
-`config_app_vectors` test compares them.
+`app.json` (`config.loadApp`), of the components' options (`config.pluginOptions`) and of what the
+node does next with them (`config.pluginStart`: it runs, it leaves the component out, or it refuses
+the start); difftest's `config_app_vectors` test compares them. The case that asks for HTTPS has no
+`config.pluginStart` record: the reference serves HTTPS, Heartwood refuses the start.
 
 ## heartwood-logger
 
@@ -1265,9 +1291,10 @@ and nix are used by this crate only (`make layers`).
 - **the recovery commands**: the marker files of `pool clear` and `state clear`, their questions
   and the trust rule for the temp directory and its markers, which the relay's start reads
   through the same function (see heartwood-core).
-- **network generate**: a network's chain definition, keys and single-node instance for a seed.
-  The built-in devnet profile writes crypto files byte-identical to the genesis vectors (V10) for
-  their three seeds.
+- **network generate**: a network's chain definition, keys and single-node instance for a seed,
+  whose `app.json` holds the relay's, the forger's and the core role's profiles. The built-in
+  devnet profile writes crypto files byte-identical to the genesis vectors (V10) for their three
+  seeds.
 - **the devnet library** (feature `devnet`, on by default): `init`, `start`, `stop`, `status`,
   `logs`, `stop-node`, `start-node`, `restart-node`, `reset`, `wait` and `env` for a local devnet
   with one loopback address per node (node k on `127.0.0.(10 + k)`, P2P on port 6002 and the API
@@ -1278,6 +1305,39 @@ and nix are used by this crate only (`make layers`).
   127.0.0.0/8. `init --force` refuses to clear a devnet whose manifest it cannot read while any of
   its processes may run; the manifest, `devnet.json`, holds the key-derivation seed and is written
   with mode 0600; `status` says how many relays it compared, out of the devnet's.
+  A devnet's other commands and flags: `init --relays N` (extra relay-only nodes), `--seed`,
+  `--epoch-delay`, `--min-network-reach`, `--log-level`, `--force`, `--failover 1:1,6,7` (node 1's
+  forger may use relays 1, 6 and 7, and connects from `127.P.111`, which each relay lists in its
+  `remoteAccess`) and `--core` (each validator one `core` process); `start --keep-epoch` and
+  `--no-wait`; `status --json` and `--resources` (each process tree's memory, CPU time and bytes
+  written, read from `/proc`); `logs --node N --role ROLE --lines N --error --follow`; and `devnet
+  run FILE`, which runs a scenario on the devnet with the harness's scenario runner, found next to
+  the binary or on `PATH` (without it the command says so).
+- **the operator commands**: `top` lists the running instances of a token (`--token`, `solar` by
+  default) across its networks, with `status`'s columns (ID, Name, Version, Status, Uptime,
+  Restarts, CPU, RAM), from an index each supervisor keeps in the token's data root
+  (`instances/<name>.json`, written after the supervisor's lock is held and removed at its stop;
+  liveness comes from the held lock, never from the entry); with nothing running it says "No
+  processes are running" and exits with 1. `env get|list|set|paths` read an instance's `.env`
+  with the node's own parser; `env set` writes the file again as `NAME=value` lines in the parsed
+  order, comments and blank lines dropped, through a temporary file renamed over the file with the
+  file's mode kept, and refuses a symbolic link in its place; `env paths` prints the five
+  directories, each as its `CORE_PATH_*` variable moves it. `config publish` writes one built-in
+  instance template
+  for any network name (`.env`, `app.json` with the relay's, the forger's and the core role's
+  profiles, an empty `peers.json`, `delegates.json` as `{"keys": []}` at mode 0600 and
+  `config.json`, no crypto file; `.env` binds both ports to `0.0.0.0`) and refuses a directory
+  that is not empty without `--force`, which writes the template's files over the ones there
+  (`delegates.json` included) and keeps the others.
+  `config forger private-key --privateKey KEY` (or `config forger --method privateKey`) checks 64
+  hexadecimal digits, replaces the `keys` of an existing `delegates.json` with that key, keeps the
+  file's other top-level keys, and writes it with four-space indentation at mode 0600 through a
+  temporary file and a rename, refusing an absent file (it names the path) and a symbolic link;
+  the passphrase method (`bip39`) is deferred and `--method bip39` says so. `service
+  install|uninstall --role ROLE [--system] [--out DIR]` writes or removes a systemd unit (see
+  heartwood-core). `version --verbose` adds the platform and the features of the build.
+  Every command that takes an instance takes `--token` and `--network` and the colon spellings
+  (`config:forger:private-key`).
 - **the doctor** (`src/doctor/`): `heartwood doctor`, 47 read-only checks of one instance with
   fixed, documented rules, a text and a JSON report (format `heartwood-doctor-report/1`, schema
   `src/doctor/report.schema.json`) with addresses, the home directory, the user and host names
@@ -1295,6 +1355,20 @@ compressed, where pm2-logrotate writes dated gzip files. The commands never writ
 symbolic link: the files they write are opened without following one, and a run directory, or
 a directory `devnet reset` would delete, that is a link is refused (a link in a directory above
 them is still followed).
+
+The operator commands differ on purpose from the reference's: `top` lists the instances of exactly
+the token, running only, where the reference lists the pm2 processes whose name starts with it
+(`node1` also lists `node10-...`), stopped and errored ones included; `env` reads with the node's
+parser, where the reference's command line uses another one for the same file, and `env set`
+rewrites the whole file from the parsed form; a refusal of `top` or `env` prints the reference's
+words and exits with 1, where the reference logs `[ERROR]` and exits with 0; `config publish`
+writes one template for any network, where the reference copies one of its bundled networks;
+`config forger` writes `delegates.json` at mode 0600 by a rename, where the reference writes it
+with no mode, and the forger refuses a key file that others can read; there is no prompt, so
+`--skipPrompts` is accepted and ignored; `--daemon` on a `stop` is accepted and changes nothing
+(there is no pm2 entry to delete); and the reference's forger commands accept and ignore the
+relay's start flags (`--networkStart` and the others), where `forger run` and `forger start`
+refuse them.
 
 ```sh
 make test-cli                   # clippy and tests of heartwood-cli alone, with no feature, the default ones and all
@@ -1314,8 +1388,9 @@ the golden report, the MCP server over a scripted client, and a forging devnet n
 
 ## heartwood-api
 
-`packages/api` is the public API a relay serves, on axum and hyper, under `/api`. It serves the
-reference's routes that a follower answers, 18 in all: `/blocks/last`, `/blocks/{id}` and
+`packages/api` is the public API a relay serves, on axum and hyper, under `/api`. It serves 38
+routes and the OpenAPI document `/api.json` (the full list is below). The first 18 are the
+reference's routes that a follower answers: `/blocks/last`, `/blocks/{id}` and
 `/blocks/{id}/transactions`; `/node/status`, `/node/syncing`, `/node/configuration` and
 `/node/configuration/crypto`; `/peers` and `/peers/{ip}`; `/transactions` (the list, and `POST` of
 a batch into the pool), `/transactions/{id}`, `/transactions/unconfirmed` and
@@ -1433,11 +1508,11 @@ each case shows only with the request named:
   reference answers with its documentation's 872-byte page, with `last-modified`, `etag` and
   `accept-ranges`. A reference peer probes a peer's API port with `HEAD /`, so the port shows
   in its `/api/peers` only when this answers 200;
-- the reference's documentation files (`/index.html`, `/api.json`, `/swagger-ui.css`,
-  `/swagger-ui.js`, and the paths that reach them through an escaped slash, such as `/..%2Fwww`)
-  and the routes a relay does not serve are unmatched paths here, including
-  `/blocks/first`, `/blocks/missed`, `/transactions/schemas` and `/wallets/top`, which a served
-  parameter route would otherwise take and which the reference answers 200;
+- the reference's documentation pages (`/index.html`, `/swagger-ui.css`, `/swagger-ui.js`, and
+  the paths that reach them through an escaped slash, such as `/..%2Fwww`) and the routes a relay
+  does not serve (the lock routes, whose transaction type is removed) are unmatched paths here; a
+  literal path such as `/blocks/first` or `/wallets/top` is a route of its own, tried before the
+  parameter route that would otherwise take it, as in the reference;
 - a request cookie that the reference refuses (400) is not read;
 - a JSON payload with a lone surrogate escape, or nested deeper than 128 levels, is 422 "Invalid
   request payload JSON format"; the reference parses it and its schema or pool answers;
@@ -1496,6 +1571,80 @@ same chain (its node controller's answers, and its wallets, blocks and transacti
 those marked `integration` need the whole crate. The class V28 holds the reference's query grammar (`api.parseQuery`) and pagination
 (`api.paginate`); the route corpus (`tools/difftest/api-corpus`) compares whole answers of a live
 node with a reference node's (see L3 and L4).
+
+### The full route list
+
+Besides the 18 routes above, the relay serves the reference's block, delegate, round, vote and
+wallet routes, so that all 38 routes under `/api` (`/transactions` answers `GET` and `POST`) and
+`GET /api.json` are served:
+
+| Route | What it answers |
+|---|---|
+| `GET /blockchain` | the tip's height and id, the burned fees and burn amounts with their total, and the supply, as decimal strings |
+| `GET /blockchain/search/{id}` | the wallets, blocks and transactions an input names: a delegate name, a public key or an address, or an id prefix |
+| `GET /blocks`, `/blocks/first`, `/blocks/last`, `/blocks/{id}`, `/blocks/{id}/transactions` | the block list with the block criteria (default order `height:desc`) and a block with its transactions |
+| `GET /blocks/missed` | the missed slots (`timestamp`, `height`, `username`), by those three criteria only |
+| `GET /delegates`, `/delegates/{id}` | the delegates as the delegate resource, filtered by the delegate criteria and ordered by `orderBy`, then rank and name |
+| `GET /delegates/{id}/voters` | the wallets that vote for a delegate |
+| `GET /delegates/{id}/blocks`, `/delegates/{id}/blocks/missed` | a delegate's blocks and missed slots |
+| `GET /node/fees` | fee statistics per kept transaction type: over the last 1 to 30 days with `days`, else over the last 20 transactions of each type |
+| `GET /rounds/{id}/delegates` | the delegates and vote weights of a round |
+| `GET /transactions/schemas` | the JSON schemas of the kept transaction types |
+| `GET /votes`, `/votes/{id}` | the vote transactions |
+| `GET /wallets`, `/wallets/top` | the wallets, as the wallet criteria and `orderBy` select them (`/wallets/top` answers as `/wallets` does, as in the reference) |
+| `GET /wallets/{id}/transactions/sent`, `/wallets/{id}/transactions/received`, `/wallets/{id}/votes` | a wallet's sent and received transactions and votes |
+| `GET /api.json` | the OpenAPI document, outside the base path |
+
+The listings are the reference's search engine, reproduced: a resource matches when it matches
+every criteria object, an array value is an OR, `%` in a string criterion is an unanchored match,
+`{from, to}` is an inclusive range, `attributes.*` paths reach into a wallet's attributes, and a
+criterion of the wrong kind answers 500. Pagination takes the page from the sorted whole as the
+reference's red-black tree does, so a sort that compares two values of different types, or two
+plain objects, answers 500 exactly when the reference's does (which depends on `offset + limit`). A
+tie of a sort follows the wallet indexes' order (the order the reference's wallet indexes iterate
+in), which is part of the answer: the live order, and, on a node restarted from its stored
+tables, the order of the stored rows. `/blockchain/search/{id}` reproduces the reference's wallet
+search, including its non-transitive comparator and V8's sorting of it.
+
+Where these routes differ on purpose, the reference has a defect or does work the relay leaves
+out:
+
+- `/node/fees` lists the six kept transaction types; the reference lists every registered type,
+  with zero values for the removed ones;
+- `/rounds/{id}/delegates` lists a round's delegates by vote balance, then public key; the reference
+  returns its rows in the storage's order;
+- a list's `totalCount` is exact, with the reference's `totalCountIsEstimate` kept (the reference
+  reports an estimate for the block list with `transform=false`, and for every list when
+  `CORE_API_ESTIMATED_TOTAL_COUNT` is set);
+- `/api.json` is the reference's document without the three lock operations and with the six kept
+  types, and its `info.version` is the node's;
+- the three lock routes (`/locks`, `/locks/{id}`, `/locks/unlocked`) and `/wallets/{id}/locks` are
+  not served (their transaction type is removed), and are unmatched paths;
+- a delegate's productivity and missed counts are computed from the store at the first request
+  after the tip changes and kept for that tip, where the reference computes them at every queue
+  drain and publishes an internal event. The values are equal at a quiescent height; the window
+  starts at the UTC midnight of the tip's date, 30 days back, and a delegate with only missed
+  slots has productivity 0.00, one with neither none. A chain whose window holds its genesis block
+  makes the reference's query fail (a division by zero) and keep the old values; the reader
+  reproduces that;
+- the order of a delegate's attributes under an `attributes.*` criterion starts with the delegate
+  record, where the reference's order follows each wallet's history; a criterion given an object
+  can answer 200 where the reference answers 500;
+- the ties of the default sort of `/delegates`, a delegate's voters, `/wallets` and `/wallets/top`
+  on a node restarted by replaying its blocks follow the order the stored blocks set, where the
+  reference rebuilds its indexes in its handlers' start-up order.
+
+Reproduced on purpose: `confirmations: 0` and no `timestamp` on `/votes` and `/votes/{id}` with
+`transform` (the default), where `/wallets/{id}/votes` carries the block join, with real
+confirmations and a timestamp; an empty page for a wallet without a public key on the sent and
+vote routes; 422 "Wallet not valid" for a 34-character id that is no wallet and 404 for any other
+id; `offset=0` ignored; `orderBy` kept in links; `/delegates/{id}/blocks/missed` taking every
+criterion and using only `timestamp` and `height`.
+
+The route corpus (`tools/difftest/api-corpus`) covers every route above, each criterion alone and
+in pairs, orders, pages and the 404 texts, and is judged against a reference node at quiescent
+heights, with each documented difference excused only where it applies. The fuzz target
+`api_query` and the `fuzz-api` and `replay-api` targets are described under L1 below.
 
 ## heartwood-core
 
@@ -1685,6 +1834,68 @@ kept apart. The devnet smoke test (marked `devnet`), on the prefix `HEARTWOOD_DE
 has `heartwood devnet init --validators 1` forge 20 blocks, then a devnet of five nodes forge a
 round, each chain consistent across its relays and every process stopped at the end.
 
+### The core role and the service units
+
+`heartwood core run|start|stop|restart|status|log` runs a relay and its forger in one process, as
+the reference's `core` commands do. The process takes the core role's lock, and also the relay's
+and the forger's, so that no split role of the instance can start beside it (`relay start`
+refuses with "<name> is already running", `relay run` with "another relay of this instance
+holds ...") and the core role refuses while either runs; a split role's `status`, `stop` and
+`restart` while it runs exit with 1 and name it (`<process> runs inside <core process>: use core
+<verb>`). It writes one pid file, the core role's. The relay's components start as for a relay;
+the forger then starts on a thread of its own and connects to its relay's peer-to-peer listener on
+the loopback address (`hosts` defaults to `127.0.0.1` on `CORE_P2P_PORT`), where the relay attests
+it as it attests any forger on its own machine. The `core` profile of `app.json` lists the relay's
+components and the forger; a profile without the forger, a key file the forger refuses (before any
+process starts, as `forger start` does), or a `remoteAccess` that does not list the address the
+forger connects from (`127.0.0.1`, or its `localAddress`) stops the start with the reason. If the
+forger stops with an error while the node runs, the whole node stops with it (`the forger
+stopped: <error>`). A stop shuts down in order: the relay's first two steps, the forger's three,
+then the relay's last two. `core start` is a daemon by default (`--daemon=false` keeps it in the
+foreground) and logs to `<token>-<network>-core-current.log`.
+
+The core role keeps the validator's keys in the process that serves the peer-to-peer port and the
+API, which the split roles avoid; it is optional, no default configuration or command selects it
+(`devnet init --core` does, by name), and the operator guide says so.
+
+`heartwood service install --role ROLE [--token T] [--network N] [--system] [--out DIR]` writes a
+systemd unit named `<token>-<network>-<role>.service` and prints the commands that enable it. It
+calls no service manager. A user unit goes to `~/.config/systemd/user`; `--system` prints a system
+unit to save under `/etc/systemd/system` and writes nothing there (the unit has no `User=` line,
+which the operator adds); `--out` writes the unit into a directory of your choice. The unit
+runs `<binary> <role> run --token=<t> --network=<n>` in the foreground, with `Type=exec`,
+`Restart=always`, `KillSignal=SIGINT`, `TimeoutStopSec=30`, `UMask=0077`, `NoNewPrivileges=yes`,
+`StartLimitIntervalSec=10`, `StartLimitBurst=5` and `Environment=CORE_SERVICE_MANAGER=systemd`,
+and only the sandboxing directives the host's systemd supports. A node whose environment names a
+manager records it at its start (`<data>/run/<role>.manager.json`, written through a temporary
+file in the held run directory, a link in its place refused), and `status` then reports `online
+(systemd)` while `stop` refuses and names the manager's command, so a stop never fights the
+manager. Both hold only where the unit and the commands use one data directory: the unit names
+none of the instance's directories and runs with the service manager's environment, so the
+operator guide has any `CORE_PATH_*` or `XDG_*_HOME` value added to the unit as an `Environment=`
+line, and a role started with `start` stopped before its unit is enabled. A system unit's
+`PrivateTmp=yes` gives its node a temporary directory of its own, which the marker files of `pool
+clear` and `state clear` do not reach; the guide has such a relay started once with `relay run`
+for them. `service uninstall` removes the unit file; the guide has the unit disabled first, since
+`systemctl disable` fails on a unit whose file is gone. There is no launchd variant: nodes run on
+Linux only. The unit's text is checked with `systemd-analyze verify` where it is installed.
+
+```sh
+cargo test -p heartwood-core --locked --test core_role     # the core role over the real binary
+cargo test -p heartwood-cli --locked --test config --test service   # the config and service commands
+make ops-doc-check                                         # the operator guide, run on two private machines
+```
+
+The operator guide, [operating.md](operating.md), is checked by running every command block of
+its Linux flows: `make ops-doc-check` builds the release binary and runs `tools/ops-doc-check.sh`,
+which makes two machines without root (a user and network namespace, and a second network
+namespace inside it joined by a veth pair; nothing is published on the host and no host setting
+is changed), each with a scratch home directory, and runs the blocks in order: a relay and a forger
+on one machine, a relay without keys, a forger on the second machine, five nodes on one machine
+(`heartwood devnet`, on the loopback block `OPS_DOC_PREFIX` names), the core role, `config
+publish`, `config forger`, `env`, `top`, `service install` and the per-role logs. A command that no
+longer works fails the check, and so does a mention of another operating system.
+
 ## L0: golden vectors
 
 `difftest run l0` compares the records of a vector run with Heartwood, with one subject per
@@ -1693,11 +1904,11 @@ models the reference's class. On a run of every class (reference tag `s1-ref-v2`
 
 | Outcome | Records |
 |---|---|
-| compared, equal to the reference | 9,172 |
-| documented differences, each with its form checked on the input or shown by the oracle's answer | 247 |
+| compared, equal to the reference | 11,641 |
+| documented differences, each with its form checked on the input or shown by the oracle's answer | 315 |
 | skipped | 0 |
 
-That is 9,419 records in 33 files, and a run of the image and a local run agree on every one. The
+That is 11,956 records in 35 files, and a run of the image and a local run agree on every one. The
 gate runs with `--strict` (`make l0`), which fails a record that is skipped or has no Rust subject
 as it fails a difference. The builders of the removed types and of the extended header, which
 Heartwood does not have, are documented refusals (checked on the builder's input), so nothing is
@@ -1776,8 +1987,18 @@ checked on the entries or shown by the oracle's answer:
 - a full pool that the reference emptied by one eviction for a transaction it then refused (the
   oracle notes each such eviction): Heartwood must refuse the same transaction and agree on every
   entry before it; its pool keeps the transaction the reference evicted, so the rest of the session
-  is not compared;
-- after the session changed the online record, an entry refused as offline on one side only: the
+  is not compared. A re-add (a re-add step, or the re-add of a restart) evicts in the same way, and
+  the oracle notes it on that step with the transactions the re-add tried, in order, and whether
+  each entered the pool; Heartwood's answer lists its own, in the order its re-add documents, and
+  the two must agree up to and including the reference's first refusal after an eviction. With no
+  result per transaction there, the pool's contents show the rest: Heartwood's pool holds a
+  transaction the reference refused only where the reference's pool holds it too, every
+  transaction either pool holds was tried in the re-add, every transaction only Heartwood's pool
+  holds is one the reference evicted or a later one of its sender, and what the evictions do not
+  touch (each pool's size, and the other senders' transactions, their priority order, wallets and
+  stored rows) is equal;
+- after the session changed the online record, an entry refused as offline on one side only (once
+  the entries of a removed type and the JSON votes given as an array or a string are left out): the
   reference's view of the sender kept the delegate's wallet as it copied it before the change. The
   rest of the session is not compared;
 - a count in a message that the oracle's default locale groups otherwise (the oracle notes its
@@ -1820,6 +2041,9 @@ minimal case, which is written to `--regressions`.
 | P18 quorum | peer sets (heights, fast verifications, attested keys, states), the forger's attested keys, round sets that differ from the ranking, ranks, and the relay's tip | `quorum.analyze`: the network state's fields and `canForge` |
 | P19 decisions | one attempt of a slot: rounds, network states of every status with quorum counts around the threshold and over-height headers (empty blocks of two delegates, the forging delegate's signed header that counts a transaction, and one of its headers whose signature fails), status headers, slot answers, times left around the 2,000 ms margin, and failing calls | `forger.decide`: the attempt's action, the quorum's reason and every log line |
 | P20 served | the seven public routes' requests over a chain made for the case, over the committed corpus and `c2-faults` and `c4-restarts` cut below their tip (when they are under `target/corpus`), and over a synthetic store of full blocks: getBlocks around the tip and the 20 MiB cut, getCommonBlocks with known, unknown and repeated ids, getStatus, getPeers, getUnconfirmedTransactions, postTransactions, and postBlock of the next block, a skipping, an old and a header-only block and one above `maxTransactions` | `p2p.controller`: the answer or the thrown error, and the log lines |
+| P21 listings | random wallet sets (attributes, balances with ties, resigned delegates, usernames with digits and punctuation), random index orders, random criteria, `orderBy` chains (with `attributes.*` and mixed JSON types) and pages; limits 1 to 3 with random offsets, mixed types and plain objects at random positions | `api.delegatesPage`, `api.walletsPage`, `api.searchPage`: the status code and the page JSON, or both answering the same error |
+| P22 wallet search | random wallet sets in random address-index orders, random inputs (short usernames, long address and key prefixes, mixed case) | `api.walletsLike`: the list, element by element |
+| P23 query grammar | random raw queries over every route's schema: nested keys to the grammar's 128 levels, comma lists, holes, casts, `%` patterns, percent-encoding and bytes beyond ASCII, repeated keys, the paging keys | `api.parseQuery` with the route's validation: the parsed query, or both refusing with the same status |
 
 With the date as the seed and 10,000 cases per property (50,000 for P7), every property agrees
 with the reference. The only documented difference that appears is the one of a refused
@@ -1844,9 +2068,30 @@ P14 to P16 agree with the reference at 10,000 cases each with the date as the se
 documented differences among them are P14's: a fork segment whose headers do not chain (about one
 case in twenty-seven), and a fork segment that starts with our own block (about one case in fifty),
 both of which Heartwood refuses (see heartwood-p2p). P17 to P19 agree with the reference at
-10,000 cases each with the date as the seed. P17's documented cases are the pool's full-pool
-eviction (about one in eighty); P18 has none. P19's are the over-height header of the delegate's own
-key that is not an empty block and whose signature verifies (about one in sixteen), on which
+10,000 cases each with the date as the seed. P17's documented cases are the pool's two differences
+after which the two pools hold different transactions: the full-pool eviction, in a batch or a
+re-add (about one in eighty), and, rarely, the online record in a sender's view. Where a step
+changed the online record or a full pool evicted, both answers carry their pool session, and a case
+counts as documented only when the pool's own rules find that difference in the two sessions, each
+collation follows from its own pool (in priority order, which keeps each sender's transactions in
+nonce order, every transaction collated or removed until the block is full), the two collators
+decide alike each transaction both pools held and both reached before a limit stopped them, and
+collate those they both collated in the same order (except the transactions of a sender the
+difference concerns, one whose transaction the reference's full pool evicted or that only one pool
+held after a step: the reference breaks a tie of fees by the order in which the senders entered its
+pool, so a sender whose evicted transaction was admitted again comes after the others of the same
+fee, with its later transactions behind it whatever their fees, where Heartwood's pool kept it in
+its place), each pool's priority order takes at every place a sender's next transaction of the
+highest fee (so a concerned sender's transaction moves only where the senders' order breaks a tie
+of fees), Heartwood's block holds its collation and
+agrees with the reference's in every field the transactions do not set and in its verification, and
+Heartwood's forger makes the reference's block from the reference's collated transactions. What
+the reference cannot witness is trusted to Heartwood's own pool: the steps after the documented
+one, where, among transactions of equal fee, a transaction only Heartwood's pool holds or one of a
+concerned sender stands among other senders' transactions, and whether a transaction only
+Heartwood's pool holds was rightly removed at the collation. P18 has
+none. P19's are the over-height header of the delegate's own key that is not an empty block and
+whose signature verifies (about one in sixteen), on which
 Heartwood does not forge; the report counts the reference's actions, and every action of an attempt
 and every reason of the quorum's refusal appears. From 10,000 cases `make l1` fails the run when one
 of them appears fewer than 20 times (`--decision-reach`, `L1_DECISION_REACH`); at 10,000 cases the
@@ -1867,6 +2112,42 @@ at least 671 times. `Reverted` and `Corrupted` cannot come from one processed bl
 names the corpora the cases drew from; a missing one is a skipped part, which fails a strict
 run.
 
+P21 to P23 agree with the reference at 1,000 cases each (P23 also at 10,000). The documented
+cases of P21 are the wallets whose attributes the reference holds in an order Heartwood does not
+keep (the delegate record first under an `attributes.*` criterion; see the full route list). The
+long runs take every property to 10,000 cases or more, in several independent seeds, and keep a
+cumulative record of every run.
+
+**The API's fuzz targets.** `api_query` gives a route and a raw query string to the grammar, the
+validation and the page envelope: nothing may panic, the work stays bounded whatever the query
+(a parse at most 129 levels deep, its output linear in its input plus the grammar's budget of
+holes), and the verdict equals the reference's. `make fuzz-api` seeds its corpus with
+`tools/api-fuzz-seeds.js` from the queries of the vectors in `API_SEEDS` (V28 and V34) and runs it
+for `FUZZ_SECONDS` with `FUZZ_FORK` jobs, its log in `API_LOGS`; `make replay-api` sends every
+file of the corpus through the oracle's `api.fuzzQuery` and Heartwood and fails on a difference.
+`api_head` gives bytes to the reader of a request's head, as Node 18's parser reads it
+(`heartwood_api::server::head::head_verdict`, which only a fuzz build and the crate's tests
+have: a release build has no public item there): no input may panic, the work stays bounded, and
+a head reads the same at once and a few bytes at a time.
+
+**The codec fuzz targets.** `address_decode` reads an input's text (its lossy UTF-8 reading) as an
+address of the devnet's network or of the reference's mainnet: no input may panic, and an accepted
+address re-encodes to the same text and validates for its own network byte and for no other.
+`transaction_json` reads an input's text, as the API reads a request's body, as a transaction's
+JSON, strictly and not, with the reference's `vendorField` and `asset.payments` aliases: no input
+may panic, and the bytes of an accepted transaction decode back to the same bytes, id and JSON.
+`make fuzz-codec` builds the three targets and runs them one after the other, each for
+`FUZZ_SECONDS`, seeded by `tools/codec-fuzz-seeds.js` from the vector run `CODEC_SEEDS` (the
+addresses of V01 to V03, the transactions of V02 and V03, and the queries of V28 and V34 as
+request heads), each one gate record; `make replay-codec` sends the corpus of `address_decode` and
+`transaction_json` (`CODEC_REPLAY`) through the oracle (the reference's `Address.validate` and
+payload decoder, and `TransactionFactory.fromData` read strictly and not) and Heartwood, with
+`difftest oracle replay-codec TARGET CORPUS --vectors DIR`, and fails on a difference that is not
+documented or on an input it did not compare. Where both refuse, the verdicts are compared, not
+the reference's error class, which differs by the stage that refused. `api_head` has no replay:
+the oracle has no operation that reads a head as Node's parser does, so that target is
+crash-only.
+
 ## L2: chains, corpora and the state digest
 
 A corpus is a chain that a reference devnet produced, imported with `difftest corpus import` from
@@ -1875,7 +2156,11 @@ definition, every block as a relay receives it, and what the node itself recorde
 missed slots, block columns, API checkpoints). The oracle's
 judge, `replay-chain.js` (`difftest corpus judge`), replays the corpus in the reference's own state
 classes with storage replaced by memory, checks that replay against the node's records, follows a
-seeded plan of reverts and re-applies, and writes one digest line per step. `difftest run l2`
+seeded plan of reverts and re-applies, and writes one digest line per step. A planned revert that
+would return to the last block of a round reverts one block more (`corpus.json` lists each such
+step as `revertPlanAdjusted`), in a corpus that `corpus import`, `corpus from-blocks` or a live
+check makes alike: the judge's node deletes the next round's rows at such a revert and does not
+save them again, while the node that stored the chain never reverted. `difftest run l2`
 replays the same steps in Heartwood and compares every line; it also checks, before each block,
 that the scheduled forger is the block's generator and that the reward in its round is the header's,
 and runs the supply check after every step, with a check of the one value the digest leaves out:
@@ -1934,10 +2219,16 @@ tooling derives from the chain's seed. Each rebuilt block must equal the stored 
 whose first block does not rebuild is reported as "aux unknown", never as passed, unless that aux
 reproduces the block's own signature: then the forging differs, and the block is a mismatch. With
 `DIRECTION=oracle` the reference rebuilds the blocks instead, which checks a chain that Heartwood
-forged. Every block of the committed corpus, of the maintainers' fault and restart chains (to
-height 265), of the chains of the live runs with reference forgers and of run `t` rebuilds
-through Heartwood's forger, and every block of runs `m` and `f`, which Heartwood's forgers made,
-rebuilds through the reference's (see L3 and L4).
+forged. The forger keys are those the devnet tooling derives from the chain's seed and, for a chain
+of a lockstep batch (`batch-S-K`), the keys of its recipe's wallets, any of which may register as
+a delegate and forge: the replay reads their labels from the batch file beside the chain
+(`batch-S.json`), whose entry for the chain must have the chain's seed. A block whose generator is
+none of these keys (a chain made alone from a recipe that registers a delegate, or a batch chain
+copied without its batch file) is reported as a harness error, never as passed. Every block of
+the committed corpus, of the maintainers' fault and restart chains (to height 265), of the chains
+of the live runs with reference forgers and of run `t` rebuilds through Heartwood's forger, and
+every block of runs `m` and `f`, which Heartwood's forgers made, rebuilds through the reference's
+(see L3 and L4).
 
 **The forger's own blocks.** `make l2-synthetic` also runs four cases of a block that the node's
 own forger posts, on top of the chain, through the reference's receipt and job and through
@@ -2028,6 +2319,58 @@ state and once without it, with an API checkpoint after each restart, which the 
 restarts must reproduce. The chains of the live runs (see L3 and L4) are imported and judged the
 same way, with `PROCESSOR=1`, and replayed through the processor.
 
+### The lockstep producer
+
+`difftest lockstep make` forges a chain without a network: Heartwood's genesis, state, pool and
+forger make every block from a seed, a genesis profile and a recipe, while the reference applies
+every block beside it. A recipe (`tools/difftest/recipes/`) is JSON: the labels of its wallets and
+its steps in height order, each a batch of transactions built once with the reference's builders
+(every kept type, with the refusals a pool gives), a delegate's forger stopped over a range of
+heights (its slots are missed), the online entries a relay would record at a round's start (a
+headless producer has no peers and no attestations, so the recipe stands in for them), a revert of
+some blocks and their re-apply, a fork (blocks reverted and a branch forged in their place), or a
+restart point.
+Each transaction is submitted to both pools, whose verdicts and error codes must be equal; each
+block is applied by the reference and its state digest line must equal Heartwood's, or the
+producer stops and names the height or the transaction.
+
+The output is an ordinary corpus (blocks, a manifest with the forger's aux, and the revert and
+restart plans), so `corpus judge`, `l2`, `l2-processor`, `l2-restart` and `forge-replay` run on it
+as on a live chain. It has no API checkpoints or archives, so the judge's checks that rest on a
+node's own records are reported as not applying. A chain is at most 5 rounds unless it is asked
+for with `--long`, and at most 50.
+
+`difftest lockstep batch --count N --rounds R --seed S [--long] [--profile P] [--out DIR] [--jobs
+J]` makes N chains, `batch-S-1` to `batch-S-N` (by default up to 8 at once), and lists them in
+`batch-S.json`. Each chain's recipe is drawn from the seed and the chain's place, so a batch can be
+made again chain by chain. Every chain funds its wallets and holds the six kept transaction types,
+the removed type's refused transaction, a vote for a delegate that is not attested (refused
+`ERR_OFFLINE`), an online step for every round, a missed-slot pattern, a restart point at a round
+start and at a round end, and from two rounds on a revert across a round end; whether it also
+forks, whether the delegate it registers wins votes and forges, whether a milestone activates
+inside it, whether that delegate resigns for good or for a time and, from six rounds on, whether a
+second delegate resigns for a time and revokes it are drawn. `difftest run l2-batch DIR [--batch
+S]...` judges every chain of the batches with the processor's results and replays it as any corpus
+is replayed (`l2` with the restarts of both start paths, `l2-processor` in both job cuts, the
+revert symmetry), and checks that the recipe's restart points and reverts are in the chain's plans
+(`make lockstep-batch` and `make l2-batch`, one gate record each). A long chain (`--long`, 7 rounds
+or more) attests one delegate in its first round only, so that its online entry has expired at the
+start of round 7: a vote for it in round 6 is admitted, and one in round 7's first block is refused
+`ERR_OFFLINE` by both pools, the one behaviour a chain of 5 rounds cannot show.
+
+The judge runs the reference's processor one block per job, so it does not show what the
+reference's cut of a download into jobs of 100 blocks does with a block whose generator registered
+earlier in the same job. The draw keeps a delegate that a chain registers from forging for the 115
+blocks after its registration, so that the two never share such a job, and `l2-batch` names, as a
+documented line, each such delegate that forges within one download of 400 blocks after its
+registration.
+
+```sh
+make lockstep NAME=my-chain SEED=my-seed PROFILE=devnet RECIPE=tools/difftest/recipes/lockstep-5.json
+make lockstep-batch COUNT=10 SEED=7 ROUNDS=5     # ten chains with drawn recipes (LONG=1 for more than 5 rounds)
+make l2-batch                                    # every chain of every batch, judged and replayed
+```
+
 ## L3 and L4: live runs
 
 L3 and L4 run on devnets of the maintainers' devnet tooling (a separate tool that is not published;
@@ -2058,8 +2401,9 @@ have forged, nodes 3 and 4 must converge on the majority's chain by themselves, 
 equal the judge's on the minority's chain and then on the majority's, and of the two conflicting
 transfers only the majority's may be in the final chain, while the other has left every pool.
 
-The route corpus (`tools/difftest/api-corpus`, 1,038 queries: each served route, each criterion
-alone and in pairs, orders, pages, `offset=0`, unknown keys, invalid values, the 404 texts, wallets
+The route corpus (`tools/difftest/api-corpus`, 1,038 queries while it covered the first 18
+routes, and since then the queries of every route of the full list: each served route, each
+criterion alone and in pairs, orders, pages, `offset=0`, unknown keys, invalid values, the 404 texts, wallets
 by address, key and name, the peers' filters, the pool after two submissions, and 102 requests for
 the rate limit) is sent at the run's pause to node 1 and to the node under test, alternately, and
 their answers are judged: equal status codes, `connection: close` and `X-Block-Height` present and
@@ -2200,6 +2544,135 @@ restarted). In the last run the restarted Heartwood relay found the fork 6 s aft
 logged the reference's own lines (19 blocks removed back to height 80), and every node was on one
 tip 104 s after the heal.
 
+### Scenarios and suites
+
+A scenario (`tools/difftest/scenarios/<suite>/*.json`) is one JSON file that names its levels,
+its network (such as five nodes with 53 delegates split 11, 11, 11, 10 and 10), its public seed,
+its actors (wallets derived from the seed) and its steps. A step fires when the observed tip
+first satisfies its trigger (a height, a number of blocks or slots after the previous step, a
+round's start or end) and does an action (submit transactions through a node's API or the
+peer-to-peer route, stop, start or restart a node or one of its roles, with the restart path of
+each implementation, partition the nodes into groups, heal, wait, and at the lockstep level
+revert and fork), checks (the pools accepted or refused the transactions with a named code, the
+transactions are or are not in the chain within some blocks, the implementations' state digests
+agree, a named projection of the API's answers is equal on the nodes given, missed slots were
+recorded, and invariants: the supply, one tip, the schedule, the secondary reward on a delegate's
+second block of a round, a revert's symmetry, a restart's equality, both sides of a partition
+forging, and the fork's recovery) or both. Every object refuses a key it does not know.
+
+`difftest scenario compile FILE` builds every transaction once with the reference's builders (the
+fixed aux, a strict decode at the height the step plans), so that both implementations receive
+the same bytes. `difftest scenario run --backend heartwood|external|lockstep [--level l2|l3|l4]
+[--devnet-root DIR] FILE|DIR` runs scenarios through a backend: `lockstep` (level l2) makes the
+chain with the lockstep producer; `heartwood` drives a devnet of this tree that is already running
+(`heartwood devnet run FILE` starts the runner on it); `external` drives the executable
+`DIFFTEST_SCENARIO_BACKEND` names, which the maintainers' devnet tooling provides for the
+reference implementation's own devnets. A level the backend cannot run is named in the record as
+left to a live run. `difftest scenario compare DIR [--suite NAME]` puts a suite's runs on the
+reference and on Heartwood, of one seed, side by side. Each scenario ends with a verdict line,
+`scenario <id>: pass|fail|skipped`.
+
+The suites are `transactions` (every kept type with its expected refusals: chained transfers, a
+double spend by nonce, large transfers, burns and the supply, a second signature, each kept type
+refused for a balance that cannot pay it, repeated operations), `lifecycle` (the pool across a
+restart, the attestation of a delegate, missed slots, a vote in the last block of a round, a relay
+and a forger split, restarts, a delegate's resignation and its revoke), `network` (a sync from the
+genesis block, peer discovery, propagation, a partition and its heal) and `network-split` (a
+partition in which both sides forge); `scenarios/lockstep` holds the cases that only the lockstep producer can show (an
+IPFS transaction refused, a vote in a round's last block, a milestone that activates inside the
+chain, reorgs that revert registrations and votes, ties among delegates with no votes, burns).
+`make scenario LEVEL=l2` runs the files through the lockstep producer with no network;
+`make suites SUITE=transactions IMPL=reference|heartwood SEED=NAME` runs a suite on one
+implementation (a devnet of this tree in mode B, or the reference's Docker devnet through the
+maintainers' tooling), and `make live-check RUN=suites SEED=NAME` compares the two. In the
+`network` suite every block must reach every node within one block time (8 s) of its first arrival
+at any node, outside the fault windows; after a heal the partition's minority keeps a window until
+30 s after the network converged on one tip, which must happen within 192 s of the heal, and a
+partition without a heal fails. A suite stops at the end of its second round, except
+`lifecycle`, which needs three (a temporary resignation's revoke is valid no earlier than 107
+blocks after it).
+
+### The mixed forging network
+
+Reference nodes and Heartwood nodes can forge one chain together. Reference nodes never accept a
+loopback peer, so each node needs an address of its own: the runs build a private network
+without root (a user and network namespace, a bridge, and a namespace per node holding the node's
+address on the bridge, `.(10 + k)` for node k, and the ports 6002 and 6003, with
+`CORE_P2P_ALLOW_PRIVATE_IP_RANGES` set and no devnet switch, so that the addressing is the
+production one). The network is generated once, with 53 delegates split over its validators, and
+every node's directory serves both implementations. Two splits of it are used: the first has
+reference nodes 1 to 3 (33 delegates) and Heartwood nodes 4 and 5 (20); the second has Heartwood
+nodes 1 and 2 (22) and reference nodes 3 to 5 (31). Heartwood nodes are
+started inside their namespaces by the product's own `relay start` and `forger start`, under the
+supervisor, with the node's `CORE_PATH_*` variables, so the supervisor, the locks and the per-role
+logs are the ones an operator gets; reference nodes run their relay and their forger as two
+processes. A forger reaches its own relay on `127.0.0.1`, so its relay attests its keys. A partition
+puts, in each node's namespace, an unreachable route to every address of the other groups, and the
+heal removes those routes, and a send to the other side fails at once. A node goes back to its
+seeds only when it holds fewer peers than the network's minimum reach (one here), and its
+discovery asks only the peers it knows, so after a partition that leaves each node a peer on its
+own side neither implementation finds the other side again by itself: 60 s after the heal the
+recipe restarts the relay of each minority node still 10 or more blocks behind, of either
+implementation, which then syncs from its seeds. The convergence these runs show is the
+restarted relays'; a heal followed without a restart is not shown. A fault is a line in the run's `faults.jsonl` with its
+nodes and its start; its window ends 30 seconds after the node answers its API again, or after the
+heal. The recipes are the maintainers' tooling (not published); the runs, named by content, are:
+
+| Run | Network | What it shows |
+|---|---|---|
+| `mixed-short` | the first split and the second in turn; 2 rounds | forging on both sides, votes admitted on both, a batch reaching every pool before the next block, every relay listing every other, no ban line, equal digests across the implementations |
+| `mixed` | the first split; 5 rounds | the same with a missed slot stored on every node, restarts of Heartwood relays on both start paths, a supervised kill of a forger, a partition along the implementations and its heal, and the route corpus compared on like-for-like pairs |
+| `mixed-split` | the second split, with `minimumDelegateReach` 15 on every node; 5 rounds | a partition across implementations in which both sides forge, conflicting transfers, and both minority nodes converging on the majority chain after the heal and the restart of their relays |
+| `churn` | five Heartwood nodes, a relay without keys (node 6), node 5's forger on a second machine (its own namespace) and a reference relay that joins late; 5 rounds | every node stopped and started in turn, supervised kills, a transaction pool filled to its limit and drained, two nodes down (forging goes on) and three (the chain halts and resumes), a vote for the split-host forger's delegate refused as offline (the relay does not attest it), the relay without keys serving every route, and a fresh reference relay syncing from one Heartwood relay alone |
+| `core` | three Heartwood `core` nodes in mode B; 2 rounds | one process per node holding the three locks, forging and attestation as split nodes, `relay start` refused while `core` runs, a graceful stop within 30 seconds |
+| `observer` | reference nodes 1 to 3 and a Heartwood relay without delegates (node 4); 3 rounds | the transaction generator's scenarios submitted through the Heartwood relay (all but a resignation's revoke, which falls past round 3), a batch through it, and a vote through it before and after its restart; then the route corpus of the full route list sent to a Heartwood relay and a reference node, alternately |
+
+Every run stops at its planned height, which its recipe refuses to pass (2 rounds is 106, 3 is
+159, 5 is 265), and never starts within 40 minutes of 00:00 UTC, when the nodes' logs rotate.
+`difftest live check` judges a run's directory: every forger produced in each round outside its
+fault windows; the scripted votes admitted on both sides, none for a restarted relay's own
+delegates before the next round's start; after the first round every reference relay lists a
+version for each Heartwood-hosted delegate, and every Heartwood relay's network state counts all
+53 delegates before a partition; both sides of a partition forged and converged after the heal
+(with each lagging minority relay restarted, which the check records);
+no reference node banned a Heartwood node; each block was made by the delegate its slot names; and
+every Heartwood relay's digest lines equal the judge's. A block that a relay of the minority applied
+in the first slots of a partition, before it found it had lost its peers, is on no judged chain: the
+branch the relay held when it applied the block is built from its block files and judged by the
+reference with its processor's results, and the relay's lines of the block must equal the
+branch's. In a run whose recipe sends a transaction to one node of an API pair only, that node's
+handler may refuse it and so move its parties inside their ties in the wallet indexes, where the
+other node never sees it: the check then lets such a wallet, and only such a wallet, stand at
+another place inside its tie on the listings of that pair, with its evidence read from the run's
+own records (sent to that node alone and refused there by its handler, not at the pool's entry,
+before the route corpus was recorded), and names the wallet. The wallets the search finds are
+sorted by the reference (an active delegate before a wallet that is no delegate, active delegates
+by name, any other pair by address): such a wallet's place is free there only inside a tie of
+names the numeric collation holds equal, or where a resigned delegate stands among active ones,
+whose order the comparator leaves to the index. Where both nodes of a pair are reference nodes, each orders a tie by its own
+index, so any order inside a tie is the reference's. A Heartwood relay restarted on a store that
+holds no missed-slot row writes the rows of the slots before block 2, as the reference's start
+does, each charged to the delegate of round 1's forging order at the slot's place (the order is
+computed from the control's round rows and checked against every block of round 1); a control that never restarted holds none, so the pair's answers to `/blocks/missed` are
+judged as the reference answers over each node's rows, once that rule gives the control's own
+answers over the control's rows exactly. `make api-compare` judges a run's recorded answers with
+the same evidence. A scripted batch whose transactions one reference relay listed only in part
+before its next block is the reference's own race, two posts of the batch reaching that relay at
+once, its pool running them side by side and refusing the later nonces for a gap the other post
+filled a moment later. The relay's own pool lines name no post (one post out of nonce order writes
+the same lines), so the step is documented only when the run's logs show the two posts as well:
+two other relays broadcast exactly the batch's number of transactions within a millisecond a
+transaction of each other, no later than the relay's first pool line of the batch; the relay's
+outcomes come in an order two posts each in nonce order can give; another reference relay took the
+whole batch in nonce order; every Heartwood relay listed the whole batch; and every transaction of
+the batch was forged later. The attestation record is required of a relay whose forger connects
+over loopback, which alone is offered statuses to sign; a signature attached, or a status served
+signed, in the record of a relay whose forger is elsewhere fails. A reference node writes no block file, so
+the chain's blocks are the Heartwood relays': each holds every block it applied, those of an
+abandoned branch included. The resource series of the longer runs (each node's whole process
+tree, every 10 seconds, with the bytes written and the log growth) are recorded and read against
+the project's resource budgets.
+
 ## The oracle image
 
 `make oracle-image`, or `tools/oracle/build-image.sh --repo DIR --commit REV`:
@@ -2258,15 +2731,17 @@ run without `DEVNET_GENERATOR`, and then installs nothing.
 | `V25-peer-rules.jsonl` (p2p) | the address rules of candidate peers, the version gate over the devnet's, the default and 400 seeded ranges, the same-subnet test and the outgoing rate limiter's waits |
 | `V26-network.jsonl` (p2p) | the status attestations of a ping, the n-ary search for the common block and the peer verification over forks of a devnet chain, the monitor's network height, fork decisions and download plans, and blocks rebuilt from getBlocks replies |
 | `V27-processor.jsonl` (blockchain) | the reference's processor on one block and a chain state (`chain.process`: every result and unchained status, the invalid generator, the reward, nonces, conflicting and stored transactions, a block refused in its apply after missed slots, a removed type) and its job on a download of one or more jobs (`chain.job`: the job's results and end, its commit, a delegate's registration and its first block in one download, as one job and as two) |
-| `V28-node.jsonl` (kernel and api) | the reference's reading of `app.json` (`config.loadApp`) and of the components' options (`config.pluginOptions`), and the API's query grammar (`api.parseQuery`, with its throws) and pagination (`api.paginate`) |
+| `V28-node.jsonl` (kernel and api) | the reference's reading of `app.json` (`config.loadApp`) and of the components' options (`config.pluginOptions`), what the node does next with those options (`config.pluginStart`), and the API's query grammar (`api.parseQuery`, with its throws) and pagination (`api.paginate`) |
 | `V29-forging.jsonl` (forger and p2p-wire) | block assembly (`forger.forge`: an empty block, each kept type alone and together, burns, 256 recipients, 150 and 151 transactions, a block over `maxPayload`, totals and rewards at the 64-bit edges, three aux values, milestones that change at the next height), collation and assembly after pool sessions (`forger.collateAndForge`), one attempt of the forger's slot (`forger.decide`, with its log lines), and the internal routes' round and network-state bodies as a relay writes them and the forger reads them |
 | `V30-relay-forger.jsonl` (p2p) | the relay's forging quorum over the network state of a round (`quorum.analyze`: the peers' heights, ids and delegates, the missed and the unknown) and the round the relay answers the forger with (`forger.round`) |
 | `V31-server.jsonl` (p2p) | the server's request chain over each route (`p2p.serveRequest`: the plugins' checks, the codec, the version and network gates, the forger's exemption from the limits), the inbound limiter's sequences (`ratelimit.run`) and the status the server signs and serves (`status.serve`) |
 | `V32-served.jsonl` (p2p) | the public controllers' answers (`p2p.controller`) over the committed corpus at heights 2, 53, 54, 106 and 265 and over a synthetic store of full blocks that reaches the 20 MiB cut: getBlocks from 0, 1, the middle, the tip and past it with limits 1 and 400, none and headers only; getCommonBlocks with no known id, one, several, the genesis block alone, ten, duplicates and an id in capitals; getPeers with equal latencies, a port of -1, the caller (also IPv4-mapped), peers without a latency and 2,001 peers; getUnconfirmedTransactions, postTransactions and getStatus (the records with `countOnly` are the controller's answer alone: the server's request schema has no such key and refuses the request before any controller runs); postBlock pinged, not chaining, by an unregistered or unranked generator, valid, from the forger, with the reduced reward, above `maxTransactions` (the reference throws, so the caller's socket ends) and with a memo that is not valid UTF-8 |
 | `V33-rollback.jsonl` (blockchain) | the reference's `snapshot:rollback` (`chain.rollback`) over the committed corpus at its tip, 265: 12 refusals (no flag, a 0 for either or both flags, negative values, the tip and above it, heights 1, 40 and 53) with their lines, and 17 rollbacks (`--height` at and around the round ends, `--number`, both flags), each with the rows it deleted, the store's summary, the start after it with its line and summary, and the rows of the round after the target |
 | `V20-logger.jsonl` (logger) | the log line of every level, coloured and plain, with and without emoji codes (the whole table, in slices), over times at the edges of a JavaScript date and messages with line breaks and colour codes |
-| `V21-pool.jsonl` (pool) | 50 scripted pool sessions over wallet fixtures, each step with the reference's answer and the pool's contents after it: every error code with its message (duplicates, the cooldown from 0 to 30 seconds and per channel, the size limit, another network byte, the fee floor and one below it, the static fee exact, lower and higher, a full pool with fee ties and evictions, the per-sender limit with `excess` and allowed senders, every handler refusal, the pending and offline texts, bad signatures and bytes that do not decode, the seven removed types as bytes and as JSON); JSON entries with a correct, wrong or missing id; accepted but not broadcast; a pending incoming transfer; nonce chains and gaps; re-adds after a flush and a restart of the storage; age expiry; removal cascades; forged removal; the online record's expiry; collation (fee and nonce order, ties, `exclude`, the most transactions, the byte budget, a failed sender) |
+| `V21-pool.jsonl` (pool) | 56 scripted pool sessions over wallet fixtures, each step with the reference's answer and the pool's contents after it: every error code with its message (duplicates, the cooldown from 0 to 30 seconds and per channel, the size limit, another network byte, the fee floor and one below it, the static fee exact, lower and higher, a full pool with fee ties and evictions, the per-sender limit with `excess` and allowed senders, every handler refusal, the pending and offline texts, bad signatures and bytes that do not decode, the seven removed types as bytes, as JSON and as JSON with a null id, and in the static-fee mode at a lower, a higher and the exact fee, then at the exact fee in a full pool, over the per-sender limit, over the size limit and from another network); JSON entries with a correct, wrong or missing id; accepted but not broadcast; a pending incoming transfer; nonce chains and gaps; re-adds after a flush and a restart of the storage; age expiry; removal cascades; forged removal; the online record's expiry; collation (fee and nonce order, ties, `exclude`, the most transactions, the byte budget, a failed sender) |
 | `V23-config.jsonl` (kernel) | `config.load` of the four crypto files: the devnet's files, accepted by both, and each refusal kind of the strict schema at each level, the keys of removed features on and off, `exceptions.json` other than `{}`, and missing files (the reference then falls back to its built-in preset) |
+| `V34-api-tiers.jsonl` (state, api and database, one copy each) | the API's listings and their parts: `state.indexOrders` (the reference's address, public-key and username index orders live, after a saved-state restart and after a rebuild, over the committed chains with reverts and restarts); `api.delegatesPage` and `api.walletsPage` (every criterion kind, a non-string criterion on a string value, `%` patterns, `orderBy` on nested and `attributes.*` paths, ties, missing values, pages); `api.searchPage` (limits and offsets, `offset=0`, mixed JSON types and plain objects placed where the sort's tree does and does not compare them, the status and the page or the error); `api.delegateResource` (vote percentages at rounding ties, tiny and huge supplies, resigned delegates); `api.walletsLike` (the wallet search, its non-transitive comparator in both input orders, the 20- and 21-character boundary); `js.localeCompare` and `js.rbTrace` (the comparisons ICU's collation and the red-black tree make); `api.spec` and `api.transactionSchemas` (the OpenAPI document and the schemas); `api.feeStatistics`; `api.productivityWindow`; `api.fuzzQuery`; and the SQL kinds `sql.round2`, `sql.avgInt8` and `sql.productivity`, recorded from the reference's own queries over generated rows on PostgreSQL 14 (the reference's devnet image) and checked on PostgreSQL 16, with a meta record that names both versions. A manifest of minimums per kind makes the crates' tests and `vectors-install` fail on a kind below its minimum or a missing class, never skip |
+| `V35-operator.jsonl` (cli) | the operator commands' files: `env.stringify` (a variable map written as the reference's `envfile` writes it: key order, array-index keys first, numbers, empty and white-space values, a value with a line break), `env.parseCli` (a file's text as the reference's command line reads it, with the lines the node's own parser reads otherwise marked as a documented difference) and `config.forgerKey` (the flags and the existing `delegates.json`, or none: an accepted or refused key, case, the file's bytes, an absent file refused, a file with `secrets: []`, an extra top-level key kept in its place) |
 
 The first line of each file is a meta record: format `heartwood-vectors/1`; the reference's version,
 commit and tree, and the SHA-256 of the reference's patch register (null when the commit has none);
@@ -2327,6 +2802,13 @@ difftest forger crash [--kills N] [--seed S] [--child FILE]
 difftest network generate DIR
 difftest levels
 difftest oracle replay OP CORPUS --vectors DIR [--height N] [--milestones FILE] [ORACLE]
+difftest oracle replay-codec address_decode|transaction_json CORPUS --vectors DIR [ORACLE]
+difftest lockstep make --seed S --profile P --rounds R --recipe FILE --out DIR [--long] [ORACLE]
+difftest lockstep batch --count N --rounds R --seed S [--long] [--profile P] [--out DIR] [--jobs J] [ORACLE]
+difftest run l2-batch DIR [--batch SEED]... [ORACLE]
+difftest scenario compile FILE [--out FILE] [ORACLE]
+difftest scenario run --backend heartwood|external|lockstep [--level l2|l3|l4] [--devnet-root DIR] FILE|DIR [ORACLE]
+difftest scenario compare DIR [--suite NAME]
 difftest genesis --profile FILE --seed TEXT --epoch TIME --out DIR [--force] [--compare DIR]
 ```
 
@@ -2339,7 +2821,10 @@ start paths and prints each one's tip and restart line: the kill test's two halv
 round, the missed slots and the transactions of a relay's store through a read-only connection,
 so a running relay's too; `live await` is the AwaitBlock report and `p2p compare` the probe's
 comparison of two relays of a live run (see L3 and L4);
-`corpus from-blocks` makes a corpus of a Heartwood relay's block files; `network generate` runs
+`corpus from-blocks` makes a corpus of a Heartwood relay's block files; `lockstep` makes chains
+without a network and `run l2-batch` judges a batch of them (see the lockstep producer);
+`scenario` compiles, runs and compares the scenarios (see Scenarios and suites); `oracle
+replay-codec` sends a codec fuzz corpus through the oracle and Heartwood (see L1); `network generate` runs
 `heartwood network generate`'s files against the genesis records of a vector set. `live check`
 judges a live run's directory and `api compare --run` its recorded API answers (see L3 and L4);
 `api compare --left --right` sends the route corpus to two running nodes and judges their answers.
@@ -2357,7 +2842,9 @@ and Heartwood), `genesis` (the chain-definition driver), `fixture` (wallet sets 
 them), `strategies` (the L1 generators), `corpus` and `digests` (L2 corpora and digest files),
 `synthetic` and `synthetic_pool` (the L2 synthetic blocks, restarts and pool sessions),
 `synthetic_processor` (the synthetic processor and fork cases), `synthetic_rollback` and
-`synthetic_clear` (the recovery cases), `synthetic_forger` and `service_rig`
+`synthetic_clear` (the recovery cases), `lockstep` (the lockstep producer, its recipes and its
+batches), `scenario` (the scenario format, compiler, runner and backends), `replay_codec` (the
+codec fuzz corpora through the oracle), `synthetic_forger` and `service_rig`
 (the forger's own blocks through the blockchain service), `forger_kill` (the forger's crash test),
 `corpus_from_blocks` (a corpus of relay block files), `restart` (restart plans and the reference's
 restart lines), `store` (the replay through the store, the store's rows against the node's, and the

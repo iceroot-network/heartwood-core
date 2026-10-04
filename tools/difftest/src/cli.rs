@@ -26,13 +26,18 @@ Usage:
                                   compare them as L0 does; DIR is a vector set with the
                                   genesis class, for the devnet rules; --milestones runs
                                   both sides under that milestone file; height 2 by default
+  difftest oracle replay-codec TARGET CORPUS --vectors DIR [ORACLE]
+                                  send each file of CORPUS (a codec fuzz target's corpus) to
+                                  the oracle and to Heartwood as TARGET reads it
+                                  (address_decode, transaction_json, api_head) and compare the
+                                  verdicts; DIR is a vector set with the genesis class
   difftest vectors verify DIR     check a vector directory: manifest, meta records, record shape
   difftest vectors diff DIR DIR   compare two oracle runs record by record (meta excluded)
   difftest run l0 DIR             compare golden vectors with Heartwood's implementations
   difftest run l1 [--property P]... [--cases N] [--seed S] [--vectors DIR]
                   [--regressions DIR] [--min-reach N] [--decision-reach N]
                   [--served-reach N] [ORACLE]
-                                  random and mutated cases of the properties (P1 to P20, or
+                                  random and mutated cases of the properties (P1 to P23, or
                                   their names; all by default), one oracle call each; 256
                                   cases and seed 1 by default; DIR is a vector set with the
                                   genesis class [packages/crypto/tests/vectors]; the minimal
@@ -67,7 +72,24 @@ Usage:
                                   the rollback replay: the stored chain of DIR rolled back to
                                   each target of the rollback class that it reaches, compared
                                   with the oracle's rollback, then started and re-synced
+  difftest run l2-batch DIR [--batch SEED]... [ORACLE]
+                                  every chain of the lockstep batches in the corpus directory
+                                  DIR (every batch file, or those of the seeds named): the
+                                  judge, l2, the processor in both job cuts, the restarts by
+                                  both paths and the revert symmetry, one report for them all
   difftest run l3|l4              later levels (see `difftest levels`)
+  difftest lockstep make --seed S --profile P --rounds R --recipe FILE --out DIR [--long] [ORACLE]
+                                  forge a chain of R rounds (5 at most, 50 with --long) from
+                                  the seed S and the genesis profile P as FILE's recipe says,
+                                  with Heartwood's forger, the reference building every
+                                  transaction and applying every block beside it, into the
+                                  corpus DIR
+  difftest lockstep batch --count N --rounds R --seed S [--long] [--profile P] [--out DIR]
+                          [--jobs J] [ORACLE]
+                                  N chains of R rounds (5 at most, 50 with --long), J at once,
+                                  each with a recipe drawn from the seed S, into the corpus
+                                  directory DIR [target/corpus] as batch-S-1 to batch-S-N,
+                                  listed in DIR/batch-S.json; P is the genesis profile [devnet]
   difftest corpus import ARCHIVE... --out DIR [--seed TEXT]
                                   join the devnet tooling's archives of one chain (in order)
                                   into a corpus; TEXT is the chain's public key-derivation
@@ -112,6 +134,24 @@ Usage:
                                   reference nodes only: the log counts are compared with the
                                   most any of those runs gave
   difftest live await RUN_DIR     the AwaitBlock report of a live run's Heartwood relays
+  difftest live resources RUN_DIR [--baseline FILE]
+                                  the resource report; accepted figures allow up to 25 % growth
+                                  (MB for memory and disk per day, percent for CPU)
+  difftest scenario compile FILE [--out FILE] [ORACLE]
+                                  build every transaction of the scenario FILE once through
+                                  the oracle, at its planned height
+  difftest scenario run --backend heartwood|external|lockstep [--level l2|l3|l4]
+                        [--devnet-root DIR] FILE|DIR [ORACLE]
+                                  run the scenarios (a file, or every file of a directory)
+                                  through the runner on the backend: a devnet of this tree,
+                                  the executable $DIFFTEST_SCENARIO_BACKEND names, or the
+                                  lockstep producer
+  difftest scenario compare DIR [--suite NAME]
+                                  a suite's reference and Heartwood runs of one seed (DIR's
+                                  NAME-reference and NAME-heartwood), side by side
+  difftest gate record|ledger|s1|coverage|register ARG...
+                                  the gate records, the cumulative ledger, the S1 record's
+                                  table, the coverage rows and the register's checks
   difftest p2p compare RUN_DIR --left NODE --right NODE
                                   the reference-client probe's records of two relays of a live
                                   run, compared case by case
@@ -133,7 +173,8 @@ Usage:
                                   generator for the same inputs
 
 --strict, with any command that compares (run, oracle replay, store crash, forger crash, network
-generate, live check, live await, api compare, p2p compare): a case that was skipped or has no Rust implementation fails the run too, as
+generate, live check, live await, live resources, api compare, p2p compare, scenario run,
+scenario compare, gate s1): a case that was skipped or has no Rust implementation fails the run too, as
 a failed case does; the Makefile's gate targets pass it.
 
 ORACLE, where the reference runs (the flags win over the environment):
@@ -359,6 +400,121 @@ pub enum Command {
         /// The vector set with the genesis class.
         vectors: PathBuf,
     },
+    /// `difftest lockstep make`: a lockstep chain.
+    LockstepMake(LockstepArgs),
+    /// `difftest lockstep batch`: many lockstep chains with drawn recipes.
+    LockstepBatch(LockstepBatchArgs),
+    /// `difftest run l2-batch`: every chain of lockstep batches, judged and replayed.
+    RunL2Batch(L2BatchArgs),
+    /// `difftest oracle replay-codec`: a codec fuzz target's corpus through the oracle and
+    /// Heartwood.
+    OracleReplayCodec(CodecReplayArgs),
+    /// `difftest live resources`: a forging run's resource report.
+    LiveResources {
+        /// The run directory.
+        dir: PathBuf,
+        /// A resource baseline with figures accepted by a person.
+        baseline: Option<PathBuf>,
+    },
+    /// `difftest scenario compile`: a scenario's transactions, built once.
+    ScenarioCompile(ScenarioCompileArgs),
+    /// `difftest scenario run`: scenarios through the runner.
+    ScenarioRun(ScenarioRunArgs),
+    /// `difftest scenario compare`: a suite's reference and Heartwood runs of one seed.
+    ScenarioCompare {
+        /// The seed's directory of suite runs.
+        dir: PathBuf,
+        /// One suite only.
+        suite: Option<String>,
+    },
+    /// `difftest gate ...`: the gate records, the ledger and the baseline record.
+    Gate(crate::gate::GateArgs),
+}
+
+/// The arguments of `difftest scenario compile`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioCompileArgs {
+    /// Where the oracle runs.
+    pub oracle: OracleArgs,
+    /// The scenario file.
+    pub file: PathBuf,
+    /// Where the compiled scenario is written; standard output when `None`.
+    pub out: Option<PathBuf>,
+}
+
+/// The arguments of `difftest scenario run`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioRunArgs {
+    /// Where the oracle runs.
+    pub oracle: OracleArgs,
+    /// The backend, the level and the devnet.
+    pub options: crate::scenario::RunOptions,
+    /// A scenario file, or a directory of them.
+    pub path: PathBuf,
+}
+
+/// The arguments of `difftest lockstep make`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockstepArgs {
+    /// Where the oracle runs.
+    pub oracle: OracleArgs,
+    /// The chain's seed: its genesis keys, its wallets' keys and its forger's aux.
+    pub seed: String,
+    /// The genesis profile.
+    pub profile: String,
+    /// The rounds of the chain: at most 5, or 50 for a long chain.
+    pub rounds: u32,
+    /// The recipe file.
+    pub recipe: PathBuf,
+    /// The corpus directory to write.
+    pub out: PathBuf,
+    /// A long chain (more than 5 rounds).
+    pub long: bool,
+}
+
+/// The arguments of `difftest lockstep batch`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockstepBatchArgs {
+    /// Where the oracle runs.
+    pub oracle: OracleArgs,
+    /// The chains to make.
+    pub count: u32,
+    /// The rounds of each chain: at most 5, or 50 for long chains.
+    pub rounds: u32,
+    /// The batch's seed, from which each chain's seed and recipe are drawn.
+    pub seed: String,
+    /// Long chains (more than 5 rounds).
+    pub long: bool,
+    /// The genesis profile of every chain.
+    pub profile: String,
+    /// The corpus directory the chains and the batch file are written into.
+    pub out: PathBuf,
+    /// The chains made at once; the machine's parallelism when `None`.
+    pub jobs: Option<usize>,
+}
+
+/// The arguments of `difftest run l2-batch`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct L2BatchArgs {
+    /// Where the oracle runs.
+    pub oracle: OracleArgs,
+    /// The corpus directory that holds the batches' chains and batch files.
+    pub dir: PathBuf,
+    /// The batches, by seed; every batch file of `dir` when empty.
+    pub batches: Vec<String>,
+}
+
+/// The arguments of `difftest oracle replay-codec`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodecReplayArgs {
+    /// Where the oracle runs.
+    pub oracle: OracleArgs,
+    /// The codec fuzz target whose corpus it is.
+    pub target: crate::replay_codec::CodecTarget,
+    /// The corpus directory.
+    pub corpus: PathBuf,
+    /// A vector set with the genesis class, for the devnet configuration.
+    pub vectors: PathBuf,
 }
 
 /// The arguments of `difftest run l2 --processor`.
@@ -516,6 +672,7 @@ pub fn parse(args: &[String]) -> Result<Command> {
             a: a.into(),
             b: b.into(),
         }),
+        ["run", "l2-batch", rest @ ..] => parse_l2_batch(rest),
         ["run", level, rest @ ..] => {
             let level: Level = level.parse()?;
             match (level, rest) {
@@ -596,6 +753,53 @@ pub fn parse(args: &[String]) -> Result<Command> {
         ["network", "generate", dir] => Ok(Command::NetworkGenerate {
             vectors: dir.into(),
         }),
+        ["lockstep", "make", rest @ ..] => parse_lockstep(rest),
+        ["lockstep", "batch", rest @ ..] => parse_lockstep_batch(rest),
+        ["live", "resources", dir, rest @ ..] => {
+            let baseline = match rest {
+                [] => None,
+                ["--baseline", file] => Some((*file).into()),
+                _ => {
+                    return Err(usage(
+                        "usage: difftest live resources RUN_DIR [--baseline FILE]",
+                    ));
+                }
+            };
+            Ok(Command::LiveResources {
+                dir: dir.into(),
+                baseline,
+            })
+        }
+        ["scenario", "compile", rest @ ..] => parse_scenario_compile(rest),
+        ["scenario", "run", rest @ ..] => parse_scenario_run(rest),
+        ["scenario", "compare", dir, rest @ ..] => {
+            let suite = match rest {
+                [] => None,
+                ["--suite", name] => Some((*name).to_owned()),
+                _ => return Err(usage("usage: difftest scenario compare DIR [--suite NAME]")),
+            };
+            Ok(Command::ScenarioCompare {
+                dir: dir.into(),
+                suite,
+            })
+        }
+        ["gate", verb, rest @ ..] => {
+            use crate::gate::{GateArgs, GateVerb};
+            let verb = match *verb {
+                "record" => GateVerb::Record,
+                "ledger" => GateVerb::Ledger,
+                "s1" => GateVerb::S1,
+                "coverage" => GateVerb::Coverage,
+                "register" => GateVerb::Register,
+                other => {
+                    return Err(usage(format!(
+                        "unknown gate command {other}: record, ledger, s1, coverage or register"
+                    )));
+                }
+            };
+            let args = rest.iter().map(|arg| (*arg).to_owned()).collect();
+            Ok(Command::Gate(GateArgs { verb, args }))
+        }
         ["corpus", "judge", dir, rest @ ..] => {
             let mut judge = JudgeArgs {
                 oracle: OracleArgs::default(),
@@ -705,6 +909,23 @@ pub fn parse(args: &[String]) -> Result<Command> {
             })
         }
         ["genesis", rest @ ..] => parse_genesis(rest),
+        ["oracle", "replay-codec", target, corpus, rest @ ..] => {
+            let mut oracle = OracleArgs::default();
+            let mut vectors = None;
+            let mut it = rest.iter();
+            while let Some(&flag) = it.next() {
+                match flag {
+                    "--vectors" => vectors = Some(PathBuf::from(value(flag, it.next())?)),
+                    _ => oracle_flag(&mut oracle, flag, it.next())?,
+                }
+            }
+            Ok(Command::OracleReplayCodec(CodecReplayArgs {
+                oracle,
+                target: target.parse()?,
+                corpus: corpus.into(),
+                vectors: vectors.ok_or_else(|| usage("oracle replay-codec needs --vectors DIR"))?,
+            }))
+        }
         ["oracle", "replay", op, corpus, rest @ ..] => {
             let mut oracle = OracleArgs::default();
             let (mut vectors, mut milestones, mut height) = (None, None, 2);
@@ -762,6 +983,129 @@ fn heights(list: &str) -> Result<Vec<u32>> {
                 .ok_or_else(|| usage(format!("{h} is not a height")))
         })
         .collect()
+}
+
+fn parse_lockstep(args: &[&str]) -> Result<Command> {
+    use crate::lockstep::{LONG_ROUNDS, SHORT_ROUNDS};
+    let mut oracle = OracleArgs::default();
+    let (mut seed, mut profile, mut recipe, mut out) = (None, None, None, None);
+    let (mut rounds, mut long) = (SHORT_ROUNDS, false);
+    let mut it = args.iter();
+    while let Some(&flag) = it.next() {
+        match flag {
+            "--seed" => seed = Some(value(flag, it.next())?.to_owned()),
+            "--profile" => profile = Some(value(flag, it.next())?.to_owned()),
+            "--recipe" => recipe = Some(PathBuf::from(value(flag, it.next())?)),
+            "--out" => out = Some(PathBuf::from(value(flag, it.next())?)),
+            "--rounds" => {
+                rounds = value(flag, it.next())?
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|r| *r >= 1)
+                    .ok_or_else(|| usage("--rounds needs a number of rounds"))?;
+            }
+            "--long" => long = true,
+            _ => oracle_flag(&mut oracle, flag, it.next())?,
+        }
+    }
+    if rounds > LONG_ROUNDS {
+        return Err(usage(format!(
+            "a lockstep chain has at most {LONG_ROUNDS} rounds"
+        )));
+    }
+    if rounds > SHORT_ROUNDS && !long {
+        return Err(usage(format!(
+            "a chain of more than {SHORT_ROUNDS} rounds is a long chain: pass --long"
+        )));
+    }
+    let need = |what: &str| usage(format!("lockstep make needs {what}"));
+    Ok(Command::LockstepMake(LockstepArgs {
+        oracle,
+        seed: seed.ok_or_else(|| need("--seed S"))?,
+        profile: profile.ok_or_else(|| need("--profile P"))?,
+        rounds,
+        recipe: recipe.ok_or_else(|| need("--recipe FILE"))?,
+        out: out.ok_or_else(|| need("--out DIR"))?,
+        long,
+    }))
+}
+
+fn parse_lockstep_batch(args: &[&str]) -> Result<Command> {
+    use crate::lockstep::{LONG_ROUNDS, SHORT_ROUNDS};
+    let mut oracle = OracleArgs::default();
+    let (mut count, mut seed, mut jobs) = (None, None, None);
+    let (mut rounds, mut long) = (SHORT_ROUNDS, false);
+    let (mut profile, mut out) = ("devnet".to_owned(), PathBuf::from("target/corpus"));
+    let mut it = args.iter();
+    while let Some(&flag) = it.next() {
+        let number = |what: &str, text: &str| {
+            text.parse::<u32>()
+                .ok()
+                .filter(|n| *n >= 1)
+                .ok_or_else(|| usage(format!("{flag} needs {what}")))
+        };
+        match flag {
+            "--count" => count = Some(number("a number of chains", value(flag, it.next())?)?),
+            "--rounds" => rounds = number("a number of rounds", value(flag, it.next())?)?,
+            "--seed" => seed = Some(value(flag, it.next())?.to_owned()),
+            "--long" => long = true,
+            "--profile" => profile = value(flag, it.next())?.to_owned(),
+            "--out" => out = PathBuf::from(value(flag, it.next())?),
+            "--jobs" => {
+                let text = value(flag, it.next())?;
+                jobs = Some(
+                    text.parse::<usize>()
+                        .ok()
+                        .filter(|n| *n >= 1)
+                        .ok_or_else(|| usage("--jobs needs a number of jobs"))?,
+                );
+            }
+            _ => oracle_flag(&mut oracle, flag, it.next())?,
+        }
+    }
+    if rounds > LONG_ROUNDS {
+        return Err(usage(format!(
+            "a lockstep chain has at most {LONG_ROUNDS} rounds"
+        )));
+    }
+    if rounds > SHORT_ROUNDS && !long {
+        return Err(usage(format!(
+            "a chain of more than {SHORT_ROUNDS} rounds is a long chain: pass --long"
+        )));
+    }
+    let need = |what: &str| usage(format!("lockstep batch needs {what}"));
+    Ok(Command::LockstepBatch(LockstepBatchArgs {
+        oracle,
+        count: count.ok_or_else(|| need("--count N"))?,
+        rounds,
+        seed: seed.ok_or_else(|| need("--seed S"))?,
+        long,
+        profile,
+        out,
+        jobs,
+    }))
+}
+
+fn parse_l2_batch(args: &[&str]) -> Result<Command> {
+    let Some((dir, rest)) = args.split_first() else {
+        return Err(usage(
+            "usage: difftest run l2-batch DIR [--batch SEED]... [ORACLE]",
+        ));
+    };
+    let mut oracle = OracleArgs::default();
+    let mut batches = Vec::new();
+    let mut it = rest.iter();
+    while let Some(&flag) = it.next() {
+        match flag {
+            "--batch" => batches.push(value(flag, it.next())?.to_owned()),
+            _ => oracle_flag(&mut oracle, flag, it.next())?,
+        }
+    }
+    Ok(Command::RunL2Batch(L2BatchArgs {
+        oracle,
+        dir: dir.into(),
+        batches,
+    }))
 }
 
 fn parse_l1(args: &[&str]) -> Result<Command> {
@@ -922,11 +1266,22 @@ fn parse_l2_processor(args: &[&str]) -> Result<Command> {
 
 fn parse_api_compare(args: &[&str]) -> Result<Command> {
     let (mut run, mut left, mut right, mut corpus, mut out) = (None, None, None, None, None);
+    let mut pair = None;
     let mut it = args.iter();
     while let Some(&flag) = it.next() {
         let v = value(flag, it.next())?;
         match flag {
             "--run" => run = Some(PathBuf::from(v)),
+            "--pair" => match v.split_once(',') {
+                Some((l, r)) if !l.is_empty() && !r.is_empty() && !r.contains(',') => {
+                    pair = Some((l.to_owned(), r.to_owned()));
+                }
+                _ => {
+                    return Err(usage(format!(
+                        "--pair takes LEFT,RIGHT (node4,node2), not {v}"
+                    )));
+                }
+            },
             "--left" => left = Some(v.to_owned()),
             "--right" => right = Some(v.to_owned()),
             "--corpus" => corpus = Some(PathBuf::from(v)),
@@ -937,12 +1292,17 @@ fn parse_api_compare(args: &[&str]) -> Result<Command> {
     let default_corpus =
         || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::api::CORPUS_DIR);
     match (run, left, right, out) {
-        (Some(run), None, None, None) if corpus.is_none() => {
-            Ok(Command::ApiCompare(crate::api::ApiCompareArgs::Recorded {
+        (Some(run), None, None, None) if corpus.is_none() => match pair {
+            None => Ok(Command::ApiCompare(crate::api::ApiCompareArgs::Recorded {
                 run,
-            }))
-        }
-        (None, Some(left), Some(right), Some(out)) => {
+            })),
+            Some((left, right)) => Ok(Command::ApiCompare(crate::api::ApiCompareArgs::Pair {
+                run,
+                left,
+                right,
+            })),
+        },
+        (None, Some(left), Some(right), Some(out)) if pair.is_none() => {
             Ok(Command::ApiCompare(crate::api::ApiCompareArgs::Live {
                 left,
                 right,
@@ -951,7 +1311,8 @@ fn parse_api_compare(args: &[&str]) -> Result<Command> {
             }))
         }
         _ => Err(usage(
-            "api compare takes --run DIR, or --left URL --right URL --out DIR [--corpus DIR]",
+            "api compare takes --run DIR [--pair LEFT,RIGHT], or --left URL --right URL --out DIR \
+             [--corpus DIR]",
         )),
     }
 }
@@ -1067,6 +1428,59 @@ fn value<'a>(flag: &str, next: Option<&&'a str>) -> Result<&'a str> {
         .ok_or_else(|| usage(format!("{flag} needs a value")))
 }
 
+fn parse_scenario_compile(args: &[&str]) -> Result<Command> {
+    let (mut oracle, mut file, mut out) = (OracleArgs::default(), None, None);
+    let mut it = args.iter();
+    while let Some(&arg) = it.next() {
+        match arg {
+            "--out" => out = Some(PathBuf::from(value(arg, it.next())?)),
+            flag if flag.starts_with("--") => oracle_flag(&mut oracle, flag, it.next())?,
+            _ if file.is_none() => file = Some(PathBuf::from(arg)),
+            _ => return Err(usage("scenario compile takes one FILE")),
+        }
+    }
+    Ok(Command::ScenarioCompile(ScenarioCompileArgs {
+        oracle,
+        file: file.ok_or_else(|| usage("usage: difftest scenario compile FILE [--out FILE]"))?,
+        out,
+    }))
+}
+
+fn parse_scenario_run(args: &[&str]) -> Result<Command> {
+    use crate::scenario::{BackendKind, Level as ScenarioLevel, RunOptions};
+    let (mut oracle, mut path) = (OracleArgs::default(), None);
+    let (mut backend, mut level, mut devnet_root) = (None, None, None);
+    let mut it = args.iter();
+    while let Some(&arg) = it.next() {
+        match arg {
+            "--backend" => backend = Some(value(arg, it.next())?.parse::<BackendKind>()?),
+            "--level" => {
+                level = Some(match value(arg, it.next())? {
+                    "l2" | "L2" => ScenarioLevel::L2,
+                    "l3" | "L3" => ScenarioLevel::L3,
+                    "l4" | "L4" => ScenarioLevel::L4,
+                    other => return Err(usage(format!("unknown level {other}: l2, l3 or l4"))),
+                });
+            }
+            "--devnet-root" => devnet_root = Some(PathBuf::from(value(arg, it.next())?)),
+            flag if flag.starts_with("--") => oracle_flag(&mut oracle, flag, it.next())?,
+            _ if path.is_none() => path = Some(PathBuf::from(arg)),
+            _ => return Err(usage("scenario run takes one FILE or DIR")),
+        }
+    }
+    let usage_text = "usage: difftest scenario run --backend heartwood|external|lockstep \
+                      [--level l2|l3|l4] [--devnet-root DIR] FILE|DIR";
+    Ok(Command::ScenarioRun(ScenarioRunArgs {
+        oracle,
+        options: RunOptions {
+            backend: backend.ok_or_else(|| usage(usage_text))?,
+            level,
+            devnet_root,
+        },
+        path: path.ok_or_else(|| usage(usage_text))?,
+    }))
+}
+
 fn oracle_flag(oracle: &mut OracleArgs, flag: &str, next: Option<&&str>) -> Result<()> {
     let v = value(flag, next)?;
     match flag {
@@ -1114,6 +1528,52 @@ mod tests {
     fn parses_the_commands() {
         assert_eq!(p("").unwrap(), Command::Help);
         assert_eq!(p("levels").unwrap(), Command::Levels);
+        let lockstep = |line: &str| match p(line).unwrap() {
+            Command::LockstepMake(args) => args,
+            other => panic!("{other:?}"),
+        };
+        let args = lockstep("lockstep make --seed s1 --profile p.json --recipe r.json --out c");
+        assert_eq!(
+            (args.seed.as_str(), args.rounds, args.long),
+            ("s1", 5, false)
+        );
+        assert_eq!(args.recipe, PathBuf::from("r.json"));
+        let args = lockstep(
+            "lockstep make --seed s --profile p --rounds 50 --long --recipe r --out o --image i",
+        );
+        assert_eq!((args.rounds, args.long), (50, true));
+        assert_eq!(args.oracle.image.as_deref(), Some("i"));
+        let batch = |line: &str| match p(line).unwrap() {
+            Command::LockstepBatch(args) => args,
+            other => panic!("{other:?}"),
+        };
+        let args = batch("lockstep batch --count 180 --seed 7");
+        assert_eq!(
+            (args.count, args.rounds, args.long, args.jobs),
+            (180, 5, false, None)
+        );
+        assert_eq!(args.profile, "devnet");
+        assert_eq!(args.out, PathBuf::from("target/corpus"));
+        let args = batch(
+            "lockstep batch --count 20 --rounds 50 --long --seed 8 --out c --jobs 4 --solar-dir s",
+        );
+        assert_eq!((args.rounds, args.long, args.jobs), (50, true, Some(4)));
+        assert_eq!(args.oracle.solar_dir, Some(PathBuf::from("s")));
+        assert_eq!(
+            p("run l2-batch c --batch 7 --batch 8").unwrap(),
+            Command::RunL2Batch(L2BatchArgs {
+                oracle: OracleArgs::default(),
+                dir: "c".into(),
+                batches: vec!["7".into(), "8".into()],
+            })
+        );
+        match p("oracle replay-codec transaction_json fuzz/corpus/t --vectors v").unwrap() {
+            Command::OracleReplayCodec(args) => {
+                assert_eq!(args.target.name(), "transaction_json");
+                assert_eq!(args.vectors, PathBuf::from("v"));
+            }
+            other => panic!("{other:?}"),
+        }
         assert_eq!(
             p("run l0 target/vectors").unwrap(),
             Command::Run {
@@ -1291,6 +1751,21 @@ mod tests {
             })
         );
         assert_eq!(
+            p("api compare --run runs/w --pair node4,node2").unwrap(),
+            Command::ApiCompare(crate::api::ApiCompareArgs::Pair {
+                run: "runs/w".into(),
+                left: "node4".into(),
+                right: "node2".into()
+            })
+        );
+        for bad in ["node4", "node4,", ",node2", "node4,node2,node1"] {
+            assert!(
+                p(&format!("api compare --run runs/w --pair {bad}")).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(p("api compare --left a --right b --out o --pair node4,node2").is_err());
+        assert_eq!(
             p("store replay c --db d --to 9").unwrap(),
             Command::StoreReplay {
                 dir: "c".into(),
@@ -1400,7 +1875,22 @@ mod tests {
             "run l0",
             "run l2",
             "run l1 --cases 0",
-            "run l1 --property P21",
+            "run l1 --property P24",
+            "lockstep make --seed s --profile p --recipe r --out o --rounds 6",
+            "lockstep make --seed s --profile p --recipe r --out o --rounds 51 --long",
+            "lockstep make --seed s --profile p --recipe r --out o --rounds 0",
+            "lockstep make --seed s --profile p --recipe r",
+            "lockstep make --profile p --recipe r --out o",
+            "lockstep batch --seed s",
+            "lockstep batch --count 0 --seed s",
+            "lockstep batch --count 2 --seed s --rounds 6",
+            "lockstep batch --count 2 --seed s --rounds 51 --long",
+            "lockstep batch --count 2 --seed s --jobs 0",
+            "lockstep batch --count 2",
+            "run l2-batch",
+            "run l2-batch c --batch",
+            "oracle replay-codec api_query c --vectors v",
+            "oracle replay-codec address_decode c",
             "run l1 --served-reach x",
             "p2p compare r --left a",
             "live check r --compare",

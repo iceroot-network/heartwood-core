@@ -15,6 +15,7 @@
 
 use std::fmt::Display;
 use std::fs;
+use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use heartwood_cli::Role;
@@ -85,7 +86,7 @@ pub fn start(forger: ForgerConfig) -> Result<(), ForgerError> {
         .warnings
         .iter()
         .for_each(|w| heartwood_kernel::warning!("{w}"));
-    let result = runtime.block_on(serve(forger, signals));
+    let result = runtime.block_on(serve(forger, signals.requested()));
     if let Err(error) = &result {
         heartwood_kernel::error!("{error}");
     }
@@ -98,8 +99,12 @@ fn component(error: impl Display) -> ForgerError {
 
 /// Read the key file, the options and the signing record of `forger`, each checked before
 /// anything connects; boot the forger component and run its loop and attester until a signal,
-/// or until the version floor at the first round refuses this version.
-async fn serve(forger: ForgerConfig, signals: Signals) -> Result<(), ForgerError> {
+/// or until the version floor at the first round refuses this version. `until` ends when the
+/// forger is to shut down.
+pub(crate) async fn serve(
+    forger: ForgerConfig,
+    until: impl Future<Output = ()> + Send + 'static,
+) -> Result<(), ForgerError> {
     let (base, entry, crypto) = (forger.base, forger.forger, forger.crypto);
     let keys = load_keys(&base.paths.config).map_err(config)?;
     let env = |name: &str| base.env.get(name).map(str::to_owned);
@@ -149,7 +154,7 @@ async fn serve(forger: ForgerConfig, signals: Signals) -> Result<(), ForgerError
     });
     let signal = Arc::clone(&trigger);
     tokio::spawn(async move {
-        signals.requested().await;
+        until.await;
         signal.trigger();
     });
     let mut component = Forger::new(service);

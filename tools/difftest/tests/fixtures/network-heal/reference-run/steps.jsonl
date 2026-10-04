@@ -1,0 +1,12 @@
+{"step":"generate","node":"all","start":"2026-10-02T00:45:17.336Z","startHeight":0,"round":1,"end":"2026-10-02T00:45:19.137Z","ok":true,"epoch":"2026-10-02T00:46:48.000Z","reach":"default"}
+{"step":"up","node":"all","start":"2026-10-02T00:45:19.164Z","startHeight":0,"round":1,"end":"2026-10-02T00:45:20.097Z","ok":true,"nodes":"node1 node2 node3 node4"}
+{"step":"scenario-00-sync-from-genesis","node":"all","start":"2026-10-02T00:46:56.378Z","startHeight":2,"round":1,"end":"2026-10-02T00:49:37.791Z","ok":true,"exit":0,"file":"00-sync-from-genesis.json","log":"steps/scenario-00-sync-from-genesis.log"}
+{"step":"scenario-01-peer-discovery","node":"all","start":"2026-10-02T00:49:37.809Z","startHeight":18,"round":1,"end":"2026-10-02T00:52:49.682Z","ok":true,"exit":0,"file":"01-peer-discovery.json","log":"steps/scenario-01-peer-discovery.log"}
+{"step":"peers-set-equality","node":"all","start":"2026-10-02T00:52:49.699Z","startHeight":42,"round":1,"end":"2026-10-02T00:52:49.791Z","ok":true,"detail":"peers-set.json"}
+{"step":"scenario-02-propagation","node":"all","start":"2026-10-02T00:52:49.808Z","startHeight":42,"round":1,"end":"2026-10-02T00:54:58.043Z","ok":true,"exit":0,"file":"02-propagation.json","log":"steps/scenario-02-propagation.log"}
+{"step":"scenario-03-partition-heal","node":"all","start":"2026-10-02T00:54:58.065Z","startHeight":58,"round":2,"end":"2026-10-02T01:00:09.618Z","ok":true,"exit":0,"file":"03-partition-heal.json","log":"steps/scenario-03-partition-heal.log"}
+{"step":"stop-height","node":"all","start":"2026-10-02T01:00:09.644Z","startHeight":88,"round":2,"end":"2026-10-02T01:00:09.654Z","ok":true,"height":88,"stopHeight":106,"plannedStopHeight":106}
+{"step":"tips","node":"all","start":"2026-10-02T01:00:09.671Z","startHeight":88,"round":2,"end":"2026-10-02T01:00:09.910Z","ok":true}
+{"step":"archive","node":"all","start":"2026-10-02T01:00:10.377Z","startHeight":88,"round":2,"end":"2026-10-02T01:00:26.891Z","ok":true,"height":90}
+{"step":"check-chain","node":"node1","start":"2026-10-02T01:00:27.769Z","startHeight":90,"round":2,"end":"2026-10-02T01:00:28.366Z","ok":true,"read":"node1"}
+{"step":"propagation-lag","node":"all","start":"2026-10-02T01:00:28.407Z","startHeight":90,"round":2,"end":"2026-10-02T01:00:28.447Z","ok":false,"detail":"propagation-lag.json"}

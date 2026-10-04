@@ -33,6 +33,12 @@ pub struct ForgerRun {
     /// The environment's name.
     #[arg(long)]
     pub env: Option<String>,
+    /// Accepted for compatibility with the removed prompt.
+    #[arg(
+        long = "skipPrompts", alias = "skip-prompts", default_value_t = false,
+        action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true"
+    )]
+    pub skip_prompts: bool,
 }
 
 /// The flags of `forger start`: those of `forger run`, and whether to leave the terminal.
@@ -63,8 +69,10 @@ pub fn run(command: ForgerCommand) -> ExitCode {
             let args = (start.run.env.into_iter()).flat_map(|env| ["--env".into(), env.into()]);
             let args: Vec<OsString> = args.collect();
             let flags = InstanceFlags { token, network };
-            on_instance(Role::Forger, &flags, |i| {
-                super::start(i, args, start.daemon)
+            on_instance(Role::Forger, &flags, |i| -> Result<(), super::RoleError> {
+                super::core::refuse_running(i, &[Role::Core])?;
+                heartwood_forger::load_keys(&i.paths.config)?;
+                Ok(super::start(i, args, start.daemon)?)
             })
         }
         ForgerCommand::Manage(command) => super::manage(Role::Forger, command),

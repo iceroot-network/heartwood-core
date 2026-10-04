@@ -1,0 +1,40 @@
+{
+  "id": "insufficient-balance",
+  "title": "Every kept transaction type from a wallet that cannot pay it is refused, and a spend of exactly the balance is kept",
+  "levels": ["L2", "L3"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "settleBlocks": 0,
+  "actors": {"hop-a": {"seed": 1}, "hop-b": {"seed": 2}, "hop-c": {"seed": 3}, "spender": {"seed": 4}, "payee": {"seed": 5}, "nonce-user": {"seed": 6}, "gap-user": {"seed": 7}, "poor": {"seed": 8}, "exact-a": {"seed": 10}, "exact-b": {"seed": 11}, "voter-a": {"seed": 12}, "voter-b": {"seed": 13}, "registrant-a": {"seed": 14}, "registrant-b": {"seed": 15}, "registrant-c": {"seed": 16}, "resigner": {"seed": 17}, "sig-owner": {"seed": 18}, "second-key": {"seed": 19}, "burner": {"seed": 20}, "bulk-1": {"seed": 21}, "bulk-2": {"seed": 22}, "bulk-3": {"seed": 23}},
+  "steps": [
+    {"name": "fund the wallets", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [
+       {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["hop-a", "50000000000"], ["hop-b", "300000000"], ["hop-c", "300000000"], ["spender", "100000000000"], ["payee", "100000000"], ["nonce-user", "100000000000"], ["gap-user", "100000000000"], ["poor", "1000"], ["exact-a", "10000000000"], ["exact-b", "10000000000"], ["voter-a", "10000000000"], ["voter-b", "10000000000"], ["registrant-a", "20000000000"], ["registrant-b", "20000000000"], ["registrant-c", "20000000000"], ["resigner", "20000000000"], ["sig-owner", "10000000000"], ["second-key", "100000000"], ["burner", "10000000000"], ["bulk-1", "100000000000"], ["bulk-2", "100000000000"], ["bulk-3", "100000000000"]]}
+     ]},
+    {"name": "registers a delegate that will be short of its resignation fee", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["register-to-resign"]},
+     "txs": [
+       {"ref": "register-to-resign", "type": "delegateRegistration", "from": "voter-b", "nonce": 1, "fee": "7600000000", "asset": {"username": "shortresigner"}}
+     ]},
+    {"name": "the delegate is registered", "at": {"afterBlocks": 1}, "check": {"forged": ["register-to-resign"], "withinBlocks": 3}},
+    {"name": "wallets too poor to pay", "at": {"height": 68}, "do": "submit", "node": 1, "via": "api", "check": {"invalid": ["short-transfer", "short-vote", "short-registration", "short-burn", "short-second-signature", "short-resignation"], "codes": {"short-transfer": "ERR_APPLY", "short-vote": "ERR_APPLY", "short-registration": "ERR_APPLY", "short-burn": "ERR_APPLY", "short-second-signature": "ERR_APPLY", "short-resignation": "ERR_APPLY"}},
+     "txs": [
+       {"ref": "short-transfer", "type": "transfer", "from": "poor", "nonce": 1, "to": [["payee", "1"]]},
+       {"ref": "short-vote", "type": "vote", "from": "poor", "nonce": 1, "asset": {"votes": [["genesis_1", 100]]}},
+       {"ref": "short-registration", "type": "delegateRegistration", "from": "poor", "nonce": 1, "asset": {"username": "poorone"}},
+       {"ref": "short-burn", "type": "burn", "from": "poor", "nonce": 1, "asset": {"amount": "2000000"}},
+       {"ref": "short-second-signature", "type": "secondSignature", "from": "poor", "nonce": 1, "secondSignature": "second-key"},
+       {"ref": "short-resignation", "type": "delegateResignation", "from": "voter-b", "nonce": 2, "fee": "2400000001", "asset": {"resignationType": 0}}
+     ]},
+    {"name": "a spend of exactly the balance", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["exact-fit", "exact-resignation"], "invalid": ["exact-plus-one"], "codes": {"exact-plus-one": "ERR_APPLY"}},
+     "txs": [
+       {"ref": "exact-fit", "type": "transfer", "from": "exact-a", "nonce": 1, "fee": "1500000", "to": [["payee", "9998500000"]]},
+       {"ref": "exact-plus-one", "type": "transfer", "from": "exact-b", "nonce": 1, "fee": "1500000", "to": [["payee", "9998500001"]]},
+       {"ref": "exact-resignation", "type": "delegateResignation", "from": "voter-b", "nonce": 2, "fee": "2400000000", "asset": {"resignationType": 0}}
+     ]},
+    {"name": "a burn of more than the balance", "at": {"afterBlocks": 2}, "do": "submit", "node": 1, "via": "api", "check": {"invalid": ["overdrawn-burn"], "codes": {"overdrawn-burn": "ERR_APPLY"}},
+     "txs": [
+       {"ref": "overdrawn-burn", "type": "burn", "from": "second-key", "nonce": 1, "asset": {"amount": "100000001"}}
+     ]},
+    {"name": "what was kept", "at": {"afterBlocks": 2}, "check": {"forged": ["exact-fit", "exact-resignation"], "absent": ["short-transfer", "short-vote", "short-registration", "short-burn", "short-second-signature", "short-resignation", "exact-plus-one", "overdrawn-burn"], "digest": true}}
+  ]
+}

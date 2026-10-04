@@ -12,7 +12,9 @@
 //! `pb` (an integer), `ff`, `fr`, `bf`, `dn` (decimal strings) and `lb` (a block id, optional);
 //! `v` (optional) is `[[username, basisPoints], ...]`. A voter needs a public key (the reference
 //! builds vote balances from the wallets it knows by key), and it may vote only for the fixture's
-//! delegates.
+//! delegates. `so` (`true`, optional, on a delegate with a second key) says the second key was set
+//! before the delegate record, which the reference's attribute order shows (a start from its store
+//! sets them so); the listings' oracle keeps that order, and Heartwood keeps none.
 
 use heartwood_crypto::BlockId;
 use heartwood_crypto::identities::{Address, PublicKey, PublicKeyBytes};
@@ -47,6 +49,8 @@ pub struct FixtureWallet {
     pub delegate: Option<FixtureDelegate>,
     /// `v`, in the order they are kept.
     pub votes: Votes,
+    /// `so`: the second key was set before the delegate record.
+    pub second_key_first: bool,
 }
 
 /// The delegate record of a fixture wallet (`u`, `rs`, `pb`, `ff`, `fr`, `bf`, `dn`, `lb`, and
@@ -108,7 +112,7 @@ fn text<'a>(
     }
 }
 
-const KEYS: [&str; 15] = [
+const KEYS: [&str; 16] = [
     "a",
     "pk",
     "bal",
@@ -124,6 +128,7 @@ const KEYS: [&str; 15] = [
     "dn",
     "lb",
     "v",
+    "so",
 ];
 
 impl Fixture {
@@ -209,6 +214,17 @@ impl Fixture {
                     }
                 }
             }
+            let second_key_first = match object.get("so") {
+                None => false,
+                Some(Value::Bool(true)) if second_public_key.is_some() && delegate.is_some() => {
+                    true
+                }
+                Some(_) => {
+                    return Err(format!(
+                        "wallet {at}: so is not true on a delegate with spk"
+                    ));
+                }
+            };
             wallets.push(FixtureWallet {
                 address,
                 public_key,
@@ -217,6 +233,7 @@ impl Fixture {
                 second_public_key,
                 delegate,
                 votes,
+                second_key_first,
             });
         }
         Ok(Fixture { wallets })
@@ -258,6 +275,9 @@ impl Fixture {
                     if !w.votes.is_empty() {
                         let v: Vec<Value> = w.votes.iter().map(|(n, b)| json!([n, b])).collect();
                         o.insert("v".into(), Value::Array(v));
+                    }
+                    if w.second_key_first {
+                        o.insert("so".into(), json!(true));
                     }
                     Value::Object(o)
                 })

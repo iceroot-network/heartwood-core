@@ -12,10 +12,12 @@ use heartwood_blockchain::rows::block_row;
 use heartwood_blockchain::{
     Channel, NodeError, OnlineWork, RestoreMode, RestorePath, StoreError, Work,
 };
+use heartwood_crypto::identities::Address;
 use heartwood_crypto::{PublicKeyBytes, TransactionId};
 use heartwood_database::Database;
 use heartwood_kernel::ChainLink;
 use heartwood_pool::Entry;
+use heartwood_state::wallets::parties;
 use node_support::{Script, Scripted, TestNode, job, lock, pool_options, replayed};
 use tokio::sync::oneshot;
 
@@ -190,6 +192,48 @@ async fn the_pool_steps_per_batch_per_applied_block_and_per_drain() {
         .unwrap();
     assert_eq!((row.round, row.version.as_str()), (2, "4.3.9"));
     assert_eq!(rows.len(), node.handle.pool().borrow().online.len());
+    node.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn an_admission_moves_its_parties_to_the_end_of_the_published_state_s_orders() {
+    let chain = Chain::load();
+    let node = node_at(&chain, "node-pool-reindex", 58).await;
+    let order = |node: &TestNode| -> Vec<Address> {
+        let view = node.handle.state().borrow().clone();
+        view.wallets
+            .by_address_index()
+            .map(|w| *w.address())
+            .collect()
+    };
+    let before = order(&node);
+    let transactions = chain.block(59).transactions();
+    let entries: Vec<_> = (transactions.iter())
+        .map(|transaction| Entry::Bytes(transaction.bytes().to_vec()))
+        .collect();
+    let result = node.handle.pool_entries(Channel::Api, entries).await;
+    assert_eq!(result.unwrap().accept.len(), transactions.len());
+    // Each admission re-indexes its sender and recipients that the state knows, in order: the
+    // last re-index of each puts it last.
+    let network = chain.files.network.pub_key_hash;
+    let parties: Vec<Address> = (transactions.iter())
+        .flat_map(|transaction| parties(transaction, network))
+        .filter(|address| before.contains(address))
+        .collect();
+    let mut moved: Vec<Address> = Vec::new();
+    for address in parties.iter().rev() {
+        if !moved.contains(address) {
+            moved.push(*address);
+        }
+    }
+    moved.reverse();
+    let mut expected: Vec<Address> = (before.iter())
+        .filter(|address| !moved.contains(address))
+        .copied()
+        .collect();
+    expected.extend(&moved);
+    assert!(!moved.is_empty() && expected != before);
+    assert_eq!(order(&node), expected);
     node.stop().await.unwrap();
 }
 

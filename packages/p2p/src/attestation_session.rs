@@ -14,6 +14,9 @@
 //! offer without such a key is never sent; its status is served with no attestation at once. The
 //! status server waits for an offer's signatures ([`AttestationSession::signatures`]); after one
 //! wait that ran out, the same offer is served unsigned without another.
+//!
+//! A harness build records each offer and the attachment of its signatures when they happen
+//! ([`NodeServices::attestation_step`]), whether or not a getStatus waits for them.
 
 use std::collections::HashSet;
 use std::net::IpAddr;
@@ -29,7 +32,7 @@ use heartwood_p2p_wire::status::{Attestation, session_proof, verify_attestation}
 use tokio::sync::watch;
 use tokio::time::{Instant, timeout_at};
 
-use crate::node_services::{AttestedKeys, NodeServices};
+use crate::node_services::{AttestationRecord, AttestationStep, AttestedKeys, NodeServices};
 use crate::server::seams::{ServerRefusal, SessionEvents, SessionId};
 
 /// How long a poll waits for a new status before it answers `Unchanged`.
@@ -58,6 +61,8 @@ struct Offer {
     status: String,
     /// The SHA-256 of the status text, in hex, which names the offer.
     name: String,
+    /// The status's slot.
+    slot: i64,
     keys: Vec<PublicKeyBytes>,
     signatures: Option<Vec<Attestation>>,
     /// A wait for the signatures ran out.
@@ -83,6 +88,8 @@ struct Session {
 struct Inner {
     /// The last status offered, kept for the next session.
     status: Option<String>,
+    /// The last status's slot.
+    slot: i64,
     session: Option<Session>,
     offers: u64,
 }
@@ -107,15 +114,17 @@ impl AttestationSession {
         }
     }
 
-    /// Offer `status`, the canonical status text, to the session's forger.
-    pub fn offer(&self, status: String) {
+    /// Offer `status`, the canonical status text of the slot `slot`, to the session's forger.
+    pub fn offer(&self, status: String, slot: i64) {
         let mut inner = self.lock();
         if inner.status.as_ref() == Some(&status) {
             return;
         }
         inner.status = Some(status);
-        self.new_offer(&mut inner);
+        inner.slot = slot;
+        let noted = self.new_offer(&mut inner);
         drop(inner);
+        self.record(noted);
         self.changed();
     }
 
@@ -234,10 +243,16 @@ impl AttestationSession {
             return Ok(());
         };
         current.attested = verified.iter().map(|a| a.public_key).collect();
+        let mut noted = Vec::new();
         if let Some(offer) = current.offer.as_mut() {
+            let signed = AttestationStep::Signed {
+                attestations: verified.len(),
+            };
+            noted.extend(self.noted(signed, offer));
             offer.signatures = Some(verified);
         }
         drop(inner);
+        self.record(noted);
         self.changed();
         Ok(())
     }
@@ -318,6 +333,7 @@ impl AttestationSession {
             .session
             .as_ref()
             .is_some_and(|s| same && s.declared == declared);
+        let mut noted = Vec::new();
         if !stays {
             let mut seen = HashSet::new();
             let repeated = declared.iter().filter(|key| !seen.insert(**key)).count();
@@ -343,19 +359,21 @@ impl AttestationSession {
                 offer: None,
                 attested: Vec::new(),
             });
-            self.new_offer(&mut inner);
+            noted = self.new_offer(&mut inner);
         }
         if let Some(current) = inner.session.as_mut() {
             current.polls = current.polls.saturating_add(1);
         }
         drop(inner);
+        self.record(noted);
         self.changed();
     }
 
-    /// Offer the last status to the current session, with its keys.
-    fn new_offer(&self, inner: &mut Inner) {
+    /// Offer the last status to the current session, with its keys; the records of the offer,
+    /// and of its signatures when no key is to sign it.
+    fn new_offer(&self, inner: &mut Inner) -> Vec<AttestationRecord> {
         let (Some(status), Some(session)) = (inner.status.clone(), inner.session.as_mut()) else {
-            return;
+            return Vec::new();
         };
         let chain = self.node.chain();
         let keys: Vec<PublicKeyBytes> = (session.declared.iter())
@@ -363,14 +381,41 @@ impl AttestationSession {
             .copied()
             .collect();
         inner.offers = inner.offers.wrapping_add(1);
-        session.offer = Some(Offer {
+        let offer = session.offer.insert(Offer {
             number: inner.offers,
             name: hex::encode(&sha256(status.as_bytes())),
             status,
+            slot: inner.slot,
             signatures: keys.is_empty().then(Vec::new),
             keys,
             waited: false,
         });
+        let mut noted: Vec<AttestationRecord> = self
+            .noted(AttestationStep::Offered, offer)
+            .into_iter()
+            .collect();
+        if offer.signatures.is_some() {
+            let none = AttestationStep::Signed { attestations: 0 };
+            noted.extend(self.noted(none, offer));
+        }
+        noted
+    }
+
+    /// The record of `step` of `offer`, now: in a harness build only.
+    fn noted(&self, step: AttestationStep, offer: &Offer) -> Option<AttestationRecord> {
+        cfg!(feature = "difftest").then(|| AttestationRecord {
+            at_ms: self.clock.now_ms(),
+            step,
+            status: offer.name.clone(),
+            slot: offer.slot,
+        })
+    }
+
+    /// Hand `records` to the node's attestation record, outside the session's lock.
+    fn record(&self, records: Vec<AttestationRecord>) {
+        for record in &records {
+            self.node.attestation_step(record);
+        }
     }
 
     /// End the session when no poll has been pending for 15 s.

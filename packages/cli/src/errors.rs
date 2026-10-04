@@ -54,6 +54,16 @@ pub enum ProcessError {
         /// The instance's name.
         name: String,
     },
+    /// `stop` or `restart` of a role that a service manager runs.
+    #[error("{name} runs under {manager}: use {command}")]
+    Managed {
+        /// The instance's name.
+        name: String,
+        /// The service manager.
+        manager: &'static str,
+        /// The manager's command that does it, as the message quotes it.
+        command: String,
+    },
     /// A lock file could not be taken or read.
     #[error("the lock {} cannot be taken: {message}", path.display())]
     Lock {
@@ -202,6 +212,16 @@ pub enum HttpError {
 /// A devnet command failed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DevnetError {
+    /// The selected node has no process of the requested role.
+    #[error("node {node} has no {role} role; its roles are {roles}")]
+    MissingRole {
+        /// The node's index.
+        node: u32,
+        /// The requested role.
+        role: crate::seams::Role,
+        /// The available roles.
+        roles: String,
+    },
     /// The node counts are out of range.
     #[error("{0}")]
     Counts(String),
@@ -259,4 +279,10 @@ pub enum DevnetError {
         /// The system's error.
         message: String,
     },
+    /// `devnet run` found no scenario runner: the harness is not installed.
+    #[error(
+        "{0} is neither next to this binary nor on PATH; the scenario runner belongs to the test \
+         harness, which is not installed"
+    )]
+    RunnerMissing(&'static str),
 }

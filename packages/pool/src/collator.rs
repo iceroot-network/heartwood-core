@@ -6,8 +6,8 @@
 //! length and bytes no longer fit (a stop, not a skip). After one of a sender's transactions
 //! fails, the sender's later ones are skipped. With `validate`, each candidate is decoded again
 //! strictly and applied with the handlers to one copy of the state's wallets, shared by every
-//! candidate. The transactions that failed are then removed from the pool with their senders'
-//! later ones.
+//! candidate, which leaves its parties for the state to re-index ([`crate::Reindexed`]). The
+//! transactions that failed are then removed from the pool with their senders' later ones.
 
 use std::sync::Arc;
 
@@ -78,10 +78,9 @@ pub fn collate(
                     if decoded.id() != transaction.id() {
                         return Err(());
                     }
-                    Handlers
-                        .apply(&apply_ctx, wallets, &decoded)
-                        .map(|_| decoded)
-                        .map_err(|_| ())
+                    let applied = Handlers.apply(&apply_ctx, wallets, &decoded);
+                    ctx.reindexed.record(&decoded, ctx.network.pub_key_hash);
+                    applied.map(|_| decoded).map_err(|_| ())
                 }),
         };
         match candidate {

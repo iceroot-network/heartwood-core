@@ -1,0 +1,41 @@
+{
+  "id": "pool-survives-restart",
+  "title": "Transactions held only in one relay's pool are still there after that relay restarts, and are forged",
+  "levels": ["L3"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "settleBlocks": 0,
+  "actors": {"voter-early": {"seed": 1}, "voter-restart": {"seed": 2}, "voter-round": {"seed": 3}, "extra-a": {"seed": 4}, "extra-b": {"seed": 5}, "extra-c": {"seed": 6}, "pool-a": {"seed": 7}, "pool-b": {"seed": 8}, "payee": {"seed": 9}, "miss-user": {"seed": 10}, "restart-user": {"seed": 11}, "split-user": {"seed": 12}},
+  "steps": [
+    {"name": "fund the wallets", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [
+       {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["voter-early", "10000000000"], ["voter-restart", "10000000000"], ["voter-round", "10000000000"], ["extra-a", "20000000000"], ["extra-b", "20000000000"], ["extra-c", "20000000000"], ["pool-a", "10000000000"], ["pool-b", "10000000000"], ["payee", "100000000"], ["miss-user", "10000000000"], ["restart-user", "10000000000"], ["split-user", "10000000000"]]}
+     ]},
+    {"name": "stop forger 1", "at": {"height": 8}, "do": "stop", "node": 1, "role": "forger"},
+    {"name": "stop forger 2", "at": {"afterBlocks": 0}, "do": "stop", "node": 2, "role": "forger"},
+    {"name": "stop forger 3", "at": {"afterBlocks": 0}, "do": "stop", "node": 3, "role": "forger"},
+    {"name": "stop forger 4", "at": {"afterBlocks": 0}, "do": "stop", "node": 4, "role": "forger"},
+    {"name": "stop relay 2", "at": {"afterBlocks": 0}, "do": "stop", "node": 2, "role": "relay"},
+    {"name": "stop relay 3", "at": {"afterBlocks": 0}, "do": "stop", "node": 3, "role": "relay"},
+    {"name": "stop relay 4", "at": {"afterBlocks": 0}, "do": "stop", "node": 4, "role": "relay"},
+    {"name": "stop relay 6", "at": {"afterBlocks": 0}, "do": "stop", "node": 6, "role": "relay"},
+    {"name": "stop relay 7", "at": {"afterBlocks": 0}, "do": "stop", "node": 7, "role": "relay"},
+    {"name": "two transfers into the only pool left", "at": {"afterBlocks": 0}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["held-a", "held-b"]},
+     "txs": [
+       {"ref": "held-a", "type": "transfer", "from": "pool-a", "nonce": 1, "to": [["payee", "500000000"]]},
+       {"ref": "held-b", "type": "transfer", "from": "pool-b", "nonce": 1, "to": [["payee", "600000000"]]}
+     ]},
+    {"name": "restart the relay that holds them", "at": {"afterBlocks": 0}, "do": "restart", "node": 1, "role": "relay", "mode": {"reference": "saved", "heartwood": "table"}},
+    {"name": "start relay 2", "at": {"afterBlocks": 0}, "do": "start", "node": 2, "role": "relay"},
+    {"name": "start relay 3", "at": {"afterBlocks": 0}, "do": "start", "node": 3, "role": "relay"},
+    {"name": "start relay 4", "at": {"afterBlocks": 0}, "do": "start", "node": 4, "role": "relay"},
+    {"name": "start relay 6", "at": {"afterBlocks": 0}, "do": "start", "node": 6, "role": "relay"},
+    {"name": "start relay 7", "at": {"afterBlocks": 0}, "do": "start", "node": 7, "role": "relay"},
+    {"name": "start forger 1", "at": {"afterBlocks": 0}, "do": "start", "node": 1, "role": "forger"},
+    {"name": "start forger 2", "at": {"afterBlocks": 0}, "do": "start", "node": 2, "role": "forger"},
+    {"name": "start forger 3", "at": {"afterBlocks": 0}, "do": "start", "node": 3, "role": "forger"},
+    {"name": "start forger 4", "at": {"afterBlocks": 0}, "do": "start", "node": 4, "role": "forger"},
+    {"name": "the held transfers are forged", "at": {"afterBlocks": 0}, "check": {"forged": ["held-a", "held-b"], "withinBlocks": 40}},
+    {"name": "one tip", "at": {"afterBlocks": 0}, "check": {"invariant": ["singleTip"], "withinBlocks": 10}}
+  ]
+}

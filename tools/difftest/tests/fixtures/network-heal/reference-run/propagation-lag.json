@@ -1,0 +1,16 @@
+{
+ "limitSeconds": 8.0,
+ "judged": true,
+ "observations": 361,
+ "worstLagSeconds": 115.11,
+ "over": [
+  {
+   "node": "node4",
+   "height": 71,
+   "lag": 115.11
+  }
+ ],
+ "overCount": 1,
+ "ok": false,
+ "note": ""
+}

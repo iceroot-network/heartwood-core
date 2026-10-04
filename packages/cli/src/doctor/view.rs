@@ -488,9 +488,9 @@ type Slot<T> = OnceCell<Result<T, Unknown>>;
 type Pair<T> = [Slot<T>; 2];
 type Memo<K, T> = RefCell<BTreeMap<K, Result<T, Unknown>>>;
 
-/// The position of `role` in [`Role::ALL`].
+/// The position of `role` in [`Role::SPLIT`].
 fn at(role: Role) -> usize {
-    Role::ALL
+    Role::SPLIT
         .iter()
         .position(|r| *r == role)
         .unwrap_or_default()

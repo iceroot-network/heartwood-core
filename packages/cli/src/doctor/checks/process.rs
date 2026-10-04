@@ -66,7 +66,7 @@ pub(crate) fn unknown(input: In<'_>, subject: Subject, cause: Unknown) -> Vec<Fi
 
 /// The `unknown` findings about every role.
 pub(crate) fn unknown_roles(input: In<'_>, cause: Unknown) -> Vec<Finding> {
-    Role::ALL
+    Role::SPLIT
         .map(|r| unknown(input, subject_of(r), cause))
         .concat()
 }
@@ -115,7 +115,7 @@ pub fn roles(input: &CheckInput<'_>) -> Vec<Finding> {
         Ok(presence) => presence,
         Err(cause) => return unknown_roles(input, cause),
     };
-    let present = Role::ALL.into_iter().filter(|role| presence.has(*role));
+    let present = Role::SPLIT.into_iter().filter(|role| presence.has(*role));
     let found: Vec<Finding> = present.map(|role| role_finding(input, role)).collect();
     // With no role here that `--role` keeps, the entry still gives a finding on each role it keeps.
     match found.iter().any(|f| input.options.roles.wants(f.subject)) {

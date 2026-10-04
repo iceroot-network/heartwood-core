@@ -1,0 +1,85 @@
+{
+  "chain": {
+    "consistency": "consistent",
+    "height": 3,
+    "compared": 3,
+    "relays": 3
+  },
+  "delegates": {
+    "total": 53,
+    "online": 53,
+    "quorum": 27,
+    "hasQuorum": true
+  },
+  "nodes": [
+    {
+      "node": 1,
+      "address": "198.51.100.11",
+      "core": true,
+      "apiUrl": "http://198.51.100.11:6003",
+      "processes": [
+        {
+          "role": "core",
+          "status": "online",
+          "pid": 1512312,
+          "uptime": 35.499,
+          "restarts": 0
+        }
+      ],
+      "api": {
+        "height": 3,
+        "lastBlockId": "e97f5a5e100c29a0e06505a678fea64e0b8fcfbcd3206514082b5730f137b92d",
+        "synced": true,
+        "peers": 2
+      },
+      "reportedAddress": "198.51.100.11:6002",
+      "delegates": 18
+    },
+    {
+      "node": 2,
+      "address": "198.51.100.12",
+      "core": true,
+      "apiUrl": "http://198.51.100.12:6003",
+      "processes": [
+        {
+          "role": "core",
+          "status": "online",
+          "pid": 1512354,
+          "uptime": 35.45,
+          "restarts": 0
+        }
+      ],
+      "api": {
+        "height": 3,
+        "lastBlockId": "e97f5a5e100c29a0e06505a678fea64e0b8fcfbcd3206514082b5730f137b92d",
+        "synced": true,
+        "peers": 2
+      },
+      "reportedAddress": "198.51.100.12:6002",
+      "delegates": 18
+    },
+    {
+      "node": 3,
+      "address": "198.51.100.13",
+      "core": true,
+      "apiUrl": "http://198.51.100.13:6003",
+      "processes": [
+        {
+          "role": "core",
+          "status": "online",
+          "pid": 1512396,
+          "uptime": 35.4,
+          "restarts": 0
+        }
+      ],
+      "api": {
+        "height": 3,
+        "lastBlockId": "e97f5a5e100c29a0e06505a678fea64e0b8fcfbcd3206514082b5730f137b92d",
+        "synced": true,
+        "peers": 2
+      },
+      "reportedAddress": "198.51.100.13:6002",
+      "delegates": 17
+    }
+  ]
+}

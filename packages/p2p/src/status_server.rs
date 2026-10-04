@@ -20,7 +20,7 @@ use heartwood_p2p_wire::status::{self, PeerConfig, SignedState, StatusHeaderData
 use tokio::sync::watch;
 
 use crate::attestation_session::{AttestationSession, Signing};
-use crate::node_services::NodeServices;
+use crate::node_services::{AttestationStep, NodeServices};
 use crate::server::ATTESTATION_WAIT;
 use crate::server::seams::ServerRefusal;
 
@@ -106,6 +106,14 @@ impl StatusServer {
             Signing::Signed(attestations) => (attestations, true, true),
             Signing::Unsigned => (Vec::new(), false, false),
         };
+        if attested {
+            let served = AttestationStep::Served {
+                attestations: attestations.len(),
+            };
+            self.attestation_step(served, &current);
+        } else if !keep {
+            self.attestation_step(AttestationStep::ServedUnsigned, &current);
+        }
         let bytes = status::response(&current.state, &current.config, &attestations).encode();
         if keep {
             let (key, bytes) = (current.key, bytes.clone());
@@ -127,16 +135,34 @@ impl StatusServer {
     }
 
     /// The tip's status now, offered to the forger's session when its key is not the one offered
-    /// last. The status is read and offered under one lock, so an older status never replaces a
-    /// newer one.
+    /// last (the session records the offer). The status is read and offered under one lock, so
+    /// an older status never replaces a newer one.
     fn offer_current(&self) -> Current {
         let mut offered = lock(&self.offered);
         let current = self.current();
         if *offered != Some(current.key) {
             *offered = Some(current.key);
-            self.attestation.offer(current.text.clone());
+            self.attestation
+                .offer(current.text.clone(), current.key.slot);
         }
         current
+    }
+
+    /// The attestation record's hook at `step` of the status `current` as a getStatus served it:
+    /// the node's record in a harness build (`difftest`), nothing in any other build.
+    fn attestation_step(&self, step: AttestationStep, current: &Current) {
+        #[cfg(feature = "difftest")]
+        self.node
+            .attestation_step(&crate::node_services::AttestationRecord {
+                at_ms: self.clock.now_ms(),
+                step,
+                status: heartwood_crypto::utils::hex::encode(
+                    &heartwood_crypto::crypto::hash::sha256(current.text.as_bytes()),
+                ),
+                slot: current.key.slot,
+            });
+        #[cfg(not(feature = "difftest"))]
+        let _ = (step, current);
     }
 
     /// Refresh at each new tip, slot boundary and half-slot flip until `shutdown` turns true.

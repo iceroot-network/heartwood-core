@@ -15,7 +15,9 @@ use heartwood_kernel::{ChainLink, Clock};
 use heartwood_p2p::attestation_session::AttestationSession;
 use heartwood_p2p::errors::LookupError;
 use heartwood_p2p::monitor::CleanseOptions;
-use heartwood_p2p::node_services::{Collation, ForgerEvent, NodeUnavailable, QueueState};
+use heartwood_p2p::node_services::{
+    AttestationRecord, Collation, ForgerEvent, NodeUnavailable, QueueState,
+};
 use heartwood_p2p::scoring::Violation;
 use heartwood_p2p::server::controllers::{ControllerParts, Controllers};
 use heartwood_p2p::server::seams::{ServerRequest, SessionId};
@@ -76,6 +78,7 @@ pub struct Node {
     pub wakeups: AtomicUsize,
     pub events: Mutex<Vec<ForgerEvent>>,
     pub served: Mutex<Vec<(IpAddr, NetworkState)>>,
+    pub attestations: Mutex<Vec<AttestationRecord>>,
 }
 
 impl Node {
@@ -103,6 +106,7 @@ impl Node {
             wakeups: AtomicUsize::new(0),
             events: Mutex::default(),
             served: Mutex::default(),
+            attestations: Mutex::default(),
         }
     }
 
@@ -252,6 +256,10 @@ impl NodeServices for Node {
 
     fn network_state_served(&self, caller: IpAddr, state: &NetworkState) {
         self.served.lock().unwrap().push((caller, state.clone()));
+    }
+
+    fn attestation_step(&self, record: &AttestationRecord) {
+        self.attestations.lock().unwrap().push(record.clone());
     }
 }
 

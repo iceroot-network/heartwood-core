@@ -97,8 +97,86 @@ pub(super) fn plan(run: &str) -> Vec<Planned> {
             planned("p2p-probe", 2, 2, 0),
             planned("api-corpus", 2, 2, 0),
         ],
+        "mixed-short" | "mixed" | "mixed-split" => forging_plan(run),
+        "churn" => churn_plan(),
         _ => Vec::new(),
     }
+}
+
+/// The steps of the mixed forging network's runs. All three fund the sender wallet and poll node
+/// 5's peers in round 1; from round 2 they wait for the attestations, send the transactions, place
+/// the votes of the two rounds and compare the batches. The route corpus is recorded at the pause,
+/// in the last round. `mixed` (reference nodes 1 to 3 beside Heartwood nodes 4 and 5) then pauses
+/// a reference forger, restarts a Heartwood and a reference node, kills a Heartwood forger and
+/// partitions the network; `mixed-split` (Heartwood nodes 1 and 2 beside reference nodes 3 to 5)
+/// splits the network with two conflicting transactions and heals it.
+fn forging_plan(run: &str) -> Vec<Planned> {
+    let last = stop_height(run).map_or(2, |h| h.div_ceil(53));
+    let mut steps = vec![
+        planned("txgen-fund", 1, 1, 0),
+        planned("peers-node5", 1, 1, 0),
+        planned("attest-wait", 1, 2, 0),
+        planned("attest-evidence", 2, 2, 55),
+        planned("txgen-once", 2, 2, 55),
+        planned("vote-s18a", 2, 2, 55),
+        planned("vote-s18b", 2, 2, 55),
+        planned("batch-heartwood", 2, 2, 55),
+        planned("batch-reference", 2, 2, 55),
+        planned("api-corpus", last, last, 0),
+    ];
+    match run {
+        "mixed" => steps.extend([
+            planned("pause-forger-node3", 2, 2, 70),
+            planned("restart-node4", 3, 3, 112),
+            planned("restart-node2", 3, 3, 122),
+            planned("kill-forger-node5", 3, 3, 132),
+            planned("partition", 3, 4, 155),
+            planned("heal", 4, 4, 160),
+            planned("converged", 4, 4, 160),
+        ]),
+        "mixed-split" => steps.extend([
+            planned("light-txgen", 2, 2, 55),
+            planned("partition", 3, 3, 133),
+            planned("conflict", 3, 4, 0),
+            planned("minority-pause", 4, 4, 0),
+            planned("archive-minority", 4, 4, 0),
+            planned("heal", 4, 4, 186),
+            planned("converged", 4, 4, 186),
+            planned("conflict-outcome", 4, 5, 186),
+        ]),
+        _ => {}
+    }
+    steps
+}
+
+/// The steps of the churn run, which has five rounds. Round 1 funds the wallets and polls the peers of
+/// nodes 5 and 6. Round 2 stops and starts nodes 1 to 5 in turn and kills a relay and a forger under
+/// their supervisors. Round 3 places the refused vote for node 5's delegate and fills the pool with the
+/// forgers paused (its step is written when the pool has drained, in a later round, with the start
+/// of the fill). Round 4 takes two and then three nodes out and brings them back. In round 5 the
+/// reference relay syncs from one relay alone. The route corpus is not compared: that relay knows only
+/// one relay, so it lists the version of few delegates.
+fn churn_plan() -> Vec<Planned> {
+    vec![
+        planned("txgen-fund", 1, 1, 0),
+        planned("peers-node5", 1, 1, 0),
+        planned("peers-node6", 1, 1, 0),
+        planned("cycle-node1", 2, 3, 54),
+        planned("cycle-node2", 2, 3, 54),
+        planned("cycle-node3", 2, 3, 54),
+        planned("cycle-node4", 2, 3, 54),
+        planned("cycle-node5", 2, 3, 54),
+        planned("crash-relay-node3", 2, 3, 54),
+        planned("crash-forger-node2", 2, 3, 54),
+        planned("vote-node5", 3, 3, 107),
+        planned("full-pool", 3, 3, 107),
+        planned("outage-two", 4, 4, 160),
+        planned("outage-three", 4, 4, 160),
+        planned("resume", 4, 4, 160),
+        planned("return-node4", 4, 5, 160),
+        planned("return-node5", 4, 5, 160),
+        planned("sync-node7", 5, 5, 213),
+    ]
 }
 
 /// The steps that must run in this order (each pair: the one that starts first, the one after).
@@ -137,6 +215,45 @@ pub(super) fn order(run: &str) -> &'static [(&'static str, &'static str)] {
             ("open-routes-node4", "vote-s18b"),
             ("batch-node4", "restart-node2"),
         ],
+        "mixed-short" | "mixed" | "mixed-split" => match run {
+            "mixed" => &[
+                ("attest-wait", "txgen-once"),
+                ("txgen-once", "pause-forger-node3"),
+                ("pause-forger-node3", "restart-node4"),
+                ("restart-node4", "restart-node2"),
+                ("restart-node2", "kill-forger-node5"),
+                ("kill-forger-node5", "partition"),
+                ("partition", "heal"),
+                ("heal", "converged"),
+            ],
+            "mixed-split" => &[
+                ("attest-wait", "txgen-once"),
+                ("light-txgen", "partition"),
+                ("partition", "conflict"),
+                ("conflict", "heal"),
+                ("minority-pause", "heal"),
+                ("archive-minority", "heal"),
+                ("heal", "converged"),
+                ("converged", "conflict-outcome"),
+            ],
+            _ => &[("attest-wait", "txgen-once")],
+        },
+        "churn" => &[
+            ("cycle-node1", "cycle-node2"),
+            ("cycle-node2", "cycle-node3"),
+            ("cycle-node3", "cycle-node4"),
+            ("cycle-node4", "cycle-node5"),
+            ("cycle-node5", "crash-relay-node3"),
+            ("crash-relay-node3", "crash-forger-node2"),
+            ("crash-forger-node2", "vote-node5"),
+            ("vote-node5", "full-pool"),
+            ("full-pool", "outage-two"),
+            ("outage-two", "outage-three"),
+            ("outage-three", "resume"),
+            ("resume", "return-node4"),
+            ("return-node4", "return-node5"),
+            ("return-node5", "sync-node7"),
+        ],
         _ => &[],
     }
 }
@@ -153,6 +270,20 @@ pub(super) fn waits(run: &str) -> &'static [(&'static str, &'static str)] {
             ("restart-node4", "rollback-isolate"),
             ("stall-node4", "restart-node4"),
         ],
+        "mixed" => &[("partition", "heal")],
+        "churn" => &[
+            ("cycle-node1", "cycle-node2"),
+            ("cycle-node2", "cycle-node3"),
+            ("cycle-node3", "cycle-node4"),
+            ("cycle-node4", "cycle-node5"),
+            ("cycle-node5", "crash-relay-node3"),
+            ("crash-relay-node3", "crash-forger-node2"),
+            ("outage-two", "outage-three"),
+            ("outage-three", "resume"),
+            ("resume", "return-node4"),
+            ("return-node4", "return-node5"),
+            ("return-node5", "sync-node7"),
+        ],
         _ => &[],
     }
 }
@@ -162,7 +293,8 @@ pub(super) fn stop_height(run: &str) -> Option<u32> {
     match run {
         "w" | "w0" => Some(212),
         "p" => Some(159),
-        "s" => Some(106),
+        "s" | "mixed-short" | "core" => Some(106),
+        "mixed" | "mixed-split" | "churn" => Some(265),
         _ => None,
     }
 }
@@ -472,6 +604,134 @@ mod tests {
             problems("w0", &steps, 53, 212)
                 .iter()
                 .any(|p| p.contains("step r1 records no start height"))
+        );
+    }
+
+    /// The recorded shape of a mixed forging run: every planned step in the plan's order, each at
+    /// the first height its trigger and its round allow (the route corpus at the stop height),
+    /// then the pause at the stop height.
+    fn forging(run: &str) -> Vec<Step> {
+        let stop = u64::from(stop_height(run).unwrap());
+        let mut height = 1;
+        let mut planned: Vec<(&str, u64)> = Vec::new();
+        for p in plan(run) {
+            if p.name == "api-corpus" {
+                continue;
+            }
+            height = height.max(p.from).max(u64::from(p.rounds.0 - 1) * 53 + 1);
+            planned.push((p.name, height));
+        }
+        planned.push(("api-corpus", stop));
+        planned.push(("pause", stop));
+        planned
+            .iter()
+            .enumerate()
+            .map(|(k, (name, h))| {
+                let at = i64::try_from(k).unwrap() * 1_000;
+                step(name, *h, at, at + 500)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_mixed_forging_runs_have_their_plans() {
+        for (run, stop) in [("mixed-short", 106), ("mixed", 265), ("mixed-split", 265)] {
+            assert_eq!(stop_height(run), Some(stop));
+            assert!(plan(run).iter().any(|p| p.name == "api-corpus"), "{run}");
+        }
+        assert!(plan("mixed").iter().any(|p| p.name == "kill-forger-node5"));
+        assert!(
+            plan("mixed-split")
+                .iter()
+                .any(|p| p.name == "conflict-outcome")
+        );
+        assert!(!plan("mixed-short").iter().any(|p| p.name == "partition"));
+        // The route corpus is recorded in the run's last round.
+        let corpus = |run: &str| {
+            plan(run)
+                .into_iter()
+                .find(|p| p.name == "api-corpus")
+                .unwrap()
+        };
+        assert_eq!(corpus("mixed-short").rounds, (2, 2));
+        assert_eq!(corpus("mixed").rounds, (5, 5));
+    }
+
+    #[test]
+    fn a_mixed_forging_run_that_keeps_to_the_plan_has_no_problem() {
+        for (run, stop) in [("mixed-short", 106), ("mixed", 265), ("mixed-split", 265)] {
+            let found = problems(run, &forging(run), 53, stop);
+            assert_eq!(found, Vec::<String>::new(), "{run}");
+        }
+    }
+
+    #[test]
+    fn the_churn_run_has_its_plan_and_keeps_to_it() {
+        assert_eq!(stop_height("churn"), Some(265));
+        let names: Vec<&str> = plan("churn").iter().map(|p| p.name).collect();
+        for name in ["cycle-node5", "full-pool", "outage-three", "sync-node7"] {
+            assert!(names.contains(&name), "{name}");
+        }
+        assert_eq!(
+            problems("churn", &forging("churn"), 53, 265),
+            Vec::<String>::new()
+        );
+        // The outage of three nodes before the outage of two, and the sync in round 4.
+        let mut steps = forging("churn");
+        let (a, b) = (
+            steps.iter().position(|s| s.name == "outage-two").unwrap(),
+            steps.iter().position(|s| s.name == "outage-three").unwrap(),
+        );
+        let start = steps[a].start;
+        steps[a].start = steps[b].start;
+        steps[b].start = start;
+        let i = steps.iter().position(|s| s.name == "sync-node7").unwrap();
+        steps[i].record["startHeight"] = json!(200);
+        let found = problems("churn", &steps, 53, 265);
+        assert!(
+            found
+                .iter()
+                .any(|p| p.contains("step outage-two started after step outage-three")),
+            "{found:?}"
+        );
+        assert!(
+            found
+                .iter()
+                .any(|p| p.contains("step sync-node7 started at height 200, in round 4")),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn a_partition_before_its_height_and_a_heal_before_the_partition_are_problems() {
+        let mut steps = forging("mixed");
+        let i = steps.iter().position(|s| s.name == "partition").unwrap();
+        steps[i].record["startHeight"] = json!(140);
+        let found = problems("mixed", &steps, 53, 265);
+        assert!(
+            found
+                .iter()
+                .any(|p| p.contains("step partition started at height 140, before the height 155")),
+            "{found:?}"
+        );
+        let mut steps = forging("mixed");
+        let (a, b) = (
+            steps.iter().position(|s| s.name == "partition").unwrap(),
+            steps.iter().position(|s| s.name == "heal").unwrap(),
+        );
+        let start = steps[a].start;
+        steps[a].start = steps[b].start;
+        steps[b].start = start;
+        let found = problems("mixed", &steps, 53, 265);
+        assert!(
+            found
+                .iter()
+                .any(|p| p.contains("step partition started after step heal")),
+            "{found:?}"
+        );
+        // The run must stop at the planned height.
+        assert!(
+            problems("mixed-short", &forging("mixed-short"), 53, 265)[0].contains("planned 106")
         );
     }
 }

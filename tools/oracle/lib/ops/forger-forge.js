@@ -14,9 +14,14 @@
 //                           collation removed from the pool (sorted ids), and Delegate.forge on the
 //                           collated transactions, each read back from its bytes with
 //                           fromBytesUnsafe as the forger reads the relay's answer, on the pool's
-//                           tip; with notes.fullPoolEviction when a step's full pool evicted a
-//                           transaction and then refused the new one, where Heartwood's pool
-//                           evicts nothing (a documented difference of the pool)
+//                           tip. Where the two pools may hold different transactions on purpose
+//                           (the pool's documented differences: a step changed the online record,
+//                           or a step's full pool, in a batch or a re-add, evicted a transaction and
+//                           then refused the new one, where Heartwood's pool evicts nothing), with
+//                           notes.session, the session as pool.run answers it (each step's result
+//                           and the contents after it, then the collation's ids and the contents
+//                           after it, as a collate step), which the judge compares with Heartwood's
+//                           session, and notes.fullPoolEviction after such an eviction
 // Loaded by lib/ops.js.
 
 const path = require("path");
@@ -67,11 +72,16 @@ module.exports = function forgerForgeOps(context) {
             const { session } = await pool["pool.open"]({ fixture, lastBlockHeight, milestones, options, online });
             try {
                 let evicted = false;
+                const results = [];
                 for (const { op, ...args } of steps) {
                     const run = pool[`pool.${op}`];
                     if (typeof run !== "function" || op === "run" || op === "open" || op === "close") throw new TypeError(`unknown pool step ${op}`);
-                    const result = await run({ session, ...args });
-                    evicted = evicted || Boolean(result && result.notes && result.notes.fullPoolEviction);
+                    // The step's result as pool.run gives it: without the contents some steps add.
+                    const result = { ...(await run({ session, ...args })) };
+                    delete result.contents;
+                    evicted = evicted || Boolean(result.notes && result.notes.fullPoolEviction);
+                    const { contents } = await pool["pool.contents"]({ session });
+                    results.push({ result, contents });
                 }
                 const { chain } = sessions.get(session);
                 const tip = chain.stateStore.getLastHeight();
@@ -82,13 +92,20 @@ module.exports = function forgerForgeOps(context) {
                         const collator = headless.app.get(headless.Id.PoolCollator);
                         const candidates = await collator.getBlockCandidateTransactions(true, []);
                         await headless.settle();
-                        const after = new Set(headless.contents().all);
+                        const contents = headless.contents();
+                        const after = new Set(contents.all);
                         const removed = before.filter((id) => !after.has(id)).sort();
+                        const collated = candidates.map((t) => t.id);
+                        results.push({ result: { ids: collated }, contents });
+                        // Without a change of the online record or a noted eviction the two pools
+                        // hold the same transactions, and the answer is the collation alone.
+                        const shown = evicted || steps.some((s) => s.op === "setOnline");
+                        const fullPool = evicted ? { fullPoolEviction: true } : {};
+                        const notes = shown ? { notes: { session: { results }, ...fullPool } } : {};
                         const hexes = candidates.map((t) => Buffer.from(t.serialised).toString("hex"));
                         const previousBlock = { id: forger.previousBlock && forger.previousBlock.id, height: tip };
                         const block = forge({ ...forger, previousBlock }, hexes);
-                        const notes = evicted ? { notes: { fullPoolEviction: true } } : {};
-                        return { collated: candidates.map((t) => t.id), removed, ...block, ...notes };
+                        return { collated, removed, ...block, ...notes };
                     }),
                 );
             } finally {

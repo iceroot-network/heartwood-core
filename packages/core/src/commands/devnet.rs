@@ -1,11 +1,14 @@
-//! `heartwood devnet ...`: a local devnet on this host, mode B (one loopback address per node).
+//! `heartwood devnet ...`: a local devnet on this host, mode B (one loopback address per node),
+//! and `devnet run`, a scenario on it through the harness's runner.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Args, Subcommand};
-use heartwood_cli::devnet::{self, Failover, InitOptions, LogStream, NodeSelection, Tools};
+use heartwood_cli::devnet::{self, Failover, InitOptions, LogStream, NodeSelection};
+use heartwood_cli::devnet::{StartOptions, Tools};
 use heartwood_cli::http::LoopbackApi;
 use heartwood_cli::network::NetworkGenerator;
 use heartwood_cli::process::Supervisors;
@@ -29,11 +32,11 @@ pub enum DevnetCommand {
     /// Create a devnet's files.
     Init(Init),
     /// Start the devnet's nodes.
-    Start(Nodes),
+    Start(Start),
     /// Stop the devnet's nodes.
     Stop(Stop),
     /// The devnet's processes, heights and quorum.
-    Status,
+    Status(Status),
     /// The nodes' logs, merged.
     Logs(Logs),
     /// Stop one node.
@@ -48,6 +51,8 @@ pub enum DevnetCommand {
     Wait(Wait),
     /// Print one node's environment.
     Env(Node),
+    /// Run a scenario on the devnet with the harness's runner.
+    Run(Run),
 }
 
 /// The flags of `init`.
@@ -80,6 +85,44 @@ pub struct Init {
     /// Replace an existing devnet.
     #[arg(long)]
     pub force: bool,
+    /// Run each validator as one `core` process instead of a relay and a forger.
+    #[arg(long)]
+    pub core: bool,
+}
+
+/// The flags of `start`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
+pub struct Start {
+    /// The nodes.
+    #[command(flatten)]
+    pub nodes: Nodes,
+    /// Keep the manifest's epoch.
+    #[arg(long)]
+    pub keep_epoch: bool,
+    /// Return once the processes are started, without waiting for the relays' APIs.
+    #[arg(long)]
+    pub no_wait: bool,
+}
+
+/// The flags of `status`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
+pub struct Status {
+    /// The status as JSON.
+    #[arg(long)]
+    pub json: bool,
+    /// Each process tree's memory, CPU time and written bytes (Linux).
+    #[arg(long)]
+    pub resources: bool,
+}
+
+/// The flags of `run`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
+pub struct Run {
+    /// The scenario file.
+    pub file: PathBuf,
+    /// The runner's own arguments, after `--`.
+    #[arg(last = true)]
+    pub args: Vec<OsString>,
 }
 
 /// The nodes and the role a command acts on.
@@ -116,6 +159,9 @@ pub struct Logs {
     /// The error captures instead of the logs.
     #[arg(long)]
     pub error: bool,
+    /// Follow the logs as they grow.
+    #[arg(long)]
+    pub follow: bool,
 }
 
 /// One node.
@@ -169,6 +215,7 @@ impl Init {
             min_network_reach: self.min_network_reach.unwrap_or(defaults.min_network_reach),
             log_level: self.log_level.clone().unwrap_or(defaults.log_level),
             force: self.force,
+            core: self.core,
         }
     }
 }
@@ -180,8 +227,27 @@ fn prefix(text: &str) -> Result<[u8; 3], String> {
     prefix.ok_or_else(|| format!("{text:?} is not an address prefix such as 127.0.0"))
 }
 
+/// `devnet run`: the runner replaces this process; 1 with the error printed when it cannot.
+fn run_scenario(dir: &Path, run: &Run) -> Result<ExitCode, DevnetError> {
+    match devnet::run(dir, &run.file, &run.args)? {}
+}
+
+/// `status --json --resources`' figures: each running process tree by its `node<k>/<role>`
+/// name, in bytes and milliseconds (`null` where a figure could not be read).
+fn trees_json(dir: &Path, tools: &Tools) -> Result<serde_json::Value, DevnetError> {
+    let tree = |used: &devnet::Resources| {
+        serde_json::json!({ "rss": used.rss, "pss": used.pss, "cpuMs": used.cpu_ms,
+                            "written": used.written })
+    };
+    let trees = devnet::resources(dir, tools)?.into_iter();
+    Ok(trees.map(|(name, used)| (name, tree(&used))).collect())
+}
+
 /// Run `command`.
 pub fn run(devnet: Devnet) -> ExitCode {
+    if let DevnetCommand::Run(run) = &devnet.command {
+        return run_scenario(&devnet.dir, run).unwrap_or_else(|error| crate::exit(Err(error)));
+    }
     crate::exit(super::program().and_then(|binary| {
         let (ops, api) = (
             Supervisors { binary },
@@ -217,11 +283,28 @@ fn devnet_command(dir: &Path, command: DevnetCommand, tools: &Tools) -> Result<(
                 made.nethash
             );
         }
-        DevnetCommand::Start(n) => devnet::start(dir, &n.selection(), tools)?,
+        DevnetCommand::Start(s) => {
+            let (keep_epoch, no_wait) = (s.keep_epoch, s.no_wait);
+            let options = StartOptions {
+                keep_epoch,
+                no_wait,
+            };
+            devnet::start_with(dir, &s.nodes.selection(), &options, tools)?;
+        }
         DevnetCommand::Stop(s) => {
             devnet::stop(dir, &s.nodes.selection(), s.kill, tools)?;
         }
-        DevnetCommand::Status => {
+        DevnetCommand::Status(Status {
+            json: true,
+            resources,
+        }) => {
+            let mut status = devnet::status_json(dir, tools)?;
+            if let (true, Some(fields)) = (resources, status.as_object_mut()) {
+                fields.insert("resources".to_owned(), trees_json(dir, tools)?);
+            }
+            println!("{status:#}");
+        }
+        DevnetCommand::Status(Status { resources, .. }) => {
             let status = devnet::status(dir, tools)?;
             let rows =
                 (status.nodes.iter()).flat_map(|n| std::iter::once(&n.relay).chain(&n.forger));
@@ -234,6 +317,11 @@ fn devnet_command(dir: &Path, command: DevnetCommand, tools: &Tools) -> Result<(
                 println!("node{}: height {height:?}", node.node);
             }
             println!("{status}");
+            if resources {
+                for (name, used) in devnet::resources(dir, tools)? {
+                    println!("{name}: {used}");
+                }
+            }
         }
         DevnetCommand::Logs(l) => {
             let stream = if l.error {
@@ -242,7 +330,10 @@ fn devnet_command(dir: &Path, command: DevnetCommand, tools: &Tools) -> Result<(
                 LogStream::File
             };
             let out = &mut std::io::stdout().lock();
-            devnet::logs(dir, &l.nodes.selection(), stream, l.lines, out)?;
+            match l.follow {
+                true => devnet::follow(dir, &l.nodes.selection(), stream, l.lines, out, &|| false)?,
+                false => devnet::logs(dir, &l.nodes.selection(), stream, l.lines, out)?,
+            }
         }
         DevnetCommand::StopNode(n) => devnet::stop_node(dir, n.node, n.role, n.kill, tools)?,
         DevnetCommand::StartNode(n) => devnet::start_node(dir, n.node, n.role, tools)?,
@@ -260,6 +351,7 @@ fn devnet_command(dir: &Path, command: DevnetCommand, tools: &Tools) -> Result<(
                 println!("{}={}", name.to_string_lossy(), value.to_string_lossy());
             }
         }
+        DevnetCommand::Run(r) => return run_scenario(dir, &r).map(|_| ()),
     }
     Ok(())
 }

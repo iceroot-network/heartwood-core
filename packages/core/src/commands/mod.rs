@@ -2,27 +2,34 @@
 //! (`run`, `start`, `stop`, `restart`, `status`, `log`), [`network`] (`generate`), `devnet`
 //! (feature `devnet`: `init`, `start`, `stop`, `status`, `logs`, `stop-node`, `start-node`,
 //! `restart-node`, `reset`, `wait`, `env`), [`snapshot`] (`rollback`), [`clear`] (`pool clear` and
-//! `state clear`), [`doctor`] (read-only diagnostics, `checks`, `explain`, `mcp`) and [`supervise`]
-//! (the hidden supervisor), with `version` and clap's `help`. The reference's colon spellings
-//! (`relay:start`) are rewritten first ([`heartwood_cli::argv::rewrite`]); flags keep the
-//! reference's camelCase with kebab-case
+//! `state clear`), [`doctor`] (read-only diagnostics, `checks`, `explain`, `mcp`), [`top`] (the
+//! token's running instances), [`mod@env`] (`get`, `list`, `set`, `paths`), [`config`] (`publish`,
+//! `forger`), [`service`] (`install`, `uninstall`), [`mod@core`] (the combined role's `run`,
+//! `start`, `stop`, `restart`, `status`, `log`) and [`supervise`] (the hidden supervisor), with
+//! `version` (`--verbose`) and clap's `help`. The reference's colon spellings (`relay:start`) are rewritten first
+//! ([`heartwood_cli::argv::rewrite`]); flags keep the reference's camelCase with kebab-case
 //! aliases.
 
 pub mod clear;
+pub mod config;
+pub mod core;
 #[cfg(feature = "devnet")]
 pub mod devnet;
 pub mod doctor;
+pub mod env;
 pub mod forger;
 pub mod network;
 pub mod relay;
+pub mod service;
 pub mod snapshot;
 pub mod supervise;
+pub mod top;
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand};
 use heartwood_cli::instance::InstanceFlags;
 use heartwood_cli::{Instance, ProcessError, Role, process, process_table};
 
@@ -61,14 +68,67 @@ pub enum Command {
     State(clear::StateCommand),
     /// Read-only diagnostics of this host's node.
     Doctor(doctor::DoctorLine),
+    /// The token's running instances.
+    Top(top::Top),
+    /// An instance's environment file and directories.
+    #[command(subcommand)]
+    Env(env::EnvCommand),
+    /// An instance's configuration files and the forger's key.
+    #[command(subcommand)]
+    Config(config::ConfigCommand),
+    /// A systemd unit for one role of an instance.
+    #[command(subcommand)]
+    Service(service::ServiceCommand),
+    /// The combined role's commands.
+    #[command(subcommand)]
+    Core(core::CoreCommand),
     /// Supervise a started role (written by `start`).
     #[command(hide = true)]
     Supervise(supervise::Supervise),
     /// Print the version.
-    Version,
+    Version {
+        /// Also the target and the enabled features.
+        #[arg(long)]
+        verbose: bool,
+    },
 }
 
-/// The flags of `stop`, `restart` and `status`: the instance.
+/// A role command was refused before its process operation.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RoleError {
+    /// A process operation failed.
+    #[error(transparent)]
+    Process(#[from] ProcessError),
+    /// The signing keys could not be loaded.
+    #[error(transparent)]
+    Keys(#[from] heartwood_forger::KeysError),
+    /// A split role belongs to the running core process.
+    #[error("{name} runs inside {core}: use core {verb}")]
+    InsideCore {
+        /// The split process name.
+        name: String,
+        /// The enclosing process name.
+        core: String,
+        /// The requested operation.
+        verb: &'static str,
+    },
+}
+
+/// The flags of `stop`: the instance and an accepted compatibility flag.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
+pub struct StopFlags {
+    /// The instance.
+    #[command(flatten)]
+    pub process: ProcessFlags,
+    /// Accepted for compatibility; stopping always ends the supervisor.
+    #[arg(
+        long, default_value_t = false, action = ArgAction::Set,
+        num_args = 0..=1, default_missing_value = "true"
+    )]
+    pub daemon: bool,
+}
+
+/// The flags of `restart` and `status`: the instance.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
 pub struct ProcessFlags {
     /// The instance.
@@ -102,10 +162,10 @@ pub(crate) fn program() -> Result<PathBuf, String> {
 
 /// Run `act` on the instance of `role` that `flags` name, resolved with the process's
 /// environment, home directory and working directory.
-pub(crate) fn on_instance(
+pub(crate) fn on_instance<E: std::fmt::Display>(
     role: Role,
     flags: &InstanceFlags,
-    act: impl FnOnce(&Instance) -> Result<(), ProcessError>,
+    act: impl FnOnce(&Instance) -> Result<(), E>,
 ) -> ExitCode {
     let env = |name: &str| std::env::var(name).ok();
     let (home, cwd) = (std::env::home_dir(), std::env::current_dir());
@@ -149,7 +209,7 @@ pub(crate) fn status(instance: &Instance) -> Result<(), ProcessError> {
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum Manage {
     /// Stop the role.
-    Stop(ProcessFlags),
+    Stop(StopFlags),
     /// Restart the role.
     Restart(ProcessFlags),
     /// The role's process status.
@@ -160,16 +220,55 @@ pub enum Manage {
 
 /// Stop, restart, show or tail `role`'s instance as `command` asks.
 pub(crate) fn manage(role: Role, command: Manage) -> ExitCode {
-    match command {
-        Manage::Stop(flags) => on_instance(role, &flags.instance, process::stop),
-        Manage::Restart(flags) => {
-            on_instance(role, &flags.instance, |i| process::restart(i, &Vec::new()))
+    let (flags, verb) = match command {
+        Manage::Stop(flags) => (flags.process, "stop"),
+        Manage::Restart(flags) => (flags, "restart"),
+        Manage::Status(flags) => (flags, "status"),
+        Manage::Log(log) => {
+            return on_instance(role, &log.instance, |i| {
+                process::log(i, log.lines, log.error, true)
+            });
         }
-        Manage::Status(flags) => on_instance(role, &flags.instance, status),
-        Manage::Log(log) => on_instance(role, &log.instance, |i| {
-            process::log(i, log.lines, log.error, true)
-        }),
-    }
+    };
+    on_instance(role, &flags.instance, |i| -> Result<(), RoleError> {
+        if role != Role::Core {
+            match core::refuse_running(i, &[Role::Core]) {
+                Err(ProcessError::AlreadyRunning { name }) => {
+                    return Err(RoleError::InsideCore {
+                        name: i.name(),
+                        core: name,
+                        verb,
+                    });
+                }
+                other => other?,
+            }
+        }
+        match verb {
+            "stop" => process::stop(i),
+            "restart" => process::restart(i, &Vec::new()),
+            _ => status(i),
+        }
+        .map_err(RoleError::from)
+    })
+}
+
+/// The version, with the platform this build runs on and the features it was built with (a test
+/// seam is named only in a build that has it).
+pub(crate) fn verbose_version() -> String {
+    let features = [
+        ("devnet", cfg!(feature = "devnet")),
+        ("difftest", cfg!(feature = "difftest")),
+    ];
+    let mut on = features.iter().filter(|(_, on)| *on).map(|(name, _)| *name);
+    let listed = on.next().map_or_else(
+        || "none".to_owned(),
+        |first| on.fold(first.to_owned(), |all, name| format!("{all}, {name}")),
+    );
+    let (arch, os) = (std::env::consts::ARCH, std::env::consts::OS);
+    format!(
+        "{}\ntarget: {arch}-{os}\nfeatures: {listed}",
+        crate::VERSION
+    )
 }
 
 /// Run `command`; the process's exit status.
@@ -184,9 +283,18 @@ pub fn run(command: Command) -> ExitCode {
         Command::Pool(command) => clear::run_pool(command),
         Command::State(command) => clear::run_state(command),
         Command::Doctor(line) => doctor::run(line),
+        Command::Top(top) => top::run(top),
+        Command::Env(command) => env::run(command),
+        Command::Config(command) => config::run(command),
+        Command::Service(command) => service::run(command),
+        Command::Core(command) => core::run(command),
         Command::Supervise(command) => supervise::run(command),
-        Command::Version => {
+        Command::Version { verbose: false } => {
             println!("{}", crate::VERSION);
+            ExitCode::SUCCESS
+        }
+        Command::Version { verbose: true } => {
+            println!("{}", verbose_version());
             ExitCode::SUCCESS
         }
     }
@@ -211,6 +319,17 @@ mod tests {
     }
 
     #[test]
+    fn the_verbose_version_has_the_version_the_target_and_the_features_of_this_build() {
+        let lines: Vec<String> = verbose_version().lines().map(str::to_owned).collect();
+        assert_eq!(lines[0], crate::VERSION);
+        assert!(lines[1].starts_with("target: "), "{lines:?}");
+        let features = lines[2].strip_prefix("features: ").unwrap();
+        assert_eq!(features.contains("devnet"), cfg!(feature = "devnet"));
+        assert_eq!(features.contains("difftest"), cfg!(feature = "difftest"));
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
     fn start_is_a_daemon_unless_the_reference_spellings_of_the_flag_say_otherwise() {
         for role in ["relay", "forger"] {
             let on = ["", "--daemon", "--daemon=true", "--daemon true"];
@@ -220,6 +339,36 @@ mod tests {
             let off = ["--daemon=false", "--no-daemon", "--daemon false"];
             for flags in off.into_iter().chain(["--daemon false --token solar"]) {
                 assert!(!daemon(role, flags), "{role} {flags}");
+            }
+        }
+    }
+
+    #[test]
+    fn compatibility_boolean_flags_accept_all_value_forms_only_on_their_commands() {
+        for role in ["core", "forger"] {
+            for verb in ["run", "start"] {
+                for flag in ["--skipPrompts", "--skip-prompts"] {
+                    for value in ["", "=true", "=false", " true", " false"] {
+                        let command = format!("heartwood {role}:{verb} {flag}{value}");
+                        assert!(line(&command).is_ok(), "{command}");
+                    }
+                }
+            }
+        }
+        for role in ["relay", "forger", "core"] {
+            for flag in [
+                "--daemon",
+                "--daemon=true",
+                "--daemon=false",
+                "--daemon true",
+                "--daemon false",
+                "--no-daemon",
+            ] {
+                let command = format!("heartwood {role}:stop {flag}");
+                assert!(line(&command).is_ok(), "{command}");
+                for verb in ["restart", "status"] {
+                    assert!(line(&format!("heartwood {role} {verb} {flag}")).is_err());
+                }
             }
         }
     }
@@ -241,6 +390,22 @@ mod tests {
             "heartwood network generate --network devnet --seed s --out o --chainOnly",
             "heartwood supervise --role relay --token t --network n -- heartwood relay run",
             "heartwood version",
+            "heartwood version --verbose",
+            "heartwood top --token node1",
+            "heartwood env get --network devnet --key CORE_DB_HOST",
+            "heartwood env set --network devnet --key CORE_LOG_LEVEL --value debug",
+            "heartwood env list --network devnet",
+            "heartwood env paths --token node1 --network devnet",
+            "heartwood config publish --network devnet --force",
+            "heartwood config forger --network devnet --method privateKey",
+            "heartwood config forger private-key --network devnet",
+            "heartwood service install --network devnet --role core --system --out o",
+            "heartwood service uninstall --network devnet --role relay",
+            "heartwood core run --token node1 --network devnet --networkStart",
+            "heartwood core start --network devnet --daemon=false",
+            "heartwood core stop --network devnet",
+            "heartwood core log --network devnet --lines 5",
+            "heartwood supervise --role core --token t --network n -- heartwood core run",
         ] {
             assert!(line(text).is_ok(), "{text}");
         }
@@ -249,6 +414,12 @@ mod tests {
             "heartwood devnet init --validators 1 --failover 1:1,6,7",
             "heartwood devnet stop-node 3 --role relay --kill",
             "heartwood devnet wait --height 20",
+            "heartwood devnet init --validators 3 --core",
+            "heartwood devnet start --keep-epoch --no-wait",
+            "heartwood devnet status --json",
+            "heartwood devnet status --resources",
+            "heartwood devnet logs --follow --node 2",
+            "heartwood devnet run s.json -- --seed 1",
         ] {
             assert!(line(text).is_ok(), "{text}");
         }

@@ -15,7 +15,13 @@
 //! - every start opens with the state the relay started from (a `restart` or `genesis` line),
 //!   except a first start on an empty store, which may open with the apply line of height 2;
 //! - the last `apply` or `reapply` line of every height of the final chain carries that chain's
-//!   block, and the node's last line is the final tip.
+//!   block, and the node's last line is the final tip;
+//! - in a mixed run, an `apply`, `reapply`, `revert` or `restart` line of a minority block that no
+//!   judged chain holds, forged within its relay's bounded peer-loss window, is recorded here, and
+//!   must agree with the node's other lines of that block ([`judge_with_records`]); the minority's
+//!   branch, built from a node's block files up to that block and judged by the oracle, then
+//!   judges those lines as any other ([`judge_branches`]). A `revert` line names the block the
+//!   node went back to: the lower of two such blocks when the node gives the upper one up.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -194,44 +200,69 @@ pub struct Judged {
     /// The number of starts whose first line is a restart line (every start but a first one
     /// from an empty store must begin with one).
     pub restarts: usize,
+    /// Unjudged minority lines recorded within the bounded peer loss window.
+    pub recorded: Vec<String>,
 }
 
 /// Compare `digest` with the judged `chains`; `chains[0]` is the final chain.
 pub fn judge(digest: &NodeDigest, chains: &[JudgedChain]) -> Judged {
+    judge_with_records(digest, chains, &RecordedBlocks::new())
+}
+
+/// A minority block's height and id, with the reason it can be recorded without a judged chain.
+pub type RecordedBlocks = BTreeMap<(u32, String), String>;
+
+/// Compare lines as usual, recording only the apply, reapply, revert and restart lines of
+/// explicitly allowed blocks. No judged chain holds such a block, but the node's own lines of it
+/// must agree: each with the first of them, in the keys a state shares (`b`, `s`, `r`, `w`), and
+/// two lines that applied it (apply or reapply) in every key a step shares. A block the node wrote
+/// one line of stays recorded, unjudged here; [`judge_branches`] judges every line of it.
+pub fn judge_with_records(
+    digest: &NodeDigest,
+    chains: &[JudgedChain],
+    records: &RecordedBlocks,
+) -> Judged {
     let mut out = Judged::default();
     let place = |l: &NodeLine| format!("start {} line {}", l.start, l.line);
+    let mut first_of: BTreeMap<(u32, &str), &NodeLine> = BTreeMap::new();
     for l in &digest.lines {
         let (h, id, step) = (l.height(), l.id(), l.step());
         let Some(chain) = chains.iter().find(|c| c.holds(h, id)) else {
+            if matches!(step, "apply" | "reapply" | "revert" | "restart")
+                && let Some(reason) = records.get(&(h, id.to_owned()))
+            {
+                let first = *first_of.entry((h, id)).or_insert(l);
+                let applied = |step: &str| matches!(step, "apply" | "reapply");
+                let keys: &[&str] = if applied(step) && applied(first.step()) {
+                    &SAME_STEP
+                } else {
+                    &SAME_STATE
+                };
+                let differing = differing_keys(&l.value, &first.value, keys);
+                if differing.is_empty() {
+                    out.recorded.push(format!(
+                        "{}: {step} at height {h} with block {id}: {reason}",
+                        place(l)
+                    ));
+                } else {
+                    out.problems.push(format!(
+                        "{}: the {step} line of the recorded block {id} at height {h} differs \
+                         from the node's {} line of it ({}) in {}",
+                        place(l),
+                        first.step(),
+                        place(first),
+                        differing.join(", ")
+                    ));
+                }
+                continue;
+            }
             out.problems.push(format!(
                 "{}: {step} to {h} with block {id}, which no judged chain holds at that height",
                 place(l)
             ));
             continue;
         };
-        let want = &chain.forward[&h];
-        let keys: &[&str] = match step {
-            "apply" | "reapply" => &SAME_STEP,
-            "revert" | "restart" | "genesis" => &SAME_STATE,
-            other => {
-                out.problems
-                    .push(format!("{}: unknown step {other:?}", place(l)));
-                continue;
-            }
-        };
-        let differing = differing_keys(&l.value, want, keys);
-        if differing.is_empty() {
-            *out.compared
-                .entry((chain.name.clone(), step.to_owned()))
-                .or_default() += 1;
-        } else {
-            out.problems.push(format!(
-                "{}: the {step} line of height {h} differs from {}'s in {}",
-                place(l),
-                chain.name,
-                differing.join(", ")
-            ));
-        }
+        compare_line(l, chain, &mut out);
     }
     let mut starts: BTreeMap<u32, &NodeLine> = BTreeMap::new();
     for l in &digest.lines {
@@ -273,6 +304,72 @@ pub fn judge(digest: &NodeDigest, chains: &[JudgedChain]) -> Judged {
                 last.tip()
             )),
             None => out.problems.push("the node wrote no digest line".into()),
+        }
+    }
+    out
+}
+
+/// Compare the line `l` with the forward line of its height in `chain` (which holds its block):
+/// an `apply` or `reapply` line in every key a step shares, a `revert`, `restart` or `genesis`
+/// line in the state's keys. The line counts as compared, or its difference is a problem.
+fn compare_line(l: &NodeLine, chain: &JudgedChain, out: &mut Judged) {
+    let (h, step) = (l.height(), l.step());
+    let place = format!("start {} line {}", l.start, l.line);
+    let Some(want) = chain.forward.get(&h) else {
+        out.problems.push(format!(
+            "{place}: {} holds no line of height {h}",
+            chain.name
+        ));
+        return;
+    };
+    let keys: &[&str] = match step {
+        "apply" | "reapply" => &SAME_STEP,
+        "revert" | "restart" | "genesis" => &SAME_STATE,
+        other => {
+            out.problems
+                .push(format!("{place}: unknown step {other:?}"));
+            return;
+        }
+    };
+    let differing = differing_keys(&l.value, want, keys);
+    if differing.is_empty() {
+        *out.compared
+            .entry((chain.name.clone(), step.to_owned()))
+            .or_default() += 1;
+    } else {
+        out.problems.push(format!(
+            "{place}: the {step} line of height {h} differs from {}'s in {}",
+            chain.name,
+            differing.join(", ")
+        ));
+    }
+}
+
+/// Judge the node's lines of `blocks` (the minority blocks [`judge_with_records`] records for it)
+/// against `branches`: the minority's chains, each built from a node's block files up to such a
+/// block and judged by the oracle. Each line of such a block is compared with the forward line of
+/// the branch that holds its block, as any other line is with its chain; a line of such a block
+/// that no branch holds is a problem. The node's other lines are left to [`judge_with_records`].
+pub fn judge_branches(
+    digest: &NodeDigest,
+    branches: &[JudgedChain],
+    blocks: &RecordedBlocks,
+) -> Judged {
+    let mut out = Judged::default();
+    for l in &digest.lines {
+        let (h, id) = (l.height(), l.id());
+        if !blocks.contains_key(&(h, id.to_owned())) {
+            continue;
+        }
+        match branches.iter().find(|c| c.holds(h, id)) {
+            Some(branch) => compare_line(l, branch, &mut out),
+            None => out.problems.push(format!(
+                "start {} line {}: {} to {h} with the minority block {id}, which no judged \
+                 branch holds",
+                l.start,
+                l.line,
+                l.step()
+            )),
         }
     }
     out
@@ -386,6 +483,257 @@ mod tests {
                 }));
         }
         out
+    }
+
+    #[test]
+    fn only_the_apply_reapply_revert_and_restart_lines_of_allowed_unjudged_blocks_are_recorded() {
+        let majority = chain("live", &["g", "a2", "a3"]);
+        let mut genesis = line(1, "g", "w1");
+        genesis["step"] = json!("genesis");
+        let mut restart = line(2, "minority", "unjudged");
+        restart["step"] = json!("restart");
+        let read = digest_of(&[
+            &[genesis, line(2, "minority", "unjudged")],
+            &[restart, line(2, "a2", "w2"), line(3, "a3", "w3")],
+        ]);
+        let records =
+            RecordedBlocks::from([((2, "minority".into()), "minority peer loss window".into())]);
+        assert_eq!(
+            judge(&read, std::slice::from_ref(&majority)).problems.len(),
+            2
+        );
+        let result = judge_with_records(&read, std::slice::from_ref(&majority), &records);
+        assert!(result.problems.is_empty(), "{:?}", result.problems);
+        assert_eq!(result.recorded.len(), 2);
+        assert!(result.recorded[0].contains("height 2 with block minority"));
+        assert!(result.uncovered.is_empty());
+        for step in ["genesis", "unknown"] {
+            let mut other = read.clone();
+            other.lines[1].value["step"] = json!(step);
+            assert!(
+                !judge_with_records(&other, std::slice::from_ref(&majority), &records)
+                    .problems
+                    .is_empty()
+            );
+        }
+        // A reapply or revert line of such a block is recorded, held to the node's other lines
+        // of the block as an apply line is.
+        for step in ["reapply", "revert"] {
+            let mut other = read.clone();
+            other.lines[1].value["step"] = json!(step);
+            let result = judge_with_records(&other, std::slice::from_ref(&majority), &records);
+            assert!(result.problems.is_empty(), "{step}: {:?}", result.problems);
+            assert_eq!(result.recorded.len(), 2, "{step}");
+        }
+        let mut other = read.clone();
+        other.lines[1].value["h"] = json!(3);
+        assert!(
+            !judge_with_records(&other, std::slice::from_ref(&majority), &records)
+                .problems
+                .is_empty()
+        );
+        other.lines[1].value["h"] = json!(2);
+        other.lines[1].value["id"] = json!("different");
+        assert!(
+            !judge_with_records(&other, std::slice::from_ref(&majority), &records)
+                .problems
+                .is_empty()
+        );
+        let mut unfinished = read;
+        unfinished.lines.truncate(3);
+        let result = judge_with_records(&unfinished, &[majority], &records);
+        assert!(!result.uncovered.is_empty());
+        assert!(
+            result
+                .problems
+                .iter()
+                .any(|p| p.contains("not at the final tip"))
+        );
+    }
+
+    #[test]
+    fn a_recorded_minority_line_must_agree_with_the_nodes_other_lines_of_its_block() {
+        let majority = chain("live", &["g", "a2", "a3"]);
+        let mut genesis = line(1, "g", "w1");
+        genesis["step"] = json!("genesis");
+        let mut restart = line(2, "minority", "w-minority");
+        restart["step"] = json!("restart");
+        let read = digest_of(&[
+            &[genesis.clone(), line(2, "minority", "w-minority")],
+            &[restart, line(2, "a2", "w2"), line(3, "a3", "w3")],
+        ]);
+        let records =
+            RecordedBlocks::from([((2, "minority".into()), "minority peer loss window".into())]);
+        let judged =
+            |read: &NodeDigest| judge_with_records(read, std::slice::from_ref(&majority), &records);
+        assert!(judged(&read).problems.is_empty());
+        // The state the relay restarted from is not the state it applied the block to.
+        for (line, key) in [(2, "b"), (2, "w"), (1, "s"), (1, "r")] {
+            let mut corrupt = read.clone();
+            corrupt.lines[line].value[key] = json!("corrupt");
+            let result = judged(&corrupt);
+            assert!(
+                result
+                    .problems
+                    .iter()
+                    .any(|p| p.contains("recorded block minority")
+                        && p.ends_with(&format!(" in {key}"))),
+                "{line} {key}: {:?}",
+                result.problems
+            );
+        }
+        // An apply line's other keys too, where the node applied the block twice.
+        let mut twice = read.clone();
+        twice.lines.insert(2, twice.lines[1].clone());
+        twice.lines[2].value["m"] = json!("corrupt");
+        assert!(!judged(&twice).problems.is_empty());
+        // A block the node has one line of has nothing on the node to be held to: it stays
+        // recorded, unjudged, as the live check names it.
+        let mut applied = line(2, "minority", "w-minority");
+        applied["b"] = json!("corrupt");
+        let mut revert = line(1, "g", "w1");
+        revert["step"] = json!("revert");
+        let lone = digest_of(&[&[
+            genesis,
+            applied,
+            revert,
+            line(2, "a2", "w2"),
+            line(3, "a3", "w3"),
+        ]]);
+        let result = judged(&lone);
+        assert!(result.problems.is_empty(), "{:?}", result.problems);
+        assert_eq!(result.recorded.len(), 1);
+    }
+
+    #[test]
+    fn a_revert_to_the_lower_of_two_recorded_blocks_is_held_to_its_apply_line_and_its_branch() {
+        // The relay applied two minority blocks, then gave both up for the final chain: its
+        // revert line of the upper one names the lower one, which no final chain holds.
+        let majority = chain("live", &["g", "a2", "a3", "a4"]);
+        let branch = chain("live-minority", &["g", "a2", "m3", "m4"]);
+        let mut genesis = line(1, "g", "w1");
+        genesis["step"] = json!("genesis");
+        let mut back_to_m3 = line(3, "m3", "w3");
+        back_to_m3["step"] = json!("revert");
+        let mut back_to_a2 = line(2, "a2", "w2");
+        back_to_a2["step"] = json!("revert");
+        let read = digest_of(&[&[
+            genesis,
+            line(2, "a2", "w2"),
+            line(3, "m3", "w3"),
+            line(4, "m4", "w4"),
+            back_to_m3,
+            back_to_a2,
+            line(3, "a3", "w3"),
+            line(4, "a4", "w4"),
+        ]]);
+        let records = RecordedBlocks::from([
+            ((3, "m3".into()), "minority".into()),
+            ((4, "m4".into()), "minority".into()),
+        ]);
+        let nodes =
+            |read: &NodeDigest| judge_with_records(read, std::slice::from_ref(&majority), &records);
+        let result = nodes(&read);
+        assert!(result.problems.is_empty(), "{:?}", result.problems);
+        assert_eq!(result.recorded.len(), 3);
+        assert!(
+            result
+                .recorded
+                .iter()
+                .any(|r| r.contains("revert at height 3 with block m3")),
+            "{:?}",
+            result.recorded
+        );
+        assert!(result.uncovered.is_empty());
+        // Without the records, it is a line of a block no judged chain holds.
+        assert!(
+            judge(&read, std::slice::from_ref(&majority))
+                .problems
+                .iter()
+                .any(|p| p.contains("revert to 3 with block m3"))
+        );
+        // The branch judges it with the blocks' apply lines.
+        let judged = judge_branches(&read, std::slice::from_ref(&branch), &records);
+        assert!(judged.problems.is_empty(), "{:?}", judged.problems);
+        assert_eq!(
+            judged.compared,
+            BTreeMap::from([
+                (("live-minority".into(), "apply".into()), 2),
+                (("live-minority".into(), "revert".into()), 1),
+            ])
+        );
+        // A wrong state to go back to fails both: the node's own apply line of the block, and
+        // the branch's line.
+        for key in ["b", "s", "r", "w"] {
+            let mut wrong = read.clone();
+            wrong.lines[4].value[key] = json!("corrupt");
+            let result = nodes(&wrong);
+            assert!(
+                result.problems.iter().any(|p| {
+                    p.contains("the revert line of the recorded block m3")
+                        && p.ends_with(&format!(" in {key}"))
+                }),
+                "{key}: {:?}",
+                result.problems
+            );
+            let judged = judge_branches(&wrong, std::slice::from_ref(&branch), &records);
+            assert!(
+                judged
+                    .problems
+                    .iter()
+                    .any(|p| p.ends_with(&format!(" in {key}"))),
+                "{key}: {:?}",
+                judged.problems
+            );
+        }
+    }
+
+    #[test]
+    fn the_lines_of_a_recorded_block_are_judged_on_the_branch_that_holds_it() {
+        let branch = chain("live-minority", &["g", "a2", "m3"]);
+        let mut genesis = line(1, "g", "w1");
+        genesis["step"] = json!("genesis");
+        let mut restart = line(3, "m3", "w3");
+        restart["step"] = json!("restart");
+        let read = digest_of(&[
+            &[genesis, line(2, "a2", "w2"), line(3, "m3", "w3")],
+            &[restart, line(3, "a3", "x3")],
+        ]);
+        let blocks = RecordedBlocks::from([((3, "m3".into()), "minority".into())]);
+        let judged = judge_branches(&read, std::slice::from_ref(&branch), &blocks);
+        assert!(judged.problems.is_empty(), "{:?}", judged.problems);
+        // Only the recorded block's lines: its apply line and its restart line.
+        assert_eq!(
+            judged.compared,
+            BTreeMap::from([
+                (("live-minority".into(), "apply".into()), 1),
+                (("live-minority".into(), "restart".into()), 1),
+            ])
+        );
+        // A wrong state of one line fails, an apply line in any key a step shares.
+        for (index, key) in [(2, "w"), (2, "m"), (2, "rw"), (3, "s")] {
+            let mut wrong = read.clone();
+            wrong.lines[index].value[key] = json!("wrong");
+            let judged = judge_branches(&wrong, std::slice::from_ref(&branch), &blocks);
+            assert_eq!(judged.problems.len(), 1, "{key}: {:?}", judged.problems);
+            assert!(
+                judged.problems[0].ends_with(&format!("differs from live-minority's in {key}")),
+                "{:?}",
+                judged.problems
+            );
+        }
+        // A restart line is held to the state's keys only.
+        let mut other = read.clone();
+        other.lines[3].value["m"] = json!("other");
+        assert!(
+            judge_branches(&other, std::slice::from_ref(&branch), &blocks)
+                .problems
+                .is_empty()
+        );
+        // Without a branch that holds the block, its lines are problems.
+        let judged = judge_branches(&read, &[chain("live", &["g", "a2", "a3"])], &blocks);
+        assert_eq!(judged.problems.len(), 2, "{:?}", judged.problems);
+        assert!(judged.problems[0].contains("which no judged branch holds"));
     }
 
     #[test]

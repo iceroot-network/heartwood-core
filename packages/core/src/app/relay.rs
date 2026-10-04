@@ -29,7 +29,9 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use heartwood_api::{Api, ApiConfig, ApiContext, NodeInfo, NodeStatus, PeerList};
+use heartwood_api::{
+    Api, ApiConfig, ApiContext, NodeInfo, NodeStatus, PeerList, StoreProductivity,
+};
 use heartwood_blockchain::state_machine::MachineState;
 use heartwood_blockchain::{
     BlockProcessor, Blockchain, BlockchainParts, ChainState, ChainStore, Node, NodeError,
@@ -59,7 +61,7 @@ use heartwood_pool::{Options as PoolOptions, Pool};
 use heartwood_transactions::Handlers;
 use thiserror::Error;
 use tokio::runtime::{Builder, Handle};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::commands::relay::RelayRun;
 use crate::config::{Package, RelayConfig};
@@ -109,6 +111,20 @@ enum Stop {
     Node(Result<(), NodeError>),
     /// The machine reached its exit state.
     Exit,
+    /// The component that runs beside the relay failed.
+    Companion(String),
+}
+
+/// What runs beside the relay in one process: the core role's forger.
+#[derive(Default)]
+pub(crate) struct Beside {
+    /// Called once the peer-to-peer listener is bound.
+    pub started: Option<Box<dyn FnOnce() + Send>>,
+    /// The companion's failure, which stops the relay.
+    pub failed: Option<oneshot::Receiver<String>>,
+    /// Called on a blocking thread after the blockchain service is disposed and before the node
+    /// stops.
+    pub stopped: Option<Box<dyn FnOnce() + Send>>,
 }
 
 fn component(error: impl Display) -> RelayError {
@@ -147,6 +163,17 @@ pub fn process_context() -> Result<ProcessContext, String> {
 
 /// Run the relay of `relay`, whose flags are `run`.
 pub fn start(relay: RelayConfig, run: &RelayRun) -> Result<(), RelayError> {
+    launch(Role::Relay, relay, run, Beside::default())
+}
+
+/// Run the relay of `relay` as the process of `role` (the relay, or the core role, which also
+/// holds the locks of the roles it contains), with what runs `beside` it.
+pub(crate) fn launch(
+    role: Role,
+    relay: RelayConfig,
+    run: &RelayRun,
+    beside: Beside,
+) -> Result<(), RelayError> {
     let paths = &relay.paths;
     // The temp directory is not made: the relay only reads the reference's markers there.
     for dir in [&paths.config, &paths.data, &paths.cache, &paths.log] {
@@ -155,18 +182,22 @@ pub fn start(relay: RelayConfig, run: &RelayRun) -> Result<(), RelayError> {
     // The signals are caught before the pid file is written.
     let runtime = Builder::new_multi_thread().enable_all().build();
     let runtime = runtime.map_err(component)?;
-    let signals = Signals::listen_in(&runtime, "relay");
-    let instance = lock::instance(Role::Relay, &relay.token, &relay.network, paths);
+    let signals = Signals::listen_in(&runtime, role.name());
+    let instance = lock::instance(role, &relay.token, &relay.network, paths);
     let locked = ProcessLock::acquire(&instance);
     let _lock = locked.map_err(|error| RelayError::Locked(error.to_string()))?;
+    let _also =
+        lock::hold_also(&instance).map_err(|error| RelayError::Locked(error.to_string()))?;
     let logger = options::logger(&relay.entry(Package::Logger), &relay.env).map_err(config)?;
-    let stem = format!("{}-{}-relay", relay.token, relay.network);
+    let stem = format!("{}-{}-{}", relay.token, relay.network, role.name());
     let _logs = heartwood_logger::init(&logger, &paths.log, &stem).map_err(component)?;
-    heartwood_kernel::info!(
-        "Heartwood Core {VERSION}: a relay of {} on {}",
-        relay.token,
-        relay.network
-    );
+    let (token, network) = (&relay.token, &relay.network);
+    match role {
+        Role::Core => {
+            heartwood_kernel::info!("Heartwood Core {VERSION}: a core node of {token} on {network}")
+        }
+        _ => heartwood_kernel::info!("Heartwood Core {VERSION}: a relay of {token} on {network}"),
+    }
     for warning in &relay.warnings {
         heartwood_kernel::warning!("{warning}");
     }
@@ -176,7 +207,7 @@ pub fn start(relay: RelayConfig, run: &RelayRun) -> Result<(), RelayError> {
         .enable_all()
         .build())
     .map_err(component)?;
-    let result = runtime.block_on(serve(relay, run, api.handle().clone(), signals));
+    let result = runtime.block_on(serve(relay, run, api.handle().clone(), signals, beside));
     if let Err(error) = &result {
         heartwood_kernel::error!("{error}");
     }
@@ -186,13 +217,22 @@ pub fn start(relay: RelayConfig, run: &RelayRun) -> Result<(), RelayError> {
 }
 
 /// Start the components of `relay` and run them until a stop.
-async fn serve(
+pub(crate) async fn serve(
     relay: RelayConfig,
     run: &RelayRun,
     api_runtime: Handle,
     signals: Signals,
+    mut beside: Beside,
 ) -> Result<(), RelayError> {
     let (stops, mut stop) = mpsc::unbounded_channel();
+    if let Some(failed) = beside.failed.take() {
+        let failure = stops.clone();
+        tokio::spawn(async move {
+            let message = failed.await;
+            let message = message.unwrap_or_else(|_| "the forger stopped".into());
+            let _ = failure.send(Stop::Companion(message));
+        });
+    }
     let signal = stops.clone();
     tokio::spawn(async move {
         signals.requested().await;
@@ -226,6 +266,10 @@ async fn serve(
     let blockchain_options = options::blockchain(&relay.entry(Package::Blockchain));
     let blockchain_options = Arc::new(blockchain_options.map_err(config)?);
     let mut api_config = api_options(&relay)?;
+    if let Some(api) = api_config.as_mut() {
+        let lookback = blockchain_options.missed_blocks_lookback;
+        api.missed_blocks_lookback = i64::try_from(lookback).unwrap_or(i64::MAX);
+    }
     devnet_guard(&p2p, &relay.crypto.network.name, api_config.as_ref())?;
     let peer_config = peer_config(&relay, api_config.as_ref());
     // The store, the state and the version floor at the stored tip.
@@ -250,7 +294,7 @@ async fn serve(
     ))));
     let first_start = restored.path == RestorePath::FirstStart;
     #[cfg(feature = "difftest")]
-    let (observer, record, await_record) =
+    let (observer, record, await_record, attestation_record) =
         crate::harness::files(&relay, run, &milestones, first_start).map_err(config)?;
     #[cfg(feature = "difftest")]
     let stall = (relay.env.get(crate::harness::DIR_VARIABLE))
@@ -331,6 +375,8 @@ async fn serve(
         record,
         #[cfg(feature = "difftest")]
         await_record,
+        #[cfg(feature = "difftest")]
+        attestation_record,
     };
     // A listener that cannot bind stops the relay, through the graceful shutdown.
     let (p2p, mut unbound) = match serve_p2p(p2p, Arc::new(services), peers, &links, clock).await {
@@ -339,6 +385,9 @@ async fn serve(
     };
     let (booted, service) = (stops, Arc::clone(&blockchain));
     if p2p.is_some() {
+        if let Some(start) = beside.started.take() {
+            start();
+        }
         tokio::spawn(async move { booted.send(Stop::Booted(service.boot().await)) });
     }
     let status = node_status(&links);
@@ -383,6 +432,7 @@ async fn serve(
                 ));
             }
             Some(Stop::Exit) => break Err(RelayError::Fatal("the blockchain stopped".into())),
+            Some(Stop::Companion(message)) => break Err(RelayError::Fatal(message)),
         }
     };
     // The graceful shutdown, in reverse: the forger's sessions first.
@@ -393,6 +443,9 @@ async fn serve(
         api.dispose().await;
     }
     blockchain.dispose().await;
+    if let Some(stopped) = beside.stopped.take() {
+        let _ = tokio::task::spawn_blocking(stopped).await;
+    }
     handle.stop().await;
     while !node_ended {
         match stop.recv().await {
@@ -401,6 +454,7 @@ async fn serve(
             Some(_) => {}
         }
     }
+    heartwood_kernel::info!("The node has stopped: its pool is flushed and its store is closed");
     outcome
 }
 
@@ -571,13 +625,18 @@ async fn serve_api(
     history: Readers,
     runtime: Handle,
 ) -> Result<Option<Api>, RelayError> {
+    let history = Arc::new(history);
+    let lookback = config.missed_blocks_lookback;
+    let productivity = StoreProductivity::new(Arc::clone(&history), lookback)
+        .with_epoch(node.crypto.milestones.at(1).epoch());
     let context = ApiContext {
         state: handle.state(),
         pool: handle.pool(),
         status: status.clone(),
         peers: Arc::clone(links) as Arc<dyn PeerList>,
-        history: Arc::new(history),
+        history: Arc::clone(&history),
         submit: Arc::new(Submit(handle.clone())),
+        productivity: Arc::new(productivity),
         node: Arc::new(node),
         config: Arc::new(config),
     };

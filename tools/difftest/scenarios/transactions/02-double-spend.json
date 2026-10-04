@@ -1,0 +1,47 @@
+{
+  "id": "double-spend",
+  "title": "One wallet spends its balance twice, reuses a nonce and skips a nonce; only the first of each is kept",
+  "levels": ["L2", "L3"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "settleBlocks": 0,
+  "actors": {"hop-a": {"seed": 1}, "hop-b": {"seed": 2}, "hop-c": {"seed": 3}, "spender": {"seed": 4}, "payee": {"seed": 5}, "nonce-user": {"seed": 6}, "gap-user": {"seed": 7}, "poor": {"seed": 8}, "exact-a": {"seed": 10}, "exact-b": {"seed": 11}, "voter-a": {"seed": 12}, "voter-b": {"seed": 13}, "registrant-a": {"seed": 14}, "registrant-b": {"seed": 15}, "registrant-c": {"seed": 16}, "resigner": {"seed": 17}, "sig-owner": {"seed": 18}, "second-key": {"seed": 19}, "burner": {"seed": 20}, "bulk-1": {"seed": 21}, "bulk-2": {"seed": 22}, "bulk-3": {"seed": 23}},
+  "steps": [
+    {"name": "fund the wallets", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [
+       {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["hop-a", "50000000000"], ["hop-b", "300000000"], ["hop-c", "300000000"], ["spender", "100000000000"], ["payee", "100000000"], ["nonce-user", "100000000000"], ["gap-user", "100000000000"], ["poor", "1000"], ["exact-a", "10000000000"], ["exact-b", "10000000000"], ["voter-a", "10000000000"], ["voter-b", "10000000000"], ["registrant-a", "20000000000"], ["registrant-b", "20000000000"], ["registrant-c", "20000000000"], ["resigner", "20000000000"], ["sig-owner", "10000000000"], ["second-key", "100000000"], ["burner", "10000000000"], ["bulk-1", "100000000000"], ["bulk-2", "100000000000"], ["bulk-3", "100000000000"]]}
+     ]},
+    {"name": "two 600-coin transfers", "at": {"height": 14}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["spend-first"], "invalid": ["spend-second"], "codes": {"spend-second": "ERR_APPLY"}},
+     "txs": [
+       {"ref": "spend-first", "type": "transfer", "from": "spender", "nonce": 1, "to": [["payee", "60000000000"]]},
+       {"ref": "spend-second", "type": "transfer", "from": "spender", "nonce": 2, "to": [["payee", "60000000000"]]}
+     ]},
+    {"name": "a third once the first is in a block", "at": {"afterBlocks": 2}, "do": "submit", "node": 1, "via": "api", "check": {"invalid": ["spend-third"], "codes": {"spend-third": "ERR_APPLY"}},
+     "txs": [
+       {"ref": "spend-third", "type": "transfer", "from": "spender", "nonce": 2, "to": [["payee", "60000000001"]]}
+     ]},
+    {"name": "a nonce used twice", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["nonce-first"], "invalid": ["nonce-reused"], "codes": {"nonce-reused": "ERR_APPLY"}},
+     "txs": [
+       {"ref": "nonce-first", "type": "transfer", "from": "nonce-user", "nonce": 1, "to": [["payee", "1000000000"]]},
+       {"ref": "nonce-reused", "type": "transfer", "from": "nonce-user", "nonce": 1, "to": [["payee", "2000000000"]]}
+     ]},
+    {"name": "the same nonce after the block", "at": {"afterBlocks": 2}, "do": "submit", "node": 1, "via": "api", "check": {"invalid": ["nonce-reused-late"], "codes": {"nonce-reused-late": "ERR_APPLY"}},
+     "txs": [
+       {"ref": "nonce-reused-late", "type": "transfer", "from": "nonce-user", "nonce": 1, "to": [["payee", "3000000000"]]}
+     ]},
+    {"name": "a nonce two ahead", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api", "check": {"invalid": ["gap-far"], "codes": {"gap-far": "ERR_APPLY"}},
+     "txs": [
+       {"ref": "gap-far", "type": "transfer", "from": "gap-user", "nonce": 3, "to": [["payee", "100000000"]]}
+     ]},
+    {"name": "the nonce in order, then a gap", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["gap-first"], "invalid": ["gap-near"], "codes": {"gap-near": "ERR_APPLY"}},
+     "txs": [
+       {"ref": "gap-first", "type": "transfer", "from": "gap-user", "nonce": 1, "to": [["payee", "100000000"]]},
+       {"ref": "gap-near", "type": "transfer", "from": "gap-user", "nonce": 3, "to": [["payee", "100000001"]]}
+     ]},
+    {"name": "the missing nonce", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["gap-second"]},
+     "txs": [
+       {"ref": "gap-second", "type": "transfer", "from": "gap-user", "nonce": 2, "to": [["payee", "100000000"]]}
+     ]},
+    {"name": "what was kept", "at": {"afterBlocks": 3}, "check": {"forged": ["spend-first", "nonce-first", "gap-first", "gap-second"], "absent": ["spend-second", "spend-third", "nonce-reused", "nonce-reused-late", "gap-far", "gap-near"], "digest": true}}
+  ]
+}

@@ -1,0 +1,20 @@
+[
+ {
+  "name": "blockchain/index",
+  "path": "/api/blockchain"
+ },
+ {
+  "name": "blockchain/index/ignored-query",
+  "path": "/api/blockchain",
+  "query": "foo=bar&limit=0"
+ },
+ {
+  "name": "blockchain/index/page-ignored",
+  "path": "/api/blockchain",
+  "query": "page=2&limit=1"
+ },
+ {
+  "name": "blockchain/index/trailing-slash",
+  "path": "/api/blockchain/"
+ }
+]

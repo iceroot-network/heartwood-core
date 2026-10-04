@@ -152,9 +152,21 @@ impl RelayConfig {
         home: &Path,
         cwd: &Path,
     ) -> Result<RelayConfig, RelayError> {
+        RelayConfig::load_as(Role::Relay, run, process, home, cwd)
+    }
+
+    /// The configuration of the relay side of `role` (the relay, or the core role, whose profile
+    /// also lists the forger), run with the flags `run`.
+    pub fn load_as(
+        role: Role,
+        run: &RelayRun,
+        process: &[(String, String)],
+        home: &Path,
+        cwd: &Path,
+    ) -> Result<RelayConfig, RelayError> {
         let config = |error: String| RelayError::Config(error);
         let flags = (run.token.as_deref(), run.network.as_deref());
-        let base = Base::load(Role::Relay, flags, run.env.as_deref(), (process, home, cwd));
+        let base = Base::load(role, flags, run.env.as_deref(), (process, home, cwd));
         let Base {
             token,
             network,
@@ -168,15 +180,21 @@ impl RelayConfig {
             let package = Package::named(&plugin.package);
             let package = package.ok_or_else(|| {
                 config(format!(
-                    "unknown package {:?} in the relay profile of app.json",
-                    plugin.package
+                    "unknown package {:?} in the {} profile of app.json",
+                    plugin.package,
+                    role.profile()
                 ))
             })?;
             let known = package.describe().1;
+            // The core role's forger entry is read by the forger's own options.
+            let own = package == Package::Forger && role == Role::Core;
             // A devnet node's addressing is a p2p option of the devnet commands' own.
             let devnet =
                 |key: &str| cfg!(feature = "devnet") && package == Package::P2p && key == "devnet";
             for key in plugin.options.as_object().into_iter().flat_map(Map::keys) {
+                if own {
+                    continue;
+                }
                 // The state's options are the reference's saved states, caches and wallet table.
                 let what = match known.contains(&key.as_str()) || devnet(key) {
                     false => "is not known and is not read",
@@ -197,13 +215,14 @@ impl RelayConfig {
         let mut missing = Package::ALL.into_iter().filter(|p| p.required());
         if let Some(missing) = missing.find(|package| !components.contains(package)) {
             return Err(config(format!(
-                "the relay profile of app.json has no {}",
+                "the {} profile of app.json has no {}",
+                role.profile(),
                 missing.name()
             )));
         }
         for package in [Package::Forger, Package::Snapshots]
             .into_iter()
-            .filter(|p| entries.contains_key(p))
+            .filter(|p| entries.contains_key(p) && (*p, role) != (Package::Forger, Role::Core))
         {
             warnings.push(format!("{} is not started by a relay", package.name()));
         }
@@ -228,6 +247,30 @@ impl RelayConfig {
             peers,
             crypto,
             warnings,
+        })
+    }
+
+    /// The forger side of a core role's configuration: its profile's forger entry (none when the
+    /// profile lists no forger), the logger's options and the same directories, environment and
+    /// crypto files.
+    pub fn forger(&self) -> Option<ForgerConfig> {
+        let forger = self.entries.get(&Package::Forger)?.clone();
+        let app = app::AppConfig {
+            plugins: Vec::new(),
+            ignored: Vec::new(),
+        };
+        Some(ForgerConfig {
+            base: Base {
+                token: self.token.clone(),
+                network: self.network.clone(),
+                paths: self.paths.clone(),
+                env: self.env.clone(),
+                app,
+                warnings: Vec::new(),
+            },
+            logger: self.entry(Package::Logger),
+            forger,
+            crypto: self.crypto.clone(),
         })
     }
 

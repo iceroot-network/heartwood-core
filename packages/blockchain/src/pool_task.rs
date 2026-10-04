@@ -15,6 +15,10 @@
 //! follower forwards what it downloads, as a reference relay does. All of it runs on the node
 //! thread, under the rules of the tip plus one.
 //!
+//! Every step that runs the handlers on the pool's views or on a collation's copy leaves the
+//! parties of their transactions for the state to re-index ([`PoolTask::take_reindexed`]), as
+//! the reference's handlers re-index them in the state's wallets too.
+//!
 //! The reference cleans the pool up after each applied block, in a listener that runs while the
 //! job goes on, and at a milestone re-adds the pool before that block's clean-up; here the steps
 //! run once after the job's commit, at the committed tip, in that order. That removes the same
@@ -33,12 +37,13 @@
 
 use std::sync::Arc;
 
+use heartwood_crypto::identities::Address;
 use heartwood_crypto::{Milestones, Network, Params, Transaction, TransactionId};
 use heartwood_kernel::Clock;
 use heartwood_p2p::node_services::Collation;
 use heartwood_pool::{
     DelegateVersions, Entry, Pool, PoolContext, PoolView, Processor, ProcessorResult, Readded,
-    StorageError,
+    Reindexed, StorageError,
 };
 use heartwood_state::State;
 
@@ -68,14 +73,16 @@ pub struct PoolEnv<'a> {
 }
 
 impl<'a> PoolEnv<'a> {
-    /// The pool's context at the tip, with the online record `online`.
-    fn context(&self, online: &'a DelegateVersions) -> PoolContext<'a> {
+    /// The pool's context at the tip, with the online record `online`, leaving the parties of its
+    /// handler runs in `reindexed`.
+    fn context(&self, online: &'a DelegateVersions, reindexed: &'a Reindexed) -> PoolContext<'a> {
         PoolContext {
             wallets: self.state.wallets(),
             tip: self.state.height(),
             milestones: self.milestones,
             network: self.network,
             online,
+            reindexed,
         }
     }
 }
@@ -91,6 +98,8 @@ pub struct PoolTask {
     failure: Option<StorageError>,
     /// The delegates on this node and the node's version.
     own: Option<(Arc<dyn OwnKeys>, String)>,
+    /// The parties the handler runs left for the state to re-index.
+    reindexed: Reindexed,
 }
 
 impl PoolTask {
@@ -105,6 +114,7 @@ impl PoolTask {
             p2p,
             failure: None,
             own: None,
+            reindexed: Reindexed::default(),
         }
     }
 
@@ -143,7 +153,7 @@ impl PoolTask {
             Channel::Download => &mut self.download,
             Channel::P2p => &mut self.p2p,
         };
-        let ctx = env.context(&self.online);
+        let ctx = env.context(&self.online, &self.reindexed);
         processor.process_to_broadcast(&mut self.pool, &ctx, env.clock, entries)
     }
 
@@ -156,7 +166,7 @@ impl PoolTask {
         validate: bool,
         exclude: &[TransactionId],
     ) -> Result<Collation, StorageError> {
-        let ctx = env.context(&self.online);
+        let ctx = env.context(&self.online, &self.reindexed);
         let collated = heartwood_pool::collate(&mut self.pool, &ctx, validate, exclude)?;
         let transactions = collated.candidates.iter();
         Ok(Collation {
@@ -179,9 +189,11 @@ impl PoolTask {
             self.online.expire(*round);
         }
         if milestone {
-            self.pool.readd(&env.context(&self.online), &[])?;
+            self.pool
+                .readd(&env.context(&self.online, &self.reindexed), &[])?;
         }
-        self.pool.clean_up(&env.context(&self.online))?;
+        self.pool
+            .clean_up(&env.context(&self.online, &self.reindexed))?;
         Ok(())
     }
 
@@ -193,7 +205,8 @@ impl PoolTask {
         env: &PoolEnv<'_>,
         forged: &[Transaction],
     ) -> Result<Readded, StorageError> {
-        self.pool.readd(&env.context(&self.online), forged)
+        self.pool
+            .readd(&env.context(&self.online, &self.reindexed), forged)
     }
 
     /// Change the online record: a status attestation's version, or the expiry at the start of a
@@ -245,6 +258,12 @@ impl PoolTask {
     /// The storage failure of a pool step during the last job, if any.
     pub fn take_failure(&mut self) -> Option<StorageError> {
         self.failure.take()
+    }
+
+    /// The parties the handler runs of the pool's steps left since the last call, in order, for
+    /// the state to re-index (`State::reindex_parties`).
+    pub fn take_reindexed(&mut self) -> Vec<Address> {
+        self.reindexed.take()
     }
 }
 

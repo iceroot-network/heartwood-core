@@ -1,25 +1,32 @@
 //! The transaction pool: a whole pool session over a wallet fixture (`pool.run`), step by step:
 //! batches of entries processed at a given time, the online record, re-adds, clean-ups, removals,
 //! flushes, collations, a restart of the pool's storage and moves of the tip, with the pool's
-//! contents in the reference's orders after every step. [`crate::levels::pool`] judges the
-//! answer against the oracle's.
+//! contents in the reference's orders after every step. A re-add's result notes the transactions
+//! it tried to add back ([`crate::levels::pool::READD_ATTEMPTS`]). [`crate::levels::pool`] judges
+//! the answer against the oracle's.
 //!
 //! The oracle's other pool operations (`pool.open` and the steps one by one) keep a session
 //! between calls; the synthetic pool cases drive them ([`crate::synthetic_pool`]), and they have no
 //! subject here.
+
+use std::collections::BTreeSet;
 
 use heartwood_blockchain::online;
 use heartwood_crypto::identities::{Address, PublicKeyBytes};
 use heartwood_crypto::{Milestones, Network, Transaction, TransactionId};
 use heartwood_database::{Database, Settings};
 use heartwood_kernel::clock::ManualClock;
-use heartwood_pool::{DelegateVersions, Entry, Options, Pool, PoolContext, Processor, collate};
+use heartwood_pool::storage::TABLE;
+use heartwood_pool::{
+    DelegateVersions, Entry, Options, Pool, PoolContext, Processor, Readded, Reindexed,
+    StoredTransaction, collate,
+};
 use heartwood_state::WalletRepository;
 use serde_json::{Map, Value, json};
 
 use super::{Env, Outcome, Run, failed, integer};
 use crate::fixture::Fixture;
-use crate::levels::pool::{ENTRY_IDS, VERSION, contents, options};
+use crate::levels::pool::{ENTRY_IDS, READD_ATTEMPTS, VERSION, contents, options};
 use crate::store::{ScratchDir, Unbuilt, guarded};
 use crate::subject::{Case, NOTES, SubjectError, Verdict};
 
@@ -105,6 +112,7 @@ impl Session<'_> {
             milestones: self.milestones,
             network: self.network,
             online: &self.online,
+            reindexed: &Reindexed::default(),
         };
         let storage = |e: heartwood_pool::StorageError| e.to_string();
         Ok(match op {
@@ -175,9 +183,10 @@ impl Session<'_> {
                     .iter()
                     .map(|t| self.decode(t.as_str().unwrap_or("")))
                     .collect::<Result<Vec<_>, String>>()?;
+                let stored = self.pool.stored().map_err(storage)?;
                 // The step's `recheck` changes only what the reference logs.
-                self.pool.readd(&ctx, &forged).map_err(storage)?;
-                json!({})
+                let readded = self.pool.readd(&ctx, &forged).map_err(storage)?;
+                attempts(&forged, &stored, &readded)
             }
             "cleanUp" => {
                 self.pool.clean_up(&ctx).map_err(storage)?;
@@ -230,8 +239,9 @@ impl Session<'_> {
                 drop(std::mem::replace(&mut self.pool, fresh));
                 self.api = Processor::new();
                 self.p2p = Processor::new();
-                self.pool.readd(&ctx, &[]).map_err(storage)?;
-                json!({})
+                let stored = self.pool.stored().map_err(storage)?;
+                let readded = self.pool.readd(&ctx, &[]).map_err(storage)?;
+                attempts(&[], &stored, &readded)
             }
             "tip" => {
                 self.tip = step
@@ -243,6 +253,39 @@ impl Session<'_> {
             }
             other => return Err(format!("unknown pool step {other}")),
         })
+    }
+}
+
+/// A re-add's result: a note of each transaction it tried to add back, in its order, with whether
+/// it entered the pool, which the judge reads when the oracle notes that the reference's re-add
+/// evicted a transaction before it refused one. The pool reports the outcomes, not their order;
+/// the order is the one `Pool::readd` documents, which the contents after every other re-add
+/// check: the previously forged transactions as given (one that entered the pool while its row
+/// was still stored counts as entered, as the reference's refused insert leaves it in the pool),
+/// then the rows `stored` before the re-add, in storage order, but the expired ones. A forged list
+/// that names a transaction twice leaves the order of its outcomes unknown, and gives no note.
+fn attempts(forged: &[Transaction], stored: &[StoredTransaction], readded: &Readded) -> Value {
+    let mut named = BTreeSet::new();
+    if !forged.iter().all(|t| named.insert(*t.id())) {
+        return json!({});
+    }
+    let unique = format!("UNIQUE constraint failed: {TABLE}.id");
+    let entered = |id: &TransactionId| {
+        readded.forged.contains(id)
+            || (readded.forged_failed.iter()).any(|(failed, why)| failed == id && *why == unique)
+    };
+    let attempts: Vec<Value> = (forged.iter())
+        .map(|t| json!([t.id().to_hex(), entered(t.id())]))
+        .chain(
+            (stored.iter())
+                .filter(|row| !readded.expired.contains(&row.id))
+                .map(|row| json!([row.id.to_hex(), readded.stored.contains(&row.id)])),
+        )
+        .collect();
+    if attempts.is_empty() {
+        json!({})
+    } else {
+        json!({ NOTES: { READD_ATTEMPTS: attempts } })
     }
 }
 
@@ -307,5 +350,57 @@ fn run(env: &Env<'_>, case: &Case<'_>) -> Outcome<Verdict> {
         Err(Unbuilt(message)) => Err(SubjectError::Unsupported(format!(
             "the pool is not built yet: {message}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id(n: u8) -> TransactionId {
+        TransactionId::from_array([n; 32])
+    }
+
+    fn row(n: u8) -> StoredTransaction {
+        StoredTransaction {
+            height: 999,
+            id: id(n),
+            recipient_id: String::new(),
+            sender_id: String::new(),
+            serialised: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_re_add_s_attempts_are_its_stored_rows_in_storage_order_with_their_outcomes() {
+        // Rows e, f, x and r: e and r went back into the pool, f failed, x had expired.
+        let stored = [row(1), row(2), row(3), row(4)];
+        let readded = Readded {
+            stored: vec![id(4), id(1)],
+            expired: vec![id(3)],
+            failed: vec![(id(2), "f cannot be applied".into())],
+            ..Readded::default()
+        };
+        let note = attempts(&[], &stored, &readded);
+        assert_eq!(
+            note,
+            json!({ NOTES: { READD_ATTEMPTS: [
+                [id(1).to_hex(), true], [id(2).to_hex(), false], [id(4).to_hex(), true],
+            ] } })
+        );
+        // The order is the one `Pool::readd` documents (storage order), not that of the lists:
+        // the same outcomes in the lists' other order give the same note.
+        let reordered = Readded {
+            stored: vec![id(1), id(4)],
+            ..readded.clone()
+        };
+        assert_eq!(attempts(&[], &stored, &reordered), note);
+        // Nothing tried, no note.
+        assert_eq!(attempts(&[], &[], &Readded::default()), json!({}));
+        let all_expired = Readded {
+            expired: vec![id(3)],
+            ..Readded::default()
+        };
+        assert_eq!(attempts(&[], &[row(3)], &all_expired), json!({}));
     }
 }

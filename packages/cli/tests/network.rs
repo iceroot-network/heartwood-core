@@ -239,15 +239,26 @@ fn the_keys_are_private_and_the_single_node_instance_is_complete() {
 }
 
 #[test]
-fn the_generated_app_json_loads_for_both_roles() {
+fn the_generated_app_json_loads_for_every_role() {
     use heartwood_kernel::config::app::{Role, parse};
     let out = scratch("app-json-loads");
     generate(&options("solar-devnet", &out), &clock()).unwrap();
     let text = fs::read_to_string(out.join("app.json")).unwrap();
-    for role in [Role::Relay, Role::Forger] {
+    for role in [Role::Relay, Role::Forger, Role::Core] {
         let app = parse(&text, role).unwrap_or_else(|error| panic!("{role:?}: {error}"));
         assert!(!app.plugins.is_empty(), "{role:?}");
     }
+    let app: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let mut expected = app["relay"]["plugins"].as_array().unwrap().clone();
+    expected.push(
+        app["forger"]["plugins"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone(),
+    );
+    assert_eq!(app["core"]["plugins"], json!(expected));
 }
 
 #[test]

@@ -1,0 +1,122 @@
+[
+ {
+  "name": "search/wallets/username-prefix",
+  "path": "/api/blockchain/search/genesis_"
+ },
+ {
+  "name": "search/wallets/username-prefix-upper",
+  "path": "/api/blockchain/search/GENESIS_"
+ },
+ {
+  "name": "search/wallets/username-one",
+  "path": "/api/blockchain/search/genesis_1"
+ },
+ {
+  "name": "search/wallets/username-digits",
+  "path": "/api/blockchain/search/genesis_5"
+ },
+ {
+  "name": "search/wallets/username-whole",
+  "path": "/api/blockchain/search/${delegateName}"
+ },
+ {
+  "name": "search/wallets/username-whole-upper",
+  "path": "/api/blockchain/search/${delegateName|upper}"
+ },
+ {
+  "name": "search/wallets/username-20-characters",
+  "path": "/api/blockchain/search/${delegateName|head:20}"
+ },
+ {
+  "name": "search/wallets/username-tx-nodes",
+  "path": "/api/blockchain/search/tx1n"
+ },
+ {
+  "name": "search/wallets/username-single-character",
+  "path": "/api/blockchain/search/g"
+ },
+ {
+  "name": "search/wallets/username-unknown",
+  "path": "/api/blockchain/search/nosuchdelegate1"
+ },
+ {
+  "name": "search/wallets/username-mark",
+  "path": "/api/blockchain/search/_"
+ },
+ {
+  "name": "search/wallets/address-whole",
+  "path": "/api/blockchain/search/${delegateAddress}"
+ },
+ {
+  "name": "search/wallets/address-whole-upper",
+  "path": "/api/blockchain/search/${delegateAddress|upper}"
+ },
+ {
+  "name": "search/wallets/address-21-characters",
+  "path": "/api/blockchain/search/${delegateAddress|head:21}"
+ },
+ {
+  "name": "search/wallets/address-22-characters",
+  "path": "/api/blockchain/search/${delegateAddress|head:22}"
+ },
+ {
+  "name": "search/wallets/address-20-characters",
+  "path": "/api/blockchain/search/${delegateAddress|head:20}"
+ },
+ {
+  "name": "search/wallets/address-voter",
+  "path": "/api/blockchain/search/${voter}"
+ },
+ {
+  "name": "search/wallets/address-voter-21-characters",
+  "path": "/api/blockchain/search/${voter|head:21}"
+ },
+ {
+  "name": "search/wallets/address-sender",
+  "path": "/api/blockchain/search/${txSender}"
+ },
+ {
+  "name": "search/wallets/address-recipient",
+  "path": "/api/blockchain/search/${recipient}"
+ },
+ {
+  "name": "search/wallets/address-unknown",
+  "path": "/api/blockchain/search/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2"
+ },
+ {
+  "name": "search/wallets/key-whole",
+  "path": "/api/blockchain/search/${delegateKey}"
+ },
+ {
+  "name": "search/wallets/key-whole-upper",
+  "path": "/api/blockchain/search/${delegateKey|upper}"
+ },
+ {
+  "name": "search/wallets/key-21-characters",
+  "path": "/api/blockchain/search/${delegateKey|head:21}"
+ },
+ {
+  "name": "search/wallets/key-20-characters",
+  "path": "/api/blockchain/search/${delegateKey|head:20}"
+ },
+ {
+  "name": "search/wallets/key-sender",
+  "path": "/api/blockchain/search/${txSenderKey}"
+ },
+ {
+  "name": "search/wallets/key-sender-40-characters",
+  "path": "/api/blockchain/search/${txSenderKey|head:40}"
+ },
+ {
+  "name": "search/wallets/key-unknown",
+  "path": "/api/blockchain/search/0368d294e20ada56bd4f14084f7aa3552534b1a0852aff6aafdcf5dfce303b4956"
+ },
+ {
+  "name": "search/wallets/too-long",
+  "path": "/api/blockchain/search/${delegateAddress}${delegateAddress}${delegateAddress}"
+ },
+ {
+  "name": "search/wallets/non-ascii",
+  "path": "/api/blockchain/search/%C3%A9"
+ }
+]

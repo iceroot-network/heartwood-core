@@ -27,7 +27,9 @@ use std::process::Command;
 
 use heartwood_crypto::Transaction;
 use heartwood_crypto::identities::Address;
-use heartwood_pool::{DelegateVersions, Pool, PoolContext, PoolView, Storage, StoredTransaction};
+use heartwood_pool::{
+    DelegateVersions, Pool, PoolContext, PoolView, Reindexed, Storage, StoredTransaction,
+};
 use heartwood_state::wallets::WalletRepository;
 use support::*;
 
@@ -234,6 +236,7 @@ fn publish_case(transactions: usize, senders: usize) {
         milestones: &MILESTONES,
         network: &NETWORK_FILE,
         online: &online,
+        reindexed: &Reindexed::default(),
     };
     let readded = pool.readd(&ctx, &[]).unwrap();
     assert_eq!(readded.stored.len(), senders * per_sender);
@@ -288,6 +291,7 @@ fn readd_case(count: usize, senders: usize) {
         milestones: &MILESTONES,
         network: &NETWORK_FILE,
         online: &online,
+        reindexed: &Reindexed::default(),
     };
     let before = resident_mib();
     let start = now_ms();

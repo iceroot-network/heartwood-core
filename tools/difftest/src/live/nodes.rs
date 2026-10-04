@@ -53,13 +53,15 @@ fn listed(label: &str, problems: &[String], out: &mut Vec<Check>) {
 /// The digest lines of the Heartwood relay `node` in `run_dir` against `chains` (the final chain
 /// first); its starts against the run's scripted `faults` (each a fault's name and the nodes it
 /// concerns); and, when the run killed it during its initial sync (`kill`, that step), that the
-/// kill landed before the node caught up.
+/// kill landed before the node caught up. `records` names unjudged minority blocks allowed
+/// during the bounded peer loss window of a mixed run.
 pub fn heartwood_digest(
     run_dir: &Path,
     node: &Node,
     chains: &[JudgedChain],
     faults: &[(String, Vec<String>)],
     kill: Option<&Step>,
+    records: &digest::RecordedBlocks,
 ) -> Vec<Check> {
     let label = format!("{}: digest lines", node.name);
     let dir = run_dir.join("nodes").join(&node.name).join("difftest");
@@ -70,7 +72,7 @@ pub fn heartwood_digest(
         Ok(d) => d,
         Err(e) => return vec![fail(&label, e.to_string())],
     };
-    let judged = digest::judge(&read, chains);
+    let judged = digest::judge_with_records(&read, chains, records);
     let mut out = Vec::new();
     for (start, text) in &read.torn {
         out.push(pass(format!(
@@ -78,6 +80,9 @@ pub fn heartwood_digest(
             node.name,
             text.len()
         )));
+    }
+    for record in &judged.recorded {
+        out.push(pass(format!("{}: recorded: {record}", node.name)));
     }
     listed(&label, &judged.problems, &mut out);
     if !judged.uncovered.is_empty() {
@@ -105,7 +110,7 @@ pub fn heartwood_digest(
         out.push(pass(format!(
             "{}: {} digest lines in {} starts equal the judge's ({}), {} restart lines",
             node.name,
-            read.lines.len(),
+            read.lines.len() - judged.recorded.len(),
             read.files.len(),
             counts.join(", "),
             judged.restarts
@@ -195,18 +200,19 @@ pub(super) fn backfilling_start(
 
 /// The rows of the slots before block 2 in the Heartwood relay `node`'s store (`missed`), which
 /// node 1 never writes: when one of its starts found no missed-slot row ([`backfilling_start`]),
-/// they must be exactly the reference's (their height 2 and times, [`super::recovery::backfill_times`];
-/// the delegates are the relay's own tests'), and they are taken out of `missed` for the anchors;
+/// they must be exactly the reference's (their height 2, times and delegates,
+/// [`super::recovery::backfill_rows`]), and they are taken out of `missed` for the anchors;
 /// otherwise they are left for the anchors to find. The passing case's text, if any.
 fn backfill_in_store(
     run_dir: &Path,
     node: &Node,
     corpus_dir: &Path,
-    block_time: u32,
+    (round_length, block_time): (u32, u32),
     missed: &mut Vec<heartwood_database::MissedRow>,
 ) -> std::result::Result<Option<String>, String> {
     let corpus = Corpus::load(corpus_dir).map_err(|e| e.to_string())?;
-    let times = super::recovery::backfill_times(&corpus, block_time);
+    let expected = super::recovery::backfill_rows(&corpus, block_time, round_length)?;
+    let times: Vec<i64> = expected.iter().map(|(time, _)| *time).collect();
     if times.is_empty() {
         return Ok(None);
     }
@@ -217,23 +223,46 @@ fn backfill_in_store(
         return Ok(None);
     };
     let last = times.last().copied().unwrap_or(0);
-    let mut held: Vec<i64> = missed
+    let mut held: Vec<(i64, String)> = missed
         .iter()
         .filter(|m| m.height == 2 && m.timestamp <= last)
-        .map(|m| m.timestamp)
+        .map(|m| (m.timestamp, m.username.clone()))
         .collect();
     held.sort_unstable();
-    if held != times {
+    let mut wanted = expected.clone();
+    wanted.sort_unstable();
+    if held != wanted {
         return Err(format!(
-            "its start at {tip} found no missed-slot row, so the {} rows of the slots before block 2 at {times:?} are expected at height 2; the store holds {held:?}",
+            "its start at {tip} found no missed-slot row, so the {} rows of the slots before block 2 (time and delegate) {wanted:?} are expected at height 2; the store holds {held:?}",
             times.len()
         ));
     }
     missed.retain(|m| !(m.height == 2 && m.timestamp <= last));
     Ok(Some(format!(
-        "its start at {tip} found no missed-slot row and wrote the {} rows of the slots before block 2, as the reference's start does (node 1's store has none)",
+        "its start at {tip} found no missed-slot row and wrote the {} rows of the slots before block 2 with the delegates of round 1's order at their slots, as the reference's start does (node 1's store has none)",
         times.len()
     )))
+}
+
+/// The missed-slot rows of the store of the Heartwood relay `node` of the run in `run_dir`, read
+/// from a copy (opening a store may write to it).
+pub(super) fn store_missed(
+    run_dir: &Path,
+    node: &str,
+) -> std::result::Result<Vec<MissedKey>, String> {
+    let data = run_dir.join("nodes").join(node).join("data");
+    let copy = ScratchDir::new("live-store-missed").map_err(|e| e.to_string())?;
+    copy_dir(&data, copy.path()).map_err(|e| e.to_string())?;
+    let database = match store::guarded(|| Database::open(&Settings::in_data_dir(copy.path()))) {
+        Err(unbuilt) => return Err(format!("the store is not built yet: {}", unbuilt.0)),
+        Ok(Err(e)) => return Err(format!("the store of {node} does not open: {e}")),
+        Ok(Ok(database)) => database,
+    };
+    let rows = database.missed_blocks().map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|m| (m.timestamp, u64::from(m.height), m.username))
+        .collect())
 }
 
 /// The store of the Heartwood relay `node` against the final chain's corpus in `corpus_dir`.
@@ -290,7 +319,13 @@ pub fn heartwood_store(
             return out;
         }
     };
-    match backfill_in_store(run_dir, node, corpus_dir, block_time, &mut rows.missed) {
+    match backfill_in_store(
+        run_dir,
+        node,
+        corpus_dir,
+        (round_length, block_time),
+        &mut rows.missed,
+    ) {
         Ok(Some(text)) => out.push(pass(format!("{}: {text}", node.name))),
         Ok(None) => {}
         Err(e) => out.push(fail(&label, e)),
@@ -740,6 +775,181 @@ pub fn reference(
         listed(&label, &problems, &mut out);
     }
     out
+}
+
+/// The refusal of a transaction's handler: the one refusal after which a node re-indexes the
+/// transaction's sender and recipients in its state, as both implementations do (a refusal before
+/// the handler leaves its indexes alone). The code also covers the refusals at the pool's entry,
+/// which run before the handler: [`handler_refused`] tells them apart by their message.
+pub const HANDLER_REFUSAL: &str = "ERR_APPLY";
+
+/// Whether the message of a [`HANDLER_REFUSAL`] (`<transaction> cannot be applied: <reason>`) is
+/// the handler's: not one of the refusals at the pool's entry (a transaction of its kind already
+/// in the pool, a delegate that is not online, a recipient of another network), which both
+/// implementations give under the same code before the handler runs, so that they re-index
+/// nothing.
+pub fn handler_refused(message: &str) -> bool {
+    let Some((_, reason)) = message.split_once(" cannot be applied: ") else {
+        return false;
+    };
+    let reason = reason.trim_end();
+    !(reason.ends_with(" transaction in the pool")
+        || reason.ends_with("' already in the pool")
+        || reason.ends_with(" is not operating a node on the network")
+        || reason.starts_with("Recipient "))
+}
+
+/// One transaction the run's records show sent to a node: the node, its verdict there (`None`
+/// when it was accepted) and the transaction's parties as far as the record names them.
+struct Sent {
+    id: String,
+    node: String,
+    refused: Option<String>,
+    /// The refusal's message, when the record keeps one.
+    message: Option<String>,
+    parties: Vec<String>,
+    /// When it was sent, in milliseconds since the Unix epoch, when the record says.
+    at: Option<i64>,
+}
+
+/// The node a txgen pass in `run_dir/txgen/<pass>` submitted to: its step's `submit`
+/// (`txgen-<pass>`), else the node whose address its start record's API names.
+fn txgen_node(
+    manifest: &Manifest,
+    steps: &[Step],
+    pass: &str,
+    records: &[Value],
+) -> Option<String> {
+    let step = steps.iter().find(|s| s.name == format!("txgen-{pass}"));
+    if let Some(node) = step.and_then(|s| s.text("submit")) {
+        return Some(node);
+    }
+    let api = (records.iter())
+        .find(|r| r["event"] == "start")
+        .and_then(|r| r["api"].as_str())?;
+    let host = api.split("://").nth(1)?.split([':', '/']).next()?;
+    manifest
+        .nodes
+        .iter()
+        .find(|n| n.ip == host)
+        .map(|n| n.name.clone())
+}
+
+/// Every transaction the run's records show sent to a node: txgen's submissions (each pass's
+/// `txgen.jsonl`) and the scripted steps' (a step's `detail` with a transaction `id` and an
+/// `outcome`).
+fn sent(run_dir: &Path, manifest: &Manifest, steps: &[Step]) -> Result<Vec<Sent>> {
+    let mut out = Vec::new();
+    let dir = run_dir.join("txgen");
+    let mut passes: Vec<PathBuf> = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries.filter_map(|e| e.ok().map(|e| e.path())).collect(),
+        Err(_) => Vec::new(),
+    };
+    passes.sort();
+    for pass in passes.iter().filter(|p| p.join("txgen.jsonl").is_file()) {
+        let file = pass.join("txgen.jsonl");
+        let records = read_lines(&file)?;
+        let name = pass
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        let node = txgen_node(manifest, steps, name, &records).ok_or_else(|| Error::Corpus {
+            path: file.clone(),
+            message: "no step or start record names the node it submitted to".into(),
+        })?;
+        for r in records.iter().filter(|r| r["event"] == "submitted") {
+            let Some(id) = r["id"].as_str() else {
+                continue;
+            };
+            let accepted = r["response"]["outcome"] == "accepted";
+            let code = r["response"]["code"].as_str().unwrap_or("refused");
+            let mut parties: Vec<String> = r["sender"]
+                .as_str()
+                .map(str::to_owned)
+                .into_iter()
+                .collect();
+            let transfers = r["tx"]["asset"]["transfers"]
+                .as_array()
+                .into_iter()
+                .flatten();
+            parties.extend(r["tx"]["recipientId"].as_str().map(str::to_owned));
+            parties.extend(transfers.filter_map(|t| t["recipientId"].as_str().map(str::to_owned)));
+            out.push(Sent {
+                id: id.to_owned(),
+                node: node.clone(),
+                refused: (!accepted).then(|| code.to_owned()),
+                message: r["response"]["message"].as_str().map(str::to_owned),
+                parties,
+                at: r["ts"].as_str().and_then(super::run::parse_time),
+            });
+        }
+    }
+    for step in steps {
+        let detail = &step.record["detail"];
+        let (Some(id), Some(outcome)) = (detail["id"].as_str(), detail["outcome"].as_str()) else {
+            continue;
+        };
+        if manifest.node(&step.node).is_none() {
+            continue;
+        }
+        let parties = ["wallet", "sender"]
+            .iter()
+            .filter_map(|k| detail[*k].as_str().map(str::to_owned))
+            .collect();
+        out.push(Sent {
+            id: id.to_owned(),
+            node: step.node.clone(),
+            refused: (outcome != "accepted")
+                .then(|| detail["code"].as_str().unwrap_or("refused").to_owned()),
+            message: detail["message"].as_str().map(str::to_owned),
+            parties,
+            at: step.start,
+        });
+    }
+    Ok(out)
+}
+
+/// The wallets whose places one node of the pair `left` and `right` alone moved in its state's
+/// indexes, each with its evidence: the sender and the recipients of every transaction the run's
+/// records show sent to one of the two and refused there by its handler ([`HANDLER_REFUSAL`],
+/// with a message [`handler_refused`] reads as the handler's: a refusal without one frees nothing),
+/// and never sent to the other, at a recorded time before `before` (the route corpus's
+/// recording; none when it is not known). A refused transaction is not broadcast, so the other
+/// node never re-indexed its parties for it.
+pub fn refused_alone(
+    run_dir: &Path,
+    manifest: &Manifest,
+    steps: &[Step],
+    (left, right): (&str, &str),
+    before: Option<i64>,
+) -> Result<BTreeMap<String, Vec<String>>> {
+    let sent = sent(run_dir, manifest, steps)?;
+    let mut nodes_of: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for s in &sent {
+        nodes_of.entry(&s.id).or_default().insert(&s.node);
+    }
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for s in &sent {
+        let pair: Vec<&&str> = nodes_of[s.id.as_str()]
+            .iter()
+            .filter(|n| **n == left || **n == right)
+            .collect();
+        let ours = s.node == left || s.node == right;
+        let early = matches!((s.at, before), (Some(at), Some(before)) if at < before);
+        let by_handler = s.refused.as_deref() == Some(HANDLER_REFUSAL)
+            && s.message.as_deref().is_some_and(handler_refused);
+        if pair.len() != 1 || !ours || !early || !by_handler {
+            continue;
+        }
+        let other = if s.node == left { right } else { left };
+        for party in &s.parties {
+            out.entry(party.clone()).or_default().push(format!(
+                "transaction {} refused by {} ({HANDLER_REFUSAL}), never sent to {other}",
+                s.id, s.node
+            ));
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

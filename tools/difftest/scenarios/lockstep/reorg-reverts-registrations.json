@@ -1,0 +1,34 @@
+{
+  "id": "reorg-reverts-registrations",
+  "title": "A fork across a round end takes back a registration and a revoked resignation, and the branch forges them again",
+  "levels": ["L2"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "settleBlocks": 0,
+  "actors": {"alice": {"seed": 1}, "bob": {"seed": 2}},
+  "steps": [
+    {"name": "fund the wallets", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [
+       {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["alice", "1000000000000"], ["bob", "1000000000000"]]}
+     ]},
+    {"name": "a delegate to spare", "at": {"height": 3}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["spare"]},
+     "txs": [
+       {"ref": "spare", "type": "delegateRegistration", "from": "bob", "nonce": 1, "asset": {"username": "sparedelegate"}}
+     ]},
+    {"name": "a delegate resigns for a while", "at": {"afterBlocks": 1}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["resign"]},
+     "txs": [
+       {"ref": "resign", "type": "delegateResignation", "from": "genesis_7", "nonce": 3, "asset": {"resignationType": 0}}
+     ]},
+    {"name": "a registration and a vote before the round end", "at": {"height": 100}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["registered", "voted"]},
+     "txs": [
+       {"ref": "registered", "type": "delegateRegistration", "from": "alice", "nonce": 1, "asset": {"username": "revertedregistration"}},
+       {"ref": "voted", "type": "vote", "from": "bob", "nonce": 2, "fee": "20000000", "asset": {"votes": [["genesis_9", 100]]}}
+     ]},
+    {"name": "the revoke in the last rounds", "at": {"height": 111}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["revoke"]},
+     "txs": [
+       {"ref": "revoke", "type": "delegateResignation", "from": "genesis_7", "nonce": 4, "asset": {"resignationType": 2}}
+     ]},
+    {"name": "past the round end", "at": {"afterBlocks": 1}, "do": "fork", "blocks": 8, "branch": "next-forging-order", "check": {"invariant": ["revertSymmetry"]}},
+    {"name": "after the branch", "at": {"afterBlocks": 3}, "check": {"forged": ["spare", "resign", "registered", "voted"], "digest": true}}
+  ]
+}

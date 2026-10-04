@@ -20,7 +20,7 @@
 //! - `logs/<node>/`: a reference node's logs; `rejections/<node>.jsonl`: each node's refused and
 //!   undone blocks;
 //! - `txgen/<name>/`: the scenario generator's records; `wallets.json`: the scenario wallets at the
-//!   pause; `check-chain.json`: the tooling's check of node 1's chain (schedule and supply);
+//!   pause; `check-chain.json`: the tooling's check of the control's chain (schedule and supply);
 //! - `api/`: the route corpus's answers (its `answers.jsonl` files); `rate-limit.jsonl`: the
 //!   rate limit's answers, sent from an address that no node whitelists.
 //!

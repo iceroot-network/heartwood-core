@@ -1,0 +1,845 @@
+[
+ {
+  "name": "delegate-history/blocks/name/default",
+  "path": "/api/delegates/${delegateName}/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/name/limit-10",
+  "path": "/api/delegates/${delegateName}/blocks",
+  "query": "limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/name/page-2",
+  "path": "/api/delegates/${delegateName}/blocks",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/name/offset-5",
+  "path": "/api/delegates/${delegateName}/blocks",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/name/offset-0-ignored",
+  "path": "/api/delegates/${delegateName}/blocks",
+  "query": "offset=0&page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/name/transform-false",
+  "path": "/api/delegates/${delegateName}/blocks",
+  "query": "transform=false"
+ },
+ {
+  "name": "delegate-history/blocks/name/order-asc",
+  "path": "/api/delegates/${delegateName}/blocks",
+  "query": "orderBy=height:asc"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-name/default",
+  "path": "/api/delegates/genesis_1/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-name/limit-10",
+  "path": "/api/delegates/genesis_1/blocks",
+  "query": "limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-name/page-2",
+  "path": "/api/delegates/genesis_1/blocks",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-name/offset-5",
+  "path": "/api/delegates/genesis_1/blocks",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-name/offset-0-ignored",
+  "path": "/api/delegates/genesis_1/blocks",
+  "query": "offset=0&page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-name/transform-false",
+  "path": "/api/delegates/genesis_1/blocks",
+  "query": "transform=false"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-name/order-asc",
+  "path": "/api/delegates/genesis_1/blocks",
+  "query": "orderBy=height:asc"
+ },
+ {
+  "name": "delegate-history/blocks/address/default",
+  "path": "/api/delegates/${delegateAddress}/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/address/limit-10",
+  "path": "/api/delegates/${delegateAddress}/blocks",
+  "query": "limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/address/page-2",
+  "path": "/api/delegates/${delegateAddress}/blocks",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/address/offset-5",
+  "path": "/api/delegates/${delegateAddress}/blocks",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/address/offset-0-ignored",
+  "path": "/api/delegates/${delegateAddress}/blocks",
+  "query": "offset=0&page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/address/transform-false",
+  "path": "/api/delegates/${delegateAddress}/blocks",
+  "query": "transform=false"
+ },
+ {
+  "name": "delegate-history/blocks/address/order-asc",
+  "path": "/api/delegates/${delegateAddress}/blocks",
+  "query": "orderBy=height:asc"
+ },
+ {
+  "name": "delegate-history/blocks/public-key/default",
+  "path": "/api/delegates/${delegateKey}/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/public-key/limit-10",
+  "path": "/api/delegates/${delegateKey}/blocks",
+  "query": "limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/public-key/page-2",
+  "path": "/api/delegates/${delegateKey}/blocks",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/public-key/offset-5",
+  "path": "/api/delegates/${delegateKey}/blocks",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/public-key/offset-0-ignored",
+  "path": "/api/delegates/${delegateKey}/blocks",
+  "query": "offset=0&page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/public-key/transform-false",
+  "path": "/api/delegates/${delegateKey}/blocks",
+  "query": "transform=false"
+ },
+ {
+  "name": "delegate-history/blocks/public-key/order-asc",
+  "path": "/api/delegates/${delegateKey}/blocks",
+  "query": "orderBy=height:asc"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-registered/default",
+  "path": "/api/delegates/${gName}/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-registered/limit-10",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-registered/page-2",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-registered/offset-5",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-registered/offset-0-ignored",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "offset=0&page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-registered/transform-false",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "transform=false"
+ },
+ {
+  "name": "delegate-history/blocks/genesis-registered/order-asc",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=height:asc"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/height",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "height=2"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/height-range",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "height.from=2&height.to=100"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/height-list",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "height=2,3,4"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/id",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "id=${tipId}"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/previousBlock",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "previousBlock=${tipId}"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/version",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "version=0"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/timestamp",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "timestamp=${txTimestamp}"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/timestamp-range",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "timestamp.from=1&timestamp.to=${txTimestamp}"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/numberOfTransactions",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "numberOfTransactions=0"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/numberOfTransactions-from",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "numberOfTransactions.from=1"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/totalAmount",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "totalAmount=0"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/totalFee",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "totalFee=0"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/burnedFee",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "burnedFee=0"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/reward",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "reward=0"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/payloadLength",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "payloadLength=0"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/payloadHash",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "payloadHash=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/blockSignature",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "blockSignature=00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/combined",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "height.from=2&numberOfTransactions.from=1&reward=0"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/raw-height",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "transform=false&height.from=2&limit=5"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/raw-height-beyond-integer",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "transform=false&height.to=2147483648"
+ },
+ {
+  "name": "delegate-history/missed/criteria/timestamp-beyond-integer",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "timestamp.to=2147483648"
+ },
+ {
+  "name": "delegate-history/blocks/criteria/empty-list",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "height=,"
+ },
+ {
+  "name": "delegate-history/blocks/order/height:desc",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=height:desc"
+ },
+ {
+  "name": "delegate-history/blocks/order/height:asc",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=height:asc"
+ },
+ {
+  "name": "delegate-history/blocks/order/timestamp:asc",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=timestamp:asc"
+ },
+ {
+  "name": "delegate-history/blocks/order/timestamp:desc",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=timestamp:desc"
+ },
+ {
+  "name": "delegate-history/blocks/order/id:asc",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=id:asc"
+ },
+ {
+  "name": "delegate-history/blocks/order/reward:desc,height:desc",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=reward:desc,height:desc"
+ },
+ {
+  "name": "delegate-history/blocks/order/numberOfTransactions:asc,height:asc",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=numberOfTransactions:asc,height:asc"
+ },
+ {
+  "name": "delegate-history/blocks/order/totalFee:desc,height:desc",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=totalFee:desc,height:desc"
+ },
+ {
+  "name": "delegate-history/blocks/order/previousBlock:asc",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=previousBlock:asc"
+ },
+ {
+  "name": "delegate-history/blocks/refused/limit-0",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "limit=0"
+ },
+ {
+  "name": "delegate-history/blocks/refused/limit-101",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "limit=101"
+ },
+ {
+  "name": "delegate-history/blocks/refused/limit-negative",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "limit=-1"
+ },
+ {
+  "name": "delegate-history/blocks/refused/limit-text",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "limit=ten"
+ },
+ {
+  "name": "delegate-history/blocks/refused/limit-fraction",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "limit=1.5"
+ },
+ {
+  "name": "delegate-history/blocks/refused/page-0",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "page=0"
+ },
+ {
+  "name": "delegate-history/blocks/refused/offset-negative",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "offset=-1"
+ },
+ {
+  "name": "delegate-history/blocks/refused/unknown-key",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "nonsense=1"
+ },
+ {
+  "name": "delegate-history/blocks/refused/unknown-nested",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "a.b=1"
+ },
+ {
+  "name": "delegate-history/blocks/refused/empty-key",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "=1"
+ },
+ {
+  "name": "delegate-history/blocks/refused/limit-twice",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "limit=1&limit=2"
+ },
+ {
+  "name": "delegate-history/blocks/refused/transform-text",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "transform=maybe"
+ },
+ {
+  "name": "delegate-history/blocks/refused/username",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "username=genesis_1"
+ },
+ {
+  "name": "delegate-history/blocks/refused/generatorPublicKey",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "generatorPublicKey=02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "delegate-history/blocks/refused/order-username",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=username:asc"
+ },
+ {
+  "name": "delegate-history/blocks/refused/order-generatorPublicKey",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=generatorPublicKey:asc"
+ },
+ {
+  "name": "delegate-history/blocks/refused/order-donations",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=donations:asc"
+ },
+ {
+  "name": "delegate-history/blocks/refused/order-capital-direction",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "orderBy=height:DESC"
+ },
+ {
+  "name": "delegate-history/blocks/refused/height-0",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "height=0"
+ },
+ {
+  "name": "delegate-history/blocks/refused/id-short",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "id=abc"
+ },
+ {
+  "name": "delegate-history/blocks/refused/blockSignature-short",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "blockSignature=aa"
+ },
+ {
+  "name": "delegate-history/blocks/refused/payloadHash-text",
+  "path": "/api/delegates/${gName}/blocks",
+  "query": "payloadHash=xyz"
+ },
+ {
+  "name": "delegate-history/blocks/id/unknown-name",
+  "path": "/api/delegates/nosuchdelegate1/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/id/unknown-valid-address",
+  "path": "/api/delegates/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/id/invalid-address",
+  "path": "/api/delegates/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxkia/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/id/unknown-public-key",
+  "path": "/api/delegates/0368d294e20ada56bd4f14084f7aa3552534b1a0852aff6aafdcf5dfce303b4956/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/id/not-a-delegate-sender",
+  "path": "/api/delegates/${txSender}/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/id/not-a-delegate-recipient",
+  "path": "/api/delegates/${recipient}/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/id/not-a-delegate-voter",
+  "path": "/api/delegates/${voter}/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/id/upper-name",
+  "path": "/api/delegates/GENESIS_1/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/id/upper-address",
+  "path": "/api/delegates/${delegateAddress|upper}/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/id/too-long",
+  "path": "/api/delegates/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/id/dots",
+  "path": "/api/delegates/a.b/blocks"
+ },
+ {
+  "name": "delegate-history/blocks/id/trailing-slash",
+  "path": "/api/delegates/${gName}/blocks/"
+ },
+ {
+  "name": "delegate-history/missed/name/default",
+  "path": "/api/delegates/${delegateName}/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/name/limit-10",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "limit=10"
+ },
+ {
+  "name": "delegate-history/missed/name/page-2",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/missed/name/offset-5",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "delegate-history/missed/name/order-asc",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "orderBy=timestamp:asc"
+ },
+ {
+  "name": "delegate-history/missed/genesis-name/default",
+  "path": "/api/delegates/genesis_1/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/genesis-name/limit-10",
+  "path": "/api/delegates/genesis_1/blocks/missed",
+  "query": "limit=10"
+ },
+ {
+  "name": "delegate-history/missed/genesis-name/page-2",
+  "path": "/api/delegates/genesis_1/blocks/missed",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/missed/genesis-name/offset-5",
+  "path": "/api/delegates/genesis_1/blocks/missed",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "delegate-history/missed/genesis-name/order-asc",
+  "path": "/api/delegates/genesis_1/blocks/missed",
+  "query": "orderBy=timestamp:asc"
+ },
+ {
+  "name": "delegate-history/missed/address/default",
+  "path": "/api/delegates/${delegateAddress}/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/address/limit-10",
+  "path": "/api/delegates/${delegateAddress}/blocks/missed",
+  "query": "limit=10"
+ },
+ {
+  "name": "delegate-history/missed/address/page-2",
+  "path": "/api/delegates/${delegateAddress}/blocks/missed",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/missed/address/offset-5",
+  "path": "/api/delegates/${delegateAddress}/blocks/missed",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "delegate-history/missed/address/order-asc",
+  "path": "/api/delegates/${delegateAddress}/blocks/missed",
+  "query": "orderBy=timestamp:asc"
+ },
+ {
+  "name": "delegate-history/missed/public-key/default",
+  "path": "/api/delegates/${delegateKey}/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/public-key/limit-10",
+  "path": "/api/delegates/${delegateKey}/blocks/missed",
+  "query": "limit=10"
+ },
+ {
+  "name": "delegate-history/missed/public-key/page-2",
+  "path": "/api/delegates/${delegateKey}/blocks/missed",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/missed/public-key/offset-5",
+  "path": "/api/delegates/${delegateKey}/blocks/missed",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "delegate-history/missed/public-key/order-asc",
+  "path": "/api/delegates/${delegateKey}/blocks/missed",
+  "query": "orderBy=timestamp:asc"
+ },
+ {
+  "name": "delegate-history/missed/genesis-registered/default",
+  "path": "/api/delegates/${gName}/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/genesis-registered/limit-10",
+  "path": "/api/delegates/${gName}/blocks/missed",
+  "query": "limit=10"
+ },
+ {
+  "name": "delegate-history/missed/genesis-registered/page-2",
+  "path": "/api/delegates/${gName}/blocks/missed",
+  "query": "page=2&limit=10"
+ },
+ {
+  "name": "delegate-history/missed/genesis-registered/offset-5",
+  "path": "/api/delegates/${gName}/blocks/missed",
+  "query": "offset=5&limit=10"
+ },
+ {
+  "name": "delegate-history/missed/genesis-registered/order-asc",
+  "path": "/api/delegates/${gName}/blocks/missed",
+  "query": "orderBy=timestamp:asc"
+ },
+ {
+  "name": "delegate-history/missed/genesis_1",
+  "path": "/api/delegates/genesis_1/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/genesis_4",
+  "path": "/api/delegates/genesis_4/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/genesis_21",
+  "path": "/api/delegates/genesis_21/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/criteria/height",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "height=207"
+ },
+ {
+  "name": "delegate-history/missed/criteria/height-range",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "height.from=150&height.to=210"
+ },
+ {
+  "name": "delegate-history/missed/criteria/height-list",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "height=154,207"
+ },
+ {
+  "name": "delegate-history/missed/criteria/timestamp",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "timestamp=1224"
+ },
+ {
+  "name": "delegate-history/missed/criteria/timestamp-old",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "timestamp=1"
+ },
+ {
+  "name": "delegate-history/missed/criteria/timestamp-range",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "timestamp.from=1200&timestamp.to=1300"
+ },
+ {
+  "name": "delegate-history/missed/criteria/timestamp-from",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "timestamp.from=1300"
+ },
+ {
+  "name": "delegate-history/missed/criteria/timestamp-list",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "timestamp=1224,1280"
+ },
+ {
+  "name": "delegate-history/missed/criteria/combined",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "height.from=150&timestamp.from=1200"
+ },
+ {
+  "name": "delegate-history/missed/criteria/reward",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "reward=0"
+ },
+ {
+  "name": "delegate-history/missed/criteria/numberOfTransactions",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "numberOfTransactions=1"
+ },
+ {
+  "name": "delegate-history/missed/criteria/id",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "delegate-history/missed/criteria/version",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "version=0"
+ },
+ {
+  "name": "delegate-history/missed/criteria/totalFee",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "totalFee=0"
+ },
+ {
+  "name": "delegate-history/missed/criteria/payloadHash",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "payloadHash=ab"
+ },
+ {
+  "name": "delegate-history/missed/criteria/reward-with-height",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "reward=0&height=207"
+ },
+ {
+  "name": "delegate-history/missed/criteria/empty-list",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "height=,"
+ },
+ {
+  "name": "delegate-history/missed/order/timestamp:desc",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "orderBy=timestamp:desc"
+ },
+ {
+  "name": "delegate-history/missed/order/timestamp:asc",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "orderBy=timestamp:asc"
+ },
+ {
+  "name": "delegate-history/missed/order/height:desc,timestamp:desc",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "orderBy=height:desc,timestamp:desc"
+ },
+ {
+  "name": "delegate-history/missed/order/height:asc,timestamp:asc",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "orderBy=height:asc,timestamp:asc"
+ },
+ {
+  "name": "delegate-history/missed/order/username:asc,timestamp:asc",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "orderBy=username:asc,timestamp:asc"
+ },
+ {
+  "name": "delegate-history/missed/refused/limit-0",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "limit=0"
+ },
+ {
+  "name": "delegate-history/missed/refused/limit-101",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "limit=101"
+ },
+ {
+  "name": "delegate-history/missed/refused/limit-negative",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "limit=-1"
+ },
+ {
+  "name": "delegate-history/missed/refused/limit-text",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "limit=ten"
+ },
+ {
+  "name": "delegate-history/missed/refused/limit-fraction",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "limit=1.5"
+ },
+ {
+  "name": "delegate-history/missed/refused/page-0",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "page=0"
+ },
+ {
+  "name": "delegate-history/missed/refused/offset-negative",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "offset=-1"
+ },
+ {
+  "name": "delegate-history/missed/refused/unknown-key",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "nonsense=1"
+ },
+ {
+  "name": "delegate-history/missed/refused/unknown-nested",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "a.b=1"
+ },
+ {
+  "name": "delegate-history/missed/refused/empty-key",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "=1"
+ },
+ {
+  "name": "delegate-history/missed/refused/limit-twice",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "limit=1&limit=2"
+ },
+ {
+  "name": "delegate-history/missed/refused/transform-false",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "transform=false"
+ },
+ {
+  "name": "delegate-history/missed/refused/username",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "username=genesis_1"
+ },
+ {
+  "name": "delegate-history/missed/refused/order-reward",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "orderBy=reward:asc"
+ },
+ {
+  "name": "delegate-history/missed/refused/order-id",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "orderBy=id:asc"
+ },
+ {
+  "name": "delegate-history/missed/refused/order-capital-direction",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "orderBy=timestamp:DESC"
+ },
+ {
+  "name": "delegate-history/missed/refused/generatorPublicKey",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "generatorPublicKey=02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "name": "delegate-history/missed/refused/height-0",
+  "path": "/api/delegates/${delegateName}/blocks/missed",
+  "query": "height=0"
+ },
+ {
+  "name": "delegate-history/missed/id/unknown-name",
+  "path": "/api/delegates/nosuchdelegate1/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/id/unknown-valid-address",
+  "path": "/api/delegates/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxki2/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/id/invalid-address",
+  "path": "/api/delegates/dNkDoLLMAzV8xUtxjjkmY9WG5qwA3Gxkia/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/id/not-a-delegate-sender",
+  "path": "/api/delegates/${txSender}/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/id/not-a-delegate-recipient",
+  "path": "/api/delegates/${recipient}/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/id/upper-name",
+  "path": "/api/delegates/GENESIS_1/blocks/missed"
+ },
+ {
+  "name": "delegate-history/missed/id/too-long",
+  "path": "/api/delegates/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/blocks/missed"
+ }
+]

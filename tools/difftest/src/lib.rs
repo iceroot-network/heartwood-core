@@ -15,7 +15,8 @@
 //! - [`strategies`]: the `proptest` strategies of L1.
 //! - [`compare`]: the structural diff, with byte offsets for hex values.
 //! - [`report`]: outcomes and the text report.
-//! - [`replay`]: a corpus of inputs (a fuzz corpus) through the oracle and Heartwood.
+//! - [`replay`]: a corpus of inputs (a fuzz corpus) through the oracle and Heartwood;
+//!   [`replay_codec`]: the codec fuzz targets' corpora, as each target reads its input.
 //! - [`corpus`]: the chains that L2 replays: import from devnet archives, the corpus directory,
 //!   and revert plans; [`corpus_from_blocks`]: a corpus from a Heartwood relay's block files.
 //! - [`digests`]: the state digest files of L2 replays, and their comparison.
@@ -30,6 +31,11 @@
 //! - [`api`]: the route corpus, its projections and `difftest api compare`.
 //! - [`live`]: `difftest live check`, the comparisons of a live run on a devnet.
 //! - [`levels`]: L0 to L4; L0, L1 and L2 run, L3 and L4 plug in with the node's processes.
+//! - [`lockstep`]: `difftest lockstep make`, chains forged by Heartwood while the reference
+//!   applies every block and judges every transaction beside it.
+//! - [`scenario`]: the scenario format, its compilation through the oracle and its runner with
+//!   its backends (`difftest scenario compile|run|compare`).
+//! - [`gate`]: the gate records, the cumulative ledger and the baseline record (`difftest gate`).
 //! - [`genesis`]: the devnet chain-definition driver (`difftest genesis`).
 //! - [`forger_kill`]: the forger's crash test (`difftest forger crash`).
 //! - [`network_generate`]: `heartwood network generate` against the genesis vectors.
@@ -49,16 +55,20 @@ pub mod digests;
 pub mod errors;
 pub mod fixture;
 pub mod forger_kill;
+pub mod gate;
 pub mod genesis;
 pub mod levels;
 pub mod live;
+pub mod lockstep;
 pub mod network_generate;
 pub mod oracle;
 pub mod p2p_compare;
 pub mod replay;
+pub mod replay_codec;
 pub mod report;
 pub mod restart;
 pub mod runtime_kill;
+pub mod scenario;
 pub mod service_rig;
 pub mod store;
 pub mod store_summary;

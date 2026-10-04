@@ -15,7 +15,14 @@
 //! The transactions are read back from each block's bytes as the forger reads its relay's answer
 //! (`fromBytesUnsafe`, at the previous block's height). The manifest records a forger aux as
 //! `forgerAux` (64 hex digits) in `corpus.json`.
+//!
+//! The forger keys are the devnet tooling's roles of the corpus seed and, for a chain of a
+//! lockstep batch (`batch-<batch seed>-<index>`), the keys of its recipe's wallets
+//! (`recipe/<label>` of the chain's seed), any of which may register as a delegate and forge. A
+//! lockstep corpus does not record its recipe, so the labels are read from the batch file beside
+//! it (`batch-<batch seed>.json`), whose chain of that name must have the corpus's seed.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use heartwood_crypto::blocks::serialiser;
@@ -29,6 +36,7 @@ use serde_json::{Value, json};
 use crate::compare::diff;
 use crate::corpus::Corpus;
 use crate::errors::{Error, Result};
+use crate::lockstep::batch;
 use crate::oracle::OracleServer;
 use crate::report::{CaseResult, Outcome, Report};
 use crate::synthetic::DERIVATION_TAG;
@@ -63,6 +71,41 @@ fn roles() -> Vec<String> {
         .collect()
 }
 
+/// The prefix of the corpus name of a lockstep batch's chain, `batch-<batch seed>-<index>`.
+const BATCH_PREFIX: &str = "batch-";
+
+/// The batch file beside `corpus` when its name is a lockstep batch chain's and the file exists.
+fn batch_file_of(corpus: &Corpus) -> Option<PathBuf> {
+    let name = corpus.name();
+    let (batch_seed, index) = name.strip_prefix(BATCH_PREFIX)?.rsplit_once('-')?;
+    let numbered = !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit());
+    let path = batch::batch_file(corpus.dir.parent()?, batch_seed);
+    (numbered && !batch_seed.is_empty() && path.is_file()).then_some(path)
+}
+
+/// The roles `recipe/<label>` of the wallets of `corpus`'s recipe, read from `path`, its batch
+/// file, whose chain of the corpus's name must have the corpus's `seed`.
+fn recipe_roles(corpus: &Corpus, path: &std::path::Path, seed: &str) -> Result<Vec<String>> {
+    let name = corpus.name();
+    let made = batch::read_batch(path)?;
+    let refused = |message: String| Error::Corpus {
+        path: path.to_path_buf(),
+        message,
+    };
+    let chain = (made.chains.iter())
+        .find(|c| c.drawn.name == name)
+        .ok_or_else(|| refused(format!("the batch has no chain {name}")))?;
+    if chain.drawn.seed != seed {
+        return Err(refused(format!(
+            "its chain {name} has the seed {}, the corpus {seed}",
+            chain.drawn.seed
+        )));
+    }
+    Ok((chain.drawn.recipe.wallets.iter())
+        .map(|label| format!("recipe/{label}"))
+        .collect())
+}
+
 /// Replay `corpus`'s blocks through the forging side of `options`; the oracle is needed for
 /// [`Direction::Reference`].
 pub fn run(
@@ -81,7 +124,12 @@ pub fn run(
         None => (derive::aux(DERIVATION_TAG, AUX_LABEL, seed), "the seed's"),
     };
     let network = corpus.network.pub_key_hash;
-    let keys: Vec<Arc<KeyPair>> = (roles().iter())
+    let batch_file = batch_file_of(corpus);
+    let recipe = match &batch_file {
+        Some(path) => recipe_roles(corpus, path, seed)?,
+        None => Vec::new(),
+    };
+    let keys: Vec<Arc<KeyPair>> = (roles().iter().chain(&recipe))
         .map(|role| derive::role_key(DERIVATION_TAG, role, seed, network).map(|k| Arc::new(k.keys)))
         .collect::<std::result::Result<_, _>>()
         .map_err(|e| problem(format!("the seed's keys: {e}")))?;
@@ -141,10 +189,18 @@ pub fn run(
         Direction::Heartwood => "Heartwood rebuilds the reference's blocks",
         Direction::Reference => "the reference rebuilds Heartwood's blocks",
     };
+    let wallets = match batch_file.as_deref().and_then(std::path::Path::file_name) {
+        Some(file) => format!(
+            ", {} recipe wallets from {}",
+            recipe.len(),
+            file.to_string_lossy()
+        ),
+        None => String::new(),
+    };
     Ok(Report {
         title: "L2 forge replay".into(),
         source: format!(
-            "{}: {side}, blocks 2 to {last}, {aux_source} forger aux",
+            "{}: {side}, blocks 2 to {last}, {aux_source} forger aux{wallets}",
             corpus.name()
         ),
         files: 1,
@@ -360,6 +416,80 @@ mod tests {
         assert!(report.results.len() > 1, "the replay stopped: {report}");
         assert!(matches!(&report.results[0].outcome, Outcome::Mismatch(_)));
         assert_eq!((report.compared(), report.failed()), (11, 1), "{report}");
+    }
+
+    /// The committed corpus as chain 1 of the batch `t` in `scratch`, with block 2 forged again by
+    /// the key the seed derives for the recipe wallet `d1` (a delegate its recipe registers). The
+    /// batch file names that wallet for a chain with `chain_seed`, or is not written for `None`.
+    fn as_a_batch_chain_forged_by_a_recipe_wallet(
+        scratch: &std::path::Path,
+        chain_seed: Option<&str>,
+    ) -> Corpus {
+        let mut corpus = committed();
+        let seed = corpus.meta["seed"].as_str().unwrap().to_owned();
+        let aux = derive::aux(DERIVATION_TAG, AUX_LABEL, &seed);
+        let network = corpus.network.pub_key_hash;
+        let key = derive::role_key(DERIVATION_TAG, "recipe/d1", &seed, network).unwrap();
+        let block = Block::decode(&corpus.blocks[0].bytes, &corpus.milestones).unwrap();
+        let transactions = forger_transactions(&corpus, &block).unwrap();
+        let header = block.header();
+        let inputs = ForgeInputs {
+            transactions: &transactions,
+            previous_id: BlockId::from_array(header.previous_block),
+            previous_height: block.height() - 1,
+            timestamp: header.timestamp,
+            reward: header.reward,
+        };
+        let forged = Delegate::new(Arc::new(key.keys), network)
+            .forge(&inputs, Aux::fixed(aux), &corpus.milestones)
+            .unwrap();
+        corpus.blocks[0].id = *forged.id();
+        corpus.blocks[0].bytes = forged.encode();
+        corpus.dir = scratch.join("batch-t-1");
+        if let Some(chain_seed) = chain_seed {
+            let batch = json!({
+                "format": crate::lockstep::batch::BATCH_FORMAT,
+                "seed": "t",
+                "profile": "devnet",
+                "chains": [{
+                    "drawn": {
+                        "index": 1, "name": "batch-t-1", "seed": chain_seed, "rounds": 1,
+                        "long": false, "recipe": {"wallets": ["w1", "d1"], "steps": []},
+                    },
+                    "tip": 12, "transactions": 0, "missed": 0, "stopped": null,
+                }],
+            });
+            std::fs::write(scratch.join("batch-t.json"), batch.to_string()).unwrap();
+        }
+        corpus
+    }
+
+    #[test]
+    fn a_block_a_registered_recipe_wallet_forged_rebuilds_with_its_labels_key() {
+        let scratch = crate::store::ScratchDir::new("forge-batch").unwrap();
+        let seed = committed().meta["seed"].as_str().unwrap().to_owned();
+        let corpus = as_a_batch_chain_forged_by_a_recipe_wallet(scratch.path(), Some(&seed));
+        let report = run(&corpus, &HEARTWOOD, None).unwrap();
+        assert_eq!((report.compared(), report.failed()), (11, 0), "{report}");
+        assert!(report.source.contains("batch-t.json"), "{}", report.source);
+    }
+
+    #[test]
+    fn without_its_batch_file_a_recipe_wallets_block_stays_a_harness_error() {
+        let scratch = crate::store::ScratchDir::new("forge-batch").unwrap();
+        let corpus = as_a_batch_chain_forged_by_a_recipe_wallet(scratch.path(), None);
+        let report = run(&corpus, &HEARTWOOD, None).unwrap();
+        assert!(!report.is_success());
+        assert!(matches!(&report.results[0].outcome,
+            Outcome::HarnessError(message) if message.contains("is no key the seed derives")));
+    }
+
+    #[test]
+    fn a_batch_file_whose_chain_has_another_seed_is_refused() {
+        let scratch = crate::store::ScratchDir::new("forge-batch").unwrap();
+        let corpus = as_a_batch_chain_forged_by_a_recipe_wallet(scratch.path(), Some("0"));
+        let error = run(&corpus, &HEARTWOOD, None).unwrap_err();
+        assert!(error.to_string().contains("seed"), "{error}");
     }
 
     #[test]

@@ -1,0 +1,27 @@
+{
+  "id": "second-signature",
+  "title": "A second signature is registered, then transfers with and without it are judged",
+  "levels": ["L3"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "settleBlocks": 0,
+  "actors": {"hop-a": {"seed": 1}, "hop-b": {"seed": 2}, "hop-c": {"seed": 3}, "spender": {"seed": 4}, "payee": {"seed": 5}, "nonce-user": {"seed": 6}, "gap-user": {"seed": 7}, "poor": {"seed": 8}, "exact-a": {"seed": 10}, "exact-b": {"seed": 11}, "voter-a": {"seed": 12}, "voter-b": {"seed": 13}, "registrant-a": {"seed": 14}, "registrant-b": {"seed": 15}, "registrant-c": {"seed": 16}, "resigner": {"seed": 17}, "sig-owner": {"seed": 18}, "second-key": {"seed": 19}, "burner": {"seed": 20}, "bulk-1": {"seed": 21}, "bulk-2": {"seed": 22}, "bulk-3": {"seed": 23}},
+  "steps": [
+    {"name": "fund the wallets", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [
+       {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["hop-a", "50000000000"], ["hop-b", "300000000"], ["hop-c", "300000000"], ["spender", "100000000000"], ["payee", "100000000"], ["nonce-user", "100000000000"], ["gap-user", "100000000000"], ["poor", "1000"], ["exact-a", "10000000000"], ["exact-b", "10000000000"], ["voter-a", "10000000000"], ["voter-b", "10000000000"], ["registrant-a", "20000000000"], ["registrant-b", "20000000000"], ["registrant-c", "20000000000"], ["resigner", "20000000000"], ["sig-owner", "10000000000"], ["second-key", "100000000"], ["burner", "10000000000"], ["bulk-1", "100000000000"], ["bulk-2", "100000000000"], ["bulk-3", "100000000000"]]}
+     ]},
+    {"name": "registers a second signature", "at": {"height": 56}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["second-signature"]},
+     "txs": [
+       {"ref": "second-signature", "type": "secondSignature", "from": "sig-owner", "nonce": 1, "secondSignature": "second-key"}
+     ]},
+    {"name": "transfers with and without it", "at": {"afterBlocks": 2}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["signed-transfer"], "invalid": ["unsigned-transfer", "wrong-second-signature", "second-signature-again"]},
+     "txs": [
+       {"ref": "signed-transfer", "type": "transfer", "from": "sig-owner", "nonce": 2, "to": [["payee", "200000000"]], "secondSignature": "second-key"},
+       {"ref": "unsigned-transfer", "type": "transfer", "from": "sig-owner", "nonce": 3, "to": [["payee", "300000000"]]},
+       {"ref": "wrong-second-signature", "type": "transfer", "from": "sig-owner", "nonce": 3, "to": [["payee", "400000000"]], "secondSignature": "payee"},
+       {"ref": "second-signature-again", "type": "secondSignature", "from": "sig-owner", "nonce": 3, "secondSignature": "second-key"}
+     ]},
+    {"name": "what was kept", "at": {"afterBlocks": 3}, "check": {"forged": ["second-signature", "signed-transfer"], "absent": ["unsigned-transfer", "wrong-second-signature", "second-signature-again"] , "digest": true}}
+  ]
+}

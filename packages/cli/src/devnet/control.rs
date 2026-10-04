@@ -33,18 +33,40 @@ const RECORD_DIR: &str = "forger";
 /// Roles of nodes to act on, in order.
 type Targets = Vec<(u32, Role)>;
 /// The roles in the order a start acts on them, and a stop in the other.
-const START: [Role; 2] = Role::ALL;
-const STOP: [Role; 2] = [Role::Forger, Role::Relay];
+const START: [Role; 3] = Role::SUPERVISED;
+const STOP: [Role; 3] = [Role::Forger, Role::Core, Role::Relay];
 
-/// Start the selected nodes: the relays, then, once their APIs answer (30 s at most), the
-/// forgers. Refused when a crypto file differs from the manifest, a node's P2P or API listener
-/// would bind outside loopback, a selected role runs, or a relay's address is taken. Before any
-/// process starts, the epoch is re-stamped `epoch_delay` seconds after the clock's time when it
-/// is less than 10 s away or past, no process of the devnet runs and no node has a chain store;
-/// the re-stamp also removes every forger's signing record.
+/// Start the selected nodes: the relays (a core node's one process among them), then, once their
+/// APIs answer (30 s at most), the forgers. Refused when a named node does not have the selected
+/// role, a crypto file differs from the manifest, a node's P2P or API listener would bind outside
+/// loopback, a selected role runs, or a relay's address is taken. Before any process starts, the
+/// epoch is re-stamped `epoch_delay` seconds after the clock's time when it is less than 10 s away
+/// or past, no process of the devnet runs and no node has a chain store; the re-stamp also
+/// removes every forger's signing record.
 pub fn start(root: &Path, selection: &NodeSelection, tools: &Tools<'_>) -> Result<()> {
+    start_with(root, selection, &StartOptions::default(), tools)
+}
+
+/// The flags of `start` beside the node selection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StartOptions {
+    /// Keep the manifest's epoch: never re-stamp it (`--keep-epoch`).
+    pub keep_epoch: bool,
+    /// Return once every process is started, without waiting for the relays' APIs (`--no-wait`).
+    pub no_wait: bool,
+}
+
+/// [`start`] with `options`: with `keep_epoch` the epoch is never re-stamped; with `no_wait` the
+/// forgers start as soon as the relays do, not once the relays' APIs answer.
+pub fn start_with(
+    root: &Path,
+    selection: &NodeSelection,
+    options: &StartOptions,
+    tools: &Tools<'_>,
+) -> Result<()> {
     let (root, mut manifest) = open(root)?;
     let (picked, role) = (manifest.select(selection)?, selection.role);
+    refuse_missing_role(&manifest, &selection.nodes, role)?;
     preflight(&root, &manifest, &picked, tools)?;
     for (k, role) in targets(&manifest, &picked, role, START)? {
         let instance = manifest.node(k)?.instance(role);
@@ -53,10 +75,10 @@ pub fn start(root: &Path, selection: &NodeSelection, tools: &Tools<'_>) -> Resul
             return Err(ProcessError::AlreadyRunning { name }.into());
         }
     }
-    if restamp_due(&root, &manifest, tools.ops, tools.clock)? {
+    if !options.keep_epoch && restamp_due(&root, &manifest, tools.ops, tools.clock)? {
         restamp(&root, &mut manifest, tools.clock)?;
     }
-    launch(&manifest, &picked, role, tools)
+    launch(&manifest, &picked, role, !options.no_wait, tools)
 }
 
 /// Start node `node` (`start-node`): [`start`] of that node alone.
@@ -66,11 +88,12 @@ pub fn start_node(root: &Path, node: u32, role: Option<Role>, tools: &Tools<'_>)
 }
 
 /// Stop the selected nodes, forgers before relays; with `kill`, by SIGKILL, waiting for the exit,
-/// then recording the stop. A role that does not run is skipped. Every targeted role is tried;
-/// the first failure is the error.
+/// then recording the stop. A role that does not run is skipped; a named node that does not have
+/// the selected role is refused. Every targeted role is tried; the first failure is the error.
 pub fn stop(root: &Path, selection: &NodeSelection, kill: bool, tools: &Tools<'_>) -> Result<()> {
     let (_, manifest) = open(root)?;
     let picked = manifest.select(selection)?;
+    refuse_missing_role(&manifest, &selection.nodes, selection.role)?;
     stop_nodes(&manifest, &picked, selection.role, kill, tools.ops)
 }
 
@@ -82,10 +105,12 @@ pub fn stop_node(root: &Path, k: u32, role: Option<Role>, kill: bool, tools: &To
 
 /// Restart node `node` gracefully (`restart-node`): the forger stops before the relay, the relay
 /// starts before the forger, each with its environment read again. Refused, before anything
-/// stops, when a selected role does not run or [`start`]'s checks fail. The epoch never moves.
+/// stops, when the node does not have the selected role, a selected role does not run or
+/// [`start`]'s checks fail. The epoch never moves.
 pub fn restart_node(root: &Path, node: u32, role: Option<Role>, tools: &Tools<'_>) -> Result<()> {
     let (root, manifest) = open(root)?;
     let picked = [manifest.node(node)?.index];
+    refuse_missing_role(&manifest, &picked, role)?;
     preflight(&root, &manifest, &picked, tools)?;
     for (k, role) in targets(&manifest, &picked, role, START)? {
         let instance = manifest.node(k)?.instance(role);
@@ -95,7 +120,7 @@ pub fn restart_node(root: &Path, node: u32, role: Option<Role>, tools: &Tools<'_
         }
     }
     stop_nodes(&manifest, &picked, role, false, tools.ops)?;
-    launch(&manifest, &picked, role, tools)
+    launch(&manifest, &picked, role, true, tools)
 }
 
 /// Stop node `node`, then delete its data, logs, temp and cache. The forger's signing record
@@ -163,8 +188,25 @@ fn open(root: &Path) -> Result<(PathBuf, Manifest)> {
     Ok((root, manifest))
 }
 
+/// Refuse a `role` that a node the command names does not have, naming the node's roles. With no
+/// node named, a role selects itself on the nodes that have it.
+fn refuse_missing_role(m: &Manifest, named: &[u32], role: Option<Role>) -> Result<()> {
+    let Some(role) = role else {
+        return Ok(());
+    };
+    for &node in named {
+        let roles = m.node(node)?.roles(None);
+        if !roles.contains(&role) {
+            let names: Vec<&str> = roles.iter().map(|role| role.name()).collect();
+            let roles = names.join(" and ");
+            return Err(DevnetError::MissingRole { node, role, roles });
+        }
+    }
+    Ok(())
+}
+
 /// The roles to act on, role by role in `order`, node by node within a role.
-fn targets(m: &Manifest, picked: &[u32], role: Option<Role>, order: [Role; 2]) -> Result<Targets> {
+fn targets(m: &Manifest, picked: &[u32], role: Option<Role>, order: [Role; 3]) -> Result<Targets> {
     let mut targets = Vec::new();
     for r in order {
         for k in picked {
@@ -208,10 +250,10 @@ fn preflight(root: &Path, manifest: &Manifest, picked: &[u32], tools: &Tools<'_>
 }
 
 /// The hosts a node's listeners would take, each with where it comes from: the P2P server's and
-/// the API's, as the relay reads them. The API's is the `server.http.host` option of its entry in
-/// `app.json` when that gives one, else `CORE_API_HOST`; the environment is the process's, the
-/// node's own `.env`, and `~/.<token>/.env` over both, as the node loads it. A host that is
-/// missing reads as the empty text, which is not loopback.
+/// the API's, as the relay (a core node's `core` process) reads them. The API's is the
+/// `server.http.host` option of its entry in `app.json` when that gives one, else `CORE_API_HOST`;
+/// the environment is the process's, the node's own `.env`, and `~/.<token>/.env` over both, as
+/// the node loads it. A host that is missing reads as the empty text, which is not loopback.
 fn listener_hosts(node: &ManifestNode, tools: &Tools<'_>) -> Result<Vec<(String, String)>> {
     let mut vars: BTreeMap<String, String> = tools.process.iter().cloned().collect();
     for (key, value) in node_env(node)? {
@@ -224,7 +266,12 @@ fn listener_hosts(node: &ManifestNode, tools: &Tools<'_>) -> Result<Vec<(String,
     let token = format!("node{}", node.index);
     let env = env::load(&config, tools.home, &token, vars);
     let env = env.map_err(|error| DevnetError::Guard(format!("node {}: {error}", node.index)))?;
-    let app = app::load(&config, AppRole::Relay);
+    let profile = if node.core {
+        AppRole::Core
+    } else {
+        AppRole::Relay
+    };
+    let app = app::load(&config, profile);
     let app = app.map_err(|error| DevnetError::Guard(format!("node {}: {error}", node.index)))?;
     let option = |package: &str, pointer: &str| {
         let entry = app.plugins.iter().find(|entry| entry.package == package);
@@ -245,27 +292,36 @@ fn listener_hosts(node: &ManifestNode, tools: &Tools<'_>) -> Result<Vec<(String,
     Ok(hosts.into_iter().map(host).collect())
 }
 
-/// Start the picked roles: the relays (their listeners test-bound first), then, once their APIs
-/// answer, the forgers.
-fn launch(manifest: &Manifest, picked: &[u32], role: Option<Role>, tools: &Tools) -> Result<()> {
+/// Start the picked roles: the relays and core processes (their listeners test-bound first),
+/// then, once their APIs answer when `wait` is set, the forgers.
+fn launch(
+    manifest: &Manifest,
+    picked: &[u32],
+    role: Option<Role>,
+    wait: bool,
+    tools: &Tools,
+) -> Result<()> {
     let all = targets(manifest, picked, role, START)?;
-    let nodes = |r: Role| -> Result<Vec<&ManifestNode>> {
-        let of = all.iter().filter(|(_, role)| *role == r);
-        of.map(|(k, _)| manifest.node(*k)).collect()
+    let nodes = |split: bool| -> Result<Vec<(&ManifestNode, Role)>> {
+        let of = all
+            .iter()
+            .filter(|(_, role)| (*role == Role::Forger) != split);
+        of.map(|(k, role)| Ok((manifest.node(*k)?, *role)))
+            .collect()
     };
-    let relays = nodes(Role::Relay)?;
-    test_bind(relays.iter().flat_map(|node| [node.p2p(), node.api()]))?;
-    for node in &relays {
-        begin(tools, node, Role::Relay)?;
+    let relays = nodes(true)?;
+    test_bind(relays.iter().flat_map(|(node, _)| [node.p2p(), node.api()]))?;
+    for (node, role) in &relays {
+        begin(tools, node, *role)?;
     }
     // Any answer shows that an API listens, a refusal or an unready node's included.
     let answers = |node: &ManifestNode| match tools.api.node_status(node.api()) {
         Ok(_) => true,
         Err(error) => matches!(error, HttpError::Status { .. } | HttpError::Body { .. }),
     };
-    let mut waiting = relays;
+    let mut waiting: Vec<&ManifestNode> = relays.iter().map(|(node, _)| *node).collect();
     for poll in 0..=API_POLLS {
-        waiting.retain(|node| !answers(node));
+        waiting.retain(|node| wait && !answers(node));
         if waiting.is_empty() {
             break;
         }
@@ -278,8 +334,8 @@ fn launch(manifest: &Manifest, picked: &[u32], role: Option<Role>, tools: &Tools
         }
         (tools.pause)(Duration::from_secs(1));
     }
-    for node in nodes(Role::Forger)? {
-        begin(tools, node, Role::Forger)?;
+    for (node, role) in nodes(false)? {
+        begin(tools, node, role)?;
     }
     Ok(())
 }

@@ -9,7 +9,10 @@
 // (the fee at and below the lowest, an eviction, fee ties, and a refusal after an eviction), the
 // per-sender limit with and without allowedSenders, a refusal of the handlers for every kept
 // type, every pending and offline message, bad signatures and bytes that do not decode, the seven
-// removed types as bytes and as JSON, JSON entries with a correct, a wrong or no id, a sender
+// removed types as bytes, as JSON and as JSON with a null id, the removed types in the static-fee
+// mode (a lower, a higher and the exact fee, then the exact fee in a full pool, over the
+// per-sender limit, over the size limit and from another network), JSON entries with a correct,
+// a wrong or no id, a sender
 // spending a pending incoming transfer, nonce chains and gaps, re-adds after a flush and after a
 // restart of the storage, age expiry, removal cascades, forged removal, and collations (fee and
 // nonce order, a failed sender skipped, the byte budget, maxTransactions, exclude, validate on
@@ -255,27 +258,76 @@ module.exports = async function pool({ solar, devnet, rec, must, craft }) {
     });
     await add("bad signature and undecodable bytes", { steps: [process([flipped.toString("hex"), truncated, "", unknownType, "ff03"])] });
 
-    // Removed types, as bytes and as JSON.
-    const removed = [];
-    const legacyTransfer = craft.builderData("transfer", [["nonce", "6"]], A);
-    Object.assign(legacyTransfer, { type: 0, amount: Utils.BigNumber.make("1000"), recipientId: R, expiration: 0, fee: Utils.BigNumber.make(FEE) });
-    delete legacyTransfer.asset;
-    removed.push(craft.signAndSerialise(legacyTransfer, A).toString("hex"));
-    const legacyVote = craft.builderData("transfer", [["nonce", "6"]], B);
-    Object.assign(legacyVote, { type: 3, asset: { votes: ["+v21d1"] }, fee: Utils.BigNumber.make(FEE) });
-    removed.push(craft.signAndSerialise(legacyVote, B).toString("hex"));
+    // Removed types, as bytes and as JSON: one transaction of each, with fee(name) as its fee, the
+    // name being the type's static-fee key.
     const participants = ["v21 multisig 1", "v21 multisig 2", "v21 multisig 3"];
     const publicKeys = participants.map((p) => key(p));
-    removed.push(
-        build("multiSignature", [["multiSignatureAsset", { min: 2, publicKeys }], ["senderPublicKey", publicKeys[0]], ["nonce", "1"], ["fee", FEE], ...participants.map((p, i) => ["multiSign", p, i])], participants[0]),
-    );
-    removed.push(build("ipfs", [["ipfsAsset", "QmR45FmbVVrixReBwJkhEKde2qwHYaQzGxu4ZoDeswuF9w"], ["nonce", "6"], ["fee", FEE]], C));
     const secretHash = "a".repeat(64);
-    removed.push(build("htlcLock", [["lockAsset", { secretHash, expiration: { type: 2, value: 5000 } }], ["recipientId", R], ["amount", "1000"], ["nonce", "7"], ["fee", FEE]], A));
-    removed.push(build("htlcClaim", [["claimAsset", { lockTransactionId: "b".repeat(64), unlockSecret: "c".repeat(64), hashType: 0 }], ["nonce", "7"], ["fee", FEE]], B));
-    removed.push(build("htlcRefund", [["refundAsset", { lockTransactionId: "b".repeat(64) }], ["nonce", "7"], ["fee", FEE]], C));
+    const REMOVED_NAMES = ["legacyTransfer", "legacyVote", "multiSignature", "ipfs", "htlcLock", "htlcClaim", "htlcRefund"];
+    const REMOVED_SIGNERS = [A, B, participants[0], C, A, B, C];
+    const removedTypes = (fee) => {
+        const list = [];
+        const legacyTransfer = craft.builderData("transfer", [["nonce", "6"]], A);
+        Object.assign(legacyTransfer, { type: 0, amount: Utils.BigNumber.make("1000"), recipientId: R, expiration: 0, fee: Utils.BigNumber.make(fee("legacyTransfer")) });
+        delete legacyTransfer.asset;
+        list.push(craft.signAndSerialise(legacyTransfer, A).toString("hex"));
+        const legacyVote = craft.builderData("transfer", [["nonce", "6"]], B);
+        Object.assign(legacyVote, { type: 3, asset: { votes: ["+v21d1"] }, fee: Utils.BigNumber.make(fee("legacyVote")) });
+        list.push(craft.signAndSerialise(legacyVote, B).toString("hex"));
+        list.push(
+            build(
+                "multiSignature",
+                [["multiSignatureAsset", { min: 2, publicKeys }], ["senderPublicKey", publicKeys[0]], ["nonce", "1"], ["fee", fee("multiSignature")], ...participants.map((p, i) => ["multiSign", p, i])],
+                participants[0],
+            ),
+        );
+        list.push(build("ipfs", [["ipfsAsset", "QmR45FmbVVrixReBwJkhEKde2qwHYaQzGxu4ZoDeswuF9w"], ["nonce", "6"], ["fee", fee("ipfs")]], C));
+        list.push(build("htlcLock", [["lockAsset", { secretHash, expiration: { type: 2, value: 5000 } }], ["recipientId", R], ["amount", "1000"], ["nonce", "7"], ["fee", fee("htlcLock")]], A));
+        list.push(build("htlcClaim", [["claimAsset", { lockTransactionId: "b".repeat(64), unlockSecret: "c".repeat(64), hashType: 0 }], ["nonce", "7"], ["fee", fee("htlcClaim")]], B));
+        list.push(build("htlcRefund", [["refundAsset", { lockTransactionId: "b".repeat(64) }], ["nonce", "7"], ["fee", fee("htlcRefund")]], C));
+        return list;
+    };
+    const removed = removedTypes(() => FEE);
     await add("removed types as bytes", { steps: [process(removed)] });
     await add("removed types as JSON", { steps: [process(removed.map((hex) => ({ json: json(hex) })))] });
+    // With a null id the reference names each entry by the id it computes, Heartwood by its index;
+    // the type group is written out, as the judge finds a removed type in JSON by it.
+    await add("removed types as JSON with a null id", { steps: [process(removed.map((hex) => ({ json: { ...json(hex), typeGroup: 1, id: null } })))] });
+
+    // Removed types in the static-fee mode: the reference compares the fee with the type's static
+    // fee before the handler refuses the type, and a fee equal to it goes on to the full pool, the
+    // per-sender limit and the size limit. Another network byte is refused when the bytes are read.
+    // A multi-signature registration's static fee is the key's times its keys plus one.
+    const staticOf = (name) => BigInt(devnet.config.milestones[0].fees.staticFees[name]) * (name === "multiSignature" ? BigInt(publicKeys.length + 1) : 1n);
+    const withStaticFee = (delta) => removedTypes((name) => String(staticOf(name) + delta));
+    const staticMode = { milestones: feesOff, options: { dynamicFees: { enabled: false } } };
+    // A type whose static fee is 0 has no lower fee.
+    const lowerFee = removedTypes((name) => String(staticOf(name) > 0n ? staticOf(name) - 1n : 0n)).filter((_, i) => staticOf(REMOVED_NAMES[i]) > 0n);
+    await add("removed types in the static-fee mode: a lower, a higher and the exact fee", {
+        ...staticMode,
+        steps: [process(lowerFee), process(withStaticFee(1n), T0 + 1000), process(withStaticFee(0n), T0 + 2000)],
+    });
+    const exact = withStaticFee(0n);
+    const transferAt = (from, nonce) => transfer(from, nonce, staticFee);
+    await add("removed types at the static fee in a full pool", {
+        ...staticMode,
+        options: { ...staticMode.options, maxTransactionsInPool: 1 },
+        steps: [process([transferAt(A, 6)]), process(exact, T0 + 1000)],
+    });
+    await add("removed types at the static fee over the per-sender limit", {
+        ...staticMode,
+        options: { ...staticMode.options, maxTransactionsPerSender: 1 },
+        steps: [process([transferAt(A, 6), transferAt(B, 6), transferAt(C, 6), transferAt(participants[0], 1)]), process(exact, T0 + 1000)],
+        fixture: [...base(), wallet(participants[0], { n: "0" })],
+    });
+    await add("removed types at the static fee over the size limit", { ...staticMode, options: { ...staticMode.options, maxTransactionBytes: 100 }, steps: [process(exact)] });
+    const otherNetwork = (hex, i) =>
+        craft.resign(hex, REMOVED_SIGNERS[i], (u) => {
+            const b = Buffer.from(u);
+            b[2] = 30;
+            return b;
+        });
+    await add("removed types at the static fee from another network", { ...staticMode, steps: [process(exact.map(otherNetwork))] });
 
     // JSON entries.
     const withId = json(transfer(A, 6));

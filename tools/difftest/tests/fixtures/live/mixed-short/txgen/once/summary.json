@@ -1,0 +1,1678 @@
+{
+    "mode": "once",
+    "reference": "s1-ref",
+    "network": "mixed-short-net",
+    "nethash": "706e8544c290a0eea0c1dc1e32c07484842c28a6805cce603cfe5d3492a829ef",
+    "api": "http://198.51.100.11:6003",
+    "run": 1,
+    "seed": "txgen-v1",
+    "finishedAt": "2026-09-30T16:28:38.320Z",
+    "tip": 70,
+    "submissions": 84,
+    "pass": 84,
+    "fail": 0,
+    "skipped": 5,
+    "accepted": 35,
+    "rejected": 49,
+    "forged": 35,
+    "typesForged": {
+        "1/6": 12,
+        "2/0": 3,
+        "1/1": 1,
+        "1/2": 3,
+        "2/2": 12,
+        "1/7": 4
+    },
+    "keptTypesMissing": [],
+    "doublySignedForged": 3,
+    "fees": {
+        "transfer-fee-at-minimum": {
+            "size": 154,
+            "fee": "1000026",
+            "minimum": "1000026",
+            "outcome": "accepted",
+            "forgedAt": 56,
+            "verdict": "pass"
+        },
+        "invalid-fee-below-minimum": {
+            "size": 154,
+            "fee": "1000025",
+            "minimum": "1000026",
+            "outcome": "rejected",
+            "code": "ERR_LOW_FEE",
+            "forgedAt": null,
+            "verdict": "pass"
+        },
+        "delegate-register-n2": {
+            "size": 132,
+            "fee": "7500404882",
+            "minimum": "7500404882",
+            "outcome": "accepted",
+            "forgedAt": 60,
+            "verdict": "pass"
+        },
+        "delegate-register-fee-below-minimum": {
+            "size": 133,
+            "fee": "7500411054",
+            "minimum": "7500411055",
+            "outcome": "rejected",
+            "code": "ERR_LOW_FEE",
+            "forgedAt": null,
+            "verdict": "pass"
+        }
+    },
+    "rejectionCodes": {
+        "ERR_COOLDOWN": 1,
+        "ERR_APPLY": 27,
+        "ERR_LOW_FEE": 2,
+        "ERR_BAD_DATA": 12,
+        "ERR_OTHER": 7
+    },
+    "apiStats": {
+        "requests": 164,
+        "throttledWaits": 3,
+        "http429": 0,
+        "networkRetries": 0
+    },
+    "failures": [],
+    "skippedScenarios": [
+        {
+            "scenario": "resign-to-53-2",
+            "why": "not needed: 1 resignation(s) take 54 non-resigned delegates to 53"
+        },
+        {
+            "scenario": "resign-to-53-3",
+            "why": "not needed: 1 resignation(s) take 54 non-resigned delegates to 53"
+        },
+        {
+            "scenario": "resign-to-53-4",
+            "why": "not needed: 1 resignation(s) take 54 non-resigned delegates to 53"
+        },
+        {
+            "scenario": "resign-to-53-5",
+            "why": "not needed: 1 resignation(s) take 54 non-resigned delegates to 53"
+        },
+        {
+            "scenario": "resign-to-53-6",
+            "why": "not needed: 1 resignation(s) take 54 non-resigned delegates to 53"
+        }
+    ],
+    "scenarios": [
+        {
+            "scenario": "transfer-fund-actors",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "e835f477ae6e6e0af41791945c5add6e6fc964f14bf4d279a7068fe3ac8cda35",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "transfer-1-recipient",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "0e5da77ce4b98bb3e388c17723e742f9666e361652ff372da7c663efd078af83",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "transfer-memo-empty",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "428ee653d114f9478f48a73279337e869a1b468268a37f6fe7ad9fc6f02b7c1a",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "transfer-memo-ascii",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "d25d358161096c8f58df023ecd6938bc4defbb02db6b7ce82179646bf482e5e1",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "transfer-memo-utf8",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "d79e442784376d1692c558222083960e05fa1d674e0f26cf8ffd4caffd970acd",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "transfer-memo-255-ascii",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "cbe08dd97e2852fc0325b951b75b708b81e445163724177679a08fdff5ac4a31",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "transfer-memo-255-utf8",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "35cc054e3dd0692e7127928f05e913c5eb69e5bf8936cdd54589d910f2ea58d8",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "transfer-7-recipients-dup",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "c445f1b91880e097218b824029cd282a21ef66f32b7567b26d57ea18c657c971",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "transfer-256-recipients",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "da089343682d2fe5ec74726339aeb9866f8a2b000bdb553ddfef9cad521f41a8",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "transfer-fee-at-minimum",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "f1e2ea8662f611bf5cb8fe99bbae226dc7a9d7c721648c29e86d35df48a15f99",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "burn-minimum",
+            "wave": "w1-basic",
+            "kind": "2/0",
+            "id": "de3f69ae80b2b81947bfd3ac69141136de1557dcd535a1237cfae4b78ff2770c",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "burn-large",
+            "wave": "w1-basic",
+            "kind": "2/0",
+            "id": "16e8ee7975fc8621983abe830581244cf97087e024a2cc063e19e4818edfec26",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "dup-original",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "820a387c5f3d707f88f0a1d023fd6c2804ecb06a21e65c681e0b4c83e2b5ec38",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "dup-resubmit-cooldown",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "820a387c5f3d707f88f0a1d023fd6c2804ecb06a21e65c681e0b4c83e2b5ec38",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_COOLDOWN",
+                "match": "/must wait another \\d+ seconds? before trying again/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_COOLDOWN",
+                "message": "dH4SMfqKYWNmoWDUYJWJfYgeTduhr1MvtK#1 e2b5ec38 Transfer v3 must wait another 30 seconds before trying again"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-nonce-future",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "eda940fdf2aaf9b66ddba93b7dc71a595351f0538c04f2fb62cc85d99b8c4998",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/Cannot apply a transaction with nonce \\d+: the sender has nonce \\d+/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dLdtEZJz6U45cJ4w2fJoomZePmmvfWYqqQ#5 9b8c4998 Transfer v3 cannot be applied: Cannot apply a transaction with nonce 5: the sender has nonce 0"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-nonce-past",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "92df4c8841c18f1a3d7e01d776f8408bf3f1b2d197821a50f524de62b654f570",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/Cannot apply a transaction with nonce \\d+: the sender has nonce \\d+/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dLdtEZJz6U45cJ4w2fJoomZePmmvfWYqqQ#0 b654f570 Transfer v3 cannot be applied: Cannot apply a transaction with nonce 0: the sender has nonce 0"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-insufficient-balance",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "698e32fdc3150ea47412463a47aeaba070c51963d97ccd2fe18241e1a10a4fab",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/Insufficient balance in the wallet/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dLdtEZJz6U45cJ4w2fJoomZePmmvfWYqqQ#1 a10a4fab Transfer v3 cannot be applied: Insufficient balance in the wallet: tried to spend 100,000.5 dRT but the wallet only has 100,000 dRT available (-0.5 dRT)"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-cold-wallet",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "d45115c98ead938b1091a93356e786c034de082c498d37f110a136bf26779d9c",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/Insufficient balance in the wallet/",
+                "quirk": "ColdWalletError cannot fire through the pool: applyToSender indexes the sender's public key before throwIfCannotBeApplied checks for a cold wallet"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dKWqwVj8njMcJ2VVpZYGdDqK6VgfatzkLu#1 26779d9c Transfer v3 cannot be applied: Insufficient balance in the wallet: tried to spend 0.50000001 dRT but the wallet only has 0 dRT available (-0.50000001 dRT)"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-fee-below-minimum",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "013451efcd2219fcff827df64d021bf640f39ea2637d9d4de156c5c2755cef17",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_LOW_FEE",
+                "match": "/fee is too low to enter the pool/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_LOW_FEE",
+                "message": "dLdtEZJz6U45cJ4w2fJoomZePmmvfWYqqQ#1 755cef17 Transfer v3 fee is too low to enter the pool"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "delegate-register-fee-below-minimum",
+            "wave": "w1-basic",
+            "kind": "1/2",
+            "id": "e22541adda92afa356b06d71c27219b745f0d7ee6702e868b5ee554831de2519",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_LOW_FEE",
+                "match": "/fee is too low to enter the pool/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_LOW_FEE",
+                "message": "dLdtEZJz6U45cJ4w2fJoomZePmmvfWYqqQ#1 31de2519 DelegateRegistration v3 fee is too low to enter the pool"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-memo-256-bytes",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "8aa6273b46b2c5e12bf84b8608d2edacffe28542a3ee6566ded63f1b8611da79",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "match": "/memo/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "message": "Invalid transaction data: data.memo should be null, data.memo should match format \"memo\", data.memo should match some schema in anyOf"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-257-recipients",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "13917e6866eb49f0a3e1420a37eabc4def556f9dd0e8f147a1abb230ecf15840",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "match": "/data\\.type should pass \"transactionType\" keyword validation/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "message": "Invalid transaction data: data.type should pass \"transactionType\" keyword validation"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-transfer-zero-amount",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "c2e99a0b54dafee4324745ef442e7df6cb9fba4789f6e21771f888bf814d5e3d",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "match": "/amount/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "message": "Invalid transaction data: data.asset.transfers[0].amount should pass \"bignumber\" keyword validation"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-transfer-zero-fee",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "f8fc8a507aed730191aa44b51752e06e21b1606b9a6af3c8bfc4d6a20cd7043e",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "match": "/fee/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "message": "Invalid transaction data: data.fee should pass \"bignumber\" keyword validation"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-foreign-recipient",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "3d950fb5cfd8b3d2202b9a17fddeead7de004f29b549c62986b94449436748d1",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "match": "/Expected address network byte \\d+, but got \\d+/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "message": "Invalid transaction data: Failed to deserialise transaction, encountered invalid bytes: Expected address network byte 90, but got 91."
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-wrong-network-byte",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "ba7c566d60630d87bed12bf955c22d3d00f5218a52d7939ea93f7f02ebfe6341",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "match": "/data\\.network should pass \"network\" keyword validation/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "message": "Invalid transaction data: data.network should pass \"network\" keyword validation"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-bad-signature",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "8d185ad57c016235542d560816a2cc8bfd1cc7e6adab6cd9b8c9d2166b83cef6",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "match": "/failed signature verification/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "message": "dLdtEZJz6U45cJ4w2fJoomZePmmvfWYqqQ#1 6b83cef6 Transfer v3 failed signature verification check"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-version-2",
+            "wave": "w1-basic",
+            "kind": "1/6",
+            "id": "a42588d1662e2a6ef320ead58d6d38ec3db4c8788625c4c1781de1f1437674b0",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "match": "/Version 2 not supported/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "message": "Invalid transaction data: Version 2 not supported"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "removed-legacy-transfer-1-0",
+            "wave": "w1-basic",
+            "kind": "1/0",
+            "id": "2659f2991d156712972c6904eba0ce54a2cb7c5e07767b0cbb0a67130b42a4e9",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "match": "/Transaction type Core\\/0 is deactivated/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "message": "Transaction type Core/0 is deactivated"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "removed-legacy-vote-1-3",
+            "wave": "w1-basic",
+            "kind": "1/3",
+            "id": "8841ddbce137a19fe2afd22df9b5420837cd78de87d04be0a4762c1df7cecde5",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "match": "/Transaction type Core\\/3 is deactivated/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "message": "Transaction type Core/3 is deactivated"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "removed-multisignature-1-4",
+            "wave": "w1-basic",
+            "kind": "1/4",
+            "id": "c0168db79b61415b2a9512864e107bf6b0624d1878ca4fbbe109296c66ef10e3",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "match": "/Transaction type Core\\/4 is deactivated/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "message": "Transaction type Core/4 is deactivated"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "removed-htlc-lock-1-8",
+            "wave": "w1-basic",
+            "kind": "1/8",
+            "id": "acea356edeb73206020224a916ab9797919be10b28e2adc2839f18764d27e68b",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "match": "/Transaction type Core\\/8 is deactivated/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "message": "Transaction type Core/8 is deactivated"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "removed-htlc-claim-1-9",
+            "wave": "w1-basic",
+            "kind": "1/9",
+            "id": "2d0cc6c6b041c15d69cea49b18c322150f830375a7704dc69e49fa103a7bfc55",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "match": "/Transaction type Core\\/9 is deactivated/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "message": "Transaction type Core/9 is deactivated"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "removed-htlc-refund-1-10",
+            "wave": "w1-basic",
+            "kind": "1/10",
+            "id": "3a2d81f3edeb8a836ebeba1876a00a8b2c99c32b7462f9179eb46371de2d6c70",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "match": "/Transaction type Core\\/10 is deactivated/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "message": "Transaction type Core/10 is deactivated"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "removed-ipfs-1-5",
+            "wave": "w1-basic",
+            "kind": "1/5",
+            "id": "687708c15406b5095bcd069ca18857fc10cb893b1ea2377020b7c46d8d23f826",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "match": "/Transaction type Core\\/5 is deactivated/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_OTHER",
+                "message": "Transaction type Core/5 is deactivated"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-burn-below-minimum",
+            "wave": "w1-basic",
+            "kind": "2/0",
+            "id": "8fdec1913c2e58dab7aa57ac6bb18fbafc74a9a7c220043f7971e9d003c0bb73",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/burn amount \\(.*\\) is below the minimum/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dLdtEZJz6U45cJ4w2fJoomZePmmvfWYqqQ#1 03c0bb73 Burn v3 cannot be applied: Failed to apply transaction, because burn amount (0.01999999 dRT) is below the minimum (0.02 dRT)."
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "invalid-delegate-username",
+            "wave": "w1-basic",
+            "kind": "1/2",
+            "id": "ad3cb9f7d8658783f0251cb0b425023cbbd9dd4a2a8df536f72b948ed072788d",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "match": "/username/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "message": "Invalid transaction data: data.asset.delegate.username should match pattern \"^(?!_)(?=.*[a-z!@$&_.])([a-z0-9!@$&_.]?)+$\""
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-multipleof-violation",
+            "wave": "w1-basic",
+            "kind": "2/2",
+            "id": "457d1634e60e0ebcdc7ca7055707105b16a590ccef944e5742dc8e23260df3f8",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "match": "/multipleOf|should be multiple/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "message": "Invalid transaction data: data.asset.votes['genesis_8'] should pass \"multipleOf\" keyword validation"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-sum-99.99",
+            "wave": "w1-basic",
+            "kind": "2/2",
+            "id": "1639ec2b520283c0bcbbe678029714cee93d4000c8dbcc7daf581daff2f13839",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "match": "/sumOfVotesEquals100/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "message": "Invalid transaction data: data.asset.votes should pass \"sumOfVotesEquals100\" keyword validation"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-nonexistent-delegate",
+            "wave": "w1-basic",
+            "kind": "2/2",
+            "id": "77e4adc608bfc7b6fff941aa9a24673b1224d1ec4e7714a0ceee7855ba432b0e",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/'nosuchdelegate' is not a delegate/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dLdtEZJz6U45cJ4w2fJoomZePmmvfWYqqQ#1 ba432b0e Vote v3 cannot be applied: Failed to apply transaction, because 'nosuchdelegate' is not a delegate"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "second-signature-register",
+            "wave": "w2-register-vote",
+            "kind": "1/1",
+            "id": "e3551175e441971d4eb0aa5160f971a5e8e118cc16d96e763985ffde3440e763",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 60,
+                "blockId": "3c7ce27dcf32befcefc7e208b4c652eaa5c6f510c35ac1fe351ad58624a15b04"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "delegate-register-n1",
+            "wave": "w2-register-vote",
+            "kind": "1/2",
+            "id": "230cca9230736d356fde02fae7b34a003a0cdd8caa1be94e70bf96a5da78217f",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 60,
+                "blockId": "3c7ce27dcf32befcefc7e208b4c652eaa5c6f510c35ac1fe351ad58624a15b04"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "delegate-register-n2",
+            "wave": "w2-register-vote",
+            "kind": "1/2",
+            "id": "160acc74868ca2c8f98dfb0b644d91c7069e9eb9bf2caf9b47f8531bd6805e53",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 60,
+                "blockId": "3c7ce27dcf32befcefc7e208b4c652eaa5c6f510c35ac1fe351ad58624a15b04"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "delegate-register-n3",
+            "wave": "w2-register-vote",
+            "kind": "1/2",
+            "id": "b05b7a2df4ccccb4f43c7eb40d4e3095c4202c59e2fb43fbc4e1f36fb13c6fe7",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 60,
+                "blockId": "3c7ce27dcf32befcefc7e208b4c652eaa5c6f510c35ac1fe351ad58624a15b04"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "delegate-register-username-pending",
+            "wave": "w2-register-vote",
+            "kind": "1/2",
+            "id": "fd9164f45e9f3fc9e04b5b31d4e5959b9be6ae3fdd93915fa13e7d45920f1cd7",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/Delegate registration for '.*' already in the pool/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dS4qxVyfgV2L1aWxrKUrafXMiNR69FsGUk#1 920f1cd7 DelegateRegistration v3 cannot be applied: Delegate registration for 'tx1n1888' already in the pool"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "delegate-register-sender-pending",
+            "wave": "w2-register-vote",
+            "kind": "1/2",
+            "id": "00227b2c6320d2d86a06b6d64952fd5c1922ec7624e170fc5b21408b223680f2",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/already has a delegate registration transaction in the pool/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dUpp9DvM3hNrkLjPBL978kcUKhsd39ej9p#2 223680f2 DelegateRegistration v3 cannot be applied: dUpp9DvM3hNrkLjPBL978kcUKhsd39ej9p already has a delegate registration transaction in the pool"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "replay-forged-transaction",
+            "wave": "w2-register-vote",
+            "kind": "1/6",
+            "id": "0e5da77ce4b98bb3e388c17723e742f9666e361652ff372da7c663efd078af83",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/Cannot apply a transaction with nonce \\d+: the sender has nonce \\d+/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dG5KDh5Jzgc646xJS48UNE4Zrn2srj1kS7#1 d078af83 Transfer v3 cannot be applied: Cannot apply a transaction with nonce 1: the sender has nonce 7"
+            },
+            "forged": {
+                "height": 56,
+                "blockId": "091826dba1f143f8e0baa6bf0c84e5b1782bddff1ed48df76ae3ad0d79f374bb"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-single",
+            "wave": "w2-register-vote",
+            "kind": "2/2",
+            "id": "37024d4f321fc07d895bf9110d2c13c666529d2b329d9a3f22de86804073615a",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 60,
+                "blockId": "3c7ce27dcf32befcefc7e208b4c652eaa5c6f510c35ac1fe351ad58624a15b04"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-two-60-40",
+            "wave": "w2-register-vote",
+            "kind": "2/2",
+            "id": "1d25e0ab6caaf84008f8350963bec647416916dd992233f5daf7ff12b3ce8774",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 60,
+                "blockId": "3c7ce27dcf32befcefc7e208b4c652eaa5c6f510c35ac1fe351ad58624a15b04"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-three-way",
+            "wave": "w2-register-vote",
+            "kind": "2/2",
+            "id": "b2f19fc1d9b803db8882d5a5ddf1e6c14c1a0771a655075df3022e8ca38a147c",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 60,
+                "blockId": "3c7ce27dcf32befcefc7e208b4c652eaa5c6f510c35ac1fe351ad58624a15b04"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-twenty-way",
+            "wave": "w2-register-vote",
+            "kind": "2/2",
+            "id": "4b23dae53f9b3f5d9976f0c16c61cc957cdf5e172c475918674f2a5020f65c9f",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 60,
+                "blockId": "3c7ce27dcf32befcefc7e208b4c652eaa5c6f510c35ac1fe351ad58624a15b04"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-unsorted-order",
+            "wave": "w2-register-vote",
+            "kind": "2/2",
+            "id": "5847341f067a668652ceff2796eb5c694033f1a652433428440541f12a998fa1",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 60,
+                "blockId": "3c7ce27dcf32befcefc7e208b4c652eaa5c6f510c35ac1fe351ad58624a15b04"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-pending-second-vote",
+            "wave": "w2-register-vote",
+            "kind": "2/2",
+            "id": "f6c6dab5753913387b3f86f77aaa58a89803b62539ca9131112b6f487bc98b06",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/already has a vote transaction in the pool/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dH6PUQCt1xXG5Xmg5tfxgySE9dCuP36x4B#2 7bc98b06 Vote v3 cannot be applied: dH6PUQCt1xXG5Xmg5tfxgySE9dCuP36x4B already has a vote transaction in the pool"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "unvote-without-vote",
+            "wave": "w2-register-vote",
+            "kind": "2/2",
+            "id": "46e434563bc5b4bd14f38b02eed3e6aac70942f85a552951c24aaaeb773bce97",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/the wallet has not voted/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dYixVcTbucRN6L2oHHqEFEab7wx58Syd4V#1 773bce97 Vote v3 cannot be applied: Failed to apply transaction, because the wallet has not voted"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-float-18.10-81.90",
+            "wave": "w2-register-vote",
+            "kind": "2/2",
+            "id": "fe7c6b3d9b077e5bb039c35b94ea4ebbdf1c3d3fe80550ffd94c52013796e6f8",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 60,
+                "blockId": "3c7ce27dcf32befcefc7e208b4c652eaa5c6f510c35ac1fe351ad58624a15b04"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-float-80.10-19.90",
+            "wave": "w2-register-vote",
+            "kind": "2/2",
+            "id": "b8f489f196b83c7b98b2898e3e1e8b70e90bd5255215ed3edb958a7baf41e1db",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 60,
+                "blockId": "3c7ce27dcf32befcefc7e208b4c652eaa5c6f510c35ac1fe351ad58624a15b04"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-float-3way",
+            "wave": "w2-register-vote",
+            "kind": "2/2",
+            "id": "574342450d0adbd4f3a53914bd42e629e15f2fee104195a1899b352a6010c581",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 60,
+                "blockId": "3c7ce27dcf32befcefc7e208b4c652eaa5c6f510c35ac1fe351ad58624a15b04"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "doubly-signed-transfer",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "1/6",
+            "id": "ded05971a59993fa6da28547cfdcfb2842f256cb1b764faaab27eeacc667bc9f",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 64,
+                "blockId": "a508a2f4d9c58af9bcdd223b9072e8d6302cb32cbb758085b1b68f6ffa7215b3"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "doubly-signed-vote",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "2/2",
+            "id": "9fa8ab0eee462661eb4d7054fbd088ba066b17f2810b5d596a0463a6453e35c3",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 64,
+                "blockId": "a508a2f4d9c58af9bcdd223b9072e8d6302cb32cbb758085b1b68f6ffa7215b3"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "doubly-signed-burn",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "2/0",
+            "id": "1421351fe7c4fe4cf79ecfad2813c866fdcecb6f76ea71295c1cd064dc07948e",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 64,
+                "blockId": "a508a2f4d9c58af9bcdd223b9072e8d6302cb32cbb758085b1b68f6ffa7215b3"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "second-signature-missing",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "1/6",
+            "id": "5c3df905348cce5ef9ab9d9cc643e3f9839ba1fd5f094b9fb0a9d37f8afd7b99",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/second signature could not be verified/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dKa3BjZB6b9UdPCsymxcigBHGMkrVoXnMf#5 8afd7b99 Transfer v3 cannot be applied: Failed to apply transaction, because the second signature could not be verified"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "second-signature-register-again",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "1/1",
+            "id": "ab5136405bc997461cb706018a830b937a937979299ad162fb4bc8bb01fbc29d",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/a second signature is already enabled on this wallet/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dKa3BjZB6b9UdPCsymxcigBHGMkrVoXnMf#5 01fbc29d SecondSignature v3 cannot be applied: Failed to apply transaction, because a second signature is already enabled on this wallet"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "second-signature-register-doubly-signed",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "1/1",
+            "id": "85ad672d6fd432b2778b2f315e9a198121b81626b68f772e5408d072a519cc82",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "match": "/data\\.secondSignature should be null/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_BAD_DATA",
+                "message": "Invalid transaction data: data.secondSignature should be null"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "revote-change-split",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "2/2",
+            "id": "60ab7ec7345ff85469c96dd7958f7ef214ad0faf051a2257096c8b75aef0c523",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 64,
+                "blockId": "a508a2f4d9c58af9bcdd223b9072e8d6302cb32cbb758085b1b68f6ffa7215b3"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "second-signature-unexpected",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "1/6",
+            "id": "ef0b9d93844008cd81018dd000ab1e5ef03c4f1e2fdda591f5637bd73d6ef04d",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/the wallet does not have a second signature/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dGndYFPrnQKTGtfXCxAjP1YQ5UvRLZ1Yi3#3 3d6ef04d Transfer v3 cannot be applied: Failed to apply transaction, because the wallet does not have a second signature"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "revote-identical",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "2/2",
+            "id": "4ecc12a1ecfaed8fc72ac3d8a1493b0725962c063bd0d8ed9e1408111b6b8e4e",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/these votes are identical to the existing votes/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dH6PUQCt1xXG5Xmg5tfxgySE9dCuP36x4B#2 1b6b8e4e Vote v3 cannot be applied: Failed to apply transaction, because these votes are identical to the existing votes"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "unvote",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "2/2",
+            "id": "b90136913bfffe853f6708d3f682d990750eb55ef799a53411679f524d6c6a6e",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 64,
+                "blockId": "a508a2f4d9c58af9bcdd223b9072e8d6302cb32cbb758085b1b68f6ffa7215b3"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "delegate-register-again",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "1/2",
+            "id": "b03d7e9a5123a0bc451b74e0a7511a29f84fe9bfbf5bc04f09a85a120e7f3391",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/the wallet already registered as a delegate/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dUpp9DvM3hNrkLjPBL978kcUKhsd39ej9p#2 0e7f3391 DelegateRegistration v3 cannot be applied: Failed to apply transaction, because the wallet already registered as a delegate"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "delegate-register-taken-username",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "1/2",
+            "id": "2e0aef7a95b7a556766092c78b4c6dca87e92499873a20fa7bff3b3aad4b843b",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/the delegate name '.*' is already registered/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dS4qxVyfgV2L1aWxrKUrafXMiNR69FsGUk#1 ad4b843b DelegateRegistration v3 cannot be applied: Failed to apply transaction, because the delegate name 'tx1n2647' is already registered"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-for-non-operating-delegate",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "2/2",
+            "id": "b4650420ef8faf37d205cc097c382b6931254173bf64acbe411e2f5c69886c13",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/is not operating a node on the network/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "daZ1c7xKBuQuz8TZK7gasGeCD5BQWhDNxZ#1 69886c13 Vote v3 cannot be applied: tx1n2647 is not operating a node on the network"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "resign-temporary-n1",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "1/7",
+            "id": "168152cfed314ce65b174b81c8e025ef5d8f8845f2991f772eeadf403fc2fbda",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 64,
+                "blockId": "a508a2f4d9c58af9bcdd223b9072e8d6302cb32cbb758085b1b68f6ffa7215b3"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "resign-non-delegate",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "1/7",
+            "id": "349834a0293760da0a54e13109ede252eaf155ea06e2aa4dbd5a3742612e3d87",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/the wallet is not a delegate/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dYixVcTbucRN6L2oHHqEFEab7wx58Syd4V#1 612e3d87 DelegateResignation v3 cannot be applied: Failed to apply transaction, because the wallet is not a delegate"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "revoke-not-resigned",
+            "wave": "w3-second-sig-revote-resign",
+            "kind": "1/7",
+            "id": "1b6a75d0b83736b6c69601a843c7f7e1f07a250d025db7f87966e24ec96dbd39",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/the wallet has not resigned as a delegate/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dGqnLzJUWRxmAGexoXXtMivZjXXbduDWj1#3 c96dbd39 DelegateResignation v3 cannot be applied: Failed to apply transaction, because the wallet has not resigned as a delegate"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "resign-temporary-again",
+            "wave": "w4-resign-upgrade",
+            "kind": "1/7",
+            "id": "74e244d431b3f452a792ca20027b8882ac272c92c87371662ed41b9ad9dc3245",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/already temporarily resigned as a delegate/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dUpp9DvM3hNrkLjPBL978kcUKhsd39ej9p#3 d9dc3245 DelegateResignation v3 cannot be applied: Failed to apply transaction, because the wallet already temporarily resigned as a delegate"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "resign-upgrade-permanent",
+            "wave": "w4-resign-upgrade",
+            "kind": "1/7",
+            "id": "97d82d79425f43406c78e17d0e013054de80168f4cc2f82f3987a9a8c60baaba",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 65,
+                "blockId": "47649f270cc6229c9c7415237b7f4ec223dcae09c6b458077bd6e8f8e09c4833"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "resign-permanent-again",
+            "wave": "w5-permanent-genesis-resign",
+            "kind": "1/7",
+            "id": "b09e2359329d46bd2e6646fa906609cc3bc52f2a574e4d46e5004c52f6ff3e20",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/already permanently resigned as a delegate/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dUpp9DvM3hNrkLjPBL978kcUKhsd39ej9p#4 f6ff3e20 DelegateResignation v3 cannot be applied: Failed to apply transaction, because the wallet already permanently resigned as a delegate"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "resign-temporary-after-permanent",
+            "wave": "w5-permanent-genesis-resign",
+            "kind": "1/7",
+            "id": "86c16fc19cd0fddd3f156a76755ed2774d6eccef35130205f0c340d8e6b6d70a",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/the wallet permanently resigned as a delegate/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dUpp9DvM3hNrkLjPBL978kcUKhsd39ej9p#4 e6b6d70a DelegateResignation v3 cannot be applied: Failed to apply transaction, because the wallet permanently resigned as a delegate"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "revoke-without-node",
+            "wave": "w5-permanent-genesis-resign",
+            "kind": "1/7",
+            "id": "958b2b445faa15b28ce1c28144130168ba6b4ca2f54953765d70f4b3944a756b",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/is not operating a node on the network/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dUpp9DvM3hNrkLjPBL978kcUKhsd39ej9p#4 944a756b DelegateResignation v3 cannot be applied: tx1n1888 is not operating a node on the network"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-for-resigned-delegate",
+            "wave": "w5-permanent-genesis-resign",
+            "kind": "2/2",
+            "id": "6599c5b9110b605565849d6e5be22b7807f7e9431e02458b1a9f149c3d890ec4",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true,
+                "quirk": "the Solar vote handler has no resigned-delegate check, and the pool skips its node check for resigned delegates"
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 66,
+                "blockId": "106f92341265a7aa18df45a4f6300130260bffd2a939c720fb74d107d5aef2e3"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "vote-too-many-delegates",
+            "wave": "w5-permanent-genesis-resign",
+            "kind": "2/2",
+            "id": "99d0f330995933a2b5c94730a7111c44893cd5aafb05061911b9b9058f9ff736",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/there are more than 53 votes/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dK1oKugqh2fBRQ6peW1BPzbyUEbYnYRBc9#2 8f9ff736 Vote v3 cannot be applied: Failed to apply transaction, because there are more than 53 votes"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "resign-temporary-genesis",
+            "wave": "w5-permanent-genesis-resign",
+            "kind": "1/7",
+            "id": "7b3e3eef2e57302c0b1beb32a073598c25a1c93b5029e5316fdbdb1ce3d09c6e",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 66,
+                "blockId": "106f92341265a7aa18df45a4f6300130260bffd2a939c720fb74d107d5aef2e3"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "revoke-too-early",
+            "wave": "w6-early-revoke",
+            "kind": "1/7",
+            "id": "c530f7add4c72f093a6aefa396d2c9221e704278ad2bc434b0eabb7be5dab900",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/more blocks? must be produced before the resignation can be revoked/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dbnMZ4KXcmr68FmWxmVMuTtkxHtegp8hrM#4 e5dab900 DelegateResignation v3 cannot be applied: Failed to apply transaction, because 105 more blocks must be produced before the resignation can be revoked"
+            },
+            "forged": null,
+            "verdict": "pass"
+        },
+        {
+            "scenario": "resign-to-53-1",
+            "wave": "w6-early-revoke",
+            "kind": "1/7",
+            "id": "726dc6942889c34752d2ac343513f0af79fbc0355795a2a885dc61e7bb18987b",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": {
+                "outcome": "accepted"
+            },
+            "forged": {
+                "height": 68,
+                "blockId": "64b3c172a51fb3c78171cafb6e41c126632f7b099ef8b7830e0c3ce4b63971bd"
+            },
+            "verdict": "pass"
+        },
+        {
+            "scenario": "resign-to-53-2",
+            "wave": "w6-early-revoke",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": null,
+            "forged": null,
+            "verdict": "skipped"
+        },
+        {
+            "scenario": "resign-to-53-3",
+            "wave": "w6-early-revoke",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": null,
+            "forged": null,
+            "verdict": "skipped"
+        },
+        {
+            "scenario": "resign-to-53-4",
+            "wave": "w6-early-revoke",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": null,
+            "forged": null,
+            "verdict": "skipped"
+        },
+        {
+            "scenario": "resign-to-53-5",
+            "wave": "w6-early-revoke",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": null,
+            "forged": null,
+            "verdict": "skipped"
+        },
+        {
+            "scenario": "resign-to-53-6",
+            "wave": "w6-early-revoke",
+            "expect": {
+                "outcome": "accepted",
+                "forged": true
+            },
+            "got": null,
+            "forged": null,
+            "verdict": "skipped"
+        },
+        {
+            "scenario": "resign-not-enough-delegates",
+            "wave": "w7-not-enough-delegates",
+            "kind": "1/7",
+            "id": "f85082e266baef6f9316c0f25ebdcebc316e4b6cbf532bdad64c1ac43c6466a2",
+            "expect": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "match": "/not enough delegates are registered to allow resignation/"
+            },
+            "got": {
+                "outcome": "rejected",
+                "code": "ERR_APPLY",
+                "message": "dGqnLzJUWRxmAGexoXXtMivZjXXbduDWj1#3 3c6466a2 DelegateResignation v3 cannot be applied: Failed to apply transaction, because not enough delegates are registered to allow resignation"
+            },
+            "forged": null,
+            "verdict": "pass"
+        }
+    ],
+    "ok": true
+}

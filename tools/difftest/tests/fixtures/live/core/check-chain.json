@@ -1,0 +1,103 @@
+{
+    "ok": true,
+    "api": "http://198.51.100.11:6003",
+    "reference": {
+        "name": "s1-ref",
+        "keyFormat": "basis-points",
+        "seriesSha256": "ff7a3841c59986b13c553762840c5c342c9360e9ea2008208ed449b61c90464d",
+        "commit": "ddbd58100d0b39a234cbbce6b9213c9f99dbc0f9",
+        "tag": null
+    },
+    "nethash": "b6f71a8eaef93da19abfdf5946417e216ba25fbe3a58db03bb56d6de82190f2b",
+    "range": {
+        "from": 2,
+        "to": 92,
+        "tip": 92
+    },
+    "rounds": {
+        "first": 1,
+        "last": 2,
+        "fullRoundsCompleted": 1
+    },
+    "rules": {
+        "bip340": true,
+        "blockVersion": 0,
+        "burn": {
+            "feeBasisPoints": 9000,
+            "txAmount": 2000000
+        },
+        "burnBasisPoints": 9000,
+        "donations": {
+            "dUPEabqq36eEE4pYupnjw15yvBf2x4SAEd": {
+                "basisPoints": 500,
+                "purpose": "placeholder-1"
+            },
+            "dV11n17qbif7ZSctJ42dGymifypNAX1f5E": {
+                "basisPoints": 500,
+                "purpose": "placeholder-2"
+            }
+        },
+        "secondaryReward": 180000000
+    },
+    "stats": {
+        "blocksChecked": 91,
+        "transactionsChecked": 0,
+        "txTypes": {},
+        "txVersions": {},
+        "blockVersions": {
+            "0": 91
+        },
+        "signatureLengths": {},
+        "rewards": {
+            "primary": 91,
+            "secondary": 0
+        },
+        "totalRewards": "18300000000",
+        "totalFees": "0",
+        "totalBurnedFees": "0",
+        "totalBurnTxAmount": "0",
+        "totalDonations": "1830000000",
+        "donationsByAddress": {
+            "dUPEabqq36eEE4pYupnjw15yvBf2x4SAEd": "915000000",
+            "dV11n17qbif7ZSctJ42dGymifypNAX1f5E": "915000000"
+        },
+        "missedSlots": 0,
+        "scheduleChecked": 91,
+        "rewardValues": {
+            "180000000": 17,
+            "190000000": 16,
+            "200000000": 18,
+            "210000000": 20,
+            "220000000": 20
+        },
+        "fees": {
+            "checked": 0,
+            "belowDynamicMinimum": 0,
+            "atDynamicMinimum": 0,
+            "minSeen": null,
+            "maxSeen": null
+        }
+    },
+    "shuffle": "Solar's RoundState.shuffleDelegates",
+    "tipChecks": {
+        "reads": 1,
+        "blocksForgedDuringRun": 0,
+        "delegates": 53,
+        "delegateForgedTotalsMismatched": 0,
+        "wallets": 59,
+        "issued": "10000000000000000",
+        "issuance": "explicit (patch 40)",
+        "sumOfBalances": "10000018300000000",
+        "expectedSumOfBalances": "10000018300000000",
+        "supplyInvariant": true,
+        "negativeBalances": [],
+        "generatorBalance": "0",
+        "apiSupply": "10000018300000000",
+        "apiBurned": {
+            "fees": "0",
+            "transactions": "0",
+            "total": "0"
+        }
+    },
+    "problems": []
+}

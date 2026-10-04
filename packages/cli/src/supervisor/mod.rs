@@ -19,6 +19,7 @@
 //!   reaches it except through the supervisor.
 
 pub mod logs;
+pub mod manager;
 pub mod restart;
 pub mod signals;
 pub mod state;
@@ -51,6 +52,7 @@ use self::restart::{AfterExit, Restarts};
 use self::signals::KILL_AFTER;
 use self::state::SupervisorState;
 use crate::errors::ProcessError;
+use crate::instance_index;
 use crate::seams::{Instance, Role, SupervisedStatus};
 
 /// The version a Heartwood node reports, as the state file and `status` show it.
@@ -209,7 +211,7 @@ impl RunDir {
     /// The file `path` names, opened in the directory, never through a link, and refused unless it
     /// is a regular file. The open does not wait: a FIFO in its place would block it until its
     /// other end opened.
-    fn file(&self, path: &Path, flags: OFlag, mode: u32) -> std::io::Result<File> {
+    pub(crate) fn file(&self, path: &Path, flags: OFlag, mode: u32) -> std::io::Result<File> {
         let flags = flags | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK;
         let name = path.file_name().unwrap_or_default();
         let mode = Mode::from_bits_truncate(mode);
@@ -231,13 +233,13 @@ impl RunDir {
         Ok(unlinkat(&self.dir, name, UnlinkatFlags::NoRemoveDir)?)
     }
 
-    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+    pub(crate) fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
         let names = (from.file_name(), to.file_name());
         let (from, to) = (names.0.unwrap_or_default(), names.1.unwrap_or_default());
         Ok(renameat(&self.dir, from, &self.dir, to)?)
     }
 
-    fn read(&self, path: &Path) -> std::io::Result<String> {
+    pub(crate) fn read(&self, path: &Path) -> std::io::Result<String> {
         let mut text = String::new();
         (self.file(path, OFlag::O_RDONLY, 0)?).read_to_string(&mut text)?;
         Ok(text)
@@ -272,6 +274,8 @@ struct Supervisor {
     /// session (a daemon).
     own_group: bool,
     dir: RunDir,
+    /// The token's data root, where the instance index is ([`instance_index`]).
+    index: PathBuf,
     _lock: File,
 }
 
@@ -318,7 +322,8 @@ impl Supervisor {
             last_exit: None,
             version: VERSION.to_owned(),
         };
-        Ok(Supervisor {
+        let index = instance_index::process_data_root(&instance.token);
+        let supervisor = Supervisor {
             instance,
             state,
             out: Arc::new(Mutex::new(out)),
@@ -328,8 +333,14 @@ impl Supervisor {
             created: Instant::now(),
             own_group: !signals::leads_session(pid),
             dir,
+            index,
             _lock: lock,
-        })
+        };
+        // A node that cannot be listed by `top` still runs: the failure is said in the capture.
+        if let Err(e) = instance_index::write(&supervisor.index, &supervisor.instance) {
+            supervisor.line(&e.to_string());
+        }
+        Ok(supervisor)
     }
 
     /// Run and restart the node until a stop or the restart rule's end; gives the exit status.
@@ -351,6 +362,9 @@ impl Supervisor {
                 }
             };
             self.set(status, None);
+            if let Err(e) = instance_index::remove(&self.index, &self.instance) {
+                self.line(&e.to_string());
+            }
             return code;
         }
     }

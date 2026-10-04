@@ -104,15 +104,26 @@ pub(crate) async fn listing(
     criteria: Option<TransactionCriteria>,
     shape: Shape,
 ) -> Result<ApiReply, ApiError> {
+    filtered(ctx, request, criteria.map(TransactionFilter::of), shape).await
+}
+
+/// The listing of `request` for `filter` (`None`: criteria that match nothing), as `shape`. A value
+/// beyond its column's type in the reference's store matches nothing too: the reference's listing
+/// fails on it and answers an empty page with the same count flag.
+pub(crate) async fn filtered(
+    ctx: &Arc<ApiContext>,
+    request: &ApiRequest,
+    filter: Option<TransactionFilter>,
+    shape: Shape,
+) -> Result<ApiReply, ApiError> {
     let pagination = Pagination::of(&request.query);
     let page = Page {
         offset: pagination.offset,
         limit: pagination.limit,
     };
     let order = order(&request.query);
-    let (rows, total) = match criteria {
-        Some(criteria) => {
-            let filter = TransactionFilter::of(criteria);
+    let (rows, total) = match filter.filter(storable) {
+        Some(filter) => {
             let listing = read(ctx, move |reader| {
                 reader.transactions(&filter, &order, page)
             })
@@ -353,8 +364,38 @@ fn invalid(key: &str) -> ApiError {
     ApiError::unprocessable(format!("\"{key}\" is not valid"))
 }
 
+/// The largest values of PostgreSQL's `integer` and `smallint`, the types of the reference's
+/// numeric columns that are not `bigint`.
+pub(crate) const INTEGER: u64 = 2_147_483_647;
+pub(crate) const SMALLINT: u64 = 32_767;
+
+/// Whether every value of `numerics` fits a column whose largest value is `max`. The reference's
+/// store refuses a value beyond its column's type, and the listing that fails answers an empty
+/// page.
+pub(crate) fn fits(numerics: &[Numeric], max: u64) -> bool {
+    numerics.iter().all(|numeric| match *numeric {
+        Numeric::Equal(value) => value <= max,
+        Numeric::Range { from, to } => [from, to].into_iter().flatten().all(|end| end <= max),
+    })
+}
+
+/// Whether the reference's store takes every value of `filter`: `smallint` columns for the
+/// version, the sequence and the type, `integer` ones for the block height, the timestamp and the
+/// type group.
+fn storable(filter: &TransactionFilter) -> bool {
+    let small = |values: &[u64], max: u64| values.iter().all(|value| *value <= max);
+    filter.groups.iter().flatten().all(|criteria| {
+        small(&criteria.version, SMALLINT)
+            && small(&criteria.kind, SMALLINT)
+            && small(&criteria.type_group, INTEGER)
+            && fits(&criteria.sequence, SMALLINT)
+            && fits(&criteria.block_height, INTEGER)
+            && fits(&criteria.timestamp, INTEGER)
+    })
+}
+
 /// The values of `key` as texts.
-fn texts(key: &str, values: &[Value]) -> Result<Vec<String>, ApiError> {
+pub(crate) fn texts(key: &str, values: &[Value]) -> Result<Vec<String>, ApiError> {
     values
         .iter()
         .map(|value| {
@@ -367,7 +408,7 @@ fn texts(key: &str, values: &[Value]) -> Result<Vec<String>, ApiError> {
 }
 
 /// The values of `key` as whole numbers from 0.
-fn integers(key: &str, values: &[Value]) -> Result<Vec<u64>, ApiError> {
+pub(crate) fn integers(key: &str, values: &[Value]) -> Result<Vec<u64>, ApiError> {
     values
         .iter()
         .map(|value| integer(value).ok_or_else(|| invalid(key)))
@@ -375,7 +416,7 @@ fn integers(key: &str, values: &[Value]) -> Result<Vec<u64>, ApiError> {
 }
 
 /// The values of `key` as numbers or ranges (`{from, to}`, either end open).
-fn numerics(key: &str, values: &[Value]) -> Result<Vec<Numeric>, ApiError> {
+pub(crate) fn numerics(key: &str, values: &[Value]) -> Result<Vec<Numeric>, ApiError> {
     values
         .iter()
         .map(|value| match value {
@@ -406,6 +447,12 @@ fn integer(value: &Value) -> Option<u64> {
 /// Whether `text` is lowercase hexadecimal, as the store writes ids.
 pub(crate) fn is_lowercase_hex(text: &str) -> bool {
     text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// `GET /transactions/schemas`: the schema properties of the activated handlers' types, by type
+/// group and type (every kept type is activated at any height).
+pub async fn schemas(_ctx: Arc<ApiContext>, _request: ApiRequest) -> Result<ApiReply, ApiError> {
+    crate::spec::transaction_schemas()
 }
 
 #[cfg(test)]

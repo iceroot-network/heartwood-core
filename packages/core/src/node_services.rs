@@ -85,6 +85,9 @@ pub struct RelayServices<N> {
     /// Where each public request's AwaitBlock step is recorded (feature `difftest`).
     #[cfg(feature = "difftest")]
     pub await_record: Option<crate::harness::AwaitRecordFile>,
+    /// Where each step of a status's attestation is recorded (feature `difftest`).
+    #[cfg(feature = "difftest")]
+    pub attestation_record: Option<crate::harness::AttestationRecordFile>,
 }
 
 /// The machine's `newBlock` state and the queue's running state of `blockchain`, kept current
@@ -420,6 +423,13 @@ impl<N: Network> NodeServices for RelayServices<N> {
     #[cfg(feature = "difftest")]
     fn await_block_step(&self, record: &heartwood_p2p::node_services::AwaitRecord) {
         if let Some(file) = &self.await_record {
+            file.write(record);
+        }
+    }
+
+    #[cfg(feature = "difftest")]
+    fn attestation_step(&self, record: &heartwood_p2p::node_services::AttestationRecord) {
+        if let Some(file) = &self.attestation_record {
             file.write(record);
         }
     }

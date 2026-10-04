@@ -223,7 +223,7 @@ pub fn run(world: &dyn World, scope: &DoctorScope, options: &DoctorOptions) -> R
         findings.extend(found.into_iter().filter(|f| options.roles.wants(f.subject)));
     }
     let presence = view.roles_present().unwrap_or_default();
-    let roles = Role::ALL.into_iter().filter(|role| presence.has(*role));
+    let roles = Role::SPLIT.into_iter().filter(|role| presence.has(*role));
     let window_minutes = options.window.as_secs() / 60;
     Report {
         created_at_ms: view.now_ms(),

@@ -1,8 +1,8 @@
 //! L0 over the node configuration's records of class V28 (`config.pluginOptions`,
-//! `config.loadApp`), without an oracle.
+//! `config.loadApp`, `config.pluginStart`), without an oracle.
 //!
-//! Each record is a component's options read with its schema and defaults, or an `app.json`
-//! profile.
+//! Each record is a component's options read with its schema and defaults, an `app.json`
+//! profile, or what the relay does next with a component's options.
 //!
 //! The class is read from `packages/kernel/tests/vectors`, where `make vectors-install` puts it and
 //! where it must be: a class that is not installed there fails the test. The directory that
@@ -21,7 +21,11 @@ use heartwood_difftest::vectors::{ClassDir, VectorSet};
 const CLASS: &str = "V28-node";
 
 /// The operations this test compares.
-const OPS: [&str; 2] = ["config.pluginOptions", "config.loadApp"];
+const OPS: [&str; 3] = [
+    "config.pluginOptions",
+    "config.loadApp",
+    "config.pluginStart",
+];
 
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")

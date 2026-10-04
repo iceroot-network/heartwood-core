@@ -13,7 +13,10 @@
 //! answered as the reference answers it, with a bare 400. Stopping the server closes the listener
 //! and waits for the connections in flight, each bounded by that timeout.
 
-mod head;
+// Public only for the head fuzz target's entry, which only `cargo fuzz`'s builds (configuration
+// `fuzzing`) and the tests have: a release build's `head` has no public item.
+#[allow(unexpected_cfgs)]
+pub mod head;
 
 use std::convert::Infallible;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -73,7 +76,8 @@ pub struct Semaphore {
     pub memory: [SemaphoreLevel; 2],
 }
 
-/// The API's options, as the reference's defaults and the node's variables give them.
+/// The API's options, as the reference's defaults and the node's variables give them, and the
+/// options of the node's other components that the routes read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiConfig {
     /// Whether the API is served (`CORE_API_DISABLED` turns it off).
@@ -97,7 +101,14 @@ pub struct ApiConfig {
     pub base_path: String,
     /// Whether list counts are estimates (`CORE_API_ESTIMATED_TOTAL_COUNT`).
     pub estimate_total_count: bool,
+    /// The window of the delegates' missed blocks and productivity, in seconds: the blockchain's
+    /// `missedBlocksLookback` (2,592,000 by default), which the node sets from its blockchain
+    /// options.
+    pub missed_blocks_lookback: i64,
 }
+
+/// The blockchain's default `missedBlocksLookback`, in seconds (30 days).
+pub const MISSED_BLOCKS_LOOKBACK: i64 = 2_592_000;
 
 impl ApiConfig {
     /// How long a connection is served, headers included: the socket timeout, or where it is 0
@@ -211,6 +222,7 @@ impl Options for ApiConfig {
             trust_proxy: options.flag("plugins.trustProxy")?,
             base_path: options.text("options.basePath")?,
             estimate_total_count: options.flag("options.estimateTotalCount")?,
+            missed_blocks_lookback: MISSED_BLOCKS_LOOKBACK,
         })
     }
 }

@@ -1,7 +1,8 @@
-//! The composition roots of both roles: [`relay`] (the relay's components, its peer-to-peer
-//! server and its graceful shutdown) and [`forger`] (the forger's), and the version floor they
-//! both check.
+//! The composition roots of the roles: [`relay`] (the relay's components, its peer-to-peer
+//! server and its graceful shutdown), [`forger`] (the forger's) and [`mod@core`] (both in one
+//! process), and the version floor they check.
 
+pub mod core;
 pub mod forger;
 pub mod relay;
 

@@ -18,14 +18,17 @@
 //!    (`nodes`), its starts against the run's scripted restarts of it, and that a kill during its
 //!    initial sync ended its first start below node 1's height at its start; a reference relay's
 //!    archive against node 1's;
-//! 4. `api`: the route corpus's answers, judged by `api compare` ([`crate::api`]), and the rate
-//!    limit's answers from an address that no node whitelists;
+//! 4. `api`: the route corpus's answers, judged by `api compare` ([`crate::api`]), a listing's
+//!    tie judged again with the places of the wallets one node of the pair alone re-indexed by its
+//!    own refusals left free ([`evidence`]), and the rate limit's answers from an address that no
+//!    node whitelists;
 //! 5. `bans`: every ban of a node under test's address ([`bans`]);
-//! 6. `invariants`: one tip at the pause, at or below the run's stop height; node 1's chain checked
-//!    by the devnet tooling (every generator the scheduled one, the supply; not in runs `m` and `f`,
-//!    whose relays do not serve the route the tooling reads); every block reached
-//!    the nodes under test within one block time (node 4 of runs `r`, `h` and `m1`), outside their fault
-//!    windows;
+//! 6. `invariants`: one tip at the pause, at or below the run's stop height; the control's chain
+//!    checked by the devnet tooling (every generator the scheduled one, the supply; not in runs `m`
+//!    and `f`, whose relays do not serve the route the tooling reads); every block reached the
+//!    nodes under test within one block time (node 4 of runs `r`, `h` and `m1`; every node under
+//!    test but the control in runs `t`, `m` and `f` and in the mixed forging runs), outside their
+//!    fault windows;
 //! 7. recorded, not gated (outcome `Pass`, label `recorded: ...`): block lags, the joining node's
 //!    sync time, the transaction propagation, socket-close bans inside fault windows, each node's
 //!    refused and undone blocks.
@@ -53,19 +56,32 @@
 //! run `s`, the recovery commands, AwaitBlock, the processes, the records and the schedule. The
 //! baseline is the run `--compare` names, or [`COMPARE`]'s run beside this one.
 //!
+//! The forging runs ([`FORGING_RUNS`]: `mixed-short`, `mixed` and `mixed-split`, reference and
+//! Heartwood nodes forging side by side in rootless namespaces; `churn`, every churn event on
+//! Heartwood nodes; `core`, Heartwood nodes of the combined role) have the checks of their own
+//! module too (`mixed_forging` with the attestation's timing, `churn` with the resource
+//! rules, `core_run`), each run in a directory of its own (`<results>/<run>/<seed>`).
+//!
 //! Besides the report, the check writes every case with its outcome to `live-check.txt` in the run
 //! directory.
 
 mod attest;
+mod attestation;
 pub mod await_block;
 pub mod bans;
-mod corpora;
+pub mod batch;
+mod churn;
+mod core_run;
+pub(crate) mod corpora;
 pub mod digest;
+pub mod evidence;
 pub mod forging;
 mod fresh;
 mod mixed;
+mod mixed_forging;
 mod nodes;
 mod recovery;
+pub mod resources;
 pub mod run;
 mod schedule;
 pub mod steps;
@@ -85,8 +101,7 @@ use crate::store;
 use crate::subject::Documented;
 use run::{Implementation, Manifest};
 
-/// Where the run's corpora go, relative to the current directory: the Makefile's `CORPUS`.
-pub const CORPUS_ROOT: &str = "target/corpus";
+pub use corpora::CORPUS_ROOT;
 /// The time a block may take to reach a node under test: one block time.
 pub const LAG_LIMIT_SECONDS: f64 = 8.0;
 /// The variable naming the run a check of run `t` or `m` compares with (the other of the two), as
@@ -96,6 +111,12 @@ pub const LAG_LIMIT_SECONDS: f64 = 8.0;
 pub const COMPARE: &str = "COMPARE";
 /// The runs of reference nodes beside Heartwood relays, `w0` being their reference baseline.
 pub const MIXED_RUNS: [&str; 4] = ["w0", "w", "p", "s"];
+/// The forging runs: the mixed forging network's (`mixed-short`, `mixed`, `mixed-split`), the
+/// churn run and the core run.
+pub const FORGING_RUNS: [&str; 5] = ["mixed-short", "mixed", "mixed-split", "churn", "core"];
+/// The mixed forging network's runs: reference and Heartwood nodes forging one chain. Their
+/// partitions and heals are judged like those of the mixed runs, against the run's control node.
+pub const MIXED_FORGING_RUNS: [&str; 3] = ["mixed-short", "mixed", "mixed-split"];
 
 /// What a live check reads besides the run directory.
 pub struct LiveOptions<'a> {
@@ -147,6 +168,36 @@ pub struct MixedRun<'a> {
     pub corpus_root: &'a Path,
     /// The oracle, asked for only when a check needs it.
     pub oracle: &'a dyn Fn() -> Result<Oracle>,
+}
+
+/// What the checks of a forging run ([`FORGING_RUNS`]) read.
+pub struct ForgingRun<'a> {
+    /// The run's directory.
+    pub run_dir: &'a Path,
+    /// Its `run.json`.
+    pub manifest: &'a Manifest,
+    /// Its fault windows.
+    pub windows: &'a [run::Window],
+    /// Where the run's corpora are imported and judged.
+    pub corpus_root: &'a Path,
+    /// The oracle, asked for only when a check needs it.
+    pub oracle: &'a dyn Fn() -> Result<Oracle>,
+}
+
+/// The checks of a forging run, by its content name.
+fn forging_checks(run: &ForgingRun<'_>, cases: &mut Cases) -> Result<()> {
+    match run.manifest.run.as_str() {
+        "mixed-short" | "mixed" | "mixed-split" => {
+            mixed_forging::check(run, cases)?;
+            attestation::check(run, cases)
+        }
+        "churn" => {
+            churn::check(run, cases)?;
+            resources::check(run, cases)
+        }
+        "core" => core_run::check(run, cases),
+        _ => Ok(()),
+    }
 }
 
 /// The checks of a mixed run, in the report's order.
@@ -268,8 +319,12 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
         results: Vec::new(),
     };
     let mut windows = run::windows(run_dir, manifest.window_seconds)?;
-    if MIXED_RUNS.contains(&manifest.run.as_str()) {
-        windows.extend(run::minority_window(&manifest, &run::steps(run_dir)?));
+    if MIXED_RUNS.contains(&manifest.run.as_str())
+        || MIXED_FORGING_RUNS.contains(&manifest.run.as_str())
+    {
+        let steps = run::steps(run_dir)?;
+        windows.extend(run::minority_window(&manifest, &steps));
+        windows.extend(mixed_forging::heal_window(&manifest, &steps));
     }
     // The route corpus first: whether its judge is built in this tree decides how a failed
     // recording of it counts.
@@ -302,6 +357,16 @@ pub fn check_with(run_dir: &Path, options: &LiveOptions<'_>) -> Result<Report> {
             oracle: options.oracle,
         };
         mixed_checks(&mixed, &mut cases)?;
+    }
+    if FORGING_RUNS.contains(&manifest.run.as_str()) {
+        let forging = ForgingRun {
+            run_dir,
+            manifest: &manifest,
+            windows: &windows,
+            corpus_root: &options.corpus_root,
+            oracle: options.oracle,
+        };
+        forging_checks(&forging, &mut cases)?;
     }
     let report = Report {
         title: match (&manifest.relay_image, &manifest.relay_binary_sha256) {
@@ -485,6 +550,25 @@ fn check_run(
             }
         }
     }
+    // A batch step whose relays missed part of the batch by the reference's own race of two
+    // posts is documented, from those relays' logs and the chain ([`batch`]).
+    for s in (steps.iter_mut()).filter(|s| !s.ok && s.name.starts_with("batch-")) {
+        match batch::reference_race(run_dir, manifest, s) {
+            Ok(text) => {
+                s.ok = true;
+                let reason = batch::REFERENCE_BATCH_RACE.to_owned();
+                let label = format!("step {} ({}): {text}", s.name, s.node);
+                cases.push("run", label, 0, Outcome::Documented(reason));
+            }
+            Err(why) => cases.record(
+                "run",
+                format!(
+                    "step {} ({}) is not the reference's batch race: {why}",
+                    s.name, s.node
+                ),
+            ),
+        }
+    }
     let problems = steps::problems(&manifest.run, &steps);
     if problems.is_empty() {
         cases.pass(
@@ -658,6 +742,16 @@ fn reconnect_heal(step: &run::Step, heal: Option<i64>) -> Option<i64> {
         .or(heal)
 }
 
+/// The control node's height and tip a reconnect `step` records: `controlHeight` and `controlTip`
+/// (the mixed forging runs, whose control node is not always node 1), else node 1's.
+fn control_tips(step: &run::Step) -> (Option<u64>, Option<String>) {
+    (
+        step.number("controlHeight")
+            .or_else(|| step.number("node1Height")),
+        step.text("controlTip").or_else(|| step.text("node1Tip")),
+    )
+}
+
 /// Why the recipe's reconnect `step` (`reconnect-<node>`) is outside its rule, or `None` when it is
 /// inside: 60 s or more after the heal ([`reconnect_heal`]), while the node was 10 or more blocks
 /// behind node 1 on another tip. The step records both tips (`height`, `tip`, `node1Height`,
@@ -672,11 +766,12 @@ fn reconnect_outside_the_rule(step: &run::Step, heal: Option<i64>) -> Option<Str
             start - heal
         ));
     }
+    let (control, control_tip) = control_tips(step);
     let tips = (
         step.number("height"),
         step.text("tip"),
-        step.number("node1Height"),
-        step.text("node1Tip"),
+        control,
+        control_tip,
     );
     match tips {
         (Some(height), Some(tip), Some(control), Some(control_tip))
@@ -704,7 +799,9 @@ fn check_reconnect(manifest: &Manifest, steps: &[run::Step], cases: &mut Cases) 
         return;
     }
     let restarted = steps.iter().any(|s| s.name == "reconnect-minority");
-    if MIXED_RUNS.contains(&manifest.run.as_str()) {
+    if MIXED_RUNS.contains(&manifest.run.as_str())
+        || MIXED_FORGING_RUNS.contains(&manifest.run.as_str())
+    {
         let heal = (steps.iter())
             .find(|s| s.name == "heal")
             .and_then(|s| s.start);
@@ -735,7 +832,7 @@ fn check_reconnect(manifest: &Manifest, steps: &[run::Step], cases: &mut Cases) 
             }
             let after =
                 (s.start.unwrap_or_default() - reconnect_heal(s, heal).unwrap_or_default()) / 1_000;
-            let behind = match (s.number("node1Height"), s.number("height")) {
+            let behind = match (control_tips(s).0, s.number("height")) {
                 (Some(control), Some(height)) => format!(
                     ", {} blocks behind node 1 on its own tip",
                     control.saturating_sub(height)
@@ -987,6 +1084,14 @@ fn check_nodes(
         .map(|w| (w.fault.clone(), w.nodes.clone()))
         .collect();
     let steps = run::steps(run_dir)?;
+    let records = match mixed_forging::minority_records(run_dir, manifest, windows, &steps) {
+        Ok(records) => records,
+        Err(e) => {
+            cases.fail("nodes", "the minority peer loss window", e.to_string());
+            BTreeMap::new()
+        }
+    };
+    let no_records = digest::RecordedBlocks::new();
     // The peers whose violations fail a relay: the reference nodes, and in a devnet of Heartwood
     // nodes every node and forger address (no violation is recorded against a devnet node).
     let forgers = forging::validators(run_dir).unwrap_or_default();
@@ -1022,7 +1127,14 @@ fn check_nodes(
                 let kill = steps
                     .iter()
                     .find(|s| s.name == "kill-during-sync" && s.node == node.name);
-                let mut c = nodes::heartwood_digest(run_dir, node, &judged, &faults, kill);
+                let mut c = nodes::heartwood_digest(
+                    run_dir,
+                    node,
+                    &judged,
+                    &faults,
+                    kill,
+                    records.get(&node.name).unwrap_or(&no_records),
+                );
                 c.extend(nodes::heartwood_store(
                     run_dir,
                     node,
@@ -1091,6 +1203,8 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
             e.to_string(),
         ),
         Ok(Ok(report)) => {
+            // `api compare` judged the failed cases again with the run's evidence; its notes
+            // are the cases of operation `evidence`.
             // One line per corpus: the first (`api/`), then each of `apiExtra`.
             let main = (left.as_str(), right.as_str(), api::RUN_ANSWERS_DIR);
             let extra = (manifest.api_extra.iter())
@@ -1114,7 +1228,9 @@ fn check_api(run_dir: &Path, manifest: &Manifest, cases: &mut Cases) -> bool {
                 }
             }
             for r in report.results {
-                if r.outcome != Outcome::Pass {
+                if r.op == evidence::EVIDENCE {
+                    cases.push("api", r.label, 0, r.outcome);
+                } else if r.outcome != Outcome::Pass {
                     cases.push(
                         "api",
                         format!("{}: {}", r.file, r.label),
@@ -1228,6 +1344,246 @@ fn check_bans(
     Ok(())
 }
 
+/// The seconds a suite run's fault window lasts after its recovery, as the suites' recipe gives it.
+pub const SUITE_WINDOW_SECONDS: i64 = 30;
+
+/// The last millisecond of the year 9999, the latest time a recorded text can name.
+const LAST_MILLISECOND: f64 = 253_402_300_799_999.0;
+
+/// The longest a suite's network may take to converge on one tip after a heal: the window the
+/// partition and heal scenario gives its check that every node is on one chain (24 blocks of
+/// 8 s).
+pub const HEAL_CONVERGENCE_SECONDS: i64 = 192;
+
+/// The block-lag rule of a suite run's `propagation-lag` step, judged from the run's records:
+/// `Ok(None)` when the recipe records the step without judging it (`propagation-lag.json`'s
+/// `judged`; only the network suite judges it), else the problems, none when the rule holds.
+///
+/// As the recipe's rule: a node is timed from when it first holds a tip within one block of the
+/// highest, and every block must reach it within [`LAG_LIMIT_SECONDS`] of its first arrival
+/// at any node, outside the fault windows of `actions.jsonl` (a stop, start or restart: that node
+/// from its start to [`SUITE_WINDOW_SECONDS`] after its end; a partition: every node from its
+/// start to that long after its heal's end). And after each heal, the minority (the nodes of
+/// every side of the partition but its largest) has the window the mixed run's check gives it:
+/// from the heal's start to [`SUITE_WINDOW_SECONDS`] after the network converged, the first
+/// moment from the heal's end on when every node holds one tip (`propagation.jsonl`). A partition
+/// without a heal, a heal without a partition, and a network that does not converge within
+/// [`HEAL_CONVERGENCE_SECONDS`] of the heal are problems themselves, and so are a run without a
+/// block arrival to judge, a partitioned node without one, and a report that names a limit other
+/// than [`LAG_LIMIT_SECONDS`] (the bound is the rule's, not the run's).
+pub fn suite_propagation(run_dir: &Path) -> Result<Option<Vec<String>>> {
+    let report = run::read_json(&run_dir.join("propagation-lag.json"))?;
+    if report.get("judged").and_then(Value::as_bool) != Some(true) {
+        return Ok(None);
+    }
+    // The rule's bound is one block time, whatever the run's report names: a report that names
+    // another is a problem, and the blocks are judged against the rule's.
+    let limit = LAG_LIMIT_SECONDS;
+    let mut problems = Vec::new();
+    let named = report.get("limitSeconds").and_then(Value::as_f64);
+    if named.is_some_and(|named| (named - limit).abs() > f64::EPSILON) {
+        problems.push(format!(
+            "propagation-lag.json names a limit of {} s, not the rule's {limit} s",
+            named.unwrap_or_default()
+        ));
+    }
+    let window = SUITE_WINDOW_SECONDS * 1_000;
+    let mut rows: Vec<(i64, String, u64, String)> = Vec::new();
+    for r in run::read_lines(&run_dir.join("propagation.jsonl"))? {
+        // A time as the recipe reads it: a text, or milliseconds since the Unix epoch (within the
+        // years a text can name).
+        let t = r.get("t").and_then(|t| match t {
+            Value::String(text) => run::parse_time(text),
+            #[allow(clippy::cast_possible_truncation)]
+            Value::Number(ms) => (ms.as_f64())
+                .filter(|f| (0.0..=LAST_MILLISECOND).contains(f))
+                .map(|f| f.round() as i64),
+            _ => None,
+        });
+        let node = r.get("node").and_then(Value::as_str);
+        let (Some(t), Some(node), Some(h)) = (t, node, r.get("h").and_then(Value::as_u64)) else {
+            continue;
+        };
+        let id = r.get("id").and_then(Value::as_str).unwrap_or_default();
+        rows.push((t, node.to_owned(), h, id.to_owned()));
+    }
+    rows.sort();
+    if rows.is_empty() {
+        problems.push("propagation.jsonl holds no block arrival to judge".to_owned());
+    }
+    let mut windows = Vec::new();
+    let mut partition: Option<(i64, Vec<Vec<String>>)> = None;
+    let time = |a: &Value, key: &str| a.get(key).and_then(Value::as_str).and_then(run::parse_time);
+    for a in run::read_lines(&run_dir.join("actions.jsonl"))? {
+        let verb = a.get("verb").and_then(Value::as_str).unwrap_or_default();
+        let args: Vec<String> = (a
+            .get("args")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten())
+        .filter_map(|v| match v {
+            Value::String(text) => Some(text.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
+        .collect();
+        let (Some(start), Some(end)) = (time(&a, "start"), time(&a, "end")) else {
+            problems.push(format!("actions.jsonl: a {verb} without its start and end"));
+            continue;
+        };
+        match verb {
+            "partition" => {
+                if partition.is_some() {
+                    problems.push(format!(
+                        "a partition at {} while another stands",
+                        run::format_time(start)
+                    ));
+                }
+                let sides = args
+                    .iter()
+                    .map(|side| side.split(',').map(|n| format!("node{n}")).collect())
+                    .collect();
+                partition = Some((start, sides));
+            }
+            "heal" => {
+                let Some((from, sides)) = partition.take() else {
+                    problems.push(format!(
+                        "a heal at {} without a partition",
+                        run::format_time(start)
+                    ));
+                    continue;
+                };
+                windows.push(run::Window {
+                    fault: "partition".to_owned(),
+                    nodes: Vec::new(),
+                    start: from,
+                    end: end + window,
+                });
+                // A partitioned node without a block arrival shows neither its lag nor its
+                // catch-up: the convergence below would leave it out.
+                let silent: Vec<&String> = (sides.iter().flatten())
+                    .filter(|n| !rows.iter().any(|r| &r.1 == *n))
+                    .collect();
+                if !silent.is_empty() {
+                    for node in silent {
+                        problems.push(format!(
+                            "{node} of the partition holds no block arrival in propagation.jsonl"
+                        ));
+                    }
+                    continue;
+                }
+                match converged(&rows, end) {
+                    None => problems.push(format!(
+                        "the network did not converge on one tip after the heal at {}",
+                        run::format_time(end)
+                    )),
+                    Some(at) if at - end > HEAL_CONVERGENCE_SECONDS * 1_000 => {
+                        problems.push(format!(
+                            "the network converged {:.1} s after the heal at {}, beyond \
+                             {HEAL_CONVERGENCE_SECONDS} s",
+                            seconds(at - end),
+                            run::format_time(end)
+                        ));
+                    }
+                    Some(at) => {
+                        let largest = sides.iter().map(Vec::len).max().unwrap_or(0);
+                        let first = sides.iter().position(|s: &Vec<String>| s.len() == largest);
+                        let minority = (sides.iter().enumerate())
+                            .filter(|(i, _)| Some(*i) != first)
+                            .flat_map(|(_, side)| side.iter().cloned())
+                            .collect();
+                        windows.push(run::Window {
+                            fault: "minority".to_owned(),
+                            nodes: minority,
+                            start,
+                            end: at + window,
+                        });
+                    }
+                }
+            }
+            "stop" | "start" | "restart" => {
+                if let Some(node) = args.first() {
+                    windows.push(run::Window {
+                        fault: verb.to_owned(),
+                        nodes: vec![format!("node{node}")],
+                        start,
+                        end: end + window,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some((from, _)) = partition {
+        problems.push(format!(
+            "the partition at {} has no heal in actions.jsonl",
+            run::format_time(from)
+        ));
+    }
+    let mut first: BTreeMap<u64, i64> = BTreeMap::new();
+    for (t, _, h, _) in &rows {
+        first.entry(*h).or_insert(*t);
+    }
+    let (mut tip, mut joined) = (0, std::collections::BTreeSet::new());
+    let mut late = Vec::new();
+    for (t, node, h, _) in &rows {
+        tip = tip.max(*h);
+        if !joined.contains(node.as_str()) {
+            if h.saturating_add(1) < tip {
+                continue;
+            }
+            joined.insert(node.as_str());
+        }
+        if windows.iter().any(|w| w.concerns(node) && w.contains(*t)) {
+            continue;
+        }
+        let lag = seconds(t - first[h]);
+        if lag > limit {
+            late.push(format!(
+                "{node} got block {h} {lag:.1} s after its first arrival"
+            ));
+        }
+    }
+    if !late.is_empty() {
+        problems.push(format!(
+            "{} blocks later than {limit} s outside the fault windows: {}",
+            late.len(),
+            late.iter().take(10).cloned().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    Ok(Some(problems))
+}
+
+/// The first moment from `from` on when every node of `rows` holds one tip, if any; a block
+/// without its id shows no tip.
+fn converged(rows: &[(i64, String, u64, String)], from: i64) -> Option<i64> {
+    let nodes: std::collections::BTreeSet<&str> = rows.iter().map(|r| r.1.as_str()).collect();
+    let mut last: BTreeMap<&str, &str> = BTreeMap::new();
+    let one = |last: &BTreeMap<&str, &str>| {
+        let tips: std::collections::BTreeSet<_> = last.values().collect();
+        last.len() == nodes.len() && tips.len() == 1 && !tips.contains(&"")
+    };
+    let mut rows = rows.iter().peekable();
+    while let Some((_, node, _, id)) = rows.next_if(|r| r.0 <= from) {
+        last.insert(node, id);
+    }
+    if one(&last) {
+        return Some(from);
+    }
+    for (t, node, _, id) in rows {
+        last.insert(node, id);
+        if one(&last) {
+            return Some(*t);
+        }
+    }
+    None
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn seconds(ms: i64) -> f64 {
+    ms as f64 / 1_000.0
+}
+
 fn check_invariants(
     run_dir: &Path,
     manifest: &Manifest,
@@ -1297,7 +1653,7 @@ fn check_invariants(
         match run::read_json(&run_dir.join("check-chain.json")) {
             Err(e) => cases.fail(
                 "invariants",
-                "node 1's chain: the schedule and the supply",
+                format!("{}'s chain: the schedule and the supply", manifest.control),
                 e.to_string(),
             ),
             Ok(c) => {
@@ -1317,13 +1673,14 @@ fn check_invariants(
                     cases.pass(
                     "invariants",
                     format!(
-                        "node 1's chain: {scheduled} blocks forged by their scheduled delegate, the supply check holds"
+                        "{}'s chain: {scheduled} blocks forged by their scheduled delegate, the supply check holds",
+                        manifest.control
                     ),
                 );
                 } else {
                     cases.fail(
                     "invariants",
-                    "node 1's chain: the schedule and the supply",
+                    format!("{}'s chain: the schedule and the supply", manifest.control),
                     format!(
                         "{problems} problems in check-chain.json, {scheduled} blocks checked against the schedule"
                     ),
@@ -1346,9 +1703,13 @@ fn check_invariants(
             .and_then(|s| s.start)
             .map_or(from, |t| t.max(from));
         let lags = steps::lags(&arrivals, &node.name, &manifest.control, windows, from);
-        // Node 4 of runs `r`, `h` and `m1` is gated: every block within one block time.
+        // Node 4 of runs `r`, `h` and `m1` is gated: every block within one block time; so is
+        // every node under test but the control in runs `t`, `m` and `f` and in the mixed forging
+        // runs, whichever nodes their seed makes Heartwood's.
         let gated = (node.name == "node4" && manifest.run != "m2")
-            || (matches!(manifest.run.as_str(), "t" | "m" | "f") && node.name != manifest.control);
+            || ((matches!(manifest.run.as_str(), "t" | "m" | "f")
+                || MIXED_FORGING_RUNS.contains(&manifest.run.as_str()))
+                && node.name != manifest.control);
         if lags.is_empty() {
             if gated {
                 cases.fail(
@@ -1537,6 +1898,53 @@ mod tests {
             start: Some((1_000 + seconds) * 1_000),
             record,
         }
+    }
+
+    #[test]
+    fn a_mixed_forging_reconnect_is_judged_against_the_control_node() {
+        let judged = |steps: &[Step]| {
+            let mut m = manifest(Implementation::Heartwood, false);
+            m.run = "mixed-split".into();
+            m.nodes.push(Node {
+                name: "node5".into(),
+                ip: String::new(),
+                implementation: Implementation::Reference,
+                forger: false,
+                under_test: false,
+            });
+            let mut cases = Cases {
+                run: "mixed-split".into(),
+                results: Vec::new(),
+            };
+            check_reconnect(&m, steps, &mut cases);
+            cases.results
+        };
+        let heal = step_after_the_heal("heal", "all", 0, json!({"step": "heal"}));
+        let record = |control: u64| {
+            json!({"step": "reconnect-node5", "height": 99, "tip": "b",
+                   "controlHeight": control, "controlTip": "a"})
+        };
+        let inside = judged(&[
+            heal.clone(),
+            step_after_the_heal("reconnect-node5", "node5", 65, record(140)),
+            step("converged"),
+        ]);
+        assert!(
+            inside.iter().all(|r| !r.outcome.is_failure())
+                && inside.iter().any(|r| r.label.contains("41 blocks behind")),
+            "{inside:?}"
+        );
+        // A node 5 nine blocks behind the control node was not behind enough to be reconnected.
+        let near = judged(&[
+            heal,
+            step_after_the_heal("reconnect-node5", "node5", 65, record(108)),
+            step("converged"),
+        ]);
+        assert!(
+            near.iter()
+                .any(|r| r.outcome.is_failure() && r.label.contains("node5")),
+            "{near:?}"
+        );
     }
 
     #[test]

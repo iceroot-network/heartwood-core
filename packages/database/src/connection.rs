@@ -6,10 +6,11 @@
 //! kept after a checkpoint; the writer checkpoints the log into the file when it closes, even
 //! while read-only connections stay open. SQLite's defensive mode is on and the schema is not
 //! trusted, so neither a changed schema nor an SQL function can reach outside the tables;
-//! extensions are never loaded. An empty file gets schema version 2 ([`SCHEMA`], then
-//! [`SCHEMA_2`]); a file of version 1 is upgraded in place, in one transaction, by adding the
-//! recipients side table and filling it from the stored transactions ([`crate::recipients`]); a
-//! file of another version, or a file that is not a node's database, is refused.
+//! extensions are never loaded. An empty file gets schema version 3 ([`SCHEMA`], [`SCHEMA_2`], then
+//! [`SCHEMA_3`]); a file of version 1 is upgraded in place, in one transaction, by adding the
+//! recipients side table and filling it from the stored transactions ([`crate::recipients`]), and
+//! then the indices of version 3; a file of version 2 gains those indices in place; a file of
+//! another version, or a file that is not a node's database, is refused.
 //!
 //! Everything a chunk of blocks changes is written in one SQLite transaction, a [`Chunk`]: its
 //! rows are all stored, or, after a crash or when the chunk is dropped, none. Each block of the
@@ -26,13 +27,16 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension, TransactionB
 use crate::errors::DatabaseError;
 
 /// The schema version this build creates and reads.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Schema version 1: every table and index, as SQL statements.
 pub const SCHEMA: &str = include_str!("schema.sql");
 
 /// The step from schema version 1 to 2: the recipients side table and its index.
 pub const SCHEMA_2: &str = include_str!("schema_2.sql");
+
+/// The step from schema version 2 to 3: the indices of the listing routes' queries (indices only).
+pub const SCHEMA_3: &str = include_str!("schema_3.sql");
 
 /// The prepared statements the connection keeps.
 const STATEMENTS: usize = 64;
@@ -95,8 +99,8 @@ impl Database {
         Ok(database)
     }
 
-    /// Create the schema in an empty file, upgrade a file of version 1, or check the version of a
-    /// file that has the current one.
+    /// Create the schema in an empty file, upgrade a file of version 1 or 2, or check the version
+    /// of a file that has the current one.
     fn check_schema(&mut self) -> Result<(), DatabaseError> {
         let transaction = self
             .connection
@@ -109,11 +113,15 @@ impl Database {
             (0, 0) => {
                 transaction.execute_batch(SCHEMA)?;
                 transaction.execute_batch(SCHEMA_2)?;
+                transaction.execute_batch(SCHEMA_3)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             }
-            (1, _) => {
-                transaction.execute_batch(SCHEMA_2)?;
-                crate::recipients::upgrade(&transaction)?;
+            (1 | 2, _) => {
+                if version == 1 {
+                    transaction.execute_batch(SCHEMA_2)?;
+                    crate::recipients::upgrade(&transaction)?;
+                }
+                transaction.execute_batch(SCHEMA_3)?;
                 transaction.execute(
                     "UPDATE meta SET value = ?1 WHERE key = 'schema_version'",
                     [SCHEMA_VERSION.to_string()],

@@ -1,6 +1,7 @@
 //! The API's root over HTTP, as a reference relay's port check asks it (`HEAD /`, status 200 or the
-//! port counts as closed): `GET` and `HEAD /` answer 200 with a page that names the base path, and
-//! the documentation's files, which the relay does not serve, stay 404.
+//! port counts as closed): `GET` and `HEAD /` answer 200 with a page that names the base path, the
+//! OpenAPI document is served at `/api.json` (outside the base path, as the reference's own route),
+//! and the documentation's other files, which the relay does not serve, stay 404.
 
 mod snapshot;
 
@@ -75,16 +76,24 @@ async fn the_root_answers_200_with_a_page_and_the_documentation_files_404() {
     assert_eq!(head.header("content-length"), page.header("content-length"));
     // A path that the router resolves to the root is the root.
     assert_eq!(raw(address, "GET", "/a/..").await.status, 200);
-    for file in [
-        "/index.html",
-        "/api.json",
-        "/swagger-ui.css",
-        "/swagger-ui.js",
-    ] {
+    for file in ["/index.html", "/swagger-ui.css", "/swagger-ui.js"] {
         for method in ["GET", "HEAD"] {
             let answer = raw(address, method, file).await;
             assert_eq!(answer.status, 404, "{method} {file}");
         }
     }
+    // The OpenAPI document, as JSON, with the plugins of any route; under the base path it is no
+    // route.
+    let document = raw(address, "GET", "/api.json").await;
+    assert_eq!(document.status, 200);
+    assert_eq!(document.header("connection"), Some("close"));
+    assert!(document.header("x-block-height").is_some());
+    let body: serde_json::Value = serde_json::from_slice(&document.body).unwrap();
+    assert!(body["openapi"].is_string(), "{body}");
+    assert!(body["paths"]["/blocks"].is_object(), "{body}");
+    let head = raw(address, "HEAD", "/api.json").await;
+    assert_eq!(head.status, 200);
+    assert!(head.body.is_empty());
+    assert_eq!(raw(address, "GET", "/api/api.json").await.status, 404);
     server.stop().await;
 }

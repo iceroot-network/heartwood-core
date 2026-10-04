@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use heartwood_cli::supervisor::RunDir;
-use heartwood_cli::supervisor::signals::take_lock_in;
+use heartwood_cli::supervisor::signals::{record_manager, take_lock_in};
 use heartwood_cli::{Instance, Role};
 use heartwood_kernel::paths::Paths;
 use thiserror::Error;
@@ -51,6 +51,8 @@ impl ProcessLock {
         let (path, role) = (instance.lock_path(), instance.role.name());
         let file = take_lock_in(&dir, &path).map_err(|e| io(&e))?;
         let file = file.ok_or(LockError::Held { role, path })?;
+        // A node a service manager starts records it, beside the lock, for `status` and `stop`.
+        record_manager(&dir, instance, &|name| std::env::var(name).ok()).map_err(|e| io(&e))?;
         // The lock is held, so a pid file that is there names no running process of the role.
         let pid = instance.pid_path();
         let _ = dir.remove(&pid);
@@ -72,6 +74,25 @@ impl Drop for ProcessLock {
         // process, since liveness is the lock's.
         let _ = self.dir.remove(&self.pid);
     }
+}
+
+/// Take the locks of the roles that `instance`'s role also holds ([`Role::also_locks`]), and
+/// remove any pid file or manager record of theirs (one there names no running process, since the
+/// lock was free).
+/// Those roles' commands see them held, and find no pid to signal.
+pub fn hold_also(instance: &Instance) -> Result<Vec<File>, LockError> {
+    let io = |error: &dyn std::fmt::Display| LockError::Io(error.to_string());
+    let (dir, mut held) = (RunDir::open(instance).map_err(|e| io(&e))?, Vec::new());
+    for role in instance.role.also_locks() {
+        let other = self::instance(*role, &instance.token, &instance.network, &instance.paths);
+        let (path, role) = (other.lock_path(), role.name());
+        let file = take_lock_in(&dir, &path).map_err(|e| io(&e))?;
+        held.push(file.ok_or(LockError::Held { role, path })?);
+        for stale in [other.pid_path(), other.manager_path()] {
+            let _ = dir.remove(&stale);
+        }
+    }
+    Ok(held)
 }
 
 /// The instance of `role` of `token` on `network`, whose directories are `paths`.
@@ -232,6 +253,30 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         probe.join().unwrap();
         assert!(probed() >= 50);
+        fs::remove_dir_all(&data).unwrap();
+    }
+
+    #[test]
+    fn a_core_node_removes_the_manager_records_of_the_roles_it_also_holds() {
+        let data = scratch("lock-also");
+        let paths = Paths {
+            config: data.clone(),
+            data: data.clone(),
+            cache: data.clone(),
+            log: data.clone(),
+            temp: data.clone(),
+        };
+        let relay = instance(Role::Relay, "t", "n", &paths);
+        // An earlier relay unit's record, left when its node stopped.
+        fs::create_dir_all(data.join("run")).unwrap();
+        let record = "{\"manager\": \"systemd\", \"unit\": \"t-n-relay.service\"}\n";
+        fs::write(relay.manager_path(), record).unwrap();
+        let held = hold_also(&instance(Role::Core, "t", "n", &paths)).unwrap();
+        assert!(!relay.manager_path().exists());
+        // The relay's lock is held by the core node, which no unit of the relay runs.
+        let status = heartwood_cli::process::status(&relay).unwrap().status;
+        assert_eq!(status, heartwood_cli::SupervisedStatus::OnlineUnsupervised);
+        drop(held);
         fs::remove_dir_all(&data).unwrap();
     }
 }

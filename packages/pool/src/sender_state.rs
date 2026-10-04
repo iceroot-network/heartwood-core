@@ -57,7 +57,9 @@ impl SenderState {
     /// Check `transaction` and apply it to the view, in the reference's order: `ERR_TOO_LARGE`,
     /// `ERR_WRONG_NETWORK`, `ERR_BAD_DATA` for a signature that did not verify, `ERR_RETRY`, then
     /// the pool-entry checks against `pending` and the handler's apply, any refusal of which is
-    /// `ERR_APPLY`. Returns what reverting it needs.
+    /// `ERR_APPLY`. Returns what reverting it needs. Once the handler runs, refusing or not, the
+    /// transaction's parties are left in the context's [`Reindexed`](crate::Reindexed), as they
+    /// are by a revert.
     ///
     /// The network step skips the network byte 0, which the reference reads as no network.
     pub fn apply<P: PoolQuery>(
@@ -112,9 +114,9 @@ impl SenderState {
         let online = ctx.online.view(&self.wallets);
         check_pool_entry(&apply_ctx, &self.wallets, transaction, pending, &online)
             .map_err(|error| cannot_apply(error.to_string()))?;
-        Handlers
-            .apply(&apply_ctx, &mut self.wallets, transaction)
-            .map_err(|error| cannot_apply(error.message(&ctx.network.symbol)))
+        let applied = Handlers.apply(&apply_ctx, &mut self.wallets, transaction);
+        ctx.reindexed.record(transaction, ctx.network.pub_key_hash);
+        applied.map_err(|error| cannot_apply(error.message(&ctx.network.symbol)))
     }
 
     /// Revert `transaction`, the last one applied to the view, with its undo record. A failure
@@ -125,11 +127,11 @@ impl SenderState {
         transaction: &Transaction,
         undo: &TxUndo,
     ) -> Result<(), TransactionFailure<TransactionError>> {
-        Handlers
-            .revert(&ctx.apply_context(), &mut self.wallets, transaction, undo)
-            .map_err(|error| {
-                self.corrupt = true;
-                TransactionFailure::Refused(error)
-            })
+        let reverted = Handlers.revert(&ctx.apply_context(), &mut self.wallets, transaction, undo);
+        ctx.reindexed.record(transaction, ctx.network.pub_key_hash);
+        reverted.map_err(|error| {
+            self.corrupt = true;
+            TransactionFailure::Refused(error)
+        })
     }
 }

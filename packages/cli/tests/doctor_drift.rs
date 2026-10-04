@@ -671,6 +671,16 @@ const CALLS: &[(&str, &str, Class)] = &[
         "The store's log could not be reset: {error}",
         Class::Untyped,
     ),
+    (
+        "api/src/productivity.rs",
+        "The productivity table could not be computed: {error}",
+        Class::Untyped,
+    ),
+    (
+        "api/src/productivity.rs",
+        "The chain's totals could not be read: {error}",
+        Class::Untyped,
+    ),
     ("blockchain/src/blockchain.rs", "{error}", Class::Untyped),
     (
         "blockchain/src/node.rs",
@@ -832,6 +842,11 @@ const CALLS: &[(&str, &str, Class)] = &[
         "p2p/src/server/controllers/mod.rs",
         "{text}",
         Class::Own("RemoteAccessNoMatch"),
+    ),
+    (
+        "p2p/src/testing/attestation.rs",
+        "the attestation record could not be written: {error}",
+        Class::Untyped,
     ),
 ];
 

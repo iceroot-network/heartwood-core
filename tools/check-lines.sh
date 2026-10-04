@@ -139,16 +139,68 @@ command -v tokei >/dev/null || { echo "check-lines: tokei is not installed (carg
 # counted the room left under the base's ceiling, so the merged heartwood-cli measures 10,616 (the
 # doctor 6,980), over the base's ceiling plus both raises (10,600), and heartwood-core 3,657.
 # heartwood-database, at 2,699, keeps its 3,000.
+# With the listing routes over the state and the store (each ceiling is the crate's count with the
+# listings' seams, plus the work planned for them and a quarter of it, plus the recovery commands'
+# work not yet spent in the same crate, rounded up to the next 100):
+# - heartwood-api goes from 5,000 to 8,200: it measured 5,046 with the route table, the
+#   productivity seam, the search signatures and the handlers' stubs; the delegate and wallet
+#   listings with their criteria (up to 650 lines), the pagination through the reference's tree
+#   (400), the wallet search with its collation and sort (450), the productivity over the store
+#   (150), the history routes (500) and the chain routes with the fee statistics, the schemas and
+#   the OpenAPI document (350) add about 2,500, a quarter of it 625, and the API root 20. The
+#   in-memory listings and the store listings are listed on their own.
+# - heartwood-database goes from 3,000 to 3,300: it measured 2,622 with the listings' readers'
+#   signatures, their filters and the index-only schema step; the readers' bodies (up to 450
+#   lines), the saved wallets' order if it must change (20), a quarter of those, and the rollback's
+#   store work (37) join it. The listings' readers are listed on their own.
+# - heartwood-state goes from 3,000 to 3,100: it measured 2,861 with the index-order iterators'
+#   signatures; the indexes kept in the reference's insertion order (up to 120 lines) and a quarter
+#   of it join it.
+# With the listings written (the same rule, on the measured count):
+# - heartwood-api goes from 8,200 to 8,300: the listings measured 8,210, 3,164 lines above the
+#   5,046 of their seams where 2,500 were planned: the state listings with every criterion kind,
+#   its conversions and its validation 1,153 (650 planned), the history routes with the store's
+#   refusals by column type 579 (500), the chain routes, the fees and the document 478 (350), the
+#   pagination 376, the wallet search 427 and the productivity 151; the API root (20 lines) joins it
+#   when the listings are carried onto it. It measures 8,270 at the head: the API root (20), a later
+#   fix of the listings (21) and the head fuzz target's entry (19) on the 8,210.
+# With the listings carried onto the recovery commands and the diagnostics command (the same rule):
+# - heartwood-database goes from 3,300 to 3,400: the listings' 3,300 counted the rollback's
+#   planned store work but not the diagnostics command's read-only store opener and its reads, so
+#   the merged crate measures 3,330 (2,699 before the listings, which added 631); no further store
+#   work is planned.
+# With the operator commands, the combined role, the devnet library's flags and the scenario
+# runner's entry (each ceiling the crate's count with their seams, plus the work planned for them in
+# this change and the next, and a quarter of that work, rounded up to the next 100):
+# - heartwood-cli goes from 10,700 to 12,400: it measures 10,967 with their seams (the instance
+#   index, top, env, config and service with their typed errors and unbuilt bodies, the
+#   service-manager record in full with its test, the combined role among the roles, the devnet
+#   library's new flags and its run entry: 351 lines); top, the index and env (up to 350 lines),
+#   the devnet flags (400), the runner's entry (40), config and service (350) and a quarter of
+#   those (285) join it. The operator commands are listed on their own.
+# - heartwood-core goes from 3,700 to 4,400: it measures 3,947 with the command tree of the new
+#   families (top, env, config, service and the combined role, one file each with the reference's
+#   flags, and the verbose version: 279 lines) and the combined role's root; the commands of top
+#   and env (30), the combined role (240), config and service (30) and a quarter of those (75)
+#   join it. None of these lines takes part in consensus.
+# - heartwood-p2p keeps 8,500: it measured 8,251 with the attestation record's types and hook, and
+#   measures 8,294 at the head with the record's three call sites (5 lines) and a later fix of the
+#   record (38 lines).
+# heartwood-forger goes from 2,200 to 2,300: it measures 2,172, and the work planned in it next
+# (the forger's hooks, about 12 lines, the sort of the block header's fields, about 30, and the
+# network hash's comparison, about 10) takes it to about 2,224; the rest leaves room for the
+# signing record's rewrite.
 CHECKS=(
     "heartwood-crypto:packages/crypto/src:6000"
     "heartwood-kernel:packages/kernel/src:1900"
     "heartwood-kernel utils:packages/kernel/src/utils:400"
     "heartwood-logger:packages/logger/src:500"
-    "heartwood-state:packages/state/src:3000"
+    "heartwood-state:packages/state/src:3100"
     "heartwood-state wallets, ranking and rounds:packages/state/src/wallets packages/state/src/dpos packages/state/src/round_state.rs:"
     "heartwood-transactions:packages/transactions/src:2500"
     "heartwood-p2p-wire:packages/p2p-wire/src:3200"
-    "heartwood-database:packages/database/src:3000"
+    "heartwood-database:packages/database/src:3400"
+    "heartwood-database listing readers:packages/database/src/history/blocks_list.rs packages/database/src/history/missed.rs packages/database/src/history/productivity.rs packages/database/src/history/fees.rs packages/database/src/history/totals.rs packages/database/src/filters/block.rs packages/database/src/filters/missed_block.rs:"
     "heartwood-pool:packages/pool/src:2000"
     "heartwood-blockchain:packages/blockchain/src !packages/blockchain/src/difftest.rs:3900"
     "heartwood-blockchain storage and restart:packages/blockchain/src/commit.rs packages/blockchain/src/rows.rs packages/blockchain/src/restore.rs packages/blockchain/src/milestones.rs packages/blockchain/src/online.rs:"
@@ -162,17 +214,20 @@ CHECKS=(
     "heartwood-p2p server transport:packages/p2p/src/server !packages/p2p/src/server/controllers packages/p2p/src/node_services.rs packages/p2p/src/devnet.rs:"
     "heartwood-p2p server controllers and forger channel:packages/p2p/src/server/controllers packages/p2p/src/status_server.rs packages/p2p/src/attestation_session.rs packages/p2p/src/network_state.rs:"
     "heartwood-p2p test support (difftest only):packages/p2p/src/testing:"
-    "heartwood-api:packages/api/src:5000"
-    "heartwood-core:packages/core/src !packages/core/src/harness.rs:3700"
+    "heartwood-api:packages/api/src:8300"
+    "heartwood-api in-memory listings:packages/api/src/search:"
+    "heartwood-api store listings:packages/api/src/controllers/delegate_history.rs packages/api/src/controllers/rounds.rs packages/api/src/controllers/votes.rs packages/api/src/controllers/blockchain.rs packages/api/src/resources/missed_block.rs packages/api/src/resources/round.rs packages/api/src/resources/fee_statistics.rs:"
+    "heartwood-core:packages/core/src !packages/core/src/harness.rs:4400"
     "heartwood-core test support (difftest only):packages/core/src/harness.rs:"
-    "heartwood-forger:packages/forger/src !packages/forger/src/bin:2200"
+    "heartwood-forger:packages/forger/src !packages/forger/src/bin:2300"
     "heartwood-forger loop and relay client:packages/forger/src/forger_service.rs packages/forger/src/client.rs packages/forger/src/deadlines.rs:"
     "heartwood-forger forging, keys, record and attester:packages/forger/src/delegate.rs packages/forger/src/keys.rs packages/forger/src/signing_record.rs packages/forger/src/signer.rs packages/forger/src/attestation.rs:"
     "heartwood-forger test support (difftest only):packages/forger/src/bin:"
-    "heartwood-cli:packages/cli/src !packages/cli/src/bin:10700"
+    "heartwood-cli:packages/cli/src !packages/cli/src/bin:12400"
     "heartwood-cli supervisor, commands and network generate:packages/cli/src/argv.rs packages/cli/src/instance.rs packages/cli/src/supervisor packages/cli/src/process.rs packages/cli/src/process_table.rs packages/cli/src/network.rs:"
     "heartwood-cli devnet:packages/cli/src/devnet packages/cli/src/http.rs:"
     "heartwood-cli recovery commands:packages/cli/src/recovery.rs:"
+    "heartwood-cli operator commands:packages/cli/src/top.rs packages/cli/src/instance_index.rs packages/cli/src/env.rs packages/cli/src/config.rs packages/cli/src/service.rs:"
     "heartwood-cli doctor:packages/cli/src/doctor:"
     "heartwood-cli test support (test-child only):packages/cli/src/bin:"
 )

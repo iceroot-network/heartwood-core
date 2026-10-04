@@ -13,6 +13,8 @@
 //! groups ([`send_group`]): a daemon supervisor's, which holds its node, and the group of the node
 //! a foreground supervisor it has just killed named last, as long as that node still leads one.
 //!
+//! A node started by a service manager records it beside its lock ([`record_manager`]).
+//!
 //! The lock files are opened relative to their run directory's descriptor ([`RunDir`]): the
 //! functions of a path open the directory it is in without following a link, and their `_in`
 //! variants take a directory that was checked and is held, so that a directory swapped after the
@@ -31,7 +33,9 @@ use nix::sys::signal::{Signal, kill, killpg};
 use nix::unistd::{Pid, getpgid, getsid};
 
 use super::RunDir;
+use super::manager::ManagerRecord;
 use crate::errors::ProcessError;
+use crate::seams::Instance;
 
 /// How long the supervisor waits after SIGINT before it sends SIGKILL.
 pub const KILL_AFTER: Duration = Duration::from_secs(30);
@@ -74,6 +78,22 @@ pub fn record_pid(lock: &File, path: &Path) -> Result<(), ProcessError> {
         .set_len(0)
         .and_then(|()| lock.write_all_at(std::process::id().to_string().as_bytes(), 0));
     written.map_err(|e| lock_error(path, &e))
+}
+
+/// Record the service manager that started the node whose lock is held, beside the lock: the
+/// record `env` names ([`ManagerRecord::from_env`]), written through a temporary file and a
+/// rename in `dir`, or an earlier start's record removed when `env` names none, so that `status`
+/// and `stop` trust only the record of the node that runs.
+pub fn record_manager(
+    dir: &RunDir,
+    instance: &Instance,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Result<(), ProcessError> {
+    let path = instance.manager_path();
+    match ManagerRecord::from_env(instance, env) {
+        Some(record) => record.write_in(dir, &path),
+        None => ManagerRecord::remove(&path),
+    }
 }
 
 /// The pid the process that holds the lock at `path` recorded there; `None` when no process

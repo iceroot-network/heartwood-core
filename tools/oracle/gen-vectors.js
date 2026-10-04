@@ -94,6 +94,14 @@ CLASSES.push(
 // The served answers (heartwood-p2p) and the rollback (heartwood-blockchain); their builders return
 // null while they have no records, and the class is then not written.
 CLASSES.push(["V32-served", require("./lib/vectors/served")], ["V33-rollback", require("./lib/vectors/rollback")]);
+// The API's listings over the state and the store (heartwood-state, heartwood-api and
+// heartwood-database); the builder returns null while it has no records, and the class is then
+// not written.
+CLASSES.push(["V34-api-tiers", require("./lib/vectors/api-tiers")]);
+// The operator commands' files (heartwood-cli): the environment file's writer and reader and the
+// forger's key file; the builder returns null while it has no records, and the class is then not
+// written.
+CLASSES.push(["V35-operator", require("./lib/vectors/operator-files")]);
 
 function parseArgs(argv) {
     const opts = {

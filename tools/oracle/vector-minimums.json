@@ -1,0 +1,24 @@
+{
+    "V34-api-tiers": {
+        "state.indexOrders": 24,
+        "api.delegatesPage": 60,
+        "api.walletsPage": 40,
+        "api.delegateResource": 20,
+        "api.searchPage": 500,
+        "js.rbTrace": 100,
+        "api.walletsLike": 40,
+        "js.localeCompare": 60,
+        "sql.round2": 50,
+        "sql.avgInt8": 30,
+        "sql.productivity": 50,
+        "api.spec": 2,
+        "api.transactionSchemas": 1,
+        "api.feeStatistics": 6,
+        "api.productivityWindow": 60
+    },
+    "V35-operator": {
+        "env.stringify": 20,
+        "env.parseCli": 20,
+        "config.forgerKey": 20
+    }
+}

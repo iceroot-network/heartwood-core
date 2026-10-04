@@ -1,0 +1,34 @@
+{
+  "id": "attestation",
+  "title": "A vote for a delegate whose node has not reported is refused and accepted after it has, also after the relay restarts",
+  "levels": ["L3", "L4"],
+  "network": "devnet",
+  "genesisSeed": "solar-devnet",
+  "settleBlocks": 0,
+  "actors": {"voter-early": {"seed": 1}, "voter-restart": {"seed": 2}, "voter-round": {"seed": 3}, "extra-a": {"seed": 4}, "extra-b": {"seed": 5}, "extra-c": {"seed": 6}, "pool-a": {"seed": 7}, "pool-b": {"seed": 8}, "payee": {"seed": 9}, "miss-user": {"seed": 10}, "restart-user": {"seed": 11}, "split-user": {"seed": 12}},
+  "steps": [
+    {"name": "fund the wallets", "at": {"height": 2}, "do": "submit", "node": 1, "via": "api",
+     "txs": [
+       {"ref": "fund", "type": "transfer", "from": "genesis", "fee": "10000000", "to": [["voter-early", "10000000000"], ["voter-restart", "10000000000"], ["voter-round", "10000000000"], ["extra-a", "20000000000"], ["extra-b", "20000000000"], ["extra-c", "20000000000"], ["pool-a", "10000000000"], ["pool-b", "10000000000"], ["payee", "100000000"], ["miss-user", "10000000000"], ["restart-user", "10000000000"], ["split-user", "10000000000"]]}
+     ]},
+    {"name": "a vote for a delegate that has not reported", "at": {"height": 16}, "do": "submit", "node": 1, "via": "api", "check": {"invalid": ["vote-early"], "codes": {"vote-early": "ERR_OFFLINE"}},
+     "txs": [
+       {"ref": "vote-early", "type": "vote", "from": "voter-early", "nonce": 1, "fee": "20000000", "asset": {"votes": [["genesis_44", 100]]}}
+     ]},
+    {"name": "the node of that delegate starts", "at": {"afterBlocks": 1}, "do": "start", "node": 5},
+    {"name": "it syncs", "at": {"afterBlocks": 6}, "check": {"invariant": ["singleTip"], "withinBlocks": 12}},
+    {"name": "the same vote after its reports", "at": {"height": 62}, "do": "submit", "node": 1, "via": "api", "check": {"accept": ["vote-after"]},
+     "txs": [
+       {"ref": "vote-after", "type": "vote", "from": "voter-early", "nonce": 1, "asset": {"votes": [["genesis_44", 100]]}}
+     ]},
+    {"name": "its forger stops", "at": {"height": 72}, "do": "stop", "node": 5, "role": "forger"},
+    {"name": "a relay restarts", "at": {"afterBlocks": 0}, "do": "restart", "node": 4, "role": "relay", "mode": {"reference": "saved", "heartwood": "table"}},
+    {"name": "the relay is synced", "at": {"afterBlocks": 1}, "check": {"invariant": ["singleTip"], "withinBlocks": 10}},
+    {"name": "a vote through the restarted relay", "at": {"afterBlocks": 0}, "do": "submit", "node": 4, "via": "api", "check": {"accept": ["vote-restart"]},
+     "txs": [
+       {"ref": "vote-restart", "type": "vote", "from": "voter-restart", "nonce": 1, "asset": {"votes": [["genesis_44", 100]]}}
+     ]},
+    {"name": "the forger starts again", "at": {"afterBlocks": 1}, "do": "start", "node": 5, "role": "forger"},
+    {"name": "the votes are forged", "at": {"afterBlocks": 3}, "check": {"forged": ["vote-after", "vote-restart"], "withinBlocks": 6}}
+  ]
+}

@@ -7,7 +7,7 @@
 //! version, the colons or the line ends. hapi answers every refusal of that parser with a bare
 //! `400 Bad Request` and ends the connection.
 //!
-//! [`read`] reads a connection to its head's end as that parser does: it counts as Node counts,
+//! `read` reads a connection to its head's end as that parser does: it counts as Node counts,
 //! refuses what the parser refuses, and closes the connection without an answer where Node's
 //! server gives none (a `CONNECT`; a method Node's server does not know, on which the reference's
 //! process stops; a stream that ends before its head does). A head the parser accepts is written
@@ -18,7 +18,7 @@
 //! with the header fields Node's server passes on (the first 1,000, and after them those that
 //! frame the body), less those whose name hyper refuses (empty, or with a space: none that the
 //! API reads), an empty `Transfer-Encoding` (no coding for Node's parser), and `Expect` but for
-//! `HTTP/1.1`, the only version Node reads it for; with `\r\n` line ends. [`Rewind`] then gives
+//! `HTTP/1.1`, the only version Node reads it for; with `\r\n` line ends. `Rewind` then gives
 //! hyper that head, followed by the rest of the connection. The request carries the target as
 //! Node gives it to hapi (`NodeRead`), which the plugins read, and where Node's parser fails on
 //! what was read after the head while hapi serves the request, which hapi then answers with its
@@ -861,6 +861,35 @@ impl AsyncWrite for Rewind {
     }
 }
 
+/// What Node's server makes of a request's head that has ended: the head fuzz target's entry,
+/// built only for the fuzz targets (`cargo fuzz` sets `fuzzing`) and the tests, never in a
+/// release build.
+#[cfg(any(test, fuzzing))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadVerdict {
+    /// Node's parser refuses it: hapi's bare 400.
+    Refused,
+    /// It ended: served (the head as hyper is to read it, then the bytes after it), or `None` when
+    /// Node's server closes the connection without an answer.
+    Ended(Option<Vec<u8>>),
+}
+
+/// The verdict on `bytes` read `step` bytes at a time (one when `step` is 0, all at once when it
+/// is at least their length), as the server reads a connection: `None` while the head has not
+/// ended.
+#[cfg(any(test, fuzzing))]
+pub fn head_verdict(bytes: &[u8], step: usize) -> Option<HeadVerdict> {
+    let (mut head, all) = (Head::new(), bytes.len());
+    let ends = (step.max(1)..all).step_by(step.max(1)).chain([all]);
+    let progress = ends
+        .map(|end| head.feed(bytes.get(..end).unwrap_or_default()))
+        .find(|progress| *progress != Progress::More)?;
+    Some(match progress {
+        Progress::Ended => HeadVerdict::Ended(head.outcome(bytes).map(|served| served.bytes)),
+        _ => HeadVerdict::Refused,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -887,6 +916,36 @@ mod tests {
                 .ok_or(progress),
             _ => Err(progress),
         }
+    }
+
+    #[test]
+    fn the_fuzz_entry_reads_a_head_as_the_server_does() {
+        let heads: [&[u8]; 5] = [
+            b"GET /api/blocks HTTP/1.1\r\nHost: a\r\n\r\n",
+            b"GET /api/blocks HTTP/1.1\r\nHost: a\r\n",
+            b"GET /a b HTTP/1.1\r\n\r\n",
+            b"CONNECT a:1 HTTP/1.1\r\n\r\n",
+            b"",
+        ];
+        for head in heads {
+            let whole = head_verdict(head, usize::MAX);
+            for step in [0, 1, 2, 7, head.len()] {
+                assert_eq!(head_verdict(head, step), whole, "{step}");
+            }
+            let expected = match verdict(head) {
+                Ok(bytes) => Some(HeadVerdict::Ended(Some(bytes))),
+                Err(Progress::More) => None,
+                Err(Progress::Refused) => Some(HeadVerdict::Refused),
+                Err(Progress::Ended) => Some(HeadVerdict::Ended(None)),
+            };
+            assert_eq!(whole, expected);
+        }
+        assert!(matches!(
+            head_verdict(heads[0], 1),
+            Some(HeadVerdict::Ended(Some(_)))
+        ));
+        assert_eq!(head_verdict(heads[1], 1), None);
+        assert_eq!(head_verdict(heads[3], 3), Some(HeadVerdict::Ended(None)));
     }
 
     #[test]

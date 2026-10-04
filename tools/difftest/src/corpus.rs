@@ -196,6 +196,40 @@ impl RevertPlan {
         }
     }
 
+    /// The plan of a chain a live node stored, as a judge replays it: [`RevertPlan::generate`]'s
+    /// with its reverts to a round's last block moved ([`RevertPlan::move_round_ends`]), and the
+    /// steps moved.
+    pub fn for_stored_chain(seed: u64, tip: u32, round_length: u32) -> (RevertPlan, Vec<Value>) {
+        let mut plan = RevertPlan::generate(seed, tip, round_length);
+        let moved = plan.move_round_ends();
+        (plan, moved)
+    }
+
+    /// Move each step that reverts to the last block of a round after the first one block further
+    /// back (one block less where that would revert the genesis block), and give the steps moved
+    /// as `{after, blocks, now}`. At such a revert the judge's headless node deletes the next
+    /// round's rows, as a reference node that reverts to a round's last block does, and does not
+    /// save them again when it applies the next blocks, while the live node that stored the chain
+    /// never reverted and holds them: the round rows' anchor, and a processor's round digest
+    /// after the revert, would test the plan, not the chain.
+    pub fn move_round_ends(&mut self) -> Vec<Value> {
+        let length = self.round_length.max(1);
+        let mut moved = Vec::new();
+        for step in &mut self.steps {
+            let to = step.after_height - step.blocks;
+            if to >= length && to % length == 0 {
+                let now = if step.blocks + 1 < step.after_height {
+                    step.blocks + 1
+                } else {
+                    step.blocks - 1
+                };
+                moved.push(json!({"after": step.after_height, "blocks": step.blocks, "now": now}));
+                step.blocks = now;
+            }
+        }
+        moved
+    }
+
     /// The plan as `revert-plan.json` holds it.
     pub fn to_json(&self) -> Value {
         json!({
@@ -846,7 +880,9 @@ fn check_no_machine_paths(rel: &str, text: &str) -> Result<()> {
 
 /// Join the devnet archives `archives` (one or more increments of the same chain, in order) into
 /// a corpus at `out`, checking that each increment continues the one before it. `seed` is the
-/// chain's public key-derivation seed; it must derive the genesis block's generator.
+/// chain's public key-derivation seed; it must derive the genesis block's generator. The revert
+/// plan is a stored chain's ([`RevertPlan::for_stored_chain`]): the steps it moved are listed in
+/// `corpus.json` (`revertPlanAdjusted`).
 pub fn import(archives: &[PathBuf], out: &Path, seed: &str) -> Result<()> {
     let opened: Vec<Archive> = archives
         .iter()
@@ -1031,7 +1067,7 @@ pub fn import(archives: &[PathBuf], out: &Path, seed: &str) -> Result<()> {
         .and_then(|b| b.get(..8).map(<[u8]>::to_vec))
         .and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
         .map_or(0, u64::from_be_bytes);
-    let plan = RevertPlan::generate(revert_seed, tip, round_length);
+    let (plan, moved) = RevertPlan::for_stored_chain(revert_seed, tip, round_length);
 
     let mut files: Vec<(String, String)> = Vec::new();
     for (name, bytes) in CRYPTO_FILES.iter().zip(&crypto) {
@@ -1072,7 +1108,7 @@ pub fn import(archives: &[PathBuf], out: &Path, seed: &str) -> Result<()> {
             reference_fields.insert(key.to_owned(), v.clone());
         }
     }
-    let corpus_meta = json!({
+    let mut corpus_meta = json!({
         "format": FORMAT,
         "seed": seed,
         "chain": chain,
@@ -1090,6 +1126,9 @@ pub fn import(archives: &[PathBuf], out: &Path, seed: &str) -> Result<()> {
         "revertSteps": plan.steps.len(),
         "revertSeed": revert_seed.to_string(),
     });
+    if !moved.is_empty() {
+        corpus_meta["revertPlanAdjusted"] = Value::Array(moved);
+    }
     files.push((
         "corpus.json".into(),
         format!(
@@ -1313,6 +1352,73 @@ mod tests {
         write_manifest(&out).unwrap();
         fs::write(out.join("extra.txt"), "x").unwrap();
         assert!(matches!(verify(&out), Err(Error::Manifest { .. })));
+    }
+
+    /// Whether `plan` reverts to the last block of a round after the first.
+    fn reverts_to_a_round_end(plan: &RevertPlan) -> bool {
+        let length = plan.round_length;
+        plan.steps.iter().any(|s| {
+            let to = s.after_height - s.blocks;
+            to >= length && to % length == 0
+        })
+    }
+
+    #[test]
+    fn a_stored_chain_s_plan_never_reverts_to_a_round_s_last_block() {
+        let seed = (0..1_000)
+            .find(|s| reverts_to_a_round_end(&RevertPlan::generate(*s, 265, 53)))
+            .expect("a seed whose plan returns to a round end");
+        let generated = RevertPlan::generate(seed, 265, 53);
+        let (plan, moved) = RevertPlan::for_stored_chain(seed, 265, 53);
+        assert!(!reverts_to_a_round_end(&plan), "{plan:?}");
+        assert_eq!(plan.steps.len(), generated.steps.len());
+        // Each moved step reverts one block more; every other step is the generated one.
+        for (ours, theirs) in plan.steps.iter().zip(&generated.steps) {
+            let entry = json!({"after": theirs.after_height, "blocks": theirs.blocks,
+                "now": theirs.blocks + 1});
+            if ours == theirs {
+                assert!(!moved.contains(&entry));
+            } else {
+                assert_eq!(ours.blocks, theirs.blocks + 1);
+                assert!(moved.contains(&entry), "{moved:?}");
+            }
+        }
+        assert!(!moved.is_empty());
+        // A plan that never returns to a round end is the generated one.
+        let quiet = (0..1_000)
+            .find(|s| !reverts_to_a_round_end(&RevertPlan::generate(*s, 265, 53)))
+            .expect("a seed whose plan never returns to a round end");
+        let (plan, moved) = RevertPlan::for_stored_chain(quiet, 265, 53);
+        assert_eq!(plan, RevertPlan::generate(quiet, 265, 53));
+        assert!(moved.is_empty());
+    }
+
+    #[test]
+    fn an_imported_chain_s_plan_never_reverts_to_a_round_s_last_block() {
+        let root = TestDir::new("corpus-round-end");
+        // A chain whose tip's id seeds a plan that returns to a round end.
+        let landing = (200..400)
+            .find_map(|to| {
+                let (dir, last) = write_archive(root.path(), &format!("chain-{to}"), 1, to, None);
+                let seed = hex::decode(&last)
+                    .ok()
+                    .and_then(|b| <[u8; 8]>::try_from(&b[..8]).ok())
+                    .map(u64::from_be_bytes)?;
+                let plan = RevertPlan::generate(seed, u32::try_from(to).ok()?, 53);
+                reverts_to_a_round_end(&plan).then_some(dir)
+            })
+            .expect("a chain whose plan returns to a round end");
+        let out = root.path().join("corpus");
+        import(std::slice::from_ref(&landing), &out, "test-seed").unwrap();
+        verify(&out).unwrap();
+        let path = out.join("revert-plan.json");
+        let plan = RevertPlan::from_json(&read_json(&path).unwrap(), &path).unwrap();
+        assert!(!reverts_to_a_round_end(&plan), "{plan:?}");
+        let meta: Value = read_json(&out.join("corpus.json")).unwrap();
+        let seed: u64 = meta["revertSeed"].as_str().unwrap().parse().unwrap();
+        let (expected, moved) = RevertPlan::for_stored_chain(seed, plan.tip, 53);
+        assert_eq!(plan, expected);
+        assert_eq!(meta["revertPlanAdjusted"], Value::Array(moved));
     }
 
     #[test]

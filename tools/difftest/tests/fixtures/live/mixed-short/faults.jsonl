@@ -1,0 +1,4 @@
+{"fault":"network-start","nodes":["node1","node2","node3","node4","node5"],"start":"2026-09-30T16:16:00.048Z","recovered":"2026-09-30T16:16:21.572Z"}
+{"fault":"collect-stop","nodes":["node4"],"start":"2026-09-30T16:34:38.331Z","recovered":""}
+{"fault":"collect-stop","nodes":["node5"],"start":"2026-09-30T16:34:39.073Z","recovered":""}
+{"fault":"pause","nodes":["node1","node2","node3","node4","node5"],"start":"2026-09-30T16:33:20.143Z","recovered":"2026-09-30T16:34:40.430Z"}

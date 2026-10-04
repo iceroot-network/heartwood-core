@@ -338,6 +338,76 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
             print!("{report}");
             Ok(verdict(&report, strict))
         }
+        Command::LiveResources { dir, baseline } => {
+            let report = live::resources::report_with_baseline(&dir, baseline.as_deref())?;
+            print!("{report}");
+            Ok(verdict(&report, strict))
+        }
+        Command::ScenarioCompile(args) => {
+            let oracle = args.oracle.resolve(|name: &str| std::env::var(name).ok())?;
+            let scenario = heartwood_difftest::scenario::load(&args.file)?;
+            let compiled = heartwood_difftest::scenario::compile(&scenario, &oracle)?;
+            let text = serde_json::to_string_pretty(&compiled)
+                .map_err(|e| Error::Usage(format!("the compiled scenario: {e}")))?;
+            match &args.out {
+                Some(out) => std::fs::write(out, text + "\n").map_err(|e| Error::Io {
+                    path: out.clone(),
+                    source: e,
+                })?,
+                None => println!("{text}"),
+            }
+            Ok(true)
+        }
+        Command::ScenarioRun(args) => {
+            let report = heartwood_difftest::scenario::run_command(&args)?;
+            print!("{report}");
+            print!("{}", heartwood_difftest::scenario::verdict_lines(&report));
+            Ok(verdict(&report, strict))
+        }
+        Command::ScenarioCompare { dir, suite } => {
+            let report = heartwood_difftest::scenario::compare(&dir, suite.as_deref())?;
+            print!("{report}");
+            print!("{}", heartwood_difftest::scenario::verdict_lines(&report));
+            Ok(verdict(&report, strict))
+        }
+        Command::Gate(args) => heartwood_difftest::gate::run(&args, strict),
+        Command::LockstepMake(args) => {
+            let made = heartwood_difftest::lockstep::run(&args)?;
+            println!(
+                "lockstep make: {} to height {}, {} transactions, {} missed slots",
+                made.dir.display(),
+                made.tip,
+                made.transactions,
+                made.missed
+            );
+            Ok(true)
+        }
+        Command::LockstepBatch(args) => {
+            let batch = heartwood_difftest::lockstep::batch::run(&args)?;
+            let stopped = batch.chains.iter().filter(|c| c.stopped.is_some()).count();
+            println!(
+                "lockstep batch: {} chains of batch {} in {}, {stopped} stopped",
+                batch.chains.len(),
+                batch.seed,
+                args.out.display()
+            );
+            Ok(stopped == 0)
+        }
+        Command::RunL2Batch(args) => {
+            let report = heartwood_difftest::levels::l2_batch::run(&args)?;
+            print!("{report}");
+            Ok(verdict(&report, strict))
+        }
+        Command::OracleReplayCodec(args) => {
+            let replayed = heartwood_difftest::replay_codec::run_command(&args)?;
+            print!("{}", replayed.report);
+            println!(
+                "  the reference accepted {} of the {} inputs",
+                replayed.accepted,
+                replayed.report.results.len()
+            );
+            Ok(verdict(&replayed.report, strict))
+        }
         Command::StoreSummary { dir } => {
             let summary = heartwood_difftest::store_summary::summary(&dir)?;
             println!("{summary}");
@@ -354,7 +424,8 @@ fn execute(command: Command, strict: bool) -> Result<bool> {
         Command::ApiCompare(args) => {
             let mut report = api::compare(&args)?;
             // Recorded answers of a Heartwood relay count only for the tree whose relay answered.
-            if let api::ApiCompareArgs::Recorded { run } = &args
+            if let api::ApiCompareArgs::Recorded { run } | api::ApiCompareArgs::Pair { run, .. } =
+                &args
                 && let Some(case) = api::relay_case(run, Path::new(live::run::RELAY_BINARY))
             {
                 report.results.insert(0, case);
