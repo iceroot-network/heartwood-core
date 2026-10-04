@@ -262,10 +262,15 @@ module.exports = function apiSpecOps({ solar, devnet, cm, atHeight, handlerRegis
         call.query = undefined;
         const response = await s.inject({ method: "GET", url: requestPath });
         if (response.statusCode !== 200) return { status: response.statusCode };
-        const query = JSON.parse(JSON.stringify(call.query));
-        // A query nested too deep for the harness's JSON reader is reported by its depth.
         const out = { status: 200 };
-        if (reads) out.query = depth(query) > MOST_DEPTH ? { depth: depth(query) } : query;
+        // Only the query of a route whose handler reads it is written out: a query no handler
+        // reads may hold what its JSON text cannot (a list of hundreds of millions of holes), and
+        // the reference answers it all the same. A query nested too deep for the harness's JSON
+        // reader is reported by its depth.
+        if (reads) {
+            const query = JSON.parse(JSON.stringify(call.query));
+            out.query = depth(query) > MOST_DEPTH ? { depth: depth(query) } : query;
+        }
         if (paged) out.page = JSON.parse(response.payload).meta;
         return out;
     }
