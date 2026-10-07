@@ -1902,7 +1902,7 @@ longer works fails the check, and so does a mention of another operating system.
 
 `difftest run l0` compares the records of a vector run with Heartwood, with one subject per
 oracle operation. Where both sides refuse, it also compares the error class wherever Heartwood
-models the reference's class. On a run of every class (reference tag `s1-ref-v2`) it reports:
+models the reference's class. The recorded baseline run of every class (reference tag `s1-ref-v2`) reported:
 
 | Outcome | Records |
 |---|---|
@@ -1910,7 +1910,11 @@ models the reference's class. On a run of every class (reference tag `s1-ref-v2`
 | documented differences, each with its form checked on the input or shown by the oracle's answer | 315 |
 | skipped | 0 |
 
-That is 11,956 records in 35 files, and a run of the image and a local run agree on every one. The
+That baseline covered 11,956 records in 35 files; the image and local runs agreed on every one.
+The committed tree now contains 35 classes in 39 files, with four duplicated class copies:
+17,348 raw records, or 12,026 after deduplicating classes. Kernel V16, logger V20, CLI V35 and
+wire V13 contain 16, 40, 8 and 6 appended records respectively beyond their original metadata
+counts. The baseline totals do not establish comparison results for those 70 appended records. The
 gate runs with `--strict` (`make l0`), which fails a record that is skipped or has no Rust subject
 as it fails a difference. The builders of the removed types and of the extended header, which
 Heartwood does not have, are documented refusals (checked on the builder's input), so nothing is
@@ -2320,7 +2324,8 @@ cargo test -p heartwood-difftest --locked --test l2       # the committed corpus
 The committed corpus, `tools/difftest/corpus/txgen-one-node`, is a one-node devnet chain of five
 rounds with every kept transaction type and one live restart of the node, with the judge's lines
 and a restart line of both reference paths at every height; its README describes it. The
-maintainers also replay chains made with the same unpublished tooling, which are imported under
+committed fixtures allow replay, but this repository cannot regenerate the original run
+without its unpublished scenario generator. The maintainers also replay chains made with the same unpublished tooling, which are imported under
 `target/corpus` and are not committed: three nodes with partitions, kills and restarts (replayed up
 to the end of its fifth round), and a one-node chain of five rounds restarted once from its saved
 state and once without it, with an API checkpoint after each restart, which the judge's headless

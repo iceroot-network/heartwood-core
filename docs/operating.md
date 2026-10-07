@@ -5,6 +5,8 @@ forger that holds a validator's keys and signs blocks, the optional `core` role 
 one process, and the local devnet that runs five nodes on one machine for practice. It describes
 what the code in this repository does today.
 
+- No binaries are published yet; build from source. When releases exist, their GitHub release
+  pages will carry SHA-256 checksums.
 - Heartwood nodes run on Linux only. Every command here is for Linux.
 - The public testnet has not launched. Its network name, ports, release and files will come with
   its announcement; until then the guide teaches the flows on a throwaway test network that
@@ -93,8 +95,8 @@ The version reads like `4.3.1-heartwood.<release>`: the first part is the protoc
 reference implementation reports, the second the Heartwood release. `--verbose` also prints the
 platform and the features the build has; a release build never lists `difftest`.
 
-**Verifying a download.** Downloads start with the public testnet. Each announcement names the
-release and the SHA-256 checksum of every download; compare the checksum in the release notes
+**Verifying a download.** No binaries are published yet. When releases exist, the GitHub release
+page will carry the SHA-256 checksum of every download; compare that checksum
 with the one in the announcement, then compute your file's (the check does not run this; there is
 no download yet):
 

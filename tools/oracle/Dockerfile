@@ -117,8 +117,10 @@ WORKDIR /opt/oracle
 
 # Self-tests in the final image: the native modules load without the build packages, the L1
 # server answers a ping, and the L0 generator runs, including its native-versus-js backend check.
-# The genesis class needs the devnet generator, a separate tool that is not in the image (a vector
-# run mounts it), so the self-test leaves that class out.
+# The genesis class needs an unpublished devnet generator that is not in the image
+# (a vector run mounts it), so the self-test leaves that class out. The committed chain
+# corpus was produced by an unpublished scenario generator; its fixtures allow replay,
+# but not regeneration of the original run from this repository alone.
 RUN set -eux; \
     node /opt/oracle/check-native.js /opt/solar; \
     echo '{"id":1,"op":"ping"}' | node /opt/oracle/oracle-server.js | grep -q '"ok":true'; \

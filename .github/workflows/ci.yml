@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   production-merge:
-    if: github.event.created == false
+    if: github.event.created == false && vars.REQUIRE_PR_MERGE != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -34,6 +34,7 @@ jobs:
 
   verify:
     needs: production-merge
+    if: ${{ !cancelled() && (needs.production-merge.result == 'success' || (needs.production-merge.result == 'skipped' && vars.REQUIRE_PR_MERGE == 'false')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -108,4 +109,4 @@ jobs:
         if: matrix.part == 'integration'
         run: cargo run --locked -p heartwood-difftest -- run l0 packages/crypto/tests/vectors --strict
       # Oracle regeneration remains an explicit reproducibility operation: it needs
-      # the pinned reference build and external genesis generator. CI never replaces vectors.
+      # the pinned reference build and unpublished genesis generator. CI never replaces vectors.
