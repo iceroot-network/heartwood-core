@@ -4,7 +4,15 @@
 
 The Rust implementation of IceRoot's node software. This repository currently provides cryptography, transaction and block codecs, network configuration, the headless state machine (wallets, delegates, rounds, transaction handlers, block application and reversal), the peer-to-peer wire codec, client and server, the store (SQLite), the transaction pool, block processing, the public API (38 routes and its OpenAPI document), the forger, the `heartwood` binary (a relay that follows a network and serves the peer-to-peer protocol and the public API, a forger process that forges through its relays, the optional `core` role that runs both in one process, a process supervisor, the recovery commands, the operator commands `top`, `env`, `config` and `service`, `network generate`, a local devnet and a read-only diagnostics command with its protocol server), and a differential-testing harness.
 
-[Core overview](https://docs.iceroot.com/core/overview/) · [Build from source](https://docs.iceroot.com/core/installation/) · [Architecture](https://docs.iceroot.com/core/architecture/) · [Protocol design](https://docs.iceroot.com/core/protocol-design/) · [Operating a node](docs/operating.md)
+[Core overview](https://docs.iceroot.com/core/overview/) · [Build from source](https://docs.iceroot.com/core/installation/) · [Architecture](https://docs.iceroot.com/core/architecture/) · [Protocol design](https://docs.iceroot.com/core/protocol-design/) · [Operating a node](docs/operating.md) · [Compatibility and testing](docs/compatibility.md)
+
+## Status
+
+Development builds only. The lab devnet has no value; no public testnet or mainnet has launched.
+The reference node is [iceroot-network/solar-core-ref](https://github.com/iceroot-network/solar-core-ref).
+This repository is published as a read-only mirror of the development repository. Issues are welcome;
+pull requests are reviewed upstream. Report security issues through the organisation's
+[SECURITY.md](https://github.com/iceroot-network/.github/blob/prod/SECURITY.md).
 
 ## Build and test
 
@@ -147,7 +155,7 @@ The current implementation uses the retained reference cryptography and transact
 
 ## Compatibility
 
-The reference is [solar-core-ref](https://github.com/iceroot-network/solar-core-ref), based on Solar Core 4.3.1 with a documented patch series. Over the thirteen crates that hold vector classes, the committed L0 vectors give 11,641 equal comparisons and 315 documented differences, with no record skipped. L1 (random cases against the reference, one call each), L2 (reference devnet chains replayed block by block through the store and through the block processor, with a state digest at every height and restarts by every start path, and every block rebuilt by the other side's forger), L3 (one scenario on a reference devnet, observed by a reference relay and by a Heartwood relay; and one scenario on a devnet of reference nodes and on a devnet of Heartwood relays and forgers, with a Heartwood devnet through faults and forger failover) and L4 (reference devnets with Heartwood relays: restarts, a sync from an empty store, a partition and its heal; and reference nodes served by Heartwood relays) run as well, and the rollback command's cases are replayed on each test chain, target by target, against the reference's own command and start.
+The reference is [solar-core-ref](https://github.com/iceroot-network/solar-core-ref), based on Solar Core 4.3.1 with a documented patch series. The recorded L0 baseline gate counted 11,641 equal comparisons and 315 documented differences, with no record skipped: 11,956 records in 35 files. The committed tree now holds 35 classes in 39 files, including four duplicated class copies: 17,348 raw records, or 12,026 after deduplicating classes. Four files contain 70 appended records beyond their original metadata counts (kernel V16: 16, logger V20: 40, CLI V35: 8, wire V13: 6). The baseline totals do not describe a new comparison of those appended records. L1 (random cases against the reference, one call each), L2 (reference devnet chains replayed block by block through the store and through the block processor, with a state digest at every height and restarts by every start path, and every block rebuilt by the other side's forger), L3 (one scenario on a reference devnet, observed by a reference relay and by a Heartwood relay; and one scenario on a devnet of reference nodes and on a devnet of Heartwood relays and forgers, with a Heartwood devnet through faults and forger failover) and L4 (reference devnets with Heartwood relays: restarts, a sync from an empty store, a partition and its heal; and reference nodes served by Heartwood relays) run as well, and the rollback command's cases are replayed on each test chain, target by target, against the reference's own command and start.
 
 In the runs with reference nodes on Heartwood relays, every reference node accepted the Heartwood relays and listed their API ports, none banned one or refused one of its replies, a reference relay synced from a Heartwood relay alone as fast as from a reference relay, a reference relay verified the status attestations of Heartwood forgers and its forger rebuilt their blocks byte for byte, the recovery commands left a live relay's store as the reference's commands leave a reference node's, and the reference's own peer client got the same answers, socket outcomes and bans from a Heartwood relay as from a reference relay. A reference node behind a relay on the minority side of a partition did not always follow the heal by itself, with a reference or a Heartwood relay in that place.
 
@@ -157,6 +165,6 @@ See [compatibility and testing](docs/compatibility.md) for exact boundaries, ora
 
 ## Contribute
 
-[Contributing](https://github.com/iceroot-network/.github/blob/prod/CONTRIBUTING.md). Work on `dev`. Production changes reach `prod` through a reviewed `dev` → `prod` pull request.
+[Contributing](https://github.com/iceroot-network/.github/blob/prod/CONTRIBUTING.md). Issues are welcome in this mirror; pull requests are reviewed in the upstream development repository.
 
 Heartwood Core is licensed under the [Apache License, Version 2.0](LICENSE). [NOTICE](NOTICE) preserves ARK Core and Solar Core attribution. External vector sources and checksums remain alongside the vector files.

@@ -6,12 +6,14 @@ A corpus is a chain that a reference devnet produced, in the format of `difftest
 replays the committed corpus in Heartwood through its store, with its restarts, and compares
 every step with those lines; no oracle runs.
 
+The committed fixtures allow replay, but not regeneration of the original scenario run
+from this repository alone.
+
 ## txgen-one-node
 
 A one-node devnet of the reference implementation with its default public seed, run natively:
-the scenario generator of the maintainers' devnet tooling (a separate tool that is not
-published) sends every kept transaction type (transfers with one to 256 items and memos of up to
-255 bytes, votes and re-votes, delegate registrations, temporary and permanent resignations and a
+an unpublished scenario generator sent every kept transaction type (transfers with one to
+256 items and memos of up to 255 bytes, votes and re-votes, delegate registrations, temporary and permanent resignations and a
 revoke 106 blocks after its resignation, burns, a second-signature registration and doubly
 signed transactions, fees at the dynamic floor) and its expected refusals; the node is restarted,
 and its forger is stopped long enough to miss slots, so that some delegates forge twice in a
