@@ -11,7 +11,10 @@ Heartwood Core credits both projects:
 
   Solar Core
   Copyright (c) Solar Network
+  CC-BY-ND-4.0
   https://github.com/Solar-network/core
+
+The copyright holder of Solar Core also publishes Heartwood Core and licenses the code in this repository that is adapted from Solar Core under the Apache License, Version 2.0 (see LICENSE).
 
 It also contains the emoji table of node-emoji 1.11.0, in packages/logger/src/emoji.tsv, with the
 MIT License notice of node-emoji at the top of that file:
